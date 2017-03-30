@@ -13,26 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_INSTRUCTION_FUSION_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_INSTRUCTION_FUSION_H_
+#ifndef THIRD_PARTY_TENSORFLOW_COMPILER_XLA_SERVICE_HLO_VERIFIER_H_
+#define THIRD_PARTY_TENSORFLOW_COMPILER_XLA_SERVICE_HLO_VERIFIER_H_
 
-#include "tensorflow/compiler/xla/service/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/instruction_fusion.h"
+#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 
 namespace xla {
-namespace cpu {
 
-class CpuInstructionFusion : public InstructionFusion {
+// HLO pass that verifies invariants of HLO instructions for each computation in
+// the module.
+class HloVerifier : public HloPassInterface {
  public:
-  CpuInstructionFusion()
-      : InstructionFusion(CpuInstructionFusion::IsExpensive) {}
-  ~CpuInstructionFusion() override = default;
+  ~HloVerifier() override = default;
+  tensorflow::StringPiece name() const override { return "verifier"; }
 
- protected:
-  bool ShouldFuse(HloInstruction* consumer, int64 operand_index) override;
+  // Note: always returns false (no instructions are ever modified by this
+  // pass).
+  StatusOr<bool> Run(HloModule* module) override;
 };
 
-}  // namespace cpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_INSTRUCTION_FUSION_H_
+#endif  // THIRD_PARTY_TENSORFLOW_COMPILER_XLA_SERVICE_HLO_VERIFIER_H_
