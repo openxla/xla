@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_LEGACY_FLAGS_HLO_PASS_PIPELINE_FLAGS_H_
-#define TENSORFLOW_COMPILER_XLA_LEGACY_FLAGS_HLO_PASS_PIPELINE_FLAGS_H_
+#ifndef THIRD_PARTY_TENSORFLOW_COMPILER_XLA_LEGACY_FLAGS_USER_COMPUTATION_FLAGS_H_
+#define THIRD_PARTY_TENSORFLOW_COMPILER_XLA_LEGACY_FLAGS_USER_COMPUTATION_FLAGS_H_
 
-// Legacy flags for XLA's hlo_pass_pipeline module.
+// Legacy flags for XLA's user_computation module.
 
 #include <vector>
 
@@ -27,22 +27,22 @@ limitations under the License.
 namespace xla {
 namespace legacy_flags {
 
-// Append to *flag_list flag definitions associated with XLA's hlo_pass_pipeline
+// Append to *flag_list flags definitions associated with XLA's user_computation
 // module.
-void AppendHloPassPipelineFlags(std::vector<tensorflow::Flag>* flag_list);
+void AppendUserComputationFlags(std::vector<tensorflow::Flag>* flag_list);
 
-// The values of flags associated with XLA's hlo_pass_pipeline module.
 typedef struct {
-  // Comma-separated list of HLO passes to disable.
-  string xla_disable_hlo_passes;
-} HloPassPipelineFlags;
+  // Eliminate implicit broadcast on when lowering user computation to HLO
+  // instructions, use explicit broadcast instead.
+  bool xla_eliminate_hlo_implicit_broadcast;
+} UserComputationFlags;
 
-// Return a pointer to the HloPassPipelineFlags struct;
+// Return a pointer to the UserComputationFlags struct;
 // repeated calls return the same pointer.
 // This should be called only after Flags::Parse() has returned.
-HloPassPipelineFlags* GetHloPassPipelineFlags();
+UserComputationFlags* GetUserComputationFlags();
 
 }  // namespace legacy_flags
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_LEGACY_FLAGS_HLO_PASS_PIPELINE_FLAGS_H_
+#endif  // THIRD_PARTY_TENSORFLOW_COMPILER_XLA_LEGACY_FLAGS_USER_COMPUTATION_FLAGS_H_

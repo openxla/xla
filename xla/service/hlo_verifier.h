@@ -13,27 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PORT_INITIALIZE_H_
-#define TENSORFLOW_COMPILER_XLA_PORT_INITIALIZE_H_
+#ifndef THIRD_PARTY_TENSORFLOW_COMPILER_XLA_SERVICE_HLO_VERIFIER_H_
+#define THIRD_PARTY_TENSORFLOW_COMPILER_XLA_SERVICE_HLO_VERIFIER_H_
 
-#undef REGISTER_MODULE_INITIALIZER
+#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 
 namespace xla {
 
-class Initializer {
+// HLO pass that verifies invariants of HLO instructions for each computation in
+// the module.
+class HloVerifier : public HloPassInterface {
  public:
-  typedef void (*InitializerFunc)();
-  explicit Initializer(InitializerFunc func) { func(); }
+  ~HloVerifier() override = default;
+  tensorflow::StringPiece name() const override { return "verifier"; }
+
+  // Note: always returns false (no instructions are ever modified by this
+  // pass).
+  StatusOr<bool> Run(HloModule* module) override;
 };
 
 }  // namespace xla
 
-#define REGISTER_INITIALIZER(type, name, body)         \
-  static void google_init_##type##_##name() { body; }  \
-  xla::Initializer google_initializer_##type##_##name( \
-      google_init_##type##_##name)
-
-#define REGISTER_MODULE_INITIALIZER(name, body) \
-  REGISTER_INITIALIZER(module, name, body)
-
-#endif  // TENSORFLOW_COMPILER_XLA_PORT_INITIALIZE_H_
+#endif  // THIRD_PARTY_TENSORFLOW_COMPILER_XLA_SERVICE_HLO_VERIFIER_H_

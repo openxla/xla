@@ -13,13 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// Legacy flags for XLA's hlo_pass_pipeline module.
-
 #include <mutex>  // NOLINT(build/c++11): only using std::call_once, not mutex.
 #include <vector>
 
-#include "tensorflow/compiler/xla/legacy_flags/hlo_pass_pipeline_flags.h"
 #include "tensorflow/compiler/xla/legacy_flags/parse_flags_from_env.h"
+#include "tensorflow/compiler/xla/legacy_flags/user_computation_flags.h"
+#include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/command_line_flags.h"
 
@@ -28,32 +27,35 @@ namespace legacy_flags {
 
 // Pointers to the parsed value of the flags and flag descriptors, initialized
 // via flags_init.
-static HloPassPipelineFlags* flags;
+static UserComputationFlags* flags;
 static std::vector<tensorflow::Flag>* flag_list;
 static std::once_flag flags_init;
 
 // Allocate *flags.  Called via call_once(&flags_init,...).
 static void AllocateFlags() {
-  flags = new HloPassPipelineFlags;
-  flags->xla_disable_hlo_passes = "";
+  flags = new UserComputationFlags;
+  flags->xla_eliminate_hlo_implicit_broadcast = false;
   flag_list = new std::vector<tensorflow::Flag>({
-      tensorflow::Flag("xla_disable_hlo_passes", &flags->xla_disable_hlo_passes,
-                       "Comma-separated list of HLO passes to disable."),
+      tensorflow::Flag("xla_eliminate_hlo_implicit_broadcast",
+                       &flags->xla_eliminate_hlo_implicit_broadcast,
+                       "Eliminate implicit broadcast on when lowering user "
+                       "computation to HLO instructions, use explicit "
+                       "broadcast instead."),
   });
   ParseFlagsFromEnv(*flag_list);
 }
 
 // Append to *append_to flag definitions associated with XLA's hlo_pass_pipeline
 // module.
-void AppendHloPassPipelineFlags(std::vector<tensorflow::Flag>* append_to) {
+void AppendUserComputationFlags(std::vector<tensorflow::Flag>* append_to) {
   std::call_once(flags_init, &AllocateFlags);
   append_to->insert(append_to->end(), flag_list->begin(), flag_list->end());
 }
 
-// Return a pointer to the HloPassPipelineFlags struct;
+// Return a pointer to the UserComputationFlags struct;
 // repeated calls return the same pointer.
 // This should be called only after Flags::Parse() has returned.
-HloPassPipelineFlags* GetHloPassPipelineFlags() {
+UserComputationFlags* GetUserComputationFlags() {
   std::call_once(flags_init, &AllocateFlags);
   return flags;
 }
