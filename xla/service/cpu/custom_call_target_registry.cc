@@ -13,32 +13,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TYPES_H_
-#define TENSORFLOW_COMPILER_XLA_TYPES_H_
-
-#include "third_party/eigen3/Eigen/Core"
-#include "tensorflow/core/platform/types.h"
-
-#include <Eigen/Core>
+#include "tensorflow/compiler/xla/service/cpu/custom_call_target_registry.h"
 
 namespace xla {
+namespace cpu {
 
-using ::tensorflow::string;
+CustomCallTargetRegistry* CustomCallTargetRegistry::Global() {
+  static auto* registry = new CustomCallTargetRegistry;
+  return registry;
+}
 
-using ::tensorflow::int8;
-using ::tensorflow::int16;
-using ::tensorflow::int32;
-using ::tensorflow::int64;
+void CustomCallTargetRegistry::Register(const std::string& symbol,
+                                        void* address) {
+  std::lock_guard<std::mutex> lock(mu_);
+  registered_symbols_[symbol] = address;
+}
 
-using ::tensorflow::uint8;
-using ::tensorflow::uint16;
-using ::tensorflow::uint32;
-using ::tensorflow::uint64;
+void* CustomCallTargetRegistry::Lookup(const std::string& symbol) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  auto it = registered_symbols_.find(symbol);
+  return it == registered_symbols_.end() ? nullptr : it->second;
+}
 
-typedef std::complex<float> complex64;
-
-using ::Eigen::half;
-
+}  // namespace cpu
 }  // namespace xla
-
-#endif  // TENSORFLOW_COMPILER_XLA_TYPES_H_
