@@ -13,13 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_scheduling.h"
+#include "tensorflow/compiler/xla/service/hlo_memory_scheduler.h"
 
 #include <memory>
 #include <string>
 
+#include "absl/algorithm/container.h"
 #include "tensorflow/compiler/xla/service/heap_simulator.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
+#include "tensorflow/compiler/xla/service/hlo_dce.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_opcode.h"
 #include "tensorflow/compiler/xla/service/hlo_ordering.h"
@@ -28,6 +30,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/tests/hlo_test_base.h"
 #include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "tensorflow/core/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {
@@ -64,21 +67,34 @@ TEST_F(HloSchedulingTest, LastUseScheduledFirst) {
   auto module = CreateNewModule();
   module->AddEntryComputation(builder.Build());
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      SequentialHloOrdering::HloModuleSequence sequence,
-      ScheduleComputationsInModule(*module, [](const BufferValue& buffer) {
-        return ShapeUtil::ByteSizeOf(buffer.shape());
-      }));
+  HloMemoryScheduler scheduler([](const BufferValue& buffer) {
+    return ShapeUtil::ByteSizeOf(buffer.shape());
+  });
+  ASSERT_FALSE(module->has_schedule());
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, scheduler.Run(module.get()));
+  EXPECT_TRUE(changed);
+  ASSERT_TRUE(module->has_schedule());
+  TF_ASSERT_OK(module->schedule().Verify());
+
   // Verify that all instructions are in the sequence.
-  EXPECT_EQ(module->entry_computation()->instruction_count(),
-            sequence.at(module->entry_computation()).size());
+  const std::vector<const HloInstruction*>& sequence =
+      module->schedule().sequence(module->entry_computation()).instructions();
+  EXPECT_EQ(module->entry_computation()->instruction_count(), sequence.size());
 
   // The first instruction should be the parameter and the last the root "sub".
-  EXPECT_EQ(param, sequence.at(module->entry_computation()).front());
-  EXPECT_EQ(sub, sequence.at(module->entry_computation()).back());
+  EXPECT_EQ(param, sequence.front());
+  EXPECT_EQ(sub, sequence.back());
 
-  SequentialHloOrdering ordering(module.get(), sequence);
+  SequentialHloOrdering ordering(module->schedule());
   EXPECT_TRUE(ordering.ExecutesBefore(add, negate));
+
+  // Clear the schedule using the descheduling pass.
+  HloDescheduler descheduler;
+  EXPECT_TRUE(module->has_schedule());
+  TF_ASSERT_OK_AND_ASSIGN(bool descheduler_changed,
+                          descheduler.Run(module.get()));
+  EXPECT_TRUE(descheduler_changed);
+  EXPECT_FALSE(module->has_schedule());
 }
 
 TEST_F(HloSchedulingTest, ListSchedulerHandlesAliasing) {
@@ -106,28 +122,26 @@ ENTRY root {
     return ShapeUtil::ByteSizeOf(buffer.shape(), /*pointer_size=*/8);
   };
   TF_ASSERT_OK_AND_ASSIGN(
-      SequentialHloOrdering::HloModuleSequence sequence,
-      ScheduleComputationsInModule(*module, size_fn, ListMemoryScheduler));
+      HloSchedule schedule,
+      ScheduleModule(*module, size_fn, ListMemoryScheduler));
   // Verify that all instructions are in the sequence.
-  EXPECT_EQ(module->entry_computation()->instruction_count(),
-            sequence.at(module->entry_computation()).size());
+  const std::vector<const HloInstruction*>& sequence =
+      schedule.sequence(module->entry_computation()).instructions();
+  EXPECT_EQ(module->entry_computation()->instruction_count(), sequence.size());
 
   std::unordered_map<string, const HloInstruction*> instructions_by_name;
-  for (const HloInstruction* instruction :
-       sequence.at(module->entry_computation())) {
+  for (const HloInstruction* instruction : sequence) {
     instructions_by_name[instruction->name()] = instruction;
   }
 
   // The first instruction should be the parameter and the last the root.
-  EXPECT_EQ(instructions_by_name.at("param"),
-            sequence.at(module->entry_computation()).front());
-  EXPECT_EQ(instructions_by_name.at("result"),
-            sequence.at(module->entry_computation()).back());
+  EXPECT_EQ(instructions_by_name.at("param"), sequence.front());
+  EXPECT_EQ(instructions_by_name.at("result"), sequence.back());
 
   // Instructions "d" and "e" will both be schedulable at the same time, but
   // instruction "d" allows us to free the buffer of "p1", so the list scheduler
   // should prefer it.
-  SequentialHloOrdering ordering(module.get(), sequence);
+  SequentialHloOrdering ordering(schedule);
   EXPECT_TRUE(ordering.ExecutesBefore(instructions_by_name.at("d"),
                                       instructions_by_name.at("e")));
 }
@@ -218,13 +232,13 @@ TEST_F(HloSchedulingTest, ListAccountsForSubcomputations) {
     return ShapeUtil::ByteSizeOf(buffer.shape());
   };
   TF_ASSERT_OK_AND_ASSIGN(
-      SequentialHloOrdering::HloModuleSequence sequence,
-      ScheduleComputationsInModule(*module, size_fn, ListMemoryScheduler));
+      HloSchedule schedule,
+      ScheduleModule(*module, size_fn, ListMemoryScheduler));
   // Verify that all instructions are in the sequence.
   auto entry_computation = module->entry_computation();
   EXPECT_EQ(entry_computation->instruction_count(),
-            sequence.at(entry_computation).size());
-  SequentialHloOrdering ordering(module.get(), sequence);
+            schedule.sequence(entry_computation).size());
+  SequentialHloOrdering ordering(schedule);
   // This schedule is an example of List's greedy heuristics being suboptimal.
   // The while_loop is more expensive than transpose, so it would have been
   // better to schedule it first, instead of during the busy time.
@@ -241,13 +255,13 @@ TEST_F(HloSchedulingTest, ListAccountsForSubcomputations) {
 
   // HeapSimulator doesn't account for subcomputations
   EXPECT_EQ(80, HeapSimulator::MinimumMemoryForComputation(
-                    *entry_computation, sequence.at(entry_computation),
+                    *entry_computation, schedule.sequence(entry_computation),
                     *points_to_analysis, size_fn)
                     .ValueOrDie());
   // HeapSimulator accounts for subcomputations. The output buffer is aliased,
   // so we don't double count.
   EXPECT_EQ(64, HeapSimulator::MinimumMemoryForComputation(
-                    *entry_computation, sequence.at(entry_computation),
+                    *entry_computation, schedule.sequence(entry_computation),
                     *points_to_analysis, size_fn, &memory_by_computation)
                     .ValueOrDie());
 }
@@ -267,7 +281,7 @@ TEST_F(HloSchedulingTest, TuplesAreAccountedCorrectly) {
   auto abs_abs1 = builder.AddInstruction(
       HloInstruction::CreateUnary(r1f32, HloOpcode::kAbs, abs_const));
   auto tuple = builder.AddInstruction(HloInstruction::CreateTuple(
-      tensorflow::gtl::ArraySlice<HloInstruction*>({abs_abs1})));
+      absl::Span<HloInstruction* const>({abs_abs1})));
   auto tuple_elm = builder.AddInstruction(
       HloInstruction::CreateGetTupleElement(r1f32, tuple, 0));
 
@@ -279,19 +293,18 @@ TEST_F(HloSchedulingTest, TuplesAreAccountedCorrectly) {
 
   auto module = CreateNewModule();
   module->AddEntryComputation(builder.Build());
-  TF_ASSERT_OK_AND_ASSIGN(
-      SequentialHloOrdering::HloModuleSequence sequence,
-      ScheduleComputationsInModule(*module,
-                                   [](const BufferValue& buffer) {
-                                     return ShapeUtil::ByteSizeOf(
-                                         buffer.shape(), TUPLE_SIZE);
-                                   },
-                                   ListMemoryScheduler));
+  TF_ASSERT_OK_AND_ASSIGN(HloSchedule schedule,
+                          ScheduleModule(*module,
+                                         [](const BufferValue& buffer) {
+                                           return ShapeUtil::ByteSizeOf(
+                                               buffer.shape(), TUPLE_SIZE);
+                                         },
+                                         ListMemoryScheduler));
 
   // Verify that all instructions are in the sequence.
   EXPECT_EQ(module->entry_computation()->instruction_count(),
-            sequence.at(module->entry_computation()).size());
-  SequentialHloOrdering ordering(module.get(), sequence);
+            schedule.sequence(module->entry_computation()).size());
+  SequentialHloOrdering ordering(schedule);
   // tuple allocates the tuple buffer and doesn't free anything.
   // abs_abs2 uses the same buffer for input/output, so its bytes-freed is 0.
   // abs_abs2 should be scheduled before tuple by List.
@@ -330,18 +343,18 @@ TEST_F(HloSchedulingTest, MultiOutputFusionAccountedCorrectly) {
   auto fusion = computation->CreateFusionInstruction(
       {tuple, mul, add}, HloInstruction::FusionKind::kLoop);
 
-  TF_ASSERT_OK_AND_ASSIGN(SequentialHloOrdering::HloModuleSequence sequence,
-                          ScheduleComputationsInModule(
-                              *module,
-                              [](const BufferValue& buffer) {
-                                return ShapeUtil::ByteSizeOf(buffer.shape(), 2);
-                              },
-                              ListMemoryScheduler));
+  TF_ASSERT_OK_AND_ASSIGN(HloSchedule schedule,
+                          ScheduleModule(*module,
+                                         [](const BufferValue& buffer) {
+                                           return ShapeUtil::ByteSizeOf(
+                                               buffer.shape(), 2);
+                                         },
+                                         ListMemoryScheduler));
 
   // Verify that all instructions are in the sequence.
   EXPECT_EQ(module->entry_computation()->instruction_count(),
-            sequence.at(module->entry_computation()).size());
-  SequentialHloOrdering ordering(module.get(), sequence);
+            schedule.sequence(module->entry_computation()).size());
+  SequentialHloOrdering ordering(schedule);
   // fusion allocates memory for the tuple elements and doesn't free anything,
   // so it's more expensive than exp.
   EXPECT_TRUE(ordering.ExecutesBefore(exp, fusion));
@@ -389,12 +402,12 @@ TEST_F(HloSchedulingTest, HeapSimulatorAccountsForSubcomputations) {
     return ShapeUtil::ByteSizeOf(buffer.shape());
   };
   TF_ASSERT_OK_AND_ASSIGN(
-      SequentialHloOrdering::HloModuleSequence sequence,
-      ScheduleComputationsInModule(*module, size_fn, ListMemoryScheduler));
+      HloSchedule schedule,
+      ScheduleModule(*module, size_fn, ListMemoryScheduler));
   // Verify that all instructions are in the sequence.
   auto entry_computation = module->entry_computation();
-  EXPECT_EQ(entry_computation->instruction_count(),
-            sequence.at(entry_computation).size());
+  EXPECT_EQ(module->entry_computation()->instruction_count(),
+            schedule.sequence(module->entry_computation()).size());
 
   tensorflow::gtl::FlatMap<const HloComputation*, int64> memory_by_computation;
   memory_by_computation[cond_computation] = 17;
@@ -404,13 +417,13 @@ TEST_F(HloSchedulingTest, HeapSimulatorAccountsForSubcomputations) {
 
   // HeapSimulator doesn't account for subcomputations
   EXPECT_EQ(16, HeapSimulator::MinimumMemoryForComputation(
-                    *entry_computation, sequence.at(entry_computation),
+                    *entry_computation, schedule.sequence(entry_computation),
                     *points_to_analysis, size_fn)
                     .ValueOrDie());
   // HeapSimulator accounts for subcomputations. Cond is the largest one.
   // The output buffer of the while is aliased.
   EXPECT_EQ(17, HeapSimulator::MinimumMemoryForComputation(
-                    *entry_computation, sequence.at(entry_computation),
+                    *entry_computation, schedule.sequence(entry_computation),
                     *points_to_analysis, size_fn, &memory_by_computation)
                     .ValueOrDie());
 }

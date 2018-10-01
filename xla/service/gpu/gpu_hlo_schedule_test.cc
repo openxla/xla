@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/hlo_schedule.h"
+#include "tensorflow/compiler/xla/service/gpu/gpu_hlo_schedule.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -24,22 +24,23 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_opcode.h"
 #include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "tensorflow/compiler/xla/tests/hlo_verified_test_base.h"
+#include "tensorflow/compiler/xla/tests/test_utils.h"
 #include "tensorflow/compiler/xla/types.h"
 
 namespace xla {
 namespace gpu {
 
-class HloScheduleTest : public HloTestBase {
+class GpuHloScheduleTest : public HloVerifiedTestBase {
  protected:
   using HloVec = std::vector<const HloInstruction*>;
 
   // Pre-canned shapes.
   Shape f32_2x2_ = ShapeUtil::MakeShape(F32, {2, 2});
 
-  static std::unique_ptr<HloSchedule> BuildHloSchedule(
+  static std::unique_ptr<GpuHloSchedule> BuildGpuHloSchedule(
       const HloModule& module, const StreamAssignment& streams) {
-    return HloSchedule::Build(module, streams, /*pointer_size=*/8)
+    return GpuHloSchedule::Build(module, streams, /*pointer_size=*/8)
         .ConsumeValueOrDie();
   }
 
@@ -65,7 +66,7 @@ class HloScheduleTest : public HloTestBase {
 
 // Test of a single stream, where data dependencies fully determine the
 // execution order.
-TEST_F(HloScheduleTest, SequentialMatMul) {
+TEST_F(GpuHloScheduleTest, SequentialMatMul) {
   HloComputation::Builder builder("entry_computation");
   HloInstruction* x = builder.AddInstruction(HloInstruction::CreateParameter(
       /*parameter_number=*/0, f32_2x2_, /*name=*/"x"));
@@ -73,10 +74,10 @@ TEST_F(HloScheduleTest, SequentialMatMul) {
       /*parameter_number=*/1, f32_2x2_, /*name=*/"y"));
   HloInstruction* z = builder.AddInstruction(HloInstruction::CreateParameter(
       /*parameter_number=*/2, f32_2x2_, /*name=*/"z"));
-  HloInstruction* dot1 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, x, y));
-  HloInstruction* dot2 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, dot1, z));
+  HloInstruction* dot1 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, x, y));
+  HloInstruction* dot2 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, dot1, z));
 
   auto module = CreateNewModule();
   module->AddEntryComputation(builder.Build(dot2));
@@ -85,7 +86,7 @@ TEST_F(HloScheduleTest, SequentialMatMul) {
   EXPECT_EQ(streams->StreamNumberForHlo(*dot1),
             streams->StreamNumberForHlo(*dot2));
 
-  auto schedule = BuildHloSchedule(*module, *streams);
+  auto schedule = BuildGpuHloSchedule(*module, *streams);
   // Remove parameters, which are unordered.
   EXPECT_EQ(RemoveHlo(schedule->ThunkLaunchOrder(), {x, y, z}),
             HloVec({dot1, dot2}));
@@ -123,7 +124,7 @@ TEST_F(HloScheduleTest, SequentialMatMul) {
 
 // Test of a single stream, where data dependencies do not fully determine the
 // execution order, but the stream assignment does.
-TEST_F(HloScheduleTest, SequentialAdd) {
+TEST_F(GpuHloScheduleTest, SequentialAdd) {
   HloComputation::Builder builder("entry_computation");
   HloInstruction* x = builder.AddInstruction(HloInstruction::CreateParameter(
       /*parameter_number=*/0, f32_2x2_, /*name=*/"x"));
@@ -147,7 +148,7 @@ TEST_F(HloScheduleTest, SequentialAdd) {
   EXPECT_EQ(streams->StreamNumberForHlo(*add1),
             streams->StreamNumberForHlo(*add3));
 
-  auto schedule = BuildHloSchedule(*module, *streams);
+  auto schedule = BuildGpuHloSchedule(*module, *streams);
   // Remove parameters, which are unordered.
   EXPECT_EQ(RemoveHlo(schedule->ThunkLaunchOrder(), {x, y, z}),
             HloVec({add1, add2, add3}));
@@ -195,18 +196,18 @@ TEST_F(HloScheduleTest, SequentialAdd) {
 }
 
 // Test of two streams.
-TEST_F(HloScheduleTest, ConcurrentMatMul) {
+TEST_F(GpuHloScheduleTest, ConcurrentMatMul) {
   HloComputation::Builder builder("entry_computation");
   HloInstruction* x = builder.AddInstruction(HloInstruction::CreateParameter(
       /*parameter_number=*/0, f32_2x2_, /*name=*/"x"));
   HloInstruction* y = builder.AddInstruction(HloInstruction::CreateParameter(
       /*parameter_number=*/1, f32_2x2_, /*name=*/"y"));
-  HloInstruction* dot1 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, x, y));
-  HloInstruction* dot2 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, y, x));
-  HloInstruction* add = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, dot1, dot2));
+  HloInstruction* dot1 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, x, y));
+  HloInstruction* dot2 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, y, x));
+  HloInstruction* add =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, dot1, dot2));
 
   auto module = CreateNewModule();
   module->AddEntryComputation(builder.Build(add));
@@ -215,7 +216,7 @@ TEST_F(HloScheduleTest, ConcurrentMatMul) {
   EXPECT_NE(streams->StreamNumberForHlo(*dot1),
             streams->StreamNumberForHlo(*dot2));
 
-  auto schedule = BuildHloSchedule(*module, *streams);
+  auto schedule = BuildGpuHloSchedule(*module, *streams);
   // Remove parameters, which are unordered.
   HloVec thunk_launch_order = RemoveHlo(schedule->ThunkLaunchOrder(), {x, y});
   EXPECT_TRUE(thunk_launch_order == HloVec({dot1, dot2, add}) ||
@@ -251,7 +252,7 @@ TEST_F(HloScheduleTest, ConcurrentMatMul) {
 }
 
 // Test of multiple streams.
-TEST_F(HloScheduleTest, LatticeMatMul) {
+TEST_F(GpuHloScheduleTest, LatticeMatMul) {
   //      d00      -- layer 0
   //     /   \
   //   d10   d11   -- layer 1
@@ -266,26 +267,26 @@ TEST_F(HloScheduleTest, LatticeMatMul) {
   params.reserve(6);
   for (int i = 0; i < 6; ++i) {
     params.push_back(builder.AddInstruction(HloInstruction::CreateParameter(
-        i, f32_2x2_, /*name=*/tensorflow::strings::Printf("param%d", i))));
+        i, f32_2x2_, /*name=*/absl::StrFormat("param%d", i))));
   }
   HloInstruction* d00 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, params[2], params[3]));
-  HloInstruction* d10 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, params[1], d00));
-  HloInstruction* d11 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, d00, params[4]));
-  HloInstruction* d20 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, params[0], d10));
-  HloInstruction* d21 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, d10, d11));
-  HloInstruction* d22 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, d11, params[5]));
-  HloInstruction* d30 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, d20, d21));
-  HloInstruction* d31 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, d21, d22));
-  HloInstruction* d40 = builder.AddInstruction(
-      HloInstruction::CreateCanonicalDot(f32_2x2_, d30, d31));
+      CreateCanonicalDot(f32_2x2_, params[2], params[3]));
+  HloInstruction* d10 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, params[1], d00));
+  HloInstruction* d11 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, d00, params[4]));
+  HloInstruction* d20 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, params[0], d10));
+  HloInstruction* d21 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, d10, d11));
+  HloInstruction* d22 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, d11, params[5]));
+  HloInstruction* d30 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, d20, d21));
+  HloInstruction* d31 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, d21, d22));
+  HloInstruction* d40 =
+      builder.AddInstruction(CreateCanonicalDot(f32_2x2_, d30, d31));
 
   auto module = CreateNewModule();
   module->AddEntryComputation(builder.Build(d40));
@@ -307,7 +308,7 @@ TEST_F(HloScheduleTest, LatticeMatMul) {
 
   // We don't check the thunk launch order, since there are many valid total
   // orders, and it's annoying to express.
-  auto schedule = BuildHloSchedule(*module, *streams);
+  auto schedule = BuildGpuHloSchedule(*module, *streams);
 
   auto order = schedule->ConsumeHloOrdering();
   const HloVec all_params(

@@ -17,12 +17,13 @@ limitations under the License.
 #include <memory>
 #include <unordered_map>
 
-#include "tensorflow/compiler/xla/service/gpu/hlo_schedule.h"
+#include "tensorflow/compiler/xla/service/gpu/gpu_hlo_schedule.h"
 
 #include "absl/memory/memory.h"
 #include "tensorflow/compiler/xla/service/buffer_value.h"
+#include "tensorflow/compiler/xla/service/hlo_memory_scheduler.h"
 #include "tensorflow/compiler/xla/service/hlo_reachability.h"
-#include "tensorflow/compiler/xla/service/hlo_scheduling.h"
+#include "tensorflow/compiler/xla/service/hlo_schedule.h"
 #include "tensorflow/compiler/xla/types.h"
 
 namespace xla {
@@ -184,13 +185,13 @@ void BFSLaunchOrder(const HloComputation* computation,
 
 }  // end namespace
 
-HloSchedule::HloSchedule() {}
+GpuHloSchedule::GpuHloSchedule() {}
 
 /* static */
-StatusOr<std::unique_ptr<HloSchedule>> HloSchedule::Build(
+StatusOr<std::unique_ptr<GpuHloSchedule>> GpuHloSchedule::Build(
     const HloModule& module, const StreamAssignment& stream_assignment,
     int64 pointer_size) {
-  std::unique_ptr<HloSchedule> schedule(new HloSchedule);
+  std::unique_ptr<GpuHloSchedule> schedule(new GpuHloSchedule);
 
   // Initialize thunk_launch_order_, the total order of thunk launches.
   const HloComputation* entry_computation = module.entry_computation();
@@ -198,11 +199,12 @@ StatusOr<std::unique_ptr<HloSchedule>> HloSchedule::Build(
     // All kernels are launched on a single stream, so there's no loss of
     // concurrency by optimizing for minimal memory usage.
     TF_ASSIGN_OR_RETURN(
-        schedule->thunk_launch_order_,
-        ScheduleOneComputation(
+        HloInstructionSequence sequence,
+        ScheduleComputation(
             *entry_computation, [pointer_size](const BufferValue& buffer) {
               return ShapeUtil::ByteSizeOf(buffer.shape(), pointer_size);
             }));
+    schedule->thunk_launch_order_ = sequence.instructions();
   } else {
     // BFS tends to increase concurrency, but also increases memory usage.
     BFSLaunchOrder(entry_computation, &schedule->thunk_launch_order_);
