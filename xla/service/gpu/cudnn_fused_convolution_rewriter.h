@@ -13,16 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_options.h"
-#include "tensorflow/core/lib/gtl/map_util.h"
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_FUSED_CONVOLUTION_REWRITER_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_FUSED_CONVOLUTION_REWRITER_H_
+
+#include "tensorflow/compiler/xla/service/hlo_instructions.h"
+#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 
 namespace xla {
 namespace gpu {
 
-bool ConvUseLayoutHeuristic(const HloModuleConfig& config) {
-  return !config.debug_options().xla_backend_extra_options().count(
-      "xla_gpu_experimental_conv_disable_layout_heuristic");
-}
+class CudnnFusedConvolutionRewriter : public HloModulePass {
+ public:
+  absl::string_view name() const override {
+    return "cudnn-fused-convolution-rewriter";
+  }
+
+  StatusOr<bool> Run(HloModule* module) override;
+};
 
 }  // namespace gpu
 }  // namespace xla
+
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_FUSED_CONVOLUTION_REWRITER_H_
