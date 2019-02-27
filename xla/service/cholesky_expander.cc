@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/cholesky.h"
+#include "tensorflow/compiler/xla/service/cholesky_expander.h"
 
 #include <memory>
 #include <vector>
@@ -23,13 +23,13 @@ limitations under the License.
 #include "tensorflow/compiler/xla/client/lib/math.h"
 #include "tensorflow/compiler/xla/client/lib/matrix.h"
 #include "tensorflow/compiler/xla/client/lib/slicing.h"
-#include "tensorflow/compiler/xla/client/lib/triangular_solve.h"
 #include "tensorflow/compiler/xla/client/xla_builder.h"
 #include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/compiler/xla/primitive_util.h"
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/statusor.h"
+#include "tensorflow/compiler/xla/util.h"
 #include "tensorflow/core/lib/core/errors.h"
 
 namespace xla {
@@ -135,10 +135,8 @@ XlaOp CholeskyUnblocked(XlaOp a, PrecisionConfig::Precision precision) {
   });
 }
 
-}  // namespace
-
-XlaOp Cholesky(XlaOp a, int64 block_size,
-               PrecisionConfig::Precision precision) {
+XlaOp BuildCholesky(XlaOp a, int64 block_size,
+                    PrecisionConfig::Precision precision) {
   XlaBuilder* builder = a.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape a_shape, builder->GetShape(a));
@@ -194,17 +192,68 @@ XlaOp Cholesky(XlaOp a, int64 block_size,
         // l[i+k:, i:i+k] =
         //     trsm_right_transpose(l[i:i+k, i:i+k], a[i+k:, i:i+k])
         auto panel = SliceInMinorDims(a, {i + k, i}, {n, i + k});
-        auto update = TriangularSolve(factorized, panel,
-                                      /*left_side=*/false,
-                                      /*lower=*/true,
-                                      /*transpose_a=*/true,
-                                      /*conjugate_a=*/false,
-                                      /*block_size=*/block_size);
+        auto update =
+            TriangularSolve(factorized, panel,
+                            /*left_side=*/false,
+                            /*lower=*/true,
+                            /*unit_diagonal=*/false,
+                            /*transpose_a=*/TriangularSolveOptions::TRANSPOSE);
         l = UpdateSliceInMinorDims(l, update, {i + k, i});
       }
     }
     return l;
   });
+}
+
+}  // namespace
+
+bool CholeskyExpander::InstructionMatchesPattern(HloInstruction* instruction) {
+  return instruction->opcode() == HloOpcode::kCholesky;
+}
+
+StatusOr<HloInstruction*> CholeskyExpander::ExpandInstruction(
+    HloInstruction* instruction) {
+  const CholeskyOptions& options = instruction->cholesky_options();
+  const string name = absl::StrFormat(
+      "xla.cholesky_%s_%s", instruction->operand(0)->shape().ToString(),
+      options.lower() ? "lower" : "upper");
+
+  HloModule* module = instruction->parent()->parent();
+
+  HloComputation*& computation =
+      computation_cache_.emplace(name, nullptr).first->second;
+  if (!computation) {
+    // Builds a new expansion.
+    //
+    // TODO(b/62327888): We do something unusual here: we build the computation
+    // using the XlaBuilder API, which is nominally an XLA client API. We do
+    // this because the external APIs for building complicated computations
+    // (XlaBuilder) are much more ergonomic than the internal ones. As it turns
+    // out, XlaBuilder isn't really a client API—what it does is build a
+    // HloModuleProto protocol buffer, that we can then deserialize and clone
+    // into our HloModule. Ideally we would avoid the protocol buffer step;
+    // that is left as an exercise for future work.
+    XlaBuilder builder(name);
+    XlaOp a = Parameter(&builder, 0, instruction->operand(0)->shape(), "a");
+    XlaOp l = BuildCholesky(MaybeTransposeInMinorDims(a, !options.lower()),
+                            /*block_size=*/128,
+                            /*precision=*/PrecisionConfig::HIGHEST);
+    MaybeTransposeInMinorDims(l, !options.lower());
+
+    TF_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
+
+    TF_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        xla_computation.GetProgramShape());
+    HloModuleConfig config(program_shape);
+    TF_ASSIGN_OR_RETURN(auto new_module, HloModule::CreateFromProto(
+                                             xla_computation.proto(), config));
+    HloCloneContext context(module);
+    computation =
+        module->DeepCloneComputation(new_module->entry_computation(), &context);
+  }
+
+  return instruction->parent()->AddInstruction(HloInstruction::CreateCall(
+      instruction->shape(), instruction->operands(), computation));
 }
 
 }  // namespace xla
