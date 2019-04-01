@@ -13,31 +13,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// Implementation of an DOT graph renderer that uses Javascript to render DOT to
-// SVG in a browser.
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CONDITIONAL_TO_SELECT_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_CONDITIONAL_TO_SELECT_H_
 
-#include "tensorflow/compiler/xla/service/hlo_graph_dumper.h"
 #include "tensorflow/compiler/xla/service/hlo_module.h"
+#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 
 namespace xla {
-namespace hlo_graph_dumper {
-namespace {
 
-class GraphHtmlRenderer : public GraphRendererInterface {
+// A pass which transforms conditionals to selects in places where conditionals
+// are legal, but not currently supported by the backends (e.g. inside kMap)
+class ConditionalToSelect : public HloModulePass {
  public:
-  string RenderGraph(const string& graph, GraphKind graph_kind,
-                     const DebugOptions& debug_options) override {
-    switch (graph_kind) {
-      case DOT_GRAPH:
-        return RenderDotAsHTMLFile(graph, debug_options);
-      default:
-        LOG(FATAL) << "Only DOT graphs can be rendered";
-    }
-  }
+  ~ConditionalToSelect() override = default;
+  absl::string_view name() const override { return "conditional-to-select"; }
+
+  // Run conditional to select on the given computation. Returns whether the
+  // computation was changed.
+  StatusOr<bool> Run(HloModule* module) override;
 };
 
-XLA_REGISTER_GRAPH_RENDERER(GraphHtmlRenderer);
-
-}  // namespace
-}  // namespace hlo_graph_dumper
 }  // namespace xla
+
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CONDITIONAL_TO_SELECT_H_
