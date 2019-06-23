@@ -1,4 +1,4 @@
-/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,23 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/owning_device_memory.h"
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_SLICE_SINKER_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_SLICE_SINKER_H_
 
-#include "tensorflow/compiler/xla/service/device_memory_allocator.h"
+#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
 
 namespace xla {
 
-void OwningDeviceMemory::Free() {
-  CHECK(allocator_ != nullptr)
-      << "Can't call Free() on an inactive (i.e. moved from, Forget()'ten, "
-         "or Free()'ed) instance.";
-  auto status = allocator_->Deallocate(device_ordinal_, mem_);
-  if (!status.ok()) {
-    LOG(WARNING) << "Deallocating buffer " << mem_.opaque() << " failed.";
-  }
+// An HLO pass that sinks slice operations used by a group of elementwise
+// operations and merges the group of elementwise operations.
+class SliceSinker : public HloModulePass {
+ public:
+  tensorflow::StringPiece name() const override { return "slice-sinker"; }
 
-  allocator_ = nullptr;
-  mem_ = se::DeviceMemoryBase();
-}
+  StatusOr<bool> Run(HloModule* module) override;
+};
 
 }  // namespace xla
+
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_SLICE_SINKER_H_
