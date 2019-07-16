@@ -13,20 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_NVPTX_CONSTANTS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_NVPTX_CONSTANTS_H_
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_SCATTER_EXPANDER_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_SCATTER_EXPANDER_H_
+
+#include "tensorflow/compiler/xla/service/scatter_expander.h"
 
 namespace xla {
-namespace gpu {
 
-// The triple that represents our target.
-constexpr char kTargetTriple[] = "nvptx64-nvidia-cuda";
+class GpuScatterExpander : public ScatterExpander {
+ public:
+  absl::string_view name() const override { return "gpu_scatter_expander"; }
+  StatusOr<bool> Run(HloModule* module) override;
+};
 
-// The data layout of the emitted module. Copied from computeDataLayout in
-// NVPTXTargetMachine.cpp.
-constexpr char kDataLayout[] = "e-i64:64-i128:128-v16:16-v32:32-n16:32:64";
-
-}  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_NVPTX_CONSTANTS_H_
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_SCATTER_EXPANDER_H_
