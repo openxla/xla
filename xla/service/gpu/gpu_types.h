@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,21 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TESTS_FILECHECK_H_
-#define TENSORFLOW_COMPILER_XLA_TESTS_FILECHECK_H_
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_TYPES_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_TYPES_H_
 
-#include <string>
-
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "absl/types/variant.h"
 
 namespace xla {
+namespace gpu {
 
-// Runs FileCheck with the given pattern over given input string. Provided that
-// FileCheck can execute, returns true if and only if FileCheck succeeded in
-// matching the input.
-StatusOr<bool> RunFileCheck(const string& input, absl::string_view pattern);
-
+// GpuVersion is used to abstract Gpu hardware version. On Cuda platform,
+// it comprises a pair of integers denoting major and minor version.
+// On ROCm platform, it comprises one integer for AMD GCN ISA version.
+using GpuVersion = absl::variant<std::pair<int, int>, int>;
+}  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TESTS_FILECHECK_H_
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_TYPES_H_
