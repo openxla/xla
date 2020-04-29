@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_SHARED_DEVICE_BUFFER_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_SHARED_DEVICE_BUFFER_H_
+#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_TRACKED_DEVICE_BUFFER_H_
+#define TENSORFLOW_COMPILER_XLA_PYTHON_TRACKED_DEVICE_BUFFER_H_
 
 #include <memory>
 
@@ -233,7 +233,7 @@ class TrackedDeviceBuffer {
       definition_events_;
 
   // in_use_ starts out true, and is set to false when the buffer is released
-  // from its owning PyLocalBuffer. Once in_use_ is false, the buffer may no
+  // from its owning PjRtBuffer. Once in_use_ is false, the buffer may no
   // longer be used on any stream.
   bool in_use_;
   // Set of streams that the buffer has ever been used on, see comment on
@@ -257,4 +257,4 @@ void WaitForBufferDefinitionEventsOnStream(const TrackedDeviceBuffer& buffer,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_SHARED_DEVICE_BUFFER_H_
+#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_TRACKED_DEVICE_BUFFER_H_
