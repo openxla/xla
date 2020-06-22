@@ -12,20 +12,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <utility>
 
-#include <memory>
-
-#include "tensorflow/compiler/xla/service/cpu/cpu_compiler.h"
-#include "tensorflow/compiler/xla/service/cpu/test_target_triple_helper.h"
-#include "tensorflow/compiler/xla/service/cpu/tests/cpu_codegen_test.h"
+#include "tensorflow/compiler/xla/service/gpu/tests/gpu_codegen_test.h"
+#include "tensorflow/compiler/xla/service/hlo_instruction.h"
+#include "tensorflow/compiler/xla/service/hlo_module_config.h"
 
 namespace xla {
-namespace cpu {
-namespace {
+namespace gpu {
+class GpuDynamicShapeTest : public GpuCodegenTest {};
 
-using CpuDynamicShapeTest = CpuCodegenTest;
-
-TEST_F(CpuDynamicShapeTest, DynamicShapeR2) {
+TEST_F(GpuDynamicShapeTest, DynamicShapeR2) {
   HloComputation::Builder builder(TestName());
 
   xla::Shape dyn_input_shape = xla::ShapeUtil::MakeShape(xla::F32, {2, 4});
@@ -38,25 +35,19 @@ TEST_F(CpuDynamicShapeTest, DynamicShapeR2) {
   auto hlo_module = CreateNewVerifiedModule();
   hlo_module->AddEntryComputation(builder.Build());
 
-  string filecheck_pattern = R"(
+  CompileAndVerifyIr(std::move(hlo_module),
+                     R"(
+; CHECK-LABEL: is_thred_0-true
+; CHECK_LABEL: custom-call.in_dyn_bounds-true
+; CHECK_LABEL: custom-call.in_bounds-true
 ; CHECK: %[[dyn_dim_size:.*]] = load i32, i32*
-; CHECK: %[[i64_dyn_dim_size:.*]] = sext i32 %[[dyn_dim_size:.*]] to i64
-; CHECK: icmp uge i64 %[[custom:.*]], %[[i64_dyn_dim_size:.*]]
-; CHECK: %[[multiplier:.*]] = mul i64 1, %[[i64_dyn_dim_size:.*]]
-; CHECK: mul nuw nsw i64 %[[custom:.*]], %[[multiplier:.*]]
-)";
-
-  CpuAotCompilationOptions options{
-      /*triple=*/kTargetTripleForHost, /*cpu_name=*/kTargetCpuForHost,
-      /*features=*/"",
-      /*entry_point_name=*/"entry",
-      /*relocation_model=*/CpuAotCompilationOptions::RelocationModel::Static};
-
-  CompileAheadOfTimeAndVerifyIr(std::move(hlo_module), options,
-                                filecheck_pattern,
-                                /*match_optimized_ir=*/false);
+; CHECK: %[[dyn_element_total:.*]] = mul i32 1, %[[dyn_dim_size:.*]]
+; CHECK: %[[linear_index:.*]] = add nuw nsw i32
+; CHECK: %[[linear_index_in_range:.*]] = icmp ult i32 %[[linear_index:.*]],
+; CHECK: store i32 %[[dyn_dim_size:.*]], i32*
+      )",
+                     /*match_optimized_ir=*/false);
 }
 
-}  // namespace
-}  // namespace cpu
+}  // namespace gpu
 }  // namespace xla
