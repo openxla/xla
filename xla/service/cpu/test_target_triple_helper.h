@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,20 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tests/test_macros.h"
+#ifndef TENSORFLOW_TEST_TARGET_TRIPLE_HELPER_H_
+#define TENSORFLOW_TEST_TARGET_TRIPLE_HELPER_H_
 
-#include "tensorflow/core/platform/logging.h"
+#if (defined(__powerpc__) || \
+     defined(__ppc__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__))
+static const char kTargetCpuForHost[] = "ppc";
+static const char kTargetTripleForHost[] = "ppc64le-ibm-linux-gnu";
+#else
+static const char kTargetCpuForHost[] = "";
+static const char kTargetTripleForHost[] = "x86_64-pc-linux";
+#endif
 
-namespace xla {
-
-static bool InitModule() {
-  *DisabledManifestPath() = XLA_DISABLED_MANIFEST;
-  VLOG(1) << "DisabledManifestPath: " << *DisabledManifestPath();
-  *TestPlatform() = XLA_PLATFORM;
-  VLOG(1) << "TestPlatform: " << *TestPlatform();
-  return false;
-}
-
-static bool module_initialized = InitModule();
-
-}  // namespace xla
+#endif
