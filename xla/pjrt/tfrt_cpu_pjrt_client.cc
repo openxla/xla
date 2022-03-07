@@ -274,11 +274,10 @@ FindResultBufferAllocationIndex(const BufferAssignment& assignment,
     // Find the buffer allocation that corresponds to the output buffer.
     const HloValueSet& sources = root_value_set.element({});
     // The points to set is unambiguous so the set should be a singleton.
-    CHECK_EQ(1, sources.values().size());
-    const HloValue* value_source = sources.values()[0];
-    HloInstruction* src = value_source->instruction();
+    const HloValue& value_source = sources.GetUniqueValue();
+    HloInstruction* src = value_source.instruction();
     TF_ASSIGN_OR_RETURN(const BufferAllocation::Slice slice,
-                        assignment.GetUniqueSlice(src, value_source->index()));
+                        assignment.GetUniqueSlice(src, value_source.index()));
     const BufferAllocation::Index buffer_index = slice.index();
     buffer_indices.push_back(buffer_index);
     return {std::move(buffer_indices)};
@@ -289,11 +288,10 @@ FindResultBufferAllocationIndex(const BufferAssignment& assignment,
     // including the tuple index table.
     const HloValueSet& sources = root_value_set.element({i});
     // The points to set is unambiguous so the set should be a singleton.
-    CHECK_EQ(1, sources.values().size());
-    const HloValue* value_source = sources.values()[0];
-    HloInstruction* src = value_source->instruction();
+    const HloValue& value_source = sources.GetUniqueValue();
+    HloInstruction* src = value_source.instruction();
     TF_ASSIGN_OR_RETURN(const BufferAllocation::Slice slice,
-                        assignment.GetUniqueSlice(src, value_source->index()));
+                        assignment.GetUniqueSlice(src, value_source.index()));
     const BufferAllocation::Index buffer_index = slice.index();
     buffer_indices.push_back(buffer_index);
   }

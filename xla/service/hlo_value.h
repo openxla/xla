@@ -16,16 +16,16 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_VALUE_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_VALUE_H_
 
-#include <stddef.h>
-
+#include <algorithm>
+#include <initializer_list>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
-#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
+#include "xla/dense_set.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/lazy.h"
 #include "xla/service/buffer_value.h"
@@ -102,9 +102,11 @@ std::ostream& operator<<(std::ostream& out, const HloUse& use);
 class HloValue : public BufferValue {
  public:
   // Predicate comparing HloValues by increasing id, useful for std::sort.
-  static bool IdLessThan(const HloValue* a, const HloValue* b) {
-    return a->id() < b->id();
-  }
+  struct IdLessThan {
+    bool operator()(const HloValue* a, const HloValue* b) const {
+      return a->id() < b->id();
+    }
+  };
 
   // Construct an HloValue defined by 'instruction' at shape index 'index'. If
   // is_phi is true, then this value is a phi value, for example, at the
@@ -195,57 +197,24 @@ std::ostream& operator<<(std::ostream& out, const HloValue& hlo_value);
 // instructions which have non-trivial dataflow such as Tuple or Select, the
 // HloValueSets of the instruction's output contains one or more HloValues
 // defined by the instruction's operands or defined further up in the XLA graph.
-class HloValueSet {
+class HloValueSet : public DenseSet<const HloValue*, HloValue::IdLessThan> {
  public:
-  HloValueSet() = default;
+  using DenseSet::DenseSet;
 
-  explicit HloValueSet(absl::Span<const HloValue* const> values);
-  explicit HloValueSet(const absl::flat_hash_set<const HloValue*>& values);
+  static HloValueSet UnionOf(absl::Span<const HloValueSet* const> inputs);
 
   // Sets this value set to the union of the given value sets. Returns whether
   // this value set changed.
   bool AssignUnionOf(absl::Span<const HloValueSet* const> inputs);
 
-  // Return the vector of HloValues in the set. Values in the vector are unique
-  // and stably sorted by value id.
-  const std::vector<const HloValue*>& values() const { return values_; }
-
-  // Adds the value to the set.  Returns true iff the value was added and didn't
-  // already exist in the set.
-  bool AddValue(const HloValue* value);
-
-  // Clear all values from the set.
-  void Clear() { values_.clear(); }
-
-  std::vector<const HloValue*> TakeValues() { return std::move(values_); }
-
-  // Return the unique HLO value in the set. CHECKs if the set does not contain
+  // Return the unique HLO value in the set. CHECKs that the set contains
   // exactly one value.
   const HloValue& GetUniqueValue() const {
     CHECK_EQ(values_.size(), 1);
     return *values_[0];
   }
 
-  bool operator==(const HloValueSet& other) const {
-    if (values_.size() != other.values_.size()) return false;
-    for (size_t i = 0; i < values_.size(); ++i) {
-      if (values_[i]->id() != other.values_[i]->id()) {
-        return false;
-      }
-    }
-    return true;
-  }
-  bool operator!=(const HloValueSet& other) const { return !(*this == other); }
-
   std::string ToString() const;
-
- private:
-  // Sorts value_ and removes duplicates. This should be called after adding any
-  // elements to values_.
-  void SortAndUniquifyValues();
-
-  // HloValues sorted by HloValue::Id.
-  std::vector<const HloValue*> values_;
 };
 
 std::ostream& operator<<(std::ostream& out, const HloValueSet& hlo_value);

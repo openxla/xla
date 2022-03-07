@@ -4071,6 +4071,7 @@ cc_library(
     hdrs = ["hlo_value.h"],
     deps = [
         ":buffer_value",
+        "//xla:dense_set",
         "//xla:lazy",
         "//xla:shape_tree",
         "//xla:shape_util",

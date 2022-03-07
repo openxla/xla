@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/hlo_dataflow_analysis.h"
 
 #include <string>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -72,10 +73,11 @@ class HloDataflowAnalysisTest : public HloTestBase,
   }
 
   // Return a vector of the HloValues at the given program position.
-  const std::vector<const HloValue*>& HloValuesAt(
-      const HloInstruction* instruction, const ShapeIndex& index = {}) {
+  std::vector<const HloValue*> HloValuesAt(const HloInstruction* instruction,
+                                           const ShapeIndex& index = {}) {
     CHECK(analysis_ != nullptr);
-    return analysis_->GetValueSet(instruction, index).values();
+    const HloValueSet& value_set = analysis_->GetValueSet(instruction, index);
+    return {value_set.begin(), value_set.end()};
   }
 
   // Returns true if the top-level values for instructions 'a' and 'b' may
@@ -1627,7 +1629,7 @@ ENTRY root {
   auto& dataflow_analysis = RunAnalysis(GetParam());
   auto set = dataflow_analysis.GetFlattenedValueSet(
       entry->GetInstructionWithName("t"));
-  EXPECT_EQ(set.values().size(), 3);
+  EXPECT_EQ(set.size(), 3);
 }
 
 TEST_P(HloDataflowAnalysisTest, ConditionalWithIdentity) {

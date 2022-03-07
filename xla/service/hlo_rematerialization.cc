@@ -812,7 +812,7 @@ MemoryUsageTracker::MemoryUsageTracker(
   tsl::gtl::CompactPointerSet<const HloValue*> live_out_set;
   for (auto& [_, hlo_value_set] : dataflow_analysis.GetInstructionValueSet(
            computation_->root_instruction())) {
-    for (auto* hlo_value : hlo_value_set.values()) {
+    for (const HloValue* hlo_value : hlo_value_set) {
       live_out_set.insert(hlo_value);
     }
   }
@@ -822,7 +822,7 @@ MemoryUsageTracker::MemoryUsageTracker(
     const HloInstruction* const instruction = item->instruction;
     for (auto& [_, hlo_value_set] :
          dataflow_analysis.GetInstructionValueSet(instruction)) {
-      for (const HloValue* hlo_value : hlo_value_set.values()) {
+      for (const HloValue* hlo_value : hlo_value_set) {
         if (hlo_value->defining_instruction() != instruction) {
           continue;
         }
@@ -833,11 +833,9 @@ MemoryUsageTracker::MemoryUsageTracker(
           // proper ShapeIndex.
           const auto& operand_value_set =
               dataflow_analysis.GetInstructionValueSet(instruction->operand(0));
-          CHECK_EQ(
-              operand_value_set.element(hlo_value->index()).values().size(), 1);
-          const HloValue* source_hlo_value =
-              operand_value_set.element(hlo_value->index()).values()[0];
-          buffer = &buffers_.at(hlo_value_to_buffer_id.at(source_hlo_value));
+          const HloValue& source_hlo_value =
+              operand_value_set.element(hlo_value->index()).GetUniqueValue();
+          buffer = &buffers_.at(hlo_value_to_buffer_id.at(&source_hlo_value));
 
           // Mark buffer as has indirect use and live out.
           buffer->has_indirect_uses = true;
@@ -878,7 +876,7 @@ MemoryUsageTracker::MemoryUsageTracker(
     // properly track which outputs does GTEs have.
     const auto& hlo_value_set =
         dataflow_analysis.GetFlattenedValueSet(instruction);
-    for (const HloValue* hlo_value : hlo_value_set.values()) {
+    for (const HloValue* hlo_value : hlo_value_set) {
       item->buffers_output.push_back(hlo_value_to_buffer_id[hlo_value]);
     }
   }

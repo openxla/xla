@@ -304,8 +304,8 @@ std::vector<const HloBuffer*> HloAliasAnalysis::ComputeBuffersAt(
   const HloValueSet& value_set =
       dataflow_analysis_->GetValueSet(instruction, index);
   std::vector<const HloBuffer*> buffers;
-  buffers.reserve(value_set.values().size());
-  for (const HloValue* value : value_set.values()) {
+  buffers.reserve(value_set.size());
+  for (const HloValue* value : value_set) {
     buffers.push_back(&GetBufferContainingValue(*value));
   }
 

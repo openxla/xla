@@ -362,7 +362,7 @@ std::set<BufferAllocation::Slice> BufferAssignment::GetAllSlices(
     const HloInstruction* instruction, const ShapeIndex& index) const {
   std::set<BufferAllocation::Slice> result;
   for (const HloValue* value :
-       dataflow_analysis().GetValueSet(instruction, index).values()) {
+       dataflow_analysis().GetValueSet(instruction, index)) {
     if (HasAllocation(*value)) {
       result.insert(GetAssignedAllocation(*value).GetSlice(*value));
     }
@@ -379,16 +379,9 @@ const BufferAllocation& BufferAssignment::GetAllocation(
 
 const BufferAllocation* BufferAssignment::GetInstructionAllocation(
     const HloInstruction* hlo, const ShapeIndex& shape_index) const {
-  const HloValue* value =
-      dataflow_analysis().GetValueSet(hlo, shape_index).values()[0];
-
-  if (!HasAllocation(*value)) {
-    return nullptr;
-  }
-
-  const BufferAllocation& instruction_allocation =
-      GetAssignedAllocation(*value);
-  return &instruction_allocation;
+  const HloValue& value =
+      **dataflow_analysis().GetValueSet(hlo, shape_index).begin();
+  return HasAllocation(value) ? &GetAssignedAllocation(value) : nullptr;
 }
 
 BufferAllocation* BufferAssignment::GetMutableAllocation(
@@ -398,9 +391,8 @@ BufferAllocation* BufferAssignment::GetMutableAllocation(
 
 bool BufferAssignment::HasAllocationAt(const HloInstruction* instruction,
                                        const ShapeIndex& index) const {
-  return absl::c_any_of(
-      dataflow_analysis().GetValueSet(instruction, index).values(),
-      IsKeyIn(allocation_index_for_value_));
+  return absl::c_any_of(dataflow_analysis().GetValueSet(instruction, index),
+                        IsKeyIn(allocation_index_for_value_));
 }
 
 bool BufferAssignment::HasTopLevelAllocation(
@@ -414,7 +406,7 @@ StatusOr<BufferAllocation::Slice> BufferAssignment::GetUniqueSlice(
           << index << "]";
   BufferAllocation::Slice result;
   for (const HloValue* value :
-       dataflow_analysis().GetValueSet(instruction, index).values()) {
+       dataflow_analysis().GetValueSet(instruction, index)) {
     VLOG(3) << "Examining value " << *value;
     if (HasAllocation(*value)) {
       VLOG(3) << "Has allocation";

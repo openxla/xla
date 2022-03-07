@@ -146,6 +146,8 @@ class ShapeTree {
     return index_table_[index].children_start_id == -1;
   }
 
+  size_t size() const { return nodes_.size(); }
+
   using iterator = typename Nodes::iterator;
   using const_iterator = typename Nodes::const_iterator;
   using reverse_iterator = typename Nodes::reverse_iterator;

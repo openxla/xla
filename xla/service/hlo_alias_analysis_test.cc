@@ -58,9 +58,8 @@ class HloAliasAnalysisTest : public HloTestBase {
   std::vector<HloBuffer> GetBuffersAt(const HloInstruction* instruction,
                                       const ShapeIndex& index = {}) const {
     std::set<HloBuffer::Id> buffer_ids;
-    for (const HloValue* value : analysis_->dataflow_analysis()
-                                     .GetValueSet(instruction, index)
-                                     .values()) {
+    for (const HloValue* value :
+         analysis_->dataflow_analysis().GetValueSet(instruction, index)) {
       buffer_ids.insert(analysis_->GetBufferContainingValue(*value).id());
     }
 
@@ -108,7 +107,7 @@ class HloAliasAnalysisTest : public HloTestBase {
          analysis_->dataflow_analysis().GetInstructionValueSet(instruction)) {
       const HloValueSet& value_set = pair.second;
       const HloBuffer* buffer = nullptr;
-      for (const HloValue* value : value_set.values()) {
+      for (const HloValue* value : value_set) {
         if (buffer == nullptr) {
           buffer = &analysis_->GetBufferContainingValue(*value);
         } else if (buffer != &analysis_->GetBufferContainingValue(*value)) {
@@ -129,7 +128,7 @@ class HloAliasAnalysisTest : public HloTestBase {
       // It's possible for multiple values at this index to have the same
       // HloBuffer. This does not result in non-distinctness.
       absl::flat_hash_set<const HloBuffer*> buffers_at_this_index;
-      for (const HloValue* value : value_set.values()) {
+      for (const HloValue* value : value_set) {
         buffers_at_this_index.insert(
             &analysis_->GetBufferContainingValue(*value));
       }

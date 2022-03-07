@@ -1086,6 +1086,16 @@ cc_library(
     deps = ["@com_google_absl//absl/functional:any_invocable"],
 )
 
+cc_library(
+    name = "dense_set",
+    hdrs = ["dense_set.h"],
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 tf_proto_library(
     name = "autotune_results_proto",
     srcs = ["autotune_results.proto"],

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -205,53 +206,43 @@ std::ostream& operator<<(std::ostream& out, const HloValue& value) {
   return out;
 }
 
-HloValueSet::HloValueSet(absl::Span<const HloValue* const> values)
-    : values_(values.begin(), values.end()) {
-  SortAndUniquifyValues();
+/*static*/
+HloValueSet HloValueSet::UnionOf(absl::Span<const HloValueSet* const> inputs) {
+  if (inputs.size() == 1) {
+    return *inputs[0];
+  }
+
+  HloValueSet union_set;
+  if (inputs.size() == 2) {
+    union_set.reserve(std::max(inputs[0]->size(), inputs[1]->size()));
+    absl::c_set_union(*inputs[0], *inputs[1],
+                      std::back_inserter(union_set.values_),
+                      HloValue::IdLessThan());
+  } else {
+    // TODO(cjfj): Take advantage of the fact that the inputs are sorted?
+    for (const HloValueSet* input : inputs) {
+      union_set.values_.insert(union_set.values_.end(), input->begin(),
+                               input->end());
+    }
+    union_set.Sort();
+    union_set.Deduplicate();
+  }
+  return union_set;
 }
 
-HloValueSet::HloValueSet(const absl::flat_hash_set<const HloValue*>& values)
-    : values_(values.begin(), values.end()) {
-  // Values are already unique, so only need to sort.
-  absl::c_sort(values_, HloValue::IdLessThan);
-}
-
-void HloValueSet::SortAndUniquifyValues() {
-  absl::c_sort(values_, HloValue::IdLessThan);
-  values_.erase(std::unique(values_.begin(), values_.end()), values_.end());
+bool HloValueSet::AssignUnionOf(absl::Span<const HloValueSet* const> inputs) {
+  HloValueSet union_set(UnionOf(inputs));
+  bool changed = (*this != union_set);
+  if (changed) *this = union_set;
+  return changed;
 }
 
 std::string HloValueSet::ToString() const {
   return StrCat("HloValueSet: ",
-                absl::StrJoin(values_, ", ",
+                absl::StrJoin(*this, ", ",
                               [](std::string* result, const HloValue* value) {
                                 result->append(value->ToShortString());
                               }));
-}
-
-bool HloValueSet::AssignUnionOf(absl::Span<const HloValueSet* const> inputs) {
-  HloValueSet union_set;
-  for (const HloValueSet* input : inputs) {
-    for (const HloValue* value : input->values()) {
-      union_set.values_.push_back(value);
-    }
-  }
-  union_set.SortAndUniquifyValues();
-  if (*this != union_set) {
-    *this = union_set;
-    return true;
-  }
-  return false;
-}
-
-bool HloValueSet::AddValue(const HloValue* value) {
-  auto it = std::lower_bound(values_.begin(), values_.end(), value,
-                             HloValue::IdLessThan);
-  if (it == values_.end() || (*it)->id() != value->id()) {
-    values_.insert(it, value);
-    return true;
-  }
-  return false;  // already exists
 }
 
 std::ostream& operator<<(std::ostream& out, const HloValueSet& value_set) {
@@ -260,11 +251,8 @@ std::ostream& operator<<(std::ostream& out, const HloValueSet& value_set) {
 }
 
 bool InstructionValueSet::IsAmbiguous() const {
-  bool ambiguous = false;
-  for (auto& iter : *this) {
-    ambiguous |= iter.second.values().size() > 1;
-  }
-  return ambiguous;
+  return absl::c_any_of(
+      *this, [](const auto& entry) { return entry.second.size() > 1; });
 }
 
 bool InstructionValueSet::AssignUnionOf(
@@ -273,12 +261,14 @@ bool InstructionValueSet::AssignUnionOf(
   for (int i = 1; i < inputs.size(); ++i) {
     DCHECK(ShapeUtil::Compatible(inputs[0]->shape(), inputs[i]->shape()));
   }
+
   bool changed = false;
   for (auto& pair : *this) {
     const ShapeIndex& index = pair.first;
     HloValueSet& value_set = pair.second;
 
     std::vector<const HloValueSet*> input_value_sets;
+    input_value_sets.reserve(inputs.size());
     for (const InstructionValueSet* input : inputs) {
       input_value_sets.push_back(&input->element(index));
     }
