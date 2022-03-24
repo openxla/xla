@@ -24,6 +24,7 @@ limitations under the License.
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
@@ -3768,28 +3769,6 @@ Status HloInstruction::Visit(DfsHloVisitorBase<HloInstructionPtr>* visitor) {
 template Status HloInstruction::Visit(DfsHloVisitor* visitor);
 template Status HloInstruction::Visit(ConstDfsHloVisitor* visitor);
 
-// Push "child" onto the dfs_stack if not already visited.  Returns false if a
-// cycle was detected, and true otherwise.
-template <typename Visitor>
-inline bool PushDFSChild(Visitor* visitor, DFSStack* dfs_stack,
-                         HloInstruction* child) {
-  CHECK(child != nullptr);
-  const int id = child->unique_id();
-  CHECK_GE(id, 0) << "instruction may not have a parent computation";
-  switch (visitor->GetVisitState(id)) {
-    case Visitor::kVisiting:
-      return false;
-
-    case Visitor::kVisited:
-      // Nothing to do
-      return true;
-
-    case Visitor::kNotVisited:
-      dfs_stack->push_back(std::make_pair(id, child));
-      return true;
-  }
-}
-
 using InternalCompareFunction =
     absl::FunctionRef<bool(std::pair<int, const HloInstruction*>,
                            std::pair<int, const HloInstruction*>)>;
@@ -3797,7 +3776,9 @@ template <typename Visitor>
 static Status PostOrderDFS(HloInstruction* root, Visitor* visitor,
                            std::optional<InternalCompareFunction> operand_order,
                            bool ignore_control_predecessors) {
-  visitor->ReserveVisitStates(root->parent()->instruction_count());
+  using VisitState = typename Visitor::VisitState;
+  absl::flat_hash_map<int, VisitState>& visit_state = visitor->visit_states();
+  visit_state.reserve(root->parent()->instruction_count());
 
   // dfs_stack holds pairs of <HloInstruction*->unique_id(), HloInstruction*>.
   //
@@ -3805,56 +3786,54 @@ static Status PostOrderDFS(HloInstruction* root, Visitor* visitor,
   // instructions can get deleted while they are on the stack, so we
   // can't always use the (potentially dead) instruction object to grab
   // its id.
-  DFSStack dfs_stack;
-  dfs_stack.emplace_back(root->unique_id(), root);
+  DFSStack dfs_stack = {{root->unique_id(), root}};
 
-  do {
-    DCHECK(!dfs_stack.empty());
-
+  while (!dfs_stack.empty()) {
     int current_id = dfs_stack.back().first;
-    HloInstruction* current_node = dfs_stack.back().second;
-    CHECK_GE(current_id, 0) << current_id << ": " << current_node
+    HloInstruction* current = dfs_stack.back().second;
+    CHECK_GE(current_id, 0) << current_id << ": " << current
                             << ": instruction may not have parent computation";
-    typename Visitor::VisitState visit_state =
-        visitor->GetVisitState(current_id);
-    if (visit_state == Visitor::kVisited) {
-      dfs_stack.pop_back();
-      VLOG(3) << "Not visiting HLO (id = " << current_id
-              << ") as it was already visited.";
-      continue;
-    }
 
-    if (visit_state == Visitor::kVisiting) {
+    if (auto [it, was_inserted] =
+            visit_state.insert({current_id, Visitor::kVisiting});
+        !was_inserted) {  // We've already seen this instruction.
       dfs_stack.pop_back();
 
-      TF_RETURN_IF_ERROR(visitor->Preprocess(current_node));
-      VLOG(2) << "Visiting HLO %" << current_node->name();
-      TF_RETURN_IF_ERROR(current_node->Visit(visitor));
-      visitor->SetVisitState(current_id, Visitor::kVisited);
-      TF_RETURN_IF_ERROR(visitor->Postprocess(current_node));
-      continue;
-    }
-
-    visitor->SetVisitState(current_id, Visitor::kVisiting);
-
-    const size_t old_dfs_stack_size = dfs_stack.size();
-    for (HloInstruction* child : current_node->operands()) {
-      if (!ABSL_PREDICT_TRUE(PushDFSChild(visitor, &dfs_stack, child))) {
-        PrintCycle(child, &dfs_stack);
-        return FailedPrecondition(
-            "A cycle is detected while visiting instruction %s",
-            current_node->ToString());
+      if (it->second == Visitor::kVisiting) {
+        TF_RETURN_IF_ERROR(visitor->Preprocess(current));
+        VLOG(2) << "Visiting HLO %" << current->name();
+        TF_RETURN_IF_ERROR(current->Visit(visitor));
+        // The iterator may have been invalidated by `Preprocess` or `Visit`.
+        visit_state[current_id] = Visitor::kVisited;
+        TF_RETURN_IF_ERROR(visitor->Postprocess(current));
+      } else {
+        VLOG(3) << "Not visiting HLO (id = " << current_id
+                << ") as it was already visited.";
       }
+
+      continue;
+    }
+
+    size_t old_dfs_stack_size = dfs_stack.size();
+
+    auto push_dfs_stack = [&](HloInstruction* instruction) -> Status {
+      auto it = visit_state.find(instruction->unique_id());
+      TF_RET_CHECK((it == visit_state.end()) ||
+                   (it->second != Visitor::kVisiting))
+          << "Detected cycle while visiting instruction "
+          << current->ToString();
+
+      dfs_stack.push_back({instruction->unique_id(), instruction});
+      return OkStatus();
+    };
+
+    for (HloInstruction* operand : current->operands()) {
+      TF_RETURN_IF_ERROR(push_dfs_stack(operand));
     }
 
     if (!ignore_control_predecessors) {
-      for (HloInstruction* child : current_node->control_predecessors()) {
-        if (!ABSL_PREDICT_TRUE(PushDFSChild(visitor, &dfs_stack, child))) {
-          PrintCycle(child, &dfs_stack);
-          return FailedPrecondition(
-              "A cycle is detected while visiting instruction %s",
-              current_node->ToString());
-        }
+      for (HloInstruction* predecessor : current->control_predecessors()) {
+        TF_RETURN_IF_ERROR(push_dfs_stack(predecessor));
       }
     }
 
@@ -3866,8 +3845,7 @@ static Status PostOrderDFS(HloInstruction* root, Visitor* visitor,
     // This makes the traversal order the same as what you'd expect
     // out of a recursive algorithm.
     std::reverse(dfs_stack.begin() + old_dfs_stack_size, dfs_stack.end());
-  } while (!dfs_stack.empty());
-
+  }
   return OkStatus();
 }
 
