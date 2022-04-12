@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,30 +13,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_CONSTANT_FOLDING_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_CONSTANT_FOLDING_H_
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_SIMPLIFY_FP_CONVERSIONS_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_SIMPLIFY_FP_CONVERSIONS_H_
 
 #include "tensorflow/compiler/xla/service/hlo_module.h"
 #include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
+#include "tensorflow/core/platform/statusor.h"
 
 namespace xla {
 
-// A pass which performs constant folding in order to avoid unnecessary
-// computation on constants.
-class HloConstantFolding : public HloModulePass {
+// Simplifies chains of floating-point conversions.
+//
+// The algebraic simplifier will remove convert pairs of the form `X -> Y -> X`,
+// only when they are a no-op (e.g. `bf16 -> f32 -> bf16`). This passes does
+// similar, but will simplify any chain of float conversions, possibly improving
+// accuracy (e.g. `f32 -> bf16 -> f32` is removed).
+class SimplifyFPConversions : public HloModulePass {
  public:
-  absl::string_view name() const override { return "constant_folding"; }
+  absl::string_view name() const override { return "simplify-fp-conversions"; }
 
-  // Run constant folding operations on the given module. Returns whether the
-  // module was changed (constant expressions folded).
   StatusOr<bool> Run(HloModule* module) override;
-
- private:
-  // Number of slow constant-folds we've encountered.  Used for firing
-  // SlowOperationAlarms.
-  static std::atomic<int64_t> slow_op_counter_;
 };
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_CONSTANT_FOLDING_H_
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_SIMPLIFY_FP_CONVERSIONS_H_
