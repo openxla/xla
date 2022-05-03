@@ -6302,8 +6302,8 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTest) {
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   EXPECT_EQ(cross_program_prefetches.size(), 1);
   if (!cross_program_prefetches.empty()) {
-    EXPECT_EQ(cross_program_prefetches[0].first, 1);
-    EXPECT_EQ(cross_program_prefetches[0].second, ShapeIndex({}));
+    EXPECT_EQ(cross_program_prefetches[0].parameter, 1);
+    EXPECT_EQ(cross_program_prefetches[0].index, ShapeIndex({}));
   }
 
   EXPECT_THAT(module->entry_computation()->root_instruction(),
@@ -6349,8 +6349,8 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleTest) {
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   EXPECT_EQ(cross_program_prefetches.size(), 1);
   if (!cross_program_prefetches.empty()) {
-    EXPECT_EQ(cross_program_prefetches[0].first, 0);
-    EXPECT_EQ(cross_program_prefetches[0].second, ShapeIndex({1}));
+    EXPECT_EQ(cross_program_prefetches[0].parameter, 0);
+    EXPECT_EQ(cross_program_prefetches[0].index, ShapeIndex({1}));
   }
 }
 
@@ -6391,8 +6391,8 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchBitcastTest) {
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   EXPECT_EQ(cross_program_prefetches.size(), 1);
   if (!cross_program_prefetches.empty()) {
-    EXPECT_EQ(cross_program_prefetches[0].first, 1);
-    EXPECT_EQ(cross_program_prefetches[0].second, ShapeIndex({}));
+    EXPECT_EQ(cross_program_prefetches[0].parameter, 1);
+    EXPECT_EQ(cross_program_prefetches[0].index, ShapeIndex({}));
   }
 }
 
@@ -6437,8 +6437,8 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchBitcastTupleTest) {
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   EXPECT_EQ(cross_program_prefetches.size(), 1);
   if (!cross_program_prefetches.empty()) {
-    EXPECT_EQ(cross_program_prefetches[0].first, 0);
-    EXPECT_EQ(cross_program_prefetches[0].second, ShapeIndex({1}));
+    EXPECT_EQ(cross_program_prefetches[0].parameter, 0);
+    EXPECT_EQ(cross_program_prefetches[0].index, ShapeIndex({1}));
   }
 }
 
@@ -6916,13 +6916,14 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchNoReuse) {
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   EXPECT_EQ(cross_program_prefetches.size(), 1);
   if (!cross_program_prefetches.empty()) {
-    EXPECT_EQ(cross_program_prefetches[0].first, 1);
-    EXPECT_EQ(cross_program_prefetches[0].second, ShapeIndex({}));
+    EXPECT_EQ(cross_program_prefetches[0].parameter, 1);
+    EXPECT_EQ(cross_program_prefetches[0].index, ShapeIndex({}));
   }
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloDataflowAnalysis> dataflow_analysis,
       HloDataflowAnalysis::Run(*module));
+  LOG(ERROR) << "module: " << module->ToString();
   const HloValue& cross_program_prefetched_value =
       dataflow_analysis->GetValueDefinedAt(
           module->entry_computation()->parameter_instruction(1), {});
@@ -6930,14 +6931,14 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchNoReuse) {
   // cross-program prefetch, the other is the end-of-program prefetch.
   auto is_cross_program_prefetch = [](const HloUse& use) {
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
-           use.instruction->is_cross_program_prefetch();
+           use.instruction->cross_program_prefetch_index().has_value();
   };
   EXPECT_EQ(absl::c_count_if(cross_program_prefetched_value.GetUses(),
                              is_cross_program_prefetch),
             1);
   auto is_end_of_program_prefetch = [](const HloUse& use) {
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
-           !use.instruction->is_cross_program_prefetch();
+           !use.instruction->cross_program_prefetch_index().has_value();
   };
   EXPECT_EQ(absl::c_count_if(cross_program_prefetched_value.GetUses(),
                              is_end_of_program_prefetch),
@@ -6995,8 +6996,8 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleNoReuse) {
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   EXPECT_EQ(cross_program_prefetches.size(), 1);
   if (!cross_program_prefetches.empty()) {
-    EXPECT_EQ(cross_program_prefetches[0].first, 0);
-    EXPECT_EQ(cross_program_prefetches[0].second, ShapeIndex({1}));
+    EXPECT_EQ(cross_program_prefetches[0].parameter, 0);
+    EXPECT_EQ(cross_program_prefetches[0].index, ShapeIndex({1}));
   }
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -7009,14 +7010,14 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleNoReuse) {
   // cross-program prefetch, the other is the end-of-program prefetch.
   auto is_cross_program_prefetch = [](const HloUse& use) {
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
-           use.instruction->is_cross_program_prefetch();
+           use.instruction->cross_program_prefetch_index().has_value();
   };
   EXPECT_EQ(absl::c_count_if(cross_program_prefetched_value.GetUses(),
                              is_cross_program_prefetch),
             1);
   auto is_end_of_program_prefetch = [](const HloUse& use) {
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
-           !use.instruction->is_cross_program_prefetch();
+           !use.instruction->cross_program_prefetch_index().has_value();
   };
   EXPECT_EQ(absl::c_count_if(cross_program_prefetched_value.GetUses(),
                              is_end_of_program_prefetch),
@@ -7074,8 +7075,8 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchReuse) {
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   EXPECT_EQ(cross_program_prefetches.size(), 1);
   if (!cross_program_prefetches.empty()) {
-    EXPECT_EQ(cross_program_prefetches[0].first, 1);
-    EXPECT_EQ(cross_program_prefetches[0].second, ShapeIndex({}));
+    EXPECT_EQ(cross_program_prefetches[0].parameter, 1);
+    EXPECT_EQ(cross_program_prefetches[0].index, ShapeIndex({}));
   }
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -7088,14 +7089,14 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchReuse) {
   // prefetch. There shouldn't be an end-of-program prefetch.
   auto is_cross_program_prefetch = [](const HloUse& use) {
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
-           use.instruction->is_cross_program_prefetch();
+           use.instruction->cross_program_prefetch_index().has_value();
   };
   EXPECT_EQ(absl::c_count_if(cross_program_prefetched_value.GetUses(),
                              is_cross_program_prefetch),
             1);
   auto is_end_of_program_prefetch = [](const HloUse& use) {
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
-           !use.instruction->is_cross_program_prefetch();
+           !use.instruction->cross_program_prefetch_index().has_value();
   };
   EXPECT_EQ(absl::c_count_if(cross_program_prefetched_value.GetUses(),
                              is_end_of_program_prefetch),
@@ -7134,8 +7135,8 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleReuse) {
   auto cross_program_prefetches = module->CrossProgramPrefetches();
   EXPECT_EQ(cross_program_prefetches.size(), 1);
   if (!cross_program_prefetches.empty()) {
-    EXPECT_EQ(cross_program_prefetches[0].first, 0);
-    EXPECT_EQ(cross_program_prefetches[0].second, ShapeIndex({1}));
+    EXPECT_EQ(cross_program_prefetches[0].parameter, 0);
+    EXPECT_EQ(cross_program_prefetches[0].index, ShapeIndex({1}));
   }
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -7148,14 +7149,14 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleReuse) {
   // prefetch. There shouldn't be an end-of-program prefetch.
   auto is_cross_program_prefetch = [](const HloUse& use) {
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
-           use.instruction->is_cross_program_prefetch();
+           use.instruction->cross_program_prefetch_index().has_value();
   };
   EXPECT_EQ(absl::c_count_if(cross_program_prefetched_value.GetUses(),
                              is_cross_program_prefetch),
             1);
   auto is_end_of_program_prefetch = [](const HloUse& use) {
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
-           !use.instruction->is_cross_program_prefetch();
+           !use.instruction->cross_program_prefetch_index().has_value();
   };
   EXPECT_EQ(absl::c_count_if(cross_program_prefetched_value.GetUses(),
                              is_end_of_program_prefetch),

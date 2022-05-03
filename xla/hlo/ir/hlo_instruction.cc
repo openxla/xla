@@ -234,8 +234,12 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       break;
     }
     case HloOpcode::kCopyStart: {
-      instruction = CreateCopyStart(shape, operands(0),
-                                    proto.is_cross_program_prefetch());
+      std::optional<int> cross_program_prefetch_index =
+          proto.has_cross_program_prefetch_index()
+              ? std::make_optional(proto.cross_program_prefetch_index())
+              : std::nullopt;
+      instruction =
+          CreateCopyStart(shape, operands(0), cross_program_prefetch_index);
       break;
     }
     case HloOpcode::kCompare: {
@@ -1235,9 +1239,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCopyStart(
     const Shape& shape, HloInstruction* operand,
-    bool is_cross_program_prefetch) {
+    std::optional<int> cross_program_prefetch) {
   return std::make_unique<HloCopyStartInstruction>(shape, operand,
-                                                   is_cross_program_prefetch);
+                                                   cross_program_prefetch);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCompare(
@@ -4931,8 +4935,8 @@ void HloInstruction::set_called_computations_execution_thread(
       async_execution_thread, skip_async_execution_thread_overwrite);
 }
 
-bool HloInstruction::is_cross_program_prefetch() const {
-  return Cast<HloCopyStartInstruction>(this)->is_cross_program_prefetch();
+std::optional<int> HloInstruction::cross_program_prefetch_index() const {
+  return Cast<HloCopyStartInstruction>(this)->cross_program_prefetch_index();
 }
 
 ComparisonDirection HloInstruction::comparison_direction() const {

@@ -274,10 +274,13 @@ class HloAsyncInstruction : public HloInstruction {
 
 class HloCopyStartInstruction : public HloInstruction {
  public:
-  explicit HloCopyStartInstruction(const Shape& shape, HloInstruction* operand,
-                                   bool is_cross_program_prefetch);
+  explicit HloCopyStartInstruction(
+      const Shape& shape, HloInstruction* operand,
+      std::optional<int> cross_program_prefetch_index);
 
-  bool is_cross_program_prefetch() const { return is_cross_program_prefetch_; }
+  std::optional<int> cross_program_prefetch_index() const {
+    return cross_program_prefetch_index_;
+  }
   HloInstructionProto ToProto() const override;
 
   static bool ClassOf(const HloInstruction* hlo) {
@@ -295,7 +298,7 @@ class HloCopyStartInstruction : public HloInstruction {
       const Shape& shape, absl::Span<HloInstruction* const> new_operands,
       HloCloneContext* context) const override;
 
-  bool is_cross_program_prefetch_;
+  std::optional<int> cross_program_prefetch_index_;
 };
 
 class HloCompareInstruction : public HloInstruction {

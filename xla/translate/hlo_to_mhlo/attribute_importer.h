@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
@@ -58,7 +59,7 @@ mlir::ArrayAttr ConvertCustomCallOutputOperandAliasing(
 
 // Converts the list of prefetches.
 mlir::ArrayAttr ConvertCrossProgramPrefetches(
-    absl::Span<const std::pair<int64_t, ShapeIndex>> prefetches,
+    absl::Span<const xla::HloModule::CrossProgramPrefetchInfo> prefetches,
     mlir::Builder* builder);
 
 StatusOr<mlir::mhlo::FftType> ConvertFftType(FftType type);

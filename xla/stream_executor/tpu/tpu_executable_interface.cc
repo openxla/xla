@@ -204,11 +204,10 @@ StatusOr<ExecutionOutput> TpuExecutableInterface::ExecuteAsyncOnStream(
           run_options->run_options().host_to_device_stream()));
 
   // Address of the buffer in TPU memory that is being speculated.
-  std::optional<se::DeviceMemoryBase> cross_program_prefetch_addr;
+  std::vector<se::DeviceMemoryBase> cross_program_prefetch_addrs;
   if (hlo_module_) {
-    for (const auto& prefetch : hlo_module_->CrossProgramPrefetches()) {
-      const auto& parameter = prefetch.first;
-      const auto& index = prefetch.second;
+    for (const auto& [parameter, index, offset] :
+         hlo_module_->CrossProgramPrefetches()) {
       CHECK_LT(parameter, arguments.size());
       // Ensure the cross program prefetched buffer doesn't alias with any
       // program outputs. If the input and output aliased, the buffer could be
@@ -221,8 +220,8 @@ StatusOr<ExecutionOutput> TpuExecutableInterface::ExecuteAsyncOnStream(
             return index_addr_pair.second.IsSameAs(
                 it->second.AsDeviceMemoryBase());
           })) {
-        // Supports only one cross-program prefetch address.
-        cross_program_prefetch_addr = it->second.AsDeviceMemoryBase();
+        cross_program_prefetch_addrs.emplace_back(
+            it->second.AsDeviceMemoryBase());
       }
     }
   }
@@ -232,9 +231,11 @@ StatusOr<ExecutionOutput> TpuExecutableInterface::ExecuteAsyncOnStream(
   // arguments.
   MarkToBeReleasedArguments(absl::MakeSpan(arguments), result);
 
+  // FIXME: This doesn't quite work, since the parameter are index are
+  // forgotten after this point.
   TF_RETURN_IF_ERROR(LoadProgramAndEnqueueToStream(
       *run_options, memory_bases, result.Result().root_buffer(),
-      cross_program_prefetch_addr));
+      cross_program_prefetch_addrs));
   return std::move(result);
 }
 

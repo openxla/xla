@@ -131,6 +131,7 @@ message HloInstructionProto {
   // Use backend_config instead for all_reduce_barrier.
   reserved 46;
   reserved "all_reduce_barrier";
+  reserved 73;
 
   string name = 1;
   string opcode = 2;
@@ -331,8 +332,8 @@ message HloInstructionProto {
   // The comparison type used for kCompare.
   string comparison_type = 72;
 
-  // Specifies if this is a cross-program-prefetch, used by kCopyStart.
-  bool is_cross_program_prefetch = 73;
+  // Specifies the cross-program-prefetch index used by kCopyStart.
+  optional int32 cross_program_prefetch_index = 80;
 
   // If a convolution is dynamic, a dynamic padding type will be specified.
   xla.PaddingType padding_type = 75;
@@ -471,6 +472,7 @@ message DynamicParameterBindingProto {
 message CrossProgramPrefetch {
   int64 parameter = 1;
   repeated int64 index = 2;
+  int64 offset = 3;
 }
 
 // Serialization of HloModule.

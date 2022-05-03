@@ -543,12 +543,15 @@ class MemorySpaceAssignment {
     friend class ParentAllocation;
 
    public:
-    Allocation(HloPosition defining_position, MemorySpace memory_space,
-               std::optional<Chunk> chunk, int64_t start_time, int64_t end_time,
-               bool is_scoped_allocation)
+    Allocation(
+        HloPosition defining_position, MemorySpace memory_space,
+        std::optional<Chunk> chunk, int64_t start_time, int64_t end_time,
+        bool is_scoped_allocation,
+        std::optional<int64_t> cross_program_prefetch_index = std::nullopt)
         : defining_position_(defining_position),
           memory_space_(memory_space),
           chunk_(chunk),
+          cross_program_prefetch_index_(cross_program_prefetch_index),
           start_time_(start_time),
           end_time_(end_time),
           is_scoped_allocation_(is_scoped_allocation) {
@@ -607,6 +610,9 @@ class MemorySpaceAssignment {
     int64_t start_time() const { return start_time_; }
     int64_t end_time() const { return end_time_; }
     bool is_scoped_allocation() const { return is_scoped_allocation_; }
+    std::optional<int64_t> cross_program_prefetch_index() const {
+      return cross_program_prefetch_index_;
+    }
 
     bool operator==(const Allocation& other) const;
     virtual std::string ToString() const;
@@ -620,6 +626,7 @@ class MemorySpaceAssignment {
     std::vector<HloUse> uses_;
     MemorySpace memory_space_;
     std::optional<Chunk> chunk_;
+    std::optional<int64_t> cross_program_prefetch_index_;
     int64_t start_time_;
     int64_t end_time_;
     const bool is_scoped_allocation_;
@@ -631,16 +638,17 @@ class MemorySpaceAssignment {
   // `copy_done_schedule_before_time` or earlier.
   class CopyAllocation : public Allocation {
    public:
-    CopyAllocation(const Allocation& prev_allocation, MemorySpace memory_space,
-                   std::optional<Chunk> chunk, int64_t start_time,
-                   int64_t end_time, int64_t copy_done_schedule_before_time,
-                   bool is_cross_program_prefetch = false)
+    CopyAllocation(
+        const Allocation& prev_allocation, MemorySpace memory_space,
+        std::optional<Chunk> chunk, int64_t start_time, int64_t end_time,
+        int64_t copy_done_schedule_before_time,
+        std::optional<int64_t> cross_program_prefetch_index = std::nullopt)
         : Allocation(/*defining_position=*/{nullptr, {}}, memory_space, chunk,
-                     start_time, end_time, /*is_scoped_allocation=*/false),
+                     start_time, end_time, /*is_scoped_allocation=*/false,
+                     cross_program_prefetch_index),
           prev_allocation_(prev_allocation),
           copy_start_schedule_after_(start_time),
-          copy_done_schedule_before_(copy_done_schedule_before_time),
-          is_cross_program_prefetch_(is_cross_program_prefetch) {}
+          copy_done_schedule_before_(copy_done_schedule_before_time) {}
 
     bool is_copy_allocation() const override { return true; }
 
@@ -686,10 +694,6 @@ class MemorySpaceAssignment {
       copy_done_schedule_before_ = copy_done_schedule_before;
     }
 
-    bool is_cross_program_prefetch() const {
-      return is_cross_program_prefetch_;
-    }
-
     bool operator==(const CopyAllocation& other) const;
     std::string ToString() const override;
 
@@ -701,7 +705,6 @@ class MemorySpaceAssignment {
     // is before copy_done_schedule_before_.
     int64_t copy_start_schedule_after_;
     int64_t copy_done_schedule_before_;
-    bool is_cross_program_prefetch_;
     HloInstruction* copy_start_;
     HloInstruction* copy_done_;
   };
@@ -1236,7 +1239,7 @@ class AlternateMemoryBestFitHeap
   // enables prefetching prefetch_candidate from default memory across program
   // boundaries.
   void AllocateCrossProgramPrefetchBuffer(
-      HloModule* module, std::optional<BufferInterval> prefetch_candidate);
+      HloModule* module, const BufferInterval& prefetch_candidate);
 
   HeapSimulator::Result<HloValue> Finish() override;
 
@@ -1536,13 +1539,13 @@ class AlternateMemoryBestFitHeap
   void ImportRepackedAllocations();
 
   // Adds an asynchronous copy to the allocations.
-  void AddAsyncCopy(const MemorySpaceAssignment::Allocation& prev_allocation,
-                    MemorySpace memory_space, std::optional<Chunk> chunk,
-                    int64_t start_time, int64_t end_time,
-                    int64_t copy_done_schedule_before_time,
-                    MemorySpaceAssignment::AllocationSequence* allocations,
-                    AliasedOffset* aliased_offset, float resource,
-                    bool is_cross_program_prefetch = false);
+  void AddAsyncCopy(
+      const MemorySpaceAssignment::Allocation& prev_allocation,
+      MemorySpace memory_space, std::optional<Chunk> chunk, int64_t start_time,
+      int64_t end_time, int64_t copy_done_schedule_before_time,
+      MemorySpaceAssignment::AllocationSequence* allocations,
+      AliasedOffset* aliased_offset, float resource,
+      std::optional<int> cross_program_prefetch_index = std::nullopt);
 
   // This method is used for committing the chunk candidate but adding it to
   // pending_chunks_ so that we can "uncommit" them in case we need to roll back

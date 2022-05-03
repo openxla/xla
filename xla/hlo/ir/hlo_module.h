@@ -468,14 +468,31 @@ class HloModule {
     spmd_output_sharding_ = sharding;
   }
 
+  struct CrossProgramPrefetchInfo {
+    int64_t parameter;
+    ShapeIndex index;
+    std::optional<int64_t> alt_memory_offset;
+  };
+
   // Add a program argument to be prefetched across programs.
-  void AddCrossProgramPrefetch(int64_t parameter, const ShapeIndex& index) {
-    cross_program_prefetches_.emplace_back(parameter, index);
+  void AddCrossProgramPrefetch(
+      int64_t parameter, const ShapeIndex& index,
+      std::optional<int64_t> alt_memory_offset = std::nullopt) {
+    cross_program_prefetches_.emplace_back(
+        CrossProgramPrefetchInfo{parameter, index, alt_memory_offset});
+  }
+
+  Status SetCrossProgramPrefetchOffset(int64_t prefetch_index, int64_t offset) {
+    auto& [parameter, index, optional_offset] =
+        cross_program_prefetches_[prefetch_index];
+    TF_RET_CHECK(!optional_offset.has_value());
+    *optional_offset = offset;
+    return OkStatus();
   }
 
   // Get the list of program arguments to be prefetch across programs.
-  const absl::Span<const std::pair<int64_t, ShapeIndex>>
-  CrossProgramPrefetches() const {
+  const absl::Span<const CrossProgramPrefetchInfo> CrossProgramPrefetches()
+      const {
     return cross_program_prefetches_;
   }
 
@@ -576,7 +593,7 @@ class HloModule {
   std::optional<HloSharding> spmd_output_sharding_;
 
   // Arguments to be prefetched across programs.
-  std::vector<std::pair<int64_t, ShapeIndex>> cross_program_prefetches_;
+  std::vector<CrossProgramPrefetchInfo> cross_program_prefetches_;
 
   // Metadata for this module, such as its canonical id and the HLO passes run.
   HloModuleMetadata metadata_;

@@ -167,10 +167,10 @@ bool IsCrossProgramPrefetchCandidate(const HloValue& value,
          });
 }
 
-std::optional<MemorySpaceAssignment::BufferInterval>
-FindCrossProgramPrefetchCandidate(const HloAliasAnalysis& alias_analysis,
-                                  const HloLiveRange& hlo_live_range,
-                                  const Options& options) {
+std::vector<MemorySpaceAssignment::BufferInterval>
+FindCrossProgramPrefetchCandidates(const HloAliasAnalysis& alias_analysis,
+                                   const HloLiveRange& hlo_live_range,
+                                   const Options& options) {
   std::vector<MemorySpaceAssignment::BufferInterval> candidates;
   for (const HloBuffer& buffer : alias_analysis.buffers()) {
     CHECK_GE(buffer.values().size(), 1);
@@ -212,13 +212,14 @@ FindCrossProgramPrefetchCandidate(const HloAliasAnalysis& alias_analysis,
                       ? *options.buffer_interval_compare
                       : size_compare;
 
-  auto best_candidate = absl::c_min_element(candidates, compare);
-  if (best_candidate == candidates.end()) {
-    return std::nullopt;
+  absl::c_sort(candidates, compare);
+
+  VLOG(3) << "Cross-program prefetch candidates: " << candidates.size();
+  for (auto& candidate : candidates) {
+    VLOG(3) << "Cross-program prefetch candidate picked: "
+            << candidate.buffer->ToString();
   }
-  VLOG(3) << "Cross-program prefetch candidate picked: "
-          << best_candidate->buffer->ToString();
-  return *best_candidate;
+  return candidates;
 }
 
 Status InsertInstructionAndEnsureOperandsInserted(
@@ -1464,12 +1465,11 @@ HeapSimulator::Result<HloValue> AlternateMemoryBestFitHeap::Finish() {
   VLOG(1) << "Memory pressure = " << memory_pressure_;
 
   if (options_.enable_cross_program_prefetch) {
-    std::optional<AlternateMemoryBestFitHeap::BufferInterval>
-        prefetch_candidate = FindCrossProgramPrefetchCandidate(
+    std::vector<AlternateMemoryBestFitHeap::BufferInterval>
+        prefetch_candidates = FindCrossProgramPrefetchCandidates(
             alias_analysis_, hlo_live_range_, options_);
-    if (prefetch_candidate) {
-      HloModule* module =
-          prefetch_candidate->buffer->instruction()->GetModule();
+    for (auto& prefetch_candidate : prefetch_candidates) {
+      HloModule* module = prefetch_candidate.buffer->instruction()->GetModule();
       AllocateCrossProgramPrefetchBuffer(module, prefetch_candidate);
     }
   }
@@ -1514,9 +1514,10 @@ HeapSimulator::Result<HloValue> AlternateMemoryBestFitHeap::Finish() {
 
     // Don't intra-program prefetch a cross program prefetch
     if (inst->opcode() == HloOpcode::kParameter &&
-        absl::c_count(module->CrossProgramPrefetches(),
-                      std::make_pair(inst->parameter_number(),
-                                     interval.buffer->index())) > 0) {
+        absl::c_count_if(module->CrossProgramPrefetches(), [&](auto& info) {
+          return info.parameter == inst->parameter_number() &&
+                 info.index == interval.buffer->index();
+        }) > 0) {
       VLOG(3) << "Skip " << interval.buffer->ToShortString()
               << " because it is cross-program prefetched.";
       continue;
@@ -2147,26 +2148,22 @@ AlternateMemoryBestFitHeap::GetLiveAllocationAt(
 }
 
 void AlternateMemoryBestFitHeap::AllocateCrossProgramPrefetchBuffer(
-    HloModule* module, std::optional<BufferInterval> prefetch_candidate) {
-  if (!prefetch_candidate) {
-    return;
-  }
-
-  Chunk chunk_candidate = FindChunkCandidate(*prefetch_candidate);
+    HloModule* module, const BufferInterval& prefetch_candidate) {
+  Chunk chunk_candidate = FindChunkCandidate(prefetch_candidate);
   if (chunk_candidate.chunk_end() > available_heap_size()) {
-    LOG(WARNING)
-        << "Could not allocate preferred memory for cross program prefetch";
+    VLOG(3) << "Could not allocate preferred memory for cross program prefetch";
     return;
   }
 
-  const HloValue* buffer = prefetch_candidate->buffer;
+  const HloValue* buffer = prefetch_candidate.buffer;
   int64_t parameter = buffer->instruction()->parameter_number();
+  int cross_program_prefetch_index = module->CrossProgramPrefetches().size();
   module->AddCrossProgramPrefetch(parameter, buffer->index());
 
   MemorySpaceAssignment::AllocationSequence allocations;
   allocations.push_back(std::make_unique<MemorySpaceAssignment::Allocation>(
       buffer->defining_position(), MemorySpace::kDefault, kDummyChunk,
-      prefetch_candidate->start, prefetch_candidate->end,
+      prefetch_candidate.start, prefetch_candidate.end,
       /*is_scoped_allocation=*/false));
 
   // Find the earliest use.
@@ -2184,7 +2181,7 @@ void AlternateMemoryBestFitHeap::AllocateCrossProgramPrefetchBuffer(
   // Find the latest use time.
   int64_t last_use_time = instruction_schedule.at(
       absl::c_max_element(uses, use_schedule_compare)->instruction);
-  for (const HloValue* colocation : prefetch_candidate->colocations) {
+  for (const HloValue* colocation : prefetch_candidate.colocations) {
     auto colocation_uses = colocation->GetUses();
     if (!colocation_uses.empty()) {
       last_use_time = std::max(
@@ -2230,13 +2227,12 @@ void AlternateMemoryBestFitHeap::AllocateCrossProgramPrefetchBuffer(
        end_of_program_prefetch_start_time > last_use_time &&
        end_of_program_prefetch_start_time < end_of_program_prefetch_end_time);
   int64_t cross_program_prefetch_end_time =
-      free_buffer ? last_use_time : prefetch_candidate->end;
+      free_buffer ? last_use_time : prefetch_candidate.end;
 
   AddAsyncCopy(*allocations.back(), MemorySpace::kAlternate, chunk_candidate,
-               prefetch_candidate->start, cross_program_prefetch_end_time,
+               prefetch_candidate.start, cross_program_prefetch_end_time,
                latest_prefetch_time, &allocations, /*aliased_offset=*/nullptr,
-               /*resource=*/0.0,
-               /*is_cross_program_prefetch=*/true);
+               /*resource=*/0.0, cross_program_prefetch_index);
 
   absl::c_for_each(uses, [&](auto& use) { allocations.back()->AddUse(use); });
   AliasedOffset* cross_program_prefetch_offset =
@@ -2262,7 +2258,7 @@ void AlternateMemoryBestFitHeap::AllocateCrossProgramPrefetchBuffer(
       buffer_interval.start = allocation->start_time();
       buffer_interval.end = allocation->end_time();
       buffer_interval.size = allocation->chunk().size;
-      buffer_interval.buffer = prefetch_candidate->buffer;
+      buffer_interval.buffer = prefetch_candidate.buffer;
       AddToPendingChunks(buffer_interval, chunk_candidate);
     }
     allocations_->push_back(std::move(allocation));
@@ -2270,21 +2266,21 @@ void AlternateMemoryBestFitHeap::AllocateCrossProgramPrefetchBuffer(
 
   // Add a repack allocation block for the Allocation objects in alternate
   // memory.
+  std::vector<RepackAllocationBlock*> colocations;
   for (int i = allocations_initial_size; i < allocations_->size(); ++i) {
     const auto& allocation = allocations_->at(i);
     if (allocation->memory_space() == MemorySpace::kAlternate) {
       repack_allocation_blocks_.push_back(MakeRepackAllocationBlock(
           allocation->start_time(), allocation->end_time(),
           allocation->chunk().size, allocation->chunk().offset,
-          static_cast<int64_t>(repack_allocation_blocks_.size()),
-          allocation.get()));
+          static_cast<int64_t>(colocations.size()), allocation.get()));
       RepackAllocationBlock* inserted = &repack_allocation_blocks_.back();
-      for (RepackAllocationBlock& colocation : repack_allocation_blocks_) {
-        colocation.colocations.push_back(inserted);
-        if (&colocation != inserted) {
-          inserted->colocations.push_back(&colocation);
-        }
+      for (auto colocation : colocations) {
+        inserted->colocations.emplace_back(colocation);
+        colocation->colocations.emplace_back(inserted);
       }
+      inserted->colocations.emplace_back(inserted);
+      colocations.emplace_back(inserted);
     }
   }
 
@@ -2598,11 +2594,14 @@ void AlternateMemoryBestFitHeap::ImportRepackedAllocations() {
   interval_tree_ = {};
   for (RepackAllocationBlock& allocation_block : repack_allocation_blocks_) {
     MemorySpaceAssignment::Allocation* allocation = allocation_block.allocation;
-    VLOG(3) << "Moved " << allocation->ToString() << ", size "
-            << allocation->chunk().size << ", (" << allocation_block.start_time
-            << ", " << allocation_block.end_time << ") from "
-            << allocation_block.initial_offset << " to "
-            << allocation_block.offset;
+    if (allocation_block.initial_offset != allocation_block.offset) {
+      VLOG(3) << "Moved " << allocation->ToString() << ", size "
+              << allocation->chunk().size << ", ("
+              << allocation_block.start_time << ", "
+              << allocation_block.end_time << ") from "
+              << allocation_block.initial_offset << " to "
+              << allocation_block.offset;
+    }
     allocation_block.allocation->mutable_chunk()->offset =
         allocation_block.offset;
     interval_tree_.Add(allocation_block.start_time, allocation_block.end_time,
@@ -2952,7 +2951,7 @@ void AlternateMemoryBestFitHeap::AddAsyncCopy(
     int64_t end_time, int64_t copy_done_schedule_before_time,
     MemorySpaceAssignment::AllocationSequence* allocations,
     AliasedOffset* aliased_offset, float resource,
-    bool is_cross_program_prefetch) {
+    std::optional<int> cross_program_prefetch_index) {
   VLOG(3) << "Copy to "
           << (memory_space == MemorySpaceAssignment::MemorySpace::kDefault
                   ? "default"
@@ -2965,7 +2964,7 @@ void AlternateMemoryBestFitHeap::AddAsyncCopy(
   allocations->push_back(
       std::make_unique<MemorySpaceAssignment::CopyAllocation>(
           prev_allocation, memory_space, chunk, start_time, end_time,
-          copy_done_schedule_before_time, is_cross_program_prefetch));
+          copy_done_schedule_before_time, cross_program_prefetch_index));
 
   // Register the additional async copy with the interval tree to keep track of
   // the limit at any given time.
@@ -3738,7 +3737,7 @@ Status MemorySpaceAssignment::CopyAllocation::Process() {
   HloComputation* computation = producing_instruction->parent();
   copy_start_ = computation->AddInstruction(HloInstruction::CreateCopyStart(
       ShapeUtil::MakeTupleShape({shape, shape, ShapeUtil::MakeShape(U32, {})}),
-      producing_instruction, is_cross_program_prefetch_));
+      producing_instruction, cross_program_prefetch_index_));
   copy_done_ = computation->AddInstruction(
       HloInstruction::CreateUnary(shape, HloOpcode::kCopyDone, copy_start_));
   VLOG(4) << "Created " << copy_start_->name()
@@ -3898,6 +3897,12 @@ Status MemorySpaceAssignment::Process() {
           allocation->defining_position(), allocation->chunk());
       alternate_memory_size_ =
           std::max(alternate_memory_size_, allocation->chunk().chunk_end());
+
+      if (allocation->cross_program_prefetch_index().has_value()) {
+        TF_RETURN_IF_ERROR(module_->SetCrossProgramPrefetchOffset(
+            *allocation->cross_program_prefetch_index(),
+            allocation->chunk().offset));
+      }
     }
   }
   // Post-process allocations. This is only used for parent allocations where we

@@ -1704,18 +1704,16 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           *async_execution_thread));
     }
     case HloOpcode::kCopyStart: {
-      // If the is_cross_program_prefetch attribute is not present then default
-      // to false.
-      optional<bool> is_cross_program_prefetch = false;
-      attrs["is_cross_program_prefetch"] = {/*required=*/false, AttrTy::kBool,
-                                            &is_cross_program_prefetch};
+      optional<int> cross_program_prefetch_index = std::nullopt;
+      attrs["cross_program_prefetch_index"] = {
+          /*required=*/false, AttrTy::kInt32, &cross_program_prefetch_index};
       if ((!preset_operands &&
            !ParseOperands(&operands, builder, /*expected_size=*/1)) ||
           !ParseAttributes(attrs, allow_attributes)) {
         return nullptr;
       }
       return builder->AddInstruction(HloInstruction::CreateCopyStart(
-          *shape, operands[0], *is_cross_program_prefetch));
+          *shape, operands[0], cross_program_prefetch_index));
     }
     case HloOpcode::kReplicaId: {
       if ((!preset_operands &&

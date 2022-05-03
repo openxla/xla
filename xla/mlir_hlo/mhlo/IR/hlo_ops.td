@@ -2098,7 +2098,7 @@ def MHLO_CopyOp: MHLO_Op<"copy", [Pure, HLO_CompatibleOperandsAndResultType]> {
   }];
   let arguments = (ins
       MHLO_TensorOrTokenOrTuple:$operand,
-      UnitAttr:$is_cross_program_prefetch
+      OptionalAttr<SI32Attr>:$cross_program_prefetch_index
   );
   let results = (outs MHLO_TensorOrTokenOrTuple:$result);
   let hasCustomHLOConverter = 1;
