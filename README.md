@@ -15,7 +15,7 @@ under the
 *   For administrative questions, contact Thea Lamkin - thealamkin at google ###
     Resources
 *   GitHub
-    ((current)[https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla])
+    ([current](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla]))
 *   Discord TBA
 *   Community proposals TBA
 *   Community meetings TBA
