@@ -12,8 +12,9 @@ under the
 ### Contacts
 
 *   For technical questions, contact Mehdi Amini - aminim at google
-*   For administrative questions, contact Thea Lamkin - thealamkin at google ###
-    Resources
+*   For administrative questions, contact Thea Lamkin - thealamkin at google
+ 
+### Resources
 *   GitHub
     ([current](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla]))
 *   Discord TBA
