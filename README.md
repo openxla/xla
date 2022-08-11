@@ -16,7 +16,7 @@ under the
  
 ### Resources
 *   GitHub
-    ([current](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla]))
+    ([current](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla))
 *   Discord TBA
 *   Community proposals TBA
 *   Community meetings TBA
