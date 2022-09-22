@@ -278,6 +278,7 @@ cc_library(
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/types:optional",
         "//tsl/protobuf:error_codes_proto_impl_cc",
+        "//tsl/protobuf:status_proto_cc",
     ] + tf_platform_deps("status"),
 )
 

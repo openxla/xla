@@ -1,5 +1,6 @@
 load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:build_config.bzl", "tsl_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -22,7 +23,7 @@ cc_library(
     ],
 )
 
-cc_test(
+tsl_cc_test(
     name = "error_util_test",
     srcs = ["error_util_test.cc"],
     deps = [

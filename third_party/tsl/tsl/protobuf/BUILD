@@ -89,6 +89,12 @@ tf_proto_library(
 )
 
 tf_proto_library(
+    name = "status_proto",
+    srcs = ["status.proto"],
+    make_default_target_header_only = True,
+)
+
+tf_proto_library(
     name = "test_log_proto",
     srcs = ["test_log.proto"],
     make_default_target_header_only = True,
@@ -111,6 +117,7 @@ tf_proto_library(
         ":coordination_config_proto",
         ":distributed_runtime_payloads_proto",
         ":error_codes_proto_impl",
+        ":status_proto",
         ":histogram_proto",
         ":rpc_options_proto",
         ":test_log_proto",

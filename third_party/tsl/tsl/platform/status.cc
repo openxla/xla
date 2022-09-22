@@ -38,6 +38,7 @@ limitations under the License.
 #include "tsl/platform/strcat.h"
 #include "tsl/platform/stringprintf.h"
 #include "tsl/protobuf/error_codes.pb.h"
+#include "tsl/protobuf/status.pb.h"
 
 namespace tsl {
 namespace error {
@@ -125,30 +126,39 @@ static constexpr const char kStackTraceProtoUrl[] =
     "type.googleapis.com/tensorflow.StackTracePayload";
 
 void SetStackTrace(::tsl::Status& status, std::vector<StackFrame> stack_trace) {
-  status.SetStackTrace(stack_trace);
+  tensorflow::StackTracePayload payload;
+  for (const StackFrame& frame : stack_trace) {
+    tensorflow::StackTracePayload::StackFrame frame_proto;
+    frame_proto.set_file_name(frame.file_name);
+    frame_proto.set_line_number(frame.line_number);
+    frame_proto.set_function_name(frame.function_name);
+    *payload.add_stack_frames() = frame_proto;
+  }
+  status.SetPayload(kStackTraceProtoUrl,
+                    absl::Cord(payload.SerializeAsString()));
 }
 
 std::vector<StackFrame> GetStackTrace(const ::tsl::Status& status) {
-  return status.GetStackTrace();
+  std::vector<StackFrame> stack_trace;
+  absl::optional<absl::Cord> maybe_serialized_payload =
+      status.GetPayload(kStackTraceProtoUrl);
+  if (maybe_serialized_payload.has_value()) {
+    tensorflow::StackTracePayload payload;
+    std::string serialized_payload(maybe_serialized_payload.value());
+    payload.ParseFromString(serialized_payload);
+    for (const auto& frame_proto : payload.stack_frames()) {
+      StackFrame frame({frame_proto.file_name(), frame_proto.line_number(),
+                        frame_proto.function_name()});
+      stack_trace.push_back(frame);
+    }
+  }
+  return stack_trace;
 }
 
 }  // namespace errors
 
 Status::~Status() {}
 
-void Status::SetStackTrace(std::vector<StackFrame> stack_trace) {
-  if (state_ != nullptr) {
-    state_->stack_trace = stack_trace;
-  }
-}
-
-std::vector<StackFrame> Status::GetStackTrace() const {
-  if (state_ != nullptr) {
-    return state_->stack_trace;
-  } else {
-    return std::vector<StackFrame>();
-  }
-}
 
 absl::Span<const SourceLocation> Status::GetSourceLocations() const {
   return state_ != nullptr ? state_->source_locations
