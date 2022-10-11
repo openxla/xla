@@ -1,7 +1,7 @@
 # OpenXLA, a community-driven and modular open-source compiler (actively migrating from [tensorflow/xla](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla)).
 
-OpenXLA is a community-driven and modular open source compiler. It will enable
-efficient lowering, optimization and deployment of ML models from most major
+The OpenXLA compiler is a community-driven and modular ML compiler. It will enable
+efficient optimization and deployment of ML models from most major
 frameworks to any hardware backend notably CPUs, GPUs, and ML ASICs.
 
 It is currently in the process of being created from the code currently inside
@@ -17,9 +17,7 @@ under the
 ### Resources
 *   GitHub
     ([current](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla))
-*   Discord TBA
-*   Community proposals TBA
-*   Community meetings TBA
+*   [Community Resources](https://github.com/openxla/community)
 
 ### Code of Conduct
 
