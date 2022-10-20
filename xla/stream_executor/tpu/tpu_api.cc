@@ -12,28 +12,21 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/c_api_decl.h"
 #include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
 
 namespace tensorflow {
 namespace tpu {
 
-class TpuEvent : public ::stream_executor::internal::EventInterface {
- public:
-  explicit TpuEvent(SE_Event* event) : event_(event) {}
-  ~TpuEvent() override {
-    tensorflow::tpu::ExecutorApiFn()->TpuEvent_FreeFn(event_);
-  }
+TfTpu_BaseFn* InitializeApiFn() {
+  static TfTpu_BaseFn base_fn;
+  return &base_fn;
+}
 
- private:
-  SE_Event* event_;
-};
+const TfTpu_OpsApiFn* OpsApiFn() {
+  static TfTpu_OpsApiFn ops_api_fn;
+  return &ops_api_fn;
+}
 
 }  // namespace tpu
 }  // namespace tensorflow
-
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
