@@ -25,7 +25,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/tpu/c_api_conversions.h"
-#include "xla/stream_executor/tpu/noncopyable_buffer.h"
 #include "xla/stream_executor/tpu/proto_helper.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
@@ -34,6 +33,7 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_id.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/distributed_runtime/noncopyable_buffer.h"
 #include "tsl/platform/status.h"
 
 namespace tensorflow {
@@ -333,7 +333,7 @@ tsl::Status TpuTransferManager::LinearizeToBuffers(
           &buffers_array_size, status.c_status);
 
   for (int64_t i = 0; i < buffers_array_size; ++i) {
-    tpu::NoncopyableBuffer buf(buffers_size[i]);
+    tensorflow::tpu::NoncopyableBuffer buf(buffers_size[i]);
     memcpy(buf.mutable_data<uint8_t>().data(), buffers_array[i],
            buffers_size[i]);
     buffers->push_back(std::move(buf));

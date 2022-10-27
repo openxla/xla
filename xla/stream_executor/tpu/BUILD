@@ -76,20 +76,6 @@ cc_library(
 )
 
 cc_library(
-    name = "noncopyable_buffer",
-    hdrs = ["noncopyable_buffer.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/functional:function_ref",
-        "@com_google_absl//absl/types:optional",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-    ],
-)
-
-cc_library(
     name = "status_helper",
     hdrs = ["status_helper.h"],
     deps = [
@@ -300,10 +286,10 @@ cc_library(
     hdrs = ["tpu_transfer_manager_interface.h"],
     visibility = ["//visibility:public"],
     deps = [
-        ":noncopyable_buffer",
         ":tpu_platform_interface",
         "//xla/service:transfer_manager",
         "@com_google_absl//absl/cleanup",
+        "@tsl//tsl/distributed_runtime:noncopyable_buffer",
     ],
 )
 
@@ -326,7 +312,6 @@ cc_library(
     hdrs = ["tpu_transfer_manager.h"],
     deps = [
         ":c_api_conversions",
-        ":noncopyable_buffer",
         ":proto_helper",
         ":status_helper",
         ":tpu_api",
@@ -341,6 +326,7 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "@com_google_absl//absl/cleanup",
+        "@tsl//tsl/distributed_runtime:noncopyable_buffer",
         "@tsl//tsl/platform:status",
     ],
 )
