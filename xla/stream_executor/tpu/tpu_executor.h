@@ -44,7 +44,7 @@ limitations under the License.
 namespace stream_executor {
 namespace tpu {
 
-class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
+class TpuExecutor : public stream_executor::tpu::TpuExecutorInterface {
  public:
   template <typename T>
   using StatusOr = ::stream_executor::port::StatusOr<T>;
@@ -180,7 +180,7 @@ class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
   // TODO(henrytan): convert this to override once the base interface is changed
   // to TpuExecutorInterface.
   StatusOr<std::unique_ptr<
-      tensorflow::tpu::TpuExecutorInterface::TemporaryDeviceMemory>>
+      stream_executor::tpu::TpuExecutorInterface::TemporaryDeviceMemory>>
   CreateTemporaryDeviceMemory(int64_t memory_space, int64_t byte_offset,
                               int64_t size) override {
     LOG(FATAL) << "Unimplemented.";

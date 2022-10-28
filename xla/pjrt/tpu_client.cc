@@ -222,8 +222,8 @@ GetTpuDevices(
   std::map<int, int> core_id_to_device_ordinal;
   for (int i = 0; i < client->device_count(); ++i) {
     se::StreamExecutor* executor = client->backend().stream_executor(i).value();
-    tf_tpu::TpuExecutorInterface* tpu_executor =
-        tensorflow::down_cast<tf_tpu::TpuExecutorInterface*>(
+    stream_executor::tpu::TpuExecutorInterface* tpu_executor =
+        tensorflow::down_cast<stream_executor::tpu::TpuExecutorInterface*>(
             executor->implementation());
     core_id_to_device_ordinal[tpu_executor->GetCoreLocationExternal().Id()] = i;
   }
