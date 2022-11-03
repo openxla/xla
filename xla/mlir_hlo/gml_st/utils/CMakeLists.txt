@@ -13,4 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-add_subdirectory(mhlo)
+
+add_mlir_dialect_library(MLIRGmlStUtils
+  linalg_utils.cc
+
+  LINK_LIBS PUBLIC
+  MLIRLinalgDialect
+)
