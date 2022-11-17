@@ -101,4 +101,4 @@ hlo_module       {
   }
 }
 
-# CHECK: func.func @main(%arg0: tensor<i32>, %arg1: tensor<?xf32, #mhlo.type_extensions<bounds = [2]>>) -> tuple<> {
+# CHECK: func.func @main(%arg0: tensor<i32>, %arg1: tensor<?xf32, #mhlo.type_extensions<bounds = [2]>>) -> tuple<>

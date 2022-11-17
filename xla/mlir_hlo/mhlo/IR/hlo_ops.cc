@@ -8859,6 +8859,36 @@ LogicalResult verifyDynamicParameterBinding(DynamicParameterBindingAttr bind,
   return success();
 }
 
+LogicalResult verifyDeviceAssignment(DeviceAssignmentAttr assignment,
+                                     ModuleOp module) {
+  auto size = assignment.getReplicaCount() * assignment.getComputationCount();
+  if (assignment.getComputationDevices().size() != size) {
+    return module->emitOpError()
+           << "device_assignment: size of device assignment must equal "
+           << "replicaCount * computationCount";
+  }
+  std::vector<int64_t> computation_ids;
+  module.walk([&](Operation* op) {
+    if (auto attr =
+            op->getAttrOfType<DenseIntElementsAttr>("mhlo.computation_ids")) {
+      llvm::append_range(computation_ids, attr.getValues<int64_t>());
+    }
+  });
+  std::set computation_ids_set(computation_ids.begin(), computation_ids.end());
+  if (computation_ids_set.size() != computation_ids.size()) {
+    return module->emitOpError()
+           << "device_assignment: repeated computation IDs";
+  }
+  if (computation_ids.size() != assignment.getComputationCount()) {
+    return module->emitOpError()
+           << "device_assignment: computationCount "
+           << assignment.getComputationCount()
+           << " does not match the number of "
+           << "computations " << computation_ids.size() << " in the module.";
+  }
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Builder utilities
 //===----------------------------------------------------------------------===//
@@ -9004,6 +9034,16 @@ LogicalResult MhloDialect::verifyOperationAttribute(Operation* op,
              << "spmd_parameters_sharding: main has " << main.getNumArguments()
              << " arguments, but spmd_parameters_sharding expects "
              << arrayAttr.size();
+  }
+  if (auto deviceAssigment = attr.getValue().dyn_cast<DeviceAssignmentAttr>()) {
+    auto module = dyn_cast<ModuleOp>(op);
+    if (!module)
+      return op->emitOpError() << "has device_assignment but is not a module";
+    if (attr.getName() != "mhlo.device_assignment")
+      return op->emitOpError()
+             << "device_assignment must be mhlo.device_assignment";
+    auto res = verifyDeviceAssignment(deviceAssigment, module);
+    if (failed(res)) return res;
   }
   return success();
 }

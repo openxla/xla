@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -222,6 +223,22 @@ static xla::FftType Convert_fft_type(mlir::mhlo::FftType fft_type) {
                      &fft_type_enum))
     return xla::FftType::FFT;
   return fft_type_enum;
+}
+
+static xla::DeviceAssignmentProto Convert_device_assignment(
+    mlir::mhlo::DeviceAssignmentAttr attr) {
+  xla::DeviceAssignmentProto proto;
+  proto.set_replica_count(attr.getReplicaCount());
+  proto.set_computation_count(attr.getComputationCount());
+
+  auto it = attr.getComputationDevices().begin();
+  for (int i = 0; i < attr.getComputationCount(); i++) {
+    auto device_replicas = proto.add_computation_devices();
+    for (int j = 0; j < attr.getReplicaCount(); j++) {
+      device_replicas->add_replica_device_ids(*it++);
+    }
+  }
+  return proto;
 }
 
 static std::vector<std::pair<int64_t, int64_t>> Convert_padding(
@@ -651,6 +668,29 @@ class ConvertToHloModule {
   // Get Reference to lowered XLA computation for a function.
   xla::XlaComputation& GetLoweredComputation(func::FuncOp func) {
     return lowered_computation_[func];
+  }
+
+  // Reshuffle computation ids so that they return to the order given in MHLO.
+  llvm::DenseMap<int64_t, int64_t> GetIdMap() {
+    std::map<int64_t, int64_t> old_to_new;
+    std::vector<int64_t> news;
+    for (auto& [func, computation] : lowered_computation_) {
+      if (auto id = func->getAttrOfType<BoolAttr>("mhlo.computation_id")) {
+        old_to_new[id.getValue()] = computation.proto().id();
+        news.push_back(computation.proto().id());
+      }
+    }
+
+    // We want to be able to pop id's smallest-to-largest
+    std::sort(news.rbegin(), news.rend());
+
+    llvm::DenseMap<int64_t, int64_t> new_to_newer;
+    // Iterating in the original order
+    for (auto& [_, new_id] : old_to_new) {
+      new_to_newer[new_id] = news.back();
+      news.pop_back();
+    }
+    return new_to_newer;
   }
 
   LogicalResult Lower(
@@ -2092,9 +2132,9 @@ LogicalResult ExportXlaOp(WhileOp op, OpLoweringContext ctx) {
   xla::XlaComputation condition;
   xla::XlaComputation body;
   if (failed(ctx.converter->LowerRegionAsComputation(
-          &op.getBody(), &body, llvm::None, /*ensure_single_arg*/ true)) ||
+          &op.getCond(), &condition, llvm::None, /*ensure_single_arg*/ true)) ||
       failed(ctx.converter->LowerRegionAsComputation(
-          &op.getCond(), &condition, llvm::None, /*ensure_single_arg*/ true))) {
+          &op.getBody(), &body, llvm::None, /*ensure_single_arg*/ true))) {
     return failure();
   }
 
@@ -3113,6 +3153,16 @@ xla::Status ConvertMlirHloToHlo(mlir::ModuleOp module, xla::HloProto* hlo_proto,
           *CreateOpShardingFromStringRef(
               sharding.cast<mlir::StringAttr>().getValue());
     }
+  }
+  auto id_map = converter.GetIdMap();
+  for (auto computation : hlo_module.computations()) {
+    computation.set_id(id_map[computation.id()]);
+  }
+  if (auto device_assignment =
+          module->getAttrOfType<mlir::mhlo::DeviceAssignmentAttr>(
+              "mhlo.device_assignment")) {
+    *hlo_module.mutable_device_assignment() =
+        Convert_device_assignment(std::move(device_assignment));
   }
   hlo_proto->mutable_hlo_module()->Swap(&hlo_module);
   return ::tsl::OkStatus();

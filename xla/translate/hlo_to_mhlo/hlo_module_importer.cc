@@ -73,6 +73,11 @@ Status HloModuleImporter::Import(const xla::HloModule& hlo_module) {
     module->setAttr("mhlo.spmd_parameters_shardings",
                     builder_.getArrayAttr(parameter_shardings));
   }
+  if (hlo_module.config().has_static_device_assignment())
+    module->setAttr(
+        "mhlo.device_assignment",
+        ConvertDeviceAssignment(hlo_module.config().static_device_assignment(),
+                                &builder_));
 
   if (!import_all_computation_)
     // Only import the entry computation, any reachable one will be imported

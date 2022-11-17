@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/translate/hlo_to_mhlo/hlo_function_importer.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -387,6 +388,12 @@ StatusOr<FuncOp> HloFunctionImporter::ImportAsFunc(
   auto visibility = computation_name == "main" ? FuncOp::Visibility::Public
                                                : FuncOp::Visibility::Private;
   function.setVisibility(visibility);
+  if (computation.parent()->config().has_static_device_assignment())
+    function->setAttr(
+        "mhlo.computation_ids",
+        DenseIntElementsAttr::get(
+            RankedTensorType::get(1, builder_->getIntegerType(64)),
+            computation.unique_id()));
 
   for (auto& entry : llvm::enumerate(computation.parameter_instructions())) {
     HloInstruction* parameter = entry.value();
@@ -462,6 +469,19 @@ Status HloFunctionImporter::ImportAsRegion(const HloComputation& computation,
   // TODO(hinsu): Store computation name as an attribute for round-trip.
   auto* block = new mlir::Block;
   region->push_back(block);
+
+  if (computation.parent()->config().has_static_device_assignment()) {
+    auto ids = region->getParentOp()->getAttrOfType<DenseIntElementsAttr>(
+        "mhlo.computation_ids");
+    llvm::SmallVector<int64_t, 1> new_ids;
+    if (ids) llvm::append_range(new_ids, ids.getValues<int64_t>());
+    new_ids.push_back(computation.unique_id());
+    auto shaped_type =
+        RankedTensorType::get(new_ids.size(), builder_->getIntegerType(64));
+    region->getParentOp()->setAttr(
+        "mhlo.computation_ids",
+        DenseIntElementsAttr::get(shaped_type, new_ids));
+  }
 
   llvm::SmallVector<Type, 4> args;
   TF_RETURN_IF_ERROR(GetMlirTypes(computation.parameter_instructions(), &args));

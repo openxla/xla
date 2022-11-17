@@ -242,7 +242,6 @@ def MHLO_DynamicParameterBinding : AttrDef<MHLO_Dialect, "DynamicParameterBindin
     Here, 'b' (param index 1) has a dynamic shape whose real size is
     determined at runtime. 'a' represents the real size of b's zeroth
     dimension.
-
   }];
   let parameters = (ins
       "int64_t":$dynamic_param_num,
@@ -250,6 +249,61 @@ def MHLO_DynamicParameterBinding : AttrDef<MHLO_Dialect, "DynamicParameterBindin
       "int64_t":$target_param_num,
       MHLO_Dims:$target_param_indices,
       "int64_t":$target_param_dim_num
+  );
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
+def MHLO_DeviceAssignment : AttrDef<MHLO_Dialect, "DeviceAssignment"> {
+  let mnemonic = "device_assignment";
+  let summary = "Represents the device ids assigned to a set of replicated computations";
+  let description = [{
+    This attribute represents the assignment of computation replicas to
+    devices. For each computation (`computationCount` of them), and for each
+    replica of that computation (`replicaCount` of each of them),
+    `computationDevices` gives us the device ID of the device assigned to that
+    computation replica. That is, the `j`th replica of the `i`th
+    computation will be performed on the device whose id is stored in element
+    `i*replicaCount + j` of `computationDevices`.
+
+    A "computation" here refers to an MLIR region, either as the body of a
+    function or another op, such as the body and conditional of a
+    WhileOp. Note that this only includes synchronous computations on the
+    main thread --- async computations are not handled by this attribute,
+    as their result is stored and the associated computation is done on the
+    device of the parent computation of the async op.
+    Module computations can be obtained by walking the ModuleOp and making
+    note of all ops that have an "mhlo.computation_ids" attribute. This
+    attribute contains a list of computation ids associated with individual
+    regions within the op. All these regions put together and sorted by their
+    ids in ascending order provide the list of all computations in a module,
+    i.e. the `i`th computation in the list corresponds to the `i`th
+    computation in the `DeviceAssignment` attribute.
+
+    For example,
+
+    ```
+    module attributes { mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 2, computationCount = 3, computationDevices = 0,1,0,1,2,3 > } {
+      func.func @op_while(%arg0: tensor<i1>) -> tensor<i1> attributes { mhlo.computation_ids = dense<0> : tensor<1xi64> } {
+        %0 = "mhlo.while"(%arg0) ({
+          ^bb0(%arg1: tensor<i1>):
+            "mhlo.return"(%arg1) : (tensor<i1>) -> ()
+          }, {
+          ^bb0(%arg1: tensor<i1>):
+            "mhlo.return"(%arg1) : (tensor<i1>) -> ()
+        }) { mhlo.computation_ids = dense<1,2> : tensor<2xi64> } : (tensor<i1>) -> tensor<i1>
+        func.return %0: tensor<i1>
+      }
+    }
+    ```
+
+    Here, we run each of two replicas of this program on devices 0 and 1
+    respectively, and running the bodies of their while loops on devices 2
+    and 3, respectively.
+  }];
+  let parameters = (ins
+      "int64_t":$replicaCount,
+      "int64_t":$computationCount,
+      ArrayRefParameter<"int64_t">:$computationDevices
   );
   let assemblyFormat = "`<` struct(params) `>`";
 }

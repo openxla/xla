@@ -118,6 +118,7 @@ void prepareWhileOp(WhileOp whileOp) {
   newWhileOp.getCond().takeBody(whileOp.getCond());
   newWhileOp.getBody().getBlocks().clear();
   newWhileOp.getBody().takeBody(whileOp.getBody());
+  newWhileOp->setAttrs(whileOp->getAttrs());
   for (auto zippedResults :
        llvm::zip_first(whileOp.getResults(), newWhileOp.getResults()))
     std::get<0>(zippedResults).replaceAllUsesWith(std::get<1>(zippedResults));

@@ -1,12 +1,12 @@
 // RUN: xla-translate -verify-diagnostics -split-input-file -mlir-hlo-to-hlo %s | FileCheck %s
 // RUN: xla-translate -verify-diagnostics -split-input-file -mlir-hlo-to-hlo --via-builder=true %s | FileCheck %s
 
-module attributes { mhlo.cross_program_prefetches = [ #mhlo.cross_program_prefetch<parameter = 1, indices = [0]> ] } {
+module attributes { mhlo.cross_program_prefetches = [ #mhlo.cross_program_prefetch<parameter = 1, indices = [0]> ], mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 3, computationCount = 1, computationDevices = 0,1,2> } {
   func.func @copy(%arg0 : tuple<tensor<2x3xi32>, tensor<i32>>) -> tuple<tensor<2x3xi32>, tensor<i32>> attributes {execution_thread = "main"} {
     %0 = "mhlo.copy"(%arg0) {is_cross_program_prefetch} : (tuple<tensor<2x3xi32>, tensor<i32>>) -> (tuple<tensor<2x3xi32>, tensor<i32>>)
     return %0 : tuple<tensor<2x3xi32>, tensor<i32>>
   }
-  func.func @main(%arg0 : tensor<i32>, %arg1 : tuple<tensor<2x3xi32>, tensor<i32>>) -> tuple<tensor<2x3xi32>, tensor<i32>> {
+  func.func @main(%arg0 : tensor<i32>, %arg1 : tuple<tensor<2x3xi32>, tensor<i32>>) -> tuple<tensor<2x3xi32>, tensor<i32>> attributes { mhlo.computation_ids = dense<1>:tensor<1xi64> } {
     %1 = "mhlo.async_start"(%arg1) {called_computation=@copy, execution_thread="main"} : (tuple<tensor<2x3xi32>, tensor<i32>>) -> (!mhlo.async_bundle<tuple<tuple<tensor<2x3xi32>, tensor<i32>>>, tuple<tuple<tensor<2x3xi32>, tensor<i32>>>>)
     %2 = "mhlo.async_done"(%1) {called_computation=@copy, execution_thread="main"} : (!mhlo.async_bundle<tuple<tuple<tensor<2x3xi32>, tensor<i32>>>, tuple<tuple<tensor<2x3xi32>, tensor<i32>>>>) -> (tuple<tensor<2x3xi32>, tensor<i32>>)
     return %2 : tuple<tensor<2x3xi32>, tensor<i32>>
@@ -18,7 +18,32 @@ module attributes { mhlo.cross_program_prefetches = [ #mhlo.cross_program_prefet
 // CHECK-NEXT:    index: 0
 // CHECK-NEXT:  }
 
+// CHECK: device_assignment {
+// CHECK-NEXT:    replica_count: 3
+// CHECK-NEXT:    computation_count: 1
+// CHECK-NEXT:    computation_devices {
+// CHECK-NEXT:      replica_device_ids: 0
+// CHECK-NEXT:      replica_device_ids: 1
+// CHECK-NEXT:      replica_device_ids: 2
+// CHECK-NEXT:    }
+
 // -----
+
+// expected-error@+1 {{device_assignment: size of device assignment must equal replicaCount * computationCount}}
+module attributes { mhlo.cross_program_prefetches = [ #mhlo.cross_program_prefetch<parameter = 1, indices = [0]> ], mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 3, computationCount = 1, computationDevices = 0,1,2,3,4,5> } {
+  func.func @copy(%arg0 : tuple<tensor<2x3xi32>, tensor<i32>>) -> tuple<tensor<2x3xi32>, tensor<i32>> attributes {execution_thread = "main"} {
+    %0 = "mhlo.copy"(%arg0) {is_cross_program_prefetch} : (tuple<tensor<2x3xi32>, tensor<i32>>) -> (tuple<tensor<2x3xi32>, tensor<i32>>)
+    return %0 : tuple<tensor<2x3xi32>, tensor<i32>>
+  }
+  func.func @main(%arg0 : tensor<i32>, %arg1 : tuple<tensor<2x3xi32>, tensor<i32>>) -> tuple<tensor<2x3xi32>, tensor<i32>> {
+    %1 = "mhlo.async_start"(%arg1) {called_computation=@copy, execution_thread="main"} : (tuple<tensor<2x3xi32>, tensor<i32>>) -> (!mhlo.async_bundle<tuple<tuple<tensor<2x3xi32>, tensor<i32>>>, tuple<tuple<tensor<2x3xi32>, tensor<i32>>>>)
+    %2 = "mhlo.async_done"(%1) {called_computation=@copy, execution_thread="main"} : (!mhlo.async_bundle<tuple<tuple<tensor<2x3xi32>, tensor<i32>>>, tuple<tuple<tensor<2x3xi32>, tensor<i32>>>>) -> (tuple<tensor<2x3xi32>, tensor<i32>>)
+    return %2 : tuple<tensor<2x3xi32>, tensor<i32>>
+  }
+}
+
+// -----
+
 
 // expected-error@+1 {{cross_program_prefetch: parameter 2 out of range. main has only 2 arguments}}
 module attributes { mhlo.cross_program_prefetches = [ #mhlo.cross_program_prefetch<parameter = 2, indices = [0]> ] } {
@@ -178,3 +203,65 @@ module attributes { mhlo.spmd_output_sharding = "\08\03\1A\02\01\02\22\02\00\01"
 // CHECK:   tile_assignment_devices: 0
 // CHECK:   tile_assignment_devices: 1
 // CHECK: }
+// -----
+
+module attributes { mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 2, computationCount = 3, computationDevices = 0,1,0,1,2,3 > } {
+  func.func @main(%arg0: tensor<i1>) -> tensor<i1> attributes { mhlo.computation_ids = dense<0> : tensor<1xi64> } {
+    %0 = "mhlo.while"(%arg0) ({
+      ^bb0(%arg1: tensor<i1>):
+        "mhlo.return"(%arg1) : (tensor<i1>) -> ()
+      }, {
+      ^bb0(%arg1: tensor<i1>):
+        "mhlo.return"(%arg1) : (tensor<i1>) -> ()
+    }) { mhlo.computation_ids = dense<[1, 2]> : tensor<2xi64> } : (tensor<i1>) -> tensor<i1>
+    func.return %0: tensor<i1>
+  }
+}
+
+// CHECK: device_assignment {
+// CHECK-NEXT:    replica_count: 2
+// CHECK-NEXT:    computation_count: 3
+// CHECK-NEXT:    computation_devices {
+// CHECK-NEXT:      replica_device_ids: 0
+// CHECK-NEXT:      replica_device_ids: 1
+// CHECK-NEXT:    }
+// CHECK-NEXT:    computation_devices {
+// CHECK-NEXT:      replica_device_ids: 0
+// CHECK-NEXT:      replica_device_ids: 1
+// CHECK-NEXT:    }
+// CHECK-NEXT:    computation_devices {
+// CHECK-NEXT:      replica_device_ids: 2
+// CHECK-NEXT:      replica_device_ids: 3
+// CHECK-NEXT:    }
+
+// -----
+
+// expected-error@+1 {{device_assignment: computationCount 2 does not match the number of computations 3 in the module}}
+module attributes { mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 2, computationCount = 2, computationDevices = 0,0,1,3 > } {
+  func.func @main(%arg0: tensor<i1>) -> tensor<i1> attributes { mhlo.computation_ids = dense<0> : tensor<1xi64> } {
+    %0 = "mhlo.while"(%arg0) ({
+      ^bb0(%arg1: tensor<i1>):
+        "mhlo.return"(%arg1) : (tensor<i1>) -> ()
+      }, {
+      ^bb0(%arg1: tensor<i1>):
+        "mhlo.return"(%arg1) : (tensor<i1>) -> ()
+    }) { mhlo.computation_ids = dense<[1, 2]> : tensor<2xi64> } : (tensor<i1>) -> tensor<i1>
+    func.return %0: tensor<i1>
+  }
+}
+
+// -----
+
+// expected-error@+1 {{device_assignment: repeated computation IDs}}
+module attributes { mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 2, computationCount = 2, computationDevices = 0,0,1,3 > } {
+  func.func @main(%arg0: tensor<i1>) -> tensor<i1> attributes { mhlo.computation_ids = dense<0> : tensor<1xi64> } {
+    %0 = "mhlo.while"(%arg0) ({
+      ^bb0(%arg1: tensor<i1>):
+        "mhlo.return"(%arg1) : (tensor<i1>) -> ()
+      }, {
+      ^bb0(%arg1: tensor<i1>):
+        "mhlo.return"(%arg1) : (tensor<i1>) -> ()
+    }) { mhlo.computation_ids = dense<[2, 2]> : tensor<2xi64> } : (tensor<i1>) -> tensor<i1>
+    func.return %0: tensor<i1>
+  }
+}

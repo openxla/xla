@@ -1,6 +1,7 @@
 # RUN: xla-translate -hlo-to-mlir-hlo %s | FileCheck %s
 
 # CHECK-LABEL: module @main attributes
+# CHECK-SAME: mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 3, computationCount = 1, computationDevices = 0, 1, 2>
 # CHECK-SAME: mhlo.spmd_output_sharding = "\08\03\1A\02\01\02\22\02\00\01"
 # CHECK-SAME: mhlo.spmd_parameters_shardings = ["\08\03\1A\02\01\02\22\02\00\01"]
 
@@ -132,4 +133,15 @@ hlo_module       {
     tile_assignment_devices: 0
     tile_assignment_devices: 1
   }
+  device_assignment {
+    replica_count: 3
+    computation_count: 1
+    computation_devices {
+      replica_device_ids: 0
+      replica_device_ids: 1
+      replica_device_ids: 2
+    }
+  }
 }
+# CHECK: func @main
+# CHECK-SAME: mhlo.computation_ids = dense<3>

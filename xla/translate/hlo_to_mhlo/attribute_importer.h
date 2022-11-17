@@ -23,6 +23,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -64,6 +65,11 @@ mlir::ArrayAttr ConvertCrossProgramPrefetches(
 
 mlir::ArrayAttr ConvertDynamicParameterBindings(DynamicParameterBinding dpb,
                                                 mlir::Builder* builder);
+
+// Converts the device assignment.
+mlir::mhlo::DeviceAssignmentAttr ConvertDeviceAssignment(
+    const xla::DeviceAssignment& static_device_assignment,
+    mlir::Builder* builder);
 
 StatusOr<mlir::mhlo::FftType> ConvertFftType(FftType type);
 StatusOr<mlir::mhlo::Transpose> ConvertTranspose(

@@ -2,7 +2,7 @@
 // RUN: xla-translate --print-sugar=false -split-input-file -mlir-hlo-to-hlo-text --via-builder=true %s | FileCheck %s
 
 // CHECK:  HloModule
-func.func @main(%arg0: tensor<2xi1>) -> tensor<2xi1> {
+func.func @main(%arg0: tensor<2xi1>) -> tensor<2xi1> attributes {mhlo.computation_ids = dense<0> : tensor<1xi64>} {
   %0 = "mhlo.add"(%arg0, %arg0) : (tensor<2xi1>, tensor<2xi1>) -> tensor<2xi1>
   func.return %0 : tensor<2xi1>
 }

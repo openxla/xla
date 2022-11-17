@@ -207,8 +207,20 @@ hlo_module       {
     parameter: 1
     index: 0
   }
+# CHECK-SAME: mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 3, computationCount = 1, computationDevices = 0, 1, 2>
+  device_assignment {
+    replica_count: 3
+    computation_count: 1
+    computation_devices {
+      replica_device_ids: 0
+      replica_device_ids: 1
+      replica_device_ids: 2
+    }
+  }
 # CHECK-SAME: mhlo.is_dynamic = true
   is_dynamic: true
 # CHECK-SAME: mhlo.use_auto_spmd_partitioning = true
   use_auto_spmd_partitioning: true
 }
+# CHECK: func @main
+# CHECK-SAME: mhlo.computation_ids = dense<5>

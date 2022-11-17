@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/layout_util.h"
+#include "xla/service/computation_placer.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -157,6 +158,21 @@ mlir::ArrayAttr ConvertCrossProgramPrefetches(
   }
 
   return mlir::ArrayAttr::get(builder->getContext(), shapes);
+}
+
+mlir::mhlo::DeviceAssignmentAttr ConvertDeviceAssignment(
+    const xla::DeviceAssignment& device_assignment, mlir::Builder* builder) {
+  llvm::SmallVector<int64_t, 4> replica_devices;
+  for (int computation = 0; computation < device_assignment.computation_count();
+       ++computation) {
+    for (int replica = 0; replica < device_assignment.replica_count();
+         ++replica) {
+      replica_devices.push_back(device_assignment(replica, computation));
+    }
+  }
+  return mlir::mhlo::DeviceAssignmentAttr::get(
+      builder->getContext(), device_assignment.replica_count(),
+      device_assignment.computation_count(), replica_devices);
 }
 
 StatusOr<mlir::mhlo::FftType> ConvertFftType(FftType type) {

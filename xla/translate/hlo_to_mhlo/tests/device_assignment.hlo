@@ -1,0 +1,155 @@
+# RUN: xla-translate -hlo-to-mlir-hlo %s | FileCheck %s
+hlo_module       {
+  name: "main"
+  entry_computation_name: "main.7"
+  computations {
+    name: "region_1.2"
+    instructions {
+      name: "Arg_.3"
+      opcode: "parameter"
+      shape {
+        element_type: PRED
+        layout {
+        }
+      }
+      metadata {
+      }
+      id: 3
+      frontend_attributes {
+      }
+    }
+    program_shape {
+      parameters {
+        element_type: PRED
+        layout {
+        }
+      }
+      result {
+        element_type: PRED
+        layout {
+        }
+      }
+      parameter_names: "Arg_"
+    }
+    id: 2
+    root_id: 3
+  }
+  computations {
+    name: "region_0.4"
+    instructions {
+      name: "Arg_.5"
+      opcode: "parameter"
+      shape {
+        element_type: PRED
+        layout {
+        }
+      }
+      metadata {
+      }
+      id: 5
+      frontend_attributes {
+      }
+    }
+    program_shape {
+      parameters {
+        element_type: PRED
+        layout {
+        }
+      }
+      result {
+        element_type: PRED
+        layout {
+        }
+      }
+      parameter_names: "Arg_"
+    }
+    id: 4
+    root_id: 5
+  }
+  computations {
+    name: "main.7"
+    instructions {
+      name: "Arg_0.1"
+      opcode: "parameter"
+      shape {
+        element_type: PRED
+        layout {
+        }
+      }
+      metadata {
+      }
+      id: 1
+      frontend_attributes {
+      }
+    }
+    instructions {
+      name: "while.6"
+      opcode: "while"
+      shape {
+        element_type: PRED
+        layout {
+        }
+      }
+      metadata {
+        source_file: "within split at <stdin>:1 offset "
+        source_line: 3
+      }
+      id: 6
+      operand_ids: 1
+      called_computation_ids: 2
+      called_computation_ids: 4
+      frontend_attributes {
+      }
+    }
+    program_shape {
+      parameters {
+        element_type: PRED
+        layout {
+        }
+      }
+      result {
+        element_type: PRED
+        layout {
+        }
+      }
+      parameter_names: "Arg_0"
+    }
+    id: 7
+    root_id: 6
+  }
+  host_program_shape {
+    parameters {
+      element_type: PRED
+      layout {
+      }
+    }
+    result {
+      element_type: PRED
+      layout {
+      }
+    }
+    parameter_names: "Arg_0"
+  }
+  id: 7
+  entry_computation_id: 7
+  dynamic_parameter_binding {
+  }
+  device_assignment {
+    replica_count: 2
+    computation_count: 3
+    computation_devices {
+      replica_device_ids: 0
+      replica_device_ids: 1
+    }
+    computation_devices {
+      replica_device_ids: 0
+      replica_device_ids: 1
+    }
+    computation_devices {
+      replica_device_ids: 2
+      replica_device_ids: 3
+    }
+  }
+}
+# CHECK: module @main attributes
+# CHECK-SAME: mhlo.device_assignment = #mhlo.device_assignment<replicaCount = 2, computationCount = 3, computationDevices = 0, 1, 0, 1, 2, 3>

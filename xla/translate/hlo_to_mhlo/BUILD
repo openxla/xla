@@ -18,6 +18,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
+        "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
         "@llvm-project//mlir:IR",
     ],
