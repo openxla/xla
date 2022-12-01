@@ -1,6 +1,5 @@
 """Build rules for XLA testing."""
 
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 load("//xla/tests:plugin.bzl", "plugins")
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -10,9 +9,19 @@ load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_gpu_tests_tags",
 )
+load(
+    "@tsl//tsl:tsl.bzl",
+    "clean_dep",
+    "if_tsl_link_protobuf",
+)
+load(
+    "@tsl//tsl/platform/google:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 all_backends = ["cpu", "gpu"] + plugins.keys()
 
+# TODO(zacmustin): rename `xla_test` to `xla_backends_test` to avoid confusion with `xla_cc_test`.
 def xla_test(
         name,
         srcs,
@@ -144,14 +153,44 @@ def xla_test(
             for lib_dep in xla_test_library_deps:
                 backend_deps += ["%s_%s" % (lib_dep, backend)]
 
-        tf_cc_test(
+        native.cc_test(
             name = test_name,
             srcs = srcs,
             tags = tags + backend_tags.get(backend, []) + this_backend_tags,
-            extra_copts = copts + ["-DXLA_TEST_BACKEND_%s=1" % backend.upper()] +
-                          this_backend_copts,
+            copts = copts + ["-DXLA_TEST_BACKEND_%s=1" % backend.upper()] +
+                    this_backend_copts,
             args = args + this_backend_args,
-            deps = deps + backend_deps,
+            deps = deps + backend_deps + if_tsl_link_protobuf(
+                       [],
+                       [
+                           clean_dep("//google/protobuf"),
+                           # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
+                           "//xla:xla_proto_cc_impl",
+                           "//xla:xla_data_proto_cc_impl",
+                           "//xla/service:hlo_proto_cc_impl",
+                           "//xla/service/gpu:backend_configs_cc_impl",
+                           "//xla/stream_executor:dnn_proto_cc_impl",
+                           "//xla/stream_executor:stream_executor_impl",
+                           "//xla/stream_executor:device_id_utils",
+                           "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
+                           "//xla/stream_executor/gpu:gpu_init_impl",
+                           "@tsl//tsl/profiler/utils:time_utils_impl",
+                           "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
+                           "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
+                           "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
+                           "@tsl//tsl/protobuf:dnn_proto_cc_impl",
+                           "@tsl//tsl/protobuf:protos_all_cc_impl",
+                           "@tsl//tsl/platform:env_impl",
+                           "@tsl//tsl/framework:allocator",
+                           "@tsl//tsl/framework:allocator_registry_impl",
+                           "@tsl//tsl/util:determinism",
+                       ],
+                   ) +
+                   if_cuda_is_configured([
+                       "//xla/stream_executor/cuda:cuda_stream",
+                       "//xla/stream_executor/cuda:all_runtime",
+                       "//xla/stream_executor/cuda:stream_executor_cuda",
+                   ]),
             data = data + this_backend_data,
             **kwargs
         )

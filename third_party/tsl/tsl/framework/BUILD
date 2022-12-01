@@ -155,7 +155,7 @@ cc_library(
     visibility = [
         "//third_party/tensorflow/core:__subpackages__",
         "//tsl:__subpackages__",
-        "//xla/stream_executor:__subpackages__",
+        "//xla:__subpackages__",
     ],
     deps = [
         ":numeric_types",

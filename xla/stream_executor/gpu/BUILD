@@ -167,6 +167,12 @@ tsl_gpu_library(
     ],
     copts = tsl_copts(),
     linkstatic = True,
+    visibility = [
+        "//third_party/tensorflow/compiler/tf2xla:__subpackages__",
+        "//third_party/tensorflow/core/common_runtime/gpu:__subpackages__",
+        "//third_party/tensorflow/stream_executor:__subpackages__",
+        "//xla:__subpackages__",
+    ],
     deps = [
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
@@ -411,6 +417,12 @@ tsl_gpu_library(
     cuda_deps = [
         "//xla/stream_executor/cuda:cuda_activation",
         "//xla/stream_executor/cuda:cuda_platform",
+    ],
+    visibility = [
+        "//third_party/tensorflow/compiler/tf2xla:__subpackages__",
+        "//third_party/tensorflow/core/common_runtime/gpu:__subpackages__",
+        "//third_party/tensorflow/stream_executor:__subpackages__",
+        "//xla:__subpackages__",
     ],
     deps = [
         ":gpu_init_impl",
