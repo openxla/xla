@@ -35,6 +35,7 @@ filegroup(
         "cancellation.h",
         "device_type.h",
         "fixedpoint_types.h",
+        "lazy.h",
         "numeric_types.h",
         "tracking_allocator.h",
         "type_traits.h",
@@ -66,6 +67,7 @@ filegroup(
         "cancellation.cc",
         "cancellation.h",
         "fixedpoint_types.h",
+        "lazy.h",
         "metrics.cc",
         "metrics.h",
     ],
@@ -334,9 +336,8 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//tsl/lib/gtl:flatmap",
+        ":lazy",
         "//tsl/platform:errors",
-        "//tsl/platform:hash",
         "//tsl/platform:logging",
         "//tsl/platform:mutex",
         "//tsl/platform:notification",
@@ -344,6 +345,7 @@ cc_library(
         "//tsl/platform:stringpiece",
         "//tsl/platform:thread_annotations",
         "//tsl/platform:types",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
     ],
 )
@@ -358,6 +360,27 @@ tsl_cc_test(
         "//tsl/platform:env_impl",
         "//tsl/platform:notification",
         "//tsl/platform:status",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
+    name = "lazy",
+    hdrs = [
+        "lazy.h",
+    ],
+    deps = [
+        "//tsl/platform:mutex",
+    ],
+)
+
+tsl_cc_test(
+    name = "lazy_test",
+    size = "small",
+    srcs = ["lazy_test.cc"],
+    deps = [
+        ":lazy",
         "//tsl/platform:test",
         "//tsl/platform:test_main",
     ],
