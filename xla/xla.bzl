@@ -6,6 +6,10 @@ load(
     "if_tsl_link_protobuf",
 )
 load("@tsl//platform:build_config.bzl", "tsl_cc_test")
+load(
+    "//third_party/tensorflow:tensorflow.bzl",
+    "tf_copts",
+)
 
 def xla_py_proto_library(**kwargs):
     # Note: we don't currently define a proto library target for Python in OSS.
@@ -44,23 +48,39 @@ def xla_cc_binary(deps = None, **kwargs):
 
 def xla_cc_test(
         name,
+        copts = [],
         deps = [],
         **kwargs):
     tsl_cc_test(
         name = name,
+        copts = copts + tf_copts(),
         deps = deps + if_tsl_link_protobuf(
             [],
             [
-                # clean_dep("//google/protobuf"),
                 # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
                 "//xla:xla_proto_cc_impl",
                 "//xla:xla_data_proto_cc_impl",
                 "//xla/service:hlo_proto_cc_impl",
                 "//xla/service/gpu:backend_configs_cc_impl",
+                "//xla/stream_executor:device_description_proto_cc_impl",
                 "//xla/stream_executor:dnn_proto_cc_impl",
+                "//xla/stream_executor:stream_executor_impl",
+                "//xla/stream_executor/cuda:cublas_plugin",
+                "//xla/stream_executor/gpu:gpu_init_impl",
+                "//xla/stream_executor/host:host_platform",
+                "//xla/stream_executor/host:host_gpu_executor",
+                "//xla/stream_executor/host:host_platform_id",
+                "@tsl//framework:allocator",
+                "@tsl//framework:allocator_registry_impl",
+                "@tsl//platform:env_impl",
+                "@tsl//platform:tensor_float_32_utils",
                 "@tsl//profiler/utils:time_utils_impl",
+                "@tsl//profiler/backends/cpu:annotation_stack_impl",
                 "@tsl//profiler/backends/cpu:traceme_recorder_impl",
+                "@tsl//protobuf:autotuning_proto_cc_impl",
+                "@tsl//protobuf:dnn_proto_cc_impl",
                 "@tsl//protobuf:protos_all_cc_impl",
+                "@tsl//util:determinism",
             ],
         ),
         **kwargs

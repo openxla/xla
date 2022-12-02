@@ -1,4 +1,4 @@
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//xla:xla.bzl", "xla_cc_test")
 
 package_group(
     name = "friends",
@@ -67,7 +67,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "array_test",
     size = "small",
     srcs = ["array_test.cc"],
@@ -78,7 +78,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "future_test",
     size = "small",
     srcs = ["future_test.cc"],
@@ -90,7 +90,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "shape_test",
     size = "small",
     srcs = ["shape_test.cc"],
@@ -100,7 +100,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "sharding_test",
     size = "small",
     srcs = ["sharding_test.cc"],
@@ -137,7 +137,7 @@ cc_library(
     alwayslink = 1,
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "array_impl_test",
     srcs = ["array_impl_test.cc"],
     deps = [
@@ -158,7 +158,7 @@ cc_library(
     alwayslink = 1,
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "client_impl_test",
     srcs = ["client_impl_test.cc"],
     deps = [
@@ -183,7 +183,7 @@ cc_library(
     alwayslink = 1,
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "executable_impl_test",
     srcs = ["executable_impl_test.cc"],
     deps = [

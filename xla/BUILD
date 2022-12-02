@@ -1,13 +1,16 @@
 load("//tensorflow:tensorflow.default.bzl", "cc_header_only_library")
 load("@tsl//:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 load(
     "@tsl//platform:build_config.bzl",
     "tf_proto_library",
 )
 load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
-load("//xla:xla.bzl", "xla_py_proto_library")
+load(
+    "//xla:xla.bzl",
+    "xla_cc_test",
+    "xla_py_proto_library",
+)
 load(
     "@tsl//platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -115,7 +118,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "bit_cast_test",
     srcs = ["bit_cast_test.cc"],
     deps = [
@@ -149,7 +152,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "comparison_util_test",
     srcs = ["comparison_util_test.cc"],
     deps = [
@@ -225,7 +228,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "status_macros_test",
     size = "small",
     srcs = ["status_macros_test.cc"],
@@ -301,7 +304,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "util_test",
     srcs = ["util_test.cc"],
     deps = [
@@ -325,7 +328,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "permutation_util_test",
     srcs = ["permutation_util_test.cc"],
     deps = [
@@ -355,7 +358,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "iterator_util_test",
     srcs = ["iterator_util_test.cc"],
     deps = [
@@ -419,7 +422,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "shape_test",
     srcs = ["shape_test.cc"],
     deps = [
@@ -437,7 +440,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "shape_util_test",
     srcs = ["shape_util_test.cc"],
     deps = [
@@ -456,7 +459,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "primitive_util_test",
     srcs = ["primitive_util_test.cc"],
     deps = [
@@ -472,7 +475,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "layout_util_test",
     srcs = ["layout_util_test.cc"],
     deps = [
@@ -483,7 +486,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "layout_test",
     srcs = ["layout_test.cc"],
     deps = [
@@ -495,7 +498,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "index_util_test",
     srcs = ["index_util_test.cc"],
     deps = [
@@ -537,7 +540,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "literal_test",
     srcs = ["literal_test.cc"],
     deps = [
@@ -647,7 +650,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "array_test",
     srcs = ["array_test.cc"],
     deps = [
@@ -670,7 +673,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "array2d_test",
     srcs = ["array2d_test.cc"],
     deps = [
@@ -691,7 +694,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "array3d_test",
     srcs = ["array3d_test.cc"],
     deps = [
@@ -716,7 +719,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "array4d_test",
     srcs = ["array4d_test.cc"],
     deps = [
@@ -792,7 +795,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "text_literal_reader_test",
     srcs = ["text_literal_reader_test.cc"],
     deps = [
@@ -825,7 +828,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "text_literal_writer_test",
     srcs = ["text_literal_writer_test.cc"],
     deps = [
@@ -861,7 +864,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "shape_tree_test",
     srcs = ["shape_tree_test.cc"],
     deps = [
@@ -907,7 +910,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "window_util_test",
     srcs = ["window_util_test.cc"],
     deps = [
@@ -943,7 +946,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "reference_util_test",
     srcs = ["reference_util_test.cc"],
     deps = [
@@ -978,7 +981,7 @@ cc_library(
         ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "parse_flags_from_env_test",
     srcs = ["parse_flags_from_env_test.cc"],
     deps =
@@ -986,7 +989,7 @@ tf_cc_test(
             ":parse_flags_from_env",
             "@com_google_absl//absl/strings:str_format",
             "@tsl//platform:env",
-            "@tsl//platform:env_impl",
+            # "@tsl//platform:env_impl",
             "@tsl//platform:logging",
             "@tsl//platform:subprocess",
             "@tsl//platform:test",
@@ -1028,7 +1031,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "debug_options_parsers_test",
     size = "small",
     srcs = [
@@ -1059,7 +1062,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "refcounting_hash_map_test",
     srcs = ["refcounting_hash_map_test.cc"],
     deps = [

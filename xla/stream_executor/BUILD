@@ -784,9 +784,9 @@ xla_cc_test(
     srcs = ["stream_test.cc"],
     deps = [
         ":stream_executor",
-        ":stream_executor_impl",
+        # ":stream_executor_impl",
         "//xla/stream_executor/host:host_platform",
-        "@tsl//platform:env_impl",
+        # "@tsl//platform:env_impl",
         "@tsl//platform:test",
         "@tsl//platform:test_main",
     ],
@@ -798,8 +798,8 @@ xla_cc_test(
     srcs = ["dnn_test.cc"],
     deps = [
         ":dnn",
-        ":stream_executor_impl",
-        "@tsl//platform:env_impl",
+        # ":stream_executor_impl",
+        # "@tsl//platform:env_impl",
         "@tsl//platform:test",
         "@tsl//platform:test_main",
     ],

@@ -2,7 +2,7 @@ load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("@tsl//:tsl.bzl", "if_nccl")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -107,7 +107,7 @@ cc_library(
     ] + if_nccl(["@local_config_nccl//:nccl"]),
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "pjrt_client_test_se_gpu",
     srcs = ["pjrt_client_test_se_gpu.cc"],
     tags = [
