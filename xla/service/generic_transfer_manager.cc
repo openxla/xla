@@ -71,7 +71,7 @@ void GenericTransferManager::TransferLiteralFromDevice(
     TF_RET_CHECK(stream->parent()->device_ordinal() ==
                  device_buffer.device_ordinal());
 
-    TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
+    return ShapeUtil::ForEachSubshapeWithStatus(
         device_buffer.on_device_shape(),
         [&](const Shape& subshape, const ShapeIndex& index) -> Status {
           if (subshape.IsArray()) {
@@ -86,8 +86,7 @@ void GenericTransferManager::TransferLiteralFromDevice(
                 /*destination=*/literal.untyped_data(index)));
           }
           return OkStatus();
-        }));
-    return OkStatus();
+        });
   }();
 
   if (!status.ok()) {
@@ -95,20 +94,23 @@ void GenericTransferManager::TransferLiteralFromDevice(
     return;
   }
 
+  auto callback = [done = std::move(done), stream] {
+    done(stream->ok() ? OkStatus()
+                      : InternalError("`TransferLiteralFromDevice` failed"));
+  };
+
   // CUDA callbacks are tricky as we cannot call any CUDA driver functions from
   // within a host callback. As a result, `TransferLiteralFromDevice` must be
-  // very conservative, and is synchronous by default. However, if the user
-  // declares, via the metadata, that their callback is safe to call from a host
-  // callback, we enqueue it and return immediately.
+  // conservative, and launch the callback in another thread. However, if the
+  // user declares, via the metadata, that their callback is safe to call from a
+  // host callback, we will do so, reducing the overhead.
   if ((transfer_metadata != nullptr) &&
       tensorflow::down_cast<const LiteralFromDeviceMetadata*>(transfer_metadata)
           ->callback_is_host_callback_safe) {
-    stream->ThenDoHostCallback([done = std::move(done), stream] {
-      done(stream->ok() ? OkStatus()
-                        : InternalError("`TransferLiteralFromDevice` failed"));
-    });
+    stream->ThenDoHostCallback(std::move(callback));
   } else {
-    done(stream->BlockHostUntilDone());
+    stream->ThenEnqueueOnBackgroundThread(
+        [cb = std::move(callback)](se::StreamExecutor*) { cb(); });
   }
 }
 
