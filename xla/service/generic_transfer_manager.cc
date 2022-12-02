@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/generic_transfer_manager.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -45,17 +46,16 @@ Status GenericTransferManager::WriteSingleTupleIndexTable(
     const Shape& shape, se::DeviceMemoryBase* region) {
   TF_RET_CHECK(elements.size() == ShapeUtil::TupleElementCount(shape));
 
-  auto element_pointers = std::make_shared<std::vector<const void*>>();
-  element_pointers->reserve(elements.size());
+  std::vector<const void*> element_pointers;
+  element_pointers.reserve(elements.size());
   for (const se::DeviceMemoryBase& element : elements) {
-    element_pointers->push_back(element.opaque());
+    element_pointers.push_back(element.opaque());
   }
+
   TF_RETURN_IF_ERROR(TransferBufferToDevice(
-      stream, GetByteSizeRequirement(shape), element_pointers->data(), region));
+      stream, GetByteSizeRequirement(shape), element_pointers.data(), region));
   // Ensure the buffer is transferred before we destroy element_pointers.
-  stream->ThenDoHostCallback([element_pointers{std::move(element_pointers)}]() {
-    /* holds reference to element_pointers in closure */
-  });
+  stream->ThenDoHostCallback([keep_alive = std::move(element_pointers)] {});
   return OkStatus();
 }
 
@@ -142,10 +142,9 @@ Status GenericTransferManager::TransferLiteralToDeviceAsync(
                                           /*destination=*/&device_memory);
           } else {
             // Relayout data before transferring.
-            auto relaid_out = std::make_shared<Literal>(
-                subliteral.Relayout(device_subshape.layout()));
+            Literal relaid_out = subliteral.Relayout(device_subshape.layout());
             TF_RETURN_IF_ERROR(TransferBufferToDevice(
-                stream, size, /*source=*/relaid_out->untyped_data(),
+                stream, size, /*source=*/relaid_out.untyped_data(),
                 /*destination=*/&device_memory));
             // Ensure the buffer is transferred before we destroy it.
             stream->ThenDoHostCallback([keep_alive = std::move(relaid_out)] {});

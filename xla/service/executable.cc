@@ -266,7 +266,8 @@ Status ExecuteWrapperAfterExecution(
     const se::DeviceDescription* device_description =
         &stream->parent()->GetDeviceDescription();
     std::shared_ptr<HloExecutionProfile> profile = state.profile_ptr;
-    stream->ThenDoHostCallback([profile, device_description]() {
+    stream->ThenDoHostCallback([profile = std::move(profile),
+                                device_description] {
       XLA_LOG_LINES(tsl::INFO,
                     profile->ToString(device_description->clock_rate_ghz()));
     });
