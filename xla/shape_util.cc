@@ -216,14 +216,18 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
   const int ndims = dimensions.size();
   auto layout = shape->mutable_layout();
   auto* minor_to_major = layout->mutable_minor_to_major();
+  auto is_unbounded_dynamic = absl::c_any_of(
+      dimensions, [](int64_t dim) { return dim == Shape::kUnboundedSize; });
   for (int i = 0; i < ndims; i++) {
     const int64_t d = dimensions[i];
-    if (d < 0) {
+    if (d < 0 && d != Shape::kUnboundedSize) {
       return false;
     }
-    dense_shape_size = MultiplyWithoutOverflow(dense_shape_size, d);
-    if (dense_shape_size < 0) {
-      return false;
+    if (!is_unbounded_dynamic) {
+      dense_shape_size = MultiplyWithoutOverflow(dense_shape_size, d);
+      if (dense_shape_size < 0) {
+        return false;
+      }
     }
 
     shape->add_dimensions(d);
@@ -667,7 +671,11 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   dim_elements.reserve(dimensions_size);
   for (int i = 0; i < dimensions_size; ++i) {
     if (shape.is_dynamic_dimension(i)) {
-      dim_elements.push_back(StrCat("<=", shape.dimensions(i)));
+      if (shape.dimensions(i) != Shape::kUnboundedSize) {
+        dim_elements.push_back(StrCat("<=", shape.dimensions(i)));
+      } else {
+        dim_elements.push_back("?");
+      }
     } else {
       dim_elements.push_back(StrCat(shape.dimensions(i)));
     }
@@ -907,7 +915,7 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
   for (int64_t i = 0; i < shape.rank(); ++i) {
     int64_t dimension = shape.dimensions(i);
-    if (dimension < 0) {
+    if (dimension < 0 && dimension != Shape::kUnboundedSize) {
       return InvalidArgument(
           "shape's dimensions must not be < 0; dimension at index %d was %d", i,
           dimension);
@@ -922,6 +930,10 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   VLOG(3) << "Validating shape size: " << ShapeUtil::HumanString(shape);
 
   if (!shape.IsArray()) {
+    return OkStatus();
+  }
+
+  if (shape.is_unbounded_dynamic()) {
     return OkStatus();
   }
 

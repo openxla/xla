@@ -152,6 +152,11 @@ Status ShapeVerifier::Preprocess(HloInstruction* hlo) {
   if (arity) {
     TF_RETURN_IF_ERROR(CheckOperandCount(hlo, *arity));
   }
+  if (hlo->shape().is_unbounded_dynamic()) {
+    return InvalidArgument(
+        "Unbounded dynamism not supported for instruction: %s",
+        hlo->ToString());
+  }
   return OkStatus();
 }
 

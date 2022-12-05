@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SHAPE_H_
 #define TENSORFLOW_COMPILER_XLA_SHAPE_H_
 
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -81,6 +82,17 @@ class Shape {
   bool is_static() const;
 
   bool is_dynamic() const { return !is_static(); }
+
+  // Unbounded dynamism.
+  // If `dimensions(axis) == kUnboundedSize && is_dynamic_dimension(axis)`,
+  // this means that the axis has unbounded dynamic size.
+  // The sentinel value for kUnboundedSize is chosen to be exactly the same
+  // as the sentinel value mlir::ShapedType::kDynamic.
+  static constexpr int64_t kUnboundedSize = std::numeric_limits<int64_t>::min();
+
+  // Returns true if the shape has one or more dimensions with unbounded sizes.
+  // Tuple shapes are traversed recursively.
+  bool is_unbounded_dynamic() const;
 
   // Returns true if the given dimension is dynamically-sized.
   bool is_dynamic_dimension(int dimension) const {

@@ -2204,3 +2204,17 @@ func.func @main(%arg0: tensor<2x3xf32>, %arg1: tensor<5x5xf32>) -> tensor<1x2x3x
 // CHECK-SAME:  custom_call_has_side_effect=true
 // CHECK-SAME:  api_version=API_VERSION_TYPED_FFI
 // CHECK-SAME:  backend_config="{user_attr0 = 123 : i32, user_attr1 = dense<42> : tensor<i32>}"
+
+// -----
+
+func.func @main(%operand: tensor<?x784xf32>) -> tensor<?x784xf32> {
+  %0 = mhlo.abs %operand : tensor<?x784xf32>
+  func.return %0 : tensor<?x784xf32>
+}
+
+//       CHECK: HloModule {{.*}}, entry_computation_layout={(f32[?,784]{1,0})->f32[?,784]{1,0}}
+// CHECK-EMPTY:
+//  CHECK-NEXT: ENTRY {{.*}} ([[ARG0:.*]]: f32[?,784]) -> f32[?,784] {
+//  CHECK-NEXT:   [[ARG0]] = f32[?,784] parameter(0)
+//  CHECK-NEXT:   ROOT {{.*}} = f32[?,784] abs(f32[?,784] %Arg_0.1), {{.*}}
+//  CHECK-NEXT: }
