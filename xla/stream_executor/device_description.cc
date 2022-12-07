@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_description.h"
 
 #include <algorithm>
 #include <cstdint>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/human_readable.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/mathutil.h"
+#include "xla/stream_executor/lib/human_readable.h"
+#include "xla/stream_executor/lib/mathutil.h"
 
 namespace stream_executor {
 

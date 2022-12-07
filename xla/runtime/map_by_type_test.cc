@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/map_by_type.h"
+#include "xla/runtime/map_by_type.h"
 
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/platform/test_benchmark.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

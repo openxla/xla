@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/dot_op_emitter.h"
+#include "xla/service/cpu/dot_op_emitter.h"
 
 #include <memory>
 #include <vector>
@@ -33,25 +33,25 @@ limitations under the License.
 #include "mlir/IR/OperationSupport.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/service/cpu/backend_config.pb.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_options.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
-#include "tensorflow/compiler/xla/service/cpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/cpu/mlir_emitter.h"
-#include "tensorflow/compiler/xla/service/cpu/target_machine_features.h"
-#include "tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.h"
-#include "tensorflow/compiler/xla/service/cpu/vector_support_library.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/kernel_support_library.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/primitive_util.h"
+#include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/cpu/cpu_options.h"
+#include "xla/service/cpu/cpu_runtime.h"
+#include "xla/service/cpu/ir_emission_utils.h"
+#include "xla/service/cpu/mlir_emitter.h"
+#include "xla/service/cpu/target_machine_features.h"
+#include "xla/service/cpu/tiled_dot_emitter.h"
+#include "xla/service/cpu/vector_support_library.h"
+#include "xla/service/llvm_ir/kernel_support_library.h"
+#include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

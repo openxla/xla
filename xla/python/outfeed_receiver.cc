@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/outfeed_receiver.h"
+#include "xla/python/outfeed_receiver.h"
 
 #include <sys/types.h>
 
@@ -23,12 +23,12 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/client/sharding_builder.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/client/sharding_builder.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/util.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 // Implementation notes:
 //

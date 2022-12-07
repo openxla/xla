@@ -19,17 +19,17 @@ limitations under the License.
 
 #include "absl/strings/str_replace.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/blocking_counter.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/literal.h"
+#include "xla/primitive_util.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/tests/test_macros.h"
+#include "xla/tests/test_utils.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/blocking_counter.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 // Tests cross-GPU operations.
 //

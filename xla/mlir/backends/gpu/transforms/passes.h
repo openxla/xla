@@ -31,7 +31,7 @@ namespace gpu {
 #define GEN_PASS_DECL_CONVERTLMHLOTOGPURUNTIMEPASS
 #define GEN_PASS_DECL_CONVERTMEMREFGETGLOBALTOARGPASS
 #define GEN_PASS_DECL_CONVERTLAUNCHFUNCTOCUDAGRAPHPASS
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/passes.h.inc"
+#include "xla/mlir/backends/gpu/transforms/passes.h.inc"
 
 class ThunkSequence;  // forward declare
 
@@ -100,7 +100,7 @@ createConvertLaunchFuncToCudaGraphPass();
 //===-----------------------------------------------------------------------===/
 
 #define GEN_PASS_REGISTRATION
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/passes.h.inc"
+#include "xla/mlir/backends/gpu/transforms/passes.h.inc"
 
 }  // namespace gpu
 }  // namespace xla

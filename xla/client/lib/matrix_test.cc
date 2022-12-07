@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/matrix.h"
+#include "xla/client/lib/matrix.h"
 
 #include <limits>
 #include <map>
@@ -21,15 +21,15 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/client/lib/constants.h"
-#include "tensorflow/compiler/xla/client/lib/slicing.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/client/lib/constants.h"
+#include "xla/client/lib/slicing.h"
+#include "xla/client/xla_builder.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/test.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/test_macros.h"
+#include "xla/types.h"
 
 namespace xla {
 namespace {

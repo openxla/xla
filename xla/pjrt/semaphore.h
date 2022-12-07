@@ -17,7 +17,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_PJRT_SEMAPHORE_H_
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/types.h"
 
 namespace xla {
 

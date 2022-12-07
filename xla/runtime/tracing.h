@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <string_view>
 
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/type_id.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/type_id.h"
 
 namespace xla {
 namespace runtime {

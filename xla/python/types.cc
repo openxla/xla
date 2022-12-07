@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/types.h"
+#include "xla/python/types.h"
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/python/exceptions.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/python/lib/core/bfloat16.h"
+#include "xla/python/exceptions.h"
+#include "xla/status_macros.h"
+#include "third_party/tensorflow/python/lib/core/bfloat16.h"
 
 namespace xla {
 

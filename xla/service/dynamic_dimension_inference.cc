@@ -13,29 +13,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/dynamic_dimension_inference.h"
+#include "xla/service/dynamic_dimension_inference.h"
 
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/match.h"
-#include "tensorflow/compiler/xla/hlo/ir/dfs_hlo_visitor_with_default.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/dynamic_window_utils.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
-#include "tensorflow/compiler/xla/service/tuple_util.h"
-#include "tensorflow/compiler/xla/service/while_util.h"
-#include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/window_util.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/literal_util.h"
+#include "xla/service/dynamic_window_utils.h"
+#include "xla/service/hlo_creation_utils.h"
+#include "xla/service/tuple_util.h"
+#include "xla/service/while_util.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
+#include "xla/window_util.h"
+#include "third_party/tsl/platform/status.h"
 namespace xla {
 
 namespace {

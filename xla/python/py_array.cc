@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/py_array.h"
+#include "xla/python/py_array.h"
 
 #include <memory>
 #include <new>
@@ -27,13 +27,13 @@ limitations under the License.
 #endif
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array.h"
 #endif
-#include "tensorflow/compiler/xla/python/python_utils.h"
-#include "tensorflow/compiler/xla/python/status_casters.h"
-#include "tensorflow/compiler/xla/python/util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/python/python_utils.h"
+#include "xla/python/status_casters.h"
+#include "xla/python/util.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

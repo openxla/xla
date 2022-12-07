@@ -17,13 +17,13 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_RUNTIME_CUBLAS_LT_MATMUL_H_
 
 #include "absl/container/node_hash_map.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/custom_call_registry.h"
 
 #if GOOGLE_CUDA
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas_lt.h"
+#include "xla/service/gpu/matmul_utils.h"
+#include "xla/stream_executor/cuda/cuda_blas_lt.h"
 #endif  // GOOGLE_CUDA
 
 namespace xla {

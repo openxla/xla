@@ -17,8 +17,8 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_SOURCE_MAP_UTIL_H_
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/service/executable.h"
+#include "xla/status.h"
 
 namespace xla {
 namespace source_map_util {

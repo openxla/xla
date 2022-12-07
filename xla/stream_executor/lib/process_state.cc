@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/lib/process_state.h"
+#include "xla/stream_executor/lib/process_state.h"
 
 #if defined(PLATFORM_WINDOWS)
 #include <direct.h>

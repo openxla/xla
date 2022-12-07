@@ -1,12 +1,12 @@
 # Description:
 #   Host-platform specific StreamExecutor support code.
 
-load("//tensorflow/compiler/xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.bzl", "xla_cc_test")
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/compiler/xla/stream_executor:build_defs.bzl", "stream_executor_friends")
+load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )
@@ -25,7 +25,7 @@ cc_library(
         "host_platform_id.h",
     ],
     deps = [
-        "//tensorflow/compiler/xla/stream_executor:platform",
+        "//xla/stream_executor:platform",
     ],
 )
 
@@ -41,11 +41,11 @@ cc_library(
     deps = [
         ":host_gpu_executor",
         ":host_platform_id",
-        "//tensorflow/compiler/xla/stream_executor:executor_cache",
-        "//tensorflow/compiler/xla/stream_executor:multi_platform_manager",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor:executor_cache",
+        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
@@ -62,10 +62,10 @@ cc_library(
         "host_stream.h",
     ],
     deps = [
-        "//tensorflow/compiler/xla/stream_executor:kernel",
-        "//tensorflow/compiler/xla/stream_executor/lib",
         "//tensorflow/tsl/platform:denormal",
         "//tensorflow/tsl/platform:setround",
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor/lib",
         "@com_google_absl//absl/synchronization",
     ],
 )
@@ -79,9 +79,9 @@ cc_library(
         "host_timer.h",
     ],
     deps = [
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_internal",
-        "//tensorflow/compiler/xla/stream_executor:timer",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor:stream_executor_internal",
+        "//xla/stream_executor:timer",
+        "//xla/stream_executor/platform",
     ],
 )
 
@@ -98,15 +98,15 @@ cc_library(
         ":host_platform_id",
         ":host_stream",
         ":host_timer",
-        "//tensorflow/compiler/xla/stream_executor",
-        "//tensorflow/compiler/xla/stream_executor:kernel",
-        "//tensorflow/compiler/xla/stream_executor:rng",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_internal",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_pimpl",
-        "//tensorflow/compiler/xla/stream_executor:timer",
-        "//tensorflow/compiler/xla/stream_executor/lib",
         "//tensorflow/tsl/platform:platform_port",
         "//tensorflow/tsl/platform/profile_utils:profile_utils_cpu_utils",
+        "//xla/stream_executor",
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:rng",
+        "//xla/stream_executor:stream_executor_internal",
+        "//xla/stream_executor:stream_executor_pimpl",
+        "//xla/stream_executor:timer",
+        "//xla/stream_executor/lib",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
     ],
@@ -118,15 +118,15 @@ xla_cc_test(
     srcs = ["host_stream_test.cc"],
     deps = [
         ":host_platform",
-        "//tensorflow/compiler/xla/stream_executor",
-        "//tensorflow/compiler/xla/stream_executor:multi_platform_manager",
-        "//tensorflow/compiler/xla/stream_executor:platform",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_impl",
         "//tensorflow/tsl/lib/core:status_test_util",
         "//tensorflow/tsl/platform:env_impl",
         "//tensorflow/tsl/platform:errors",
         "//tensorflow/tsl/platform:test",
         "//tensorflow/tsl/platform:test_main",
+        "//xla/stream_executor",
+        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_impl",
         "@com_google_absl//absl/synchronization",
     ],
 )

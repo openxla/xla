@@ -19,8 +19,8 @@ limitations under the License.
 #include <string>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/lib/gtl/int_type.h"
+#include "xla/types.h"
+#include "third_party/tsl/lib/gtl/int_type.h"
 
 namespace xla {
 

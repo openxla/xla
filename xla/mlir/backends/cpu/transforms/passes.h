@@ -41,7 +41,7 @@ createLegalizeCollectiveOpsPass();
 //===-----------------------------------------------------------------------===/
 
 #define GEN_PASS_REGISTRATION
-#include "tensorflow/compiler/xla/mlir/backends/cpu/transforms/passes.h.inc"
+#include "xla/mlir/backends/cpu/transforms/passes.h.inc"
 
 }  // namespace cpu
 }  // namespace xla

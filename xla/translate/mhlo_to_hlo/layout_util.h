@@ -21,11 +21,11 @@ limitations under the License.
 #include <functional>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/client/xla_builder.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/shape.h"
+#include "xla/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace mlir {
 

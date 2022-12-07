@@ -2,9 +2,9 @@ load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "//tensorflow:internal",
+        "//third_party/tensorflow:internal",
     ],
     licenses = ["notice"],
 )

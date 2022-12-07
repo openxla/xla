@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/utils.h"
+#include "xla/service/gpu/llvm_gpu_backend/utils.h"
 
 #include <string>
 
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/resource_loader.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/resource_loader.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

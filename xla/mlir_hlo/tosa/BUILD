@@ -3,10 +3,10 @@ load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
         ":internal",
-        "//tensorflow/compiler/xla/mlir_hlo/tosa:__subpackages__",
+        "//xla/mlir_hlo/tosa:__subpackages__",
     ],
     licenses = ["notice"],
 )
@@ -27,7 +27,7 @@ gentbl_cc_library(
     tblgen = "@llvm-project//mlir:mlir-pdll",
     td_file = "lib/Transforms/legalize_mhlo.pdll",
     deps = [
-        "//tensorflow/compiler/xla/mlir_hlo:hlo_ops_td_files",
+        "//xla/mlir_hlo:hlo_ops_td_files",
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:TosaDialectTdFiles",
     ],
@@ -65,7 +65,7 @@ cc_library(
     deps = [
         ":MHLOTOSAPDLLPatternsIncGen",
         ":MHLOTOSATransformsPassIncGen",
-        "//tensorflow/compiler/xla/mlir_hlo",
+        "//xla/mlir_hlo",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
@@ -81,7 +81,7 @@ cc_binary(
     srcs = ["mhlo_tosa_opt.cc"],
     deps = [
         ":MHLOTOSATransforms",
-        "//tensorflow/compiler/xla/mlir_hlo:hlo_dialect_registration",
+        "//xla/mlir_hlo:hlo_dialect_registration",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:IR",

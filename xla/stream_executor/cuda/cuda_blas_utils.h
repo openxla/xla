@@ -19,9 +19,9 @@ limitations under the License.
 #include <string>
 
 #include "third_party/gpus/cuda/include/cublas_v2.h"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/lib/status.h"
+#include "third_party/tsl/platform/errors.h"
 
 #define SE_CUBLAS_RETURN_IF_ERROR(expr) \
   TF_RETURN_IF_ERROR(::stream_executor::cuda::ToStatus(expr, #expr))

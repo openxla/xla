@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
+#include "xla/service/hlo_parser.h"
 
 #include <cmath>
 #include <complex>
@@ -41,24 +41,24 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_domain_metadata.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_input_output_alias_config.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_schedule.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding_metadata.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/service/computation_layout.h"
-#include "tensorflow/compiler/xla/service/hlo_lexer.h"
-#include "tensorflow/compiler/xla/service/shape_inference.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/lib/gtl/map_util.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_domain_metadata.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/primitive_util.h"
+#include "xla/service/computation_layout.h"
+#include "xla/service/hlo_lexer.h"
+#include "xla/service/shape_inference.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/lib/gtl/map_util.h"
 
 namespace xla {
 

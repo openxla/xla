@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/execution_tracker.h"
+#include "xla/service/execution_tracker.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

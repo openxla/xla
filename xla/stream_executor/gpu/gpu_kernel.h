@@ -22,11 +22,11 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_KERNEL_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_KERNEL_H_
 
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_driver.h"
-#include "tensorflow/compiler/xla/stream_executor/kernel_cache_config.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/gpu/gpu_driver.h"
+#include "xla/stream_executor/kernel_cache_config.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/stream_executor_internal.h"
 
 namespace stream_executor {
 namespace gpu {

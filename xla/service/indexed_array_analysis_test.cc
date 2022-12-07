@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/indexed_array_analysis.h"
+#include "xla/service/indexed_array_analysis.h"
 
 #include "absl/strings/ascii.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_utils.h"
 
 namespace xla {
 namespace {

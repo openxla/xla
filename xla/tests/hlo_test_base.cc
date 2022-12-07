@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/tests/hlo_test_base.h"
 
 #include <functional>
 #include <memory>
@@ -24,24 +24,24 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/service/hlo_module_util.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/hlo_runner_interface.h"
-#include "tensorflow/compiler/xla/service/hlo_runner_pjrt.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/tests/filecheck.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/tests/pjrt_client_registry.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
-#include "tensorflow/compiler/xla/tests/verified_hlo_module.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/debug_options_flags.h"
+#include "xla/layout_util.h"
+#include "xla/service/hlo_module_util.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/hlo_runner_interface.h"
+#include "xla/service/hlo_runner_pjrt.h"
+#include "xla/service/platform_util.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/tests/filecheck.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/tests/pjrt_client_registry.h"
+#include "xla/tests/test_utils.h"
+#include "xla/tests/verified_hlo_module.h"
+#include "xla/types.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 

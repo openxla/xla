@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/type_converter.h"
+#include "xla/mlir/runtime/transforms/type_converter.h"
 
 #include <iterator>
 #include <memory>
@@ -27,7 +27,7 @@ limitations under the License.
 #include "mlir/Dialect/Async/IR/AsyncTypes.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_dialect.h"
+#include "xla/mlir/runtime/ir/rt_dialect.h"
 
 namespace xla {
 namespace runtime {

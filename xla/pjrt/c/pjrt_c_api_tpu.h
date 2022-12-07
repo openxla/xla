@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_PJRT_C_PJRT_C_API_TPU_H_
 #define TENSORFLOW_COMPILER_XLA_PJRT_C_PJRT_C_API_TPU_H_
 
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api.h"
 
 #ifdef __cplusplus
 extern "C" {

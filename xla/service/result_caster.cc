@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/result_caster.h"
+#include "xla/service/result_caster.h"
 
-#include "tensorflow/compiler/xla/service/shape_inference.h"
+#include "xla/service/shape_inference.h"
 
 namespace xla {
 namespace {

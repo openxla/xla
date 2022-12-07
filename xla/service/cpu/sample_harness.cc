@@ -18,19 +18,19 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/array4d.h"
-#include "tensorflow/compiler/xla/client/client.h"
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/client/global_data.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/array4d.h"
+#include "xla/client/client.h"
+#include "xla/client/client_library.h"
+#include "xla/client/global_data.h"
+#include "xla/client/local_client.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
+#include "xla/literal.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
 
 int main(int argc, char** argv) {
   tsl::port::InitMain(argv[0], &argc, &argv);

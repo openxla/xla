@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <vector>
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/protobuf/autotuning.pb.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {

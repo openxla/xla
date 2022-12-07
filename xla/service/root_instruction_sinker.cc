@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/root_instruction_sinker.h"
+#include "xla/service/root_instruction_sinker.h"
 
-#include "tensorflow/compiler/xla/service/tuple_util.h"
+#include "xla/service/tuple_util.h"
 namespace xla {
 
 namespace {

@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/move_copy_to_users.h"
+#include "xla/service/gpu/move_copy_to_users.h"
 
 #include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/hlo/ir/dfs_hlo_visitor_with_default.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/hlo_creation_utils.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

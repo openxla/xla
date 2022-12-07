@@ -16,10 +16,10 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_STATUS_HELPER_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_STATUS_HELPER_H_
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor_c_api.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/protobuf/error_codes.pb.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_executor_c_api.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/protobuf/error_codes.pb.h"
 
 class StatusHelper {
  public:

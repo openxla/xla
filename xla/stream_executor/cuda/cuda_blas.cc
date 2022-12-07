@@ -18,7 +18,7 @@ limitations under the License.
 
 #define SE_CUDA_DATA_HALF CUDA_R_16F
 
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas.h"
+#include "xla/stream_executor/cuda/cuda_blas.h"
 
 // Both Eigen Half.h and CUDA cuda_fp16.h provide similar typedef for __half. As
 // such, there are two ways to get the typedef for __half:
@@ -50,27 +50,27 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "third_party/eigen3/Eigen/Core"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_activation.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas_utils.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_helpers.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_timer.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_helpers.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_timer.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_types.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/initialize.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/platform/tensor_float_32_utils.h"
+#include "xla/stream_executor/cuda/cuda_activation.h"
+#include "xla/stream_executor/cuda/cuda_blas_utils.h"
+#include "xla/stream_executor/cuda/cuda_gpu_executor.h"
+#include "xla/stream_executor/cuda/cuda_helpers.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/cuda/cuda_stream.h"
+#include "xla/stream_executor/cuda/cuda_timer.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/gpu/gpu_helpers.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_timer.h"
+#include "xla/stream_executor/gpu/gpu_types.h"
+#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/platform/tensor_float_32_utils.h"
 
 namespace stream_executor {
 namespace cuda {

@@ -18,17 +18,17 @@ limitations under the License.
 
 #include <optional>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
-#include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-#include "tensorflow/compiler/xla/service/gpu/cusolver_context.h"
-#include "tensorflow/compiler/xla/service/gpu/thunk.h"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_asm_opts.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/cusolver_context.h"
+#include "xla/service/gpu/thunk.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

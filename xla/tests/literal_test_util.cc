@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
+#include "xla/tests/literal_test_util.h"
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/literal_comparison.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/literal_comparison.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 

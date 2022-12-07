@@ -22,13 +22,13 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/array2d.h"
-#include "tensorflow/compiler/xla/service/global_device_id.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/array2d.h"
+#include "xla/service/global_device_id.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 

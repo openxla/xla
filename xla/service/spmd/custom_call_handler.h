@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 
 namespace xla {
 namespace spmd {

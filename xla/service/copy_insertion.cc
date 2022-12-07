@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/copy_insertion.h"
+#include "xla/service/copy_insertion.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -27,24 +27,24 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/any.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/compile_time_cap.h"
-#include "tensorflow/compiler/xla/service/dump.h"
-#include "tensorflow/compiler/xla/service/hlo_alias_analysis.h"
-#include "tensorflow/compiler/xla/service/hlo_buffer.h"
-#include "tensorflow/compiler/xla/service/hlo_dce.h"
-#include "tensorflow/compiler/xla/service/hlo_graph_dumper.h"
-#include "tensorflow/compiler/xla/service/hlo_ordering.h"
-#include "tensorflow/compiler/xla/service/logical_buffer.h"
-#include "tensorflow/compiler/xla/service/tuple_simplifier.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/compile_time_cap.h"
+#include "xla/service/dump.h"
+#include "xla/service/hlo_alias_analysis.h"
+#include "xla/service/hlo_buffer.h"
+#include "xla/service/hlo_dce.h"
+#include "xla/service/hlo_graph_dumper.h"
+#include "xla/service/hlo_ordering.h"
+#include "xla/service/logical_buffer.h"
+#include "xla/service/tuple_simplifier.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace {

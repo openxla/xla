@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 
 namespace xla {
 namespace gpu {

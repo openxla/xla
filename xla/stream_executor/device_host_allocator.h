@@ -18,10 +18,10 @@ limitations under the License.
 
 #include <vector>
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/framework/allocator.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/framework/allocator.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace stream_executor {
 // Allocator for pinned CPU RAM that is made known to a StreamExecutor-based

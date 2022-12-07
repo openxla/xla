@@ -21,7 +21,7 @@ limitations under the License.
 #include <limits>
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 namespace port {

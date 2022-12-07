@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/permutation_util.h"
+#include "xla/permutation_util.h"
 
-#include "tensorflow/compiler/xla/test.h"
+#include "xla/test.h"
 
 namespace xla {
 namespace {

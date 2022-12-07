@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/buffer_comparator.h"
+#include "xla/service/gpu/buffer_comparator.h"
 
 #include <algorithm>
 #include <cmath>
@@ -21,16 +21,16 @@ limitations under the License.
 
 #include "absl/base/call_once.h"
 #include "absl/strings/str_replace.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
-#include "tensorflow/compiler/xla/service/gpu/launch_dimensions.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/asm_compiler.h"
-#include "tensorflow/compiler/xla/stream_executor/kernel.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_pimpl.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/service/gpu/gpu_asm_opts_util.h"
+#include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {

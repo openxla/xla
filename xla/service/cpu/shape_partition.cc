@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/shape_partition.h"
+#include "xla/service/cpu/shape_partition.h"
 
 namespace xla {
 namespace cpu {

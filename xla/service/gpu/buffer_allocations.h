@@ -23,10 +23,10 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {

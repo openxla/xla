@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/target_util.h"
+#include "xla/service/gpu/target_util.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Verifier.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

@@ -12,15 +12,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/service/xla_debug_info_manager.h"
+#include "xla/service/xla_debug_info_manager.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 

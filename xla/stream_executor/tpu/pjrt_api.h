@@ -17,9 +17,9 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_PJRT_API_H_
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 
 namespace stream_executor {
 namespace tpu {

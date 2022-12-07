@@ -28,11 +28,11 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/tsl/lib/gtl/iterator_range.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "third_party/tsl/lib/gtl/iterator_range.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 

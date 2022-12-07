@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <chrono>
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/stream_executor_internal.h"
 
 namespace stream_executor {
 namespace host {

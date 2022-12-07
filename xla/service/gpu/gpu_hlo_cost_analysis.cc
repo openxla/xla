@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/gpu_hlo_cost_analysis.h"
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/elemental_ir_emitter.h"
-#include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/elemental_ir_emitter.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 
 namespace xla {
 namespace gpu {

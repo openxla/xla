@@ -18,10 +18,10 @@ limitations under the License.
 
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/shape.h"
+#include "xla/status_macros.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

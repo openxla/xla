@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_HLO_XLA_RUNTIME_PIPELINE_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_HLO_XLA_RUNTIME_PIPELINE_H_
 
-#include "tensorflow/compiler/xla/runtime/compiler.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/runtime/compiler.h"
+#include "xla/status.h"
 
 namespace mlir {
 class DialectRegistry;

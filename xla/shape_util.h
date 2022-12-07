@@ -33,13 +33,13 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/cpu_info.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/layout_util.h"
+#include "xla/primitive_util.h"
+#include "xla/shape.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/cpu_info.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 namespace xla {
 

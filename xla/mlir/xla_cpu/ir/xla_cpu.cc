@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu.h"
+#include "xla/mlir/xla_cpu/ir/xla_cpu.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu_dialect.cc.inc"
-#include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu_enums.cc.inc"
+#include "xla/mlir/xla_cpu/ir/xla_cpu_dialect.cc.inc"
+#include "xla/mlir/xla_cpu/ir/xla_cpu_enums.cc.inc"
 #define GET_ATTRDEF_CLASSES
-#include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu_attrdefs.cc.inc"
+#include "xla/mlir/xla_cpu/ir/xla_cpu_attrdefs.cc.inc"
 
 namespace mlir {
 namespace xla_cpu {
@@ -31,7 +31,7 @@ namespace xla_cpu {
 void XlaCpuDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
-#include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu.cc.inc"
+#include "xla/mlir/xla_cpu/ir/xla_cpu.cc.inc"
 #undef GET_OP_LIST
       >();
 }
@@ -117,4 +117,4 @@ LogicalResult OutfeedOp::bufferize(
 }  // namespace mlir
 
 #define GET_OP_CLASSES
-#include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu.cc.inc"
+#include "xla/mlir/xla_cpu/ir/xla_cpu.cc.inc"

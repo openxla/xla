@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/tracked_device_buffer.h"
+#include "xla/pjrt/tracked_device_buffer.h"
 
 #include <atomic>
 #include <iterator>
 #include <memory>
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/pjrt/local_device_state.h"
-#include "tensorflow/compiler/xla/service/shaped_buffer.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/event.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/pjrt/local_device_state.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/event.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/types.h"
 
 namespace xla {
 

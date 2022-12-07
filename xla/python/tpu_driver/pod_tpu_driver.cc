@@ -18,13 +18,13 @@
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_split.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/pjrt/semaphore.h"
-#include "tensorflow/compiler/xla/pjrt/worker_thread.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.pb.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/pjrt/semaphore.h"
+#include "xla/pjrt/worker_thread.h"
+#include "xla/python/tpu_driver/grpc_tpu_driver.h"
+#include "xla/python/tpu_driver/tpu_driver.h"
+#include "xla/python/tpu_driver/tpu_driver.pb.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace tpu_driver {
 namespace {

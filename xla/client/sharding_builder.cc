@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/sharding_builder.h"
+#include "xla/client/sharding_builder.h"
 
 namespace xla {
 namespace sharding_builder {

@@ -17,12 +17,12 @@
 
 #include "absl/strings/str_format.h"
 #include "absl/time/time.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/client/libtpu.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.pb.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/python/tpu_driver/client/libtpu.h"
+#include "xla/python/tpu_driver/tpu_driver.h"
+#include "xla/python/tpu_driver/tpu_driver.pb.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace tpu_driver {
 namespace {

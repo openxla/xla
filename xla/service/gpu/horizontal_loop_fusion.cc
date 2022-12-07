@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/horizontal_loop_fusion.h"
+#include "xla/service/gpu/horizontal_loop_fusion.h"
 
 #include <algorithm>
 #include <memory>
@@ -22,14 +22,14 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_fusible.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/layout_util.h"
+#include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/hlo_creation_utils.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {

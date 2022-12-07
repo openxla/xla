@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_TRIDIAGONAL_H_
 #define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_TRIDIAGONAL_H_
 
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/client/xla_builder.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace tridiagonal {

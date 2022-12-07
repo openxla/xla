@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/softmax_fusion.h"
+#include "xla/service/gpu/softmax_fusion.h"
 
 #include <memory>
 #include <string>
@@ -21,14 +21,14 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/substitute.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher_gmock.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/service/pattern_matcher_gmock.h"
+#include "xla/status_macros.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/util.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {

@@ -27,11 +27,11 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
 
-from tensorflow.compiler.xla.python import xla_client
+from xla.python import xla_client
 
 # pylint: disable=g-import-not-at-top
 try:
-  from tensorflow.compiler.xla.python import custom_call_for_test
+  from xla.python import custom_call_for_test
 except ImportError:
   custom_call_for_test = None
 

@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/index_util.h"
+#include "xla/index_util.h"
 
 #include <algorithm>
 #include <string>
 #include <vector>
 
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/shape_util.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

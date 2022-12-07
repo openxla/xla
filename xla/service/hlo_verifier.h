@@ -21,8 +21,8 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
-#include "tensorflow/compiler/xla/service/shape_inference.h"
+#include "xla/service/hlo_pass_interface.h"
+#include "xla/service/shape_inference.h"
 
 namespace xla {
 

@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CUSTOM_CALL_STATUS_TEST_C_CALLER_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CUSTOM_CALL_STATUS_TEST_C_CALLER_H_
 
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 #ifdef __cplusplus
 extern "C" {

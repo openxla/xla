@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/text_literal_writer.h"
+#include "xla/text_literal_writer.h"
 
 #include <memory>
 #include <string>
 
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/test.h"
+#include "xla/test_helpers.h"
+#include "xla/types.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace xla {
 namespace {

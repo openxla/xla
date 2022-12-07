@@ -30,17 +30,17 @@ limitations under the License.
 // Where the instruction must be elementwise, and both reshapes and transposes
 // are moved.
 
-#include "tensorflow/compiler/xla/service/reshape_mover.h"
+#include "xla/service/reshape_mover.h"
 
 #include <algorithm>
 
 #include "absl/algorithm/container.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/permutation_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/literal.h"
+#include "xla/permutation_util.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 

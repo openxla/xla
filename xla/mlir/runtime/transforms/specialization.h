@@ -19,9 +19,9 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/FunctionInterfaces.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/constraints.h"
-#include "tensorflow/compiler/xla/runtime/symbolic_shape.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/constraints.h"
+#include "xla/runtime/symbolic_shape.h"
 
 namespace xla {
 namespace runtime {

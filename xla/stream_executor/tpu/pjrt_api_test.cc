@@ -12,12 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/stream_executor/tpu/pjrt_api.h"
+#include "xla/stream_executor/tpu/pjrt_api.h"
 
 #include <gtest/gtest.h>
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/status_matchers.h"
-#include "tensorflow/tsl/protobuf/error_codes.pb.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/status_matchers.h"
+#include "third_party/tsl/protobuf/error_codes.pb.h"
 namespace {
 
 using ::testing::HasSubstr;

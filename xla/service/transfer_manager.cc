@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/transfer_manager.h"
+#include "xla/service/transfer_manager.h"
 
 #include <functional>
 #include <memory>
@@ -22,14 +22,14 @@ limitations under the License.
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/service/compiler.h"
-#include "tensorflow/compiler/xla/service/maybe_owning_device_memory.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/notification.h"
+#include "xla/service/compiler.h"
+#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/notification.h"
 
 using absl::StrCat;
 

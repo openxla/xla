@@ -24,11 +24,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/error_spec.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/hlo_runner_interface.h"
-#include "tensorflow/compiler/xla/tools/hlo_bisect/hlo_bisect_state.h"
+#include "xla/error_spec.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/literal.h"
+#include "xla/service/hlo_runner_interface.h"
+#include "xla/tools/hlo_bisect/hlo_bisect_state.h"
 
 namespace xla {
 namespace bisect {

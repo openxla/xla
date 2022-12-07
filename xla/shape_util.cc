@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/shape_util.h"
 
 #include <algorithm>
 #include <functional>
@@ -27,14 +27,14 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
-#include "tensorflow/compiler/xla/index_util.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/overflow_util.h"
-#include "tensorflow/compiler/xla/permutation_util.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/index_util.h"
+#include "xla/layout_util.h"
+#include "xla/overflow_util.h"
+#include "xla/permutation_util.h"
+#include "xla/primitive_util.h"
+#include "xla/status_macros.h"
+#include "xla/types.h"
+#include "xla/util.h"
 
 namespace xla {
 

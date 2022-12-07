@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul.h"
+#include "xla/service/cpu/runtime_matmul.h"
 
 #define EIGEN_USE_THREADS
 
 #include "absl/base/dynamic_annotations.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_lightweight_check.h"
+#include "xla/executable_run_options.h"
+#include "xla/service/cpu/runtime_lightweight_check.h"
 
 #if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
-#include "tensorflow/tsl/framework/contraction/eigen_contraction_kernel.h"
+#include "third_party/tsl/framework/contraction/eigen_contraction_kernel.h"
 #endif
 
 namespace {

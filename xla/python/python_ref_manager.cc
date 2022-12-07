@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/python_ref_manager.h"
+#include "xla/python/python_ref_manager.h"
 
 #include "absl/container/inlined_vector.h"
 

@@ -15,9 +15,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/c_api_decl.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
 
 namespace tensorflow {
 namespace tpu {

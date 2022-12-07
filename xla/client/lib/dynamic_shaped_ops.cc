@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/dynamic_shaped_ops.h"
+#include "xla/client/lib/dynamic_shaped_ops.h"
 
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/client/xla_builder.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace {

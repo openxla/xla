@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/buffer_value.h"
+#include "xla/service/buffer_value.h"
 
 #include <iosfwd>
 #include <ostream>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 
 namespace xla {
 

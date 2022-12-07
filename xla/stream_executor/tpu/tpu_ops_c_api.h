@@ -20,9 +20,9 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/c_api_decl.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/libtftpu.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/proto_helper.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/libtftpu.h"
+#include "xla/stream_executor/tpu/proto_helper.h"
 
 typedef struct TpuSerializedProto TpuSerializedProto;
 

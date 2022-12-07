@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_transfer_manager.h"
+#include "xla/service/cpu/cpu_transfer_manager.h"
 
 #include <memory>
 #include <string>
@@ -21,20 +21,20 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/compiler.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_xfeed.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/service/compiler.h"
+#include "xla/service/cpu/cpu_runtime.h"
+#include "xla/service/cpu/cpu_xfeed.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/host/host_platform_id.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

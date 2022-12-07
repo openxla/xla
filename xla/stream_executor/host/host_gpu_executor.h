@@ -21,14 +21,14 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_timer.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/error.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/rng.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/host/host_stream.h"
+#include "xla/stream_executor/host/host_timer.h"
+#include "xla/stream_executor/lib/error.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/rng.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_internal.h"
 
 namespace stream_executor {
 namespace host {

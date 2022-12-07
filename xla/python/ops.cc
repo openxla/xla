@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/ops.h"
+#include "xla/python/ops.h"
 
 #include <optional>
 #include <string>
@@ -22,19 +22,19 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "pybind11/attr.h"
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/client/lib/approx_topk.h"
-#include "tensorflow/compiler/xla/client/lib/approx_topk_shape.h"
-#include "tensorflow/compiler/xla/client/lib/comparators.h"
-#include "tensorflow/compiler/xla/client/lib/lu_decomposition.h"
-#include "tensorflow/compiler/xla/client/lib/math.h"
-#include "tensorflow/compiler/xla/client/lib/qr.h"
-#include "tensorflow/compiler/xla/client/lib/self_adjoint_eig.h"
-#include "tensorflow/compiler/xla/client/lib/sorting.h"
-#include "tensorflow/compiler/xla/client/lib/svd.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/python/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/client/lib/approx_topk.h"
+#include "xla/client/lib/approx_topk_shape.h"
+#include "xla/client/lib/comparators.h"
+#include "xla/client/lib/lu_decomposition.h"
+#include "xla/client/lib/math.h"
+#include "xla/client/lib/qr.h"
+#include "xla/client/lib/self_adjoint_eig.h"
+#include "xla/client/lib/sorting.h"
+#include "xla/client/lib/svd.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
+#include "xla/python/types.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

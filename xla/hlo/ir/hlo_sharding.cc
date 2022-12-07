@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 
 #include <algorithm>
 #include <iterator>
@@ -31,12 +31,12 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_op_metadata.h"
-#include "tensorflow/compiler/xla/overflow_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/hlo/ir/hlo_op_metadata.h"
+#include "xla/overflow_util.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 

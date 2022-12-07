@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_xfeed.h"
+#include "xla/service/cpu/cpu_xfeed.h"
 
 #include <cstring>
 #include <limits>
@@ -24,20 +24,20 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
-#include "tensorflow/compiler/xla/service/cpu/xfeed_manager.h"
-#include "tensorflow/compiler/xla/service/hlo_cost_analysis.h"
-#include "tensorflow/compiler/xla/service/shaped_buffer.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/notification.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/service/cpu/cpu_runtime.h"
+#include "xla/service/cpu/xfeed_manager.h"
+#include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/notification.h"
 
 namespace xla {
 namespace {

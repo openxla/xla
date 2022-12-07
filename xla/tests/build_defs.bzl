@@ -1,9 +1,9 @@
 """Build rules for XLA testing."""
 
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
-load("//tensorflow/compiler/xla/tests:plugin.bzl", "plugins")
+load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//xla/tests:plugin.bzl", "plugins")
 load(
-    "//tensorflow/compiler/xla/stream_executor:build_defs.bzl",
+    "//xla/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
 )
 load(
@@ -124,11 +124,11 @@ def xla_test(
         this_backend_args = backend_args.get(backend, [])
         this_backend_data = []
         if backend == "cpu":
-            backend_deps = ["//tensorflow/compiler/xla/service:cpu_plugin"]
-            backend_deps += ["//tensorflow/compiler/xla/tests:test_macros_cpu"]
+            backend_deps = ["//xla/service:cpu_plugin"]
+            backend_deps += ["//xla/tests:test_macros_cpu"]
         elif backend == "gpu":
-            backend_deps = if_gpu_is_configured(["//tensorflow/compiler/xla/service:gpu_plugin"])
-            backend_deps += if_gpu_is_configured(["//tensorflow/compiler/xla/tests:test_macros_gpu"])
+            backend_deps = if_gpu_is_configured(["//xla/service:gpu_plugin"])
+            backend_deps += if_gpu_is_configured(["//xla/tests:test_macros_gpu"])
             this_backend_tags += tf_gpu_tests_tags()
         elif backend in plugins:
             backend_deps = []
@@ -207,7 +207,7 @@ def xla_test_library(
     for backend in backends:
         this_backend_copts = []
         if backend in ["cpu", "gpu"]:
-            backend_deps = ["//tensorflow/compiler/xla/tests:test_macros_%s" % backend]
+            backend_deps = ["//xla/tests:test_macros_%s" % backend]
         elif backend in plugins:
             backend_deps = plugins[backend]["deps"]
             this_backend_copts += plugins[backend]["copts"]

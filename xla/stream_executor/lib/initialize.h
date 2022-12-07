@@ -16,6 +16,6 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LIB_INITIALIZE_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LIB_INITIALIZE_H_
 
-#include "tensorflow/compiler/xla/stream_executor/platform/initialize.h"
+#include "xla/stream_executor/platform/initialize.h"
 
 #endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LIB_INITIALIZE_H_

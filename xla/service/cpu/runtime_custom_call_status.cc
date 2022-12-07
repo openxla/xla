@@ -12,10 +12,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/service/cpu/runtime_custom_call_status.h"
+#include "xla/service/cpu/runtime_custom_call_status.h"
 
 #include "absl/base/dynamic_annotations.h"
-#include "tensorflow/compiler/xla/service/custom_call_status_internal.h"
+#include "xla/service/custom_call_status_internal.h"
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY bool __xla_cpu_runtime_StatusIsSuccess(
     const void* status_ptr) {

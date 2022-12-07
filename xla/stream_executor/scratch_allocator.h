@@ -21,11 +21,11 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/inlined_vector.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/temporary_device_memory.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/temporary_device_memory.h"
 
 namespace stream_executor {
 

@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <type_traits>
 
-#include "tensorflow/compiler/xla/runtime/logical_result.h"
-#include "tensorflow/compiler/xla/runtime/types.h"
+#include "xla/runtime/logical_result.h"
+#include "xla/runtime/types.h"
 
 namespace xla {
 namespace runtime {

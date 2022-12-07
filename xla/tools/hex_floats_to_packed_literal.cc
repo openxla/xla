@@ -20,14 +20,14 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/lib/io/buffered_inputstream.h"
-#include "tensorflow/tsl/lib/io/random_inputstream.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "xla/types.h"
+#include "third_party/tsl/lib/io/buffered_inputstream.h"
+#include "third_party/tsl/lib/io/random_inputstream.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 using std::string;
 

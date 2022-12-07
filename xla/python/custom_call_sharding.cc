@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/python/custom_call_sharding.h"
+#include "xla/python/custom_call_sharding.h"
 
 #include <memory>
 #include <optional>
@@ -22,12 +22,12 @@ limitations under the License.
 
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/python/status_casters.h"
-#include "tensorflow/compiler/xla/service/custom_call_sharding_helper.h"
-#include "tensorflow/compiler/xla/service/hlo_sharding_util.h"
-#include "tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.h"
+#include "xla/client/xla_computation.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/python/status_casters.h"
+#include "xla/service/custom_call_sharding_helper.h"
+#include "xla/service/hlo_sharding_util.h"
+#include "xla/service/spmd/spmd_partitioner_util.h"
 
 namespace xla {
 

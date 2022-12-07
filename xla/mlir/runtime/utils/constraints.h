@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/FunctionInterfaces.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/runtime/constraints.h"
+#include "xla/runtime/constraints.h"
 
 namespace xla {
 namespace runtime {

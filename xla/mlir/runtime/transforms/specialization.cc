@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/specialization.h"
+#include "xla/mlir/runtime/transforms/specialization.h"
 
 #include <memory>
 #include <numeric>
@@ -31,10 +31,10 @@ limitations under the License.
 #include "mlir/IR/FunctionInterfaces.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/type_converter.h"
-#include "tensorflow/compiler/xla/mlir/runtime/utils/constraints.h"
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/symbolic_shape.h"
+#include "xla/mlir/runtime/transforms/type_converter.h"
+#include "xla/mlir/runtime/utils/constraints.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/symbolic_shape.h"
 
 namespace xla {
 namespace runtime {

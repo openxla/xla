@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <string>
 
-#include "tensorflow/compiler/xla/service/llvm_compiler.h"
-#include "tensorflow/compiler/xla/tests/codegen_test_base.h"
+#include "xla/service/llvm_compiler.h"
+#include "xla/tests/codegen_test_base.h"
 
 namespace xla {
 

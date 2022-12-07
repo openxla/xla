@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_executable.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 
 #include <memory>
 #include <optional>
@@ -21,17 +21,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/ifrt/device.h"
-#include "tensorflow/compiler/xla/python/ifrt/dtype.h"
-#include "tensorflow/compiler/xla/python/ifrt/sharding.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_array.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/client/xla_computation.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/sharding.h"
+#include "xla/python/pjrt_ifrt/pjrt_array.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {

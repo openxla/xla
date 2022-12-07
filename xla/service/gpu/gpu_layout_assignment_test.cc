@@ -13,25 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_layout_assignment.h"
+#include "xla/service/gpu/gpu_layout_assignment.h"
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/service/computation_layout.h"
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
-#include "tensorflow/compiler/xla/service/gpu/gemm_rewriter.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/shape_layout.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/status_matchers.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout_util.h"
+#include "xla/service/computation_layout.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/gemm_rewriter.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/shape_layout.h"
+#include "xla/shape_util.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace gpu {

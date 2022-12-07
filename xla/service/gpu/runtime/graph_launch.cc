@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/graph_launch.h"
+#include "xla/service/gpu/runtime/graph_launch.h"
 
 #include <cstddef>
 #include <memory>
@@ -23,15 +23,15 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/kernel_launch.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/executable.h"
+#include "xla/service/gpu/runtime/kernel_launch.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "xla/service/service_executable_run_options.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 #endif  // #if GOOGLE_CUDA
 
 namespace xla {

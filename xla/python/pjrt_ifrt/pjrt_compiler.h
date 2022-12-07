@@ -22,8 +22,8 @@ limitations under the License.
 #include <utility>
 
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "tensorflow/compiler/xla/python/ifrt/compiler.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/python/ifrt/compiler.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace ifrt {

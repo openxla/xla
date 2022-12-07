@@ -21,12 +21,12 @@ limitations under the License.
 #include <numeric>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/lib/constants.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/bfloat16.h"
+#include "xla/client/lib/constants.h"
+#include "xla/client/xla_builder.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/bfloat16.h"
 
 namespace xla {
 

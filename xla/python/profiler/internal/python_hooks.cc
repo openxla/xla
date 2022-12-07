@@ -12,19 +12,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/python/profiler/internal/python_hooks.h"
+#include "xla/python/profiler/internal/python_hooks.h"
 
 #include <atomic>
 #include <string>
 
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/profiler/utils/time_utils.h"
-#include "tensorflow/tsl/profiler/utils/xplane_builder.h"
-#include "tensorflow/tsl/profiler/utils/xplane_schema.h"
-#include "tensorflow/tsl/profiler/utils/xplane_utils.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/profiler/utils/time_utils.h"
+#include "third_party/tsl/profiler/utils/xplane_builder.h"
+#include "third_party/tsl/profiler/utils/xplane_schema.h"
+#include "third_party/tsl/profiler/utils/xplane_utils.h"
 
 namespace xla {
 namespace profiler {

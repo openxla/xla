@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/hlo/ir/hlo_sharding_metadata.h"
 
 #include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 

@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/while_loop_analysis.h"
+#include "xla/service/while_loop_analysis.h"
 
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module_metadata.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 
 #include <algorithm>
 
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace xla {
 

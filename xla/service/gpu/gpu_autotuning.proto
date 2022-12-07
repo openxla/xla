@@ -4,9 +4,9 @@ syntax = "proto3";
 
 package xla.gpu;
 
-import "tensorflow/compiler/xla/service/hlo.proto";
-import "tensorflow/compiler/xla/xla_data.proto";
-import "tensorflow/tsl/protobuf/autotuning.proto";
+import "xla/service/hlo.proto";
+import "xla/xla_data.proto";
+import "third_party/tsl/protobuf/autotuning.proto";
 
 message ConvInstructionLog {
   xla.HloInstructionProto instruction = 1;

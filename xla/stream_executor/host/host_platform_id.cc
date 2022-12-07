@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/host/host_platform_id.h"
+#include "xla/stream_executor/host/host_platform_id.h"
 
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform.h"
 
 namespace stream_executor {
 namespace host {

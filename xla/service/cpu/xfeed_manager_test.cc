@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/xfeed_manager.h"
+#include "xla/service/cpu/xfeed_manager.h"
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/service/cpu/cpu_runtime.h"
+#include "xla/shape_util.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 namespace xla {
 namespace {

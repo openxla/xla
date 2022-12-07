@@ -12,17 +12,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/backends/profiler/cpu/python_tracer.h"
+#include "xla/backends/profiler/cpu/python_tracer.h"
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/python/profiler/internal/python_hooks.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/profiler/lib/profiler_interface.h"
-#include "tensorflow/tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/python/profiler/internal/python_hooks.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/profiler/lib/profiler_interface.h"
+#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

@@ -28,7 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace spmd {

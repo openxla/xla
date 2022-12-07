@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_EXECUTION_OPTIONS_UTIL_H_
 #define TENSORFLOW_COMPILER_XLA_EXECUTION_OPTIONS_UTIL_H_
 
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 

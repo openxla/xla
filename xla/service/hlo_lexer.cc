@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_lexer.h"
+#include "xla/service/hlo_lexer.h"
 
 #include <cstring>
 #include <limits>
@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/numbers.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/numbers.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/numbers.h"
 
 namespace xla {
 namespace {

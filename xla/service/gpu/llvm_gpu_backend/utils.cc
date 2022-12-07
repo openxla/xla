@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/utils.h"
+#include "xla/service/gpu/llvm_gpu_backend/utils.h"
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -21,8 +21,8 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace {
 

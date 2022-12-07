@@ -17,9 +17,9 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_RUNTIME_COLLECTIVES_H_
 
 #include "llvm/ADT/DenseMap.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/event.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/stream_executor/event.h"
+#include "xla/stream_executor/stream.h"
 
 namespace xla {
 namespace gpu {

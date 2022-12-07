@@ -20,7 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 
 namespace xla {
 

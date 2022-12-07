@@ -13,21 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/custom_call.h"
+#include "xla/service/gpu/runtime/custom_call.h"
 
 #include <string>
 #include <string_view>
 
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/service/custom_call_status_internal.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/triangular_solve.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
+#include "xla/runtime/executable.h"
+#include "xla/service/custom_call_status_internal.h"
+#include "xla/service/custom_call_target_registry.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "xla/service/gpu/runtime/triangular_solve.h"
+#include "xla/service/service_executable_run_options.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace xla {

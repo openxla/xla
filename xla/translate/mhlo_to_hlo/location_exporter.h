@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "mlir/IR/Location.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace mlir {
 namespace mhlo {

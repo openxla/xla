@@ -27,8 +27,8 @@ limitations under the License.
 
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
-#include "tensorflow/compiler/xla/stream_executor/device_description.pb.h"
-#include "tensorflow/compiler/xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/device_description.pb.h"
+#include "xla/stream_executor/launch_dim.h"
 
 namespace stream_executor {
 namespace internal {

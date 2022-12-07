@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/cusolver_context.h"
+#include "xla/service/gpu/cusolver_context.h"
 
 #include <algorithm>
 #include <complex>
 #include <utility>
 
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/primitive_util.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {

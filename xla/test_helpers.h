@@ -20,11 +20,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/protobuf.h"
-#include "tensorflow/tsl/platform/regexp.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/protobuf.h"
+#include "third_party/tsl/platform/regexp.h"
+#include "third_party/tsl/platform/test.h"
 
 // This module contains a minimal subset of gmock functionality just
 // sufficient to execute the currently existing tests.

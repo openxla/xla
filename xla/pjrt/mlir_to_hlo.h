@@ -18,8 +18,8 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/client/xla_computation.h"
+#include "xla/status.h"
 
 namespace xla {
 

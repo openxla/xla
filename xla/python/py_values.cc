@@ -14,10 +14,10 @@ limitations under the License.
 ==============================================================================*/
 // Must be included first
 // clang-format off
-#include "tensorflow/tsl/python/lib/core/numpy.h" //NOLINT
+#include "third_party/tsl/python/lib/core/numpy.h" //NOLINT
 // clang-format on
 
-#include "tensorflow/compiler/xla/python/py_values.h"
+#include "xla/python/py_values.h"
 
 // NOLINTBEGIN
 #include <exception>
@@ -30,21 +30,21 @@ limitations under the License.
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/ifrt/shape.h"
-#include "tensorflow/compiler/xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/shape.h"
+#include "xla/python/ifrt/sharding.h"
 #endif
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/python/py_array.h"
-#include "tensorflow/compiler/xla/python/py_buffer.h"
-#include "tensorflow/compiler/xla/python/python_ref_manager.h"
-#include "tensorflow/compiler/xla/python/sharded_device_array.h"
-#include "tensorflow/compiler/xla/python/sharding.h"
-#include "tensorflow/compiler/xla/python/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/statusor.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/primitive_util.h"
+#include "xla/python/py_array.h"
+#include "xla/python/py_buffer.h"
+#include "xla/python/python_ref_manager.h"
+#include "xla/python/sharded_device_array.h"
+#include "xla/python/sharding.h"
+#include "xla/python/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/statusor.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace py = pybind11;
 

@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/ir_emitter_context.h"
+#include "xla/service/gpu/ir_emitter_context.h"
 
 #include <algorithm>
 #include <iterator>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_constants.h"
+#include "xla/service/gpu/gpu_constants.h"
 
 namespace xla {
 namespace gpu {

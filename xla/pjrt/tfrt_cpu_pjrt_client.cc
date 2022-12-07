@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/tfrt_cpu_pjrt_client.h"
+#include "xla/pjrt/tfrt_cpu_pjrt_client.h"
 
 #include <algorithm>
 #include <cstring>
@@ -24,8 +24,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
 
 #define EIGEN_USE_THREADS
 
@@ -35,29 +35,29 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/compiler/xla/client/executable_build_options.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_future.h"
-#include "tensorflow/compiler/xla/pjrt/semaphore.h"
-#include "tensorflow/compiler/xla/pjrt/tracked_tfrt_cpu_device_buffer.h"
-#include "tensorflow/compiler/xla/pjrt/utils.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_executable.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_xfeed.h"
-#include "tensorflow/compiler/xla/service/dump.h"
-#include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/service/hlo_cost_analysis.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/denormal.h"
-#include "tensorflow/tsl/platform/setround.h"
-#include "tensorflow/tsl/profiler/lib/connected_traceme.h"
+#include "xla/client/executable_build_options.h"
+#include "xla/client/xla_computation.h"
+#include "xla/literal.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/semaphore.h"
+#include "xla/pjrt/tracked_tfrt_cpu_device_buffer.h"
+#include "xla/pjrt/utils.h"
+#include "xla/primitive_util.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/computation_placer.h"
+#include "xla/service/cpu/cpu_executable.h"
+#include "xla/service/cpu/cpu_xfeed.h"
+#include "xla/service/dump.h"
+#include "xla/service/executable.h"
+#include "xla/service/hlo_cost_analysis.h"
+#include "xla/shape.h"
+#include "xla/statusor.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/denormal.h"
+#include "third_party/tsl/platform/setround.h"
+#include "third_party/tsl/profiler/lib/connected_traceme.h"
 #include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
 #include "tfrt/support/forward_decls.h"  // from @tf_runtime
 

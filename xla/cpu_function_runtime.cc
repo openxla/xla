@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/cpu_function_runtime.h"
+#include "xla/cpu_function_runtime.h"
 
 #include "absl/base/dynamic_annotations.h"
 

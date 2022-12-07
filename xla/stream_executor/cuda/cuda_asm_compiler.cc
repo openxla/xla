@@ -21,12 +21,12 @@ limitations under the License.
 #include "absl/base/call_once.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/asm_compiler.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_diagnostics.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_driver.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/subprocess.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/stream_executor/gpu/gpu_diagnostics.h"
+#include "xla/stream_executor/gpu/gpu_driver.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/subprocess.h"
 
 namespace stream_executor {
 

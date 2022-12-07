@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/ir_function.h"
+#include "xla/service/cpu/ir_function.h"
 
 #include <iterator>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
-#include "tensorflow/compiler/xla/service/cpu/shape_partition.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/service/cpu/cpu_runtime.h"
+#include "xla/service/cpu/shape_partition.h"
+#include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/status_macros.h"
 
 namespace xla {
 namespace cpu {

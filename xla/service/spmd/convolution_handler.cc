@@ -13,25 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/spmd/convolution_handler.h"
+#include "xla/service/spmd/convolution_handler.h"
 
 #include "absl/algorithm/container.h"
 #include "absl/functional/function_ref.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/dot_as_convolution_util.h"
-#include "tensorflow/compiler/xla/service/hlo_sharding_util.h"
-#include "tensorflow/compiler/xla/service/shape_inference.h"
-#include "tensorflow/compiler/xla/service/spmd/spmd_partitioner.h"
-#include "tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/window_util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/numbers.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/literal_util.h"
+#include "xla/service/dot_as_convolution_util.h"
+#include "xla/service/hlo_sharding_util.h"
+#include "xla/service/shape_inference.h"
+#include "xla/service/spmd/spmd_partitioner.h"
+#include "xla/service/spmd/spmd_partitioner_util.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
+#include "xla/window_util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/numbers.h"
 
 namespace xla {
 namespace spmd {

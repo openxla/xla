@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executable_interface.h"
+#include "xla/stream_executor/tpu/tpu_executable_interface.h"
 
 #include <utility>
 
 #include "absl/algorithm/container.h"
-#include "tensorflow/compiler/xla/service/maybe_owning_device_memory.h"
-#include "tensorflow/compiler/xla/service/shaped_buffer.h"
-#include "tensorflow/compiler/xla/service/transfer_manager.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/service/transfer_manager.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
 
 namespace xla {
 

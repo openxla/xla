@@ -19,12 +19,12 @@
 #include "absl/base/internal/sysinfo.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/platform/external/compat.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.pb.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_service.grpc.pb.h"
-#include "tensorflow/tsl/platform/file_system.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/python/tpu_driver/platform/external/compat.h"
+#include "xla/python/tpu_driver/tpu_driver.h"
+#include "xla/python/tpu_driver/tpu_driver.pb.h"
+#include "xla/python/tpu_driver/tpu_service.grpc.pb.h"
+#include "third_party/tsl/platform/file_system.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 /*
  * The ReplayDriver wraps a concrete TpuDriver implementation and records the

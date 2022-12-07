@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/mapped_ptr_container_sorter.h"
+#include "xla/service/mapped_ptr_container_sorter.h"
 
 #include <cstddef>
 #include <list>
@@ -23,8 +23,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/functional/bind_front.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/test.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

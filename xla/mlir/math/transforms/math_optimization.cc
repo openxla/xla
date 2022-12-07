@@ -21,14 +21,14 @@ limitations under the License.
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"  // from @llvm-project
 #include "mlir/Dialect/X86Vector/X86VectorDialect.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/math/transforms/passes.h"
+#include "xla/mlir/math/transforms/passes.h"
 
 namespace xla {
 
 using namespace mlir;  // NOLINT
 
 #define GEN_PASS_DEF_MATHOPTIMIZATIONPASS
-#include "tensorflow/compiler/xla/mlir/math/transforms/passes.h.inc"
+#include "xla/mlir/math/transforms/passes.h.inc"
 
 struct MathOptimizationPass
     : public impl::MathOptimizationPassBase<MathOptimizationPass> {

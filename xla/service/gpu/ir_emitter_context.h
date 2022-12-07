@@ -23,10 +23,10 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable.h"
-#include "tensorflow/compiler/xla/service/name_uniquer.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/gpu_device_info.h"
+#include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/name_uniquer.h"
 
 namespace xla {
 namespace gpu {

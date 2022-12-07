@@ -1,11 +1,11 @@
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )
@@ -13,7 +13,7 @@ package(
 package_group(
     name = "friends",
     includes = [
-        "//tensorflow/compiler/xla:friends",
+        "//xla:friends",
     ],
 )
 
@@ -49,15 +49,15 @@ cc_library(
         "@llvm-project//llvm:Scalar",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
-        "//tensorflow/compiler/xla/service/gpu:metrics",
-        "//tensorflow/compiler/xla:status_macros",
-        "//tensorflow/compiler/xla:statusor",
-        "//tensorflow/compiler/xla:types",
-        "//tensorflow/compiler/xla:util",
-        "//tensorflow/compiler/xla/service:hlo_module_config",
-        "//tensorflow/compiler/xla/service/gpu:gpu_types",
-        "//tensorflow/compiler/xla/service/llvm_ir:llvm_command_line_options",
-        "//tensorflow/compiler/xla/service/llvm_ir:llvm_type_conversion_util",
+        "//xla/service/gpu:metrics",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla:types",
+        "//xla:util",
+        "//xla/service:hlo_module_config",
+        "//xla/service/gpu:gpu_types",
+        "//xla/service/llvm_ir:llvm_command_line_options",
+        "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//tensorflow/tsl/platform:random",
         "//tensorflow/tsl/profiler/lib:traceme",
         "//tensorflow/tsl/platform:path",
@@ -77,12 +77,12 @@ tf_cc_test(
     ],
     deps = [
         ":llvm_gpu_backend",
-        "//tensorflow/compiler/xla:types",
-        "//tensorflow/compiler/xla/tests:xla_internal_test_main",
         "//tensorflow/tsl/platform:logging",
         "//tensorflow/tsl/platform:path",
         "//tensorflow/tsl/platform:resource_loader",
         "//tensorflow/tsl/platform:test",
+        "//xla:types",
+        "//xla/tests:xla_internal_test_main",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
     ],

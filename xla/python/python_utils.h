@@ -23,8 +23,8 @@ limitations under the License.
 
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
 
 namespace jax {
 

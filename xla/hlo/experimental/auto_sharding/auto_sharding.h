@@ -24,13 +24,13 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/auto_sharding_cost_graph.h"
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/auto_sharding_solver_option.h"
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/cluster_environment.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_cost_graph.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_solver_option.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
+#include "xla/hlo/experimental/auto_sharding/cluster_environment.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/hlo_pass_interface.h"
+#include "third_party/tsl/platform/errors.h"
 namespace xla {
 
 class DummyAutoSharding : public HloModulePass {

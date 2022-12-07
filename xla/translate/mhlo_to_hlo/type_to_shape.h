@@ -18,8 +18,8 @@ limitations under the License.
 
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/Types.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/shape.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/fft.h"
+#include "xla/service/gpu/runtime/fft.h"
 
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/service/gpu/fft_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/executable.h"
+#include "xla/service/gpu/fft_thunk.h"
+#include "xla/service/gpu/runtime/support.h"
 
 namespace xla {
 namespace gpu {

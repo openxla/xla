@@ -15,15 +15,15 @@ limitations under the License.
 
 // This file defines helpers useful when creating or manipulating lhlo/hlo.
 
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/hlo_utils.h"
+#include "xla/translate/hlo_to_mhlo/hlo_utils.h"
 
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/TypeUtilities.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
-#include "tensorflow/tsl/platform/bfloat16.h"
+#include "xla/literal.h"
+#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
+#include "third_party/tsl/platform/bfloat16.h"
 
 namespace xla {
 namespace {

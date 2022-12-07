@@ -13,23 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/reduction_layout_normalizer.h"
+#include "xla/service/gpu/reduction_layout_normalizer.h"
 
 #include <algorithm>
 
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/hlo/ir/dfs_hlo_visitor_with_default.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_ordering.h"
+#include "xla/service/hlo_ordering.h"
 
 #include <utility>
 #include <vector>
@@ -21,14 +21,14 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

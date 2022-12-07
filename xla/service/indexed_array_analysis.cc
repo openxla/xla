@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/indexed_array_analysis.h"
+#include "xla/service/indexed_array_analysis.h"
 
 #include <algorithm>
 #include <numeric>
@@ -27,9 +27,9 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/hlo/evaluator/hlo_evaluator.h"
-#include "tensorflow/compiler/xla/map_util.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/map_util.h"
+#include "xla/util.h"
 
 namespace xla {
 

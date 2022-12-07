@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/container/node_hash_map.h"
 #include "absl/functional/function_ref.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/statusor.h"
 
 namespace xla {
 

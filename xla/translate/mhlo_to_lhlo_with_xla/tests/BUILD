@@ -1,12 +1,12 @@
 load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
-load("//tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
+load("//third_party/tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
 load(
     "//tensorflow/tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     licenses = ["notice"],
 )
 
@@ -34,9 +34,9 @@ filegroup(
     name = "test_utilities",
     testonly = True,
     data = [
-        "//tensorflow/compiler/xla/translate:xla-translate",
-        "//tensorflow/compiler/xla/translate/mhlo_to_lhlo_with_xla:xla-translate-gpu-opt",
-        "//tensorflow/compiler/xla/translate/mhlo_to_lhlo_with_xla:xla-translate-opt",
+        "//xla/translate:xla-translate",
+        "//xla/translate/mhlo_to_lhlo_with_xla:xla-translate-gpu-opt",
+        "//xla/translate/mhlo_to_lhlo_with_xla:xla-translate-opt",
         "@llvm-project//llvm:FileCheck",
         "@llvm-project//llvm:not",
     ],

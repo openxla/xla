@@ -17,8 +17,8 @@
 // ==============================================================================
 
 #include "grpcpp/grpcpp.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.pb.h"
+#include "xla/python/tpu_driver/tpu_driver.h"
+#include "xla/python/tpu_driver/tpu_driver.pb.h"
 
 namespace tpu_driver {
 

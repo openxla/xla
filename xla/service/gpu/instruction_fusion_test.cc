@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/instruction_fusion.h"
+#include "xla/service/gpu/instruction_fusion.h"
 
-#include "tensorflow/compiler/xla/hlo/ir/dfs_hlo_visitor_with_default.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_fusible.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/status_macros.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_utils.h"
+#include "xla/util.h"
 
 namespace op = xla::testing::opcode_matchers;
 

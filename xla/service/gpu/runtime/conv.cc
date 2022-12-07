@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/conv.h"
+#include "xla/service/gpu/runtime/conv.h"
 
 #include <optional>
 #include <utility>
 #include <vector>
 
 #include "llvm/ADT/Sequence.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_conv_runner.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/attribute_exporter.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/executable.h"
+#include "xla/service/gpu/gpu_conv_runner.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 
 namespace xla {
 namespace gpu {

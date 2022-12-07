@@ -22,8 +22,8 @@ limitations under the License.
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/constraints.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/constraints.h"
 
 namespace xla {
 namespace runtime {

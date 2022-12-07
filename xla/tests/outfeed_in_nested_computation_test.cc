@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/tests/local_client_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/tests/local_client_test_base.h"
+#include "xla/tests/test_macros.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

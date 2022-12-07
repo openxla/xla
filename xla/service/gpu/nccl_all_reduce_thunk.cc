@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_reduce_thunk.h"
+#include "xla/service/gpu/nccl_all_reduce_thunk.h"
 
 #include <array>
 #include <chrono>  // NOLINT (required by TF interfaces)
@@ -25,14 +25,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/service/collective_ops_utils.h"
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/hlo_utils.h"
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/type_to_shape.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/layout_util.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/translate/hlo_to_mhlo/hlo_utils.h"
+#include "xla/translate/mhlo_to_hlo/type_to_shape.h"
+#include "xla/xla_data.pb.h"
 
 #if XLA_ENABLE_XCCL
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 #endif
 
 namespace xla {

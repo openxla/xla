@@ -22,8 +22,8 @@ limitations under the License.
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/shape.h"
+#include "xla/status.h"
 
 namespace xla {
 namespace cpu {

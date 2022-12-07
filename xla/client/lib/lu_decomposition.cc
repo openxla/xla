@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/lu_decomposition.h"
+#include "xla/client/lib/lu_decomposition.h"
 
 #include <vector>
 
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
 
 namespace xla {
 

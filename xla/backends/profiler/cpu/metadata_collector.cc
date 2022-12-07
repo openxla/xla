@@ -18,17 +18,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/backends/profiler/cpu/metadata_utils.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/service/xla_debug_info_manager.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/profiler/lib/profiler_factory.h"
-#include "tensorflow/tsl/profiler/lib/profiler_interface.h"
-#include "tensorflow/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tensorflow/tsl/profiler/protobuf/xplane.pb.h"
-#include "tensorflow/tsl/profiler/utils/xplane_schema.h"
-#include "tensorflow/tsl/profiler/utils/xplane_utils.h"
+#include "xla/backends/profiler/cpu/metadata_utils.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/service/xla_debug_info_manager.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/profiler/lib/profiler_factory.h"
+#include "third_party/tsl/profiler/lib/profiler_interface.h"
+#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
+#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "third_party/tsl/profiler/utils/xplane_schema.h"
+#include "third_party/tsl/profiler/utils/xplane_utils.h"
 
 namespace xla {
 namespace profiler {

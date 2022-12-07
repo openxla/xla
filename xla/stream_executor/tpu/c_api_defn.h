@@ -16,11 +16,11 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_C_API_DEFN_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_C_API_DEFN_H_
 
-#include "tensorflow/compiler/xla/stream_executor/device_options.h"
-#include "tensorflow/compiler/xla/stream_executor/event.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/timer.h"
+#include "xla/stream_executor/device_options.h"
+#include "xla/stream_executor/event.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/timer.h"
 
 // Definitions for XLA API data structures. Any underlying C++ data structures
 // are implementation details and should only be used from within the stream

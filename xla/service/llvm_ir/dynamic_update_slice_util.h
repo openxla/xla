@@ -16,12 +16,12 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_DYNAMIC_UPDATE_SLICE_UTIL_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_DYNAMIC_UPDATE_SLICE_UTIL_H_
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
-#include "tensorflow/compiler/xla/service/elemental_ir_emitter.h"
-#include "tensorflow/compiler/xla/service/gpu/launch_dimensions.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/fused_ir_emitter.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/elemental_ir_emitter.h"
+#include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/llvm_ir/fused_ir_emitter.h"
+#include "xla/service/llvm_ir/ir_array.h"
 
 // Utilities related to emitting LLVM IR for various HLO ops.
 

@@ -23,19 +23,19 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/runtime/ffi.h"
-#include "tensorflow/compiler/xla/runtime/jit_executable.h"
-#include "tensorflow/compiler/xla/runtime/module_registry.h"
-#include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/collectives.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/conv.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/cublas_lt_matmul.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/gemm.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/graph_launch.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/kernel_launch.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/runtime/executable.h"
+#include "xla/runtime/ffi.h"
+#include "xla/runtime/jit_executable.h"
+#include "xla/runtime/module_registry.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/runtime/collectives.h"
+#include "xla/service/gpu/runtime/conv.h"
+#include "xla/service/gpu/runtime/cublas_lt_matmul.h"
+#include "xla/service/gpu/runtime/gemm.h"
+#include "xla/service/gpu/runtime/graph_launch.h"
+#include "xla/service/gpu/runtime/kernel_launch.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {

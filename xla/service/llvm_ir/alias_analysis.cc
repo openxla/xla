@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_ir/alias_analysis.h"
+#include "xla/service/llvm_ir/alias_analysis.h"
 
 #include <map>
 
 #include "absl/container/flat_hash_set.h"
 #include "llvm/IR/MDBuilder.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_type_conversion_util.h"
-#include "tensorflow/compiler/xla/service/logical_buffer.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/service/llvm_ir/llvm_type_conversion_util.h"
+#include "xla/service/logical_buffer.h"
+#include "xla/types.h"
 
 namespace xla {
 namespace llvm_ir {

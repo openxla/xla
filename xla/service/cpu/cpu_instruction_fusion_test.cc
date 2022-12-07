@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_instruction_fusion.h"
+#include "xla/service/cpu/cpu_instruction_fusion.h"
 
 #include <algorithm>
 #include <memory>
@@ -21,11 +21,11 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/transpose_folding.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/service/transpose_folding.h"
+#include "xla/shape.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_utils.h"
 
 namespace op = xla::testing::opcode_matchers;
 

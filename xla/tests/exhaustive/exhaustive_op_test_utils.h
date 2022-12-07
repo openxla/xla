@@ -25,14 +25,14 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/bit_cast.h"
-#include "tensorflow/compiler/xla/client/lib/constants.h"
-#include "tensorflow/compiler/xla/client/lib/math.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/service/shaped_buffer.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
+#include "xla/bit_cast.h"
+#include "xla/client/lib/constants.h"
+#include "xla/client/lib/math.h"
+#include "xla/client/xla_builder.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/tests/test_macros.h"
 
 namespace xla {
 namespace exhaustive_op_test {

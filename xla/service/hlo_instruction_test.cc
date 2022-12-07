@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 
 #include <optional>
 #include <set>
@@ -22,20 +22,20 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/hlo/ir/dfs_hlo_visitor_with_default.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/protobuf_util.h"
-#include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/window_util.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/literal.h"
+#include "xla/protobuf_util.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/shape_util.h"
+#include "xla/test.h"
+#include "xla/test_helpers.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/util.h"
+#include "xla/window_util.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

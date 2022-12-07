@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/all_reduce_promotion.h"
+#include "xla/service/gpu/all_reduce_promotion.h"
 
 #include <memory>
 #include <string>

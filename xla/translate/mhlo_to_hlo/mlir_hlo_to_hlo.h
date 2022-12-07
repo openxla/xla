@@ -20,9 +20,9 @@ limitations under the License.
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/layout_util.h"
+#include "xla/client/xla_builder.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/translate/mhlo_to_hlo/layout_util.h"
 
 namespace mlir {
 

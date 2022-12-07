@@ -29,14 +29,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/client/compile_only_client.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/service/compile_only_service.h"
-#include "tensorflow/compiler/xla/service/local_service.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/client/compile_only_client.h"
+#include "xla/client/local_client.h"
+#include "xla/service/compile_only_service.h"
+#include "xla/service/local_service.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/types.h"
 
 namespace xla {
 

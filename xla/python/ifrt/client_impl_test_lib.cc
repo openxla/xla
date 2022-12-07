@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/ifrt/client.h"
-#include "tensorflow/compiler/xla/python/ifrt/test_util.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/python/ifrt/test_util.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {

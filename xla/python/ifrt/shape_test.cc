@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/ifrt/shape.h"
+#include "xla/python/ifrt/shape.h"
 
 #include <limits>
 #include <numeric>

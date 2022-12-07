@@ -19,11 +19,11 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/gpu/xfeed_queue.h"
-#include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/platform/notification.h"
+#include "xla/literal.h"
+#include "xla/service/gpu/xfeed_queue.h"
+#include "xla/shape_tree.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/platform/notification.h"
 
 namespace xla {
 namespace gpu {

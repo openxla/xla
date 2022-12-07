@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_execution_profile.h"
+#include "xla/service/hlo_execution_profile.h"
 
 #include <algorithm>
 #include <memory>
@@ -21,12 +21,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo_execution_profile_data.pb.h"
-#include "tensorflow/compiler/xla/service/human_readable_profile_builder.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/hlo_execution_profile_data.pb.h"
+#include "xla/service/human_readable_profile_builder.h"
+#include "xla/types.h"
+#include "xla/util.h"
 
 namespace xla {
 HloProfileIndexMap::HloProfileIndexMap(

@@ -21,11 +21,11 @@ limitations under the License.
 #include "absl/container/node_hash_map.h"
 #include "absl/functional/function_ref.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_conv_runner.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/service/gpu/gpu_conv_runner.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {

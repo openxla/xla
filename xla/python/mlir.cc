@@ -25,15 +25,15 @@ limitations under the License.
 #include "pybind11/pybind11.h"
 #include "stablehlo/dialect/ChloOps.h"  // from @stablehlo
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/mlir/utils/error_util.h"
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/transforms/passes.h"
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/python/types.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/client/xla_computation.h"
+#include "xla/mlir/utils/error_util.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/mlir_hlo/mhlo/transforms/passes.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/python/types.h"
+#include "xla/status.h"
+#include "xla/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace py = pybind11;
 

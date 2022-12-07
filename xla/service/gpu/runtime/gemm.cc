@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/gemm.h"
+#include "xla/service/gpu/runtime/gemm.h"
 
 #include <utility>
 
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/executable.h"
+#include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {

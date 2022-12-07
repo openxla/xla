@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/host_callback.h"
+#include "xla/pjrt/host_callback.h"
 
 #include <memory>
 #include <utility>

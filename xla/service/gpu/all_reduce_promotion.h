@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_ALL_REDUCE_PROMOTION_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_ALL_REDUCE_PROMOTION_H_
 
-#include "tensorflow/compiler/xla/service/change_op_data_type.h"
+#include "xla/service/change_op_data_type.h"
 
 namespace xla {
 namespace gpu {

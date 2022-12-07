@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
+#include "xla/stream_executor/dnn.h"
 
 #include <cstdint>
 #include <iterator>
@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/tsl/lib/strings/proto_serialization.h"
+#include "third_party/tsl/lib/strings/proto_serialization.h"
 
 namespace stream_executor {
 namespace dnn {

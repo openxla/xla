@@ -22,13 +22,13 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_fusible.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_hlo_cost_analysis.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
-#include "tensorflow/compiler/xla/service/hlo_reachability.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/gpu/gpu_device_info.h"
+#include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/gpu/gpu_hlo_cost_analysis.h"
+#include "xla/service/hlo_pass_interface.h"
+#include "xla/service/hlo_reachability.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace gpu {

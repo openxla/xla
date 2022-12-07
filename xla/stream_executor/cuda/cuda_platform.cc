@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_platform.h"
+#include "xla/stream_executor/cuda/cuda_platform.h"
 
 #include "absl/base/call_once.h"
 #include "absl/base/const_init.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_driver.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/error.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/initialize.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/cuda/cuda_driver.h"
+#include "xla/stream_executor/cuda/cuda_gpu_executor.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/lib/error.h"
+#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/lib/status.h"
 
 namespace stream_executor {
 namespace gpu {

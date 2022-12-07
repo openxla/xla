@@ -19,7 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "tensorflow/compiler/xla/service/cpu/xla_framework.pb.h"
+#include "xla/service/cpu/xla_framework.pb.h"
 
 namespace xla {
 namespace cpu {

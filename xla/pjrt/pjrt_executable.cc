@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_executable.h"
 
 #include <algorithm>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/executable_build_options.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/client/executable_build_options.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 

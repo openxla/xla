@@ -17,7 +17,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LIB_PATH_H_
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 namespace port {

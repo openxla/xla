@@ -13,25 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/collectives.h"
+#include "xla/service/gpu/runtime/collectives.h"
 
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/service/global_device_id.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable_run_options.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_gather_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_reduce_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_to_all_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_collective_permute_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_collective_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/executable.h"
+#include "xla/service/computation_placer.h"
+#include "xla/service/global_device_id.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/gpu/nccl_all_gather_thunk.h"
+#include "xla/service/gpu/nccl_all_reduce_thunk.h"
+#include "xla/service/gpu/nccl_all_to_all_thunk.h"
+#include "xla/service/gpu/nccl_collective_permute_thunk.h"
+#include "xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "xla/service/service_executable_run_options.h"
 
 namespace xla {
 namespace gpu {

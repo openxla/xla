@@ -20,10 +20,10 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_types.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/rng.h"
+#include "xla/stream_executor/gpu/gpu_types.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/rng.h"
 
 namespace stream_executor {
 

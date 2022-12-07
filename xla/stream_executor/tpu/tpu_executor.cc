@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor.h"
+#include "xla/stream_executor/tpu/tpu_executor.h"
 
 #include <cstdint>
 
 #include "absl/cleanup/cleanup.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/status_helper.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_event.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_timer.h"
-#include "tensorflow/tsl/c/tsl_status.h"
+#include "xla/status.h"
+#include "xla/stream_executor/tpu/status_helper.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_event.h"
+#include "xla/stream_executor/tpu/tpu_stream.h"
+#include "xla/stream_executor/tpu/tpu_timer.h"
+#include "third_party/tsl/c/tsl_status.h"
 
 using stream_executor::DeviceMemoryBase;
 

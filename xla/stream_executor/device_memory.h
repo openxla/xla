@@ -26,7 +26,7 @@ limitations under the License.
 
 #include <stddef.h>
 
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace perftools {
 namespace gputools {

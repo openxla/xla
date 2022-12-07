@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_reachability.h"
+#include "xla/service/hlo_reachability.h"
 
 #include <set>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/computation_placer.h"
+#include "xla/test.h"
+#include "xla/test_helpers.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 

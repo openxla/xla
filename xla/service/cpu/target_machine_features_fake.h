@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
 
-#include "tensorflow/compiler/xla/service/cpu/target_machine_features.h"
+#include "xla/service/cpu/target_machine_features.h"
 
 namespace xla {
 namespace cpu {

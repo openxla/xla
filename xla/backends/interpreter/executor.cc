@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/backends/interpreter/executor.h"
+#include "xla/backends/interpreter/executor.h"
 
 #include <cstring>
 
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/status_macros.h"
 
 namespace stream_executor {
 namespace interpreter {

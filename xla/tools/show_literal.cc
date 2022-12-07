@@ -22,13 +22,13 @@ limitations under the License.
 
 #include <string>
 
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/literal.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/status.h"
 
 int main(int argc, char **argv) {
   tsl::port::InitMain(argv[0], &argc, &argv);

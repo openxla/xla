@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/nccl_collective_permute_thunk.h"
+#include "xla/service/gpu/nccl_collective_permute_thunk.h"
 
 #include <map>
 #include <optional>
@@ -23,13 +23,13 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/compiler/xla/service/collective_ops_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/attribute_exporter.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
+#include "xla/xla_data.pb.h"
 
 #if XLA_ENABLE_XCCL
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 #endif
 
 namespace xla {

@@ -12,17 +12,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/tests/verified_hlo_module.h"
+#include "xla/tests/verified_hlo_module.h"
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 

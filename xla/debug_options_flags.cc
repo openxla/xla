@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/debug_options_flags.h"
+#include "xla/debug_options_flags.h"
 
 #include <cstdlib>
 #include <memory>
@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/container/node_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
-#include "tensorflow/compiler/xla/debug_options_parsers.h"
-#include "tensorflow/compiler/xla/parse_flags_from_env.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/debug_options_parsers.h"
+#include "xla/parse_flags_from_env.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 

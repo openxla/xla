@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_SCATTER_EXPANDER_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_SCATTER_EXPANDER_H_
 
-#include "tensorflow/compiler/xla/service/scatter_expander.h"
+#include "xla/service/scatter_expander.h"
 
 namespace xla {
 

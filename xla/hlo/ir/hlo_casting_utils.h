@@ -20,8 +20,8 @@ limitations under the License.
 
 #include <type_traits>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

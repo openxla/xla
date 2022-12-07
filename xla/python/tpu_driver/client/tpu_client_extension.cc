@@ -19,12 +19,12 @@ limitations under the License.
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/python/python_ref_manager.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.h"
-#include "tensorflow/compiler/xla/python/types.h"
-#include "tensorflow/compiler/xla/python/util.h"
-#include "tensorflow/python/lib/core/bfloat16.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/python/python_ref_manager.h"
+#include "xla/python/tpu_driver/client/tpu_client.h"
+#include "xla/python/types.h"
+#include "xla/python/util.h"
+#include "third_party/tensorflow/python/lib/core/bfloat16.h"
 
 namespace xla {
 

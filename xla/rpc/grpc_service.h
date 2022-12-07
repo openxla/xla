@@ -17,8 +17,8 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_RPC_GRPC_SERVICE_H_
 
 #include "grpcpp/server_context.h"
-#include "tensorflow/compiler/xla/rpc/xla_service.grpc.pb.h"
-#include "tensorflow/compiler/xla/service/service.h"
+#include "xla/rpc/xla_service.grpc.pb.h"
+#include "xla/service/service.h"
 
 namespace xla {
 

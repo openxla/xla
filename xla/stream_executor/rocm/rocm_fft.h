@@ -31,11 +31,11 @@ limitations under the License.
 
 #endif
 
-#include "tensorflow/compiler/xla/stream_executor/fft.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "xla/stream_executor/fft.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/stream.h"
 
 namespace stream_executor {
 

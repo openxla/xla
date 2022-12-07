@@ -14,21 +14,21 @@ limitations under the License.
 ==============================================================================*/
 
 #include "llvm/Target/TargetMachine.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_compiler.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info.h"
-#include "tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
+#include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/gpu_device_info.h"
+#include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #if GOOGLE_CUDA
-#include "tensorflow/compiler/xla/service/gpu/nvptx_compiler.h"
-#include "tensorflow/compiler/xla/service/gpu/nvptx_helper.h"
+#include "xla/service/gpu/nvptx_compiler.h"
+#include "xla/service/gpu/nvptx_helper.h"
 #endif
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/gpu/target_constants.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_platform_id.h"
-#include "tensorflow/compiler/xla/tools/hlo_module_loader.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/gpu/target_constants.h"
+#include "xla/status.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/tools/hlo_module_loader.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 const char* const kUsage = R"(
 This tool reads in an HloModule from a file, compiles it using the NVPTX

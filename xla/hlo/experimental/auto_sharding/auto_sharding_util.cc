@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/auto_sharding_util.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_util.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -35,12 +35,12 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/array.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/index_util.h"
-#include "tensorflow/compiler/xla/service/hlo_sharding_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/array.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/index_util.h"
+#include "xla/service/hlo_sharding_util.h"
+#include "xla/shape_util.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 namespace spmd {

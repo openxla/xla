@@ -12,23 +12,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/service/hlo_live_range.h"
+#include "xla/service/hlo_live_range.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/hlo_alias_analysis.h"
-#include "tensorflow/compiler/xla/service/hlo_ordering.h"
-#include "tensorflow/compiler/xla/service/hlo_value.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/literal.h"
+#include "xla/service/hlo_alias_analysis.h"
+#include "xla/service/hlo_ordering.h"
+#include "xla/service/hlo_value.h"
+#include "xla/status_macros.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

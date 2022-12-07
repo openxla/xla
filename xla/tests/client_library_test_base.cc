@@ -13,24 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
+#include "xla/tests/client_library_test_base.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/execution_options_util.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/client/client_library.h"
+#include "xla/client/local_client.h"
+#include "xla/client/xla_builder.h"
+#include "xla/execution_options_util.h"
+#include "xla/literal_util.h"
+#include "xla/service/platform_util.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/test_helpers.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace {

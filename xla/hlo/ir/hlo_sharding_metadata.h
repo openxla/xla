@@ -21,10 +21,10 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_domain_metadata.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/hlo/ir/hlo_domain_metadata.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 

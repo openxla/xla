@@ -16,7 +16,7 @@
 import enum
 from typing import Any, List, Optional, Sequence, Tuple, overload
 
-from tensorflow.compiler.xla.python import xla_extension
+from xla.python import xla_extension
 
 ChannelHandle = xla_extension.ChannelHandle
 FftType = xla_extension.FftType

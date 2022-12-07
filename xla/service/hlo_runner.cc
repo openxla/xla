@@ -14,23 +14,23 @@ limitations under the License.
 ==============================================================================*/
 #define EIGEN_USE_THREADS
 
-#include "tensorflow/compiler/xla/service/hlo_runner.h"
+#include "xla/service/hlo_runner.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module_group.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/service/hlo_module_util.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/transfer_manager.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/tsl/platform/blocking_counter.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/hlo/ir/hlo_module_group.h"
+#include "xla/layout_util.h"
+#include "xla/service/executable.h"
+#include "xla/service/hlo_module_util.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/transfer_manager.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "third_party/tsl/platform/blocking_counter.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

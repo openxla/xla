@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/transpose.h"
+#include "xla/pjrt/transpose.h"
 
 #include <algorithm>
 #include <functional>
@@ -24,14 +24,14 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/numeric/int128.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/compiler/xla/array.h"
-#include "tensorflow/compiler/xla/permutation_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/test_benchmark.h"
-#include "tensorflow/tsl/platform/threadpool.h"
-#include "tensorflow/tsl/protobuf/error_codes.pb.h"
+#include "xla/array.h"
+#include "xla/permutation_util.h"
+#include "xla/shape_util.h"
+#include "xla/test.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/test_benchmark.h"
+#include "third_party/tsl/platform/threadpool.h"
+#include "third_party/tsl/protobuf/error_codes.pb.h"
 
 namespace xla {
 

@@ -20,8 +20,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/time/time.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/gpu_device_info.h"
+#include "xla/service/gpu/gpu_hlo_cost_analysis.h"
 
 namespace xla {
 namespace gpu {

@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/convert_operand_folding.h"
+#include "xla/service/convert_operand_folding.h"
 
 #include "absl/base/attributes.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/primitive_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

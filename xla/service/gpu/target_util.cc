@@ -15,15 +15,15 @@ limitations under the License.
 // Provide helper routine for obtaining  gpu target information useful
 // for llvm IR contruction.
 
-#include "tensorflow/compiler/xla/service/gpu/target_util.h"
+#include "xla/service/gpu/target_util.h"
 
 #include "absl/strings/str_cat.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/MDBuilder.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_type_conversion_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/service/llvm_ir/llvm_type_conversion_util.h"
+#include "xla/service/llvm_ir/llvm_util.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace gpu {

@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/ifrt/future.h"
+#include "xla/python/ifrt/future.h"
 
 #include <vector>
 
 #include <gtest/gtest.h>
 #include "absl/types/span.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace ifrt {

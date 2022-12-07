@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TESTS_CPU_CODEGEN_TEST_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TESTS_CPU_CODEGEN_TEST_H_
 
-#include "tensorflow/compiler/xla/tests/llvm_irgen_test_base.h"
+#include "xla/tests/llvm_irgen_test_base.h"
 
 namespace xla {
 namespace cpu {

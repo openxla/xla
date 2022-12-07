@@ -16,9 +16,9 @@
 
 import numpy as _np  # Avoids becoming a part of public Tensorflow API.
 
-from tensorflow.compiler.xla import xla_data_pb2
-from tensorflow.compiler.xla.python_api import types
-from tensorflow.compiler.xla.python_api import xla_shape
+from xla import xla_data_pb2
+from xla.python_api import types
+from xla.python_api import xla_shape
 
 
 def ConvertLiteralToNumpyArray(literal):

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/amdgpu_compiler.h"
-#include "tensorflow/compiler/xla/stream_executor/rocm/rocm_platform_id.h"
+#include "xla/service/gpu/amdgpu_compiler.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 
 static bool InitModule() {
   xla::Compiler::RegisterCompilerFactory(

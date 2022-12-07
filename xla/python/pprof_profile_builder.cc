@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/pprof_profile_builder.h"
+#include "xla/python/pprof_profile_builder.h"
 
 #include <string>
 
-#include "tensorflow/compiler/xla/python/traceback.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/python/traceback.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 

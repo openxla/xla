@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/sharding_remover.h"
+#include "xla/service/sharding_remover.h"
 
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/status_macros.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace op = xla::testing::opcode_matchers;
 

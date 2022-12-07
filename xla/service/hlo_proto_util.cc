@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_proto_util.h"
+#include "xla/service/hlo_proto_util.h"
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "tensorflow/compiler/xla/service/hlo_verifier.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/service/hlo_verifier.h"
+#include "xla/util.h"
 
 namespace xla {
 

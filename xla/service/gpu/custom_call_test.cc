@@ -26,18 +26,18 @@ limitations under the License.
 #define PLATFORM "ROCM"
 #endif
 
-#include "tensorflow/compiler/xla/client/lib/constants.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/runtime/ffi/ffi_api.h"
-#include "tensorflow/compiler/xla/runtime/module.h"
-#include "tensorflow/compiler/xla/runtime/module_registry.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_types.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/client/lib/constants.h"
+#include "xla/client/xla_builder.h"
+#include "xla/runtime/ffi/ffi_api.h"
+#include "xla/runtime/module.h"
+#include "xla/runtime/module_registry.h"
+#include "xla/service/custom_call_status.h"
+#include "xla/service/custom_call_target_registry.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/gpu/gpu_types.h"
+#include "xla/test_helpers.h"
+#include "xla/tests/client_library_test_base.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 #if GOOGLE_CUDA
 #define gpuSuccess cudaSuccess

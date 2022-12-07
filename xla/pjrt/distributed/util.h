@@ -17,7 +17,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_PJRT_DISTRIBUTED_UTIL_H_
 
 #include "grpcpp/support/status.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/status.h"
 
 namespace xla {
 

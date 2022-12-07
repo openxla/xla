@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/callback.h"
+#include "xla/python/callback.h"
 
 #include <cstring>
 #include <memory>
@@ -21,10 +21,10 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/python/exceptions.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/primitive_util.h"
+#include "xla/python/exceptions.h"
+#include "xla/service/custom_call_status.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace py = pybind11;
 

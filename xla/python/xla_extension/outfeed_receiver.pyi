@@ -16,7 +16,7 @@
 import enum
 from typing import Any, Sequence
 
-from tensorflow.compiler.xla.python import xla_extension
+from xla.python import xla_extension
 
 Client = xla_extension.Client
 XlaBuilder = xla_extension.XlaBuilder

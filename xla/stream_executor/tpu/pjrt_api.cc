@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/pjrt_api.h"
+#include "xla/stream_executor/tpu/pjrt_api.h"
 
 #include <dlfcn.h>
 
@@ -21,9 +21,9 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api_tpu.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/pjrt/c/pjrt_c_api_tpu.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 
 namespace stream_executor {
 namespace tpu {

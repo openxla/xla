@@ -24,14 +24,14 @@ limitations under the License.
 
 #include "absl/types/span.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_executable.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #endif
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/py_buffer.h"
-#include "tensorflow/compiler/xla/python/py_client.h"
-#include "tensorflow/compiler/xla/python/traceback.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/py_buffer.h"
+#include "xla/python/py_client.h"
+#include "xla/python/traceback.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
 
 namespace xla {
 

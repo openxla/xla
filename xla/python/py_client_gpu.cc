@@ -24,8 +24,8 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #endif
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/python/callback.h"
-#include "tensorflow/compiler/xla/python/exceptions.h"
+#include "xla/python/callback.h"
+#include "xla/python/exceptions.h"
 
 #if TENSORFLOW_USE_ROCM
 #define gpuStreamHandle hipStream_t

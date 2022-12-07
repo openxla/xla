@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/convolution_pred_expander.h"
+#include "xla/service/convolution_pred_expander.h"
 
 #include <iterator>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/hlo_creation_utils.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

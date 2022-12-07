@@ -21,14 +21,14 @@ limitations under the License.
 
 #include "absl/types/span.h"
 #include "llvm/Target/TargetMachine.h"
-#include "tensorflow/compiler/xla/cpu_function_runtime.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/cpu/executable.pb.h"
-#include "tensorflow/compiler/xla/service/cpu/target_machine_features.h"
-#include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/service/llvm_compiler.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "xla/cpu_function_runtime.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/cpu/executable.pb.h"
+#include "xla/service/cpu/target_machine_features.h"
+#include "xla/service/executable.h"
+#include "xla/service/llvm_compiler.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace cpu {

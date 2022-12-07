@@ -18,9 +18,9 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "tensorflow/compiler/xla/stream_executor/lib/array_slice.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/lib/array_slice.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 

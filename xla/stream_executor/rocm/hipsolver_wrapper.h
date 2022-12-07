@@ -25,9 +25,9 @@ limitations under the License.
 #if TF_ROCM_VERSION >= 40500
 
 #include "rocm/include/hipsolver.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/env.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/dso_loader.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/lib/env.h"
+#include "xla/stream_executor/platform/dso_loader.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 namespace wrap {

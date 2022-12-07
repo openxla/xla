@@ -15,11 +15,11 @@ limitations under the License.
 
 #include <array>
 
-#include "tensorflow/compiler/xla/service/hlo_verifier.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/hlo_verifier.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_macros.h"
+#include "xla/tests/test_utils.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

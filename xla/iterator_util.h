@@ -20,7 +20,7 @@ limitations under the License.
 #include <iterator>
 #include <utility>
 
-#include "tensorflow/tsl/lib/gtl/iterator_range.h"
+#include "third_party/tsl/lib/gtl/iterator_range.h"
 
 namespace xla {
 

@@ -4,10 +4,10 @@ load("//tensorflow/tsl:tsl.bzl", "tsl_copts")
 licenses(["notice"])
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "//tensorflow/compiler/xla/stream_executor:__subpackages__",
-        "//tensorflow/stream_executor:__subpackages__",
+        "//third_party/tensorflow/stream_executor:__subpackages__",
+        "//xla/stream_executor:__subpackages__",
     ],
 )
 
@@ -26,8 +26,8 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "//tensorflow/compiler/xla/stream_executor/lib",
         "//tensorflow/tsl/platform:dso_loader",
+        "//xla/stream_executor/lib",
         "@com_google_absl//absl/strings",
     ],
 )

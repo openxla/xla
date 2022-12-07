@@ -17,8 +17,8 @@ syntax = "proto3";
 
 package xla;
 
-import "tensorflow/compiler/xla/service/hlo.proto";
-import "tensorflow/compiler/xla/xla_data.proto";
+import "xla/service/hlo.proto";
+import "xla/xla_data.proto";
 
 // Debugging options for XLA. These options may change at any time - there are
 // no guarantees about backward or forward compatibility for these fields.

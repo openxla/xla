@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/while_loop_trip_count_annotator.h"
-#include "tensorflow/compiler/xla/service/while_loop_analysis.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/service/while_loop_trip_count_annotator.h"
+#include "xla/service/while_loop_analysis.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

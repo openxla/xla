@@ -26,13 +26,13 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_asm_opts.h"
-#include "tensorflow/compiler/xla/stream_executor/kernel.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_pimpl.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
+#include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
 #if GOOGLE_CUDA
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_driver.h"
+#include "xla/stream_executor/cuda/cuda_driver.h"
 #endif  // GOOGLE_CUDA
 
 namespace stream_executor {

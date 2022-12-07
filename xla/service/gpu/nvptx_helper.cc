@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/nvptx_helper.h"
+#include "xla/service/gpu/nvptx_helper.h"
 
 #include <string>
 
 #include "absl/strings/str_join.h"
-#include "tensorflow/tsl/platform/cuda_libdevice_path.h"
-#include "tensorflow/tsl/platform/path.h"
+#include "third_party/tsl/platform/cuda_libdevice_path.h"
+#include "third_party/tsl/platform/path.h"
 
 namespace xla {
 namespace gpu {

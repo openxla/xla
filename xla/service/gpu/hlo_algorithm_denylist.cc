@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/hlo_algorithm_denylist.h"
+#include "xla/service/gpu/hlo_algorithm_denylist.h"
 
 #include <string>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_autotuning.pb.h"
+#include "xla/debug_options_flags.h"
+#include "xla/service/gpu/gpu_autotuning.pb.h"
 
 namespace xla {
 namespace gpu {

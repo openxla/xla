@@ -23,12 +23,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/numbers.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/framework/device_id.h"
-#include "tensorflow/tsl/framework/device_id_manager.h"
-#include "tensorflow/tsl/lib/gtl/int_type.h"
-#include "tensorflow/tsl/platform/str_util.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/framework/device_id.h"
+#include "third_party/tsl/framework/device_id_manager.h"
+#include "third_party/tsl/lib/gtl/int_type.h"
+#include "third_party/tsl/platform/str_util.h"
 
 namespace stream_executor {
 

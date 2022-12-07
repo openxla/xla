@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/matmul_utils.h"
 
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/tsl/platform/status_matchers.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/test.h"
+#include "third_party/tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace gpu {

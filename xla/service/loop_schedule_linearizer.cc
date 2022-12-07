@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/loop_schedule_linearizer.h"
+#include "xla/service/loop_schedule_linearizer.h"
 
-#include "tensorflow/compiler/xla/service/dump.h"
-#include "tensorflow/compiler/xla/service/graphcycles/graphcycles.h"
+#include "xla/service/dump.h"
+#include "xla/service/graphcycles/graphcycles.h"
 
 namespace xla {
 

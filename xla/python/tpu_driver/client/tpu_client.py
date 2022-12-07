@@ -18,8 +18,8 @@ import logging
 
 # Import xla_client to load shared C++ extensions (just CompileOptions at the
 # time of writing).
-from tensorflow.compiler.xla.python import xla_client  # pylint: disable=unused-import
-from tensorflow.compiler.xla.python.tpu_driver.client import tpu_client_extension as _tpu_client
+from xla.python import xla_client  # pylint: disable=unused-import
+from xla.python.tpu_driver.client import tpu_client_extension as _tpu_client
 
 logger = logging.getLogger(__name__)
 

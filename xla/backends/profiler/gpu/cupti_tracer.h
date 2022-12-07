@@ -19,12 +19,12 @@ limitations under the License.
 #include "absl/types/optional.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
 #include "third_party/gpus/cuda/include/nvtx3/nvToolsExt.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_collector.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_interface.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/platform/types.h"
-#include "tensorflow/tsl/profiler/utils/buffer_pool.h"
+#include "xla/backends/profiler/gpu/cupti_collector.h"
+#include "xla/backends/profiler/gpu/cupti_interface.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/platform/types.h"
+#include "third_party/tsl/profiler/utils/buffer_pool.h"
 
 namespace xla {
 namespace profiler {

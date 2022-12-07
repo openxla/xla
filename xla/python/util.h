@@ -21,11 +21,11 @@ limitations under the License.
 
 #include "absl/strings/str_format.h"
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_client.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array.h"
 #endif
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/status.h"
 
 namespace xla {
 

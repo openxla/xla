@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/distributed/key_value_store.h"
+#include "xla/pjrt/distributed/key_value_store.h"
 
 namespace xla {
 

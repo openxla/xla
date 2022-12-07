@@ -51,7 +51,7 @@ void PopulateLegalizeXLAFrameworkToLLVMPatterns(llvm::StringRef device_type,
 #define GEN_PASS_DECL_LEGALIZEXLAFRAMEWORKTOLLVM
 #define GEN_PASS_DECL_OUTLINEWITHXLAFRAMEWORK
 #define GEN_PASS_DECL_PREPAREFOREXPORTPASS
-#include "tensorflow/compiler/xla/mlir/framework/transforms/passes.h.inc"
+#include "xla/mlir/framework/transforms/passes.h.inc"
 
 }  // namespace mhlo
 }  // namespace mlir

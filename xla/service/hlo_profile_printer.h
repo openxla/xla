@@ -20,8 +20,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "tensorflow/compiler/xla/service/hlo_profile_printer_data.pb.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/service/hlo_profile_printer_data.pb.h"
+#include "xla/types.h"
 
 namespace xla {
 // Pretty-print an array of profile counters using hlo_profile_printer_data.

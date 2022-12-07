@@ -19,8 +19,8 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace gpu {

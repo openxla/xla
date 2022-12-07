@@ -37,13 +37,13 @@ limitations under the License.
 #include "third_party/eigen3/Eigen/Core"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Compiler.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/runtime/diagnostics.h"
-#include "tensorflow/compiler/xla/runtime/errors.h"
-#include "tensorflow/compiler/xla/runtime/logical_result.h"
-#include "tensorflow/compiler/xla/runtime/map_by_type.h"
-#include "tensorflow/compiler/xla/runtime/state.h"
-#include "tensorflow/compiler/xla/runtime/type_id.h"
+#include "xla/primitive_util.h"
+#include "xla/runtime/diagnostics.h"
+#include "xla/runtime/errors.h"
+#include "xla/runtime/logical_result.h"
+#include "xla/runtime/map_by_type.h"
+#include "xla/runtime/state.h"
+#include "xla/runtime/type_id.h"
 
 namespace xla {
 namespace runtime {

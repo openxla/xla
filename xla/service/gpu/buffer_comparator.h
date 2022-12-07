@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
 
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/shape.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {

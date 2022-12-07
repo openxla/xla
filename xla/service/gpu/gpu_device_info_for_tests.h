@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_DEVICE_INFO_FOR_TESTS_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_DEVICE_INFO_FOR_TESTS_H_
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info.h"
+#include "xla/service/gpu/gpu_device_info.h"
 
 namespace xla {
 namespace gpu {

@@ -16,10 +16,10 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_TIMER_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_TIMER_H_
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor_c_api.h"
-#include "tensorflow/tsl/platform/types.h"
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_executor_c_api.h"
+#include "third_party/tsl/platform/types.h"
 
 namespace tensorflow {
 

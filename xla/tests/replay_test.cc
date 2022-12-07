@@ -15,20 +15,20 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/client/global_data.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/protobuf_util.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/client/global_data.h"
+#include "xla/client/local_client.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
+#include "xla/literal.h"
+#include "xla/protobuf_util.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/tests/test_macros.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

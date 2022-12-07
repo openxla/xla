@@ -20,8 +20,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from tensorflow.compiler.xla import xla_data_pb2
-from tensorflow.compiler.xla.runtime.runner import runner_pb2
+from xla import xla_data_pb2
+from xla.runtime.runner import runner_pb2
 
 PrimitiveType = xla_data_pb2.PrimitiveType
 

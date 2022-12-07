@@ -19,16 +19,16 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "tensorflow/compiler/xla/backends/interpreter/platform_id.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/compiler.h"
-#include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/service/hlo_cost_analysis.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/backends/interpreter/platform_id.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/compiler.h"
+#include "xla/service/executable.h"
+#include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace interpreter {

@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/fusion_node_indexing_evaluation.h"
+#include "xla/service/fusion_node_indexing_evaluation.h"
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/instruction_fusion.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/instruction_fusion.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 

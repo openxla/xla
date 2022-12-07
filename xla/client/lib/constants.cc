@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/constants.h"
+#include "xla/client/lib/constants.h"
 
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/literal_util.h"
+#include "xla/util.h"
 
 namespace xla {
 

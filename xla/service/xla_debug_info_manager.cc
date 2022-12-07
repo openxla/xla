@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/xla_debug_info_manager.h"
+#include "xla/service/xla_debug_info_manager.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/hlo_proto_util.h"
+#include "xla/service/hlo_proto_util.h"
 
 namespace xla {
 

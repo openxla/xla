@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/name_uniquer.h"
+#include "xla/service/name_uniquer.h"
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/primitive_util.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

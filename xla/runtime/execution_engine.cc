@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/execution_engine.h"
+#include "xla/runtime/execution_engine.h"
 
 #include <memory>
 #include <string>
@@ -37,7 +37,7 @@ limitations under the License.
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetSelect.h"
-#include "tensorflow/compiler/xla/runtime/errors.h"
+#include "xla/runtime/errors.h"
 
 namespace xla {
 namespace runtime {

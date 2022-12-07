@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/move_copy_to_users.h"
+#include "xla/service/gpu/move_copy_to_users.h"
 
 #include <optional>
 #include <utility>
 
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/gpu/redzone_allocator.h"
+#include "xla/stream_executor/gpu/redzone_allocator.h"
 
 #include <array>
 #include <cstdint>
@@ -23,16 +23,16 @@ limitations under the License.
 #include "absl/container/fixed_array.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/optional.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/asm_compiler.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_asm_opts.h"
-#include "tensorflow/compiler/xla/stream_executor/kernel.h"
-#include "tensorflow/compiler/xla/stream_executor/kernel_spec.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_pimpl.h"
-#include "tensorflow/tsl/framework/allocator.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
+#include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_spec.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
+#include "third_party/tsl/framework/allocator.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace stream_executor {
 

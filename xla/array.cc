@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/array.h"
+#include "xla/array.h"
 
 #include <complex>
 #include <random>

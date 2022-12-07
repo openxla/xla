@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/reference_util.h"
+#include "xla/reference_util.h"
 
 #include <array>
 #include <cmath>
@@ -25,15 +25,15 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/hlo/evaluator/hlo_evaluator.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/shape_inference.h"
-#include "tensorflow/compiler/xla/window_util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/lib/math/math_util.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/client/xla_builder.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal_util.h"
+#include "xla/service/shape_inference.h"
+#include "xla/window_util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/lib/math/math_util.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

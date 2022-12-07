@@ -25,8 +25,8 @@ limitations under the License.
 
 #include <complex>
 
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_types.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/stream_executor/gpu/gpu_types.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace stream_executor {
 

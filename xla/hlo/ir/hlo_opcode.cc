@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/types.h"
+#include "xla/util.h"
 
 namespace xla {
 

@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/launch_dimensions.h"
 
 #include <algorithm>
 #include <ostream>
 #include <string>
 
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/shape_util.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace gpu {

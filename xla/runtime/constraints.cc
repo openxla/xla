@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/constraints.h"
+#include "xla/runtime/constraints.h"
 
 #include <string>
 #include <string_view>

@@ -21,11 +21,11 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_INFEED_MANAGER_H_
 
 #include "absl/base/thread_annotations.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/gpu/xfeed_queue.h"
-#include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/literal.h"
+#include "xla/service/gpu/xfeed_queue.h"
+#include "xla/shape_tree.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/types.h"
 
 namespace xla {
 namespace gpu {

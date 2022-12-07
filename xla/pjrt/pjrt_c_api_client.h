@@ -23,9 +23,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api.h"
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api_helpers.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_helpers.h"
+#include "xla/pjrt/pjrt_client.h"
 
 namespace xla {
 // If false, PjRtCApiClient will raise an error on methods unimplemented in the

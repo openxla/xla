@@ -22,10 +22,10 @@ limitations under the License.
 
 #include "absl/time/time.h"
 #include "grpcpp/channel.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/protocol.grpc.pb.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/pjrt/distributed/protocol.grpc.pb.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace tsl {
 class CoordinationServiceAgent;

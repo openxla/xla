@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/location_importer.h"
+#include "xla/translate/hlo_to_mhlo/location_importer.h"
 
 #include "mlir/IR/Builders.h"  // from @llvm-project
 

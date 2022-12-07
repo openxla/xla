@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/ffi.h"
+#include "xla/runtime/ffi.h"
 
 #include <algorithm>
 #include <array>
@@ -24,15 +24,15 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/async_runtime.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/runtime/ffi/ffi_api.h"
-#include "tensorflow/compiler/xla/runtime/ffi/ffi_c_api.h"
-#include "tensorflow/compiler/xla/runtime/jit_executable.h"
-#include "tensorflow/compiler/xla/runtime/results.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/async_runtime.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/runtime/ffi/ffi_api.h"
+#include "xla/runtime/ffi/ffi_c_api.h"
+#include "xla/runtime/jit_executable.h"
+#include "xla/runtime/results.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace runtime {

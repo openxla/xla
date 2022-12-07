@@ -19,21 +19,21 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/array4d.h"
-#include "tensorflow/compiler/xla/client/global_data.h"
-#include "tensorflow/compiler/xla/client/lib/arithmetic.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/array4d.h"
+#include "xla/client/global_data.h"
+#include "xla/client/lib/arithmetic.h"
+#include "xla/client/local_client.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/test_helpers.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/tests/test_macros.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

@@ -13,11 +13,11 @@
 // limitations under the License.
 // =============================================================================
 
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.h"
+#include "xla/python/tpu_driver/tpu_driver.h"
 
 #include "absl/strings/match.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/util.h"
 
 namespace tpu_driver {
 

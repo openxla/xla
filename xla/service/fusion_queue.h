@@ -19,7 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 
 namespace xla {
 

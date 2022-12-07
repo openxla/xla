@@ -18,8 +18,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/service/hlo_pass_interface.h"
+#include "xla/statusor.h"
 
 namespace xla::gpu {
 

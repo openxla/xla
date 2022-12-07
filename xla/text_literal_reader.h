@@ -19,11 +19,11 @@ limitations under the License.
 #include <memory>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/literal.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace xla {
 

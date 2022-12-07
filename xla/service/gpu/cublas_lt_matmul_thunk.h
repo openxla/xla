@@ -19,11 +19,11 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/thunk.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas_lt.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/thunk.h"
+#include "xla/status.h"
+#include "xla/stream_executor/cuda/cuda_blas_lt.h"
 
 namespace xla {
 namespace gpu {

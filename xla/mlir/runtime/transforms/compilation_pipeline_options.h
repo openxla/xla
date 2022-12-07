@@ -19,8 +19,8 @@ limitations under the License.
 #include <functional>
 
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
-#include "tensorflow/compiler/xla/runtime/type_id.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/runtime/type_id.h"
 
 namespace xla {
 namespace runtime {

@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/instruction_fusion.h"
+#include "xla/service/gpu/instruction_fusion.h"
 
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/fusion_node_indexing_evaluation.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_fusible.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/fusion_node_indexing_evaluation.h"
+#include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {

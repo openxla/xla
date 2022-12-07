@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/real_imag_expander.h"
+#include "xla/service/real_imag_expander.h"
 
-#include "tensorflow/compiler/xla/literal_util.h"
+#include "xla/literal_util.h"
 
 namespace xla {
 

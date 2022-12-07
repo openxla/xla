@@ -22,8 +22,8 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/hlo.pb.h"
 
 namespace xla {
 

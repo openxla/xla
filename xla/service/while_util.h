@@ -19,8 +19,8 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/call_inliner.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/call_inliner.h"
 
 namespace xla {
 class WhileUtil {

@@ -20,12 +20,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/python/ifrt/client.h"
-#include "tensorflow/compiler/xla/python/ifrt/test_util.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/statusor.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/python/ifrt/test_util.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/statusor.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {

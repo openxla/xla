@@ -17,14 +17,14 @@ limitations under the License.
 
 #include <optional>
 
-#include "tensorflow/compiler/xla/autotune_results.pb.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_conv_runner.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/protobuf/autotuning.pb.h"
+#include "xla/autotune_results.pb.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/gpu/gpu_conv_runner.h"
+#include "xla/service/hlo_pass_interface.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {

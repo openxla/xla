@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/sharding_op_util.h"
+#include "xla/sharding_op_util.h"
 
 #include <string>
 #include <vector>
@@ -22,8 +22,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/service/hlo_lexer.h"
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/service/hlo_lexer.h"
+#include "xla/status_macros.h"
 
 namespace xla {
 namespace sharding_op_util {

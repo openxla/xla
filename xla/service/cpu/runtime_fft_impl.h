@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "third_party/eigen3/Eigen/Core"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/types.h"
 
 namespace xla {
 

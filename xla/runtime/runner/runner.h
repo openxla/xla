@@ -20,9 +20,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/runtime/jit_executable.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "xla/runtime/executable.h"
+#include "xla/runtime/jit_executable.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 namespace xla {
 namespace runtime {

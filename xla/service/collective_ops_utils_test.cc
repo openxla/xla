@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/collective_ops_utils.h"
+#include "xla/service/collective_ops_utils.h"
 
 #include <iterator>
 #include <optional>
@@ -21,11 +21,11 @@ limitations under the License.
 #include <string>
 
 #include "absl/algorithm/container.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/service/global_device_id.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/computation_placer.h"
+#include "xla/service/global_device_id.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

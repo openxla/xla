@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/slice_sinker.h"
+#include "xla/service/slice_sinker.h"
 
 #include <algorithm>
 #include <optional>
@@ -22,7 +22,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 

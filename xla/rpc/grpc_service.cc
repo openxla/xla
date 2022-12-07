@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/rpc/grpc_service.h"
+#include "xla/rpc/grpc_service.h"
 
 #include <functional>
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/tsl/distributed_runtime/rpc/grpc_util.h"
+#include "xla/service/platform_util.h"
+#include "third_party/tsl/distributed_runtime/rpc/grpc_util.h"
 
 namespace xla {
 

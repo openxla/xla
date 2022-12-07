@@ -35,8 +35,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/framework/ir/xla_framework.h"
-#include "tensorflow/compiler/xla/mlir/framework/transforms/passes.h"
+#include "xla/mlir/framework/ir/xla_framework.h"
+#include "xla/mlir/framework/transforms/passes.h"
 
 namespace mlir {
 namespace mhlo {
@@ -217,7 +217,7 @@ struct BarePtrFuncOpConversion : public ConvertOpToLLVMPattern<func::FuncOp> {
 };
 
 #define GEN_PASS_DEF_LEGALIZEXLAFRAMEWORKTOLLVM
-#include "tensorflow/compiler/xla/mlir/framework/transforms/passes.h.inc"
+#include "xla/mlir/framework/transforms/passes.h.inc"
 
 class LegalizeXLAFrameworkToLLVMPass
     : public impl::LegalizeXLAFrameworkToLLVMBase<

@@ -16,8 +16,8 @@ limitations under the License.
 #include <string>
 #include <string_view>
 
-#include "tensorflow/compiler/xla/service/gpu/tests/mlir_gpu_test_base.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/service/gpu/tests/mlir_gpu_test_base.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace gpu {

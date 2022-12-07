@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/custom_call_sharding_helper.h"
+#include "xla/service/custom_call_sharding_helper.h"
 
 #include <memory>
 #include <string>

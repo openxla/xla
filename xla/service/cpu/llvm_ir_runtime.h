@@ -18,7 +18,7 @@ limitations under the License.
 
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {
 namespace cpu {

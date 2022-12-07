@@ -18,8 +18,8 @@ import collections
 
 import numpy as _np  # Avoids becoming a part of public Tensorflow API.
 
-from tensorflow.compiler.xla import xla_data_pb2
-from tensorflow.python.framework import dtypes
+from xla import xla_data_pb2
+from google3.third_party.tensorflow.python.framework import dtypes
 
 # Records correspondence between a XLA primitive type and Python/Numpy types.
 #

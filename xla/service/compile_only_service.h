@@ -16,12 +16,12 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_COMPILE_ONLY_SERVICE_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_COMPILE_ONLY_SERVICE_H_
 
-#include "tensorflow/compiler/xla/service/backend.h"
-#include "tensorflow/compiler/xla/service/compiler.h"
-#include "tensorflow/compiler/xla/service/service.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/service/backend.h"
+#include "xla/service/compiler.h"
+#include "xla/service/service.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

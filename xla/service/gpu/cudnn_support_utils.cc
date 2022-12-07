@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/cudnn_support_utils.h"
+#include "xla/service/gpu/cudnn_support_utils.h"
 
 #include <functional>
 
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/primitive_util.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

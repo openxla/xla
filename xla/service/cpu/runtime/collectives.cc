@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "tensorflow/compiler/xla/service/cpu/runtime/collectives.h"
+#include "xla/service/cpu/runtime/collectives.h"
 
 #include <cstdint>
 #include <cstring>
@@ -27,14 +27,14 @@
 #include <vector>
 
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/executable_run_options.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/runtime/executable.h"
+#include "xla/service/cpu/cpu_runtime.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {

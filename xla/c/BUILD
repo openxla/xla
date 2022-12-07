@@ -1,10 +1,10 @@
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
         "//learning/brain/tfrt/tpu_plugin:__subpackages__",
-        "//tensorflow/core/common_runtime/next_pluggable_device:__subpackages__",
+        "//third_party/tensorflow/core/common_runtime/next_pluggable_device:__subpackages__",
     ],
     licenses = ["notice"],
 )

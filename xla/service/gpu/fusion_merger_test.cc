@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/fusion_merger.h"
+#include "xla/service/gpu/fusion_merger.h"
 
 #include <vector>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info_for_tests.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_fusible.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace gpu {

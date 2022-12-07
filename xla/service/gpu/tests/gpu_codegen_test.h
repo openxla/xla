@@ -19,8 +19,8 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tensorflow/compiler/xla/tests/llvm_irgen_test_base.h"
-#include "tensorflow/compiler/xla/tests/verified_hlo_module.h"
+#include "xla/tests/llvm_irgen_test_base.h"
+#include "xla/tests/verified_hlo_module.h"
 
 namespace xla {
 namespace gpu {

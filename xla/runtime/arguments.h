@@ -23,8 +23,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "llvm/ADT/SmallVector.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/runtime/types.h"
+#include "xla/primitive_util.h"
+#include "xla/runtime/types.h"
 
 namespace xla {
 namespace runtime {

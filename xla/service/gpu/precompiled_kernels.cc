@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/precompiled_kernels.h"
+#include "xla/service/gpu/precompiled_kernels.h"
 
 #include <string>
 #include <utility>
@@ -21,12 +21,12 @@ limitations under the License.
 #include "absl/base/call_once.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/asm_compiler.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/util.h"
 
 #if TENSORFLOW_USE_ROCM
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 namespace stream_executor {
 namespace gpu {
 

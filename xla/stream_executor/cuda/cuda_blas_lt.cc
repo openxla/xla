@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas_lt.h"
+#include "xla/stream_executor/cuda/cuda_blas_lt.h"
 
 #include <algorithm>
 #include <climits>
@@ -25,16 +25,16 @@ limitations under the License.
 
 #include "third_party/gpus/cuda/include/cublasLt.h"
 #include "third_party/gpus/cuda/include/cublas_v2.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas_utils.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_activation.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_helpers.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_timer.h"
-#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/cuda/cuda_blas.h"
+#include "xla/stream_executor/cuda/cuda_blas_utils.h"
+#include "xla/stream_executor/gpu/gpu_activation.h"
+#include "xla/stream_executor/gpu/gpu_helpers.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_timer.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/stream.h"
 
 #define SET_ATTR(setter, handle, attr, value) \
   ToStatus(setter(handle, attr, &value, sizeof(decltype(value))), #setter)

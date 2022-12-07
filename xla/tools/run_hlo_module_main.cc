@@ -22,15 +22,15 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/service/hlo_runner.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/tools/run_hlo_module.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "xla/debug_options_flags.h"
+#include "xla/service/hlo_runner.h"
+#include "xla/service/platform_util.h"
+#include "xla/tools/run_hlo_module.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 namespace {
 const char* const kUsage = R"(

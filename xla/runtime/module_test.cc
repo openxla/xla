@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/module.h"
+#include "xla/runtime/module.h"
 
 #include <memory>
 #include <optional>
 
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/runtime/custom_call.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace runtime {

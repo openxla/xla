@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/ffi.h"
+#include "xla/runtime/ffi.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -26,9 +26,9 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/ffi/ffi_c_api.h"
-#include "tensorflow/compiler/xla/runtime/module.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/ffi/ffi_c_api.h"
+#include "xla/runtime/module.h"
 
 //===----------------------------------------------------------------------===//
 // Define structs forward-declared by XLA FFI C API.

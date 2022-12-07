@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <functional>
 
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/compilation_pipeline_options.h"
-#include "tensorflow/compiler/xla/runtime/compiler.h"
+#include "xla/mlir/runtime/transforms/compilation_pipeline_options.h"
+#include "xla/runtime/compiler.h"
 
 namespace mlir {
 class MLIRContext;

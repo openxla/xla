@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
+#include "xla/stream_executor/dnn.h"
 
-#include "tensorflow/tsl/platform/test.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace stream_executor {
 namespace {

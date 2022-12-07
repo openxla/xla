@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/metric_table_report.h"
+#include "xla/metric_table_report.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,7 +26,7 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_performance_model.h"
+#include "xla/service/gpu/gpu_performance_model.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info_for_tests.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace gpu {

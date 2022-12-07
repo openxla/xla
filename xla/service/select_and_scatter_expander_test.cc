@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/select_and_scatter_expander.h"
+#include "xla/service/select_and_scatter_expander.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace {

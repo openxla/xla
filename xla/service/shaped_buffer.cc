@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/shaped_buffer.h"
+#include "xla/service/shaped_buffer.h"
 
 #include <memory>
 #include <string>
@@ -22,12 +22,12 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/layout_util.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

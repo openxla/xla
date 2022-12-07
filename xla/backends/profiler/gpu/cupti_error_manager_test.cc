@@ -15,20 +15,20 @@ limitations under the License.
 
 #if GOOGLE_CUDA
 
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_error_manager.h"
+#include "xla/backends/profiler/gpu/cupti_error_manager.h"
 
 #include <cstdint>
 #include <memory>
 #include <utility>
 
 #include "absl/memory/memory.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cuda_test.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_interface.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_tracer.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_wrapper.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/mock_cupti.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/profiler/utils/time_utils.h"
+#include "xla/backends/profiler/gpu/cuda_test.h"
+#include "xla/backends/profiler/gpu/cupti_interface.h"
+#include "xla/backends/profiler/gpu/cupti_tracer.h"
+#include "xla/backends/profiler/gpu/cupti_wrapper.h"
+#include "xla/backends/profiler/gpu/mock_cupti.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/profiler/utils/time_utils.h"
 
 namespace xla {
 namespace profiler {

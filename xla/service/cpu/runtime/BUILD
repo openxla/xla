@@ -1,7 +1,7 @@
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )
@@ -9,7 +9,7 @@ package(
 package_group(
     name = "friends",
     includes = [
-        "//tensorflow/compiler/xla:friends",
+        "//xla:friends",
     ],
 )
 
@@ -18,13 +18,13 @@ cc_library(
     srcs = ["collectives.cc"],
     hdrs = ["collectives.h"],
     deps = [
-        "//tensorflow/compiler/xla:executable_run_options",
-        "//tensorflow/compiler/xla:shape_util",
-        "//tensorflow/compiler/xla:xla_data_proto_cc",
-        "//tensorflow/compiler/xla/runtime:custom_call",
-        "//tensorflow/compiler/xla/runtime:custom_call_registry",
-        "//tensorflow/compiler/xla/runtime:executable",
-        "//tensorflow/compiler/xla/service/cpu:cpu_runtime",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/service/cpu:cpu_runtime",
         "@llvm-project//mlir:Support",
     ],
 )
@@ -34,14 +34,14 @@ cc_library(
     srcs = ["custom_call.cc"],
     hdrs = ["custom_call.h"],
     deps = [
-        "//tensorflow/compiler/xla:shape_util",
-        "//tensorflow/compiler/xla:xla_proto_cc",
-        "//tensorflow/compiler/xla/runtime:custom_call",
-        "//tensorflow/compiler/xla/runtime:custom_call_registry",
-        "//tensorflow/compiler/xla/runtime:executable",
-        "//tensorflow/compiler/xla/service:custom_call_status_internal",
-        "//tensorflow/compiler/xla/service:custom_call_target_registry",
-        "//tensorflow/compiler/xla/service:hlo_proto_cc",
+        "//xla:shape_util",
+        "//xla:xla_proto_cc",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/service:custom_call_status_internal",
+        "//xla/service:custom_call_target_registry",
+        "//xla/service:hlo_proto_cc",
         "@llvm-project//mlir:Support",
     ],
 )
@@ -51,13 +51,13 @@ cc_library(
     srcs = ["fft_call.cc"],
     hdrs = ["fft_call.h"],
     deps = [
-        "//tensorflow/compiler/xla:executable_run_options",
-        "//tensorflow/compiler/xla:xla_proto_cc",
-        "//tensorflow/compiler/xla/runtime:custom_call",
-        "//tensorflow/compiler/xla/runtime:custom_call_registry",
-        "//tensorflow/compiler/xla/runtime:executable",
-        "//tensorflow/compiler/xla/service:hlo_proto_cc",
-        "//tensorflow/compiler/xla/service/cpu:runtime_fft",
+        "//xla:executable_run_options",
+        "//xla:xla_proto_cc",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service/cpu:runtime_fft",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
     ],
@@ -68,12 +68,12 @@ cc_library(
     srcs = ["xfeed.cc"],
     hdrs = ["xfeed.h"],
     deps = [
-        "//tensorflow/compiler/xla:executable_run_options",
-        "//tensorflow/compiler/xla:shape_util",
-        "//tensorflow/compiler/xla/runtime:custom_call",
-        "//tensorflow/compiler/xla/runtime:custom_call_registry",
-        "//tensorflow/compiler/xla/runtime:executable",
-        "//tensorflow/compiler/xla/service/cpu:cpu_runtime",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/service/cpu:cpu_runtime",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
     ],

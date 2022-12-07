@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/tpu_client.h"
+#include "xla/pjrt/tpu_client.h"
 
 #include <array>
 #include <map>
@@ -24,24 +24,24 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/pjrt/local_device_state.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h"
-#include "tensorflow/compiler/xla/pjrt/utils.h"
-#include "tensorflow/compiler/xla/service/tpu_computation_placer.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executable.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executable_interface.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor_interface.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_initializer_helper.h"  // NOLINT(unused-includes): required for tensorflow::tpu::FindAndLoadTpuLibrary
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_platform_interface.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_stream.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/casts.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/client/client_library.h"
+#include "xla/pjrt/local_device_state.h"
+#include "xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/pjrt/utils.h"
+#include "xla/service/tpu_computation_placer.h"
+#include "xla/shape.h"
+#include "xla/status.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/tpu/tpu_executable.h"
+#include "xla/stream_executor/tpu/tpu_executable_interface.h"
+#include "xla/stream_executor/tpu/tpu_executor_interface.h"
+#include "xla/stream_executor/tpu/tpu_initializer_helper.h"  // NOLINT(unused-includes): required for tensorflow::tpu::FindAndLoadTpuLibrary
+#include "xla/stream_executor/tpu/tpu_platform_interface.h"
+#include "xla/stream_executor/tpu/tpu_stream.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/casts.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace tf_tpu = tensorflow::tpu;
 

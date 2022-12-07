@@ -19,7 +19,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tensorflow/compiler/xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_cost_analysis.h"
 
 namespace xla {
 namespace gpu {

@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/layout_util.h"
+#include "xla/layout_util.h"
 
 #include <sstream>
 
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/tsl/platform/status_matchers.h"
+#include "xla/shape_util.h"
+#include "xla/test_helpers.h"
+#include "third_party/tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace {

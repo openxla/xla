@@ -19,11 +19,11 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/regexp.h"
+#include "xla/shape.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/regexp.h"
 
 namespace xla {
 

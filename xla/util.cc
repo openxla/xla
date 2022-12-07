@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/util.h"
 
 #include <stdarg.h>
 
@@ -35,10 +35,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/numbers.h"
-#include "tensorflow/tsl/platform/stacktrace.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/numbers.h"
+#include "third_party/tsl/platform/stacktrace.h"
 
 namespace xla {
 

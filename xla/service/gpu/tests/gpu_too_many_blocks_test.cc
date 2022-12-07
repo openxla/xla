@@ -15,11 +15,11 @@ limitations under the License.
 
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/gpu/tests/gpu_codegen_test.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/statusor.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

@@ -2,17 +2,17 @@
 #   MLIR-GPU-specific convolution in XLA service implementation.
 
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )
 
 package_group(
     name = "friends",
-    includes = ["//tensorflow/compiler/xla:friends"],
+    includes = ["//xla:friends"],
 )
 
 # Filegroup used to collect source files for dependency checking.
@@ -30,10 +30,10 @@ cc_library(
     hdrs = ["conv_emitter.h"],
     deps = [
         ":conv_emitter_transforms",
-        "//tensorflow/compiler/xla:permutation_util",
-        "//tensorflow/compiler/xla:window_util",
-        "//tensorflow/compiler/xla/hlo/ir:hlo",
-        "//tensorflow/compiler/xla/service/llvm_ir:llvm_type_conversion_util",
+        "//xla:permutation_util",
+        "//xla:window_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/llvm_ir:llvm_type_conversion_util",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineDialect",
@@ -69,11 +69,11 @@ tf_cc_test(
     srcs = ["conv_emitter_test.cc"],
     deps = [
         ":conv_emitter",
-        "//tensorflow/compiler/xla/service:hlo_parser",
-        "//tensorflow/compiler/xla/tests:filecheck",
-        "//tensorflow/compiler/xla/tests:verified_hlo_module",
         "//tensorflow/tsl/platform:test",
         "//tensorflow/tsl/platform:test_main",
+        "//xla/service:hlo_parser",
+        "//xla/tests:filecheck",
+        "//xla/tests:verified_hlo_module",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:AffineToStandard",

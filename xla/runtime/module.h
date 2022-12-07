@@ -25,7 +25,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
+#include "xla/runtime/custom_call_registry.h"
 
 namespace xla {
 namespace runtime {

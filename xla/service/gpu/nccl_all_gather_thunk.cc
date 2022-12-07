@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_gather_thunk.h"
+#include "xla/service/gpu/nccl_all_gather_thunk.h"
 
 #include <chrono>  // NOLINT (required by TF interfaces)
 #include <cstdlib>
@@ -23,11 +23,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
+#include "xla/layout_util.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 
 #if XLA_ENABLE_XCCL
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 #endif
 
 namespace xla {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/client.h"
+#include "xla/client/client.h"
 
 #include <memory>
 #include <optional>
@@ -21,15 +21,15 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/execution_options_util.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/client/xla_computation.h"
+#include "xla/debug_options_flags.h"
+#include "xla/execution_options_util.h"
+#include "xla/literal.h"
+#include "xla/status_macros.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 

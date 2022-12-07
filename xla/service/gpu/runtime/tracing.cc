@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/tracing.h"
+#include "xla/service/gpu/runtime/tracing.h"
 
 #include <memory>
 
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/runtime/tracing.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/tsl/profiler/lib/scoped_annotation_stack.h"
+#include "xla/runtime/executable.h"
+#include "xla/runtime/tracing.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "third_party/tsl/profiler/lib/scoped_annotation_stack.h"
 
 namespace xla {
 namespace gpu {

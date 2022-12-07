@@ -19,9 +19,9 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/platform/port.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace stream_executor {
 namespace port {

@@ -15,7 +15,7 @@ limitations under the License.
 
 // Defines the data returned by the XLA buffer assignment packages.
 
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
+#include "xla/service/buffer_assignment.h"
 
 #include <algorithm>
 #include <deque>
@@ -30,22 +30,22 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_op_metadata.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/map_util.h"
-#include "tensorflow/compiler/xla/service/buffer_value_containers.h"
-#include "tensorflow/compiler/xla/service/heap_simulator.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/service/hlo_alias_analysis.h"
-#include "tensorflow/compiler/xla/service/hlo_buffer.h"
-#include "tensorflow/compiler/xla/service/hlo_live_range.h"
-#include "tensorflow/compiler/xla/service/hlo_value.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/numbers.h"
+#include "xla/hlo/ir/hlo_op_metadata.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/map_util.h"
+#include "xla/service/buffer_value_containers.h"
+#include "xla/service/heap_simulator.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_alias_analysis.h"
+#include "xla/service/hlo_buffer.h"
+#include "xla/service/hlo_live_range.h"
+#include "xla/service/hlo_value.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/numbers.h"
 
 namespace xla {
 namespace {

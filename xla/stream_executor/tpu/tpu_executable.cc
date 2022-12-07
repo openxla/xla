@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executable.h"
+#include "xla/stream_executor/tpu/tpu_executable.h"
 
 #include "absl/cleanup/cleanup.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/c_api_conversions.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/status_helper.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_stream.h"
+#include "xla/stream_executor/tpu/c_api_conversions.h"
+#include "xla/stream_executor/tpu/status_helper.h"
+#include "xla/stream_executor/tpu/tpu_executor_api.h"
+#include "xla/stream_executor/tpu/tpu_stream.h"
 
 namespace ApiConverter {
 static SE_ExecutableRunOptions ToC(

@@ -24,10 +24,10 @@ limitations under the License.
 #include "pybind11/numpy.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/py_client.h"
-#include "tensorflow/compiler/xla/python/sharded_device_array.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/py_client.h"
+#include "xla/python/sharded_device_array.h"
+#include "xla/xla_data.pb.h"
 
 namespace jax {
 

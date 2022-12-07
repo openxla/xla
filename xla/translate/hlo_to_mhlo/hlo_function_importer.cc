@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/hlo_function_importer.h"
+#include "xla/translate/hlo_to_mhlo/hlo_function_importer.h"
 
 #include <algorithm>
 #include <optional>
@@ -36,24 +36,24 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Location.h"  // from @llvm-project
 #include "mlir/IR/Region.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/comparison_util.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding_metadata.h"
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "tensorflow/compiler/xla/protobuf_util.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/attribute_importer.h"
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/hlo_utils.h"
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/location_importer.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/comparison_util.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/protobuf_util.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/status_macros.h"
+#include "xla/translate/hlo_to_mhlo/attribute_importer.h"
+#include "xla/translate/hlo_to_mhlo/hlo_utils.h"
+#include "xla/translate/hlo_to_mhlo/location_importer.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/statusor.h"
 
 using llvm::APInt;
 using llvm::makeArrayRef;

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/distributed/service.h"
+#include "xla/pjrt/distributed/service.h"
 
 #include <memory>
 #include <string>
@@ -22,18 +22,18 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "grpcpp/server_builder.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/protocol.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/util.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/distributed_runtime/coordination/coordination_service.h"
-#include "tensorflow/tsl/distributed_runtime/rpc/async_service_interface.h"
-#include "tensorflow/tsl/distributed_runtime/rpc/coordination/grpc_coordination_service_impl.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/random.h"
-#include "tensorflow/tsl/platform/threadpool.h"
-#include "tensorflow/tsl/protobuf/coordination_config.pb.h"
+#include "xla/pjrt/distributed/protocol.h"
+#include "xla/pjrt/distributed/util.h"
+#include "xla/status.h"
+#include "xla/util.h"
+#include "third_party/tsl/distributed_runtime/coordination/coordination_service.h"
+#include "third_party/tsl/distributed_runtime/rpc/async_service_interface.h"
+#include "third_party/tsl/distributed_runtime/rpc/coordination/grpc_coordination_service_impl.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/random.h"
+#include "third_party/tsl/platform/threadpool.h"
+#include "third_party/tsl/protobuf/coordination_config.pb.h"
 
 namespace {
 constexpr int kBarrierTimedOut = -1000;

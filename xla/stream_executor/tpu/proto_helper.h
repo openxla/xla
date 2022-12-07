@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <cstddef>
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/c_api_decl.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "third_party/tsl/platform/logging.h"
 
 extern "C" {
 

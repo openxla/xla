@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/backends/interpreter/interpreter_transfer_manager.h"
+#include "xla/backends/interpreter/interpreter_transfer_manager.h"
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/backends/interpreter/platform_id.h"
-#include "tensorflow/compiler/xla/service/transfer_manager.h"
+#include "xla/backends/interpreter/platform_id.h"
+#include "xla/service/transfer_manager.h"
 
 namespace xla {
 

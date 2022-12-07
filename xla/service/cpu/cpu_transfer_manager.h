@@ -19,14 +19,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/cpu/xfeed_manager.h"
-#include "tensorflow/compiler/xla/service/generic_transfer_manager.h"
-#include "tensorflow/compiler/xla/service/transfer_manager.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/literal.h"
+#include "xla/service/cpu/xfeed_manager.h"
+#include "xla/service/generic_transfer_manager.h"
+#include "xla/service/transfer_manager.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

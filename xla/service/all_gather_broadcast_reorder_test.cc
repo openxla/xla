@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/all_gather_broadcast_reorder.h"
+#include "xla/service/all_gather_broadcast_reorder.h"
 
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

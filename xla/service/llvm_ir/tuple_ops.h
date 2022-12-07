@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
+#include "xla/service/llvm_ir/ir_array.h"
 
 // Utilities for emitting LLVM IR related to HLO tuples.
 

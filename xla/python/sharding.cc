@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/sharding.h"
+#include "xla/python/sharding.h"
 
 #include <utility>
 
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
-#include "tensorflow/compiler/xla/python/util.h"
+#include "xla/python/util.h"
 
 namespace jax {
 

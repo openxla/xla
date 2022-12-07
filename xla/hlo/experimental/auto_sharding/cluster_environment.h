@@ -27,9 +27,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/auto_sharding_solver_option.h"
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/auto_sharding_util.h"
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/profiling_result.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_solver_option.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_util.h"
+#include "xla/hlo/experimental/auto_sharding/profiling_result.h"
 
 namespace xla {
 namespace spmd {

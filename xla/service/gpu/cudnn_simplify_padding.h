@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_SIMPLIFY_PADDING_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_SIMPLIFY_PADDING_H_
 
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/service/hlo_pass_interface.h"
+#include "xla/statusor.h"
 
 namespace xla::gpu {
 

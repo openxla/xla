@@ -20,7 +20,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/types.h"
 
 namespace llvm {
 class LLVMContext;

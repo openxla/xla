@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/triangular_solve_expander.h"
+#include "xla/service/triangular_solve_expander.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/reference_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/literal.h"
+#include "xla/reference_util.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/types.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

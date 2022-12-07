@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/compile_only_client.h"
+#include "xla/client/compile_only_client.h"
 
 #include <memory>
 
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/status_macros.h"
 
 namespace xla {
 

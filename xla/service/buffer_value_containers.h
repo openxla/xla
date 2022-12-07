@@ -17,9 +17,9 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_BUFFER_VALUE_CONTAINERS_H_
 
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/compiler/xla/service/buffer_value.h"
-#include "tensorflow/compiler/xla/service/logical_buffer.h"
-#include "tensorflow/tsl/lib/gtl/compactptrset.h"
+#include "xla/service/buffer_value.h"
+#include "xla/service/logical_buffer.h"
+#include "third_party/tsl/lib/gtl/compactptrset.h"
 
 namespace xla {
 

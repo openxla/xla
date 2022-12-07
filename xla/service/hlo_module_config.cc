@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
+#include "xla/service/hlo_module_config.h"
 
 #include <algorithm>
 #include <atomic>
@@ -28,11 +28,11 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/service/computation_layout.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/shape_layout.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/service/computation_layout.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/shape_layout.h"
+#include "xla/xla.pb.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 

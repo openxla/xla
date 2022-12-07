@@ -25,9 +25,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_interface.h"
-#include "tensorflow/tsl/platform/mutex.h"
-#include "tensorflow/tsl/platform/thread_annotations.h"
+#include "xla/backends/profiler/gpu/cupti_interface.h"
+#include "third_party/tsl/platform/mutex.h"
+#include "third_party/tsl/platform/thread_annotations.h"
 
 namespace xla {
 namespace profiler {

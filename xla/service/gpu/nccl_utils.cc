@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/nccl_utils.h"
+#include "xla/service/gpu/nccl_utils.h"
 
 #include <cstdlib>
 #include <memory>
@@ -27,13 +27,13 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/service/global_device_id.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable_run_options.h"
-#include "tensorflow/compiler/xla/service/rendezvous.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/debug_options_flags.h"
+#include "xla/service/global_device_id.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/rendezvous.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace xla {
 namespace gpu {

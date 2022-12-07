@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
+#include "xla/service/gpu/gemm_algorithm_picker.h"
 
-#include "tensorflow/compiler/xla/service/gpu/gemm_rewriter.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher_gmock.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/statusor.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/protobuf/dnn.pb.h"
+#include "xla/service/gpu/gemm_rewriter.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/service/pattern_matcher_gmock.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/statusor.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/protobuf/dnn.pb.h"
 
 namespace xla::gpu {
 namespace {

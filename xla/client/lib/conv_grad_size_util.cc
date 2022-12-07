@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/conv_grad_size_util.h"
+#include "xla/client/lib/conv_grad_size_util.h"
 
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/status_macros.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 

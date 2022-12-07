@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_runner_interface.h"
+#include "xla/service/hlo_runner_interface.h"
 
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
+#include "xla/service/hlo_parser.h"
 
 namespace xla {
 

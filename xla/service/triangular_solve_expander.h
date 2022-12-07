@@ -17,8 +17,8 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_TRIANGULAR_SOLVE_EXPANDER_H_
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/service/op_expander_pass.h"
+#include "xla/client/xla_builder.h"
+#include "xla/service/op_expander_pass.h"
 
 namespace xla {
 

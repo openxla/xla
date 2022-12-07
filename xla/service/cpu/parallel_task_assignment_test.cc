@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/parallel_task_assignment.h"
+#include "xla/service/cpu/parallel_task_assignment.h"
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_executable.h"
-#include "tensorflow/compiler/xla/service/cpu/target_machine_features_fake.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/service/cpu/cpu_executable.h"
+#include "xla/service/cpu/target_machine_features_fake.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

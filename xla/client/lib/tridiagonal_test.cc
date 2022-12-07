@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/tridiagonal.h"
+#include "xla/client/lib/tridiagonal.h"
 
 #include <cstdint>
 #include <tuple>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/lib/slicing.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
+#include "xla/client/lib/slicing.h"
+#include "xla/client/xla_builder.h"
+#include "xla/literal.h"
+#include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/test_macros.h"
 
 namespace xla {
 namespace tridiagonal {

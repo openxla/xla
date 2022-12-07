@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/reference_util.h"
+#include "xla/reference_util.h"
 
 #include <cmath>
 #include <memory>
 
-#include "tensorflow/compiler/xla/array2d.h"
-#include "tensorflow/compiler/xla/array3d.h"
-#include "tensorflow/compiler/xla/array4d.h"
-#include "tensorflow/compiler/xla/client/padding.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/array2d.h"
+#include "xla/array3d.h"
+#include "xla/array4d.h"
+#include "xla/client/padding.h"
+#include "xla/literal.h"
+#include "xla/test.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

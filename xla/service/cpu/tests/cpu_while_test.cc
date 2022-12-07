@@ -16,8 +16,8 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_compiler.h"
-#include "tensorflow/compiler/xla/service/cpu/tests/cpu_codegen_test.h"
+#include "xla/service/cpu/cpu_compiler.h"
+#include "xla/service/cpu/tests/cpu_codegen_test.h"
 
 namespace xla {
 namespace cpu {

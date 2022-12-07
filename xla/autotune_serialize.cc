@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/autotune_serialize.h"
+#include "xla/autotune_serialize.h"
 
 #include <string>
 
-#include "tensorflow/compiler/xla/autotune_results.pb.h"
-#include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_conv_algorithm_picker.h"
+#include "xla/autotune_results.pb.h"
+#include "xla/service/gpu/gemm_algorithm_picker.h"
+#include "xla/service/gpu/gpu_conv_algorithm_picker.h"
 
 namespace xla {
 namespace {

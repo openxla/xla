@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GATHER_SIMPLIFIER_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GATHER_SIMPLIFIER_H_
 
-#include "tensorflow/compiler/xla/service/op_expander_pass.h"
+#include "xla/service/op_expander_pass.h"
 
 namespace xla {
 

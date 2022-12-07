@@ -18,16 +18,16 @@ limitations under the License.
 #include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"  // from @llvm-project
 #include "stablehlo/dialect/Register.h"  // from @stablehlo
-#include "tensorflow/compiler/xla/mlir/backends/cpu/transforms/passes.h"
-#include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu.h"
-#include "tensorflow/compiler/xla/mlir_hlo/gml_st/IR/gml_st_ops.h"
-#include "tensorflow/compiler/xla/mlir_hlo/gml_st/transforms/passes.h"
-#include "tensorflow/compiler/xla/mlir_hlo/gml_st/transforms/test_passes.h"
-#include "tensorflow/compiler/xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
-#include "tensorflow/compiler/xla/mlir_hlo/lhlo/transforms/passes.h"
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/IR/register.h"
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/transforms/passes.h"
-#include "tensorflow/compiler/xla/mlir_hlo/thlo/IR/thlo_ops.h"
+#include "xla/mlir/backends/cpu/transforms/passes.h"
+#include "xla/mlir/xla_cpu/ir/xla_cpu.h"
+#include "xla/mlir_hlo/gml_st/IR/gml_st_ops.h"
+#include "xla/mlir_hlo/gml_st/transforms/passes.h"
+#include "xla/mlir_hlo/gml_st/transforms/test_passes.h"
+#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
+#include "xla/mlir_hlo/lhlo/transforms/passes.h"
+#include "xla/mlir_hlo/mhlo/IR/register.h"
+#include "xla/mlir_hlo/mhlo/transforms/passes.h"
+#include "xla/mlir_hlo/thlo/IR/thlo_ops.h"
 
 int main(int argc, char **argv) {
   mlir::mhlo::registerAllMhloPasses();

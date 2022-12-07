@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/ifrt/test_util.h"
+#include "xla/python/ifrt/test_util.h"
 
 #include <functional>
 #include <memory>
 #include <utility>
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/python/ifrt/client.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace ifrt {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/tracked_tfrt_cpu_device_buffer.h"
+#include "xla/pjrt/tracked_tfrt_cpu_device_buffer.h"
 
 #include <cstring>
 #include <string>

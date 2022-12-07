@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/runtime/types.h"
+#include "xla/runtime/types.h"
 
 namespace xla {
 namespace runtime {

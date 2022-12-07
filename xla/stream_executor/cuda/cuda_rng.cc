@@ -13,21 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_rng.h"
+#include "xla/stream_executor/cuda/cuda_rng.h"
 
 #include <cstdint>
 
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_activation.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_helpers.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/env.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/initialize.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/rng.h"
+#include "xla/stream_executor/cuda/cuda_activation.h"
+#include "xla/stream_executor/cuda/cuda_gpu_executor.h"
+#include "xla/stream_executor/cuda/cuda_helpers.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/cuda/cuda_stream.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/lib/env.h"
+#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/rng.h"
 // clang-format off
 #include "third_party/gpus/cuda/include/curand.h"
 // clang-format on

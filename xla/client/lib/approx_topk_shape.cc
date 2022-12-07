@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/approx_topk_shape.h"
+#include "xla/client/lib/approx_topk_shape.h"
 
 #include <algorithm>
 
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/util.h"
 
 // Used by rank 2+ operands
 const uint64_t kTpuLaneTiling = 128;

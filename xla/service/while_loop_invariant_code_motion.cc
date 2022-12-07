@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/while_loop_invariant_code_motion.h"
+#include "xla/service/while_loop_invariant_code_motion.h"
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
-#include "tensorflow/compiler/xla/service/compile_time_cap.h"
-#include "tensorflow/compiler/xla/service/hlo_dce.h"
-#include "tensorflow/compiler/xla/service/tuple_util.h"
-#include "tensorflow/compiler/xla/service/while_loop_analysis.h"
-#include "tensorflow/compiler/xla/service/while_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/service/compile_time_cap.h"
+#include "xla/service/hlo_dce.h"
+#include "xla/service/tuple_util.h"
+#include "xla/service/while_loop_analysis.h"
+#include "xla/service/while_util.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
 
 namespace xla {
 

@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_PYTHON_IFRT_FUTURE_H_
 #define TENSORFLOW_COMPILER_XLA_PYTHON_IFRT_FUTURE_H_
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/status.h"
 
 namespace xla {
 namespace ifrt {

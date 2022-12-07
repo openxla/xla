@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/diagnostics.h"
+#include "xla/runtime/diagnostics.h"
 
 #include <utility>
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tools/run_hlo_module.h"
+#include "xla/tools/run_hlo_module.h"
 
 #include <functional>
 #include <iostream>
@@ -24,24 +24,24 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/client/lib/testing.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/error_spec.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/literal_comparison.h"
-#include "tensorflow/compiler/xla/service/hlo_runner.h"
-#include "tensorflow/compiler/xla/service/hlo_verifier.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
-#include "tensorflow/compiler/xla/tools/hlo_control_flow_flattening.h"
-#include "tensorflow/compiler/xla/tools/hlo_module_loader.h"
-#include "tensorflow/compiler/xla/tools/prepare_reference_module.h"
-#include "tensorflow/compiler/xla/tools/run_hlo_module.pb.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/client/lib/testing.h"
+#include "xla/debug_options_flags.h"
+#include "xla/error_spec.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/literal.h"
+#include "xla/literal_comparison.h"
+#include "xla/service/hlo_runner.h"
+#include "xla/service/hlo_verifier.h"
+#include "xla/tests/test_utils.h"
+#include "xla/tools/hlo_control_flow_flattening.h"
+#include "xla/tools/hlo_module_loader.h"
+#include "xla/tools/prepare_reference_module.h"
+#include "xla/tools/run_hlo_module.pb.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace {

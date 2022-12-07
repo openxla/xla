@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_PJRT_METRICS_H_
 #define TENSORFLOW_COMPILER_XLA_PJRT_METRICS_H_
 
-#include "tensorflow/tsl/lib/monitoring/counter.h"
+#include "third_party/tsl/lib/monitoring/counter.h"
 
 // Simplified version of tensorflow/core/framework/metrics.h for JAX.
 

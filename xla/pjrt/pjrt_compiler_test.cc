@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/pjrt_compiler.h"
 
 #include <memory>
 #include <utility>
 
 #include <gtest/gtest.h>
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
+#include "xla/client/xla_computation.h"
+#include "xla/pjrt/pjrt_client.h"
 
 namespace xla {
 

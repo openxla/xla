@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_BUFFER_ASSIGNMENT_UTIL_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_BUFFER_ASSIGNMENT_UTIL_H_
 
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
+#include "xla/service/buffer_assignment.h"
 
 namespace xla {
 namespace llvm_ir {

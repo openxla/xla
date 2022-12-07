@@ -22,10 +22,10 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "rocm/include/miopen/miopen.h"
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/temporary_device_memory.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/temporary_device_memory.h"
 
 namespace stream_executor {
 namespace gpu {

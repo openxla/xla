@@ -23,8 +23,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace status_macros {

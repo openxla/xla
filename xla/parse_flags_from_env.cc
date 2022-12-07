@@ -17,7 +17,7 @@ limitations under the License.
 // modules to parse flags from an environtment variable, or a file named by the
 // environment variable.
 
-#include "tensorflow/compiler/xla/parse_flags_from_env.h"
+#include "xla/parse_flags_from_env.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,8 +32,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 namespace xla {
 

@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_ir/loop_emitter.h"
+#include "xla/service/llvm_ir/loop_emitter.h"
 
 #include <memory>
 #include <utility>
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_loop.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/service/llvm_ir/llvm_loop.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 namespace llvm_ir {

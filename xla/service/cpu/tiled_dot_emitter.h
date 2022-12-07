@@ -17,8 +17,8 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TILED_DOT_EMITTER_H_
 
 #include "llvm/IR/IRBuilder.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {

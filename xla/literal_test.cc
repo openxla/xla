@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/literal.h"
+#include "xla/literal.h"
 
 #include <cstdint>
 #include <limits>
@@ -23,15 +23,15 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/array2d.h"
-#include "tensorflow/compiler/xla/array3d.h"
-#include "tensorflow/compiler/xla/array4d.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/array2d.h"
+#include "xla/array3d.h"
+#include "xla/array4d.h"
+#include "xla/layout_util.h"
+#include "xla/literal_util.h"
+#include "xla/shape_util.h"
+#include "xla/test.h"
+#include "xla/types.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

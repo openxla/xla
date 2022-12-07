@@ -21,8 +21,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/tsl/profiler/protobuf/profile.pb.h"
+#include "xla/statusor.h"
+#include "third_party/tsl/profiler/protobuf/profile.pb.h"
 
 namespace xla {
 

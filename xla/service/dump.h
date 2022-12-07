@@ -18,9 +18,9 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "mlir/IR/Operation.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/status.h"
+#include "xla/xla.pb.h"
 
 // Consolidated utilities for logging information during compilation, usually
 // based on the options specified in the DebugOptions proto.

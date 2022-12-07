@@ -27,16 +27,16 @@ limitations under the License.
 
 #include "absl/base/dynamic_annotations.h"
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/tests/testlib_pipeline.h"
-#include "tensorflow/compiler/xla/mlir/runtime/utils/async_runtime_api.h"
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/async_runtime.h"
-#include "tensorflow/compiler/xla/runtime/jit_executable.h"
-#include "tensorflow/compiler/xla/runtime/logical_result.h"
-#include "tensorflow/compiler/xla/runtime/results.h"
-#include "tensorflow/compiler/xla/runtime/types.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/platform/test_benchmark.h"
+#include "xla/mlir/runtime/transforms/tests/testlib_pipeline.h"
+#include "xla/mlir/runtime/utils/async_runtime_api.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/async_runtime.h"
+#include "xla/runtime/jit_executable.h"
+#include "xla/runtime/logical_result.h"
+#include "xla/runtime/results.h"
+#include "xla/runtime/types.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

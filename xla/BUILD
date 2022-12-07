@@ -1,27 +1,27 @@
 load("//tensorflow:tensorflow.default.bzl", "cc_header_only_library")
 load("//tensorflow/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 load(
     "//tensorflow/tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
 load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
-load("//tensorflow/compiler/xla:xla.bzl", "xla_py_proto_library")
+load("//xla:xla.bzl", "xla_py_proto_library")
 load(
     "//tensorflow/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//tensorflow:internal"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    default_visibility = ["//third_party/tensorflow:internal"],
     licenses = ["notice"],
 )
 
 package_group(
     name = "friends",
-    includes = ["//tensorflow:internal"],
+    includes = ["//third_party/tensorflow:internal"],
     packages = [
         # copybara:uncomment "//learning/infra/mira/...",
         "//third_party/australis/...",
@@ -31,23 +31,23 @@ package_group(
         "//third_party/mlir_edge/model_curriculum/...",
         "//third_party/py/jax/...",
         "//third_party/py/t5x/...",
-        "//tensorflow/compiler/...",
-        "//tensorflow/python/tpu/...",
+        "//third_party/tensorflow/compiler/...",
+        "//third_party/tensorflow/python/tpu/...",
     ],
 )
 
 package_group(
     name = "internal",
     packages = [
-        "//tensorflow/compiler/xla/...",
+        "//xla/...",
     ],
 )
 
 package_group(
     name = "runtime",
     packages = [
-        "//tensorflow/compiler/xla/runtime/...",
-        "//tensorflow/compiler/xla/service/gpu/runtime/...",
+        "//xla/runtime/...",
+        "//xla/service/gpu/runtime/...",
     ],
 )
 
@@ -98,7 +98,7 @@ tf_proto_library(
     make_default_target_header_only = True,
     protodeps = [
         ":xla_data_proto",
-        "//tensorflow/compiler/xla/service:hlo_proto",
+        "//xla/service:hlo_proto",
     ],
     visibility = ["//visibility:public"],
 )
@@ -261,7 +261,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":status",
-        "//tensorflow/compiler/xla/stream_executor/lib",
+        "//xla/stream_executor/lib",
     ],
 )
 
@@ -413,7 +413,7 @@ cc_library(
     deps = [
         ":status",
         ":status_macros",
-        "//tensorflow/compiler/xla/service:hlo_lexer",
+        "//xla/service:hlo_lexer",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
@@ -627,7 +627,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":types",
-        "//tensorflow/compiler/xla/stream_executor",
+        "//xla/stream_executor",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -783,11 +783,11 @@ cc_library(
         ":types",
         ":util",
         ":xla_data_proto_cc",
-        "//tensorflow/compiler/xla/service:hlo_parser",
         "//tensorflow/tsl/lib/io:buffered_inputstream",
         "//tensorflow/tsl/lib/io:random_inputstream",
         "//tensorflow/tsl/platform:env",
         "//tensorflow/tsl/platform:protobuf",
+        "//xla/service:hlo_parser",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -930,13 +930,13 @@ cc_library(
         ":util",
         ":window_util",
         ":xla_data_proto_cc",
-        "//tensorflow/compiler/xla/client:padding",
-        "//tensorflow/compiler/xla/client:xla_builder",
-        "//tensorflow/compiler/xla/hlo/evaluator:hlo_evaluator",
-        "//tensorflow/compiler/xla/hlo/ir:hlo",
-        "//tensorflow/compiler/xla/service:shape_inference",
         "//tensorflow/tsl/lib/math:math_util",
         "//tensorflow/tsl/platform:logging",
+        "//xla/client:padding",
+        "//xla/client:xla_builder",
+        "//xla/hlo/evaluator:hlo_evaluator",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:shape_inference",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/types:span",
@@ -955,9 +955,9 @@ tf_cc_test(
         ":test",
         ":util",
         ":xla_data_proto_cc",
-        "//tensorflow/compiler/xla/client:padding",
-        "//tensorflow/compiler/xla/tests:literal_test_util",
         "//tensorflow/tsl/platform:test_main",
+        "//xla/client:padding",
+        "//xla/tests:literal_test_util",
         "@com_google_absl//absl/memory",
     ],
 )
@@ -1038,9 +1038,9 @@ tf_cc_test(
     deps =
         [
             ":xla_proto_cc",
-            "//tensorflow/compiler/xla/hlo/ir:hlo",
             "//tensorflow/tsl/platform:logging",
             "//tensorflow/tsl/platform:test",
+            "//xla/hlo/ir:hlo",
             "@com_google_absl//absl/container:flat_hash_map",
             "@com_google_absl//absl/strings",
             "@com_google_absl//absl/strings:str_format",
@@ -1111,8 +1111,8 @@ cc_library(
     deps = if_cuda_is_configured([
         ":autotune_results_proto_cc",
         ":statusor",
-        "//tensorflow/compiler/xla/service/gpu:gemm_algorithm_picker",
-        "//tensorflow/compiler/xla/service/gpu:gpu_conv_algorithm_picker",
+        "//xla/service/gpu:gemm_algorithm_picker",
+        "//xla/service/gpu:gpu_conv_algorithm_picker",
     ]),
 )
 

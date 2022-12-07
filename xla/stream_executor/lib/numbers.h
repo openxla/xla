@@ -19,7 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 namespace port {

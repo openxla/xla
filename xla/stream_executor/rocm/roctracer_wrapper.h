@@ -28,9 +28,9 @@ limitations under the License.
 #else
 #include "rocm/include/roctracer/roctracer_hcc.h"
 #endif
-#include "tensorflow/compiler/xla/stream_executor/lib/env.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/dso_loader.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/lib/env.h"
+#include "xla/stream_executor/platform/dso_loader.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 namespace wrap {

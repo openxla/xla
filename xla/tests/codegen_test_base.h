@@ -18,10 +18,10 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/compiler.h"
-#include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/compiler.h"
+#include "xla/service/executable.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 

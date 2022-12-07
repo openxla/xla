@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/gpu/gpu_helpers.h"
+#include "xla/pjrt/gpu/gpu_helpers.h"
 
 #include <memory>
 #include <optional>
@@ -22,14 +22,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/device_host_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/device_mem_allocator.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/framework/device_id.h"
-#include "tensorflow/tsl/util/env_var.h"
+#include "xla/client/client_library.h"
+#include "xla/service/platform_util.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_host_allocator.h"
+#include "xla/stream_executor/device_mem_allocator.h"
+#include "xla/util.h"
+#include "third_party/tsl/framework/device_id.h"
+#include "third_party/tsl/util/env_var.h"
 
 namespace xla {
 

@@ -36,11 +36,11 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/lib/math/math_util.h"
-#include "tensorflow/tsl/platform/errors.h"  // IWYU pragma: keep
+#include "xla/status.h"
+#include "xla/status_macros.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/lib/math/math_util.h"
+#include "third_party/tsl/platform/errors.h"  // IWYU pragma: keep
 
 namespace xla {
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/layout.h"
+#include "xla/layout.h"
 
 #include <memory>
 #include <ostream>
@@ -24,9 +24,9 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/layout_util.h"
+#include "xla/shape.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

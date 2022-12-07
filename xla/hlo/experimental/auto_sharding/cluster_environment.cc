@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/cluster_environment.h"
+#include "xla/hlo/experimental/auto_sharding/cluster_environment.h"
 
 #include <algorithm>
 #include <cstdint>

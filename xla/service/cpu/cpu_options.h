@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_OPTIONS_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_OPTIONS_H_
 
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
+#include "xla/service/hlo_module_config.h"
 
 // Helper functions for querying options that are specific to the CPU backend.
 

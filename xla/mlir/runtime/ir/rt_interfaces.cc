@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_interfaces.h"  // IWYU pragma: keep
+#include "xla/mlir/runtime/ir/rt_interfaces.h"  // IWYU pragma: keep
 
 #define GET_ATTR_INTERFACE_CLASSES
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_attr_interfaces.cc.inc"  // IWYU pragma: keep
+#include "xla/mlir/runtime/ir/rt_attr_interfaces.cc.inc"  // IWYU pragma: keep

@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/operand_upcaster.h"
+#include "xla/service/operand_upcaster.h"
 
 #include <optional>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
-#include "tensorflow/compiler/xla/service/shape_inference.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/hlo_creation_utils.h"
+#include "xla/service/shape_inference.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

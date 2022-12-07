@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/compilation_environments.h"
+#include "xla/service/compilation_environments.h"
 
 #include <cstdint>
 #include <memory>
@@ -29,8 +29,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

@@ -20,14 +20,14 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/memref/transforms/passes.h"
+#include "xla/mlir/memref/transforms/passes.h"
 
 namespace xla {
 
 using namespace mlir;  // NOLINT
 
 #define GEN_PASS_DEF_ALIGNEDALLOCATIONSPASS
-#include "tensorflow/compiler/xla/mlir/memref/transforms/passes.h.inc"
+#include "xla/mlir/memref/transforms/passes.h.inc"
 
 struct AlignedAllocationsPass
     : public impl::AlignedAllocationsPassBase<AlignedAllocationsPass> {

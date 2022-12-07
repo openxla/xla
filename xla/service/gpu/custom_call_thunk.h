@@ -16,12 +16,12 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUSTOM_CALL_THUNK_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUSTOM_CALL_THUNK_H_
 
-#include "tensorflow/compiler/xla/service/custom_call_status_internal.h"
-#include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-#include "tensorflow/compiler/xla/service/gpu/thunk.h"
+#include "xla/service/custom_call_status_internal.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/thunk.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_types.h"
+#include "xla/stream_executor/gpu/gpu_types.h"
 #endif
 
 namespace xla {

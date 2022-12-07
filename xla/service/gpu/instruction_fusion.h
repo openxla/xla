@@ -21,9 +21,9 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/fusion_node_indexing_evaluation.h"
-#include "tensorflow/compiler/xla/service/instruction_fusion.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/fusion_node_indexing_evaluation.h"
+#include "xla/service/instruction_fusion.h"
 
 namespace xla {
 namespace gpu {

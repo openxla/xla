@@ -16,16 +16,16 @@ limitations under the License.
 // Tests that our utility functions for dealing with literals are correctly
 // implemented.
 
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
+#include "xla/tests/literal_test_util.h"
 
 #include <vector>
 
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/test_helpers.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

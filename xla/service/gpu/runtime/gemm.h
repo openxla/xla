@@ -17,9 +17,9 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_RUNTIME_GEMM_H_
 
 #include "absl/container/node_hash_map.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/runtime/state.h"
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/runtime/state.h"
+#include "xla/service/gpu/matmul_utils.h"
 
 namespace xla {
 namespace gpu {

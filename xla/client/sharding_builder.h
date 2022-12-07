@@ -18,12 +18,12 @@ limitations under the License.
 
 #include <vector>
 
-#include "tensorflow/compiler/xla/array.h"
-#include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/array.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace sharding_builder {

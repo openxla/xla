@@ -18,9 +18,9 @@ limitations under the License.
 
 #include <ostream>
 
-#include "tensorflow/compiler/xla/service/pattern_matcher.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/test.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 

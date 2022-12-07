@@ -21,12 +21,12 @@ limitations under the License.
 #include <string_view>
 #include <system_error>  // NOLINT
 
-#include "tensorflow/tsl/platform/platform.h"
+#include "third_party/tsl/platform/platform.h"
 
 #if defined(PLATFORM_GOOGLE)
-#include "tensorflow/compiler/xla/runtime/google/memory_mapper.h"
+#include "xla/runtime/google/memory_mapper.h"
 #else
-#include "tensorflow/compiler/xla/runtime/default/memory_mapper.h"
+#include "xla/runtime/default/memory_mapper.h"
 #endif
 
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"

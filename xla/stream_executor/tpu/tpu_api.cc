@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
 
 namespace stream_executor {
 namespace tpu {

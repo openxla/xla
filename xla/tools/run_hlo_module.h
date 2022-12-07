@@ -20,10 +20,10 @@ limitations under the License.
 #include <random>
 #include <string>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo_runner.h"
-#include "tensorflow/compiler/xla/tools/run_hlo_module.pb.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/hlo_runner.h"
+#include "xla/tools/run_hlo_module.pb.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 

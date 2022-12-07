@@ -3,8 +3,8 @@ load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//tensorflow:internal"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    default_visibility = ["//third_party/tensorflow:internal"],
     licenses = ["notice"],
 )
 
@@ -44,15 +44,15 @@ cc_library(
     compatible_with = [],
     deps = [
         ":passes_inc_gen",
-        "//tensorflow/compiler/xla/mlir/runtime/ir:rt",
-        "//tensorflow/compiler/xla/mlir/runtime/utils:custom_calls",
-        "//tensorflow/compiler/xla/mlir_hlo:lhlo",
-        "//tensorflow/compiler/xla/mlir_hlo:lhlo_gpu",
-        "//tensorflow/compiler/xla/service/gpu:gpu_executable",
-        "//tensorflow/compiler/xla/service/gpu:launch_dimensions",
-        "//tensorflow/compiler/xla/service/gpu:nccl_collective_thunks",
-        "//tensorflow/compiler/xla/stream_executor:blas",
-        "//tensorflow/compiler/xla/translate/mhlo_to_hlo:location_exporter",
+        "//xla/mlir/runtime/ir:rt",
+        "//xla/mlir/runtime/utils:custom_calls",
+        "//xla/mlir_hlo:lhlo",
+        "//xla/mlir_hlo:lhlo_gpu",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu:nccl_collective_thunks",
+        "//xla/stream_executor:blas",
+        "//xla/translate/mhlo_to_hlo:location_exporter",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",

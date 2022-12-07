@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/metrics.h"
+#include "xla/pjrt/metrics.h"
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/tsl/lib/monitoring/counter.h"
+#include "third_party/tsl/lib/monitoring/counter.h"
 
 namespace xla {
 namespace {

@@ -20,10 +20,10 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "tensorflow/compiler/xla/comparison_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/comparison_util.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

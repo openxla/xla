@@ -19,15 +19,15 @@
 # plugins = {
 #   "foo": {
 #     "deps": [
-#       "//tensorflow/compiler/plugin/foo:foo_lib",
-#       "//tensorflow/compiler/plugin/foo:test_macros",
+#       "//third_party/tensorflow/compiler/plugin/foo:foo_lib",
+#       "//third_party/tensorflow/compiler/plugin/foo:test_macros",
 #     ],
 #     "disabled_manifest": "tensorflow/compiler/plugin/foo/disabled_test_manifest.txt",
 #     "copts": [],
 #     "tags": [],
 #     "args": []
 #     "data": [
-#       "//tensorflow/compiler/plugin/foo:disabled_test_manifest.txt",
+#       "//third_party/tensorflow/compiler/plugin/foo:disabled_test_manifest.txt",
 #     ],
 #   },
 # }

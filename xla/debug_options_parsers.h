@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_split.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 

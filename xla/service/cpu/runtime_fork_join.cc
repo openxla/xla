@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/runtime_fork_join.h"
+#include "xla/service/cpu/runtime_fork_join.h"
 
 #define EIGEN_USE_THREADS
 
@@ -21,10 +21,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/service/custom_call_status_internal.h"
-#include "tensorflow/tsl/platform/blocking_counter.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/executable_run_options.h"
+#include "xla/service/custom_call_status_internal.h"
+#include "third_party/tsl/platform/blocking_counter.h"
+#include "third_party/tsl/platform/logging.h"
 
 using ComputeFunctionType = void (*)(void*, const void*, const void**, void**,
                                      void*, int64_t*, uint64_t*);

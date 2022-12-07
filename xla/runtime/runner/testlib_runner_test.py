@@ -18,7 +18,7 @@ import pathlib
 from absl.testing import absltest
 import numpy as np
 
-from tensorflow.compiler.xla.runtime.runner import runner
+from xla.runtime.runner import runner
 
 # We assume that the testlib runner is defined in the same project as this test.
 r = runner.Runner(f'{pathlib.Path(__file__).parent.resolve()}/testlib_runner')

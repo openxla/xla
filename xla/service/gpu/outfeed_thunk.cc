@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/outfeed_thunk.h"
+#include "xla/service/gpu/outfeed_thunk.h"
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/gpu/outfeed_manager.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal.h"
+#include "xla/service/gpu/outfeed_manager.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {

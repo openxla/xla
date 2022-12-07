@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/testing.h"
+#include "xla/client/lib/testing.h"
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/execution_options_util.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/client/xla_builder.h"
+#include "xla/execution_options_util.h"
+#include "xla/literal.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/tests/test_utils.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

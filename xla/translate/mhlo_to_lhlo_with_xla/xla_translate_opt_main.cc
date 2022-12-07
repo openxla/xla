@@ -18,11 +18,11 @@ limitations under the License.
 #include "mlir/InitAllPasses.h"  // from @llvm-project
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"  // from @llvm-project
 #include "stablehlo/dialect/Register.h"  // from @stablehlo
-#include "tensorflow/compiler/xla/mlir/framework/ir/xla_framework.h"
-#include "tensorflow/compiler/xla/mlir/framework/transforms/passes.h"
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/IR/register.h"
-#include "tensorflow/compiler/xla/translate/mhlo_to_lhlo_with_xla/mhlo_to_lhlo_with_xla.h"
-#include "tensorflow/tsl/platform/init_main.h"
+#include "xla/mlir/framework/ir/xla_framework.h"
+#include "xla/mlir/framework/transforms/passes.h"
+#include "xla/mlir_hlo/mhlo/IR/register.h"
+#include "xla/translate/mhlo_to_lhlo_with_xla/mhlo_to_lhlo_with_xla.h"
+#include "third_party/tsl/platform/init_main.h"
 
 int main(int argc, char **argv) {
   // TODO(jreiffers): Move this to a more appropriate place. It is used by both

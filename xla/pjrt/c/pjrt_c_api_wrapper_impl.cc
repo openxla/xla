@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
+#include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 
 #include <functional>
 #include <memory>
@@ -23,22 +23,22 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api.h"
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api_helpers.h"
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_executable.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_future.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/client/xla_computation.h"
+#include "xla/literal.h"
+#include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_helpers.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_future.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 
 // TODO(b/238999986): Remove this.
-#include "tensorflow/compiler/xla/stream_executor/tpu/c_api_conversions.h"
+#include "xla/stream_executor/tpu/c_api_conversions.h"
 
 namespace pjrt {
 

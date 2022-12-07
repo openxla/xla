@@ -13,22 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime_intrinsics.h"
+#include "xla/service/gpu/runtime_intrinsics.h"
 
 #include <string>
 #include <utility>
 
 #include "absl/cleanup/cleanup.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/multi_platform_manager.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/service/custom_call_status.h"
+#include "xla/service/custom_call_target_registry.h"
+#include "xla/service/platform_util.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/multi_platform_manager.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/util.h"
 
 namespace xla {
 

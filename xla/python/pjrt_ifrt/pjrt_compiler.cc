@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_compiler.h"
+#include "xla/python/pjrt_ifrt/pjrt_compiler.h"
 
 #include <functional>
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_executable.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/pjrt_ifrt/pjrt_executable.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {

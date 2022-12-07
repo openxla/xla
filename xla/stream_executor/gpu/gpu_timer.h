@@ -19,9 +19,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_TIMER_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_TIMER_H_
 
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_driver.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/gpu/gpu_driver.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/stream_executor_internal.h"
 
 namespace stream_executor {
 namespace gpu {

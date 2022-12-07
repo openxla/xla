@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/platform_util.h"
+#include "xla/service/platform_util.h"
 
 #include <algorithm>
 #include <string>
@@ -21,18 +21,18 @@ limitations under the License.
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/service/compiler.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/rocm/rocm_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/debug_options_flags.h"
+#include "xla/service/compiler.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/host/host_platform_id.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 namespace xla {
 

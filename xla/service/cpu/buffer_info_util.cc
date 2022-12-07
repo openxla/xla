@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/buffer_info_util.h"
+#include "xla/service/cpu/buffer_info_util.h"
 
-#include "tensorflow/compiler/xla/cpu_function_runtime.h"
+#include "xla/cpu_function_runtime.h"
 
 namespace xla {
 namespace cpu {

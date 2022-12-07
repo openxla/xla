@@ -27,16 +27,16 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/client/executable_build_options.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.pb.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/client/executable_build_options.h"
+#include "xla/executable_run_options.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/tpu_driver/tpu_driver.h"
+#include "xla/python/tpu_driver/tpu_driver.pb.h"
+#include "xla/shape.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 namespace xla {
 

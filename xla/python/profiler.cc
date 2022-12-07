@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/profiler.h"
+#include "xla/python/profiler.h"
 
 #include <memory>
 
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/python/profiler/internal/traceme_wrapper.h"
-#include "tensorflow/compiler/xla/python/types.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/tsl/profiler/lib/profiler_session.h"
-#include "tensorflow/tsl/profiler/rpc/client/capture_profile.h"
-#include "tensorflow/tsl/profiler/rpc/profiler_server.h"
+#include "xla/python/profiler/internal/traceme_wrapper.h"
+#include "xla/python/types.h"
+#include "xla/status.h"
+#include "third_party/tsl/profiler/lib/profiler_session.h"
+#include "third_party/tsl/profiler/rpc/client/capture_profile.h"
+#include "third_party/tsl/profiler/rpc/profiler_server.h"
 
 namespace xla {
 

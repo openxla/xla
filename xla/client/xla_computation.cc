@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/xla_computation.h"
+#include "xla/client/xla_computation.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
 
 namespace xla {
 

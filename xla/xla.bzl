@@ -29,12 +29,12 @@ def xla_cc_binary(deps = None, **kwargs):
     # TODO(ddunleavy): some of these should be removed from here and added to
     # specific targets.
     deps += [
-        clean_dep("@com_google_protobuf//:protobuf"),
-        "//tensorflow/compiler/xla:xla_proto_cc_impl",
-        "//tensorflow/compiler/xla:xla_data_proto_cc_impl",
-        "//tensorflow/compiler/xla/service:hlo_proto_cc_impl",
-        "//tensorflow/compiler/xla/service/gpu:backend_configs_cc_impl",
-        "//tensorflow/compiler/xla/stream_executor:dnn_proto_cc_impl",
+        clean_dep("//google/protobuf"),
+        "//xla:xla_proto_cc_impl",
+        "//xla:xla_data_proto_cc_impl",
+        "//xla/service:hlo_proto_cc_impl",
+        "//xla/service/gpu:backend_configs_cc_impl",
+        "//xla/stream_executor:dnn_proto_cc_impl",
         "//tensorflow/tsl/platform:env_impl",
         "//tensorflow/tsl/profiler/utils:time_utils_impl",
         "//tensorflow/tsl/profiler/backends/cpu:traceme_recorder_impl",
@@ -51,13 +51,13 @@ def xla_cc_test(
         deps = deps + if_tsl_link_protobuf(
             [],
             [
-                # clean_dep("@com_google_protobuf//:protobuf"),
+                # clean_dep("//google/protobuf"),
                 # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
-                "//tensorflow/compiler/xla:xla_proto_cc_impl",
-                "//tensorflow/compiler/xla:xla_data_proto_cc_impl",
-                "//tensorflow/compiler/xla/service:hlo_proto_cc_impl",
-                "//tensorflow/compiler/xla/service/gpu:backend_configs_cc_impl",
-                "//tensorflow/compiler/xla/stream_executor:dnn_proto_cc_impl",
+                "//xla:xla_proto_cc_impl",
+                "//xla:xla_data_proto_cc_impl",
+                "//xla/service:hlo_proto_cc_impl",
+                "//xla/service/gpu:backend_configs_cc_impl",
+                "//xla/stream_executor:dnn_proto_cc_impl",
                 "//tensorflow/tsl/profiler/utils:time_utils_impl",
                 "//tensorflow/tsl/profiler/backends/cpu:traceme_recorder_impl",
                 "//tensorflow/tsl/protobuf:protos_all_cc_impl",

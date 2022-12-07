@@ -51,8 +51,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "xla/types.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 namespace xla {
 

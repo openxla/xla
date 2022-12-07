@@ -24,8 +24,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "tensorflow/compiler/xla/runtime/logical_result.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/runtime/logical_result.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace runtime {

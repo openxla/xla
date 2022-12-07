@@ -20,7 +20,7 @@ limitations under the License.
 #include <string>
 
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/status.h"
 
 namespace jax {
 

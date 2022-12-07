@@ -36,20 +36,20 @@ limitations under the License.
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/utils/custom_calls.h"
-#include "tensorflow/compiler/xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
-#include "tensorflow/compiler/xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_gather_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_reduce_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_to_all_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_collective_permute_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/mlir/runtime/utils/custom_calls.h"
+#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
+#include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
+#include "xla/service/gpu/nccl_all_gather_thunk.h"
+#include "xla/service/gpu/nccl_all_reduce_thunk.h"
+#include "xla/service/gpu/nccl_all_to_all_thunk.h"
+#include "xla/service/gpu/nccl_collective_permute_thunk.h"
+#include "xla/service/gpu/nccl_collective_thunk.h"
 
 namespace xla {
 namespace gpu {
 
 #define GEN_PASS_DEF_CONVERTLMHLOTOGPURUNTIMEPASS
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/passes.h.inc"
+#include "xla/mlir/backends/gpu/transforms/passes.h.inc"
 
 using namespace mlir;  // NOLINT
 

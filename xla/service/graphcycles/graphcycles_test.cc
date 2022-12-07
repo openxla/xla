@@ -15,16 +15,16 @@ limitations under the License.
 
 // A test for the GraphCycles interface.
 
-#include "tensorflow/compiler/xla/service/graphcycles/graphcycles.h"
+#include "xla/service/graphcycles/graphcycles.h"
 
 #include <optional>
 #include <random>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/platform/test_benchmark.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/platform/test_benchmark.h"
 
 // We emulate a GraphCycles object with a node vector and an edge vector.
 // We then compare the two implementations.

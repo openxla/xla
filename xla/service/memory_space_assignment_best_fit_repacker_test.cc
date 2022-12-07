@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/memory_space_assignment_best_fit_repacker.h"
+#include "xla/service/memory_space_assignment_best_fit_repacker.h"
 
-#include "tensorflow/tsl/platform/test.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 

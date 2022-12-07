@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
+#include "xla/service/cpu/cpu_runtime.h"
 
 #include <complex>
 #include <cstdarg>
@@ -34,21 +34,21 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/refcounting_hash_map.h"
-#include "tensorflow/compiler/xla/service/collective_ops_utils.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/service/cpu/xfeed_manager.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/executable_run_options.h"
+#include "xla/layout_util.h"
+#include "xla/primitive_util.h"
+#include "xla/refcounting_hash_map.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/service/computation_placer.h"
+#include "xla/service/cpu/xfeed_manager.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace cpu {

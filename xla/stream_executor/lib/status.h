@@ -18,9 +18,9 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LIB_STATUS_H_
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/error.h"  // IWYU pragma: export
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/stream_executor/lib/error.h"  // IWYU pragma: export
+#include "xla/stream_executor/platform/logging.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace stream_executor {
 namespace port {

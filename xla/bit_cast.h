@@ -28,8 +28,8 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "third_party/eigen3/Eigen/Core"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/bfloat16.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/bfloat16.h"
 
 namespace xla {
 

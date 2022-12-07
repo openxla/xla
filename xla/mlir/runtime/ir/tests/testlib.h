@@ -24,15 +24,15 @@ limitations under the License.
 
 // clang-format off
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/ir/tests/testlib_dialect.h.inc"
-#include "tensorflow/compiler/xla/mlir/runtime/ir/tests/testlib_enums.h.inc"
+#include "xla/mlir/runtime/ir/tests/testlib_dialect.h.inc"
+#include "xla/mlir/runtime/ir/tests/testlib_enums.h.inc"
 // clang-format on
 
 #define GET_ATTRDEF_CLASSES
-#include "tensorflow/compiler/xla/mlir/runtime/ir/tests/testlib_attrs.h.inc"
+#include "xla/mlir/runtime/ir/tests/testlib_attrs.h.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "tensorflow/compiler/xla/mlir/runtime/ir/tests/testlib_types.h.inc"
+#include "xla/mlir/runtime/ir/tests/testlib_types.h.inc"
 
 namespace xla {
 namespace runtime {

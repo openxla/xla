@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/global_device_id.h"
+#include "xla/service/global_device_id.h"
 
 #include "absl/strings/str_join.h"
 

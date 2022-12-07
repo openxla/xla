@@ -16,14 +16,14 @@ limitations under the License.
 #include <cmath>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
+#include "xla/client/xla_builder.h"
+#include "xla/literal.h"
+#include "xla/statusor.h"
+#include "xla/test.h"
+#include "xla/test_helpers.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/test_macros.h"
+#include "xla/tests/test_utils.h"
 
 // Tests the handling of the basic mathematics operations with F16 operands.
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/pjrt/pjrt_stream_executor_client.h"
 
 #include <memory>
 #include <string>
@@ -22,13 +22,13 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include "absl/functional/any_invocable.h"
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/client/client_library.h"
+#include "xla/client/xla_builder.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/service/platform_util.h"
+#include "xla/shape_util.h"
+#include "xla/test.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

@@ -2,8 +2,8 @@ load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//tensorflow/compiler/xla/mlir/runtime:friends"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    default_visibility = ["//xla/mlir/runtime:friends"],
     licenses = ["notice"],
 )
 
@@ -13,8 +13,8 @@ cc_library(
     hdrs = ["async_runtime_api.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "//tensorflow/compiler/xla/runtime:async_runtime",
         "//tensorflow/tsl/platform:platform_port",
+        "//xla/runtime:async_runtime",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//llvm:Support",
@@ -39,8 +39,8 @@ cc_library(
     hdrs = ["constraints.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "//tensorflow/compiler/xla/runtime:constraints",
-        "//tensorflow/compiler/xla/runtime:errors",
+        "//xla/runtime:constraints",
+        "//xla/runtime:errors",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",

@@ -12,13 +12,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/translate.h"
+#include "xla/translate/mhlo_to_hlo/translate.h"
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/type_to_shape.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
+#include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 
 namespace xla {
 

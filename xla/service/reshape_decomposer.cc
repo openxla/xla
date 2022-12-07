@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/reshape_decomposer.h"
+#include "xla/service/reshape_decomposer.h"
 
-#include "tensorflow/compiler/xla/hlo/ir/dfs_hlo_visitor_with_default.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/service/hlo_creation_utils.h"
+#include "xla/status.h"
 
 namespace xla {
 

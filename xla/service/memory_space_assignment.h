@@ -29,9 +29,9 @@ limitations under the License.
 #include <map>
 #endif
 #include "absl/functional/function_ref.h"
-#include "tensorflow/compiler/xla/service/heap_simulator.h"
-#include "tensorflow/compiler/xla/service/hlo_cost_analysis.h"
-#include "tensorflow/compiler/xla/service/memory_space_assignment_repacking.h"
+#include "xla/service/heap_simulator.h"
+#include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/memory_space_assignment_repacking.h"
 
 namespace xla {
 

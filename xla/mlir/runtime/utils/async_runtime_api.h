@@ -18,7 +18,7 @@ limitations under the License.
 
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
-#include "tensorflow/compiler/xla/runtime/async_runtime.h"
+#include "xla/runtime/async_runtime.h"
 #include "tfrt/concurrency/async_value_ref.h"  // from @tf_runtime
 #include "tfrt/concurrency/chain.h"  // from @tf_runtime
 

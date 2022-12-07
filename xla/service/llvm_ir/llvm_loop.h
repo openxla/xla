@@ -25,9 +25,9 @@ limitations under the License.
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/service/llvm_ir/ir_array.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace llvm_ir {

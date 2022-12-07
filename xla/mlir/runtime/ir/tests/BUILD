@@ -1,12 +1,12 @@
-load("//tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
+load("//third_party/tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("//tensorflow/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
-# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
+# copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
 
 glob_lit_tests(
     data = [":test_utilities"],
-    driver = "//tensorflow/compiler/xla:run_lit.sh",
+    driver = "//xla:run_lit.sh",
     test_file_exts = ["mlir"],
 )
 
@@ -15,7 +15,7 @@ filegroup(
     name = "test_utilities",
     testonly = True,
     data = [
-        "//tensorflow/compiler/xla/mlir/runtime:xla-runtime-opt",
+        "//xla/mlir/runtime:xla-runtime-opt",
         "@llvm-project//llvm:FileCheck",
         "@llvm-project//mlir:run_lit.sh",
     ],
@@ -81,7 +81,7 @@ cc_library(
     srcs = ["testlib.cc"],
     hdrs = ["testlib.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//tensorflow/compiler/xla/mlir/runtime:friends"],
+    visibility = ["//xla/mlir/runtime:friends"],
     deps = [
         ":testlib_inc_gen",
         "@llvm-project//llvm:Support",

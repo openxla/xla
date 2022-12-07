@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/local_client.h"
+#include "xla/client/local_client.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "llvm/ADT/Triple.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/service/backend.h"
-#include "tensorflow/compiler/xla/service/dump.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
-#include "tensorflow/compiler/xla/service/source_map_util.h"
-#include "tensorflow/compiler/xla/service/stream_pool.h"
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/client/xla_computation.h"
+#include "xla/service/backend.h"
+#include "xla/service/dump.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/service/source_map_util.h"
+#include "xla/service/stream_pool.h"
+#include "xla/status_macros.h"
 
 using xla::source_map_util::InvalidParameterArgument;
 

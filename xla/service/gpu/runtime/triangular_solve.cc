@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/triangular_solve.h"
+#include "xla/service/gpu/runtime/triangular_solve.h"
 
 #include <numeric>
 #include <string>
 #include <string_view>
 
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/tsl/platform/human_readable_json.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/service/gpu/gpu_asm_opts_util.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "third_party/tsl/platform/human_readable_json.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#include "tensorflow/compiler/xla/service/gpu/triangular_solve_thunk.h"
+#include "xla/service/gpu/triangular_solve_thunk.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace xla {

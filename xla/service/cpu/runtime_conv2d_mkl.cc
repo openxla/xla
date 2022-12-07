@@ -12,18 +12,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv2d_mkl.h"
+#include "xla/service/cpu/runtime_conv2d_mkl.h"
 
 #include <iostream>
 
 #include "absl/base/dynamic_annotations.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
+#include "xla/executable_run_options.h"
 
 #ifdef ENABLE_MKL
 #include <omp.h>
 
 #include "dnnl.hpp"
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv2d.h"
+#include "xla/service/cpu/runtime_conv2d.h"
 
 namespace {
 

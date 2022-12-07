@@ -21,9 +21,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "pybind11/pytypes.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/platform/types.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/platform/types.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace profiler {

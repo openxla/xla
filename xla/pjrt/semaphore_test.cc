@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/semaphore.h"
+#include "xla/pjrt/semaphore.h"
 
 #include "absl/synchronization/notification.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/test.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 namespace xla {
 namespace {

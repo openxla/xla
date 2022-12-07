@@ -13,22 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/executable.h"
+#include "xla/service/executable.h"
 
 #include <memory>
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/service/dump.h"
-#include "tensorflow/compiler/xla/service/hlo_graph_dumper.h"
-#include "tensorflow/compiler/xla/service/maybe_owning_device_memory.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/stream_executor/device_description.h"
-#include "tensorflow/tsl/lib/strings/proto_serialization.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/debug_options_flags.h"
+#include "xla/service/dump.h"
+#include "xla/service/hlo_graph_dumper.h"
+#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/status.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/device_description.h"
+#include "third_party/tsl/lib/strings/proto_serialization.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 

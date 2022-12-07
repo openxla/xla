@@ -19,8 +19,8 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/types.h"
 
 namespace xla {
 

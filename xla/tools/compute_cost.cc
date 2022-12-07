@@ -21,9 +21,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "tensorflow/compiler/xla/service/hlo_cost_analysis.h"
-#include "tensorflow/compiler/xla/tools/hlo_module_loader.h"
-#include "tensorflow/tsl/platform/init_main.h"
+#include "xla/service/hlo_cost_analysis.h"
+#include "xla/tools/hlo_module_loader.h"
+#include "third_party/tsl/platform/init_main.h"
 
 namespace {
 const char* const kUsage = R"(

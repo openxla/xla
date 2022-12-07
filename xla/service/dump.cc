@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/dump.h"
+#include "xla/service/dump.h"
 
 #include <functional>
 #include <memory>
@@ -27,17 +27,17 @@ limitations under the License.
 #include "mlir/IR/OperationSupport.h"  // from @llvm-project
 #include "mlir/Support/FileUtilities.h"  // from @llvm-project
 #include "mlir/Transforms/LocationSnapshot.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo_graph_dumper.h"
-#include "tensorflow/compiler/xla/service/hlo_proto_util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/lib/io/zlib_compression_options.h"
-#include "tensorflow/tsl/lib/io/zlib_outputbuffer.h"
-#include "tensorflow/tsl/lib/strings/proto_serialization.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/regexp.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/hlo_graph_dumper.h"
+#include "xla/service/hlo_proto_util.h"
+#include "xla/util.h"
+#include "third_party/tsl/lib/io/zlib_compression_options.h"
+#include "third_party/tsl/lib/io/zlib_outputbuffer.h"
+#include "third_party/tsl/lib/strings/proto_serialization.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/regexp.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 

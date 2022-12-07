@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tests/test_utils.h"
+#include "xla/tests/test_utils.h"
 
 #include <cmath>
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/service/hlo_dataflow_analysis.h"
-#include "tensorflow/compiler/xla/service/hlo_verifier.h"
-#include "tensorflow/compiler/xla/service/transfer_manager.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/literal_util.h"
+#include "xla/primitive_util.h"
+#include "xla/service/hlo_dataflow_analysis.h"
+#include "xla/service/hlo_verifier.h"
+#include "xla/service/transfer_manager.h"
 
 namespace xla {
 

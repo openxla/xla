@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/spmd/stateful_rng_spmd_partitioner.h"
+#include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 
 namespace xla {
 namespace spmd {

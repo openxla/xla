@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/logdet.h"
+#include "xla/client/lib/logdet.h"
 
-#include "tensorflow/compiler/xla/array2d.h"
-#include "tensorflow/compiler/xla/array3d.h"
-#include "tensorflow/compiler/xla/client/lib/matrix.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/array2d.h"
+#include "xla/array3d.h"
+#include "xla/client/lib/matrix.h"
+#include "xla/client/xla_builder.h"
+#include "xla/literal.h"
+#include "xla/statusor.h"
+#include "xla/test.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/tests/test_macros.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace {
 

@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/sequential_thunk.h"
+#include "xla/service/gpu/sequential_thunk.h"
 
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/profiler/lib/scoped_annotation.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla {
 namespace gpu {

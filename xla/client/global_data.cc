@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/global_data.h"
+#include "xla/client/global_data.h"
 
 #include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace {

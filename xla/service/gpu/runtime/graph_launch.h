@@ -22,8 +22,8 @@ limitations under the License.
 #include <tuple>
 #include <utility>
 
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/stream_executor/stream_executor.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/experimental/conv_emitter/conv_emitter.h"
+#include "xla/experimental/conv_emitter/conv_emitter.h"
 
 #include <vector>
 
@@ -32,10 +32,10 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/tests/filecheck.h"
-#include "tensorflow/compiler/xla/tests/verified_hlo_module.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/tests/filecheck.h"
+#include "xla/tests/verified_hlo_module.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace experimental {

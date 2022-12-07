@@ -19,7 +19,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/map_util.h"
+#include "xla/map_util.h"
 
 namespace xla {
 

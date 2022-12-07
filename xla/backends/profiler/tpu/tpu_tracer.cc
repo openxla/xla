@@ -19,17 +19,17 @@ limitations under the License.
 
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/status_helper.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_ops_c_api.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/platform/types.h"
-#include "tensorflow/tsl/profiler/lib/profiler_factory.h"
-#include "tensorflow/tsl/profiler/lib/profiler_interface.h"
-#include "tensorflow/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tensorflow/tsl/profiler/protobuf/xplane.pb.h"
-#include "tensorflow/tsl/profiler/utils/xplane_schema.h"
+#include "xla/stream_executor/tpu/status_helper.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_ops_c_api.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/platform/types.h"
+#include "third_party/tsl/profiler/lib/profiler_factory.h"
+#include "third_party/tsl/profiler/lib/profiler_interface.h"
+#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
+#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "third_party/tsl/profiler/utils/xplane_schema.h"
 
 namespace xla {
 namespace profiler {

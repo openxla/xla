@@ -19,8 +19,8 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/hlo_domain_map.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/hlo_domain_map.h"
 
 namespace xla {
 

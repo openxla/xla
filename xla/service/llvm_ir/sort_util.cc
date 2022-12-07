@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_ir/sort_util.h"
+#include "xla/service/llvm_ir/sort_util.h"
 
 #include <algorithm>
 #include <functional>
@@ -29,18 +29,18 @@ limitations under the License.
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/service/gpu/launch_dimensions.h"
-#include "tensorflow/compiler/xla/service/gpu/parallel_loop_emitter.h"
-#include "tensorflow/compiler/xla/service/gpu/target_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/kernel_support_library.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_loop.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/loop_emitter.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/primitive_util.h"
+#include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/parallel_loop_emitter.h"
+#include "xla/service/gpu/target_util.h"
+#include "xla/service/llvm_ir/ir_array.h"
+#include "xla/service/llvm_ir/kernel_support_library.h"
+#include "xla/service/llvm_ir/llvm_loop.h"
+#include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/loop_emitter.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace llvm_ir {

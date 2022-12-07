@@ -15,7 +15,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_HLO_TRANSFORMS_HLO_CONSTANT_SPLITTER_H_
 #define TENSORFLOW_COMPILER_XLA_HLO_TRANSFORMS_HLO_CONSTANT_SPLITTER_H_
 
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
+#include "xla/service/hlo_pass_interface.h"
 
 namespace xla {
 

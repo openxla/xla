@@ -20,7 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/ADT/SmallVector.h"
-#include "tensorflow/compiler/xla/runtime/type_id.h"
+#include "xla/runtime/type_id.h"
 
 namespace xla {
 namespace runtime {

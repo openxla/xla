@@ -28,14 +28,14 @@
 #include "absl/container/inlined_vector.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/platform/external/compat.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.pb.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/python/tpu_driver/platform/external/compat.h"
+#include "xla/python/tpu_driver/tpu_driver.pb.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/logging.h"
 
 // This API is EXPERIMENTAL and under active development. It is subject to
 // change without notice.

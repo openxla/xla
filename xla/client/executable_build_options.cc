@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/executable_build_options.h"
+#include "xla/client/executable_build_options.h"
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/execution_options_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/debug_options_flags.h"
+#include "xla/execution_options_util.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 

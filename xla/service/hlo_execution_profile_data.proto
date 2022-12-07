@@ -17,7 +17,7 @@ syntax = "proto3";
 
 package xla;
 
-import "tensorflow/compiler/xla/service/hlo_profile_printer_data.proto";
+import "xla/service/hlo_profile_printer_data.proto";
 
 option cc_enable_arenas = true;
 

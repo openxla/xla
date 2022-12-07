@@ -13,28 +13,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_fft.h"
+#include "xla/stream_executor/cuda/cuda_fft.h"
 
 #include <array>
 #include <complex>
 #include <limits>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_activation.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_helpers.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/env.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/initialize.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/stream_executor/cuda/cuda_activation.h"
+#include "xla/stream_executor/cuda/cuda_gpu_executor.h"
+#include "xla/stream_executor/cuda/cuda_helpers.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/cuda/cuda_stream.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/lib/env.h"
+#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace stream_executor {
 namespace gpu {

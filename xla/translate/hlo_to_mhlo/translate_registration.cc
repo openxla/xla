@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/Tools/mlir-translate/Translation.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/translate.h"
+#include "xla/translate/hlo_to_mhlo/translate.h"
 
 namespace {
 // NOLINTNEXTLINE

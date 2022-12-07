@@ -23,10 +23,10 @@ limitations under the License.
 #include <cstdint>
 
 #include "third_party/gpus/cuda/include/cufft.h"
-#include "tensorflow/compiler/xla/stream_executor/fft.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/fft.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/scratch_allocator.h"
 
 namespace stream_executor {
 

@@ -21,12 +21,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/pjrt/event_pool.h"
-#include "tensorflow/compiler/xla/pjrt/semaphore.h"
-#include "tensorflow/compiler/xla/pjrt/worker_thread.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "xla/client/local_client.h"
+#include "xla/pjrt/event_pool.h"
+#include "xla/pjrt/semaphore.h"
+#include "xla/pjrt/worker_thread.h"
+#include "xla/status.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 

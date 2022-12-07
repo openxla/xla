@@ -18,16 +18,16 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/layout.h"
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
-#include "tensorflow/compiler/xla/service/gpu/launch_dimensions.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/kernel_spec.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/protobuf/autotuning.pb.h"
+#include "xla/layout.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/kernel_spec.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/protobuf/autotuning.pb.h"
 
 // Helper functions for interacting with StreamExecutor.
 

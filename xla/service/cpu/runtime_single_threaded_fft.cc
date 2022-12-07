@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_fft.h"
+#include "xla/service/cpu/runtime_single_threaded_fft.h"
 
 #include "absl/base/dynamic_annotations.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_fft_impl.h"
+#include "xla/service/cpu/runtime_fft_impl.h"
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_EigenSingleThreadedFft(
     const void* run_options_ptr, void* out, void* operand, int32_t fft_type,

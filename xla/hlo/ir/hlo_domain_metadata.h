@@ -22,9 +22,9 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 

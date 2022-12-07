@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/runner/runner.h"
+#include "xla/runtime/runner/runner.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -24,15 +24,15 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/logical_result.h"
-#include "tensorflow/compiler/xla/runtime/results.h"
-#include "tensorflow/compiler/xla/runtime/runner/runner.pb.h"
-#include "tensorflow/compiler/xla/runtime/types.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/logical_result.h"
+#include "xla/runtime/results.h"
+#include "xla/runtime/runner/runner.pb.h"
+#include "xla/runtime/types.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 namespace runtime {

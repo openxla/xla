@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/mlir/utils/error_util.h"
+#include "xla/mlir/utils/error_util.h"
 
 #include <string>
 #include <string_view>
 
-#include "tensorflow/tsl/platform/errors.h"
+#include "third_party/tsl/platform/errors.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
 

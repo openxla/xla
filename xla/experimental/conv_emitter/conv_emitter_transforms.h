@@ -20,7 +20,7 @@ limitations under the License.
 #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
-#include "tensorflow/tsl/platform/types.h"
+#include "third_party/tsl/platform/types.h"
 
 namespace xla {
 namespace experimental {

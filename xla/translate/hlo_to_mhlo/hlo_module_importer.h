@@ -23,9 +23,9 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/status.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 class HloModule;

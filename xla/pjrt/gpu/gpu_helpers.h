@@ -22,11 +22,11 @@ limitations under the License.
 #include <string>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/framework/bfc_allocator.h"
+#include "xla/client/local_client.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/types.h"
+#include "third_party/tsl/framework/bfc_allocator.h"
 
 namespace xla {
 

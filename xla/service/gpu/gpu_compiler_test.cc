@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/service/gpu/horizontal_loop_fusion.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/gpu/horizontal_loop_fusion.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace gpu {

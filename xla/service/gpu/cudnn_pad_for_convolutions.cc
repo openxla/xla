@@ -13,21 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/cudnn_pad_for_convolutions.h"
+#include "xla/service/gpu/cudnn_pad_for_convolutions.h"
 
 #include <utility>
 
 #include "absl/functional/bind_front.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/gpu/cudnn_support_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/stream_executor_util.h"
-#include "tensorflow/compiler/xla/stream_executor/device_description.h"
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/window_util.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/literal_util.h"
+#include "xla/service/gpu/cudnn_support_utils.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/stream_executor_util.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/util.h"
+#include "xla/window_util.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

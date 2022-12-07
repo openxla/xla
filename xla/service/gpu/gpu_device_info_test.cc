@@ -20,10 +20,10 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info_for_tests.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_driver.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/device_description.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/stream_executor/cuda/cuda_driver.h"
+#include "xla/stream_executor/cuda/cuda_gpu_executor.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace stream_executor {
 namespace gpu {

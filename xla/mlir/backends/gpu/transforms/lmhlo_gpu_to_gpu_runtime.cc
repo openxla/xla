@@ -34,16 +34,16 @@ limitations under the License.
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/uid_generator.h"
-#include "tensorflow/compiler/xla/mlir/runtime/utils/custom_calls.h"
-#include "tensorflow/compiler/xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
+#include "xla/mlir/backends/gpu/transforms/uid_generator.h"
+#include "xla/mlir/runtime/utils/custom_calls.h"
+#include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
+#include "xla/stream_executor/blas.h"
 
 namespace xla {
 namespace gpu {
 
 #define GEN_PASS_DEF_CONVERTLMHLOGPUTOGPURUNTIMEPASS
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/passes.h.inc"
+#include "xla/mlir/backends/gpu/transforms/passes.h.inc"
 
 using namespace mlir;  // NOLINT
 

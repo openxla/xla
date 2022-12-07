@@ -19,10 +19,10 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/client.h"
-#include "tensorflow/compiler/xla/client/global_data.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/client/client.h"
+#include "xla/client/global_data.h"
+#include "xla/client/xla_computation.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

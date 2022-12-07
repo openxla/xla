@@ -31,11 +31,11 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
 
 namespace llvm {
 class FastMathFlags;

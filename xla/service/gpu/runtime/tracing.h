@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/runtime/type_id.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/runtime/type_id.h"
 
 namespace xla {
 namespace gpu {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/sharded_device_array.h"
+#include "xla/python/sharded_device_array.h"
 
 #include <memory>
 #include <optional>
@@ -23,15 +23,15 @@ limitations under the License.
 
 #include "absl/types/span.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/ifrt/device.h"
-#include "tensorflow/compiler/xla/python/ifrt/sharding.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_array.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/sharding.h"
+#include "xla/python/pjrt_ifrt/pjrt_array.h"
 #endif
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/py_buffer.h"
-#include "tensorflow/compiler/xla/python/python_utils.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/py_buffer.h"
+#include "xla/python/python_utils.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace jax {
 

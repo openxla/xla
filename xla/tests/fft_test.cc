@@ -14,9 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_macros.h"
+#include "xla/tests/test_utils.h"
 
 namespace xla {
 namespace {

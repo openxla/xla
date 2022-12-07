@@ -26,9 +26,9 @@ limitations under the License.
 #include "pybind11/numpy.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/py_buffer.h"
-#include "tensorflow/compiler/xla/python/types.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/py_buffer.h"
+#include "xla/python/types.h"
 
 // TODO(jblespiau): The current implementation moves the Python logic to C++,
 // as a preliminary step to executing the `pmap` execution path from C++.

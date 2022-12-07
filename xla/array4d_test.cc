@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/array4d.h"
+#include "xla/array4d.h"
 
 #include <initializer_list>
 #include <numeric>
 #include <vector>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/test.h"
+#include "xla/test.h"
 
 namespace xla {
 namespace {

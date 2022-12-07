@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/async_collective_creator.h"
+#include "xla/service/async_collective_creator.h"
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_schedule.h"
-#include "tensorflow/compiler/xla/service/shape_inference.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/service/shape_inference.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 

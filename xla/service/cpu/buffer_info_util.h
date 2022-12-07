@@ -17,8 +17,8 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_BUFFER_INFO_UTIL_H_
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/cpu_function_runtime.h"
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
+#include "xla/cpu_function_runtime.h"
+#include "xla/service/buffer_assignment.h"
 
 namespace xla {
 namespace cpu {

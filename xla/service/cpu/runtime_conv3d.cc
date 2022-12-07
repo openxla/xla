@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv3d.h"
+#include "xla/service/cpu/runtime_conv3d.h"
 
 #define EIGEN_USE_THREADS
 
 #include "absl/base/dynamic_annotations.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv_impl.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_lightweight_check.h"
+#include "xla/executable_run_options.h"
+#include "xla/service/cpu/runtime_conv_impl.h"
+#include "xla/service/cpu/runtime_lightweight_check.h"
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_EigenConv3DF32(
     const void* run_options_ptr, float* out, float* lhs, float* rhs,

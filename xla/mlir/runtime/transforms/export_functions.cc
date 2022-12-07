@@ -25,8 +25,8 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_ops.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/passes.h"
+#include "xla/mlir/runtime/ir/rt_ops.h"
+#include "xla/mlir/runtime/transforms/passes.h"
 
 namespace xla {
 namespace runtime {
@@ -34,7 +34,7 @@ namespace runtime {
 using namespace mlir;  // NOLINT
 
 #define GEN_PASS_DEF_EXPORTFUNCTIONS
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/passes.h.inc"
+#include "xla/mlir/runtime/transforms/passes.h.inc"
 
 class ExportFunctionsPass
     : public impl::ExportFunctionsBase<ExportFunctionsPass> {

@@ -16,12 +16,12 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_SUPPORT_UTILS_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_SUPPORT_UTILS_H_
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/stream_executor/device_description.h"
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/window_util.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/util.h"
+#include "xla/window_util.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

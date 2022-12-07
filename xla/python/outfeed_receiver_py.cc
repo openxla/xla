@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/outfeed_receiver_py.h"
+#include "xla/python/outfeed_receiver_py.h"
 
 #include <memory>
 
@@ -21,11 +21,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "pybind11/functional.h"
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/outfeed_receiver.h"
-#include "tensorflow/compiler/xla/python/py_client.h"
-#include "tensorflow/compiler/xla/python/types.h"
+#include "xla/client/xla_builder.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/outfeed_receiver.h"
+#include "xla/python/py_client.h"
+#include "xla/python/types.h"
 
 namespace xla {
 

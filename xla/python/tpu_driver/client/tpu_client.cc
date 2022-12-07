@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.h"
+#include "xla/python/tpu_driver/client/tpu_client.h"
 
 #include <algorithm>
 #include <memory>
@@ -25,16 +25,16 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/pjrt/semaphore.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/threadpool.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/literal.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/pjrt/semaphore.h"
+#include "xla/python/tpu_driver/tpu_driver.h"
+#include "xla/service/computation_placer.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/threadpool.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace xla {
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/ifrt/future.h"
+#include "xla/python/ifrt/future.h"
 
 #include <atomic>
 #include <memory>
@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/status.h"
 
 namespace xla {
 namespace ifrt {

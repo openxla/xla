@@ -20,8 +20,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/runtime/ffi/ffi_c_api.h"
-#include "tensorflow/compiler/xla/runtime/module.h"
+#include "xla/runtime/ffi/ffi_c_api.h"
+#include "xla/runtime/module.h"
 
 namespace xla {
 namespace runtime {

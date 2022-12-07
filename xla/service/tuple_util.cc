@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/tuple_util.h"
+#include "xla/service/tuple_util.h"
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_computation.h"
 
 namespace xla {
 

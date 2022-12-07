@@ -17,18 +17,18 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_domain_metadata.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding_metadata.h"
-#include "tensorflow/compiler/xla/service/call_inliner.h"
-#include "tensorflow/compiler/xla/service/hlo_domain_isolator.h"
-#include "tensorflow/compiler/xla/service/hlo_domain_remover.h"
-#include "tensorflow/compiler/xla/service/hlo_domain_verifier.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/sharding_propagation.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/debug_options_flags.h"
+#include "xla/hlo/ir/hlo_domain_metadata.h"
+#include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/service/call_inliner.h"
+#include "xla/service/hlo_domain_isolator.h"
+#include "xla/service/hlo_domain_remover.h"
+#include "xla/service/hlo_domain_verifier.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/sharding_propagation.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/mlir/runtime/utils/async_runtime_api.h"
+#include "xla/mlir/runtime/utils/async_runtime_api.h"
 
 #include <stdlib.h>
 
@@ -26,8 +26,8 @@ limitations under the License.
 
 #include "absl/base/dynamic_annotations.h"
 #include "mlir/ExecutionEngine/AsyncRuntime.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/runtime/async_runtime.h"
-#include "tensorflow/tsl/platform/mem.h"
+#include "xla/runtime/async_runtime.h"
+#include "third_party/tsl/platform/mem.h"
 #include "tfrt/concurrency/async_value.h"  // from @tf_runtime
 #include "tfrt/concurrency/async_value_ref.h"  // from @tf_runtime
 #include "tfrt/concurrency/chain.h"  // from @tf_runtime

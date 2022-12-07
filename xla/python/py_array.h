@@ -25,11 +25,11 @@ limitations under the License.
 #endif
 #include "pybind11/pybind11.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_array.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/pjrt_ifrt/pjrt_array.h"
 #endif
-#include "tensorflow/compiler/xla/python/py_buffer.h"
-#include "tensorflow/compiler/xla/python/types.h"
+#include "xla/python/py_buffer.h"
+#include "xla/python/types.h"
 
 namespace xla {
 

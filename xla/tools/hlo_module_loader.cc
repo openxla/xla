@@ -15,7 +15,7 @@ limitations under the License.
 
 // Emits an HLO module in a text form suitable for diffing.
 
-#include "tensorflow/compiler/xla/tools/hlo_module_loader.h"
+#include "xla/tools/hlo_module_loader.h"
 
 #include <functional>
 #include <memory>
@@ -25,15 +25,15 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/protobuf.h"
-#include "tensorflow/tsl/platform/regexp.h"
+#include "xla/debug_options_flags.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/hlo_parser.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/protobuf.h"
+#include "third_party/tsl/platform/regexp.h"
 
 namespace xla {
 namespace {

@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_TO_MLIR_HLO_H_
 #define TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_TO_MLIR_HLO_H_
 
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/status.h"
 
 namespace mlir {
 class ModuleOp;

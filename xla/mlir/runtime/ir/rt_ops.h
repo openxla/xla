@@ -21,10 +21,10 @@ limitations under the License.
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project  // IWYU pragma: keep
 #include "mlir/Interfaces/ControlFlowInterfaces.h"  // from @llvm-project  // IWYU pragma: keep
 #include "mlir/Interfaces/SideEffectInterfaces.h"  // from @llvm-project  // IWYU pragma: keep
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_dialect.h"  // IWYU pragma: keep
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_interfaces.h"  // IWYU pragma: keep
+#include "xla/mlir/runtime/ir/rt_dialect.h"  // IWYU pragma: keep
+#include "xla/mlir/runtime/ir/rt_interfaces.h"  // IWYU pragma: keep
 
 #define GET_OP_CLASSES
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_ops.h.inc"
+#include "xla/mlir/runtime/ir/rt_ops.h.inc"
 
 #endif  // TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_IR_RT_OPS_H_

@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/padding.h"
+#include "xla/client/padding.h"
 
 #include <algorithm>
 
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/lib/math/math_util.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/util.h"
+#include "third_party/tsl/lib/math/math_util.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

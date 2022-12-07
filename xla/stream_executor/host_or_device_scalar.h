@@ -19,7 +19,7 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory.h"
 
 namespace stream_executor {
 

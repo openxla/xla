@@ -20,7 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/runtime/module.h"
+#include "xla/runtime/module.h"
 
 namespace xla {
 namespace runtime {

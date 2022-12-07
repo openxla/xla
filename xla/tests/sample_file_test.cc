@@ -19,14 +19,14 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/resource_loader.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/platform_util.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/resource_loader.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

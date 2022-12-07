@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/runtime_fft_impl.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/cpu/runtime_fft_impl.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/test.h"
 
 TEST(FftTypeTest, MatchesProto) {
   EXPECT_EQ(::xla::FftType_ARRAYSIZE, 4);

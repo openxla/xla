@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/optimization_barrier_expander.h"
+#include "xla/service/optimization_barrier_expander.h"
 
 namespace xla {
 

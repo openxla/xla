@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LAZY_OP_RUNNER_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LAZY_OP_RUNNER_H_
 
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/stream.h"
 
 namespace stream_executor {
 namespace dnn {

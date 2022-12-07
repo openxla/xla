@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_TRANSFORMS_TESTS_TESTLIB_PIPELINE_H_
 #define TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_TRANSFORMS_TESTS_TESTLIB_PIPELINE_H_
 
-#include "tensorflow/compiler/xla/runtime/compiler.h"
+#include "xla/runtime/compiler.h"
 
 namespace xla {
 namespace runtime {

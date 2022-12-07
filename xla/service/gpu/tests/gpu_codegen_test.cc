@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/service/gpu/tests/gpu_codegen_test.h"
 
 #include <memory>
 
 #include "absl/strings/str_replace.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/tests/filecheck.h"
-#include "tensorflow/compiler/xla/tests/verified_hlo_module.h"
+#include "xla/debug_options_flags.h"
+#include "xla/service/gpu/gpu_executable.h"
+#include "xla/shape_util.h"
+#include "xla/tests/filecheck.h"
+#include "xla/tests/verified_hlo_module.h"
 
 namespace xla {
 namespace gpu {

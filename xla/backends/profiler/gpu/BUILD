@@ -15,7 +15,7 @@ load(
     "tf_cuda_tests_tags",
 )
 load(
-    "//tensorflow/compiler/xla/stream_executor:build_defs.bzl",
+    "//xla/stream_executor:build_defs.bzl",
     "tf_additional_cupti_deps",
 )
 load("//tensorflow/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
@@ -25,7 +25,7 @@ load(
 )
 
 package(
-    default_visibility = ["//tensorflow:internal"],
+    default_visibility = ["//third_party/tensorflow:internal"],
     features = [
         "-layering_check",
     ],
@@ -205,7 +205,6 @@ tsl_gpu_library(
     copts = tf_profiler_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/compiler/xla/stream_executor/rocm:roctracer_wrapper",
         "//tensorflow/tsl/platform:env",
         "//tensorflow/tsl/platform:errors",
         "//tensorflow/tsl/platform:logging",
@@ -213,6 +212,7 @@ tsl_gpu_library(
         "//tensorflow/tsl/platform:platform_port",
         "//tensorflow/tsl/profiler/backends/cpu:annotation_stack",
         "//tensorflow/tsl/profiler/utils:time_utils",
+        "//xla/stream_executor/rocm:roctracer_wrapper",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_map",

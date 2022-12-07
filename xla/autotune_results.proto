@@ -17,7 +17,7 @@ syntax = "proto3";
 
 package xla;
 
-import "tensorflow/tsl/protobuf/autotuning.proto";
+import "third_party/tsl/protobuf/autotuning.proto";
 
 // A collection of algorithms for particular dot/convs.  Usually this is "the
 // best" algorithm for the particular dot/conv, although that's not strictly

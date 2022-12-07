@@ -21,7 +21,7 @@ limitations under the License.
 #else
 #include "third_party/gpus/cuda/include/cuda.h"
 #endif
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 #if TENSORFLOW_USE_ROCM
 #define gpuStreamHandle hipStream_t

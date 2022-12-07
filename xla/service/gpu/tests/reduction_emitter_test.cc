@@ -17,9 +17,9 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/gpu/tests/gpu_codegen_test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_sharding_util.h"
+#include "xla/service/hlo_sharding_util.h"
 
 #include <optional>
 #include <vector>
 
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/test.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace hlo_sharding_util {

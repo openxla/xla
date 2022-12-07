@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/scatter_simplifier.h"
+#include "xla/service/scatter_simplifier.h"
 
 #include <optional>
 
-#include "tensorflow/compiler/xla/service/hlo_pass_fix.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_pipeline.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/hlo_pass_fix.h"
+#include "xla/service/hlo_pass_pipeline.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace {

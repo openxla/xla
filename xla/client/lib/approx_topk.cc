@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/lib/approx_topk.h"
+#include "xla/client/lib/approx_topk.h"
 
 #include <limits>
 #include <string>
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/client/lib/approx_topk_shape.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/client/lib/approx_topk_shape.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 // Used by rank 2+ operands
 const uint64_t kTpuLaneTiling = 128;

@@ -19,8 +19,8 @@ limitations under the License.
 #include <functional>
 #include <memory>
 
-#include "tensorflow/compiler/xla/python/ifrt/client.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace ifrt {

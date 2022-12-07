@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_ENUMS_TD_
 #define TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_ENUMS_TD_
 
-include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu_dialect.td"
+include "xla/mlir/xla_cpu/ir/xla_cpu_dialect.td"
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/PatternBase.td"
 

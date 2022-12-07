@@ -3,7 +3,7 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     licenses = ["notice"],
 )
 
@@ -14,7 +14,7 @@ package(
         data = [
             "lit.cfg.py",
             "lit.site.cfg.py",
-            "//tensorflow/compiler/xla/mlir_hlo:mlir-hlo-opt",
+            "//xla/mlir_hlo:mlir-hlo-opt",
             "@llvm-project//llvm:FileCheck",
             "@llvm-project//llvm:count",
             "@llvm-project//llvm:not",
@@ -35,7 +35,7 @@ cc_library(
     name = "capi_test",
     srcs = ["capi_test.c"],
     deps = [
-        "//tensorflow/compiler/xla/mlir_hlo:CAPI",
+        "//xla/mlir_hlo:CAPI",
     ],
 )
 
@@ -60,8 +60,8 @@ expand_template(
         "@MLIR_LIB_DIR@": package_path("@llvm-project//mlir:BUILD"),
         "@MLIR_BINARY_DIR@": package_path("@llvm-project//mlir:BUILD"),
         # Separate '@' (reference to main repo) to avoid confusing copybara.
-        "@MLIR_HLO_TOOLS_DIR@": package_path("@" + "//tensorflow/compiler/xla/mlir_hlo:BUILD"),
-        "@MLIR_HLO_SOURCE_DIR@": package_path("@" + "//tensorflow/compiler/xla/mlir_hlo:BUILD"),
+        "@MLIR_HLO_TOOLS_DIR@": package_path("@" + "//xla/mlir_hlo:BUILD"),
+        "@MLIR_HLO_SOURCE_DIR@": package_path("@" + "//xla/mlir_hlo:BUILD"),
     },
     template = "lit.site.cfg.py.in",
     visibility = ["//visibility:private"],

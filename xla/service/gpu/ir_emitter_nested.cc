@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/ir_emitter_nested.h"
+#include "xla/service/gpu/ir_emitter_nested.h"
 
 #include <memory>
 #include <string>
@@ -24,19 +24,19 @@ limitations under the License.
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_constants.h"
-#include "tensorflow/compiler/xla/service/gpu/hlo_to_ir_bindings.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emitter_context.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/buffer_assignment_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/tuple_ops.h"
-#include "tensorflow/compiler/xla/service/name_uniquer.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/gpu/gpu_constants.h"
+#include "xla/service/gpu/hlo_to_ir_bindings.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/ir_emitter_context.h"
+#include "xla/service/llvm_ir/buffer_assignment_util.h"
+#include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/tuple_ops.h"
+#include "xla/service/name_uniquer.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

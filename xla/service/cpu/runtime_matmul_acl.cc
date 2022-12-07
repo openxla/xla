@@ -14,18 +14,18 @@ limitations under the License.
 ==============================================================================*/
 
 #ifdef XLA_CPU_USE_ACL
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul_acl.h"
+#include "xla/service/cpu/runtime_matmul_acl.h"
 
 #include "absl/base/call_once.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_lightweight_check.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/types.h"
+#include "xla/executable_run_options.h"
+#include "xla/service/cpu/runtime_lightweight_check.h"
+#include "xla/service/cpu/runtime_matmul.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/types.h"
 
 #define EIGEN_USE_THREADS
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/tsl/platform/dynamic_annotations.h"
+#include "third_party/tsl/platform/dynamic_annotations.h"
 
 namespace {
 // ACL GEMM API for 32-bit Matrix Multiplication.

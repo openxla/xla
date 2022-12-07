@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <string>
 
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
+#include "xla/service/hlo_module_config.h"
 
 namespace xla {
 namespace gpu {

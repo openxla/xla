@@ -18,10 +18,10 @@ limitations under the License.
 
 #include <vector>
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/framework/allocator.h"
-#include "tensorflow/tsl/framework/device_id.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/framework/allocator.h"
+#include "third_party/tsl/framework/device_id.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace stream_executor {
 

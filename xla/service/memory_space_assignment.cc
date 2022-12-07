@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/memory_space_assignment.h"
+#include "xla/service/memory_space_assignment.h"
 
 #include <algorithm>
 #include <functional>
@@ -26,10 +26,10 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/service/memory_space_assignment_tuning_utils.h"
-#include "tensorflow/compiler/xla/service/memory_space_assignment_utils.h"
-#include "tensorflow/compiler/xla/service/tuple_util.h"
+#include "xla/debug_options_flags.h"
+#include "xla/service/memory_space_assignment_tuning_utils.h"
+#include "xla/service/memory_space_assignment_utils.h"
+#include "xla/service/tuple_util.h"
 namespace xla {
 
 namespace memory_space_assignment {

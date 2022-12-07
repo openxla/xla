@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tools/hlo_bisect/hlo_bisect_utils.h"
+#include "xla/tools/hlo_bisect/hlo_bisect_utils.h"
 
 #include <memory>
 #include <random>
@@ -22,21 +22,21 @@ limitations under the License.
 #include <vector>
 
 #include "absl/cleanup/cleanup.h"
-#include "tensorflow/compiler/xla/error_spec.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/protobuf_util.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/hlo_proto_util.h"
-#include "tensorflow/compiler/xla/service/hlo_runner.h"
-#include "tensorflow/compiler/xla/service/hlo_verifier.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/tests/test_utils.h"
-#include "tensorflow/compiler/xla/tools/prepare_reference_module.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/subprocess.h"
+#include "xla/error_spec.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/protobuf_util.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/hlo_proto_util.h"
+#include "xla/service/hlo_runner.h"
+#include "xla/service/hlo_verifier.h"
+#include "xla/service/platform_util.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/tests/test_utils.h"
+#include "xla/tools/prepare_reference_module.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/subprocess.h"
 
 namespace xla {
 namespace bisect {

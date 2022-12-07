@@ -21,7 +21,7 @@ limitations under the License.
 #include <string_view>
 
 #include "llvm/ADT/StringMap.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
+#include "xla/runtime/custom_call.h"
 
 namespace xla {
 namespace runtime {

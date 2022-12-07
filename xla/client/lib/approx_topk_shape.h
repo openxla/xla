@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
 #define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
 
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/statusor.h"
 
 namespace xla {
 

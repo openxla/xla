@@ -16,7 +16,7 @@
 from typing import Any, Callable, Optional, Sequence, Tuple
 
 import numpy as np
-from tensorflow.compiler.xla.python import xla_extension
+from xla.python import xla_extension
 
 Client = xla_extension.Client
 Device = xla_extension.Device

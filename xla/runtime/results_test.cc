@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/results.h"
+#include "xla/runtime/results.h"
 
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include "tensorflow/compiler/xla/runtime/logical_result.h"
-#include "tensorflow/compiler/xla/runtime/types.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/platform/test_benchmark.h"
+#include "xla/runtime/logical_result.h"
+#include "xla/runtime/types.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

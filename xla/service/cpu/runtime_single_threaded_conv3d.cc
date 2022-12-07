@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_conv3d.h"
+#include "xla/service/cpu/runtime_single_threaded_conv3d.h"
 
 #include "absl/base/dynamic_annotations.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv_impl.h"
+#include "xla/service/cpu/runtime_conv_impl.h"
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void
 __xla_cpu_runtime_EigenSingleThreadedConv3DF32(

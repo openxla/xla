@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_CONV_PADDING_LEGALIZATION_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_CONV_PADDING_LEGALIZATION_H_
 
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
+#include "xla/service/hlo_pass_interface.h"
 
 namespace xla {
 namespace gpu {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
 
 #include <functional>
 #include <memory>
@@ -21,8 +21,8 @@ limitations under the License.
 #include <utility>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_array.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/python/pjrt_ifrt/pjrt_array.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {

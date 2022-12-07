@@ -22,11 +22,11 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/framework/allocator.h"
-#include "tensorflow/tsl/framework/device_id.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/platform/mutex.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/framework/allocator.h"
+#include "third_party/tsl/framework/device_id.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/platform/mutex.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"

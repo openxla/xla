@@ -15,12 +15,12 @@ limitations under the License.
 
 #include <utility>
 
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
+#include "xla/literal.h"
+#include "xla/shape_util.h"
+#include "xla/test.h"
+#include "xla/test_helpers.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_macros.h"
 
 namespace xla {
 namespace {

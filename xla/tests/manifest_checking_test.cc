@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tests/manifest_checking_test.h"
+#include "xla/tests/manifest_checking_test.h"
 
 #include <fstream>
 #include <iterator>
@@ -22,9 +22,9 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_split.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/regexp.h"
+#include "xla/tests/test_macros.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/regexp.h"
 
 namespace xla {
 

@@ -26,10 +26,10 @@ limitations under the License.
 #include "mlir/IR/OpImplementation.h"  // from @llvm-project
 
 #define GET_TYPEDEF_CLASSES
-#include "tensorflow/compiler/xla/mlir/framework/ir/xla_framework_types.h.inc"
+#include "xla/mlir/framework/ir/xla_framework_types.h.inc"
 #define GET_OP_CLASSES
-#include "tensorflow/compiler/xla/mlir/framework/ir/xla_framework.h.inc"
-#include "tensorflow/compiler/xla/mlir/framework/ir/xla_framework_dialect.h.inc"
+#include "xla/mlir/framework/ir/xla_framework.h.inc"
+#include "xla/mlir/framework/ir/xla_framework_dialect.h.inc"
 
 #undef GET_OP_CLASSES
 

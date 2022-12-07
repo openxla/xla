@@ -25,8 +25,8 @@ limitations under the License.
 
 #include "pybind11/numpy.h"
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/py_client.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/py_client.h"
 
 namespace xla {
 

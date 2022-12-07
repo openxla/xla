@@ -15,8 +15,8 @@ limitations under the License.
 
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/gpu/nvptx_compiler.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/gpu/nvptx_compiler.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace gpu {

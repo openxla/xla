@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/hlo_to_ir_bindings.h"
+#include "xla/service/gpu/hlo_to_ir_bindings.h"
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/buffer_assignment_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/tuple_ops.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/llvm_ir/buffer_assignment_util.h"
+#include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/tuple_ops.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace gpu {

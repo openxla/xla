@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_DEVICE_INFO_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_DEVICE_INFO_H_
 
-#include "tensorflow/compiler/xla/stream_executor/device_description.pb.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/device_description.pb.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {

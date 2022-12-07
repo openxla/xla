@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/literal_util.h"
+#include "xla/service/gpu/tests/gpu_codegen_test.h"
 
 namespace xla {
 namespace gpu {

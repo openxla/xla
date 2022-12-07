@@ -22,8 +22,8 @@ limitations under the License.
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_loop.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/llvm_loop.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {
 // A thin wrapper around llvm_loop.h to make code generating structured control

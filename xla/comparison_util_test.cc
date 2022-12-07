@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/comparison_util.h"
+#include "xla/comparison_util.h"
 
 #include <limits>
 
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/bfloat16.h"
+#include "xla/test.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/bfloat16.h"
 
 namespace xla {
 namespace {

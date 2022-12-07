@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_shape_verifier.h"
+#include "xla/service/cpu/cpu_shape_verifier.h"
 
 namespace xla {
 

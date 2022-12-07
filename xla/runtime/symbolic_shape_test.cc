@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/symbolic_shape.h"
+#include "xla/runtime/symbolic_shape.h"
 
 #include <memory>
 #include <optional>
@@ -22,11 +22,11 @@ limitations under the License.
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/constraints.h"
-#include "tensorflow/compiler/xla/runtime/types.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/platform/test_benchmark.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/constraints.h"
+#include "xla/runtime/types.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

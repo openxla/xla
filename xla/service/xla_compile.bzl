@@ -3,7 +3,7 @@
 
 To use from your BUILD file, add the following line to load the macro:
 
-load("//tensorflow/compiler/xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gpu")
+load("//xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gpu")
 
 Then call the macro like this:
 
@@ -14,7 +14,7 @@ xla_aot_compile(
 
 """
 
-xla_compile_tool = "//tensorflow/compiler/xla/service:xla_compile"
+xla_compile_tool = "//xla/service:xla_compile"
 
 def xla_aot_compile_cpu(
         name,

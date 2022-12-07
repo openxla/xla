@@ -26,14 +26,14 @@ limitations under the License.
 #include "pybind11/pytypes.h"
 #include "pybind11/stl.h"
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/python/status_casters.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/literal.h"
+#include "xla/python/status_casters.h"
+#include "xla/shape.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 

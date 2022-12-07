@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/backends/profiler/gpu/nvtx_utils.h"
+#include "xla/backends/profiler/gpu/nvtx_utils.h"
 
 #include "third_party/gpus/cuda/include/nvtx3/nvToolsExt.h"
-#include "tensorflow/tsl/platform/platform.h"
+#include "third_party/tsl/platform/platform.h"
 
 namespace xla {
 namespace profiler {

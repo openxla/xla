@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/pmap_lib.h"
+#include "xla/python/pmap_lib.h"
 
 #include <algorithm>
 #include <exception>
@@ -37,25 +37,25 @@ limitations under the License.
 #include "pybind11/pytypes.h"
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/ifrt/dtype.h"
-#include "tensorflow/compiler/xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/sharding.h"
 #endif
-#include "tensorflow/compiler/xla/python/exceptions.h"
-#include "tensorflow/compiler/xla/python/jax_jit.h"
-#include "tensorflow/compiler/xla/python/py_array.h"
-#include "tensorflow/compiler/xla/python/py_buffer.h"
-#include "tensorflow/compiler/xla/python/py_executable.h"
-#include "tensorflow/compiler/xla/python/py_values.h"
-#include "tensorflow/compiler/xla/python/python_utils.h"
-#include "tensorflow/compiler/xla/python/sharded_device_array.h"
-#include "tensorflow/compiler/xla/python/sharding.h"
-#include "tensorflow/compiler/xla/python/types.h"
-#include "tensorflow/compiler/xla/python/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/statusor.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/python/exceptions.h"
+#include "xla/python/jax_jit.h"
+#include "xla/python/py_array.h"
+#include "xla/python/py_buffer.h"
+#include "xla/python/py_executable.h"
+#include "xla/python/py_values.h"
+#include "xla/python/python_utils.h"
+#include "xla/python/sharded_device_array.h"
+#include "xla/python/sharding.h"
+#include "xla/python/types.h"
+#include "xla/python/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/statusor.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace jax {
 
@@ -1253,28 +1253,6 @@ void BuildPmapSubmodule(py::module& m) {
       [](py::handle self) -> xla::StatusOr<std::string> {
         TF_ASSIGN_OR_RETURN(PmapFunction * fun, AsPmapFunction(self));
         return fun->DebugCacheKeys();
-      },
-      py::is_method(cfun_type));
-
-  // Accepts _arbitrary_ arguments for a pmapped function and returns the
-  // corresponding signatures that are used as cache keys. No-op.
-  //
-  // This function allows to pass partial args, which is especially useful when
-  // the full list of arguments is too long and results in enormous signatures.
-  // For example, this function can be multiple times as
-  // > fn._debug_compute_cache_key(arg[0])
-  // > fn._debug_compute_cache_key(arg[1])
-  // > fn._debug_compute_cache_key(arg[-3:-1])
-  // ...
-  cfun.attr("_debug_compute_cache_key") = py::cpp_function(
-      [](const PmapFunction::object& self, const py::args& args,
-         const py::kwargs& kwargs) -> xla::StatusOr<std::string> {
-        ParsedArgumentsAsBuffers arguments;
-        TF_ASSIGN_OR_RETURN(PmapFunction * fun, AsPmapFunction(self));
-        TF_RETURN_IF_ERROR(ParseArguments(args, kwargs, fun->static_argnums(),
-                                          /*static_argnames=*/{}, arguments));
-        TF_RETURN_IF_ERROR(fun->UpdateArgsSignature(arguments));
-        return arguments.signature.DebugString();
       },
       py::is_method(cfun_type));
 

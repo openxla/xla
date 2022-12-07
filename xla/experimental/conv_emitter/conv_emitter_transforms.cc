@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/experimental/conv_emitter/conv_emitter_transforms.h"
+#include "xla/experimental/conv_emitter/conv_emitter_transforms.h"
 
 #include <iterator>
 
@@ -21,7 +21,7 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
 #include "mlir/Dialect/Affine/LoopUtils.h"  // from @llvm-project
-#include "tensorflow/tsl/platform/logging.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace experimental {

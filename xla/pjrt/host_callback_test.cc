@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/host_callback.h"
+#include "xla/pjrt/host_callback.h"
 
 #include <cstring>
 #include <utility>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/tests/literal_test_util.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

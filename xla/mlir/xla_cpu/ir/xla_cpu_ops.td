@@ -20,8 +20,8 @@ include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
-include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu_dialect.td"
-include "tensorflow/compiler/xla/mlir/xla_cpu/ir/xla_cpu_enums.td"
+include "xla/mlir/xla_cpu/ir/xla_cpu_dialect.td"
+include "xla/mlir/xla_cpu/ir/xla_cpu_enums.td"
 
 // Base class for XLA CPU dialect ops.
 class XlaCpu_Op<string mnemonic, list<Trait> traits = []> :

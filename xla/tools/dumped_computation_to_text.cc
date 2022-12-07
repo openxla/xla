@@ -20,17 +20,17 @@ limitations under the License.
 #include <utility>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/client/client.h"
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/service/service.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/client/client.h"
+#include "xla/client/client_library.h"
+#include "xla/client/local_client.h"
+#include "xla/client/xla_computation.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/service/service.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace tools {

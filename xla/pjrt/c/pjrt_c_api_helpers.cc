@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api_helpers.h"
+#include "xla/pjrt/c/pjrt_c_api_helpers.h"
 
 #include <functional>
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_future.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_future.h"
+#include "xla/primitive_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace pjrt {
 

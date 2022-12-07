@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/despecializer.h"
+#include "xla/service/despecializer.h"
 
 #include <iterator>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/service/bfloat16_normalization.h"
-#include "tensorflow/compiler/xla/service/defuser.h"
-#include "tensorflow/compiler/xla/service/hlo_memory_scheduler.h"
+#include "xla/service/bfloat16_normalization.h"
+#include "xla/service/defuser.h"
+#include "xla/service/hlo_memory_scheduler.h"
 
 namespace xla {
 

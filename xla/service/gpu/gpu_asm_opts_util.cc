@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
+#include "xla/service/gpu/gpu_asm_opts_util.h"
 
 #include <string>
 #include <vector>
 
 #include "absl/strings/str_split.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_asm_opts.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {

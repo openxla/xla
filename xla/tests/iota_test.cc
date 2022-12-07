@@ -17,11 +17,11 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
-#include "tensorflow/compiler/xla/error_spec.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/error_spec.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_macros.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 namespace {

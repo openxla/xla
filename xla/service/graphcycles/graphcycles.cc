@@ -29,7 +29,7 @@ limitations under the License.
 // (2) When a new edge (x->y) is inserted, do nothing if rank[x] < rank[y].
 // (3) Otherwise: adjust ranks in the neighborhood of x and y.
 
-#include "tensorflow/compiler/xla/service/graphcycles/graphcycles.h"
+#include "xla/service/graphcycles/graphcycles.h"
 
 #include <algorithm>
 
@@ -37,8 +37,8 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/service/graphcycles/ordered_set.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/service/graphcycles/ordered_set.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace tensorflow {
 

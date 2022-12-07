@@ -25,7 +25,7 @@ load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
 # To add additional devices to the XLA subsystem, add targets to the
 # dependency list in the 'plugin' target. For instance:
 #
-#   deps = ["//tensorflow/compiler/xla/pjrt/plugin/example:plugin_lib"],
+#   deps = ["//xla/pjrt/plugin/example:plugin_lib"],
 #
 # ** Please don't remove this file - it is supporting some 3rd party plugins **
 
@@ -37,6 +37,6 @@ package(
 cc_library(
     name = "plugin",
     deps = [
-        #"//tensorflow/compiler/xla/pjrt/plugin/example:example_lib",
+        #"//xla/pjrt/plugin/example:example_lib",
     ],
 )

@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/cudnn_vectorize_convolutions.h"
+#include "xla/service/gpu/cudnn_vectorize_convolutions.h"
 
-#include "tensorflow/compiler/xla/service/call_inliner.h"
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher_gmock.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/service/call_inliner.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/service/pattern_matcher_gmock.h"
+#include "xla/status_macros.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {

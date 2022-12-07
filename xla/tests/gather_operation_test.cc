@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/execution_options_util.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
+#include "xla/client/xla_builder.h"
+#include "xla/execution_options_util.h"
+#include "xla/literal_util.h"
+#include "xla/status_macros.h"
+#include "xla/test.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_macros.h"
 
 namespace xla {
 namespace {

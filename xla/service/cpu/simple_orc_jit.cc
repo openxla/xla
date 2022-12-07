@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/simple_orc_jit.h"
+#include "xla/service/cpu/simple_orc_jit.h"
 
 #include <stdint.h>
 
@@ -32,30 +32,30 @@ limitations under the License.
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Host.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
-#include "tensorflow/compiler/xla/service/cpu/orc_jit_memory_mapper.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv2d.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv2d_acl.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv2d_mkl.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_conv3d.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_custom_call_status.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_fft.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_fork_join.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_fp16.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_key_value_sort.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul_acl.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul_mkl.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_pow.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_conv2d.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_conv3d.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_fft.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_matmul.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_topk.h"
-#include "tensorflow/compiler/xla/service/cpu/windows_compatibility.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/service/cpu/cpu_runtime.h"
+#include "xla/service/cpu/orc_jit_memory_mapper.h"
+#include "xla/service/cpu/runtime_conv2d.h"
+#include "xla/service/cpu/runtime_conv2d_acl.h"
+#include "xla/service/cpu/runtime_conv2d_mkl.h"
+#include "xla/service/cpu/runtime_conv3d.h"
+#include "xla/service/cpu/runtime_custom_call_status.h"
+#include "xla/service/cpu/runtime_fft.h"
+#include "xla/service/cpu/runtime_fork_join.h"
+#include "xla/service/cpu/runtime_fp16.h"
+#include "xla/service/cpu/runtime_key_value_sort.h"
+#include "xla/service/cpu/runtime_matmul.h"
+#include "xla/service/cpu/runtime_matmul_acl.h"
+#include "xla/service/cpu/runtime_matmul_mkl.h"
+#include "xla/service/cpu/runtime_pow.h"
+#include "xla/service/cpu/runtime_single_threaded_conv2d.h"
+#include "xla/service/cpu/runtime_single_threaded_conv3d.h"
+#include "xla/service/cpu/runtime_single_threaded_fft.h"
+#include "xla/service/cpu/runtime_single_threaded_matmul.h"
+#include "xla/service/cpu/runtime_topk.h"
+#include "xla/service/cpu/windows_compatibility.h"
+#include "xla/service/custom_call_target_registry.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/logging.h"
 
 // Provided by compiler-rt and MLIR.
 // Converts an F32 value to a BF16.

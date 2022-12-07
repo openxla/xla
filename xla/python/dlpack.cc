@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/dlpack.h"
+#include "xla/python/dlpack.h"
 
 #include <functional>
 #include <memory>
@@ -26,12 +26,12 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"  // from @dlpack
 #include "pybind11/pytypes.h"
-#include "tensorflow/compiler/xla/pjrt/gpu/se_gpu_pjrt_client.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/python_ref_manager.h"
-#include "tensorflow/compiler/xla/python/traceback.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/python_ref_manager.h"
+#include "xla/python/traceback.h"
+#include "xla/types.h"
+#include "xla/util.h"
 
 namespace py = pybind11;
 

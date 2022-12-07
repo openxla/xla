@@ -13,35 +13,35 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/backends/interpreter/compiler.h"
+#include "xla/backends/interpreter/compiler.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/backends/interpreter/executable.h"
-#include "tensorflow/compiler/xla/service/algebraic_simplifier.h"
-#include "tensorflow/compiler/xla/service/batchnorm_expander.h"
-#include "tensorflow/compiler/xla/service/cholesky_expander.h"
-#include "tensorflow/compiler/xla/service/comparison_expander.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
-#include "tensorflow/compiler/xla/service/dynamic_index_splitter.h"
-#include "tensorflow/compiler/xla/service/eigh_expander.h"
-#include "tensorflow/compiler/xla/service/flatten_call_graph.h"
-#include "tensorflow/compiler/xla/service/hlo_constant_folding.h"
-#include "tensorflow/compiler/xla/service/hlo_cse.h"
-#include "tensorflow/compiler/xla/service/hlo_dce.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_fix.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_pipeline.h"
-#include "tensorflow/compiler/xla/service/layout_assignment.h"
-#include "tensorflow/compiler/xla/service/map_inliner.h"
-#include "tensorflow/compiler/xla/service/qr_expander.h"
-#include "tensorflow/compiler/xla/service/reshape_mover.h"
-#include "tensorflow/compiler/xla/service/triangular_solve_expander.h"
-#include "tensorflow/compiler/xla/service/while_loop_simplifier.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/backends/interpreter/executable.h"
+#include "xla/service/algebraic_simplifier.h"
+#include "xla/service/batchnorm_expander.h"
+#include "xla/service/cholesky_expander.h"
+#include "xla/service/comparison_expander.h"
+#include "xla/service/computation_placer.h"
+#include "xla/service/custom_call_target_registry.h"
+#include "xla/service/dynamic_index_splitter.h"
+#include "xla/service/eigh_expander.h"
+#include "xla/service/flatten_call_graph.h"
+#include "xla/service/hlo_constant_folding.h"
+#include "xla/service/hlo_cse.h"
+#include "xla/service/hlo_dce.h"
+#include "xla/service/hlo_pass_fix.h"
+#include "xla/service/hlo_pass_pipeline.h"
+#include "xla/service/layout_assignment.h"
+#include "xla/service/map_inliner.h"
+#include "xla/service/qr_expander.h"
+#include "xla/service/reshape_mover.h"
+#include "xla/service/triangular_solve_expander.h"
+#include "xla/service/while_loop_simplifier.h"
+#include "xla/status_macros.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 namespace interpreter {

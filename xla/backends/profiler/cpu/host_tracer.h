@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/tsl/profiler/lib/profiler_interface.h"
+#include "third_party/tsl/profiler/lib/profiler_interface.h"
 
 namespace xla {
 namespace profiler {

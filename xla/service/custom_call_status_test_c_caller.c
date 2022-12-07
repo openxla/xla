@@ -15,7 +15,7 @@ limitations under the License.
 
 #include <string.h>
 
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 // Call the API from a .c file to make sure it works with pure C code.
 

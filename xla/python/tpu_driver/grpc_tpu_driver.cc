@@ -25,12 +25,12 @@
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "grpcpp/grpcpp.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/event_id.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/platform/external/compat.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_driver.pb.h"
-#include "tensorflow/compiler/xla/python/tpu_driver/tpu_service.grpc.pb.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/python/tpu_driver/event_id.h"
+#include "xla/python/tpu_driver/platform/external/compat.h"
+#include "xla/python/tpu_driver/tpu_driver.h"
+#include "xla/python/tpu_driver/tpu_driver.pb.h"
+#include "xla/python/tpu_driver/tpu_service.grpc.pb.h"
+#include "xla/util.h"
 
 namespace tpu_driver {
 namespace {

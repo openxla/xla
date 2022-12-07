@@ -29,8 +29,8 @@ limitations under the License.
 #include "llvm/ExecutionEngine/Orc/SymbolStringPool.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Target/TargetMachine.h"
-#include "tensorflow/compiler/xla/service/cpu/compiler_functor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/service/cpu/compiler_functor.h"
+#include "xla/types.h"
 
 namespace xla {
 namespace cpu {

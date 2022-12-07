@@ -15,11 +15,11 @@ limitations under the License.
 
 #if GOOGLE_CUDA
 #include "absl/memory/memory.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/multi_platform_manager.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/multi_platform_manager.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace stream_executor {
 

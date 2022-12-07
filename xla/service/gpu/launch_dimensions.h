@@ -20,8 +20,8 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_device_info.h"
-#include "tensorflow/compiler/xla/shape.h"
+#include "xla/service/gpu/gpu_device_info.h"
+#include "xla/shape.h"
 
 namespace xla {
 namespace gpu {

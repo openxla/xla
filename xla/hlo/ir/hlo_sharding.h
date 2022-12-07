@@ -27,9 +27,9 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/array.h"
-#include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/array.h"
+#include "xla/shape_tree.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

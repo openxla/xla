@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/broadcast_canonicalizer.h"
+#include "xla/service/broadcast_canonicalizer.h"
 
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
+#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 

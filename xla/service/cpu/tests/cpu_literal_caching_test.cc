@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_compiler.h"
-#include "tensorflow/compiler/xla/service/cpu/test_target_triple_helper.h"
-#include "tensorflow/compiler/xla/service/cpu/tests/cpu_codegen_test.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
+#include "xla/service/cpu/cpu_compiler.h"
+#include "xla/service/cpu/test_target_triple_helper.h"
+#include "xla/service/cpu/tests/cpu_codegen_test.h"
+#include "xla/service/hlo_parser.h"
 
 namespace xla {
 namespace cpu {

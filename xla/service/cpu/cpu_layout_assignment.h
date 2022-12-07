@@ -16,10 +16,10 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_LAYOUT_ASSIGNMENT_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_LAYOUT_ASSIGNMENT_H_
 
-#include "tensorflow/compiler/xla/service/computation_layout.h"
-#include "tensorflow/compiler/xla/service/cpu/target_machine_features.h"
-#include "tensorflow/compiler/xla/service/layout_assignment.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/service/computation_layout.h"
+#include "xla/service/cpu/target_machine_features.h"
+#include "xla/service/layout_assignment.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace cpu {

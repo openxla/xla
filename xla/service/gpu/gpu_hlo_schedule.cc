@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_hlo_schedule.h"
+#include "xla/service/gpu/gpu_hlo_schedule.h"
 
 #include <deque>
 #include <memory>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_schedule.h"
-#include "tensorflow/compiler/xla/service/buffer_value.h"
-#include "tensorflow/compiler/xla/service/hlo_memory_scheduler.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/service/buffer_value.h"
+#include "xla/service/hlo_memory_scheduler.h"
 
 namespace xla {
 namespace gpu {

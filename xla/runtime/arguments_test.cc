@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-#include "tensorflow/compiler/xla/runtime/arguments.h"
+#include "xla/runtime/arguments.h"
 
 #include <array>
 #include <type_traits>
 #include <utility>
 
-#include "tensorflow/tsl/platform/test_benchmark.h"
+#include "third_party/tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

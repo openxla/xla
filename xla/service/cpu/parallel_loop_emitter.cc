@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/parallel_loop_emitter.h"
+#include "xla/service/cpu/parallel_loop_emitter.h"
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_loop.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/llvm_loop.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {
 namespace cpu {

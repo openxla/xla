@@ -5,7 +5,7 @@ load("//tensorflow/compiler/xla/tests:build_defs.bzl", "xla_test")
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )
@@ -13,7 +13,7 @@ package(
 package_group(
     name = "friends",
     includes = [
-        "//tensorflow/compiler/xla:friends",
+        "//xla:friends",
     ],
     packages = [
         "//platforms/testing/tests/...",
@@ -27,15 +27,15 @@ cc_library(
     hdrs = ["exhaustive_op_test_utils.h"],
     tags = ["no_pip"],
     deps = [
-        "//tensorflow/compiler/xla:bit_cast",
-        "//tensorflow/compiler/xla/client:xla_builder",
-        "//tensorflow/compiler/xla/client/lib:constants",
-        "//tensorflow/compiler/xla/client/lib:math",
-        "//tensorflow/compiler/xla/service:shaped_buffer",
-        "//tensorflow/compiler/xla/tests:client_library_test_base",
-        "//tensorflow/compiler/xla/tests:literal_test_util",
-        "//tensorflow/compiler/xla/tests:test_macros_header",
-        "//tensorflow/compiler/xla/tests:xla_internal_test_main",
+        "//xla:bit_cast",
+        "//xla/client:xla_builder",
+        "//xla/client/lib:constants",
+        "//xla/client/lib:math",
+        "//xla/service:shaped_buffer",
+        "//xla/tests:client_library_test_base",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:test_macros_header",
+        "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -53,8 +53,8 @@ xla_test(
     ],
     deps = [
         ":exhaustive_op_test_utils",
-        "//tensorflow/compiler/xla:util",
-        "//tensorflow/compiler/xla/tests:client_library_test_base",
+        "//xla:util",
+        "//xla/tests:client_library_test_base",
     ],
 )
 
@@ -76,8 +76,8 @@ xla_test(
     ],
     deps = [
         ":exhaustive_op_test_utils",
-        "//tensorflow/compiler/xla:util",
-        "//tensorflow/compiler/xla/tests:client_library_test_base",
+        "//xla:util",
+        "//xla/tests:client_library_test_base",
     ],
 )
 
@@ -97,8 +97,8 @@ xla_test(
     ],
     deps = [
         ":exhaustive_op_test_utils",
-        "//tensorflow/compiler/xla:util",
-        "//tensorflow/compiler/xla/tests:client_library_test_base",
+        "//xla:util",
+        "//xla/tests:client_library_test_base",
     ],
 )
 

@@ -18,16 +18,16 @@ limitations under the License.
 
 #include "mlir/IR/Dialect.h"  // from @llvm-project  // IWYU pragma: keep
 #include "mlir/IR/OpImplementation.h"  // from @llvm-project  // IWYU pragma: keep
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_interfaces.h"  // IWYU pragma: keep
+#include "xla/mlir/runtime/ir/rt_interfaces.h"  // IWYU pragma: keep
 
 // Runtime dialect definition.
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_dialect.h.inc"
+#include "xla/mlir/runtime/ir/rt_dialect.h.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_types.h.inc"
+#include "xla/mlir/runtime/ir/rt_types.h.inc"
 
 #define GET_ATTRDEF_CLASSES
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_attrs.h.inc"
+#include "xla/mlir/runtime/ir/rt_attrs.h.inc"
 
 namespace xla {
 namespace runtime {

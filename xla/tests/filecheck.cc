@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tests/filecheck.h"
+#include "xla/tests/filecheck.h"
 
 #include <cstdlib>
 
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/resource_loader.h"
-#include "tensorflow/tsl/platform/subprocess.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/resource_loader.h"
+#include "third_party/tsl/platform/subprocess.h"
 
 namespace xla {
 

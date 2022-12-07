@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
+#include "xla/service/gpu/gemm_algorithm_picker.h"
 
 #include <algorithm>
 #include <functional>
@@ -22,24 +22,24 @@ limitations under the License.
 #include <tuple>
 #include <utility>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
-#include "tensorflow/compiler/xla/service/gpu/buffer_comparator.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/stream_executor_util.h"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas_lt.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/redzone_allocator.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logger.h"
-#include "tensorflow/tsl/platform/statusor.h"
-#include "tensorflow/tsl/protobuf/autotuning.pb.h"
-#include "tensorflow/tsl/util/proto/proto_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/buffer_comparator.h"
+#include "xla/service/gpu/gpu_asm_opts_util.h"
+#include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/stream_executor_util.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/cuda/cuda_blas_lt.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/gpu/redzone_allocator.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logger.h"
+#include "third_party/tsl/platform/statusor.h"
+#include "third_party/tsl/protobuf/autotuning.pb.h"
+#include "third_party/tsl/util/proto/proto_utils.h"
 
 namespace xla {
 namespace gpu {

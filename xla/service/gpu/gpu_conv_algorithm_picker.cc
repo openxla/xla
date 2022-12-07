@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_conv_algorithm_picker.h"
+#include "xla/service/gpu/gpu_conv_algorithm_picker.h"
 
 #include <algorithm>
 #include <limits>
@@ -28,30 +28,30 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/time/time.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/gpu/backend_configs.pb.h"
-#include "tensorflow/compiler/xla/service/gpu/convolution_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_autotuning.pb.h"
-#include "tensorflow/compiler/xla/service/gpu/hlo_algorithm_denylist.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/stream_executor_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/stream_executor/dnn.pb.h"
-#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/logger.h"
-#include "tensorflow/tsl/platform/numbers.h"
-#include "tensorflow/tsl/util/env_var.h"
-#include "tensorflow/tsl/util/proto/proto_utils.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/literal_util.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/convolution_thunk.h"
+#include "xla/service/gpu/gpu_asm_opts_util.h"
+#include "xla/service/gpu/gpu_autotuning.pb.h"
+#include "xla/service/gpu/hlo_algorithm_denylist.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/stream_executor_util.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/dnn.pb.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/logger.h"
+#include "third_party/tsl/platform/numbers.h"
+#include "third_party/tsl/util/env_var.h"
+#include "third_party/tsl/util/proto/proto_utils.h"
 
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
 #include "third_party/gpus/cudnn/cudnn.h"
-#include "tensorflow/compiler/xla/service/gpu/buffer_comparator.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/redzone_allocator.h"
+#include "xla/service/gpu/buffer_comparator.h"
+#include "xla/stream_executor/gpu/redzone_allocator.h"
 #endif
 
 namespace xla {

@@ -19,10 +19,10 @@ limitations under the License.
 #include <functional>
 #include <optional>
 
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/status_macros.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace xla {
 

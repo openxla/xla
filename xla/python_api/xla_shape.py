@@ -16,8 +16,8 @@
 
 import numpy as _np  # Avoids becoming a part of public Tensorflow API.
 
-from tensorflow.compiler.xla import xla_data_pb2
-from tensorflow.compiler.xla.python_api import types
+from xla import xla_data_pb2
+from xla.python_api import types
 
 
 class Shape(object):

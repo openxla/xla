@@ -13,30 +13,30 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/spmd/custom_call_handler.h"
+#include "xla/service/spmd/custom_call_handler.h"
 
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/client/lib/comparators.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/custom_call_sharding_helper.h"
-#include "tensorflow/compiler/xla/service/hlo_lexer.h"
-#include "tensorflow/compiler/xla/service/hlo_sharding_util.h"
-#include "tensorflow/compiler/xla/service/shape_inference.h"
-#include "tensorflow/compiler/xla/service/spmd/spmd_partitioner.h"
-#include "tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/window_util.h"
+#include "xla/client/lib/comparators.h"
+#include "xla/client/xla_builder.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/literal_util.h"
+#include "xla/service/custom_call_sharding_helper.h"
+#include "xla/service/hlo_lexer.h"
+#include "xla/service/hlo_sharding_util.h"
+#include "xla/service/shape_inference.h"
+#include "xla/service/spmd/spmd_partitioner.h"
+#include "xla/service/spmd/spmd_partitioner_util.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
+#include "xla/window_util.h"
 
 namespace xla {
 namespace spmd {

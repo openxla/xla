@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_INTERFACE_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_INTERFACE_H_
 
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/status.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

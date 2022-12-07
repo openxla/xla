@@ -76,11 +76,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/kernel_cache_config.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/array_slice.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/kernel_cache_config.h"
+#include "xla/stream_executor/lib/array_slice.h"
+#include "xla/stream_executor/platform/port.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace stream_executor {
 

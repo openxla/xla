@@ -1,11 +1,11 @@
 load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
-load("//tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
+load("//third_party/tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
 
 package(licenses = ["notice"])
 
 glob_lit_tests(
     data = [":test_utilities"],
-    driver = "//tensorflow/compiler/xla:run_lit.sh",
+    driver = "//xla:run_lit.sh",
     test_file_exts = [
         "mlir",
     ],
@@ -18,7 +18,7 @@ filegroup(
     name = "test_utilities",
     testonly = True,
     data = [
-        "//tensorflow/compiler/xla/mlir/backends/cpu:xla-cpu-opt",
+        "//xla/mlir/backends/cpu:xla-cpu-opt",
         "@llvm-project//llvm:FileCheck",
         "@llvm-project//mlir:run_lit.sh",
     ],

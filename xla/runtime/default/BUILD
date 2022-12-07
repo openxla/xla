@@ -2,8 +2,8 @@ load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//tensorflow/compiler/xla/runtime:__pkg__"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    default_visibility = ["//xla/runtime:__pkg__"],
     licenses = ["notice"],
 )
 

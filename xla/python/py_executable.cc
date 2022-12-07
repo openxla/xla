@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/py_executable.h"
+#include "xla/python/py_executable.h"
 
 #include <memory>
 #include <optional>
@@ -23,12 +23,12 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/ifrt/device.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/device.h"
 #endif
-#include "tensorflow/compiler/xla/pjrt/host_callback.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/tsl/platform/fingerprint.h"
+#include "xla/pjrt/host_callback.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "third_party/tsl/platform/fingerprint.h"
 
 namespace xla {
 

@@ -22,13 +22,13 @@ limitations under the License.
 
 #include <string>
 
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 namespace tools {

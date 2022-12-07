@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/infeed_manager.h"
+#include "xla/service/gpu/infeed_manager.h"
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/shape_util.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#include "tensorflow/compiler/xla/service/gpu/xla_executor_state.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/service/gpu/xla_executor_state.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace xla {

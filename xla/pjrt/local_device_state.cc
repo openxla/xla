@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/local_device_state.h"
+#include "xla/pjrt/local_device_state.h"
 
 #include <memory>
 #include <vector>
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
-#include "tensorflow/tsl/protobuf/error_codes.pb.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/util.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
+#include "third_party/tsl/protobuf/error_codes.pb.h"
 
 namespace xla {
 

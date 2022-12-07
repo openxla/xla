@@ -27,14 +27,14 @@ limitations under the License.
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/uid_generator.h"
-#include "tensorflow/compiler/xla/mlir/runtime/utils/custom_calls.h"
+#include "xla/mlir/backends/gpu/transforms/uid_generator.h"
+#include "xla/mlir/runtime/utils/custom_calls.h"
 
 namespace xla {
 namespace gpu {
 
 #define GEN_PASS_DEF_CONVERTGPUTOGPURUNTIMEPASS
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/passes.h.inc"
+#include "xla/mlir/backends/gpu/transforms/passes.h.inc"
 
 using namespace mlir;  // NOLINT
 

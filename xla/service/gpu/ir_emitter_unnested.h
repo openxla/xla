@@ -25,13 +25,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emitter.h"
-#include "tensorflow/compiler/xla/service/gpu/kernel_mapping_scheme.h"
-#include "tensorflow/compiler/xla/service/gpu/nccl_all_reduce_thunk.h"
-#include "tensorflow/compiler/xla/service/gpu/thunk.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/service/gpu/ir_emitter.h"
+#include "xla/service/gpu/kernel_mapping_scheme.h"
+#include "xla/service/gpu/nccl_all_reduce_thunk.h"
+#include "xla/service/gpu/thunk.h"
+#include "xla/service/llvm_ir/ir_array.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {
 namespace gpu {

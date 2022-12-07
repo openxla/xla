@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/host/host_platform.h"
+#include "xla/stream_executor/host/host_platform.h"
 
 #include <thread>
 
 #include "absl/memory/memory.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/error.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/initialize.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/host/host_gpu_executor.h"
+#include "xla/stream_executor/host/host_platform_id.h"
+#include "xla/stream_executor/lib/error.h"
+#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/lib/status.h"
 
 namespace stream_executor {
 namespace host {

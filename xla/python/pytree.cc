@@ -16,7 +16,7 @@ limitations under the License.
 // Caution: this code uses exceptions. The exception use is local to the
 // binding code and the idiomatic way to emit Python exceptions.
 
-#include "tensorflow/compiler/xla/python/pytree.h"
+#include "xla/python/pytree.h"
 
 #include <algorithm>
 #include <iterator>
@@ -37,8 +37,8 @@ limitations under the License.
 #include "pybind11/pytypes.h"
 #include "pybind11/stl.h"
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
-#include "tensorflow/compiler/xla/python/exceptions.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/python/exceptions.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/backends/interpreter/executable.h"
+#include "xla/backends/interpreter/executable.h"
 
 #include <algorithm>
 #include <cstring>
@@ -22,18 +22,18 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/backends/interpreter/executable_base.h"
-#include "tensorflow/compiler/xla/backends/interpreter/executor.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/maybe_owning_device_memory.h"
-#include "tensorflow/compiler/xla/service/transfer_manager.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/backends/interpreter/executable_base.h"
+#include "xla/backends/interpreter/executor.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal.h"
+#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/transfer_manager.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 namespace interpreter {

@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_profile_printer.h"
+#include "xla/service/hlo_profile_printer.h"
 
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/service/human_readable_profile_builder.h"
+#include "xla/service/human_readable_profile_builder.h"
 
 namespace xla {
 std::string PrintHloProfile(

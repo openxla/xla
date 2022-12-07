@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_initializer_helper.h"
+#include "xla/stream_executor/tpu/tpu_initializer_helper.h"
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -32,21 +32,21 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/libtftpu.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api_dlsym_set_fn.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor_c_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_ops_c_api.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/stream_executor/tpu/libtftpu.h"
+#include "xla/stream_executor/tpu/tpu_api_dlsym_set_fn.h"
+#include "xla/stream_executor/tpu/tpu_executor_c_api.h"
+#include "xla/stream_executor/tpu/tpu_ops_c_api.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
 
 #if !defined(PLATFORM_GOOGLE)
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_platform.h"
-#include "tensorflow/tsl/platform/cloud/gcs_file_system.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_platform.h"
+#include "third_party/tsl/platform/cloud/gcs_file_system.h"
+#include "third_party/tsl/platform/env.h"
 #elif defined(LIBTPU_STATIC)
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_platform.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_platform.h"
 #endif  // PLATFORM_GOOGLE
 
 namespace tensorflow {
@@ -192,7 +192,7 @@ stream_executor::port::Status TryAcquireTpuLock() {
   }
 }
 #if !defined(PLATFORM_GOOGLE)
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_library_init_fns.inc"
+#include "xla/stream_executor/tpu/tpu_library_init_fns.inc"
 
 stream_executor::port::Status InitializeTpuLibrary(void* library_handle) {
   stream_executor::port::Status s = InitializeTpuStructFns(library_handle);
@@ -276,7 +276,7 @@ stream_executor::port::Status FindAndLoadTpuLibrary() {
 
 #elif defined(LIBTPU_STATIC)
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_library_init_fns.inc"
+#include "xla/stream_executor/tpu/tpu_library_init_fns.inc"
 
 stream_executor::port::Status InitializeTpuLibrary() {
   // Retrieve arguments from environment if applicable

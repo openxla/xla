@@ -20,9 +20,9 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/map_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/map_util.h"
+#include "xla/service/llvm_ir/ir_array.h"
 
 namespace xla {
 namespace gpu {

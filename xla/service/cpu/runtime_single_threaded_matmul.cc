@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_matmul.h"
+#include "xla/service/cpu/runtime_single_threaded_matmul.h"
 
 #include "absl/base/attributes.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
 #if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
-#include "tensorflow/tsl/framework/contraction/eigen_contraction_kernel.h"
+#include "third_party/tsl/framework/contraction/eigen_contraction_kernel.h"
 #endif
 
 namespace {

@@ -23,10 +23,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/ifrt/compiler.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/compiler.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace ifrt {

@@ -16,14 +16,14 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/array2d.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/cpu/tests/cpu_codegen_test.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/tests/filecheck.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/array2d.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/cpu/tests/cpu_codegen_test.h"
+#include "xla/shape_util.h"
+#include "xla/tests/filecheck.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {

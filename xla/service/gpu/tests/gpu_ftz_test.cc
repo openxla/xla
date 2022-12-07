@@ -15,8 +15,8 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/service/gpu/tests/gpu_codegen_test.h"
-#include "tensorflow/compiler/xla/tests/verified_hlo_module.h"
+#include "xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/tests/verified_hlo_module.h"
 
 // Check that the ftz (flush denormals to zero) flag is reflected in PTX as
 // expected.

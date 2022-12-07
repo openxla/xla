@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_REPLICA_ID_THUNK_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_REPLICA_ID_THUNK_H_
 
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
-#include "tensorflow/compiler/xla/service/gpu/thunk.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/thunk.h"
 
 namespace xla {
 namespace gpu {

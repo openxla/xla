@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/mlir_emitter.h"
+#include "xla/service/cpu/mlir_emitter.h"
 
 #include "llvm/Linker/Linker.h"
 #include "llvm/Transforms/IPO/Internalize.h"
@@ -27,7 +27,7 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/hlo_utils.h"
+#include "xla/translate/hlo_to_mhlo/hlo_utils.h"
 
 namespace xla {
 namespace cpu {

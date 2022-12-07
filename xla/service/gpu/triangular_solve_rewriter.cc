@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/triangular_solve_rewriter.h"
+#include "xla/service/gpu/triangular_solve_rewriter.h"
 
 #include <numeric>
 
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 namespace gpu {

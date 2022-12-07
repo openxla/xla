@@ -19,12 +19,12 @@ limitations under the License.
 #include <utility>
 
 #include "llvm/ADT/ArrayRef.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/service/gpu/matmul_utils.h"
+#include "xla/shape_util.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/device_memory.h"
 
 namespace xla {
 namespace gpu {

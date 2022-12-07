@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_client_test.h"
+#include "xla/pjrt/pjrt_client_test.h"
 
 #include <functional>
 #include <memory>
@@ -21,9 +21,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/synchronization/blocking_counter.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
+#include "xla/client/xla_builder.h"
+#include "xla/test.h"
+#include "xla/tests/literal_test_util.h"
 
 namespace xla {
 namespace {

@@ -23,11 +23,11 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "tensorflow/compiler/xla/python/ifrt/dtype.h"
-#include "tensorflow/compiler/xla/python/ifrt/future.h"
-#include "tensorflow/compiler/xla/python/ifrt/shape.h"
-#include "tensorflow/compiler/xla/python/ifrt/sharding.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/future.h"
+#include "xla/python/ifrt/shape.h"
+#include "xla/python/ifrt/sharding.h"
+#include "xla/status.h"
 
 namespace xla {
 namespace ifrt {

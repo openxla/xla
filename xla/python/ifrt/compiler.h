@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "tensorflow/compiler/xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/executable.h"
 
 namespace xla {
 namespace ifrt {

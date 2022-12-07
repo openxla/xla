@@ -41,7 +41,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TEMPORARY_DEVICE_MEMORY_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TEMPORARY_DEVICE_MEMORY_H_
 
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory.h"
 
 namespace stream_executor {
 

@@ -14,11 +14,11 @@ limitations under the License.
 ==============================================================================*/
 
 #if defined(ENABLE_MKL) && !defined(INTEL_MKL_DNN_ONLY)
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul_mkl.h"
+#include "xla/service/cpu/runtime_matmul_mkl.h"
 
 #include "third_party/intel_mkl_ml/include/mkl_cblas.h"
 #include "third_party/intel_mkl_ml/include/mkl_service.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
+#include "xla/executable_run_options.h"
 
 #define EIGEN_USE_THREADS
 #include "absl/base/dynamic_annotations.h"

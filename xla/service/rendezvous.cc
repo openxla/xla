@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/rendezvous.h"
+#include "xla/service/rendezvous.h"
 
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/multi_output_fusion.h"
+#include "xla/service/gpu/multi_output_fusion.h"
 
 #include <stdint.h>
 
@@ -24,15 +24,15 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_fusible.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_performance_model.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/hlo_graph_dumper.h"
-#include "tensorflow/compiler/xla/service/hlo_reachability.h"
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/debug_options_flags.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/gpu/gpu_performance_model.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/hlo_graph_dumper.h"
+#include "xla/service/hlo_reachability.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 namespace gpu {

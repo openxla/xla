@@ -17,12 +17,12 @@ limitations under the License.
 #include <ostream>
 #include <string>
 
-#include "tensorflow/compiler/xla/hlo/experimental/auto_sharding/auto_sharding.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/tools/hlo_module_loader.h"
-#include "tensorflow/tsl/platform/init_main.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/status.h"
+#include "xla/tools/hlo_module_loader.h"
+#include "third_party/tsl/platform/init_main.h"
 
 namespace xla {
 namespace spmd {

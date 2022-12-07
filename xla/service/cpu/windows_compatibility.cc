@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/windows_compatibility.h"
+#include "xla/service/cpu/windows_compatibility.h"
 
 #ifdef _MSC_VER
 

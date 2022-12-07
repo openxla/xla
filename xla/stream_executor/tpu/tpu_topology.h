@@ -19,8 +19,8 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/c_api_decl.h"
-#include "tensorflow/tsl/platform/types.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "third_party/tsl/platform/types.h"
 
 namespace tensorflow {
 namespace tpu {

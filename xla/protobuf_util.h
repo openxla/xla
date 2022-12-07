@@ -19,8 +19,8 @@ limitations under the License.
 #include <functional>
 #include <string>
 
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/status.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 namespace protobuf_util {

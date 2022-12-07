@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

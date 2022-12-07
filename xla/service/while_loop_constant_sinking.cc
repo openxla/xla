@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/while_loop_constant_sinking.h"
+#include "xla/service/while_loop_constant_sinking.h"
 
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
-#include "tensorflow/compiler/xla/service/while_util.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/service/while_util.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace {

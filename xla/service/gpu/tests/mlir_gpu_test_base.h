@@ -17,7 +17,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TESTS_MLIR_GPU_TEST_BASE_H_
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace gpu {

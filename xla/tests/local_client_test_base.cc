@@ -14,26 +14,26 @@ limitations under the License.
 ==============================================================================*/
 #define EIGEN_USE_THREADS
 
-#include "tensorflow/compiler/xla/tests/local_client_test_base.h"
+#include "xla/tests/local_client_test_base.h"
 
 #include <memory>
 #include <vector>
 
 #include "absl/strings/string_view.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/map_util.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/status_macros.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/client/local_client.h"
+#include "xla/client/xla_computation.h"
+#include "xla/map_util.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/test_helpers.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 namespace xla {
 

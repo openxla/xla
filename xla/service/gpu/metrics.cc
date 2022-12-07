@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/metrics.h"
+#include "xla/service/gpu/metrics.h"
 
-#include "tensorflow/tsl/lib/monitoring/sampler.h"
+#include "third_party/tsl/lib/monitoring/sampler.h"
 
 namespace xla {
 namespace {

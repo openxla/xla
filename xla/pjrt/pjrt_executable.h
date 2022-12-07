@@ -23,11 +23,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/client/executable_build_options.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/client/executable_build_options.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 

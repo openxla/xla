@@ -19,12 +19,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/match.h"
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/runtime/ffi/ffi_api.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/literal_test_util.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/runtime/ffi/ffi_api.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/literal_test_util.h"
+#include "xla/tests/test_macros.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace gpu {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_collector.h"
+#include "xla/backends/profiler/gpu/cupti_collector.h"
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -23,14 +23,14 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_occupancy.h"
-#include "tensorflow/tsl/platform/abi.h"
-#include "tensorflow/tsl/platform/host_info.h"
-#include "tensorflow/tsl/platform/mutex.h"
-#include "tensorflow/tsl/profiler/utils/parse_annotation.h"
-#include "tensorflow/tsl/profiler/utils/trace_utils.h"
-#include "tensorflow/tsl/profiler/utils/xplane_builder.h"
-#include "tensorflow/tsl/profiler/utils/xplane_schema.h"
-#include "tensorflow/tsl/profiler/utils/xplane_utils.h"
+#include "third_party/tsl/platform/abi.h"
+#include "third_party/tsl/platform/host_info.h"
+#include "third_party/tsl/platform/mutex.h"
+#include "third_party/tsl/profiler/utils/parse_annotation.h"
+#include "third_party/tsl/profiler/utils/trace_utils.h"
+#include "third_party/tsl/profiler/utils/xplane_builder.h"
+#include "third_party/tsl/profiler/utils/xplane_schema.h"
+#include "third_party/tsl/profiler/utils/xplane_utils.h"
 
 namespace xla {
 namespace profiler {

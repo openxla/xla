@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/status.h"
 
 namespace xla {
 namespace sharding_op_util {

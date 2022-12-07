@@ -19,7 +19,7 @@ limitations under the License.
 #include <complex>
 #include <cstdint>
 
-#include "tensorflow/compiler/xla/stream_executor/dnn.pb.h"
+#include "xla/stream_executor/dnn.pb.h"
 
 namespace Eigen {
 struct bfloat16;

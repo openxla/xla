@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/outfeed_receiver.h"
+#include "xla/python/outfeed_receiver.h"
 
 #include <memory>
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/client/executable_build_options.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h"
-#include "tensorflow/compiler/xla/pjrt/tfrt_cpu_pjrt_client.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/test.h"
+#include "xla/client/client_library.h"
+#include "xla/client/executable_build_options.h"
+#include "xla/client/xla_builder.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/pjrt/tfrt_cpu_pjrt_client.h"
+#include "xla/service/platform_util.h"
+#include "xla/test.h"
 
 namespace xla {
 

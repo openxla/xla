@@ -19,9 +19,9 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tensorflow/compiler/xla/pjrt/distributed/client.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/service.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/pjrt/distributed/client.h"
+#include "xla/pjrt/distributed/service.h"
+#include "xla/statusor.h"
 
 namespace xla {
 

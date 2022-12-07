@@ -21,8 +21,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/service/hlo_runner_interface.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/service/hlo_runner_interface.h"
 
 namespace xla {
 

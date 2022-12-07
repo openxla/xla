@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/event_pool.h"
+#include "xla/pjrt/event_pool.h"
 
 #include <memory>
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/status_macros.h"
 
 namespace xla {
 

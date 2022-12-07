@@ -31,8 +31,8 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_sharding.h"
-#include "tensorflow/compiler/xla/service/hlo_value.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/service/hlo_value.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 namespace xla {

@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LIB_PROCESS_STATE_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LIB_PROCESS_STATE_H_
 
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 namespace port {

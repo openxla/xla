@@ -12,23 +12,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tensorflow/compiler/xla/backends/profiler/cpu/host_tracer.h"
+#include "xla/backends/profiler/cpu/host_tracer.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/platform/types.h"
-#include "tensorflow/tsl/profiler/backends/cpu/host_tracer_utils.h"
-#include "tensorflow/tsl/profiler/backends/cpu/traceme_recorder.h"
-#include "tensorflow/tsl/profiler/lib/profiler_interface.h"
-#include "tensorflow/tsl/profiler/protobuf/xplane.pb.h"
-#include "tensorflow/tsl/profiler/utils/time_utils.h"
-#include "tensorflow/tsl/profiler/utils/xplane_schema.h"
-#include "tensorflow/tsl/profiler/utils/xplane_utils.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/platform/types.h"
+#include "third_party/tsl/profiler/backends/cpu/host_tracer_utils.h"
+#include "third_party/tsl/profiler/backends/cpu/traceme_recorder.h"
+#include "third_party/tsl/profiler/lib/profiler_interface.h"
+#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "third_party/tsl/profiler/utils/time_utils.h"
+#include "third_party/tsl/profiler/utils/xplane_schema.h"
+#include "third_party/tsl/profiler/utils/xplane_utils.h"
 
 namespace xla {
 namespace profiler {

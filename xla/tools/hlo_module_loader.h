@@ -20,8 +20,8 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace hlo_module_loader_details {

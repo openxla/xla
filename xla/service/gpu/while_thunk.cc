@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/while_thunk.h"
+#include "xla/service/gpu/while_thunk.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {

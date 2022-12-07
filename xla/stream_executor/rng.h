@@ -21,8 +21,8 @@ limitations under the License.
 #include <complex>
 #include <cstdint>
 
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 

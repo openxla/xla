@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,14 +21,14 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "third_party/eigen3/Eigen/Core"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/stacktrace.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
-#include "tensorflow/compiler/xla/stream_executor/rng.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_pimpl.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/lib/stacktrace.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/rng.h"
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
 
 namespace stream_executor {
 

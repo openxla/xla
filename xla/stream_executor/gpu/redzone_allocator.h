@@ -19,12 +19,12 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/asm_compiler.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_asm_opts.h"
-#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/lib/math/math_util.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/lib/math/math_util.h"
 
 namespace stream_executor {
 

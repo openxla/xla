@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/type_converter.h"
+#include "xla/mlir/runtime/transforms/type_converter.h"
 
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "tensorflow/tsl/platform/test.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace runtime {

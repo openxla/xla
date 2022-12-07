@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/llvm_ir_runtime.h"
+#include "xla/service/cpu/llvm_ir_runtime.h"
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "tensorflow/compiler/xla/service/cpu/vector_support_library.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/math_ops.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/service/cpu/vector_support_library.h"
+#include "xla/service/llvm_ir/math_ops.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace cpu {

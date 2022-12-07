@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_ir/buffer_assignment_util.h"
+#include "xla/service/llvm_ir/buffer_assignment_util.h"
 
 #include <algorithm>
 

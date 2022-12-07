@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.1
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/cublas_lt_matmul.h"
+#include "xla/service/gpu/runtime/cublas_lt_matmul.h"
 
 #include <memory>
 #include <optional>
@@ -23,19 +23,19 @@ limitations under the License.1
 #include <vector>
 
 #include "llvm/ADT/ArrayRef.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/runtime/logical_result.h"
-#include "tensorflow/compiler/xla/runtime/state.h"
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
-#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/runtime/executable.h"
+#include "xla/runtime/logical_result.h"
+#include "xla/runtime/state.h"
+#include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/xla.pb.h"
+#include "third_party/tsl/platform/status.h"
 
 #if GOOGLE_CUDA
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas_lt.h"
+#include "xla/stream_executor/cuda/cuda_blas_lt.h"
 #endif  // GOOGLE_CUDA
 
 namespace xla {

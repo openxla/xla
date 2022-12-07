@@ -19,14 +19,14 @@ limitations under the License.
 #include <map>
 
 #include "absl/base/macros.h"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
-#include "tensorflow/compiler/xla/stream_executor/fft.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin.h"
-#include "tensorflow/compiler/xla/stream_executor/rng.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/fft.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/plugin.h"
+#include "xla/stream_executor/rng.h"
 
 namespace stream_executor {
 

@@ -16,7 +16,7 @@ limitations under the License.
 // This files implements the configuration management for transfer guards.
 // C++ backends responsible for enforcing transfer guard levels.
 
-#include "tensorflow/compiler/xla/python/transfer_guard_lib.h"
+#include "xla/python/transfer_guard_lib.h"
 
 #include <memory>
 #include <optional>
@@ -26,8 +26,8 @@ limitations under the License.
 #include "pybind11/cast.h"
 #include "pybind11/pybind11.h"
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/status.h"
+#include "xla/util.h"
 
 namespace jax {
 

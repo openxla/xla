@@ -26,8 +26,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_RUNTIME_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_RUNTIME_H_
 
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/service/cpu/xfeed_manager.h"
+#include "xla/executable_run_options.h"
+#include "xla/service/cpu/xfeed_manager.h"
 
 namespace xla {
 namespace cpu {

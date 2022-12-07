@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/runtime/executable.h"
+#include "xla/service/gpu/runtime/executable.h"
 
 #include <memory>
 #include <string>
@@ -23,26 +23,26 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/runtime/ffi.h"
-#include "tensorflow/compiler/xla/runtime/jit_executable.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/cholesky.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/conv.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/cublas_lt_matmul.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/fft.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/gemm.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/io_feed.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/memcpy.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/memset.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/support.h"
-#include "tensorflow/compiler/xla/service/gpu/runtime/tracing.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
-#include "tensorflow/tsl/protobuf/dnn.pb.h"
+#include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
+#include "xla/runtime/executable.h"
+#include "xla/runtime/ffi.h"
+#include "xla/runtime/jit_executable.h"
+#include "xla/service/gpu/runtime/cholesky.h"
+#include "xla/service/gpu/runtime/conv.h"
+#include "xla/service/gpu/runtime/cublas_lt_matmul.h"
+#include "xla/service/gpu/runtime/custom_call.h"
+#include "xla/service/gpu/runtime/fft.h"
+#include "xla/service/gpu/runtime/gemm.h"
+#include "xla/service/gpu/runtime/io_feed.h"
+#include "xla/service/gpu/runtime/memcpy.h"
+#include "xla/service/gpu/runtime/memset.h"
+#include "xla/service/gpu/runtime/support.h"
+#include "xla/service/gpu/runtime/tracing.h"
+#include "xla/service/service_executable_run_options.h"
+#include "third_party/tsl/protobuf/dnn.pb.h"
 
 #if GOOGLE_CUDA
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 #endif  // #if GOOGLE_CUDA
 
 namespace xla {

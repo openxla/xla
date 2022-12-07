@@ -23,12 +23,12 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/platform/types.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "xla/stream_executor/platform.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/platform/types.h"
 
 namespace stream_executor {
 

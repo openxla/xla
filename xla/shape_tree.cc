@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/shape_tree.h"
+#include "xla/shape_tree.h"
 
 namespace xla {
 namespace internal {

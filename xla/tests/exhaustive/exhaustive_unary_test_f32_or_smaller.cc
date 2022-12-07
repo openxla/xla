@@ -18,9 +18,9 @@ limitations under the License.
 #include <cmath>
 #include <limits>
 
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/exhaustive/exhaustive_op_test_utils.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/exhaustive/exhaustive_op_test_utils.h"
+#include "xla/util.h"
 
 #ifdef __FAST_MATH__
 #error "Can't be compiled with fast math on"

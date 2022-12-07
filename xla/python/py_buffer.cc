@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/py_buffer.h"
+#include "xla/python/py_buffer.h"
 
 #include <cstring>
 #include <functional>
@@ -28,17 +28,17 @@ limitations under the License.
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/ifrt/device.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/device.h"
 #endif
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/py_client.h"
-#include "tensorflow/compiler/xla/python/python_ref_manager.h"
-#include "tensorflow/compiler/xla/python/python_utils.h"
-#include "tensorflow/compiler/xla/python/transfer_guard_lib.h"
-#include "tensorflow/compiler/xla/python/types.h"
-#include "tensorflow/compiler/xla/python/util.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/py_client.h"
+#include "xla/python/python_ref_manager.h"
+#include "xla/python/python_utils.h"
+#include "xla/python/transfer_guard_lib.h"
+#include "xla/python/types.h"
+#include "xla/python/util.h"
+#include "xla/util.h"
 
 namespace xla {
 

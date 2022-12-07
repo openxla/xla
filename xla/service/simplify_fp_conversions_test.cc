@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/simplify_fp_conversions.h"
+#include "xla/service/simplify_fp_conversions.h"
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/tsl/platform/status_matchers.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/tests/hlo_test_base.h"
+#include "third_party/tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace {

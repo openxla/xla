@@ -19,7 +19,7 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/hlo_verifier.h"
+#include "xla/service/hlo_verifier.h"
 
 namespace xla {
 

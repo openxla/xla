@@ -1,19 +1,19 @@
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package_group(
     name = "friends",
     includes = [
-        "//tensorflow/compiler/xla/python:friends",
+        "//xla/python:friends",
     ],
     packages = [
-        "//tensorflow/compiler/xla/python/...",
+        "//xla/python/...",
     ],
 )
 
 package_group(
     name = "internal",
     packages = [
-        "//tensorflow/compiler/xla/python/ifrt/...",
+        "//xla/python/ifrt/...",
     ],
 )
 
@@ -53,10 +53,10 @@ cc_library(
         "sharding.h",
     ],
     deps = [
-        "//tensorflow/compiler/xla:status",
-        "//tensorflow/compiler/xla:statusor",
-        "//tensorflow/compiler/xla:util",
-        "//tensorflow/compiler/xla/pjrt:pjrt_client",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla/pjrt:pjrt_client",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
@@ -119,7 +119,7 @@ cc_library(
     hdrs = ["test_util.h"],
     deps = [
         ":ifrt",
-        "//tensorflow/compiler/xla:statusor",
+        "//xla:statusor",
         "@com_google_absl//absl/synchronization",
     ],
 )
@@ -174,10 +174,10 @@ cc_library(
     deps = [
         ":ifrt",
         ":test_util",
-        "//tensorflow/compiler/xla/pjrt:mlir_to_hlo",
         "//tensorflow/tsl/lib/core:status_test_util",
         "//tensorflow/tsl/platform:statusor",
         "//tensorflow/tsl/platform:test",
+        "//xla/pjrt:mlir_to_hlo",
         "@com_google_absl//absl/strings",
     ],
     alwayslink = 1,

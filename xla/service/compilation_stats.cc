@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/compilation_stats.h"
+#include "xla/service/compilation_stats.h"
 
 #include <iostream>
 #include <memory>
@@ -21,8 +21,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace xla {
 

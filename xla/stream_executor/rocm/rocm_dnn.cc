@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/rocm/rocm_dnn.h"
+#include "xla/stream_executor/rocm/rocm_dnn.h"
 
 #include <functional>
 #include <memory>
@@ -25,26 +25,26 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/eigen3/Eigen/Core"
 #include "rocm/include/miopen/miopen.h"
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_activation.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_driver.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_timer.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/env.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/error.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/initialize.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/threadpool.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/dso_loader.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/rocm/rocm_diagnostics.h"
-#include "tensorflow/compiler/xla/stream_executor/rocm/rocm_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/scratch_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_pimpl.h"
-#include "tensorflow/tsl/platform/hash.h"
-#include "tensorflow/tsl/util/env_var.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/gpu/gpu_activation.h"
+#include "xla/stream_executor/gpu/gpu_driver.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/gpu_timer.h"
+#include "xla/stream_executor/lib/env.h"
+#include "xla/stream_executor/lib/error.h"
+#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/lib/threadpool.h"
+#include "xla/stream_executor/platform/dso_loader.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/rocm/rocm_diagnostics.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
+#include "third_party/tsl/platform/hash.h"
+#include "third_party/tsl/util/env_var.h"
 
 namespace {
 

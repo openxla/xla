@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
+#include "xla/runtime/custom_call.h"
 
 #include <array>
 #include <cstdint>
@@ -26,18 +26,18 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/mlir/runtime/ir/tests/testlib.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/async_runtime.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/runtime/diagnostics.h"
-#include "tensorflow/compiler/xla/runtime/jit_executable.h"
-#include "tensorflow/compiler/xla/runtime/module.h"
-#include "tensorflow/compiler/xla/runtime/state.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/platform/test_benchmark.h"
+#include "xla/mlir/runtime/ir/tests/testlib.h"
+#include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/async_runtime.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/runtime/diagnostics.h"
+#include "xla/runtime/jit_executable.h"
+#include "xla/runtime/module.h"
+#include "xla/runtime/state.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

@@ -21,12 +21,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/service/collective_ops_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable_run_options.h"
-#include "tensorflow/compiler/xla/service/gpu/thunk.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/gpu/thunk.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/xla_data.pb.h"
 
 // Common place for all collective thunks to include nccl/rccl headers.
 #if TENSORFLOW_USE_ROCM

@@ -19,14 +19,14 @@ limitations under the License.
 #include <memory>
 
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/compiler/xla/pjrt/event_pool.h"
-#include "tensorflow/compiler/xla/pjrt/local_device_state.h"
-#include "tensorflow/compiler/xla/service/shaped_buffer.h"
-#include "tensorflow/compiler/xla/service/transfer_manager.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "xla/pjrt/event_pool.h"
+#include "xla/pjrt/local_device_state.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/service/transfer_manager.h"
+#include "xla/shape.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/stream.h"
 
 namespace xla {
 

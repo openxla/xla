@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gemm_thunk.h"
+#include "xla/service/gpu/gemm_thunk.h"
 
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/gpu/matmul_utils.h"
-#include "tensorflow/compiler/xla/service/gpu/thunk.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/thunk.h"
+#include "xla/status.h"
+#include "xla/stream_executor/device_memory.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 namespace gpu {

@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_UTILS_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_UTILS_H_
 
-#include "tensorflow/compiler/xla/service/heap_simulator.h"
+#include "xla/service/heap_simulator.h"
 
 namespace xla {
 

@@ -19,7 +19,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_client.h"
 
 namespace xla {
 

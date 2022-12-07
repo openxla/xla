@@ -67,7 +67,7 @@ limitations under the License.
 //   small (e.g., inner dimensions of size [..., 3] are not uncommon in some
 //   use cases.)
 
-#include "tensorflow/compiler/xla/pjrt/transpose.h"
+#include "xla/pjrt/transpose.h"
 
 #include <algorithm>
 #include <functional>
@@ -82,12 +82,12 @@ limitations under the License.
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
-#include "tensorflow/compiler/xla/permutation_util.h"
-#include "tensorflow/compiler/xla/pjrt/transpose_kernels.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/permutation_util.h"
+#include "xla/pjrt/transpose_kernels.h"
+#include "xla/status.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace xla {
 

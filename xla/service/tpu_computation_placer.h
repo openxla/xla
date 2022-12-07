@@ -16,10 +16,10 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_TPU_COMPUTATION_PLACER_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_TPU_COMPUTATION_PLACER_H_
 
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor_c_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_topology.h"
+#include "xla/service/computation_placer.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/tpu/tpu_executor_c_api.h"
+#include "xla/stream_executor/tpu/tpu_topology.h"
 
 namespace tensorflow {
 namespace tpu {

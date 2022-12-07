@@ -18,7 +18,7 @@ limitations under the License.
 #include <stdexcept>
 #include <string>
 
-#include "tensorflow/compiler/xla/status.h"
+#include "xla/status.h"
 
 namespace xla {
 

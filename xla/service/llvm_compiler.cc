@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_compiler.h"
+#include "xla/service/llvm_compiler.h"
 
-#include "tensorflow/tsl/platform/denormal.h"
+#include "third_party/tsl/platform/denormal.h"
 
 #ifdef __FAST_MATH__
 #error "Don't build XLA with -ffast-math"

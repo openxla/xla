@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_options.h"
+#include "xla/service/cpu/cpu_options.h"
 
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_split.h"

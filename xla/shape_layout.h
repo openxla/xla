@@ -18,10 +18,10 @@ limitations under the License.
 
 #include <string>
 
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/shape_util.h"
+#include "xla/types.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 

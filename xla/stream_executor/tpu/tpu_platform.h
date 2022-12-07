@@ -20,12 +20,12 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/stream_executor/executor_cache.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor_c_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_platform_interface.h"
-#include "tensorflow/tsl/platform/types.h"
+#include "xla/stream_executor/executor_cache.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/tpu/tpu_executor_c_api.h"
+#include "xla/stream_executor/tpu/tpu_platform_interface.h"
+#include "third_party/tsl/platform/types.h"
 
 namespace tensorflow {
 namespace tpu {

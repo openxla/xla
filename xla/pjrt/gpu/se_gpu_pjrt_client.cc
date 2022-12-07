@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/gpu/se_gpu_pjrt_client.h"
+#include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
 #include <fstream>
 #include <map>
@@ -26,34 +26,34 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/ascii.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h"
-#include "tensorflow/compiler/xla/stream_executor/device_memory.h"
-#include "tensorflow/tsl/framework/bfc_allocator.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/stream_executor/device_memory.h"
+#include "third_party/tsl/framework/bfc_allocator.h"
+#include "third_party/tsl/platform/errors.h"
 
 #ifdef GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "tensorflow/compiler/xla/pjrt/gpu/nccl_id_store.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_activation.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
+#include "xla/pjrt/gpu/nccl_id_store.h"
+#include "xla/stream_executor/cuda/cuda_activation.h"
+#include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #endif  // GOOGLE_CUDA
 
 #ifdef TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
-#include "tensorflow/compiler/xla/pjrt/gpu/nccl_id_store.h"  // NOLINT(build/include)
+#include "xla/pjrt/gpu/nccl_id_store.h"  // NOLINT(build/include)
 #endif  // TENSORFLOW_USE_ROCM
 
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable_run_options.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/device_host_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/device_mem_allocator.h"
-#include "tensorflow/compiler/xla/stream_executor/tf_allocator_adapter.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/framework/device_id.h"
-#include "tensorflow/tsl/util/env_var.h"
+#include "xla/client/client_library.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/platform_util.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_host_allocator.h"
+#include "xla/stream_executor/device_mem_allocator.h"
+#include "xla/stream_executor/tf_allocator_adapter.h"
+#include "xla/util.h"
+#include "third_party/tsl/framework/device_id.h"
+#include "third_party/tsl/util/env_var.h"
 
 namespace xla {
 namespace {

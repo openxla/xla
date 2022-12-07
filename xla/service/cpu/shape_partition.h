@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <vector>
 
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 namespace cpu {

@@ -24,11 +24,11 @@ limitations under the License.
 #include <vector>
 
 #include "mlir/IR/Operation.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable_run_options.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

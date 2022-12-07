@@ -20,10 +20,10 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "tensorflow/compiler/xla/pjrt/distributed/client.h"
-#include "tensorflow/compiler/xla/pjrt/gpu/gpu_helpers.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/pjrt/distributed/client.h"
+#include "xla/pjrt/gpu/gpu_helpers.h"
+#include "xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/statusor.h"
 
 namespace xla {
 

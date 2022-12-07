@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/async_op_canonicalizer.h"
+#include "xla/service/async_op_canonicalizer.h"
 
 namespace xla {
 

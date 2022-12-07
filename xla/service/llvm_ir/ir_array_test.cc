@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
+#include "xla/service/llvm_ir/ir_array.h"
 
-#include "tensorflow/compiler/xla/test.h"
+#include "xla/test.h"
 
 namespace xla {
 namespace llvm_ir {

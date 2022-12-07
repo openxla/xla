@@ -23,15 +23,15 @@ limitations under the License.
 #include <vector>
 
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
+#include "xla/client/xla_builder.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/exceptions.h"
-#include "tensorflow/compiler/xla/python/ifrt/client.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/exceptions.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
 #endif
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
 
 namespace xla {
 

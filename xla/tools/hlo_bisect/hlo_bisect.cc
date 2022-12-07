@@ -19,9 +19,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/tools/hlo_bisect/hlo_bisect_utils.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "xla/tools/hlo_bisect/hlo_bisect_utils.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 const char* const kUsage = R"(
 Given an HloModule that manifests an XLA bug, either crashes the compiler or

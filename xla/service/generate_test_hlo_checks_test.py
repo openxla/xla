@@ -16,7 +16,7 @@
 
 from absl.testing import absltest
 
-from tensorflow.compiler.xla.service import generate_test_hlo_checks
+from xla.service import generate_test_hlo_checks
 
 
 class GenerateTestHloChecksTest(absltest.TestCase):

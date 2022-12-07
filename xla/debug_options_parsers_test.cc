@@ -15,13 +15,13 @@ limitations under the License.
 
 // Test for parse_flags_from_env.cc
 
-#include "tensorflow/compiler/xla/debug_options_parsers.h"
+#include "xla/debug_options_parsers.h"
 
 #include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 

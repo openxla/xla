@@ -18,9 +18,9 @@ limitations under the License.
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
-#include "tensorflow/compiler/xla/service/cpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/loop_emitter.h"
+#include "xla/service/cpu/ir_emission_utils.h"
+#include "xla/service/llvm_ir/ir_array.h"
+#include "xla/service/llvm_ir/loop_emitter.h"
 
 namespace xla {
 namespace cpu {

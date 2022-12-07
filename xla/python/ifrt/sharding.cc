@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/sharding.h"
 
 #include <functional>
 #include <memory>
@@ -24,8 +24,8 @@ limitations under the License.
 
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace ifrt {

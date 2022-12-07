@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <utility>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/gpu/tests/gpu_codegen_test.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/service/hlo_module_config.h"
 
 namespace xla {
 namespace gpu {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/weakref_lru_cache.h"
+#include "xla/python/weakref_lru_cache.h"
 
 #include <memory>
 #include <string>
@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/synchronization/notification.h"
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/pjrt/lru_cache.h"
+#include "xla/pjrt/lru_cache.h"
 
 namespace jax {
 

@@ -21,9 +21,9 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 

@@ -3,7 +3,7 @@ load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],
 )
@@ -23,7 +23,7 @@ gentbl_cc_library(
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "passes.td",
     deps = [
-        "//tensorflow/compiler/xla/mlir_hlo:hlo_ops_td_files",
+        "//xla/mlir_hlo:hlo_ops_td_files",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncTdFiles",
         "@llvm-project//mlir:PassBaseTdFiles",
@@ -42,7 +42,7 @@ cc_library(
     ],
     deps = [
         ":passes_inc_gen",
-        "//tensorflow/compiler/xla/mlir/framework/ir:xla_framework",
+        "//xla/mlir/framework/ir:xla_framework",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",

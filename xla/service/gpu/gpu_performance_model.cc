@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_performance_model.h"
+#include "xla/service/gpu/gpu_performance_model.h"
 
 #include <algorithm>
 #include <cstdint>

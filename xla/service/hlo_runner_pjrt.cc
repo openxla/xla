@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/hlo_runner_pjrt.h"
+#include "xla/service/hlo_runner_pjrt.h"
 
 #include <functional>
 #include <memory>
@@ -21,17 +21,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_executable.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_future.h"
-#include "tensorflow/compiler/xla/service/executable.h"
-#include "tensorflow/compiler/xla/service/hlo_module_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/tests/pjrt_client_registry.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/client/xla_computation.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_future.h"
+#include "xla/service/executable.h"
+#include "xla/service/hlo_module_util.h"
+#include "xla/statusor.h"
+#include "xla/tests/pjrt_client_registry.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 

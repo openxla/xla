@@ -27,7 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "llvm/Support/raw_ostream.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace runtime {

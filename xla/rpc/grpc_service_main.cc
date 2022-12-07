@@ -22,11 +22,11 @@ limitations under the License.
 #include "grpcpp/security/server_credentials.h"
 #include "grpcpp/server.h"
 #include "grpcpp/server_builder.h"
-#include "tensorflow/compiler/xla/rpc/grpc_service.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "xla/rpc/grpc_service.h"
+#include "xla/service/platform_util.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 namespace xla {
 namespace {

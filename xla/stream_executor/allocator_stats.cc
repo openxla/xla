@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/allocator_stats.h"
+#include "xla/stream_executor/allocator_stats.h"
 
 #include "absl/strings/str_format.h"
 

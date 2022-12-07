@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_driver.h"
+#include "xla/stream_executor/cuda/cuda_driver.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -34,15 +34,15 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_diagnostics.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/env.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/error.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/human_readable.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/stacktrace.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/static_threadlocal.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/threadpool.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/cuda/cuda_diagnostics.h"
+#include "xla/stream_executor/lib/env.h"
+#include "xla/stream_executor/lib/error.h"
+#include "xla/stream_executor/lib/human_readable.h"
+#include "xla/stream_executor/lib/stacktrace.h"
+#include "xla/stream_executor/lib/static_threadlocal.h"
+#include "xla/stream_executor/lib/threadpool.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
 
 bool FLAGS_gpuexec_cuda_driver_inject_init_error = false;
 bool FLAGS_gpuexec_cuda_sync_around_driver_calls = false;

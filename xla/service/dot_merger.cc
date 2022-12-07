@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/dot_merger.h"
+#include "xla/service/dot_merger.h"
 
 #include <functional>
 #include <string>
 
-#include "tensorflow/compiler/xla/hlo/ir/dfs_hlo_visitor_with_default.h"
-#include "tensorflow/compiler/xla/service/graphcycles/graphcycles.h"
-#include "tensorflow/compiler/xla/service/shape_inference.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/service/graphcycles/graphcycles.h"
+#include "xla/service/shape_inference.h"
 
 namespace xla {
 namespace {

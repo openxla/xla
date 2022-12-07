@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/sharding.h"
 
 #include <memory>
 #include <utility>
@@ -22,7 +22,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "llvm/Support/Casting.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace ifrt {

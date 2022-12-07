@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/parallel_task_assignment.h"
+#include "xla/service/cpu/parallel_task_assignment.h"
 
 #include <algorithm>
 #include <memory>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/cpu/backend_config.pb.h"
-#include "tensorflow/compiler/xla/service/cpu/ir_emission_utils.h"
-#include "tensorflow/compiler/xla/service/cpu/shape_partition.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/dynamic_update_slice_util.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/cpu/ir_emission_utils.h"
+#include "xla/service/cpu/shape_partition.h"
+#include "xla/service/llvm_ir/dynamic_update_slice_util.h"
 
 namespace xla {
 namespace cpu {

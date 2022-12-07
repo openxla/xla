@@ -17,10 +17,10 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Target/TargetMachine.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_compiler.h"
-#include "tensorflow/compiler/xla/service/cpu/test_target_triple_helper.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/cpu/cpu_compiler.h"
+#include "xla/service/cpu/test_target_triple_helper.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace {

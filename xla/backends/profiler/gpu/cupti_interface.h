@@ -21,8 +21,8 @@ limitations under the License.
 
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/platform/types.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/platform/types.h"
 
 namespace xla {
 namespace profiler {

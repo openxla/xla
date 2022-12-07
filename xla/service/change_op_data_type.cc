@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/change_op_data_type.h"
+#include "xla/service/change_op_data_type.h"
 
 #include <optional>
 
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
+#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 namespace {

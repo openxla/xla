@@ -12,15 +12,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/translate.h"
+#include "xla/translate/hlo_to_mhlo/translate.h"
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/status.h"
+#include "xla/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 

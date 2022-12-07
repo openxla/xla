@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/worker_thread.h"
+#include "xla/pjrt/worker_thread.h"
 
 namespace xla {
 

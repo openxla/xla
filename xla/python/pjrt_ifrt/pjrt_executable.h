@@ -23,10 +23,10 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/ifrt/executable.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/ifrt/executable.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace ifrt {

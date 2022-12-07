@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_platform.h"
+#include "xla/stream_executor/tpu/tpu_platform.h"
 
-#include "tensorflow/compiler/xla/stream_executor/tpu/status_helper.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_api.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_executor.h"
-#include "tensorflow/compiler/xla/stream_executor/tpu/tpu_platform_id.h"
-#include "tensorflow/tsl/c/tsl_status.h"
-#include "tensorflow/tsl/c/tsl_status_helper.h"
+#include "xla/stream_executor/tpu/status_helper.h"
+#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_executor.h"
+#include "xla/stream_executor/tpu/tpu_platform_id.h"
+#include "third_party/tsl/c/tsl_status.h"
+#include "third_party/tsl/c/tsl_status_helper.h"
 
 namespace tensorflow {
 namespace tpu {

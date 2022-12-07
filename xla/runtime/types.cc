@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/types.h"
+#include "xla/runtime/types.h"
 
 #include <functional>
 #include <memory>
@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "llvm/ADT/StringExtras.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
+#include "xla/primitive_util.h"
 
 namespace xla {
 namespace runtime {

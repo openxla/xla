@@ -27,9 +27,9 @@ limitations under the License.
 
 #include "absl/functional/function_ref.h"
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/array.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/array.h"
+#include "xla/types.h"
+#include "xla/util.h"
 
 namespace xla {
 

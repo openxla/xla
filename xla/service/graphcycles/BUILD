@@ -1,11 +1,11 @@
 load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "//tensorflow/compiler/tf2xla:internal",
-        "//tensorflow/compiler/xla:internal",
+        "//third_party/tensorflow/compiler/tf2xla:internal",
+        "//xla:internal",
     ],
     licenses = ["notice"],
 )

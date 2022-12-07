@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_BACKENDS_INTERPRETER_INTERPRETER_TRANSFER_MANAGER_H_
 #define TENSORFLOW_COMPILER_XLA_BACKENDS_INTERPRETER_INTERPRETER_TRANSFER_MANAGER_H_
 
-#include "tensorflow/compiler/xla/service/generic_transfer_manager.h"
+#include "xla/service/generic_transfer_manager.h"
 
 namespace xla {
 

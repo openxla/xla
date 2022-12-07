@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/compilation_environments.h"
+#include "xla/service/compilation_environments.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/test_compilation_environment.pb.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/tsl/platform/casts.h"
-#include "tensorflow/tsl/platform/protobuf.h"
+#include "xla/service/test_compilation_environment.pb.h"
+#include "xla/test.h"
+#include "third_party/tsl/platform/casts.h"
+#include "third_party/tsl/platform/protobuf.h"
 
 namespace xla {
 

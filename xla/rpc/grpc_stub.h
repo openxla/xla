@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_RPC_GRPC_STUB_H_
 #define TENSORFLOW_COMPILER_XLA_RPC_GRPC_STUB_H_
 
-#include "tensorflow/compiler/xla/rpc/xla_service.grpc.pb.h"
-#include "tensorflow/compiler/xla/service_interface.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/rpc/xla_service.grpc.pb.h"
+#include "xla/service_interface.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

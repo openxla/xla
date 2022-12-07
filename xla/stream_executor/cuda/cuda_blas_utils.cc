@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_blas_utils.h"
+#include "xla/stream_executor/cuda/cuda_blas_utils.h"
 
 #include "absl/strings/str_cat.h"
 #include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "tensorflow/compiler/xla/stream_executor/blas.h"
+#include "xla/stream_executor/blas.h"
 
 namespace stream_executor {
 namespace cuda {

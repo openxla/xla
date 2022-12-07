@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "tensorflow/compiler/xla/service/cpu/runtime/fft_call.h"
+#include "xla/service/cpu/runtime/fft_call.h"
 
 #include <cstdint>
 #include <functional>
@@ -26,13 +26,13 @@
 
 #include "absl/status/status.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/runtime/executable.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_fft.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/executable_run_options.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/runtime/executable.h"
+#include "xla/service/cpu/runtime_fft.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace cpu {

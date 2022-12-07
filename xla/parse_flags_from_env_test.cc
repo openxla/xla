@@ -15,7 +15,7 @@ limitations under the License.
 
 // Test for parse_flags_from_env.cc
 
-#include "tensorflow/compiler/xla/parse_flags_from_env.h"
+#include "xla/parse_flags_from_env.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,11 +24,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_format.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/subprocess.h"
-#include "tensorflow/tsl/platform/test.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/subprocess.h"
+#include "third_party/tsl/platform/test.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 namespace xla {
 

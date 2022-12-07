@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/memory_space_propagation.h"
+#include "xla/service/memory_space_propagation.h"
 
 namespace xla {
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #define EIGEN_USE_THREADS
-#include "tensorflow/compiler/xla/service/cpu/cpu_runtime.h"
+#include "xla/service/cpu/cpu_runtime.h"
 
 #include <memory>
 #include <string>
@@ -21,18 +21,18 @@ limitations under the License.
 
 #include "absl/strings/str_format.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/compiler/xla/array2d.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_custom_call_status.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul_acl.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_matmul_mkl.h"
-#include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_matmul.h"
-#include "tensorflow/compiler/xla/service/custom_call_status_internal.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/array2d.h"
+#include "xla/client/local_client.h"
+#include "xla/service/cpu/runtime_custom_call_status.h"
+#include "xla/service/cpu/runtime_matmul.h"
+#include "xla/service/cpu/runtime_matmul_acl.h"
+#include "xla/service/cpu/runtime_matmul_mkl.h"
+#include "xla/service/cpu/runtime_single_threaded_matmul.h"
+#include "xla/service/custom_call_status_internal.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace {

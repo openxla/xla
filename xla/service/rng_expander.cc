@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/rng_expander.h"
+#include "xla/service/rng_expander.h"
 
 #include <random>
 
-#include "tensorflow/compiler/xla/client/lib/prng.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
+#include "xla/client/lib/prng.h"
+#include "xla/client/xla_builder.h"
+#include "xla/literal_util.h"
+#include "xla/primitive_util.h"
+#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 

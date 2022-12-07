@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/tfrt_cpu_pjrt_client.h"
+#include "xla/pjrt/tfrt_cpu_pjrt_client.h"
 
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
+#include "xla/service/custom_call_status.h"
+#include "xla/service/custom_call_target_registry.h"
+#include "xla/service/hlo_parser.h"
 
 namespace xla {
 namespace {

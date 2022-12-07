@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -24,13 +24,13 @@ limitations under the License.
 
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "tensorflow/compiler/xla/service/gpu/target_util.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_type_conversion_util.h"
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/type_to_shape.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/service/gpu/target_util.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/llvm_ir/llvm_type_conversion_util.h"
+#include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 
 namespace xla {
 namespace gpu {

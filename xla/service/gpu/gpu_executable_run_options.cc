@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 
 #include <map>
 #include <optional>
 
 #include "absl/algorithm/container.h"
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/status_macros.h"
 
 namespace xla {
 namespace gpu {

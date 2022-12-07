@@ -21,7 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_client.h"
 
 // The following provides an API for implementing host callbacks on top of
 // PjRT's send/recv interface (see xla::SendCallback and xla::RecvCallback).

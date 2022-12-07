@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/status_macros.h"
+#include "xla/status_macros.h"
 
 #include <algorithm>
 #include <string>
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/stacktrace.h"
+#include "xla/types.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/stacktrace.h"
 
 namespace xla {
 namespace status_macros {

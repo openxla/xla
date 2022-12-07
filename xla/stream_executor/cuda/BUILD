@@ -4,7 +4,7 @@
 load("//tensorflow/tsl:tsl.bzl", "if_google", "tsl_copts")
 load("//tensorflow/tsl:tsl.default.bzl", "tsl_gpu_cc_test")
 load(
-    "//tensorflow/compiler/xla/stream_executor:build_defs.bzl",
+    "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
     "tf_additional_cuda_driver_deps",
     "tf_additional_cuda_platform_deps",
@@ -27,7 +27,7 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [":friends"],
     features = ["-layering_check"],
     licenses = ["notice"],
@@ -42,7 +42,7 @@ cc_library(
     name = "cuda_platform_id",
     srcs = ["cuda_platform_id.cc"],
     hdrs = ["cuda_platform_id.h"],
-    deps = ["//tensorflow/compiler/xla/stream_executor:platform"],
+    deps = ["//xla/stream_executor:platform"],
 )
 
 cc_library(
@@ -56,12 +56,12 @@ cc_library(
             ":cuda_gpu_executor",
             ":cuda_platform_id",
             ":cuda_activation",
-            "//tensorflow/compiler/xla/stream_executor",  # buildcleaner: keep
-            "//tensorflow/compiler/xla/stream_executor:executor_cache",
-            "//tensorflow/compiler/xla/stream_executor:multi_platform_manager",
-            "//tensorflow/compiler/xla/stream_executor:stream_executor_pimpl_header",
-            "//tensorflow/compiler/xla/stream_executor/lib",
-            "//tensorflow/compiler/xla/stream_executor/platform",
+            "//xla/stream_executor",  # buildcleaner: keep
+            "//xla/stream_executor:executor_cache",
+            "//xla/stream_executor:multi_platform_manager",
+            "//xla/stream_executor:stream_executor_pimpl_header",
+            "//xla/stream_executor/lib",
+            "//xla/stream_executor/platform",
         ],
     ) + tf_additional_cuda_platform_deps() + [
         "@com_google_absl//absl/base",
@@ -81,9 +81,9 @@ cc_library(
     deps = if_cuda_is_configured([
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_diagnostics_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor/gpu:gpu_diagnostics_header",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
     ]) + ["@com_google_absl//absl/strings:str_format"],
 )
 
@@ -109,11 +109,11 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
-        "//tensorflow/compiler/xla/stream_executor:device_options",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_driver_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
-        "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
+        "//xla/stream_executor:device_options",
+        "//xla/stream_executor/gpu:gpu_driver_header",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
+        "//xla/stream_executor/platform:dso_loader",
     ] + tf_additional_cuda_driver_deps()) + select({
         # include dynamic loading implementation only when if_cuda_is_configured and build dynamically
         "//tensorflow/tsl:is_cuda_enabled_and_oss": ["cudart_stub"],
@@ -132,12 +132,12 @@ tsl_gpu_cc_test(
     srcs = ["stream_search_test.cc"],
     tags = tf_cuda_tests_tags(),
     deps = [
-        "//tensorflow/compiler/xla/stream_executor",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_impl",
-        "//tensorflow/compiler/xla/stream_executor/host:host_platform",
         "//tensorflow/tsl/platform:env_impl",
         "//tensorflow/tsl/platform:test",
         "//tensorflow/tsl/platform:test_main",
+        "//xla/stream_executor",
+        "//xla/stream_executor:stream_executor_impl",
+        "//xla/stream_executor/host:host_platform",
     ],
 )
 
@@ -149,10 +149,10 @@ tsl_gpu_cc_test(
     ],
     deps = [
         ":cuda_driver",
-        "//tensorflow/compiler/xla/stream_executor/lib",
         "//tensorflow/tsl/platform:env_impl",
         "//tensorflow/tsl/platform:test",
         "//tensorflow/tsl/platform:test_main",
+        "//xla/stream_executor/lib",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -164,14 +164,14 @@ tsl_gpu_cc_test(
         "no_cuda_asan",  # TODO(b/171512140): re-enable.
     ],
     deps = [
-        "//tensorflow/compiler/xla/stream_executor",
-        "//tensorflow/compiler/xla/stream_executor:device_memory",
-        "//tensorflow/compiler/xla/stream_executor:multi_platform_manager",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_impl",
-        "//tensorflow/compiler/xla/stream_executor/lib",
         "//tensorflow/tsl/platform:env_impl",
         "//tensorflow/tsl/platform:test",
         "//tensorflow/tsl/platform:test_main",
+        "//xla/stream_executor",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:stream_executor_impl",
+        "//xla/stream_executor/lib",
     ],
 )
 
@@ -188,8 +188,8 @@ cc_library(
     hdrs = ["cuda_activation.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_activation_header",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor/gpu:gpu_activation_header",
+        "//xla/stream_executor/platform",
     ],
 )
 
@@ -200,10 +200,10 @@ cc_library(
     deps = if_cuda_is_configured([
         ":cuda_driver",
         "@local_config_cuda//cuda:cuda_headers",
-        "//tensorflow/compiler/xla/stream_executor",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_internal",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_activation",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor",
+        "//xla/stream_executor:stream_executor_internal",
+        "//xla/stream_executor/gpu:gpu_activation",
+        "//xla/stream_executor/platform",
     ]),
 )
 
@@ -213,10 +213,10 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         ":cuda_kernel",
-        "//tensorflow/compiler/xla/stream_executor:event",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_executor_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor/gpu:gpu_executor_header",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
     ]),
 )
 
@@ -242,10 +242,10 @@ cc_library(
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "//tensorflow/tsl/platform:status",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor:host_or_device_scalar",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor:host_or_device_scalar",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/platform",
     ]) + ["//tensorflow/tsl/platform:errors"],
 )
 
@@ -288,19 +288,19 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "//third_party/eigen3",
         "@local_config_cuda//cuda:cuda_headers",
-        "//tensorflow/compiler/xla:status_macros",
-        "//tensorflow/compiler/xla/stream_executor:device_memory",
-        "//tensorflow/compiler/xla/stream_executor:host_or_device_scalar",
-        "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_activation_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_executor_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_timer_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_types_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla:status_macros",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:host_or_device_scalar",
+        "//xla/stream_executor:scratch_allocator",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/gpu:gpu_activation_header",
+        "//xla/stream_executor/gpu:gpu_executor_header",
+        "//xla/stream_executor/gpu:gpu_helpers_header",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:gpu_timer_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
         "//tensorflow/tsl/platform:tensor_float_32_hdr_lib",
     ]) + if_static([
         "//tensorflow/tsl/platform:tensor_float_32_utils",
@@ -316,8 +316,8 @@ cc_library(
         ":cublas_lib",
         "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
-        "//tensorflow/compiler/xla/stream_executor/lib",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/lib",
     ]) + ["//tensorflow/tsl/platform:errors"],
 )
 
@@ -346,14 +346,14 @@ cc_library(
         ":cuda_helpers",
         ":cufft_lib",
         "@local_config_cuda//cuda:cuda_headers",
-        "//tensorflow/compiler/xla/stream_executor:event",
-        "//tensorflow/compiler/xla/stream_executor:fft",
-        "//tensorflow/compiler/xla/stream_executor:plugin_registry",
-        "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
-        "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:fft",
+        "//xla/stream_executor:plugin_registry",
+        "//xla/stream_executor:scratch_allocator",
+        "//xla/stream_executor/gpu:gpu_helpers_header",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
+        "//xla/stream_executor/platform:dso_loader",
     ]) + ["//tensorflow/tsl/platform:errors"],
     alwayslink = True,
 )
@@ -375,9 +375,9 @@ cc_library(
     textual_hdrs = ["cuda_dnn.h"],
     deps = if_cuda_is_configured([
         ":cuda_activation_header",
-        "//tensorflow/compiler/xla/stream_executor:dnn",
-        "//tensorflow/compiler/xla/stream_executor:plugin_registry",
-        "//tensorflow/compiler/xla/stream_executor/lib",
+        "//xla/stream_executor:dnn",
+        "//xla/stream_executor:plugin_registry",
+        "//xla/stream_executor/lib",
     ]),
 )
 
@@ -406,14 +406,14 @@ cc_library(
         "//tensorflow/tsl/cuda:cudnn_version",
         "//tensorflow/tsl/platform:tensor_float_32_utils",
         "//tensorflow/tsl/util:determinism",
-        "//tensorflow/compiler/xla/stream_executor:dnn",
-        "//tensorflow/compiler/xla/stream_executor:event",
-        "//tensorflow/compiler/xla/stream_executor:plugin_registry",
-        "//tensorflow/compiler/xla/stream_executor:scratch_allocator",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_pimpl_header",
-        "//tensorflow/compiler/xla/stream_executor:temporary_device_memory",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor:dnn",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:plugin_registry",
+        "//xla/stream_executor:scratch_allocator",
+        "//xla/stream_executor:stream_executor_pimpl_header",
+        "//xla/stream_executor:temporary_device_memory",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
         "//tensorflow/tsl/platform:errors",
         "//tensorflow/tsl/platform:tensor_float_32_hdr_lib",
         "//tensorflow/tsl/util:env_var",
@@ -447,14 +447,14 @@ cc_library(
         ":cuda_helpers",
         ":curand_lib",
         "@local_config_cuda//cuda:cuda_headers",
-        "//tensorflow/compiler/xla/stream_executor:event",
-        "//tensorflow/compiler/xla/stream_executor:plugin_registry",
-        "//tensorflow/compiler/xla/stream_executor:rng",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_rng_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
-        "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:plugin_registry",
+        "//xla/stream_executor:rng",
+        "//xla/stream_executor/gpu:gpu_helpers_header",
+        "//xla/stream_executor/gpu:gpu_rng_header",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
+        "//xla/stream_executor/platform:dso_loader",
     ]),
     alwayslink = True,
 )
@@ -496,11 +496,11 @@ cc_library(
     deps = if_cuda_is_configured([
         ":cuda_driver",
         "@local_config_cuda//cuda:cuda_headers",
-        "//tensorflow/compiler/xla/stream_executor:event",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_pimpl_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_kernel_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:stream_executor_pimpl_header",
+        "//xla/stream_executor/gpu:gpu_kernel_header",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
     ]),
 )
 
@@ -509,7 +509,7 @@ cc_library(
     name = "cuda_helpers",
     textual_hdrs = if_cuda_is_configured(["cuda_helpers.h"]),
     deps = if_cuda_is_configured([
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_helpers_header",
+        "//xla/stream_executor/gpu:gpu_helpers_header",
     ]),
 )
 
@@ -521,10 +521,10 @@ cc_library(
         ":cuda_driver",
         ":cuda_gpu_executor_header",
         ":cuda_stream",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_event",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/gpu:gpu_event",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/lib",
     ]),
 )
 
@@ -535,10 +535,10 @@ cc_library(
     deps = if_cuda_is_configured([
         ":cuda_driver",
         ":cuda_gpu_executor_header",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_stream",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/gpu:gpu_stream",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
     ]),
 )
 
@@ -550,9 +550,9 @@ cc_library(
         ":cuda_driver",
         ":cuda_gpu_executor_header",
         ":cuda_stream",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_headers",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_timer",
-        "//tensorflow/compiler/xla/stream_executor/lib",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/gpu:gpu_timer",
+        "//xla/stream_executor/lib",
     ]),
 )
 
@@ -563,10 +563,10 @@ cc_library(
     deps = if_cuda_is_configured([
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings:str_format",
-        "//tensorflow/compiler/xla/stream_executor/gpu:asm_compiler_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_diagnostics_header",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_driver_header",
-        "//tensorflow/compiler/xla:status_macros",
+        "//xla/stream_executor/gpu:asm_compiler_header",
+        "//xla/stream_executor/gpu:gpu_diagnostics_header",
+        "//xla/stream_executor/gpu:gpu_driver_header",
+        "//xla:status_macros",
         "//tensorflow/tsl/platform:errors",
     ]),
 )
@@ -586,16 +586,16 @@ cc_library(
         ":cuda_timer",
         ":cuda_asm_compiler",
         "@com_google_absl//absl/strings",
-        "//tensorflow/compiler/xla/stream_executor:event",
-        "//tensorflow/compiler/xla/stream_executor:plugin_registry",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_internal",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_pimpl_header",
-        "//tensorflow/compiler/xla/stream_executor:timer",
-        "//tensorflow/compiler/xla/stream_executor/gpu:asm_compiler",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_executor_header",
-        "//tensorflow/compiler/xla/stream_executor/lib",
-        "//tensorflow/compiler/xla/stream_executor/platform",
-        "//tensorflow/compiler/xla/stream_executor/platform:dso_loader",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:plugin_registry",
+        "//xla/stream_executor:stream_executor_internal",
+        "//xla/stream_executor:stream_executor_pimpl_header",
+        "//xla/stream_executor:timer",
+        "//xla/stream_executor/gpu:asm_compiler",
+        "//xla/stream_executor/gpu:gpu_executor_header",
+        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
+        "//xla/stream_executor/platform:dso_loader",
     ]) + [
         "@com_google_absl//absl/strings:str_format",
     ],
@@ -626,7 +626,7 @@ cc_library(
 cc_library(
     name = "stream_executor_cuda",
     deps = [
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_bundle",
+        "//xla/stream_executor:stream_executor_bundle",
     ] + if_google(
         select({
             # copybara:uncomment_begin(different config setting in OSS)
@@ -656,13 +656,6 @@ tsl_gpu_cc_test(
         ":cuda_activation",
         ":cuda_gpu_executor",
         ":stream_executor_cuda",
-        "//tensorflow/compiler/xla/stream_executor",
-        "//tensorflow/compiler/xla/stream_executor:device_memory_allocator",
-        "//tensorflow/compiler/xla/stream_executor:event",
-        "//tensorflow/compiler/xla/stream_executor:kernel",
-        "//tensorflow/compiler/xla/stream_executor:stream_executor_impl",
-        "//tensorflow/compiler/xla/stream_executor/gpu:gpu_asm_opts",
-        "//tensorflow/compiler/xla/stream_executor/gpu:redzone_allocator",
         "//tensorflow/tsl/framework:allocator_registry_impl",
         "//tensorflow/tsl/lib/core:status_test_util",
         "//tensorflow/tsl/platform:env_impl",
@@ -670,5 +663,12 @@ tsl_gpu_cc_test(
         "//tensorflow/tsl/platform:test_main",
         "//tensorflow/tsl/profiler/backends/cpu:traceme_recorder_impl",
         "//tensorflow/tsl/profiler/utils:time_utils_impl",
+        "//xla/stream_executor",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:stream_executor_impl",
+        "//xla/stream_executor/gpu:gpu_asm_opts",
+        "//xla/stream_executor/gpu:redzone_allocator",
     ],
 )

@@ -23,9 +23,9 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/ifrt/client.h"
-#include "tensorflow/compiler/xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
 
 namespace xla {
 namespace ifrt {

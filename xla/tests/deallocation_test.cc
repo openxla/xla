@@ -16,15 +16,15 @@ limitations under the License.
 #include <memory>
 
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/client/global_data.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/client/xla_builder.h"
-#include "tensorflow/compiler/xla/client/xla_computation.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/client_library_test_base.h"
-#include "tensorflow/compiler/xla/tests/test_macros.h"
+#include "xla/client/global_data.h"
+#include "xla/client/local_client.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
+#include "xla/statusor.h"
+#include "xla/test.h"
+#include "xla/test_helpers.h"
+#include "xla/tests/client_library_test_base.h"
+#include "xla/tests/test_macros.h"
 
 namespace xla {
 namespace {

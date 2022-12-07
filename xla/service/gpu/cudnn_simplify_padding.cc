@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/cudnn_simplify_padding.h"
+#include "xla/service/gpu/cudnn_simplify_padding.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -22,10 +22,10 @@ limitations under the License.
 #include <sstream>
 #include <vector>
 
-#include "tensorflow/compiler/xla/service/gpu/cublas_cudnn.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/hlo_creation_utils.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 

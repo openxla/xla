@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/statusor.h"
 
 namespace xla {
 

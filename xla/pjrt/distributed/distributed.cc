@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/distributed/distributed.h"
+#include "xla/pjrt/distributed/distributed.h"
 
 #include <string>
 
 #include "grpcpp/grpcpp.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/client.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/service.h"
+#include "xla/pjrt/distributed/client.h"
+#include "xla/pjrt/distributed/service.h"
 
 namespace xla {
 

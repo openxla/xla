@@ -22,9 +22,9 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/shape_tree.h"
-#include "tensorflow/compiler/xla/shape_util.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 

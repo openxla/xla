@@ -19,7 +19,7 @@ import unittest
 from absl.testing import absltest
 import numpy as np
 
-from tensorflow.compiler.xla.python import xla_client
+from xla.python import xla_client
 
 # pylint: disable=g-import-not-at-top
 try:

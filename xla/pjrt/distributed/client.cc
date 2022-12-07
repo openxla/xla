@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/distributed/client.h"
+#include "xla/pjrt/distributed/client.h"
 
 #include <algorithm>
 #include <chrono>  // NOLINT
@@ -27,17 +27,17 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "grpcpp/channel.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/protocol.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/distributed_runtime/coordination/coordination_client.h"
-#include "tensorflow/tsl/distributed_runtime/coordination/coordination_service_agent.h"
-#include "tensorflow/tsl/distributed_runtime/coordination/coordination_service_error_util.h"
-#include "tensorflow/tsl/distributed_runtime/rpc/coordination/grpc_coordination_client.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/random.h"
-#include "tensorflow/tsl/protobuf/coordination_config.pb.h"
-#include "tensorflow/tsl/protobuf/coordination_service.pb.h"
+#include "xla/pjrt/distributed/protocol.h"
+#include "xla/pjrt/distributed/util.h"
+#include "xla/util.h"
+#include "third_party/tsl/distributed_runtime/coordination/coordination_client.h"
+#include "third_party/tsl/distributed_runtime/coordination/coordination_service_agent.h"
+#include "third_party/tsl/distributed_runtime/coordination/coordination_service_error_util.h"
+#include "third_party/tsl/distributed_runtime/rpc/coordination/grpc_coordination_client.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/random.h"
+#include "third_party/tsl/protobuf/coordination_config.pb.h"
+#include "third_party/tsl/protobuf/coordination_service.pb.h"
 
 namespace xla {
 class DistributedRuntimeClientImpl : public DistributedRuntimeClient {

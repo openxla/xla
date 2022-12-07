@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_tracer.h"
+#include "xla/backends/profiler/gpu/cupti_tracer.h"
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -22,14 +22,14 @@ limitations under the License.
 #include "absl/container/node_hash_set.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/generated_nvtx_meta.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_collector.h"
-#include "tensorflow/compiler/xla/backends/profiler/gpu/nvtx_utils.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/host_info.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/profiler/backends/cpu/annotation_stack.h"
+#include "xla/backends/profiler/gpu/cupti_collector.h"
+#include "xla/backends/profiler/gpu/nvtx_utils.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/host_info.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/profiler/backends/cpu/annotation_stack.h"
 
 namespace xla {
 namespace profiler {

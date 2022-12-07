@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_ir/math_ops.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/math_ops.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {
 namespace llvm_ir {

@@ -23,9 +23,9 @@ limitations under the License.
 #include <queue>
 
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/threadpool.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/lib/threadpool.h"
+#include "xla/stream_executor/stream_executor_internal.h"
 
 namespace stream_executor {
 namespace host {

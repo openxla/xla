@@ -13,21 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_compiler.h"
+#include "xla/service/llvm_compiler.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/backend.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_compiler.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_compiler.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/verified_hlo_module.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal_util.h"
+#include "xla/service/backend.h"
+#include "xla/service/cpu/cpu_compiler.h"
+#include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/platform_util.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/test_helpers.h"
+#include "xla/tests/verified_hlo_module.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

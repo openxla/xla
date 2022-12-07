@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/literal_comparison.h"
+#include "xla/literal_comparison.h"
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "xla/literal_util.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/env.h"
 
 using absl::StrAppend;
 using absl::StrAppendFormat;

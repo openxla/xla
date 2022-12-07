@@ -24,7 +24,7 @@ limitations under the License.
 // (a) inspect arguments and describe their structure, dtype/shapes, etc.
 // (b) keep a mapping from function signatures to compiled XLA Executables.
 
-#include "tensorflow/compiler/xla/python/jax_jit.h"
+#include "xla/python/jax_jit.h"
 
 #include <Python.h>
 
@@ -51,29 +51,29 @@ limitations under the License.
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
-#include "tensorflow/compiler/xla/python/ifrt/client.h"
-#include "tensorflow/compiler/xla/python/ifrt/sharding.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/python/ifrt/sharding.h"
 #endif
-#include "tensorflow/compiler/xla/pjrt/lru_cache.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/python/exceptions.h"
-#include "tensorflow/compiler/xla/python/py_array.h"
-#include "tensorflow/compiler/xla/python/py_buffer.h"
-#include "tensorflow/compiler/xla/python/py_executable.h"
-#include "tensorflow/compiler/xla/python/py_values.h"
-#include "tensorflow/compiler/xla/python/python_ref_manager.h"
-#include "tensorflow/compiler/xla/python/python_utils.h"
-#include "tensorflow/compiler/xla/python/pytree.h"
-#include "tensorflow/compiler/xla/python/types.h"
-#include "tensorflow/compiler/xla/python/util.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
+#include "xla/pjrt/lru_cache.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/python/exceptions.h"
+#include "xla/python/py_array.h"
+#include "xla/python/py_buffer.h"
+#include "xla/python/py_executable.h"
+#include "xla/python/py_values.h"
+#include "xla/python/python_ref_manager.h"
+#include "xla/python/python_utils.h"
+#include "xla/python/pytree.h"
+#include "xla/python/types.h"
+#include "xla/python/util.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/status.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
 
 namespace jax {
 
@@ -237,93 +237,6 @@ bool CallSignature::operator==(const CallSignature& other) const {
          (!thread_local_extra_jit_context.has_value() ||
           thread_local_extra_jit_context->equal(
               *other.thread_local_extra_jit_context));
-}
-
-xla::Status ParseArguments(py::handle args,
-                           const std::optional<py::kwargs>& py_kwargs,
-                           absl::Span<int const> static_argnums,
-                           absl::Span<py::str const> static_argnames,
-                           ParsedArgumentsAsBuffers& arguments) {
-  tsl::profiler::TraceMe traceme("ParseArguments");
-  int num_args = PyTuple_GET_SIZE(args.ptr());
-  int num_kwargs = py_kwargs ? py_kwargs->size() : 0;
-
-  arguments.flat_dynamic_args.reserve(num_args + num_kwargs);
-  if (static_argnums.empty()) {
-    arguments.signature.dynamic_arg_treedefs.resize(num_args);
-
-    // Positional arguments.
-    for (int i = 0; i < num_args; ++i) {
-      xla::PyTreeDef& pytree_def = arguments.signature.dynamic_arg_treedefs[i];
-      pytree_def.FlattenInto(PyTuple_GET_ITEM(args.ptr(), i),
-                             arguments.flat_dynamic_args);
-    }
-  } else {
-    arguments.signature.dynamic_arg_treedefs.reserve(num_args);
-
-    // Positional arguments.
-    for (int i = 0; i < num_args; ++i) {
-      if (std::find(static_argnums.begin(), static_argnums.end(), i) ==
-          static_argnums.end()) {
-        arguments.signature.dynamic_arg_treedefs.emplace_back();
-        xla::PyTreeDef& pytree_def =
-            arguments.signature.dynamic_arg_treedefs.back();
-        pytree_def.FlattenInto(PyTuple_GET_ITEM(args.ptr(), i),
-                               arguments.flat_dynamic_args);
-      } else {
-        arguments.signature.static_args.emplace_back(
-            py::reinterpret_borrow<py::object>(
-                PyTuple_GET_ITEM(args.ptr(), i)));
-      }
-    }
-  }
-
-  // Keyword arguments.
-  if (py_kwargs) {
-    std::vector<std::pair<py::handle, py::handle>> kwargs(py_kwargs->begin(),
-                                                          py_kwargs->end());
-    // We first intern the keys, then sort them (by name, as in the Python path)
-    // (see also xla::PyTreeDef::Flatten) and then create the signatures.
-    // TODO(jblespiau): We should be able to sort the keys by interned-key
-    // pointers, but this requires the Python compilation to do the same.
-    for (int i = 0; i < num_kwargs; ++i) {
-      // Intern the key if not already interned.
-      kwargs[i].first.inc_ref();
-      if (!PyUnicode_CHECK_INTERNED(kwargs[i].first.ptr())) {
-        PyUnicode_InternInPlace(&kwargs[i].first.ptr());
-      }
-    }
-
-    std::sort(kwargs.begin(), kwargs.end(),
-              [](const std::pair<py::handle, py::handle>& a,
-                 const std::pair<py::handle, py::handle>& b) {
-                return a.first < b.first;
-              });
-    auto kwarg_is_static = [&](py::handle name) {
-      for (const auto& kw : static_argnames) {
-        if (kw.ptr() == name.ptr()) return true;
-      }
-      return false;
-    };
-
-    arguments.signature.dynamic_arg_names.reserve(num_kwargs);
-    for (int i = 0; i < num_kwargs; ++i) {
-      if (kwarg_is_static(kwargs[i].first)) {
-        arguments.signature.static_arg_names.push_back(
-            py::reinterpret_steal<py::object>(kwargs[i].first));
-        arguments.signature.static_args.push_back(
-            py::reinterpret_borrow<py::object>(kwargs[i].second));
-      } else {
-        arguments.signature.dynamic_arg_names.push_back(
-            py::reinterpret_steal<py::object>(kwargs[i].first));
-        arguments.signature.dynamic_arg_treedefs.emplace_back();
-        xla::PyTreeDef& pytree_def =
-            arguments.signature.dynamic_arg_treedefs.back();
-        pytree_def.FlattenInto(kwargs[i].second, arguments.flat_dynamic_args);
-      }
-    }
-  }
-  return ::tsl::OkStatus();
 }
 
 // Filter out static arguments, flatten and concatenate other arguments (i.e.

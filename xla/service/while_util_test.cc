@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/while_util.h"
+#include "xla/service/while_util.h"
 
 #include <memory>
 
 #include "absl/algorithm/container.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/tests/verified_hlo_module.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/verified_hlo_module.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace {

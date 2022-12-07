@@ -18,9 +18,9 @@ limitations under the License.
 
 #include <string_view>
 
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/service/service_executable_run_options.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {

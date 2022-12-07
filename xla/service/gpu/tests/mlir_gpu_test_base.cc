@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/tests/mlir_gpu_test_base.h"
+#include "xla/service/gpu/tests/mlir_gpu_test_base.h"
 
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/SourceMgr.h"
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_compiler.h"
-#include "tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.h"
-#include "tensorflow/compiler/xla/service/gpu/target_constants.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_init.h"
+#include "xla/debug_options_flags.h"
+#include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/ir_emitter_unnested.h"
+#include "xla/service/gpu/target_constants.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
 
 namespace xla {
 namespace gpu {

@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_ir/alias_analysis.h"
+#include "xla/service/llvm_ir/alias_analysis.h"
 
 #include <memory>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/cpu/tests/cpu_codegen_test.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
-#include "tensorflow/compiler/xla/tests/filecheck.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/service/cpu/tests/cpu_codegen_test.h"
+#include "xla/service/custom_call_status.h"
+#include "xla/service/custom_call_target_registry.h"
+#include "xla/tests/filecheck.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {

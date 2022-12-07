@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/slow_operation_alarm.h"
+#include "xla/service/slow_operation_alarm.h"
 
 #include <functional>
 #include <iterator>
@@ -29,7 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
-#include "tensorflow/tsl/platform/env.h"
+#include "third_party/tsl/platform/env.h"
 
 namespace xla {
 namespace {

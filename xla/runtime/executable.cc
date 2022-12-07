@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/executable.h"
+#include "xla/runtime/executable.h"
 
 #include <algorithm>
 #include <functional>
@@ -30,13 +30,13 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/Support/ErrorOr.h"
-#include "tensorflow/compiler/xla/mlir/runtime/utils/async_runtime_api.h"
-#include "tensorflow/compiler/xla/mlir/runtime/utils/c_runner_utils.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
-#include "tensorflow/compiler/xla/runtime/errors.h"
-#include "tensorflow/compiler/xla/runtime/runtime.h"
-#include "tensorflow/compiler/xla/runtime/type_id.h"
+#include "xla/mlir/runtime/utils/async_runtime_api.h"
+#include "xla/mlir/runtime/utils/c_runner_utils.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/custom_call_registry.h"
+#include "xla/runtime/errors.h"
+#include "xla/runtime/runtime.h"
+#include "xla/runtime/type_id.h"
 
 namespace xla {
 namespace runtime {

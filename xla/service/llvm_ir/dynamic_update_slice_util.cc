@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/llvm_ir/dynamic_update_slice_util.h"
+#include "xla/service/llvm_ir/dynamic_update_slice_util.h"
 
-#include "tensorflow/compiler/xla/service/cpu/backend_config.pb.h"
-#include "tensorflow/compiler/xla/service/gpu/launch_dimensions.h"
-#include "tensorflow/compiler/xla/service/gpu/parallel_loop_emitter.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/loop_emitter.h"
+#include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/parallel_loop_emitter.h"
+#include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/loop_emitter.h"
 
 namespace xla {
 namespace llvm_ir {

@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/async_op_canonicalizer.h"
+#include "xla/service/async_op_canonicalizer.h"
 
 #include <string>
 
-#include "tensorflow/compiler/xla/service/hlo_dce.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/hlo_dce.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace {

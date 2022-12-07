@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_client_test.h"
-#include "tensorflow/compiler/xla/pjrt/tfrt_cpu_pjrt_client.h"
+#include "xla/pjrt/pjrt_client_test.h"
+#include "xla/pjrt/tfrt_cpu_pjrt_client.h"
 
 namespace xla {
 namespace {

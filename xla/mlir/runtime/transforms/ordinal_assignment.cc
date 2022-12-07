@@ -20,8 +20,8 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_ops.h"
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/passes.h"
+#include "xla/mlir/runtime/ir/rt_ops.h"
+#include "xla/mlir/runtime/transforms/passes.h"
 
 namespace xla {
 namespace runtime {
@@ -29,7 +29,7 @@ namespace runtime {
 using namespace mlir;  // NOLINT
 
 #define GEN_PASS_DEF_ORDINALASSIGNMENT
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/passes.h.inc"
+#include "xla/mlir/runtime/transforms/passes.h.inc"
 
 class OrdinalAssignmentPass
     : public impl::OrdinalAssignmentBase<OrdinalAssignmentPass> {

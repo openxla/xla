@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/stream_executor/gpu/asm_compiler.h"
 
 #include <array>
 #include <cstdint>
@@ -31,14 +31,14 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_driver.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/tsl/platform/cuda_libdevice_path.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/path.h"
-#include "tensorflow/tsl/platform/regexp.h"
-#include "tensorflow/tsl/platform/subprocess.h"
+#include "xla/stream_executor/gpu/gpu_driver.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "third_party/tsl/platform/cuda_libdevice_path.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/path.h"
+#include "third_party/tsl/platform/regexp.h"
+#include "third_party/tsl/platform/subprocess.h"
 
 namespace stream_executor {
 

@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_RUNTIME_CUSTOM_CALL_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_RUNTIME_CUSTOM_CALL_H_
 
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
+#include "xla/runtime/custom_call_registry.h"
 
 namespace xla {
 namespace gpu {

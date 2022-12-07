@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Target/TargetMachine.h"
-#include "tensorflow/compiler/xla/primitive_util.h"
+#include "xla/primitive_util.h"
 
 namespace xla {
 namespace cpu {

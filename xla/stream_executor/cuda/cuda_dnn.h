@@ -22,11 +22,11 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/base/thread_annotations.h"
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_activation.h"
-#include "tensorflow/compiler/xla/stream_executor/dnn.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/temporary_device_memory.h"
+#include "xla/stream_executor/cuda/cuda_activation.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/temporary_device_memory.h"
 
 namespace stream_executor {
 namespace gpu {

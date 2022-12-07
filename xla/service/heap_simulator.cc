@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/heap_simulator.h"
+#include "xla/service/heap_simulator.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -26,12 +26,12 @@ limitations under the License.
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "tensorflow/compiler/xla/comparison_util.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_schedule.h"
-#include "tensorflow/compiler/xla/map_util.h"
-#include "tensorflow/compiler/xla/service/hlo_live_range.h"
-#include "tensorflow/compiler/xla/service/memory_space_assignment_repacking.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/comparison_util.h"
+#include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/map_util.h"
+#include "xla/service/hlo_live_range.h"
+#include "xla/service/memory_space_assignment_repacking.h"
+#include "xla/util.h"
 
 namespace xla {
 

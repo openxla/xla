@@ -16,16 +16,16 @@ limitations under the License.
 #include <string>
 
 #include <gtest/gtest.h>
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/client/local_client.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/literal_util.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/resource_loader.h"
-#include "tensorflow/tsl/platform/statusor.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/client/client_library.h"
+#include "xla/client/local_client.h"
+#include "xla/executable_run_options.h"
+#include "xla/literal_util.h"
+#include "xla/service/platform_util.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/resource_loader.h"
+#include "third_party/tsl/platform/statusor.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace xla_compile {

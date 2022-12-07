@@ -15,7 +15,7 @@ limitations under the License.
 
 // Implementation of HostExecutor class [of those methods not defined in the
 // class declaration].
-#include "tensorflow/compiler/xla/stream_executor/host/host_gpu_executor.h"
+#include "xla/stream_executor/host/host_gpu_executor.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -25,14 +25,14 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/notification.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_platform_id.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_stream.h"
-#include "tensorflow/compiler/xla/stream_executor/host/host_timer.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/plugin_registry.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor_internal.h"
-#include "tensorflow/tsl/platform/mem.h"
-#include "tensorflow/tsl/platform/profile_utils/cpu_utils.h"
+#include "xla/stream_executor/host/host_platform_id.h"
+#include "xla/stream_executor/host/host_stream.h"
+#include "xla/stream_executor/host/host_timer.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "third_party/tsl/platform/mem.h"
+#include "third_party/tsl/platform/profile_utils/cpu_utils.h"
 
 namespace stream_executor {
 namespace host {

@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/python/util.h"
+#include "xla/python/util.h"
 
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_future.h"
 #ifdef JAX_ENABLE_IFRT
-#include "tensorflow/compiler/xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array.h"
 #endif
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/status.h"
+#include "xla/util.h"
 
 namespace xla {
 

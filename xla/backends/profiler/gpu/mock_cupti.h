@@ -21,8 +21,8 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "tensorflow/compiler/xla/backends/profiler/gpu/cupti_interface.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/backends/profiler/gpu/cupti_interface.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace profiler {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/stream_executor_util.h"
+#include "xla/service/gpu/stream_executor_util.h"
 
 #include <memory>
 #include <random>
@@ -21,18 +21,18 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/layout_util.h"
-#include "tensorflow/compiler/xla/stream_executor/kernel_spec.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/regexp.h"
-#include "tensorflow/tsl/profiler/lib/traceme.h"
-#include "tensorflow/tsl/util/determinism.h"
-#include "tensorflow/tsl/util/env_var.h"
-#include "tensorflow/tsl/util/proto/proto_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout_util.h"
+#include "xla/stream_executor/kernel_spec.h"
+#include "xla/util.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/regexp.h"
+#include "third_party/tsl/profiler/lib/traceme.h"
+#include "third_party/tsl/util/determinism.h"
+#include "third_party/tsl/util/env_var.h"
+#include "third_party/tsl/util/proto/proto_utils.h"
 
 namespace xla {
 namespace gpu {

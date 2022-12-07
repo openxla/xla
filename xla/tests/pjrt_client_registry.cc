@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tests/pjrt_client_registry.h"
+#include "xla/tests/pjrt_client_registry.h"
 
 #include <functional>
 #include <memory>

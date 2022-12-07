@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/multi_platform_manager.h"
+#include "xla/stream_executor/multi_platform_manager.h"
 
 #include <string>
 
@@ -24,9 +24,9 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/error.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/initialize.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/stream_executor/lib/error.h"
+#include "xla/stream_executor/lib/initialize.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace stream_executor {
 namespace {

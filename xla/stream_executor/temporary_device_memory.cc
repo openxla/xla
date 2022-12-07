@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/temporary_device_memory.h"
+#include "xla/stream_executor/temporary_device_memory.h"
 
-#include "tensorflow/compiler/xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream.h"
 
 namespace stream_executor {
 

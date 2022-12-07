@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <string>
 
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/types.h"
+#include "xla/statusor.h"
+#include "xla/types.h"
 
 namespace xla {
 

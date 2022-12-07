@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/mlir/utils/error_util.h"
+#include "xla/mlir/utils/error_util.h"
 
 #include <string>
 
@@ -22,8 +22,8 @@ limitations under the License.
 #include "llvm/ADT/Twine.h"
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/platform/status.h"
 
 namespace mlir {
 namespace {

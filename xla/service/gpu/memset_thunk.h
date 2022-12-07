@@ -16,11 +16,11 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_MEMSET_THUNK_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_MEMSET_THUNK_H_
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/buffer_assignment.h"
-#include "tensorflow/compiler/xla/service/gpu/thunk.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/thunk.h"
+#include "xla/status.h"
+#include "xla/stream_executor/stream_executor.h"
 
 // This file contains thunks that set a buffer's elements to a particular value.
 // This can be faster than emitting a kernel to set the elements.

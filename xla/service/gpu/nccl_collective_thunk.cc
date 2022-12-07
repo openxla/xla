@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/service/gpu/nccl_collective_thunk.h"
 
 #include <chrono>  // NOLINT (required by TF interfaces)
 #include <cstdlib>
@@ -24,10 +24,10 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_format.h"
-#include "tensorflow/compiler/xla/service/collective_ops_utils.h"
-#include "tensorflow/compiler/xla/service/global_device_id.h"
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_activation.h"
-#include "tensorflow/compiler/xla/util.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/service/global_device_id.h"
+#include "xla/stream_executor/gpu/gpu_activation.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {

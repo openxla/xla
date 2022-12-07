@@ -1,14 +1,14 @@
 load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
-load("//tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
+load("//third_party/tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     licenses = ["notice"],
 )
 
 glob_lit_tests(
     data = [":test_utilities"],
-    driver = "//tensorflow/compiler/xla:run_lit.sh",
+    driver = "//xla:run_lit.sh",
     test_file_exts = ["mlir"],
 )
 
@@ -17,7 +17,7 @@ filegroup(
     name = "test_utilities",
     testonly = True,
     data = [
-        "//tensorflow/compiler/xla/mlir/runtime:xla-runtime-opt",
+        "//xla/mlir/runtime:xla-runtime-opt",
         "@llvm-project//llvm:FileCheck",
         "@llvm-project//mlir:run_lit.sh",
     ],
@@ -28,11 +28,11 @@ cc_library(
     testonly = 1,
     srcs = ["testlib_pipeline.cc"],
     hdrs = ["testlib_pipeline.h"],
-    visibility = ["//tensorflow/compiler/xla:runtime"],
+    visibility = ["//xla:runtime"],
     deps = [
-        "//tensorflow/compiler/xla/mlir/runtime/transforms:compiler",
-        "//tensorflow/compiler/xla/mlir/runtime/transforms:passes",
-        "//tensorflow/compiler/xla/runtime:compiler",
+        "//xla/mlir/runtime/transforms:compiler",
+        "//xla/mlir/runtime/transforms:passes",
+        "//xla/runtime:compiler",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:AsyncDialect",
         "@llvm-project//mlir:AsyncToLLVM",

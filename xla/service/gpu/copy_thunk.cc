@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/copy_thunk.h"
+#include "xla/service/gpu/copy_thunk.h"
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/runtime/symbolic_shape.h"
+#include "xla/runtime/symbolic_shape.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -25,10 +25,10 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
-#include "tensorflow/compiler/xla/runtime/arguments.h"
-#include "tensorflow/compiler/xla/runtime/constraints.h"
-#include "tensorflow/compiler/xla/runtime/logical_result.h"
-#include "tensorflow/compiler/xla/runtime/types.h"
+#include "xla/runtime/arguments.h"
+#include "xla/runtime/constraints.h"
+#include "xla/runtime/logical_result.h"
+#include "xla/runtime/types.h"
 
 namespace xla {
 namespace runtime {

@@ -24,19 +24,19 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "tensorflow/compiler/xla/pjrt/mlir_to_hlo.h"
-#include "tensorflow/compiler/xla/service/compiler.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_compiler.h"
-#include "tensorflow/compiler/xla/service/cpu/cpu_executable.h"
-#include "tensorflow/compiler/xla/service/gpu/executable.pb.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_compiler.h"
-#include "tensorflow/compiler/xla/service/gpu/nvptx_compiler.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/init_main.h"
-#include "tensorflow/tsl/platform/protobuf.h"
-#include "tensorflow/tsl/util/command_line_flags.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/service/compiler.h"
+#include "xla/service/cpu/cpu_compiler.h"
+#include "xla/service/cpu/cpu_executable.h"
+#include "xla/service/gpu/executable.pb.h"
+#include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/nvptx_compiler.h"
+#include "xla/statusor.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/protobuf.h"
+#include "third_party/tsl/util/command_line_flags.h"
 
 namespace xla {
 namespace xla_compile {

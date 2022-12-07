@@ -19,7 +19,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 struct XlaCustomCallStatus_ {
   // The message being present means "failure". Otherwise means "success".

@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/ir_emission_utils.h"
+#include "xla/service/cpu/ir_emission_utils.h"
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/service/cpu/target_machine_features_fake.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "xla/service/cpu/target_machine_features_fake.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
 
 namespace xla {
 namespace {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_module.h"
 
 #include <cstdint>
 #include <memory>
@@ -25,22 +25,22 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/hlo_memory_scheduler.h"
-#include "tensorflow/compiler/xla/service/test_compilation_environment.pb.h"
-#include "tensorflow/compiler/xla/shape_util.h"
-#include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
-#include "tensorflow/tsl/lib/strings/proto_serialization.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/statusor.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal.h"
+#include "xla/service/computation_placer.h"
+#include "xla/service/hlo_matchers.h"
+#include "xla/service/hlo_memory_scheduler.h"
+#include "xla/service/test_compilation_environment.pb.h"
+#include "xla/shape_util.h"
+#include "xla/test.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/lib/core/status_test_util.h"
+#include "third_party/tsl/lib/strings/proto_serialization.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -742,9 +742,9 @@ ENTRY ReduceR3ToR2.v3 {
       reconstructed_module->ToProtoWithConfig());
 
   // The two protos should be equivalent except for the `id` field
-  google::protobuf::util::MessageDifferencer diff;
+  proto2::util::MessageDifferencer diff;
   diff.set_message_field_comparison(
-      google::protobuf::util::MessageDifferencer::EQUIVALENT);
+      proto2::util::MessageDifferencer::EQUIVALENT);
   auto module_descriptor = HloModuleProto::GetDescriptor();
   auto unique_id_field = module_descriptor->FindFieldByName("id");
   diff.IgnoreField(unique_id_field);
@@ -872,9 +872,9 @@ TEST_F(HloModuleTest, HloModuleConfigCreateFromProto) {
   TF_ASSERT_OK_AND_ASSIGN(HloModuleConfigProto output_proto,
                           good_config->ToProto());
 
-  google::protobuf::util::MessageDifferencer diff;
+  proto2::util::MessageDifferencer diff;
   diff.set_message_field_comparison(
-      google::protobuf::util::MessageDifferencer::EQUIVALENT);
+      proto2::util::MessageDifferencer::EQUIVALENT);
   EXPECT_TRUE(diff.Compare(input_proto, output_proto));
 }
 
@@ -889,9 +889,9 @@ TEST_F(HloModuleTest, HloModuleConfigToProto) {
   TF_ASSERT_OK_AND_ASSIGN(HloModuleConfigProto second_proto,
                           remade_config->ToProto());
 
-  google::protobuf::util::MessageDifferencer diff;
+  proto2::util::MessageDifferencer diff;
   diff.set_message_field_comparison(
-      google::protobuf::util::MessageDifferencer::EQUIVALENT);
+      proto2::util::MessageDifferencer::EQUIVALENT);
   EXPECT_TRUE(diff.Compare(first_proto, second_proto));
 }
 

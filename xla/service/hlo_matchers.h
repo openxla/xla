@@ -20,9 +20,9 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/test.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/test.h"
 
 namespace xla {
 namespace testing {

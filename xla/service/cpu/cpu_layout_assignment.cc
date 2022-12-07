@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/cpu_layout_assignment.h"
+#include "xla/service/cpu/cpu_layout_assignment.h"
 
 #include <numeric>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/compiler/xla/map_util.h"
-#include "tensorflow/compiler/xla/service/cpu/dot_op_emitter.h"
-#include "tensorflow/compiler/xla/service/cpu/ir_emission_utils.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/map_util.h"
+#include "xla/service/cpu/dot_op_emitter.h"
+#include "xla/service/cpu/ir_emission_utils.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 namespace cpu {

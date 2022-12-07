@@ -22,14 +22,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/functional/function_ref.h"
-#include "tensorflow/compiler/xla/executable_run_options.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/service/global_device_id.h"
-#include "tensorflow/compiler/xla/service/pattern_matcher.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/tsl/platform/blocking_counter.h"
+#include "xla/executable_run_options.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/computation_placer.h"
+#include "xla/service/global_device_id.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/statusor.h"
+#include "third_party/tsl/platform/blocking_counter.h"
 
 namespace xla {
 

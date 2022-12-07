@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/cpu/vector_support_library.h"
+#include "xla/service/cpu/vector_support_library.h"
 
 #include "absl/algorithm/container.h"
 #include "llvm/Support/raw_ostream.h"
-#include "tensorflow/compiler/xla/service/cpu/target_machine_features.h"
-#include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/cpu/target_machine_features.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {
 namespace cpu {

@@ -18,9 +18,9 @@ limitations under the License.
 
 #include <string>
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_computation.h"
-#include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/types.h"
+#include "xla/xla.pb.h"
 
 // This file contains routines for rendering HLO computations into a
 // human-readable graphical format.

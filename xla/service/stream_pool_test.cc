@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/stream_pool.h"
+#include "xla/service/stream_pool.h"
 
 #include <memory>
 
-#include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
-#include "tensorflow/compiler/xla/test_helpers.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/test_helpers.h"
 
 namespace xla {
 namespace {

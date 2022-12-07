@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gather_scatter_utils.h"
+#include "xla/service/gather_scatter_utils.h"
 
 #include <iterator>
 #include <utility>
 #include <vector>
 
-#include "tensorflow/compiler/xla/permutation_util.h"
-#include "tensorflow/compiler/xla/service/hlo_creation_utils.h"
+#include "xla/permutation_util.h"
+#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 

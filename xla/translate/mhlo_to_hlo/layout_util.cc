@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/translate/mhlo_to_hlo/layout_util.h"
+#include "xla/translate/mhlo_to_hlo/layout_util.h"
 
 namespace mlir {
 

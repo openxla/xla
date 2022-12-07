@@ -20,8 +20,8 @@ limitations under the License.
 #include <optional>
 #include <type_traits>
 
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace xla {
 

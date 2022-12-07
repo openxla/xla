@@ -24,16 +24,16 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project
 #include "mlir/Transforms/RegionUtils.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/passes.h"
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_dialect.h"
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_ops.h"
-#include "tensorflow/compiler/xla/mlir/runtime/utils/custom_calls.h"
+#include "xla/mlir/backends/gpu/transforms/passes.h"
+#include "xla/mlir/runtime/ir/rt_dialect.h"
+#include "xla/mlir/runtime/ir/rt_ops.h"
+#include "xla/mlir/runtime/utils/custom_calls.h"
 
 namespace xla {
 namespace gpu {
 
 #define GEN_PASS_DEF_CONVERTLAUNCHFUNCTOCUDAGRAPHPASS
-#include "tensorflow/compiler/xla/mlir/backends/gpu/transforms/passes.h.inc"
+#include "xla/mlir/backends/gpu/transforms/passes.h.inc"
 
 using namespace mlir;  // NOLINT
 

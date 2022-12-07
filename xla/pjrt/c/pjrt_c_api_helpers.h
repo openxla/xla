@@ -19,11 +19,11 @@ limitations under the License.
 #include <functional>
 #include <memory>
 
-#include "tensorflow/compiler/xla/pjrt/c/pjrt_c_api.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_future.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
+#include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_future.h"
+#include "xla/status.h"
+#include "xla/xla_data.pb.h"
 
 namespace pjrt {
 

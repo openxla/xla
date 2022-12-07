@@ -22,7 +22,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_ops.h"  // IWYU pragma: keep
+#include "xla/mlir/runtime/ir/rt_ops.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace runtime {
@@ -33,7 +33,7 @@ namespace runtime {
 #define GEN_PASS_DECL_CONVERTASSERTS
 #define GEN_PASS_DECL_CONVERTRUNTIMETOLLVMPASS
 
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/passes.h.inc"
+#include "xla/mlir/runtime/transforms/passes.h.inc"
 
 //===-----------------------------------------------------------------------===/
 // Transformations targeting `rt` dialect.
@@ -97,7 +97,7 @@ CreateConvertRuntimeToLLVMPass(ConvertRuntimeToLLvmOpts opts = {});
 //===-----------------------------------------------------------------------===/
 
 #define GEN_PASS_REGISTRATION
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/passes.h.inc"
+#include "xla/mlir/runtime/transforms/passes.h.inc"
 
 }  // namespace runtime
 }  // namespace xla

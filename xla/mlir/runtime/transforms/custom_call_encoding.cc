@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/custom_call_encoding.h"
+#include "xla/mlir/runtime/transforms/custom_call_encoding.h"
 
 #include <functional>
 #include <memory>
@@ -35,10 +35,10 @@ limitations under the License.
 #include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_dialect.h"
-#include "tensorflow/compiler/xla/runtime/custom_call.h"
-#include "tensorflow/compiler/xla/runtime/tracing.h"
-#include "tensorflow/compiler/xla/runtime/type_id.h"
+#include "xla/mlir/runtime/ir/rt_dialect.h"
+#include "xla/runtime/custom_call.h"
+#include "xla/runtime/tracing.h"
+#include "xla/runtime/type_id.h"
 
 namespace Eigen {
 struct half;

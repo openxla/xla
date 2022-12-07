@@ -19,7 +19,7 @@ limitations under the License.
 #include <functional>
 #include <utility>
 
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
+#include "xla/service/hlo_pass_interface.h"
 
 namespace xla {
 

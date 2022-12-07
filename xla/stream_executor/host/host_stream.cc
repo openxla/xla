@@ -15,11 +15,11 @@ limitations under the License.
 
 // Class method definitions for HostStream, the Stream implementation for
 // the HostExecutor implementation.
-#include "tensorflow/compiler/xla/stream_executor/host/host_stream.h"
+#include "xla/stream_executor/host/host_stream.h"
 
 #include "absl/synchronization/notification.h"
-#include "tensorflow/tsl/platform/denormal.h"
-#include "tensorflow/tsl/platform/setround.h"
+#include "third_party/tsl/platform/denormal.h"
+#include "third_party/tsl/platform/setround.h"
 
 namespace stream_executor {
 namespace host {

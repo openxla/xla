@@ -3,8 +3,8 @@ load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//tensorflow/compiler/xla/mlir/runtime:friends"],
+    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    default_visibility = ["//xla/mlir/runtime:friends"],
     licenses = ["notice"],
 )
 
@@ -90,7 +90,7 @@ cc_library(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         ":rt_inc_gen",
-        "//tensorflow/compiler/xla/runtime:constraints",
+        "//xla/runtime:constraints",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:FuncDialect",

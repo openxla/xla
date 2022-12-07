@@ -28,7 +28,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Support/ToolUtilities.h"  // from @llvm-project
 #include "mlir/Tools/mlir-translate/Translation.h"  // from @llvm-project
-#include "tensorflow/tsl/platform/init_main.h"
+#include "third_party/tsl/platform/init_main.h"
 
 // NOLINTNEXTLINE
 static llvm::cl::opt<std::string> input_filename(llvm::cl::Positional,

@@ -22,8 +22,8 @@ limitations under the License.
 #include <type_traits>
 #include <vector>
 
-#include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
-#include "tensorflow/compiler/xla/stream_executor/platform/port.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
 namespace port {

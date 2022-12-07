@@ -25,9 +25,9 @@ limitations under the License.
 #include "pybind11/cast.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/pytypes.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/platform/types.h"
-#include "tensorflow/tsl/profiler/protobuf/xplane.pb.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/platform/types.h"
+#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

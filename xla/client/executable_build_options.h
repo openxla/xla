@@ -22,12 +22,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "tensorflow/compiler/xla/pjrt/compile_options.pb.h"
-#include "tensorflow/compiler/xla/service/computation_placer.h"
-#include "tensorflow/compiler/xla/shape.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/platform/threadpool.h"
+#include "xla/pjrt/compile_options.pb.h"
+#include "xla/service/computation_placer.h"
+#include "xla/shape.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
+#include "third_party/tsl/platform/threadpool.h"
 
 namespace stream_executor {
 

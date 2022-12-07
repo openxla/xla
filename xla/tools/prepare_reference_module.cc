@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/tools/prepare_reference_module.h"
+#include "xla/tools/prepare_reference_module.h"
 
 #include <functional>
 #include <memory>
 
-#include "tensorflow/compiler/xla/debug_options_flags.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/service/despecializer.h"
-#include "tensorflow/compiler/xla/service/hlo_module_config.h"
-#include "tensorflow/compiler/xla/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
-#include "tensorflow/compiler/xla/xla.pb.h"
-#include "tensorflow/tsl/platform/errors.h"
+#include "xla/debug_options_flags.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/despecializer.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/xla.pb.h"
+#include "third_party/tsl/platform/errors.h"
 
 namespace xla {
 

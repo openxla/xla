@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-#include "tensorflow/compiler/xla/mlir/runtime/transforms/calling_convention.h"
+#include "xla/mlir/runtime/transforms/calling_convention.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/TypeRange.h"  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/mlir/runtime/ir/rt_ops.h"
-#include "tensorflow/tsl/platform/test.h"
+#include "xla/mlir/runtime/ir/rt_ops.h"
+#include "third_party/tsl/platform/test.h"
 
 namespace xla {
 namespace runtime {

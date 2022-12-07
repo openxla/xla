@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/pjrt/interpreter_device.h"
+#include "xla/pjrt/interpreter_device.h"
 
 #include "absl/strings/str_cat.h"
-#include "tensorflow/compiler/xla/client/client_library.h"
-#include "tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h"
-#include "tensorflow/compiler/xla/service/platform_util.h"
+#include "xla/client/client_library.h"
+#include "xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/service/platform_util.h"
 
 namespace xla {
 

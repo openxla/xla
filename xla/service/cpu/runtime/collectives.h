@@ -15,7 +15,7 @@
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_COLLECTIVES_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_COLLECTIVES_H_
 
-#include "tensorflow/compiler/xla/runtime/custom_call_registry.h"
+#include "xla/runtime/custom_call_registry.h"
 
 namespace xla {
 namespace cpu {

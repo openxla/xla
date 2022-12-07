@@ -23,10 +23,10 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
-#include "tensorflow/compiler/xla/pjrt/distributed/client.h"
-#include "tensorflow/compiler/xla/service/global_device_id.h"
-#include "tensorflow/compiler/xla/service/gpu/gpu_executable_run_options.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/pjrt/distributed/client.h"
+#include "xla/service/global_device_id.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/statusor.h"
 
 namespace xla {
 

@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/stream_executor/gpu/gpu_init.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
 
 #include <string>
 
-#include "tensorflow/compiler/xla/stream_executor/lib/status.h"
-#include "tensorflow/compiler/xla/stream_executor/lib/statusor.h"
-#include "tensorflow/compiler/xla/stream_executor/multi_platform_manager.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
-#include "tensorflow/tsl/platform/logging.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/lib/statusor.h"
+#include "xla/stream_executor/multi_platform_manager.h"
+#include "xla/stream_executor/platform.h"
+#include "third_party/tsl/platform/logging.h"
 
 namespace stream_executor {
 

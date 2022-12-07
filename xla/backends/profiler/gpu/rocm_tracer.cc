@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/backends/profiler/gpu/rocm_tracer.h"
+#include "xla/backends/profiler/gpu/rocm_tracer.h"
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
 #include "rocm/rocm_config.h"
-#include "tensorflow/tsl/platform/env.h"
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/platform/logging.h"
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/platform/mem.h"
-#include "tensorflow/tsl/profiler/backends/cpu/annotation_stack.h"
-#include "tensorflow/tsl/profiler/utils/time_utils.h"
+#include "third_party/tsl/platform/env.h"
+#include "third_party/tsl/platform/errors.h"
+#include "third_party/tsl/platform/logging.h"
+#include "third_party/tsl/platform/macros.h"
+#include "third_party/tsl/platform/mem.h"
+#include "third_party/tsl/profiler/backends/cpu/annotation_stack.h"
+#include "third_party/tsl/profiler/utils/time_utils.h"
 
 namespace xla {
 namespace profiler {

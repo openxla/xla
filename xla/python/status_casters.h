@@ -17,9 +17,9 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_PYTHON_STATUS_CASTERS_H_
 
 #include "pybind11/pybind11.h"
-#include "tensorflow/compiler/xla/python/exceptions.h"
-#include "tensorflow/compiler/xla/status.h"
-#include "tensorflow/compiler/xla/statusor.h"
+#include "xla/python/exceptions.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 
 namespace xla {
 
