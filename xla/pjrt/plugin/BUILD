@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 
 # Configuration file for an XLA plugin.
 #

@@ -31,8 +31,6 @@ cc_library(
         ":cluster_environment",
         ":matrix",
         ":metrics",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
         "//xla/hlo/ir:hlo",
         "//xla/service:dump",
         "//xla/service:heap_simulator",
@@ -47,6 +45,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_ortools//ortools/linear_solver",
         "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
     ],
 )
 
@@ -79,8 +79,8 @@ cc_library(
         "matrix.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:logging",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -116,7 +116,6 @@ cc_library(
     ],
     deps = [
         ":auto_sharding_strategy",
-        "//tensorflow/tsl/platform:errors",
         "//xla:array",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
@@ -126,6 +125,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//platform:errors",
     ],
 )
 
@@ -134,8 +134,8 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = [
-        "//tensorflow/tsl/lib/monitoring:counter",
         "@com_google_absl//absl/base:core_headers",
+        "@tsl//lib/monitoring:counter",
     ],
 )
 
@@ -144,10 +144,10 @@ xla_cc_binary(
     srcs = ["auto_sharding_runner.cc"],
     deps = [
         ":auto_sharding",
-        "//tensorflow/tsl/platform:platform_port",
         "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_parser",
         "//xla/tools:hlo_module_loader",
+        "@tsl//platform:platform_port",
     ],
 )

@@ -43,17 +43,17 @@ def tf_additional_license_deps():
 # used for all framework_shared_object platforms including MacOS.
 def if_static(extra_deps, otherwise = [], macos = []):
     ret = {
-        str(Label("//tensorflow/tsl:framework_shared_object")): otherwise,
+        str(Label("@tsl//:framework_shared_object")): otherwise,
         "//conditions:default": extra_deps,
     }
     if macos:
-        ret[str(Label("//tensorflow/tsl:macos_with_framework_shared_object"))] = macos
+        ret[str(Label("@tsl//:macos_with_framework_shared_object"))] = macos
     return select(ret)
 
 def if_static_and_not_mobile(extra_deps, otherwise = []):
     return select({
-        str(Label("//tensorflow/tsl:framework_shared_object")): otherwise,
-        str(Label("//tensorflow/tsl:android")): otherwise,
-        str(Label("//tensorflow/tsl:ios")): otherwise,
+        str(Label("@tsl//:framework_shared_object")): otherwise,
+        str(Label("@tsl//:android")): otherwise,
+        str(Label("@tsl//:ios")): otherwise,
         "//conditions:default": extra_deps,
     })

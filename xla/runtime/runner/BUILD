@@ -1,4 +1,4 @@
-load("//tensorflow/tsl/platform:build_config.bzl", "tf_proto_library")
+load("@tsl//platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_py_proto_library")
 
 package(
@@ -13,11 +13,6 @@ cc_library(
     hdrs = ["runner.h"],
     deps = [
         ":runner_proto_cc",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/util:command_line_flags",
         "//xla/runtime:arguments",
         "//xla/runtime:executable",
         "//xla/runtime:jit_executable",
@@ -26,6 +21,11 @@ cc_library(
         "//xla/runtime:types",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//platform:env",
+        "@tsl//platform:logging",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:protobuf",
+        "@tsl//util:command_line_flags",
     ],
 )
 

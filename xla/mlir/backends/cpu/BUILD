@@ -10,7 +10,6 @@ xla_cc_binary(
     name = "xla-cpu-opt",
     srcs = ["xla-cpu-opt.cc"],
     deps = [
-        "//tensorflow/tsl/protobuf:dnn_proto_cc_impl",
         "//xla/mlir/backends/cpu/transforms:passes",
         "//xla/mlir/xla_cpu/ir:xla_cpu",
         "//xla/mlir_hlo:all_passes",
@@ -26,5 +25,6 @@ xla_cc_binary(
         "@llvm-project//mlir:MlirOptLib",
         "@llvm-project//mlir:TensorDialect",
         "@stablehlo//:register",
+        "@tsl//protobuf:dnn_proto_cc_impl",
     ],
 )

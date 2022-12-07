@@ -2,7 +2,7 @@
 #   Computationally expensive, exhaustive tests for XLA
 
 load("//tensorflow/compiler/xla/tests:build_defs.bzl", "xla_test")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],

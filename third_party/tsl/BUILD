@@ -428,7 +428,6 @@ package_group(
         "//learning/lib/ami/simple_ml/...",
         "//learning/pathways/...",
         "//smartass/brain/configure/...",
-        "//tensorflow/tsl/...",
         "//third_party/cloud_tpu/convergence_tools/sdc_monitoring/...",
         "//third_party/cloud_tpu/inference_converter/...",
         "//third_party/py/cloud_ml_autoflow/...",
@@ -438,6 +437,7 @@ package_group(
         "//third_party/tensorflow_decision_forests/...",
         "//third_party/tensorflow_federated/...",
         "//third_party/yggdrasil_decision_forests/...",
+        "@tsl//...",
     ],
 )
 
@@ -446,7 +446,6 @@ bzl_library(
     srcs = ["tsl.bzl"],
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/tsl/platform:rules_cc_bzl",
         "//third_party/compute_library:build_defs_bzl",
         "//third_party/mkl:build_defs_bzl",
         "//third_party/mkl_dnn:build_defs_bzl",
@@ -454,6 +453,7 @@ bzl_library(
         "@local_config_cuda//cuda:build_defs_bzl",
         "@local_config_rocm//rocm:build_defs_bzl",
         "@local_config_tensorrt//:build_defs_bzl",
+        "@tsl//platform:rules_cc_bzl",
     ],
 )
 

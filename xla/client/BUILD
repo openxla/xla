@@ -1,8 +1,8 @@
 # Description:
 #   XLA client libraries.
 
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "filegroup")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -32,14 +32,14 @@ cc_library(
     srcs = ["global_data.cc"],
     hdrs = ["global_data.h"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:status",
         "//xla:service_interface",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/types:span",
+        "@tsl//platform:logging",
+        "@tsl//platform:status",
     ],
 )
 
@@ -48,12 +48,12 @@ cc_library(
     srcs = ["padding.cc"],
     hdrs = ["padding.h"],
     deps = [
-        "//tensorflow/tsl/lib/math:math_util",
-        "//tensorflow/tsl/platform:logging",
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "@com_google_absl//absl/types:span",
+        "@tsl//lib/math:math_util",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -62,8 +62,8 @@ tf_cc_test(
     srcs = ["padding_test.cc"],
     deps = [
         ":padding",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -74,9 +74,6 @@ cc_library(
     deps = [
         ":global_data",
         ":xla_computation",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:protobuf",
         "//xla:debug_options_flags",
         "//xla:execution_options_util",
         "//xla:literal",
@@ -90,6 +87,9 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:protobuf",
     ],
 )
 
@@ -98,8 +98,6 @@ cc_library(
     srcs = ["executable_build_options.cc"],
     hdrs = ["executable_build_options.h"],
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:logging",
         "//xla:debug_options_flags",
         "//xla:execution_options_util",
         "//xla:shape_util",
@@ -110,6 +108,8 @@ cc_library(
         "//xla/service:computation_placer",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//platform:env",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -172,7 +172,6 @@ cc_library(
     deps = [
         ":compile_only_client",
         ":local_client",
-        "//tensorflow/tsl/platform:logging",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:types",
@@ -185,6 +184,7 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -224,7 +224,6 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":xla_builder",
-        "//tensorflow/tsl/platform:errors",
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:literal_util",
@@ -240,6 +239,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@tsl//platform:errors",
     ],
 )
 
@@ -252,9 +252,6 @@ cc_library(
         ":padding",
         ":sharding_builder",
         ":xla_computation",
-        "//tensorflow/tsl/lib/core:bitmap",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:stacktrace",
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:literal_util",
@@ -276,6 +273,9 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//lib/core:bitmap",
+        "@tsl//platform:errors",
+        "@tsl//platform:stacktrace",
     ],
 )
 
@@ -287,7 +287,6 @@ tf_cc_test(
         ":value_inference",
         ":xla_builder",
         ":xla_computation",
-        "//tensorflow/tsl/platform:test",
         "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:shape_util",
@@ -299,5 +298,6 @@ tf_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_matchers",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//platform:test",
     ],
 )

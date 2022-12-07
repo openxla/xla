@@ -1,7 +1,7 @@
 """Default (OSS) build versions of TSL general-purpose build extensions."""
 
 load(
-    "//tensorflow/tsl:tsl.bzl",
+    "@tsl//:tsl.bzl",
     "clean_dep",
     "two_gpu_tags",
     _filegroup = "filegroup",
@@ -12,11 +12,11 @@ load(
     _tsl_pybind_extension = "tsl_pybind_extension",
 )
 load(
-    "//tensorflow/tsl/platform:build_config.bzl",
+    "@tsl//platform:build_config.bzl",
     "tsl_cc_test",
 )
 load(
-    "//tensorflow/tsl/platform:build_config_root.bzl",
+    "@tsl//platform:build_config_root.bzl",
     "tf_gpu_tests_tags",
 )
 load(

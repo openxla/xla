@@ -1,12 +1,12 @@
 # Description:
 # C API for TensorFlow, for use by client language bindings.
 
-load("//tensorflow/tsl/platform:build_config.bzl", "tsl_cc_test")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl:tsl.bzl", "tsl_copts", "tsl_gpu_library")
+load("@tsl//platform:build_config.bzl", "tsl_cc_test")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.bzl", "tsl_copts", "tsl_gpu_library")
 
 # buildifier: disable=same-origin-load
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
+load("@tsl//:tsl.default.bzl", "filegroup")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -62,7 +62,7 @@ tsl_gpu_library(
         "//third_party/tensorflow/c:__subpackages__",
     ],
     deps = [
-        "//tensorflow/tsl/platform:status",
+        "@tsl//platform:status",
     ],
 )
 
@@ -73,8 +73,8 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":tsl_status_internal",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
     ],
 )
 
@@ -84,10 +84,10 @@ tsl_cc_test(
     deps = [
         ":tsl_status",
         ":tsl_status_internal",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -105,8 +105,8 @@ tsl_gpu_library(
     deps = [
         ":tsl_status",
         ":tsl_status_internal",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
     ],
 )
 
@@ -115,10 +115,10 @@ tsl_cc_test(
     srcs = ["tsl_status_helper_test.cc"],
     deps = [
         ":tsl_status_helper",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 

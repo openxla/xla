@@ -1,6 +1,6 @@
 # Description: SPMD partitioning pass.
 
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -34,9 +34,6 @@ cc_library(
         "spmd_partitioner_util.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:numbers",
-        "//tensorflow/tsl/platform:statusor",
         "//xla:comparison_util",
         "//xla:literal_util",
         "//xla:protobuf_util",
@@ -74,6 +71,9 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//platform:logging",
+        "@tsl//platform:numbers",
+        "@tsl//platform:statusor",
     ],
 )
 
@@ -82,8 +82,6 @@ tf_cc_test(
     srcs = ["spmd_partitioner_test.cc"],
     deps = [
         ":spmd_partitioner",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:test",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -96,6 +94,8 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:test",
     ],
 )
 
@@ -104,8 +104,6 @@ tf_cc_test(
     srcs = ["canonicalize_all_gather_for_cse_test.cc"],
     deps = [
         ":canonicalize_all_gather_for_cse",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:test",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_matchers",
@@ -114,6 +112,8 @@ tf_cc_test(
         "//xla/service:hlo_verifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:test",
     ],
 )
 
@@ -134,8 +134,6 @@ tf_cc_test(
     srcs = ["schedule_aware_collective_ops_cse_test.cc"],
     deps = [
         ":schedule_aware_collective_ops_cse",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:test",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_matchers",
@@ -144,6 +142,8 @@ tf_cc_test(
         "//xla/service:hlo_verifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:test",
     ],
 )
 
@@ -176,8 +176,6 @@ tf_cc_test(
     srcs = ["stateful_rng_spmd_partitioner_test.cc"],
     deps = [
         ":stateful_rng_spmd_partitioner",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:test",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -189,6 +187,8 @@ tf_cc_test(
         "//xla/service:sharding_propagation",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:test",
     ],
 )
 

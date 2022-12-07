@@ -1,4 +1,4 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -36,7 +36,6 @@ cc_library(
         ":attribute_importer",
         ":hlo_utils",
         ":location_importer",
-        "//tensorflow/tsl/platform:statusor",
         "//xla:comparison_util",
         "//xla:permutation_util",
         "//xla:protobuf_util",
@@ -58,6 +57,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
+        "@tsl//platform:statusor",
     ],
 )
 
@@ -79,7 +79,6 @@ cc_library(
     hdrs = ["hlo_utils.h"],
     includes = ["include"],
     deps = [
-        "//tensorflow/tsl/platform:bfloat16",
         "//xla:literal",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -89,6 +88,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
+        "@tsl//platform:bfloat16",
     ],
 )
 
@@ -97,12 +97,12 @@ tf_cc_test(
     srcs = ["hlo_utils_test.cc"],
     deps = [
         ":hlo_utils",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:test_main",
         "//xla:shape_util",
         "//xla:test",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -147,9 +147,6 @@ tf_cc_test(
     deps = [
         ":hlo_module_importer",
         ":mlir_hlo_builder",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:test_main",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -160,6 +157,9 @@ tf_cc_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:status",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -169,13 +169,13 @@ cc_library(
     hdrs = ["translate.h"],
     deps = [
         ":hlo_to_mlir_hlo",
-        "//tensorflow/tsl/platform:protobuf",
         "//xla:status",
         "//xla/mlir_hlo",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_proto_cc",
         "//xla/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
         "@llvm-project//mlir:IR",
+        "@tsl//platform:protobuf",
     ],
 )
 

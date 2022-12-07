@@ -1,7 +1,7 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_portable")
 load(
-    "//tensorflow/tsl/platform:build_config.bzl",
+    "@tsl//platform:build_config.bzl",
     "tsl_cc_test",
 )
 
@@ -26,7 +26,7 @@ cc_library(
     # TODO(b/238649163): remove this once no longer necessary.
     defines = ["GEMM_KERNEL_H"],
     deps = [
-        "//tensorflow/tsl/framework/convolution:eigen_convolution_helpers",
+        "@tsl//framework/convolution:eigen_convolution_helpers",
     ],
 )
 
@@ -50,10 +50,10 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     defines = ["EIGEN_NEON_GEBP_NR=4"],
     deps = [
-        "//tensorflow/tsl/framework/contraction:eigen_contraction_kernel",
-        "//tensorflow/tsl/framework/convolution:eigen_convolution_helpers",
-        "//tensorflow/tsl/framework/convolution:eigen_spatial_convolutions-inl",
         "//third_party/eigen3",
+        "@tsl//framework/contraction:eigen_contraction_kernel",
+        "@tsl//framework/convolution:eigen_convolution_helpers",
+        "@tsl//framework/convolution:eigen_spatial_convolutions-inl",
     ],
 )
 
@@ -69,7 +69,7 @@ filegroup(
     # Somehow the following code works with fixedpoint, but not here.
     # visibility = [
     #     "//third_party/tensorflow:__subpackages__",
-    #     "//tensorflow/tsl:internal",
+    #     "@tsl//:internal",
     # ],
 )
 
@@ -104,9 +104,9 @@ tsl_cc_test(
     ],
     deps = [
         ":eigen_helpers",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )

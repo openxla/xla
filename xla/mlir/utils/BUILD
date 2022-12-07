@@ -1,5 +1,5 @@
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -15,10 +15,10 @@ cc_library(
     hdrs = ["error_util.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "//tensorflow/tsl/platform:errors",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@tsl//platform:errors",
     ],
 )
 
@@ -27,12 +27,12 @@ cc_test(
     srcs = ["error_util_test.cc"],
     deps = [
         ":error_util",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:test_main",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:status",
+        "@tsl//platform:test_main",
     ],
 )

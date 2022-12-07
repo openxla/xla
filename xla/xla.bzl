@@ -1,11 +1,11 @@
 """Wrapper around proto libraries used inside the XLA codebase."""
 
 load(
-    "//tensorflow/tsl:tsl.bzl",
+    "@tsl//:tsl.bzl",
     "clean_dep",
     "if_tsl_link_protobuf",
 )
-load("//tensorflow/tsl/platform:build_config.bzl", "tsl_cc_test")
+load("@tsl//platform:build_config.bzl", "tsl_cc_test")
 
 def xla_py_proto_library(**kwargs):
     # Note: we don't currently define a proto library target for Python in OSS.
@@ -35,10 +35,10 @@ def xla_cc_binary(deps = None, **kwargs):
         "//xla/service:hlo_proto_cc_impl",
         "//xla/service/gpu:backend_configs_cc_impl",
         "//xla/stream_executor:dnn_proto_cc_impl",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/profiler/utils:time_utils_impl",
-        "//tensorflow/tsl/profiler/backends/cpu:traceme_recorder_impl",
-        "//tensorflow/tsl/protobuf:protos_all_cc_impl",
+        "@tsl//platform:env_impl",
+        "@tsl//profiler/utils:time_utils_impl",
+        "@tsl//profiler/backends/cpu:traceme_recorder_impl",
+        "@tsl//protobuf:protos_all_cc_impl",
     ]
     native.cc_binary(deps = deps, **kwargs)
 
@@ -58,9 +58,9 @@ def xla_cc_test(
                 "//xla/service:hlo_proto_cc_impl",
                 "//xla/service/gpu:backend_configs_cc_impl",
                 "//xla/stream_executor:dnn_proto_cc_impl",
-                "//tensorflow/tsl/profiler/utils:time_utils_impl",
-                "//tensorflow/tsl/profiler/backends/cpu:traceme_recorder_impl",
-                "//tensorflow/tsl/protobuf:protos_all_cc_impl",
+                "@tsl//profiler/utils:time_utils_impl",
+                "@tsl//profiler/backends/cpu:traceme_recorder_impl",
+                "@tsl//protobuf:protos_all_cc_impl",
             ],
         ),
         **kwargs

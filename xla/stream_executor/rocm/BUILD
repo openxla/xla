@@ -1,14 +1,14 @@
 # Description:
 #   ROCm-platform specific StreamExecutor support code.
 
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
 )
-load("//tensorflow/tsl:tsl.bzl", "tsl_copts")
+load("@tsl//:tsl.bzl", "tsl_copts")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")
-load("//tensorflow/tsl/platform:build_config_root.bzl", "if_static")
+load("@tsl//platform:build_config_root.bzl", "if_static")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -272,7 +272,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@local_config_rocm//rocm:rocm_headers",
-        "//tensorflow/tsl/util:env_var",
+        "@tsl//util:env_var",
     ]),
     alwayslink = True,
 )

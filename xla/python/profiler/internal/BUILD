@@ -1,6 +1,6 @@
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
-load("//tensorflow/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//profiler/builds:build_config.bzl", "tf_profiler_copts")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -21,19 +21,19 @@ cc_library(
         "//xla/backends/profiler:__subpackages__",
     ],
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/profiler/protobuf:xplane_proto_cc",
-        "//tensorflow/tsl/profiler/utils:time_utils",
-        "//tensorflow/tsl/profiler/utils:xplane_builder",
-        "//tensorflow/tsl/profiler/utils:xplane_schema",
-        "//tensorflow/tsl/profiler/utils:xplane_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@pybind11",
+        "@tsl//platform:env",
+        "@tsl//platform:macros",
+        "@tsl//platform:path",
+        "@tsl//platform:types",
+        "@tsl//profiler/protobuf:xplane_proto_cc",
+        "@tsl//profiler/utils:time_utils",
+        "@tsl//profiler/utils:xplane_builder",
+        "@tsl//profiler/utils:xplane_schema",
+        "@tsl//profiler/utils:xplane_utils",
     ],
     alwayslink = True,
 )
@@ -47,10 +47,10 @@ cc_library(
         "//xla/python:__pkg__",
     ],
     deps = [
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/profiler/lib:traceme_for_pybind",
         "@com_google_absl//absl/strings",
         "@pybind11",
+        "@tsl//platform:macros",
+        "@tsl//platform:types",
+        "@tsl//profiler/lib:traceme_for_pybind",
     ],
 )

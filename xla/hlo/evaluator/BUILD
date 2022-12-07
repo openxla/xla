@@ -1,7 +1,7 @@
 # Description:
 #   XLA evaluator implementation.
 
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -40,13 +40,6 @@ cc_library(
     ],
     hdrs = ["hlo_evaluator.h"],
     deps = [
-        "//tensorflow/tsl/lib/core:bitmap",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:statusor",
-        "//tensorflow/tsl/platform:types",
         "//xla:array2d",
         "//xla:literal",
         "//xla:literal_util",
@@ -75,6 +68,13 @@ cc_library(
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//lib/core:bitmap",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:status",
+        "@tsl//platform:statusor",
+        "@tsl//platform:types",
     ],
 )
 
@@ -83,11 +83,6 @@ tf_cc_test(
     srcs = ["hlo_evaluator_test.cc"],
     deps = [
         ":hlo_evaluator",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
         "//xla:literal",
         "//xla:permutation_util",
         "//xla:reference_util",
@@ -108,5 +103,10 @@ tf_cc_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:logging",
+        "@tsl//platform:status",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
     ],
 )

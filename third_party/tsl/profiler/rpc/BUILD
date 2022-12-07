@@ -1,14 +1,14 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load(
-    "//tensorflow/tsl/profiler/builds:build_config.bzl",
+    "@tsl//profiler/builds:build_config.bzl",
     "tf_profiler_copts",
     "tf_profiler_pybind_cc_library_wrapper",
 )
-load("//tensorflow/tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("@tsl//:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
-    default_visibility = ["//tensorflow/tsl/profiler:internal"],
+    default_visibility = ["@tsl//profiler:internal"],
     licenses = ["notice"],
 )
 
@@ -19,33 +19,33 @@ cc_library(
     hdrs = ["profiler_service_impl.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//tensorflow/tsl/profiler/rpc/client:__pkg__",
         "//third_party/tensorflow/core/data/service:__pkg__",
         "//third_party/tensorflow/core/distributed_runtime/rpc:__pkg__",
         "//third_party/tensorflow/core/profiler/rpc:__pkg__",
         "//third_party/tensorflow/python:__pkg__",
         "//third_party/tensorflow_serving/model_servers:__pkg__",
+        "@tsl//profiler/rpc/client:__pkg__",
     ],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_time",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/profiler/lib:profiler_session",
-        "//tensorflow/tsl/profiler/protobuf:profiler_service_proto_cc",
-        "//tensorflow/tsl/profiler/protobuf:profiler_service_cc_grpc_proto",
-        "//tensorflow/tsl/profiler/protobuf:xplane_proto_cc",
-        "//tensorflow/tsl/profiler/rpc/client:save_profile",
-        "//tensorflow/tsl/profiler/utils:file_system_utils",
-        "//tensorflow/tsl/profiler/utils:math_utils",
-        "//tensorflow/tsl/profiler/utils:time_utils",
-        "//tensorflow/tsl/profiler/utils:xplane_utils",
+        "@tsl//platform:env",
+        "@tsl//platform:env_time",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:status",
+        "@tsl//profiler/lib:profiler_session",
+        "@tsl//profiler/protobuf:profiler_service_proto_cc",
+        "@tsl//profiler/protobuf:profiler_service_cc_grpc_proto",
+        "@tsl//profiler/protobuf:xplane_proto_cc",
+        "@tsl//profiler/rpc/client:save_profile",
+        "@tsl//profiler/utils:file_system_utils",
+        "@tsl//profiler/utils:math_utils",
+        "@tsl//profiler/utils:time_utils",
+        "@tsl//profiler/utils:xplane_utils",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -61,19 +61,19 @@ cc_library(
     hdrs = ["profiler_server.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//tensorflow/tsl/profiler:internal",
-        "//tensorflow/tsl/profiler/rpc/client:__pkg__",
         "//third_party/tensorflow/core/profiler/rpc:__pkg__",
         "//third_party/tensorflow/python:__pkg__",
         "//third_party/tensorflow/python/profiler/internal:__pkg__",
         "//xla:__subpackages__",
+        "@tsl//profiler:internal",
+        "@tsl//profiler/rpc/client:__pkg__",
     ],
     deps = [
         ":profiler_service_impl",
         "@com_google_absl//absl/strings",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/profiler/protobuf:profiler_service_cc_grpc_proto",
+        "@tsl//platform:logging",
+        "@tsl//platform:types",
+        "@tsl//profiler/protobuf:profiler_service_cc_grpc_proto",
     ] + tsl_grpc_cc_dependencies(),
     alwayslink = True,
 )

@@ -1,8 +1,8 @@
 # Description:
 #    Libraries for helping construct LLVM IR for XLA backends.
 
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "filegroup")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load(
     "//third_party/tensorflow:tensorflow.bzl",
     "tf_cc_test",
@@ -37,7 +37,6 @@ cc_library(
     deps = [
         ":ir_array",
         ":llvm_type_conversion_util",
-        "//tensorflow/tsl/platform:logging",
         "//xla:types",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
@@ -46,6 +45,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Core",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -54,12 +54,12 @@ tf_cc_test(
     srcs = ["alias_analysis_test.cc"],
     deps = [
         ":alias_analysis",
-        "//tensorflow/tsl/platform:test",
         "//xla/service:custom_call_status_public_headers",
         "//xla/service:custom_call_target_registry",
         "//xla/service:hlo_parser",
         "//xla/service/cpu/tests:cpu_codegen_test",
         "//xla/tests:filecheck",
+        "@tsl//platform:test",
     ],
 )
 
@@ -69,9 +69,6 @@ cc_library(
     hdrs = ["llvm_util.h"],
     deps = [
         ":llvm_type_conversion_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
         "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:shape_util",
@@ -91,6 +88,9 @@ cc_library(
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//mlir:IR",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -108,9 +108,9 @@ cc_library(
     name = "llvm_command_line_options",
     hdrs = ["llvm_command_line_options.h"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -121,7 +121,6 @@ cc_library(
     deps = [
         ":llvm_type_conversion_util",
         ":llvm_util",
-        "//tensorflow/tsl/platform:logging",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:statusor",
@@ -132,6 +131,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -142,7 +142,6 @@ cc_library(
     deps = [
         ":ir_array",
         ":llvm_util",
-        "//tensorflow/tsl/platform:logging",
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
@@ -150,6 +149,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -160,9 +160,6 @@ cc_library(
     deps = [
         ":ir_array",
         ":llvm_loop",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:protobuf",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:statusor",
@@ -170,6 +167,9 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Core",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:protobuf",
     ],
 )
 
@@ -181,9 +181,6 @@ cc_library(
         ":ir_array",
         ":llvm_util",
         ":tuple_ops",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:statusor",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:statusor",
@@ -193,6 +190,9 @@ cc_library(
         "//xla/service:fusion_node_indexing_evaluation",
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//llvm:Core",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:statusor",
     ],
 )
 
@@ -224,7 +224,6 @@ cc_library(
         ":llvm_loop",
         ":llvm_util",
         ":loop_emitter",
-        "//tensorflow/tsl/platform:status",
         "//xla:shape_util",
         "//xla:util",
         "//xla/service/gpu:launch_dimensions",
@@ -234,6 +233,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
+        "@tsl//platform:status",
     ],
 )
 
@@ -245,12 +245,12 @@ cc_library(
         ":ir_array",
         ":llvm_type_conversion_util",
         ":llvm_util",
-        "//tensorflow/tsl/platform:logging",
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
+        "@tsl//platform:logging",
     ],
 )
 

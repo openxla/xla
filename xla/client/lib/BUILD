@@ -1,7 +1,7 @@
 # Common computation builders for XLA.
 
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "filegroup")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//tensorflow/compiler/xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 
 package(
@@ -142,10 +142,10 @@ cc_library(
     srcs = ["conv_grad_size_util.cc"],
     hdrs = ["conv_grad_size_util.h"],
     deps = [
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
         "//xla:status_macros",
         "//xla/client:padding",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -310,14 +310,14 @@ cc_library(
         ":math",
         ":matrix",
         ":slicing",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -329,10 +329,6 @@ xla_test(
         ":constants",
         ":matrix",
         ":qr",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:tensor_float_32_hdr_lib",
-        "//tensorflow/tsl/platform:tensor_float_32_utils",
-        "//tensorflow/tsl/platform:test",
         "//xla:array2d",
         "//xla:array3d",
         "//xla:literal",
@@ -345,6 +341,10 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:tensor_float_32_hdr_lib",
+        "@tsl//platform:tensor_float_32_utils",
+        "@tsl//platform:test",
     ],
 )
 
@@ -454,12 +454,12 @@ cc_library(
     hdrs = ["quantize.h"],
     deps = [
         ":constants",
-        "//tensorflow/tsl/platform:bfloat16",
-        "//tensorflow/tsl/platform:logging",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@tsl//platform:bfloat16",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -488,8 +488,6 @@ cc_library(
     srcs = ["testing.cc"],
     hdrs = ["testing.h"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:protobuf",
         "//xla:execution_options_util",
         "//xla:literal",
         "//xla:shape_util",
@@ -503,6 +501,8 @@ cc_library(
         "//xla/client:xla_computation",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:logging",
+        "@tsl//platform:protobuf",
     ],
 )
 
@@ -518,8 +518,6 @@ cc_library(
         ":math",
         ":matrix",
         ":slicing",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -527,6 +525,8 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -542,8 +542,6 @@ xla_test(
         ":math",
         ":matrix",
         ":self_adjoint_eig",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:test",
         "//xla:array",
         "//xla:array2d",
         "//xla:array3d",
@@ -556,6 +554,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:test",
     ],
 )
 
@@ -571,14 +571,14 @@ cc_library(
         ":math",
         ":matrix",
         ":slicing",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -594,10 +594,6 @@ xla_test(
         ":matrix",
         ":slicing",
         ":svd",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:tensor_float_32_hdr_lib",
-        "//tensorflow/tsl/platform:tensor_float_32_utils",
-        "//tensorflow/tsl/platform:test",
         "//xla:array2d",
         "//xla:array3d",
         "//xla:literal",
@@ -610,6 +606,10 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:tensor_float_32_hdr_lib",
+        "@tsl//platform:tensor_float_32_utils",
+        "@tsl//platform:test",
     ],
 )
 
@@ -667,13 +667,13 @@ cc_library(
         ":matrix",
         ":qr",
         ":slicing",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla/client:xla_builder",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -686,8 +686,6 @@ xla_test(
     deps = [
         ":logdet",
         ":matrix",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:test",
         "//xla:array2d",
         "//xla:array3d",
         "//xla:literal",
@@ -698,5 +696,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:test",
     ],
 )

@@ -1,13 +1,13 @@
 # Description:
 # Cloud file system implementation.
 
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load(
-    "//tensorflow/tsl:tsl.bzl",
+    "@tsl//:tsl.bzl",
     "if_windows",
     "tsl_copts",
 )
-load("//tensorflow/tsl/platform:build_config.bzl", "tsl_cc_test")
+load("@tsl//platform:build_config.bzl", "tsl_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -32,10 +32,10 @@ cc_library(
     hdrs = ["expiring_lru_cache.h"],
     copts = tsl_copts(),
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:env",
+        "@tsl//platform:mutex",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
     ],
 )
 
@@ -44,13 +44,13 @@ cc_library(
     hdrs = ["file_block_cache.h"],
     copts = tsl_copts(),
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:notification",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:env",
+        "@tsl//platform:mutex",
+        "@tsl//platform:notification",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
     ],
 )
 
@@ -62,14 +62,14 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":file_block_cache",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:notification",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
         "@com_google_absl//absl/cleanup",
+        "@tsl//platform:env",
+        "@tsl//platform:mutex",
+        "@tsl//platform:notification",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
     ],
 )
 
@@ -80,7 +80,7 @@ cc_library(
     copts = tsl_copts(),
     deps = [
         ":http_request",
-        "//tensorflow/tsl/platform:env",
+        "@tsl//platform:env",
     ],
 )
 
@@ -90,7 +90,7 @@ cc_library(
     hdrs = ["gcs_throttle.h"],
     copts = tsl_copts(),
     deps = [
-        "//tensorflow/tsl/platform:env",
+        "@tsl//platform:env",
     ],
 )
 
@@ -113,24 +113,24 @@ cc_library(
         ":http_request",
         ":ram_file_block_cache",
         ":time_util",
-        "//tensorflow/tsl/lib/gtl:map_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:file_statistics",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:numbers",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:retrying_file_system",
-        "//tensorflow/tsl/platform:retrying_utils",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:stringprintf",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/profiler/lib:traceme",
         "@com_google_absl//absl/base:core_headers",
         "@jsoncpp_git//:jsoncpp",
+        "@tsl//lib/gtl:map_util",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:file_statistics",
+        "@tsl//platform:mutex",
+        "@tsl//platform:numbers",
+        "@tsl//platform:path",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:retrying_file_system",
+        "@tsl//platform:retrying_utils",
+        "@tsl//platform:status",
+        "@tsl//platform:str_util",
+        "@tsl//platform:strcat",
+        "@tsl//platform:stringprintf",
+        "@tsl//platform:thread_annotations",
+        "@tsl//profiler/lib:traceme",
     ],
     alwayslink = 1,
 )
@@ -157,24 +157,24 @@ cc_library(
         ":http_request",
         ":ram_file_block_cache",
         ":time_util",
-        "//tensorflow/tsl/lib/gtl:map_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:file_statistics",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:numbers",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:retrying_file_system",
-        "//tensorflow/tsl/platform:retrying_utils",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:stringprintf",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/profiler/lib:traceme",
         "@com_google_absl//absl/base:core_headers",
         "@jsoncpp_git//:jsoncpp",
+        "@tsl//lib/gtl:map_util",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:file_statistics",
+        "@tsl//platform:mutex",
+        "@tsl//platform:numbers",
+        "@tsl//platform:path",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:retrying_file_system",
+        "@tsl//platform:retrying_utils",
+        "@tsl//platform:status",
+        "@tsl//platform:str_util",
+        "@tsl//platform:strcat",
+        "@tsl//platform:stringprintf",
+        "@tsl//platform:thread_annotations",
+        "@tsl//profiler/lib:traceme",
     ],
     alwayslink = 1,
 )
@@ -184,13 +184,13 @@ cc_library(
     hdrs = ["http_request.h"],
     copts = tsl_copts(),
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:macros",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:types",
     ],
 )
 
@@ -201,18 +201,18 @@ cc_library(
     copts = tsl_copts(),
     deps = [
         ":http_request",
-        "//tensorflow/tsl/lib/gtl:map_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:scanner",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/util:env_var",
         "@curl",
+        "@tsl//lib/gtl:map_util",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:macros",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:scanner",
+        "@tsl//platform:status",
+        "@tsl//platform:str_util",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:types",
+        "@tsl//util:env_var",
     ],
 )
 
@@ -225,15 +225,15 @@ cc_library(
     copts = tsl_copts(),
     deps = [
         ":curl_http_request",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:types",
         "@curl",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:errors",
+        "@tsl//platform:macros",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:test",
+        "@tsl//platform:types",
     ],
 )
 
@@ -248,16 +248,16 @@ cc_library(
     deps = [
         ":compute_engine_metadata_client",
         ":oauth_client",
-        "//tensorflow/tsl/platform:base64",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:retrying_utils",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:thread_annotations",
         "@com_google_absl//absl/strings",
         "@jsoncpp_git//:jsoncpp",
+        "@tsl//platform:base64",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:mutex",
+        "@tsl//platform:path",
+        "@tsl//platform:retrying_utils",
+        "@tsl//platform:status",
+        "@tsl//platform:thread_annotations",
     ],
 )
 
@@ -273,8 +273,8 @@ cc_library(
     deps = [
         ":curl_http_request",
         ":http_request",
-        "//tensorflow/tsl/platform:retrying_utils",
-        "//tensorflow/tsl/platform:status",
+        "@tsl//platform:retrying_utils",
+        "@tsl//platform:status",
     ],
 )
 
@@ -290,9 +290,9 @@ cc_library(
     copts = tsl_copts(),
     deps = [
         ":compute_engine_metadata_client",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:str_util",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
+        "@tsl//platform:str_util",
     ],
 )
 
@@ -302,9 +302,9 @@ cc_library(
     hdrs = ["now_seconds_env.h"],
     copts = tsl_copts(),
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:env",
+        "@tsl//platform:mutex",
+        "@tsl//platform:types",
     ],
 )
 
@@ -320,12 +320,12 @@ cc_library(
     deps = [
         ":curl_http_request",
         ":http_request",
-        "//tensorflow/tsl/platform:base64",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
         "@boringssl//:crypto",
         "@jsoncpp_git//:jsoncpp",
+        "@tsl//platform:base64",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
     ],
 )
 
@@ -339,8 +339,8 @@ cc_library(
     ],
     copts = tsl_copts(),
     deps = [
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
     ],
 )
 
@@ -351,10 +351,10 @@ tsl_cc_test(
     deps = [
         ":expiring_lru_cache",
         ":now_seconds_env",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -365,13 +365,13 @@ tsl_cc_test(
     deps = [
         ":now_seconds_env",
         ":ram_file_block_cache",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:blocking_counter",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:notification",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:blocking_counter",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:notification",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -382,15 +382,15 @@ tsl_cc_test(
     deps = [
         ":gcs_file_system",
         ":http_request_fake",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
-        "//tensorflow/tsl/profiler/backends/cpu:traceme_recorder_impl",
-        "//tensorflow/tsl/profiler/utils:time_utils_impl",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:errors",
+        "@tsl//platform:str_util",
+        "@tsl//platform:strcat",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
+        "@tsl//profiler/backends/cpu:traceme_recorder_impl",
+        "@tsl//profiler/utils:time_utils_impl",
     ],
 )
 
@@ -401,10 +401,10 @@ tsl_cc_test(
     linkopts = if_windows(["-DEFAULTLIB:ws2_32.lib"]),
     deps = [
         ":gcs_dns_cache",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:str_util",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -415,11 +415,11 @@ tsl_cc_test(
     linkopts = if_windows(["-DEFAULTLIB:ws2_32.lib"]),
     deps = [
         ":gcs_throttle",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:str_util",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -429,12 +429,12 @@ tsl_cc_test(
     srcs = ["curl_http_request_test.cc"],
     deps = [
         ":curl_http_request",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:path",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -443,22 +443,22 @@ tsl_cc_test(
     size = "small",
     srcs = ["oauth_client_test.cc"],
     data = [
-        "//tensorflow/tsl/platform/cloud/testdata:service_account_credentials",
-        "//tensorflow/tsl/platform/cloud/testdata:service_account_public_key",
+        "@tsl//platform/cloud/testdata:service_account_credentials",
+        "@tsl//platform/cloud/testdata:service_account_public_key",
     ],
     deps = [
         ":http_request_fake",
         ":oauth_client",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:base64",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:resource_loader",
-        "//tensorflow/tsl/platform:scanner",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
         "@boringssl//:crypto",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:base64",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:path",
+        "@tsl//platform:resource_loader",
+        "@tsl//platform:scanner",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -467,19 +467,19 @@ tsl_cc_test(
     size = "small",
     srcs = ["google_auth_provider_test.cc"],
     data = [
-        "//tensorflow/tsl/platform/cloud/testdata:application_default_credentials",
-        "//tensorflow/tsl/platform/cloud/testdata:service_account_credentials",
+        "@tsl//platform/cloud/testdata:application_default_credentials",
+        "@tsl//platform/cloud/testdata:service_account_credentials",
     ],
     deps = [
         ":google_auth_provider",
         ":http_request_fake",
         ":oauth_client",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:resource_loader",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:path",
+        "@tsl//platform:resource_loader",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -490,9 +490,9 @@ tsl_cc_test(
     deps = [
         ":compute_engine_metadata_client",
         ":http_request_fake",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -503,9 +503,9 @@ tsl_cc_test(
     deps = [
         ":compute_engine_zone_provider",
         ":http_request_fake",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -515,8 +515,8 @@ tsl_cc_test(
     srcs = ["time_util_test.cc"],
     deps = [
         ":time_util",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )

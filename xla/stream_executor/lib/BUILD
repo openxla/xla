@@ -1,7 +1,7 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl:tsl.bzl", "if_windows")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.bzl", "if_windows")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
-load("//tensorflow/tsl/platform:build_config_root.bzl", "if_static")
+load("@tsl//platform:build_config_root.bzl", "if_static")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -32,12 +32,12 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "//xla/stream_executor/platform",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:stacktrace",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:statusor",
-        "//tensorflow/tsl/protobuf:error_codes_proto_impl_cc",
+        "@tsl//platform:env",
+        "@tsl//platform:stacktrace",
+        "@tsl//platform:status",
+        "@tsl//platform:statusor",
+        "@tsl//protobuf:error_codes_proto_impl_cc",
     ] + if_static([
-        "//tensorflow/tsl/platform:env_impl",
+        "@tsl//platform:env_impl",
     ]),
 )

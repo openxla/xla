@@ -10,7 +10,6 @@ xla_cc_binary(
     name = "xla-gpu-opt",
     srcs = ["xla-gpu-opt.cc"],
     deps = [
-        "//tensorflow/tsl/protobuf:dnn_proto_cc_impl",
         "//xla/mlir/backends/gpu/transforms:passes",
         "//xla/mlir_hlo:lhlo",
         "//xla/mlir_hlo:lhlo_gpu",
@@ -19,5 +18,6 @@ xla_cc_binary(
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",
+        "@tsl//protobuf:dnn_proto_cc_impl",
     ],
 )

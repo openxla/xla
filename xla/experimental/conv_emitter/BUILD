@@ -1,7 +1,7 @@
 # Description:
 #   MLIR-GPU-specific convolution in XLA service implementation.
 
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -51,8 +51,6 @@ cc_library(
     srcs = ["conv_emitter_transforms.cc"],
     hdrs = ["conv_emitter_transforms.h"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:types",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
@@ -61,6 +59,8 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:TransformUtils",
+        "@tsl//platform:logging",
+        "@tsl//platform:types",
     ],
 )
 
@@ -69,8 +69,6 @@ tf_cc_test(
     srcs = ["conv_emitter_test.cc"],
     deps = [
         ":conv_emitter",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
         "//xla/service:hlo_parser",
         "//xla/tests:filecheck",
         "//xla/tests:verified_hlo_module",
@@ -87,5 +85,7 @@ tf_cc_test(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFToControlFlow",
         "@llvm-project//mlir:Transforms",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )

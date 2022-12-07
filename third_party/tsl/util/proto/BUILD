@@ -1,5 +1,5 @@
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 

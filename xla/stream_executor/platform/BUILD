@@ -1,5 +1,5 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl/platform:build_config.bzl", "tf_stream_executor_deps")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:build_config.bzl", "tf_stream_executor_deps")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 
 package(
@@ -22,9 +22,9 @@ cc_library(
         "port.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:types",
+        "@tsl//platform:logging",
     ] + tf_stream_executor_deps("platform", "//xla/stream_executor/platform/"),
 )
 

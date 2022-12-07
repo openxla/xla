@@ -1,7 +1,7 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 load(
-    "//tensorflow/tsl/platform:build_config.bzl",
+    "@tsl//platform:build_config.bzl",
     "tf_proto_library",
 )
 
@@ -28,9 +28,9 @@ cc_library(
     srcs = ["worker_thread.cc"],
     hdrs = ["worker_thread.h"],
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:logging",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:env",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -53,10 +53,10 @@ cc_library(
     srcs = ["semaphore.cc"],
     hdrs = ["semaphore.h"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
         "//xla:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -65,12 +65,12 @@ tf_cc_test(
     srcs = ["semaphore_test.cc"],
     deps = [
         ":semaphore",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:test_main",
         "//xla:test",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:logging",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -85,7 +85,6 @@ cc_library(
     deps = [
         ":event_pool",
         ":local_device_state",
-        "//tensorflow/tsl/platform:logging",
         "//xla:shape_util",
         "//xla:types",
         "//xla/service:shaped_buffer",
@@ -95,6 +94,7 @@ cc_library(
         "//xla/stream_executor:event",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -103,7 +103,6 @@ tf_cc_test(
     srcs = ["tracked_device_buffer_test.cc"],
     deps = [
         ":tracked_device_buffer",
-        "//tensorflow/tsl/platform:test_main",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -112,6 +111,7 @@ tf_cc_test(
         "//xla/service:cpu_plugin",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -123,8 +123,6 @@ cc_library(
         ":event_pool",
         ":semaphore",
         ":worker_thread",
-        "//tensorflow/tsl/profiler/lib:traceme",
-        "//tensorflow/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla:status",
         "//xla:util",
         "//xla/client:local_client",
@@ -132,6 +130,8 @@ cc_library(
         "//xla/stream_executor:event",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/synchronization",
+        "@tsl//profiler/lib:traceme",
+        "@tsl//protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -143,8 +143,6 @@ cc_library(
     deps = [
         ":pjrt_executable",
         ":pjrt_future",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:fingerprint",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
@@ -161,6 +159,8 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
+        "@tsl//platform:errors",
+        "@tsl//platform:fingerprint",
     ],
 )
 
@@ -185,7 +185,7 @@ tf_cc_test(
     deps = [
         ":pjrt_client_test_common",
         ":tfrt_cpu_pjrt_client",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -195,13 +195,13 @@ cc_library(
     hdrs = ["pjrt_executable.h"],
     visibility = [":friends"],
     deps = [
-        "//tensorflow/tsl/platform:statusor",
         "//xla:statusor",
         "//xla:util",
         "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:statusor",
     ],
 )
 
@@ -267,8 +267,8 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = [
-        "//tensorflow/tsl/lib/monitoring:counter",
         "@com_google_absl//absl/strings",
+        "@tsl//lib/monitoring:counter",
     ],
 )
 
@@ -287,17 +287,6 @@ cc_library(
         ":tracked_device_buffer",
         ":transpose",
         ":utils",
-        "//tensorflow/tsl/framework:allocator",
-        "//tensorflow/tsl/platform:casts",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:fingerprint",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:statusor",
-        "//tensorflow/tsl/profiler/lib:connected_traceme",
-        "//tensorflow/tsl/profiler/lib:traceme",
-        "//tensorflow/tsl/profiler/lib:traceme_encode",
         "//xla:cpu_function_runtime",
         "//xla:executable_run_options",
         "//xla:literal",
@@ -334,6 +323,17 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@tsl//framework:allocator",
+        "@tsl//platform:casts",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:fingerprint",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:status",
+        "@tsl//platform:statusor",
+        "@tsl//profiler/lib:connected_traceme",
+        "@tsl//profiler/lib:traceme",
+        "@tsl//profiler/lib:traceme_encode",
     ],
 )
 
@@ -364,8 +364,6 @@ cc_library(
         ":local_device_state",
         ":pjrt_stream_executor_client",
         ":utils",
-        "//tensorflow/tsl/platform:casts",
-        "//tensorflow/tsl/platform:errors",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
@@ -384,6 +382,8 @@ cc_library(
         "//xla/stream_executor/tpu:tpu_platform_interface",
         "//xla/stream_executor/tpu:tpu_topology_external",
         "//xla/stream_executor/tpu:tpu_transfer_manager",
+        "@tsl//platform:casts",
+        "@tsl//platform:errors",
     ],
 )
 
@@ -458,7 +458,6 @@ cc_library(
     srcs = ["tracked_tfrt_cpu_device_buffer.cc"],
     hdrs = ["tracked_tfrt_cpu_device_buffer.h"],
     deps = [
-        "//tensorflow/tsl/platform:platform_port",
         "//xla:cpu_function_runtime",
         "//xla:shape_util",
         "//xla:util",
@@ -467,6 +466,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tf_runtime//:hostcontext",
+        "@tsl//platform:platform_port",
     ],
 )
 
@@ -497,11 +497,6 @@ cc_library(
         ":transpose",
         ":utils",
         ":worker_thread",
-        "//tensorflow/tsl/platform:denormal",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:setround",
-        "//tensorflow/tsl/profiler/lib:connected_traceme",
-        "//tensorflow/tsl/profiler/lib:traceme",
         "//third_party/eigen3",  # TODO(zhangqiaorjc): Remove if use TFRT threadpool.
         "//xla:literal",
         "//xla:shape_util",
@@ -527,6 +522,11 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:support",
+        "@tsl//platform:denormal",
+        "@tsl//platform:errors",
+        "@tsl//platform:setround",
+        "@tsl//profiler/lib:connected_traceme",
+        "@tsl//profiler/lib:traceme",
     ],
 )
 
@@ -546,8 +546,8 @@ cc_library(
     name = "lru_cache",
     hdrs = ["lru_cache.h"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
         "@com_google_absl//absl/container:node_hash_map",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -556,9 +556,9 @@ tf_cc_test(
     srcs = ["lru_cache_test.cc"],
     deps = [
         ":lru_cache",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:test_main",
         "//xla:test",
+        "@tsl//platform:logging",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -572,8 +572,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":lru_cache",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/profiler/lib:traceme",
         "//third_party/eigen3",
         "//xla:permutation_util",
         "//xla:status",
@@ -586,6 +584,8 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
+        "@tsl//platform:logging",
+        "@tsl//profiler/lib:traceme",
     ],
 )
 
@@ -594,10 +594,6 @@ tf_cc_test(
     srcs = ["transpose_test.cc"],
     deps = [
         ":transpose",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
-        "//tensorflow/tsl/protobuf:error_codes_proto_impl_cc",
         "//third_party/eigen3",
         "//xla:array",
         "//xla:permutation_util",
@@ -606,6 +602,10 @@ tf_cc_test(
         "//xla:util",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/numeric:int128",
+        "@tsl//platform:env",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
+        "@tsl//protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -617,7 +617,6 @@ cc_library(
         ":pjrt_client",
         ":pjrt_executable",
         ":pjrt_future",
-        "//tensorflow/tsl/platform:status",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -629,6 +628,7 @@ cc_library(
         "//xla/stream_executor/tpu:tpu_initializer_helper",
         "@com_google_absl//absl/strings",
         "@llvm-project//mlir:BytecodeWriter",
+        "@tsl//platform:status",
     ],
 )
 
@@ -646,9 +646,9 @@ tf_cc_test(
     deps = [
         ":host_callback",
         ":pjrt_client",
-        "//tensorflow/tsl/lib/core:status_test_util",
         "//xla/tests:literal_test_util",
         "@com_google_googletest//:gtest_main",
+        "@tsl//lib/core:status_test_util",
     ],
 )
 

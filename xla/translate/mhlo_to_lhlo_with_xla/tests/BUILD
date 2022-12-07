@@ -1,7 +1,7 @@
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
+load("@tsl//:tsl.default.bzl", "filegroup")
 load("//third_party/tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
 load(
-    "//tensorflow/tsl/platform:build_config_root.bzl",
+    "@tsl//platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
 

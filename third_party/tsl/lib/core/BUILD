@@ -4,9 +4,9 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_portable")
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -80,7 +80,7 @@ cc_library(
     hdrs = ["bitmap.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "//tensorflow/tsl/platform:logging",
+        "@tsl//platform:logging",
     ],
     alwayslink = 1,
 )
@@ -90,8 +90,8 @@ cc_library(
     testonly = 1,
     hdrs = ["status_test_util.h"],
     deps = [
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:test",
+        "@tsl//platform:status",
+        "@tsl//platform:test",
     ],
 )
 
@@ -99,7 +99,7 @@ cc_library(
     name = "bits",
     hdrs = ["bits.h"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:logging",
+        "@tsl//platform:types",
     ],
 )

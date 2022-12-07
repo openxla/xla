@@ -4,17 +4,17 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load("@tsl//:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
-    "//tensorflow/tsl/platform:build_config_root.bzl",
+    "@tsl//platform:build_config_root.bzl",
     "if_static",
 )
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 load(
-    "//tensorflow/tsl/platform:build_config.bzl",
+    "@tsl//platform:build_config.bzl",
     "tsl_cc_test",
 )
 
@@ -116,24 +116,24 @@ cc_library(
     ] + if_static(
         extra_deps = [
             ":allocator_registry_impl",
-            "//tensorflow/tsl/lib/gtl:inlined_vector",
-            "//tensorflow/tsl/platform:strcat",
-            "//tensorflow/tsl/platform:stringprintf",
-            "//tensorflow/tsl/platform:env",
-            "//tensorflow/tsl/platform:env_impl",
-            "//tensorflow/tsl/platform:logging",
-            "//tensorflow/tsl/platform:macros",
-            "//tensorflow/tsl/platform:mutex",
-            "//tensorflow/tsl/platform:platform_port",
-            "//tensorflow/tsl/platform:thread_annotations",
-            "//tensorflow/tsl/platform:types",
+            "@tsl//lib/gtl:inlined_vector",
+            "@tsl//platform:strcat",
+            "@tsl//platform:stringprintf",
+            "@tsl//platform:env",
+            "@tsl//platform:env_impl",
+            "@tsl//platform:logging",
+            "@tsl//platform:macros",
+            "@tsl//platform:mutex",
+            "@tsl//platform:platform_port",
+            "@tsl//platform:thread_annotations",
+            "@tsl//platform:types",
         ],
         otherwise = [
-            "//tensorflow/tsl/lib/gtl:inlined_vector",
-            "//tensorflow/tsl/platform:logging",
-            "//tensorflow/tsl/platform:platform_port",
-            "//tensorflow/tsl/platform:strcat",
-            "//tensorflow/tsl/platform:env",
+            "@tsl//lib/gtl:inlined_vector",
+            "@tsl//platform:logging",
+            "@tsl//platform:platform_port",
+            "@tsl//platform:strcat",
+            "@tsl//platform:env",
         ],
     ),
     alwayslink = 1,
@@ -153,26 +153,26 @@ cc_library(
         "tracking_allocator.h",
     ],
     visibility = [
-        "//tensorflow/tsl:__subpackages__",
         "//third_party/tensorflow/core:__subpackages__",
         "//xla/stream_executor:__subpackages__",
+        "@tsl//:__subpackages__",
     ],
     deps = [
         ":numeric_types",
         ":type_traits",
-        "//tensorflow/tsl/lib/gtl:inlined_vector",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:stringprintf",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/profiler/lib:scoped_memory_debug_annotation",
-        "//tensorflow/tsl/profiler/lib:traceme",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
+        "@tsl//lib/gtl:inlined_vector",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:strcat",
+        "@tsl//platform:stringprintf",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
+        "@tsl//profiler/lib:scoped_memory_debug_annotation",
+        "@tsl//profiler/lib:traceme",
     ],
     alwayslink = 1,
 )
@@ -191,26 +191,26 @@ cc_library(
         ":allocator",
         ":metrics",
         ":shared_counter",
-        "//tensorflow/tsl/lib/core:bits",
-        "//tensorflow/tsl/lib/monitoring:counter",
-        "//tensorflow/tsl/lib/monitoring:gauge",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:numbers",
-        "//tensorflow/tsl/platform:statusor",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/profiler/lib:scoped_memory_debug_annotation",
-        "//tensorflow/tsl/profiler/lib:traceme",
-        "//tensorflow/tsl/protobuf:bfc_memory_map_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
+        "@tsl//lib/core:bits",
+        "@tsl//lib/monitoring:counter",
+        "@tsl//lib/monitoring:gauge",
+        "@tsl//platform:env",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:numbers",
+        "@tsl//platform:statusor",
+        "@tsl//platform:str_util",
+        "@tsl//platform:strcat",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
+        "@tsl//profiler/lib:scoped_memory_debug_annotation",
+        "@tsl//profiler/lib:traceme",
+        "@tsl//protobuf:bfc_memory_map_proto_cc",
     ],
 )
 
@@ -232,7 +232,7 @@ cc_library(
         "device_id_manager.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:types",
     ] + if_static([
         ":device_id_impl",
     ]),
@@ -247,13 +247,13 @@ cc_library(
     ],
     deps = [
         ":device_type",
-        "//tensorflow/tsl/lib/gtl:int_type",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//lib/gtl:int_type",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:status",
+        "@tsl//platform:types",
     ],
 )
 
@@ -274,7 +274,7 @@ cc_library(
     ],
     deps = [
         ":fixedpoint_types",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:types",
     ],
 )
 
@@ -284,7 +284,7 @@ cc_library(
     features = ["parse_headers"],
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:types",
     ],
 )
 
@@ -293,7 +293,7 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = [
-        "//tensorflow/tsl/lib/monitoring:counter",
+        "@tsl//lib/monitoring:counter",
     ],
 )
 
@@ -315,7 +315,7 @@ cc_library(
     ],
     deps = [
         ":numeric_types",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:types",
     ],
 )
 
@@ -337,17 +337,17 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/tsl/lib/gtl:flatmap",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:hash",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:notification",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
         "@com_google_absl//absl/memory",
+        "@tsl//lib/gtl:flatmap",
+        "@tsl//platform:errors",
+        "@tsl//platform:hash",
+        "@tsl//platform:logging",
+        "@tsl//platform:mutex",
+        "@tsl//platform:notification",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
     ],
 )
 
@@ -357,12 +357,12 @@ tsl_cc_test(
     srcs = ["cancellation_test.cc"],
     deps = [
         ":cancellation",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:notification",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:notification",
+        "@tsl//platform:status",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 

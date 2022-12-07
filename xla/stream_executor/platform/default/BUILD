@@ -1,5 +1,5 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl:tsl.bzl", "tsl_copts")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.bzl", "tsl_copts")
 
 licenses(["notice"])
 
@@ -26,8 +26,8 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "//tensorflow/tsl/platform:dso_loader",
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:dso_loader",
     ],
 )

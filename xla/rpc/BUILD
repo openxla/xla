@@ -1,5 +1,5 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load(
     "//third_party/tensorflow:tensorflow.bzl",
     "tf_cc_test",
@@ -10,11 +10,11 @@ load(
     "xla_py_grpc_library",
 )
 load(
-    "//tensorflow/tsl:tsl.bzl",
+    "@tsl//:tsl.bzl",
     "if_libtpu",
 )
 load(
-    "//tensorflow/tsl/platform:build_config.bzl",
+    "@tsl//platform:build_config.bzl",
     "tf_proto_library",
 )
 
@@ -45,10 +45,10 @@ cc_library(
     deps = [
         ":xla_service_cc_grpc_proto",
         ":xla_service_proto_cc",
-        "//tensorflow/tsl/distributed_runtime/rpc:grpc_util",
         "//xla:service_interface",
         "//xla:xla_data_cc_grpc_proto",
         "//xla:xla_data_proto_cc",
+        "@tsl//distributed_runtime/rpc:grpc_util",
     ],
 )
 
@@ -59,9 +59,9 @@ cc_library(
         ":grpc_service",
         "@com_google_absl//absl/strings:str_format",
         "//xla/service:platform_util",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/util:command_line_flags",
+        "@tsl//platform:logging",
+        "@tsl//platform:platform_port",
+        "@tsl//util:command_line_flags",
     ] + tsl_grpc_cc_dependencies() + if_libtpu(
         if_false = ["//xla/service:cpu_plugin"],
         if_true = [],
@@ -72,8 +72,8 @@ xla_cc_binary(
     name = "grpc_service_main_cpu",
     deps = [
         ":grpc_service_main_library",
-        "//tensorflow/tsl/protobuf:dnn_proto_cc_impl",
         "//xla/service:cpu_plugin",
+        "@tsl//protobuf:dnn_proto_cc_impl",
     ],
 )
 
@@ -89,12 +89,12 @@ tf_cc_test(
         "//xla/client",
         "//xla/client:xla_builder",
         "//xla/tests:literal_test_util",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:net",
-        "//tensorflow/tsl/platform:subprocess",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
-        "//tensorflow/tsl/platform:path",
+        "@tsl//platform:logging",
+        "@tsl//platform:net",
+        "@tsl//platform:subprocess",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
+        "@tsl//platform:path",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -107,7 +107,7 @@ cc_library(
         ":xla_service_cc_grpc_proto",
         "//xla/service",
         "//xla/service:platform_util",
-        "//tensorflow/tsl/distributed_runtime/rpc:grpc_util",
+        "@tsl//distributed_runtime/rpc:grpc_util",
     ] + tsl_grpc_cc_dependencies(),
 )
 

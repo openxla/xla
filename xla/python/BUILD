@@ -1,8 +1,8 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl/platform:build_config.bzl", "pyx_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:build_config.bzl", "pyx_library")
 load(
-    "//tensorflow/tsl/platform/default:cuda_build_defs.bzl",
+    "@tsl//platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 load("//xla:xla.bzl", "xla_py_test_deps")
@@ -12,7 +12,7 @@ load(
     "tf_cc_test",
 )
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("//tensorflow/tsl:tsl.default.bzl", "tsl_pybind_extension")
+load("@tsl//:tsl.default.bzl", "tsl_pybind_extension")
 load("//third_party/tensorflow:pytype.default.bzl", "pytype_library")
 
 package(
@@ -159,8 +159,6 @@ cc_library(
     deps = [
         ":exceptions",
         ":status_casters",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:protobuf",
         "//third_party/tensorflow/python:bfloat16_lib",
         "//xla:literal",
         "//xla:shape_util",
@@ -174,6 +172,8 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
+        "@tsl//platform:logging",
+        "@tsl//platform:protobuf",
     ],
 )
 
@@ -226,12 +226,12 @@ cc_library(
     deps = [
         ":exceptions",
         ":python_ref_manager",
-        "//tensorflow/tsl/platform:logging",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@pybind11",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -247,12 +247,12 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":traceback",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/profiler/protobuf:profile_proto_cc",
         "//xla:statusor",
         "//xla:util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@pybind11",
+        "@tsl//platform:protobuf",
+        "@tsl//profiler/protobuf:profile_proto_cc",
     ],
 )
 
@@ -295,7 +295,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":exceptions",
-        "//tensorflow/tsl/python/lib/core:numpy",
+        "@tsl//python/lib/core:numpy",
         ":pprof_profile_builder",
         ":python_ref_manager",
         ":python_utils",
@@ -328,10 +328,10 @@ cc_library(
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:statusor",
-        "//tensorflow/tsl/profiler/lib:traceme",
-        "//tensorflow/tsl/platform:fingerprint",
+        "@tsl//platform:errors",
+        "@tsl//platform:statusor",
+        "@tsl//profiler/lib:traceme",
+        "@tsl//platform:fingerprint",
     ] + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
     ]) + select({
@@ -414,8 +414,8 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:lru_cache",
         "//xla/pjrt:pjrt_client",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/profiler/lib:traceme",
+        "@tsl//platform:status",
+        "@tsl//profiler/lib:traceme",
     ] + select({
         ":ifrt_enabled": [
             "//xla/python/ifrt",
@@ -482,7 +482,6 @@ cc_library(
     srcs = ["outfeed_receiver.cc"],
     hdrs = ["outfeed_receiver.h"],
     deps = [
-        "//tensorflow/tsl/profiler/lib:traceme",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:statusor",
@@ -494,6 +493,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//profiler/lib:traceme",
     ],
 )
 
@@ -520,7 +520,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@pybind11",
         "//xla/pjrt:lru_cache",
-        "//tensorflow/tsl/profiler/lib:traceme",
+        "@tsl//profiler/lib:traceme",
     ] + select({
         ":ifrt_enabled": [
             "//xla/python/ifrt",
@@ -562,9 +562,9 @@ cc_library(
         "@pybind11_abseil//pybind11_abseil:absl_casters",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:statusor",
-        "//tensorflow/tsl/profiler/lib:traceme",
+        "@tsl//platform:logging",
+        "@tsl//platform:statusor",
+        "@tsl//profiler/lib:traceme",
     ] + select({
         ":ifrt_enabled": [
             "//xla/python/ifrt",
@@ -580,8 +580,6 @@ tf_cc_test(
     srcs = ["outfeed_receiver_test.cc"],
     deps = [
         ":outfeed_receiver",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
         "//xla:statusor",
         "//xla:test",
         "//xla/client:client_library",
@@ -593,6 +591,8 @@ tf_cc_test(
         "//xla/service:platform_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -632,7 +632,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":exceptions",
-        "//tensorflow/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
@@ -641,6 +640,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -656,7 +656,6 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":types",
-        "//tensorflow/tsl/platform:errors",
         "//xla:status",
         "//xla/client:xla_computation",
         "//xla/mlir/utils:error_util",
@@ -673,6 +672,7 @@ cc_library(
         "@pybind11",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
+        "@tsl//platform:errors",
     ],
 )
 
@@ -689,15 +689,15 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":types",
-        "//tensorflow/tsl/profiler/lib:profiler_session",
-        "//tensorflow/tsl/profiler/rpc:profiler_server_impl",
-        "//tensorflow/tsl/profiler/rpc/client:capture_profile",
-        "//tensorflow/tsl/profiler/rpc/client:profiler_client",
         "//xla:status",
         "//xla/backends/profiler:profiler_backends",
         "//xla/backends/profiler/cpu:python_tracer",
         "//xla/python/profiler/internal:traceme_wrapper",
         "@pybind11",
+        "@tsl//profiler/lib:profiler_session",
+        "@tsl//profiler/rpc:profiler_server_impl",
+        "@tsl//profiler/rpc/client:capture_profile",
+        "@tsl//profiler/rpc/client:profiler_client",
     ],
 )
 
@@ -782,7 +782,6 @@ cc_library(
     deps = [
         ":py_client",
         ":types",
-        "//tensorflow/tsl/lib/strings:proto_serialization",
         "//xla:debug_options_flags",
         "//xla:shape_util",
         "//xla:statusor",
@@ -811,6 +810,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@pybind11",
+        "@tsl//lib/strings:proto_serialization",
     ],
 )
 
@@ -933,7 +933,7 @@ tsl_pybind_extension(
         ":custom_call_sharding",
         ":jax_jit",
         ":mlir",
-        "//tensorflow/tsl/python/lib/core:numpy",
+        "@tsl//python/lib/core:numpy",
         ":ops",
         ":util",
         ":pmap_lib",
@@ -969,8 +969,8 @@ tsl_pybind_extension(
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
         "//xla/stream_executor/tpu:pjrt_api",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/distributed_runtime/preemption:preemption_sync_manager",
+        "@tsl//platform:logging",
+        "@tsl//distributed_runtime/preemption:preemption_sync_manager",
         "//third_party/tensorflow/python:bfloat16_lib",
     ] + select({
         ":gpu_enabled": [

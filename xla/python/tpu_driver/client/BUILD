@@ -1,5 +1,5 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -15,10 +15,6 @@ cc_library(
     ],
     compatible_with = [],
     deps = [
-        "//tensorflow/tsl/framework:allocator",
-        "//tensorflow/tsl/platform:casts",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/profiler/lib:traceme",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",
@@ -43,6 +39,10 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
+        "@tsl//framework:allocator",
+        "@tsl//platform:casts",
+        "@tsl//platform:env",
+        "@tsl//profiler/lib:traceme",
     ],
 )
 

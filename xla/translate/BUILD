@@ -11,8 +11,6 @@ xla_cc_binary(
     testonly = True,
     srcs = ["xla_translate_main.cc"],
     deps = [
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/protobuf:dnn_proto_cc_impl",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:cpu_transfer_manager",
         "//xla/stream_executor/host:host_platform",
@@ -24,5 +22,7 @@ xla_cc_binary(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TranslateLib",
+        "@tsl//platform:platform_port",
+        "@tsl//protobuf:dnn_proto_cc_impl",
     ],
 )

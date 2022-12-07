@@ -3,14 +3,14 @@
 # processes for distributed operations.
 
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "//tensorflow/tsl:internal",
+        "@tsl//:internal",
     ],
     licenses = ["notice"],
 )
@@ -20,10 +20,10 @@ cc_library(
     srcs = ["call_options.cc"],
     hdrs = ["call_options.h"],
     deps = [
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
     ],
 )
 

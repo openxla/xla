@@ -44,7 +44,6 @@ cc_library(
         "pjrt_executable.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:statusor",
         "//xla:literal",
         "//xla:statusor",
         "//xla:util",
@@ -57,6 +56,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@tsl//platform:statusor",
     ],
 )
 

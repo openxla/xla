@@ -1,7 +1,7 @@
 # Description:
 #   Implementation of XLA’s HLO transformations.
 
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -29,11 +29,11 @@ tf_cc_test(
     srcs = ["hlo_constant_splitter_test.cc"],
     deps = [
         ":hlo_constant_splitter",
-        "//tensorflow/tsl/lib/core:status_test_util",
         "//xla:shape_util",
         "//xla:test",
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//lib/core:status_test_util",
     ],
 )

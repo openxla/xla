@@ -1,6 +1,6 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -16,6 +16,7 @@ td_library(
     ],
     compatible_with = get_compatible_with_cloud(),
     deps = [
+        "//xla/mlir_hlo:hlo_ops_td_files",
         "@llvm-project//mlir:BufferizableOpInterfaceTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
@@ -96,6 +97,7 @@ cc_library(
         ":xla_cpu_dialect_inc_gen",
         ":xla_cpu_enums_inc_gen",
         ":xla_cpu_inc_gen",
+        "//xla/mlir_hlo",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BufferizationDialect",
         "@llvm-project//mlir:IR",

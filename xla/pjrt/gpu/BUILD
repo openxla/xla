@@ -1,5 +1,5 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl:tsl.bzl", "if_nccl")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.bzl", "if_nccl")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
@@ -16,9 +16,6 @@ cc_library(
     hdrs = ["gpu_helpers.h"],
     visibility = ["//xla/pjrt:friends"],
     deps = [
-        "//tensorflow/tsl/framework:bfc_allocator",
-        "//tensorflow/tsl/framework:device_id_impl",
-        "//tensorflow/tsl/util:env_var",
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
@@ -28,6 +25,9 @@ cc_library(
         "//xla/stream_executor:device_mem_allocator",
         "//xla/stream_executor:kernel",
         "@com_google_absl//absl/types:span",
+        "@tsl//framework:bfc_allocator",
+        "@tsl//framework:device_id_impl",
+        "@tsl//util:env_var",
     ],
 )
 
@@ -49,12 +49,12 @@ cc_library(
         "//xla/pjrt/distributed:client",
         "//xla/service:platform_util",
         "//xla:util",
-        "//tensorflow/tsl/framework:bfc_allocator",
-        "//tensorflow/tsl/framework:device_id",
-        "//tensorflow/tsl/framework:device_id_impl",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/util:env_var",
+        "@tsl//framework:bfc_allocator",
+        "@tsl//framework:device_id",
+        "@tsl//framework:device_id_impl",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//util:env_var",
         "//xla/stream_executor:device_mem_allocator",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:tf_allocator_adapter",
@@ -117,8 +117,8 @@ tf_cc_test(
     ],
     deps = [
         ":se_gpu_pjrt_client",
-        "//tensorflow/tsl/platform:test_main",
         "//xla/pjrt:pjrt_client_test_common",
         "//xla/service:gpu_plugin",
+        "@tsl//platform:test_main",
     ],
 )

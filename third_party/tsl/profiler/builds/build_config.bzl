@@ -1,7 +1,7 @@
 """Provides a redirection point for platform specific implementations of Starlark utilities."""
 
 load(
-    "//tensorflow/tsl/profiler/builds/oss:build_config.bzl",
+    "@tsl//profiler/builds/oss:build_config.bzl",
     _tf_profiler_alias = "tf_profiler_alias",
     _tf_profiler_pybind_cc_library_wrapper = "tf_profiler_pybind_cc_library_wrapper",
 )
@@ -14,6 +14,6 @@ def tf_profiler_copts():
 
 def if_profiler_oss(if_true, if_false = []):
     return select({
-        "//tensorflow/tsl/profiler/builds:profiler_build_oss": if_true,
+        "@tsl//profiler/builds:profiler_build_oss": if_true,
         "//conditions:default": if_false,
     })

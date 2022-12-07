@@ -1,5 +1,5 @@
 load("//xla:xla.bzl", "xla_cc_binary")
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
 
 package_group(
     name = "friends",
@@ -31,7 +31,6 @@ xla_cc_binary(
     srcs = ["xla-runtime-opt.cc"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "//tensorflow/tsl/protobuf:dnn_proto_cc_impl",
         "//xla/mlir/math/transforms:passes",
         "//xla/mlir/memref/transforms:passes",
         "//xla/mlir/runtime/ir/tests:testlib",
@@ -42,5 +41,6 @@ xla_cc_binary(
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",
+        "@tsl//protobuf:dnn_proto_cc_impl",
     ],
 )

@@ -1,6 +1,6 @@
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_portable")
 load(
-    "//tensorflow/tsl/platform:build_config.bzl",
+    "@tsl//platform:build_config.bzl",
     "tsl_cc_test",
 )
 
@@ -22,8 +22,8 @@ cc_library(
         "//third_party/tensorflow:__subpackages__",
     ],
     deps = [
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:logging",
+        "@tsl//platform:types",
     ],
 )
 
@@ -35,11 +35,11 @@ tsl_cc_test(
     ],
     deps = [
         ":math_util",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:logging",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
+        "@tsl//platform:types",
     ],
 )
 

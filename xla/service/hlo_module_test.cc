@@ -742,9 +742,9 @@ ENTRY ReduceR3ToR2.v3 {
       reconstructed_module->ToProtoWithConfig());
 
   // The two protos should be equivalent except for the `id` field
-  proto2::util::MessageDifferencer diff;
+  google::protobuf::util::MessageDifferencer diff;
   diff.set_message_field_comparison(
-      proto2::util::MessageDifferencer::EQUIVALENT);
+      google::protobuf::util::MessageDifferencer::EQUIVALENT);
   auto module_descriptor = HloModuleProto::GetDescriptor();
   auto unique_id_field = module_descriptor->FindFieldByName("id");
   diff.IgnoreField(unique_id_field);
@@ -872,9 +872,9 @@ TEST_F(HloModuleTest, HloModuleConfigCreateFromProto) {
   TF_ASSERT_OK_AND_ASSIGN(HloModuleConfigProto output_proto,
                           good_config->ToProto());
 
-  proto2::util::MessageDifferencer diff;
+  google::protobuf::util::MessageDifferencer diff;
   diff.set_message_field_comparison(
-      proto2::util::MessageDifferencer::EQUIVALENT);
+      google::protobuf::util::MessageDifferencer::EQUIVALENT);
   EXPECT_TRUE(diff.Compare(input_proto, output_proto));
 }
 
@@ -889,9 +889,9 @@ TEST_F(HloModuleTest, HloModuleConfigToProto) {
   TF_ASSERT_OK_AND_ASSIGN(HloModuleConfigProto second_proto,
                           remade_config->ToProto());
 
-  proto2::util::MessageDifferencer diff;
+  google::protobuf::util::MessageDifferencer diff;
   diff.set_message_field_comparison(
-      proto2::util::MessageDifferencer::EQUIVALENT);
+      google::protobuf::util::MessageDifferencer::EQUIVALENT);
   EXPECT_TRUE(diff.Compare(first_proto, second_proto));
 }
 

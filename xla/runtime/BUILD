@@ -1,7 +1,7 @@
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
-load("//tensorflow/tsl/platform:build_config.bzl", "tf_platform_deps")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//platform:build_config.bzl", "tf_platform_deps")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -37,10 +37,10 @@ tf_cc_test(
     deps = [
         ":arguments",
         ":types",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
         "@llvm-project//llvm:Support",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -50,12 +50,12 @@ cc_library(
     hdrs = ["async_runtime.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:platform_port",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/status",
         "@tf_runtime//:async_value",
         "@tf_runtime//:ref_count",
+        "@tsl//platform:env",
+        "@tsl//platform:platform_port",
     ],
 )
 
@@ -64,7 +64,7 @@ cc_library(
     hdrs = ["async_values_cache.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "//tensorflow/tsl/platform",
+        "@tsl//platform",
     ] + tf_platform_deps(
         "async_values_cache",
         platform_dir = "//xla/runtime/",
@@ -118,12 +118,12 @@ tf_cc_test(
         ":jit_executable",
         ":module",
         ":state",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
         "//xla/mlir/runtime/ir/tests:testlib",
         "//xla/mlir/runtime/transforms:compilation_pipeline_gpu",
         "//xla/mlir/runtime/transforms:custom_call_encoding",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -145,9 +145,9 @@ cc_library(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         ":logical_result",
-        "//tensorflow/tsl/platform:logging",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -156,9 +156,9 @@ tf_cc_test(
     srcs = ["diagnostics_test.cc"],
     deps = [
         ":diagnostics",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
         "@com_google_absl//absl/status",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -213,13 +213,13 @@ tf_cc_test(
         ":logical_result",
         ":results",
         ":types",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
         "//xla/mlir/runtime/transforms/tests:testlib_pipeline",
         "//xla/mlir/runtime/utils:async_runtime_api",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@llvm-project//mlir:Support",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -272,14 +272,14 @@ tf_cc_test(
         ":ffi",
         ":jit_executable",
         ":results",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
         "//xla/mlir/runtime/transforms:compilation_pipeline_gpu",
         "//xla/runtime/ffi:ffi_api_hdrs",
         "//xla/runtime/ffi:ffi_c_api_hdrs",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -326,9 +326,9 @@ tf_cc_test(
     srcs = ["map_by_type_test.cc"],
     deps = [
         ":map_by_type",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -338,7 +338,7 @@ cc_library(
     hdrs = ["memory_mapper.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "//tensorflow/tsl/platform",
+        "@tsl//platform",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:Support",
     ] + tf_platform_deps(
@@ -375,8 +375,8 @@ tf_cc_test(
     deps = [
         ":custom_call",
         ":module",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -397,9 +397,9 @@ tf_cc_test(
         ":logical_result",
         ":results",
         ":types",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -424,9 +424,9 @@ tf_cc_test(
     srcs = ["state_test.cc"],
     deps = [
         ":state",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -454,10 +454,10 @@ tf_cc_test(
         ":constraints",
         ":symbolic_shape",
         ":types",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
         "@llvm-project//llvm:Support",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -511,8 +511,8 @@ tf_cc_test(
     srcs = ["type_id_test.cc"],
     deps = [
         ":type_id",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )

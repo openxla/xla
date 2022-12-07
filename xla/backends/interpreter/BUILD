@@ -1,6 +1,6 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load(
-    "//tensorflow/tsl/platform:build_config_root.bzl",
+    "@tsl//platform:build_config_root.bzl",
     "if_static",
 )
 
@@ -30,8 +30,6 @@ cc_library(
     deps = [
         ":executable",
         ":platform_id",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
         "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
@@ -61,6 +59,8 @@ cc_library(
         "//xla/service:triangular_solve_expander",
         "//xla/service:while_loop_simplifier",
         "//xla/stream_executor",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
     ],
     alwayslink = True,  # Contains compiler registration
 )
@@ -105,10 +105,6 @@ cc_library(
     deps = [
         ":executable_base",
         ":executor",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:mutex",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -127,6 +123,10 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/types:span",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:mutex",
     ],
 )
 
@@ -149,7 +149,6 @@ cc_library(
     srcs = ["executor.cc"],
     hdrs = ["executor.h"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
@@ -157,5 +156,6 @@ cc_library(
         "//xla/stream_executor/host:host_stream",
         "//xla/stream_executor/host:host_timer",
         "@com_google_absl//absl/types:span",
+        "@tsl//platform:logging",
     ],
 )

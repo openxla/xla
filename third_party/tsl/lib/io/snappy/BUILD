@@ -1,20 +1,20 @@
 load(
-    "//tensorflow/tsl/platform:build_config.bzl",
+    "@tsl//platform:build_config.bzl",
     "tsl_cc_test",
 )
 
 # Snappy targets.
 
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "//tensorflow/tsl/lib/io:__pkg__",
         "//third_party/tensorflow/core/lib/io:__pkg__",
+        "@tsl//lib/io:__pkg__",
     ],
     licenses = ["notice"],
 )
@@ -33,12 +33,12 @@ cc_library(
     srcs = ["snappy_inputbuffer.cc"],
     hdrs = ["snappy_inputbuffer.h"],
     deps = [
-        "//tensorflow/tsl/lib/io:inputstream_interface",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//lib/io:inputstream_interface",
+        "@tsl//platform:env",
+        "@tsl//platform:macros",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:status",
+        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -48,12 +48,12 @@ cc_library(
     srcs = ["snappy_outputbuffer.cc"],
     hdrs = ["snappy_outputbuffer.h"],
     deps = [
-        "//tensorflow/tsl/platform",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform",
+        "@tsl//platform:env",
+        "@tsl//platform:macros",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:status",
+        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -63,10 +63,10 @@ cc_library(
     srcs = ["snappy_inputstream.cc"],
     hdrs = ["snappy_inputstream.h"],
     deps = [
-        "//tensorflow/tsl/lib/io:inputstream_interface",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:platform_port",
         "@com_google_absl//absl/memory",
+        "@tsl//lib/io:inputstream_interface",
+        "@tsl//platform:errors",
+        "@tsl//platform:platform_port",
     ],
     alwayslink = True,
 )
@@ -75,7 +75,7 @@ cc_library(
     name = "snappy_compression_options",
     hdrs = ["snappy_compression_options.h"],
     deps = [
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -88,12 +88,12 @@ tsl_cc_test(
         ":snappy_inputbuffer",
         ":snappy_inputstream",
         ":snappy_outputbuffer",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/lib/io:inputbuffer",
-        "//tensorflow/tsl/lib/io:random_inputstream",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//lib/io:inputbuffer",
+        "@tsl//lib/io:random_inputstream",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )

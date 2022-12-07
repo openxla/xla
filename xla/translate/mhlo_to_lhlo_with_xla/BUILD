@@ -1,4 +1,4 @@
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_binary")
 
 package(
@@ -12,9 +12,6 @@ cc_library(
     srcs = ["mhlo_to_lhlo_with_xla.cc"],
     hdrs = ["mhlo_to_lhlo_with_xla.h"],
     deps = [
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:statusor",
         "//xla:debug_options_flags",
         "//xla:shape_util",
         "//xla:statusor",
@@ -51,6 +48,9 @@ cc_library(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:TranslateLib",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
+        "@tsl//platform:statusor",
     ],
 )
 
@@ -71,8 +71,6 @@ xla_cc_binary(
     srcs = ["xla_translate_opt_main.cc"],
     deps = [
         ":mhlo_to_lhlo_with_xla",  # buildcleaner: keep
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/protobuf:dnn_proto_cc_impl",
         "//xla/mlir/framework/ir:xla_framework",
         "//xla/mlir/framework/transforms:passes",
         "//xla/mlir_hlo:hlo_dialect_registration",
@@ -82,6 +80,8 @@ xla_cc_binary(
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:MlirOptLib",
         "@stablehlo//:register",
+        "@tsl//platform:platform_port",
+        "@tsl//protobuf:dnn_proto_cc_impl",
     ],
 )
 
@@ -91,8 +91,6 @@ xla_cc_binary(
     srcs = ["xla_translate_opt_main.cc"],
     deps = [
         ":mhlo_to_lhlo_with_xla",  # buildcleaner: keep
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/protobuf:dnn_proto_cc_impl",
         "//xla/mlir/framework/ir:xla_framework",
         "//xla/mlir/framework/transforms:passes",
         "//xla/mlir_hlo:all_passes",
@@ -103,5 +101,7 @@ xla_cc_binary(
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:MlirOptLib",
         "@stablehlo//:register",
+        "@tsl//platform:platform_port",
+        "@tsl//protobuf:dnn_proto_cc_impl",
     ],
 )

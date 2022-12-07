@@ -1,6 +1,6 @@
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
+load("@tsl//:tsl.default.bzl", "filegroup")
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -17,13 +17,13 @@ cc_library(
         "//xla/stream_executor:__pkg__",
     ],
     deps = [
-        "//tensorflow/tsl/lib/gtl:inlined_vector",
-        "//tensorflow/tsl/platform:hash",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:protobuf",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
+        "@tsl//lib/gtl:inlined_vector",
+        "@tsl//platform:hash",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:protobuf",
     ],
 )
 

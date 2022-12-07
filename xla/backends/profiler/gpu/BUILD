@@ -1,26 +1,26 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load(
-    "//tensorflow/tsl:tsl.bzl",
+    "@tsl//:tsl.bzl",
     "tsl_copts",
     "tsl_gpu_library",
 )
-load("//tensorflow/tsl:tsl.default.bzl", "tsl_gpu_cc_test")
+load("@tsl//:tsl.default.bzl", "tsl_gpu_cc_test")
 load(
-    "//tensorflow/tsl/platform:build_config.bzl",
+    "@tsl//platform:build_config.bzl",
     "tf_additional_device_tracer_srcs",
 )
 load(
-    "//tensorflow/tsl/platform:build_config_root.bzl",
+    "@tsl//platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
 load(
     "//xla/stream_executor:build_defs.bzl",
     "tf_additional_cupti_deps",
 )
-load("//tensorflow/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
+load("@tsl//profiler/builds:build_config.bzl", "tf_profiler_copts")
 load(
-    "//tensorflow/tsl/platform/default:cuda_build_defs.bzl",
+    "@tsl//platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 
@@ -43,22 +43,22 @@ tsl_gpu_library(
     ],
     deps = [
         ":cupti_utils",
-        "//tensorflow/tsl/platform:abi",
-        "//tensorflow/tsl/platform:env_time",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/profiler/lib:profiler_factory",
-        "//tensorflow/tsl/profiler/lib:profiler_interface",
-        "//tensorflow/tsl/profiler/protobuf:xplane_proto_cc",
-        "//tensorflow/tsl/profiler/utils:time_utils",
-        "//tensorflow/tsl/util:env_var",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:abi",
+        "@tsl//platform:env_time",
+        "@tsl//platform:errors",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:thread_annotations",
+        "@tsl//profiler/lib:profiler_factory",
+        "@tsl//profiler/lib:profiler_interface",
+        "@tsl//profiler/protobuf:xplane_proto_cc",
+        "@tsl//profiler/utils:time_utils",
+        "@tsl//util:env_var",
     ],
     alwayslink = 1,
 )
@@ -69,8 +69,8 @@ tsl_gpu_library(
     copts = tf_profiler_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:macros",
+        "@tsl//platform:types",
     ] + tf_additional_cupti_deps(),
 )
 
@@ -83,7 +83,7 @@ tsl_gpu_library(
         ":cupti_interface",
     ],
     deps = [
-        "//tensorflow/tsl/platform:test",
+        "@tsl//platform:test",
     ],
 )
 
@@ -98,12 +98,12 @@ tsl_gpu_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:thread_annotations",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/debugging:leak_check",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:logging",
+        "@tsl//platform:mutex",
+        "@tsl//platform:thread_annotations",
     ],
 )
 
@@ -116,7 +116,7 @@ tsl_gpu_cc_test(
         "gpu_cupti",
     ],
     deps = [
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:test_main",
     ] + if_cuda_is_configured([
         ":cuda_test",
         ":cupti_error_manager",
@@ -125,9 +125,9 @@ tsl_gpu_cc_test(
         ":cupti_wrapper",
         ":mock_cupti",
         "@com_google_absl//absl/memory",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/profiler/utils:time_utils",
-        "//tensorflow/tsl/profiler/backends/cpu:annotation_stack_impl",
+        "@tsl//platform:env_impl",
+        "@tsl//profiler/utils:time_utils",
+        "@tsl//profiler/backends/cpu:annotation_stack_impl",
     ]),
 )
 
@@ -145,9 +145,9 @@ cuda_library(
     }),
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/tsl/platform:test",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudart",
+        "@tsl//platform:test",
     ],
 )
 
@@ -180,21 +180,21 @@ tsl_gpu_library(
         ":cupti_interface",
         ":cupti_utils",
         ":nvtx_utils",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/profiler/backends/cpu:annotation_stack",
-        "//tensorflow/tsl/profiler/lib:scoped_annotation",
-        "//tensorflow/tsl/profiler/utils:buffer_pool",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/types:optional",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:status",
+        "@tsl//platform:types",
+        "@tsl//profiler/backends/cpu:annotation_stack",
+        "@tsl//profiler/lib:scoped_annotation",
+        "@tsl//profiler/utils:buffer_pool",
     ],
 )
 
@@ -205,19 +205,19 @@ tsl_gpu_library(
     copts = tf_profiler_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/profiler/backends/cpu:annotation_stack",
-        "//tensorflow/tsl/profiler/utils:time_utils",
         "//xla/stream_executor/rocm:roctracer_wrapper",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/types:optional",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:platform_port",
+        "@tsl//profiler/backends/cpu:annotation_stack",
+        "@tsl//profiler/utils:time_utils",
     ],
 )
 
@@ -227,9 +227,9 @@ tsl_gpu_library(
     hdrs = if_cuda(["nvtx_utils.h"]),
     copts = tf_profiler_copts() + tsl_copts(),
     deps = [
-        "//tensorflow/tsl/platform",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
+        "@tsl//platform",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
     ],
 )
 
@@ -245,18 +245,18 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/strings",
-        "//tensorflow/tsl/platform:abi",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/profiler/protobuf:xplane_proto_cc",
-        "//tensorflow/tsl/profiler/utils:parse_annotation",
-        "//tensorflow/tsl/profiler/utils:xplane_builder",
-        "//tensorflow/tsl/profiler/utils:xplane_schema",
-        "//tensorflow/tsl/profiler/utils:xplane_utils",
-        "//tensorflow/tsl/profiler/utils:trace_utils",
+        "@tsl//platform:abi",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:mutex",
+        "@tsl//platform:macros",
+        "@tsl//platform:status",
+        "@tsl//platform:types",
+        "@tsl//profiler/protobuf:xplane_proto_cc",
+        "@tsl//profiler/utils:parse_annotation",
+        "@tsl//profiler/utils:xplane_builder",
+        "@tsl//profiler/utils:xplane_schema",
+        "@tsl//profiler/utils:xplane_utils",
+        "@tsl//profiler/utils:trace_utils",
     ] + tf_additional_cupti_deps(),
 )
 
@@ -265,14 +265,14 @@ cc_library(
     hdrs = ["cupti_collector.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/profiler/protobuf:xplane_proto_cc",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:macros",
+        "@tsl//platform:status",
+        "@tsl//platform:types",
+        "@tsl//profiler/protobuf:xplane_proto_cc",
     ],
 )
 

@@ -2,7 +2,7 @@
 #   Host-platform specific StreamExecutor support code.
 
 load("//xla:xla.bzl", "xla_cc_test")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 
 package(
@@ -62,11 +62,11 @@ cc_library(
         "host_stream.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:denormal",
-        "//tensorflow/tsl/platform:setround",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:denormal",
+        "@tsl//platform:setround",
     ],
 )
 
@@ -98,8 +98,6 @@ cc_library(
         ":host_platform_id",
         ":host_stream",
         ":host_timer",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform/profile_utils:profile_utils_cpu_utils",
         "//xla/stream_executor",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:rng",
@@ -109,6 +107,8 @@ cc_library(
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@tsl//platform:platform_port",
+        "@tsl//platform/profile_utils:profile_utils_cpu_utils",
     ],
     alwayslink = True,
 )
@@ -118,15 +118,15 @@ xla_cc_test(
     srcs = ["host_stream_test.cc"],
     deps = [
         ":host_platform",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
         "//xla/stream_executor",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_impl",
         "@com_google_absl//absl/synchronization",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:errors",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )

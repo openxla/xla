@@ -1,6 +1,6 @@
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 
 package(
@@ -80,13 +80,13 @@ tf_cc_test(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         ":calling_convention",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
         "//xla/mlir/runtime/ir:rt",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Transforms",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -279,10 +279,10 @@ tf_cc_test(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         ":type_converter",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
         "//xla/runtime:types",
         "@llvm-project//mlir:IR",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 

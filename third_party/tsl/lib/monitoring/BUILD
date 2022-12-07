@@ -1,6 +1,6 @@
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
+load("@tsl//:tsl.default.bzl", "filegroup")
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -21,8 +21,8 @@ package(
         "//xla/hlo/experimental:__subpackages__",
         "//third_party/tensorflow/core/lib/monitoring:__subpackages__",
         "//xla/service:__subpackages__",
-        "//tensorflow/tsl/framework:__subpackages__",
-        "//tensorflow/tsl/distributed_runtime:__subpackages__",
+        "@tsl//framework:__subpackages__",
+        "@tsl//distributed_runtime:__subpackages__",
     ],
     licenses = ["notice"],
 )
@@ -33,13 +33,13 @@ cc_library(
     deps = [
         ":collection_registry",
         ":metric_def",
-        "//tensorflow/tsl/platform",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:status",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
     ],
 )
 
@@ -51,12 +51,12 @@ cc_library(
     deps = [
         ":collection_registry",
         ":metric_def",
-        "//tensorflow/tsl/platform",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:status",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
     ],
 )
 
@@ -67,14 +67,14 @@ cc_library(
     deps = [
         ":collection_registry",
         ":metric_def",
-        "//tensorflow/tsl/lib/histogram",
-        "//tensorflow/tsl/platform",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/protobuf:histogram_proto_cc",
+        "@tsl//lib/histogram",
+        "@tsl//platform",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:status",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
+        "@tsl//protobuf:histogram_proto_cc",
     ],
 )
 
@@ -84,7 +84,7 @@ cc_library(
         "types.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:types",
     ],
 )
 
@@ -97,9 +97,9 @@ cc_library(
     ],
     deps = [
         ":types",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/protobuf:histogram_proto_cc",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:types",
+        "@tsl//protobuf:histogram_proto_cc",
     ],
 )
 
@@ -114,15 +114,15 @@ cc_library(
         ":collected_metrics",
         ":metric_def",
         ":types",
-        "//tensorflow/tsl/platform",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:thread_annotations",
-        "//tensorflow/tsl/platform:types",
-        "//tensorflow/tsl/protobuf:histogram_proto_cc",
+        "@tsl//platform",
+        "@tsl//platform:env",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:thread_annotations",
+        "@tsl//platform:types",
+        "@tsl//protobuf:histogram_proto_cc",
     ],
 )
 
@@ -134,7 +134,7 @@ cc_library(
     deps = [
         ":metric_def",
         ":types",
-        "//tensorflow/tsl/protobuf:histogram_proto_cc",
+        "@tsl//protobuf:histogram_proto_cc",
     ],
 )
 
@@ -162,11 +162,11 @@ cc_library(
         ":collection_registry",
         ":metric_def",
         ":types",
-        "//tensorflow/tsl/lib/monitoring:test_utils",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
+        "@tsl//lib/monitoring:test_utils",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
+        "@tsl//platform:statusor",
     ],
 )
 
@@ -178,11 +178,11 @@ cc_library(
         ":collection_registry",
         ":metric_def",
         ":types",
-        "//tensorflow/tsl/platform",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:thread_annotations",
+        "@tsl//platform",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//platform:status",
+        "@tsl//platform:thread_annotations",
     ],
 )
 
@@ -194,11 +194,11 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":types",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:statusor",
-        "//tensorflow/tsl/protobuf:histogram_proto_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:errors",
+        "@tsl//platform:statusor",
+        "@tsl//protobuf:histogram_proto_cc",
     ],
 )
 
@@ -208,8 +208,8 @@ cc_library(
         "timed.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:env_time",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:env_time",
+        "@tsl//platform:types",
     ],
 )
 

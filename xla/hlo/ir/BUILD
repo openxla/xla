@@ -1,7 +1,7 @@
 # Description:
 #   XLA’s HLO Intermediate Representation implementation.
 
-load("//tensorflow/tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -53,16 +53,6 @@ cc_library(
         "hlo_sharding_metadata.h",
     ],
     deps = [
-        "//tensorflow/tsl/lib/gtl:iterator_range",
-        "//tensorflow/tsl/lib/gtl:map_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:fingerprint",
-        "//tensorflow/tsl/platform:human_readable_json",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:statusor",
         "//xla:array",
         "//xla:comparison_util",
         "//xla:literal",
@@ -95,6 +85,16 @@ cc_library(
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@tsl//lib/gtl:iterator_range",
+        "@tsl//lib/gtl:map_util",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:fingerprint",
+        "@tsl//platform:human_readable_json",
+        "@tsl//platform:logging",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:status",
+        "@tsl//platform:statusor",
     ],
 )
 

@@ -10,21 +10,21 @@ load(
     "if_rocm_is_configured",
 )
 load(
-    "//tensorflow/tsl:tsl.bzl",
+    "@tsl//:tsl.bzl",
     "if_libtpu",
     "tsl_copts",
     "tsl_gpu_library",
 )
 load(
-    "//tensorflow/tsl/platform:build_config_root.bzl",
+    "@tsl//platform:build_config_root.bzl",
     "if_static",
 )
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 load(
-    "//tensorflow/tsl/platform/default:cuda_build_defs.bzl",
+    "@tsl//platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 
@@ -120,8 +120,6 @@ cc_library(
     hdrs = if_gpu_is_configured(["gpu_executor.h"]),
     deps = [
         ":gpu_kernel_header",
-        "//tensorflow/tsl/platform:fingerprint",
-        "//tensorflow/tsl/platform:logging",
         "//xla/stream_executor:event",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_pimpl_header",
@@ -130,6 +128,8 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:fingerprint",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -138,7 +138,7 @@ cc_library(
     hdrs = if_gpu_is_configured(["gpu_helpers.h"]),
     deps = [
         ":gpu_types_header",
-        "//tensorflow/tsl/platform:logging",
+        "@tsl//platform:logging",
     ],
 )
 
@@ -148,7 +148,7 @@ tsl_gpu_library(
         "gpu_init.h",
     ],
     visibility = [
-        "//tensorflow/tsl:internal",
+        "@tsl//:internal",
     ],
     deps = [
         "//xla/stream_executor/lib",
@@ -168,10 +168,10 @@ tsl_gpu_library(
     copts = tsl_copts(),
     linkstatic = True,
     deps = [
-        "//tensorflow/tsl/platform:logging",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
         "//xla/stream_executor/lib",
+        "@tsl//platform:logging",
     ],
     alwayslink = True,
 )
@@ -290,12 +290,12 @@ cc_library(
         ":gpu_helpers_header",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/base:core_headers",
-        "//tensorflow/tsl/platform:regexp",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:subprocess",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:cuda_libdevice_path",
+        "@tsl//platform:regexp",
+        "@tsl//platform:mutex",
+        "@tsl//platform:errors",
+        "@tsl//platform:subprocess",
+        "@tsl//platform:path",
+        "@tsl//platform:cuda_libdevice_path",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
@@ -330,13 +330,13 @@ cc_library(
         ":gpu_helpers_header",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/base:core_headers",
-        "//tensorflow/tsl/platform:regexp",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:subprocess",
-        "//tensorflow/tsl/platform:path",
-        "//tensorflow/tsl/platform:cuda_libdevice_path",
+        "@tsl//platform:regexp",
+        "@tsl//platform:mutex",
+        "@tsl//platform:errors",
+        "@tsl//platform:env",
+        "@tsl//platform:subprocess",
+        "@tsl//platform:path",
+        "@tsl//platform:cuda_libdevice_path",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
@@ -375,15 +375,15 @@ cc_library(
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:optional",
-        "//tensorflow/tsl/lib/math:math_util",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/framework:allocator",
+        "@tsl//lib/math:math_util",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//framework:allocator",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor:stream_executor_headers",
-        "//tensorflow/tsl/platform:status",
+        "@tsl//platform:status",
     ]),
 )
 
@@ -392,13 +392,13 @@ tsl_gpu_library(
     name = "gpu_cudamallocasync_allocator_header",
     hdrs = ["gpu_cudamallocasync_allocator.h"],
     deps = [
-        "//tensorflow/tsl/framework:allocator",
-        "//tensorflow/tsl/framework:device_id",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
         "//xla/stream_executor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@tsl//framework:allocator",
+        "@tsl//framework:device_id",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
     ],
 )
 
@@ -414,16 +414,16 @@ tsl_gpu_library(
     ],
     deps = [
         ":gpu_init_impl",
-        "//tensorflow/tsl/framework:allocator",
-        "//tensorflow/tsl/framework:device_id",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/util:env_var",
         "//xla/stream_executor",
         "//xla/stream_executor:device_id_utils",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
+        "@tsl//framework:allocator",
+        "@tsl//framework:device_id",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:mutex",
+        "@tsl//util:env_var",
     ],
 )

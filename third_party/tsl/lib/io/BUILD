@@ -1,7 +1,7 @@
-load("//tensorflow/tsl/platform:build_config.bzl", "tsl_cc_test")
-load("//tensorflow/tsl:tsl.default.bzl", "filegroup")
+load("@tsl//platform:build_config.bzl", "tsl_cc_test")
+load("@tsl//:tsl.default.bzl", "filegroup")
 load(
-    "//tensorflow/tsl/platform:rules_cc.bzl",
+    "@tsl//platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -10,12 +10,12 @@ package(
     default_visibility = [
         "//third_party/tensorflow/c/experimental/filesystem:__pkg__",
         "//third_party/tensorflow/c/experimental/filesystem/plugins/posix:__pkg__",
-        "//tensorflow/tsl/lib/io/snappy:__pkg__",
+        "@tsl//lib/io/snappy:__pkg__",
         "//xla:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
         "//third_party/tensorflow/core:__pkg__",
         "//third_party/tensorflow/core/lib/io:__subpackages__",
-        "//tensorflow/tsl/profiler:__subpackages__",
+        "@tsl//profiler:__subpackages__",
     ],
     licenses = ["notice"],
 )
@@ -37,16 +37,16 @@ cc_library(
     deps = [
         ":iterator",
         ":table_options",
-        "//tensorflow/tsl/lib/hash:crc32c",
-        "//tensorflow/tsl/platform:coding",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:raw_coding",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//lib/hash:crc32c",
+        "@tsl//platform:coding",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:raw_coding",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -58,7 +58,7 @@ cc_library(
     deps = [
         ":inputstream_interface",
         ":random_inputstream",
-        "//tensorflow/tsl/platform:env",
+        "@tsl//platform:env",
     ],
     alwayslink = True,
 )
@@ -75,13 +75,13 @@ cc_library(
     srcs = ["inputbuffer.cc"],
     hdrs = ["inputbuffer.h"],
     deps = [
-        "//tensorflow/tsl/platform:coding",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:coding",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:status",
+        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -91,10 +91,10 @@ cc_library(
     srcs = ["inputstream_interface.cc"],
     hdrs = ["inputstream_interface.h"],
     deps = [
-        "//tensorflow/tsl/platform:cord",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:cord",
+        "@tsl//platform:errors",
+        "@tsl//platform:status",
+        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -104,8 +104,8 @@ cc_library(
     srcs = ["iterator.cc"],
     hdrs = ["iterator.h"],
     deps = [
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
     ],
     alwayslink = True,
 )
@@ -114,10 +114,10 @@ cc_library(
     name = "proto_encode_helper",
     hdrs = ["proto_encode_helper.h"],
     deps = [
-        "//tensorflow/tsl/platform:coding",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:protobuf",
-        "//tensorflow/tsl/platform:stringpiece",
+        "@tsl//platform:coding",
+        "@tsl//platform:logging",
+        "@tsl//platform:protobuf",
+        "@tsl//platform:stringpiece",
     ],
 )
 
@@ -127,8 +127,8 @@ cc_library(
     hdrs = ["random_inputstream.h"],
     deps = [
         ":inputstream_interface",
-        "//tensorflow/tsl/platform:cord",
-        "//tensorflow/tsl/platform:env",
+        "@tsl//platform:cord",
+        "@tsl//platform:env",
     ],
     alwayslink = True,
 )
@@ -146,13 +146,13 @@ cc_library(
         ":snappy_inputstream",
         ":zlib_compression_options",
         ":zlib_inputstream",
-        "//tensorflow/tsl/lib/hash:crc32c",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:raw_coding",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//lib/hash:crc32c",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:macros",
+        "@tsl//platform:raw_coding",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -167,36 +167,36 @@ cc_library(
         ":snappy_outputbuffer",
         ":zlib_compression_options",
         ":zlib_outputbuffer",
-        "//tensorflow/tsl/lib/hash:crc32c",
-        "//tensorflow/tsl/platform:coding",
-        "//tensorflow/tsl/platform:cord",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//lib/hash:crc32c",
+        "@tsl//platform:coding",
+        "@tsl//platform:cord",
+        "@tsl//platform:env",
+        "@tsl//platform:macros",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
 
 alias(
     name = "snappy_inputbuffer",
-    actual = "//tensorflow/tsl/lib/io/snappy:snappy_inputbuffer",
+    actual = "@tsl//lib/io/snappy:snappy_inputbuffer",
 )
 
 alias(
     name = "snappy_inputstream",
-    actual = "//tensorflow/tsl/lib/io/snappy:snappy_inputstream",
+    actual = "@tsl//lib/io/snappy:snappy_inputstream",
 )
 
 alias(
     name = "snappy_outputbuffer",
-    actual = "//tensorflow/tsl/lib/io/snappy:snappy_outputbuffer",
+    actual = "@tsl//lib/io/snappy:snappy_outputbuffer",
 )
 
 alias(
     name = "snappy_compression_options",
-    actual = "//tensorflow/tsl/lib/io/snappy:snappy_compression_options",
+    actual = "@tsl//lib/io/snappy:snappy_compression_options",
 )
 
 cc_library(
@@ -208,9 +208,9 @@ cc_library(
         "cache.h",
     ],
     deps = [
-        "//tensorflow/tsl/platform:mutex",
-        "//tensorflow/tsl/platform:raw_coding",
-        "//tensorflow/tsl/platform:stringpiece",
+        "@tsl//platform:mutex",
+        "@tsl//platform:raw_coding",
+        "@tsl//platform:stringpiece",
     ],
 )
 
@@ -229,9 +229,9 @@ cc_library(
         ":cache",
         ":iterator",
         ":table_options",
-        "//tensorflow/tsl/platform:coding",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
+        "@tsl//platform:coding",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
     ],
     alwayslink = True,
 )
@@ -246,7 +246,7 @@ cc_library(
     srcs = ["zlib_compression_options.cc"],
     hdrs = ["zlib_compression_options.h"],
     deps = [
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:types",
         "@zlib",
     ],
     alwayslink = True,
@@ -259,12 +259,12 @@ cc_library(
     deps = [
         ":inputstream_interface",
         ":zlib_compression_options",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:env",
+        "@tsl//platform:logging",
+        "@tsl//platform:macros",
+        "@tsl//platform:status",
+        "@tsl//platform:strcat",
+        "@tsl//platform:types",
         "@zlib",
     ],
     alwayslink = True,
@@ -276,12 +276,12 @@ cc_library(
     hdrs = ["zlib_outputbuffer.h"],
     deps = [
         ":zlib_compression_options",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:macros",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:stringpiece",
-        "//tensorflow/tsl/platform:types",
+        "@tsl//platform:env",
+        "@tsl//platform:errors",
+        "@tsl//platform:macros",
+        "@tsl//platform:status",
+        "@tsl//platform:stringpiece",
+        "@tsl//platform:types",
         "@zlib",
     ],
     alwayslink = True,
@@ -324,9 +324,9 @@ filegroup(
         "zlib_compression_options.h",
         "zlib_inputstream.cc",
         "zlib_inputstream.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_compression_options.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_inputstream.cc",
-        "//tensorflow/tsl/lib/io/snappy:snappy_inputstream.h",
+        "@tsl//lib/io/snappy:snappy_compression_options.h",
+        "@tsl//lib/io/snappy:snappy_inputstream.cc",
+        "@tsl//lib/io/snappy:snappy_inputstream.h",
     ],
 )
 
@@ -352,10 +352,10 @@ filegroup(
         "zlib_compression_options.h",
         "zlib_inputstream.h",
         "zlib_outputbuffer.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_compression_options.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_inputbuffer.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_inputstream.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_outputbuffer.h",
+        "@tsl//lib/io/snappy:snappy_compression_options.h",
+        "@tsl//lib/io/snappy:snappy_inputbuffer.h",
+        "@tsl//lib/io/snappy:snappy_inputstream.h",
+        "@tsl//lib/io/snappy:snappy_outputbuffer.h",
     ],
     visibility = ["//third_party/tensorflow/core:__pkg__"],
 )
@@ -386,10 +386,10 @@ filegroup(
         "zlib_compression_options.h",
         "zlib_inputstream.h",
         "zlib_outputbuffer.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_compression_options.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_inputbuffer.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_inputstream.h",
-        "//tensorflow/tsl/lib/io/snappy:snappy_outputbuffer.h",
+        "@tsl//lib/io/snappy:snappy_compression_options.h",
+        "@tsl//lib/io/snappy:snappy_inputbuffer.h",
+        "@tsl//lib/io/snappy:snappy_inputstream.h",
+        "@tsl//lib/io/snappy:snappy_outputbuffer.h",
     ],
     visibility = ["//third_party/tensorflow/core:__pkg__"],
 )
@@ -411,12 +411,12 @@ tsl_cc_test(
     deps = [
         ":buffered_inputstream",
         ":random_inputstream",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_benchmark",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:test",
+        "@tsl//platform:test_benchmark",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -426,10 +426,10 @@ tsl_cc_test(
     srcs = ["cache_test.cc"],
     deps = [
         ":cache",
-        "//tensorflow/tsl/platform:coding",
-        "//tensorflow/tsl/platform:raw_coding",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//platform:coding",
+        "@tsl//platform:raw_coding",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -439,17 +439,17 @@ tsl_cc_test(
     srcs = ["inputbuffer_test.cc"],
     deps = [
         ":inputbuffer",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:coding",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:coding",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:status",
+        "@tsl//platform:str_util",
+        "@tsl//platform:strcat",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -459,10 +459,10 @@ tsl_cc_test(
     srcs = ["inputstream_interface_test.cc"],
     deps = [
         ":inputstream_interface",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:errors",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -472,11 +472,11 @@ tsl_cc_test(
     srcs = ["random_inputstream_test.cc"],
     deps = [
         ":random_inputstream",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -487,15 +487,15 @@ tsl_cc_test(
     deps = [
         ":record_reader",
         ":record_writer",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:logging",
-        "//tensorflow/tsl/platform:status",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:errors",
+        "@tsl//platform:logging",
+        "@tsl//platform:status",
+        "@tsl//platform:strcat",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
         "@zlib",
     ],
 )
@@ -507,16 +507,16 @@ tsl_cc_test(
     deps = [
         ":record_reader",
         ":record_writer",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/lib/hash:crc32c",
-        "//tensorflow/tsl/lib/random:philox",
-        "//tensorflow/tsl/platform:coding",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:str_util",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//lib/hash:crc32c",
+        "@tsl//lib/random:philox",
+        "@tsl//platform:coding",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:errors",
+        "@tsl//platform:str_util",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -528,14 +528,14 @@ tsl_cc_test(
         ":block",
         ":iterator",
         ":table",
-        "//tensorflow/tsl/lib/random:philox",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:platform_port",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
         "@com_google_absl//absl/strings",
+        "@tsl//lib/random:philox",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:errors",
+        "@tsl//platform:platform_port",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
 
@@ -548,12 +548,12 @@ tsl_cc_test(
         ":zlib_compression_options",
         ":zlib_inputstream",
         ":zlib_outputbuffer",
-        "//tensorflow/tsl/lib/core:status_test_util",
-        "//tensorflow/tsl/platform:env",
-        "//tensorflow/tsl/platform:env_impl",
-        "//tensorflow/tsl/platform:errors",
-        "//tensorflow/tsl/platform:strcat",
-        "//tensorflow/tsl/platform:test",
-        "//tensorflow/tsl/platform:test_main",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env",
+        "@tsl//platform:env_impl",
+        "@tsl//platform:errors",
+        "@tsl//platform:strcat",
+        "@tsl//platform:test",
+        "@tsl//platform:test_main",
     ],
 )
