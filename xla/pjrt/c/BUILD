@@ -32,6 +32,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
+        "//xla:util",
         "//xla/client:xla_computation",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
