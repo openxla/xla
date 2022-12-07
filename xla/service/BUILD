@@ -4068,6 +4068,7 @@ cc_library(
     hdrs = ["hlo_value.h"],
     deps = [
         ":buffer_value",
+        "//xla:lazy",
         "//xla:shape_tree",
         "//xla:shape_util",
         "//xla:status",
@@ -4077,7 +4078,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
