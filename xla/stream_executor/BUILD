@@ -5,7 +5,7 @@
 # do not link against restricted binary blobs.
 
 load("@tsl//platform:build_config_root.bzl", "if_static")
-load("@tsl//:tsl.bzl", "tsl_gpu_library")
+load("@tsl//:tsl.bzl", "transitive_hdrs", "tsl_gpu_library")
 load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("@tsl//platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
@@ -77,6 +77,11 @@ cc_library(
         "@tsl//platform:status",
         "@tsl//platform:types",
     ],
+)
+
+transitive_hdrs(
+    name = "stream_executor_install_hdrs",
+    deps = [":stream_executor_headers"],
 )
 
 cc_library(
