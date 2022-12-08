@@ -27,10 +27,8 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:blocking_counter",
-        "@tsl//platform:logging",
-        "@tsl//platform:platform_port",
     ],
 )
 
@@ -59,8 +57,8 @@ cc_library(
     hdrs = ["concurrent_vector.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:mutex",
     ],
 )
 
