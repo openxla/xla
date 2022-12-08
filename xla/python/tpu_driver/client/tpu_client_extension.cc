@@ -24,14 +24,14 @@ limitations under the License.
 #include "xla/python/tpu_driver/client/tpu_client.h"
 #include "xla/python/types.h"
 #include "xla/python/util.h"
-#include "third_party/tensorflow/python/lib/core/bfloat16.h"
+#include "third_party/tsl/python/lib/core/bfloat16.h"
 
 namespace xla {
 
 namespace py = pybind11;
 
 PYBIND11_MODULE(tpu_client_extension, m) {
-  CHECK(tensorflow::RegisterNumpyBfloat16());
+  CHECK(tsl::RegisterNumpyBfloat16());
 
   py::class_<PyTpuClient, std::shared_ptr<PyTpuClient>>(m, "TpuClient")
       .def_static("Get", &PyTpuClient::Get, py::arg("worker"))

@@ -159,7 +159,6 @@ cc_library(
     deps = [
         ":exceptions",
         ":status_casters",
-        "//third_party/tensorflow/python:bfloat16_lib",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
@@ -174,6 +173,7 @@ cc_library(
         "@pybind11_abseil//pybind11_abseil:absl_casters",
         "@tsl//platform:logging",
         "@tsl//platform:protobuf",
+        "@tsl//python/lib/core:bfloat16_lib",
     ],
 )
 
@@ -971,7 +971,7 @@ tsl_pybind_extension(
         "//xla/stream_executor/tpu:pjrt_api",
         "@tsl//platform:logging",
         "@tsl//distributed_runtime/preemption:preemption_sync_manager",
-        "//third_party/tensorflow/python:bfloat16_lib",
+        "@tsl//python/lib/core:bfloat16_lib",
     ] + select({
         ":gpu_enabled": [
             "//xla/pjrt/gpu:se_gpu_pjrt_client",

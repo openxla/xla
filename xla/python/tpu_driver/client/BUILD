@@ -61,7 +61,6 @@ tsl_pybind_extension(
         ":tpu_client",
         "//third_party/py/numpy:headers",
         "//third_party/python_runtime:headers",  # buildcleaner: keep
-        "//third_party/tensorflow/python:bfloat16_lib",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/python:python_ref_manager",
         "//xla/python:types",
@@ -70,6 +69,7 @@ tsl_pybind_extension(
         "//xla/service:hlo_graph_dumper",
         "@llvm-project//mlir:IR",
         "@pybind11",
+        "@tsl//python/lib/core:bfloat16_lib",
     ],
 )
 
