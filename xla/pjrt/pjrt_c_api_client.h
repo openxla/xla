@@ -513,8 +513,6 @@ class PjRtCApiExecutable : public PjRtLoadedExecutable {
   PjRtCApiClient* client_;
   std::unique_ptr<PJRT_Executable, pjrt::PJRT_ExecutableDeleter> executable_;
   std::vector<PjRtDevice*> addressable_devices_;
-
-  void InitDevices();
 };
 
 StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(

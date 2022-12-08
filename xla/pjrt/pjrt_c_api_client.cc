@@ -531,31 +531,7 @@ PjRtCApiExecutable::PjRtCApiExecutable(PjRtCApiClient* client,
                                        PJRT_Executable* executable)
     : client_(client),
       executable_(executable,
-                  ::pjrt::MakeExecutableDeleter(client->pjrt_c_api())) {
-  InitDevices();
-}
-
-void PjRtCApiExecutable::InitDevices() {
-  PJRT_Executable_AddressableDevices_Args args;
-  args.struct_size = PJRT_Executable_AddressableDevices_Args_STRUCT_SIZE;
-  args.priv = nullptr;
-  args.executable = executable_.get();
-  args.addressable_devices = nullptr;
-  args.num_addressable_devices = 0;
-
-  const PJRT_Api* api = pjrt_c_api();
-  pjrt::LogFatalIfPjrtError(api->PJRT_Executable_AddressableDevices(&args),
-                            api);
-
-  const size_t num_addressable_devices = args.num_addressable_devices;
-  addressable_devices_.reserve(num_addressable_devices);
-
-  for (size_t i = 0; i < num_addressable_devices; ++i) {
-    PJRT_Device* device = args.addressable_devices[i];
-    PjRtCApiDevice* c_api_device = client_->GetCppDevice(device);
-    addressable_devices_.push_back(c_api_device);
-  }
-}
+                  ::pjrt::MakeExecutableDeleter(client->pjrt_c_api())) {}
 
 static std::vector<std::vector<PJRT_Buffer*>> Convert2DCppBuffersToCBuffers(
     absl::Span<const std::vector<PjRtBuffer*>> cpp_lists) {
@@ -586,7 +562,6 @@ Convert2DCBuffersToCppBuffers(PJRT_Buffer*** c_lists, size_t outer_size,
   }
   return ret;
 }
-
 
 xla::StatusOr<PJRT_Executable_Execute_Args>
 PjRtCApiExecutable::GetCommonExecuteArgs(
