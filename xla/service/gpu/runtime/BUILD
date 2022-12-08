@@ -47,7 +47,8 @@ cc_library(
         "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor:event",
         "//xla/stream_executor:executor_cache",
-        "@llvm-project//llvm:Support",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:node_hash_map",
     ],
 )
 
