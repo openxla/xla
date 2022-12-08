@@ -233,8 +233,6 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor/cuda:cublas_lt_header",
-        "@com_google_absl//absl/container:node_hash_map",
-        "@llvm-project//llvm:Support",
         "@tsl//platform:status",
     ],
 )
