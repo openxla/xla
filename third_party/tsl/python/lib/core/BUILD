@@ -22,6 +22,52 @@ filegroup(
 )
 
 cc_library(
+    name = "bfloat16_hdr",
+    hdrs = [
+        "bfloat16.h",
+    ],
+    deps = [
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+    ],
+)
+
+cc_library(
+    name = "bfloat16_lib",
+    srcs = [
+        "bfloat16.cc",
+        "float8_e4m3b11.cc",
+    ],
+    hdrs = [
+        "bfloat16.h",
+        "float8_e4m3b11.h",
+    ],
+    deps = [
+        ":custom_float",
+        "//third_party/eigen3",
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "@com_google_absl//absl/strings",
+        "@tsl//platform:logging",
+        "@tsl//platform:types",
+        "@tsl//python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "custom_float",
+    hdrs = [
+        "custom_float.h",
+    ],
+    deps = [
+        "//third_party/eigen3",
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "@com_google_absl//absl/strings",
+        "@tsl//platform:logging",
+        "@tsl//platform:types",
+        "@tsl//python/lib/core:numpy",
+    ],
+)
+
+cc_library(
     name = "numpy",
     srcs = ["numpy.cc"],
     hdrs = ["numpy.h"],
