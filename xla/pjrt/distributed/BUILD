@@ -1,7 +1,7 @@
 load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("@tsl//platform:build_config.bzl", "tf_proto_library")
 load("@tsl//:tsl.default.bzl", "tsl_grpc_cc_dependencies")
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//xla:xla.bzl", "xla_cc_test")
 
 licenses(["notice"])
 
@@ -65,7 +65,7 @@ cc_library(
     ] + tsl_grpc_cc_dependencies(),
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "service_test",
     srcs = ["service_test.cc"],
     tags = [
@@ -131,7 +131,7 @@ cc_library(
     ] + tsl_grpc_cc_dependencies(),
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "client_server_test",
     size = "small",
     srcs = ["client_server_test.cc"],
@@ -150,7 +150,7 @@ tf_cc_test(
         "//xla:status_macros",
         "@tsl//lib/core:status_test_util",
         "@tsl//platform:env",
-        "@tsl//platform:env_impl",
+        # "@tsl//platform:env_impl",
         "@tsl//platform:test",
         "@tsl//platform:test_main",
         "@tsl//platform:errors",

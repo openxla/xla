@@ -3,7 +3,6 @@
 load(
     "@tsl//:tsl.bzl",
     "clean_dep",
-    "if_tsl_link_protobuf",
 )
 load("@tsl//platform:build_config.bzl", "tsl_cc_test")
 
@@ -48,20 +47,29 @@ def xla_cc_test(
         **kwargs):
     tsl_cc_test(
         name = name,
-        deps = deps + if_tsl_link_protobuf(
-            [],
-            [
-                # clean_dep("//google/protobuf"),
-                # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
-                "//xla:xla_proto_cc_impl",
-                "//xla:xla_data_proto_cc_impl",
-                "//xla/service:hlo_proto_cc_impl",
-                "//xla/service/gpu:backend_configs_cc_impl",
-                "//xla/stream_executor:dnn_proto_cc_impl",
-                "@tsl//profiler/utils:time_utils_impl",
-                "@tsl//profiler/backends/cpu:traceme_recorder_impl",
-                "@tsl//protobuf:protos_all_cc_impl",
-            ],
-        ),
+        deps = deps +
+               [
+                   # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
+                   "//xla:xla_proto_cc_impl",
+                   "//xla:xla_data_proto_cc_impl",
+                   "//xla/service:hlo_proto_cc_impl",
+                   "//xla/service/gpu:backend_configs_cc_impl",
+                   "//xla/stream_executor:device_description_proto_cc_impl",
+                   "//xla/stream_executor:dnn_proto_cc_impl",
+                   "//xla/stream_executor:stream_executor_impl",
+                   "//xla/stream_executor/cuda:cublas_plugin",
+                   "//xla/stream_executor/gpu:gpu_init_impl",
+                   "@tsl//framework:allocator",
+                   "@tsl//framework:allocator_registry_impl",
+                   "@tsl//platform:env_impl",
+                   "@tsl//platform:tensor_float_32_utils",
+                   "@tsl//profiler/utils:time_utils_impl",
+                   "@tsl//profiler/backends/cpu:annotation_stack_impl",
+                   "@tsl//profiler/backends/cpu:traceme_recorder_impl",
+                   "@tsl//protobuf:autotuning_proto_cc_impl",
+                   "@tsl//protobuf:dnn_proto_cc_impl",
+                   "@tsl//protobuf:protos_all_cc_impl",
+                   "@tsl//util:determinism",
+               ],
         **kwargs
     )

@@ -1,5 +1,5 @@
 load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//xla:xla.bzl", "xla_cc_test")
 load(
     "@tsl//platform:build_config.bzl",
     "tf_proto_library",
@@ -60,15 +60,15 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "semaphore_test",
     srcs = ["semaphore_test.cc"],
     deps = [
         ":semaphore",
-        "//xla:test",
         "@com_google_absl//absl/synchronization",
+        "//xla:test",
         "@tsl//platform:env",
-        "@tsl//platform:env_impl",
+        # "@tsl//platform:env_impl",
         "@tsl//platform:logging",
         "@tsl//platform:test_main",
     ],
@@ -98,7 +98,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "tracked_device_buffer_test",
     srcs = ["tracked_device_buffer_test.cc"],
     deps = [
@@ -179,7 +179,7 @@ cc_library(
     alwayslink = 1,
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "pjrt_client_test_cpu",
     srcs = ["pjrt_client_test_cpu.cc"],
     deps = [
@@ -205,7 +205,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "pjrt_executable_test",
     srcs = ["pjrt_executable_test.cc"],
     deps = [
@@ -233,7 +233,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "pjrt_compiler_test",
     srcs = ["pjrt_compiler_test.cc"],
     deps = [
@@ -337,7 +337,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "pjrt_stream_executor_client_test",
     srcs = ["pjrt_stream_executor_client_test.cc"],
     deps = [
@@ -470,7 +470,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "tracked_tfrt_cpu_device_buffer_test",
     srcs = ["tracked_tfrt_cpu_device_buffer_test.cc"],
     deps = [
@@ -530,7 +530,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "tfrt_cpu_pjrt_client_test",
     srcs = ["tfrt_cpu_pjrt_client_test.cc"],
     deps = [
@@ -551,7 +551,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "lru_cache_test",
     srcs = ["lru_cache_test.cc"],
     deps = [
@@ -589,7 +589,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "transpose_test",
     srcs = ["transpose_test.cc"],
     deps = [
@@ -640,7 +640,7 @@ cc_library(
     deps = [":pjrt_client"],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "host_callback_test",
     srcs = ["host_callback_test.cc"],
     deps = [
