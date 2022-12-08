@@ -1,4 +1,4 @@
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//xla:xla.bzl", "xla_cc_test")
 load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
@@ -74,7 +74,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "calling_convention_test",
     srcs = ["calling_convention_test.cc"],
     compatible_with = get_compatible_with_cloud(),
@@ -273,7 +273,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "type_converter_test",
     srcs = ["type_converter_test.cc"],
     compatible_with = get_compatible_with_cloud(),

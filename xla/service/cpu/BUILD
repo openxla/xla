@@ -2,12 +2,16 @@
 #    LLVM-based CPU backend for XLA.
 
 load("@tsl//:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
-load("//xla:xla.bzl", "ORC_JIT_MEMORY_MAPPER_TARGETS", "xla_cc_binary")
+load(
+    "//xla:xla.bzl",
+    "ORC_JIT_MEMORY_MAPPER_TARGETS",
+    "xla_cc_binary",
+    "xla_cc_test",
+)
 load(
     "//third_party/mkl:build_defs.bzl",
     "mkl_deps",
 )
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 load("@tsl//:tsl.bzl", "tf_openmp_copts", "tsl_copts")
 load(
     "//third_party/compute_library:build_defs.bzl",
@@ -1117,7 +1121,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_runtime_test",
     srcs = ["cpu_runtime_test.cc"],
     shard_count = 10,
@@ -1144,7 +1148,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "runtime_fft_test",
     srcs = [
         "runtime_fft_impl.h",
@@ -1161,7 +1165,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_instruction_fusion_test",
     srcs = ["cpu_instruction_fusion_test.cc"],
     deps = [
@@ -1178,7 +1182,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "xfeed_manager_test",
     size = "small",
     srcs = ["xfeed_manager_test.cc"],
@@ -1221,7 +1225,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "ir_emission_utils_test",
     srcs = ["ir_emission_utils_test.cc"],
     deps = [
@@ -1263,7 +1267,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_layout_assignment_test",
     size = "small",
     srcs = ["cpu_layout_assignment_test.cc"],
@@ -1308,7 +1312,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "conv_canonicalization_test",
     srcs = ["conv_canonicalization_test.cc"],
     deps = [
@@ -1332,7 +1336,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "shape_partition_test",
     srcs = ["shape_partition_test.cc"],
     deps = [
@@ -1362,7 +1366,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "parallel_task_assignment_test",
     srcs = ["parallel_task_assignment_test.cc"],
     deps = [
@@ -1430,7 +1434,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_eigen_tensor_alignment_test",
     size = "small",
     srcs = ["cpu_eigen_tensor_alignment_test.cc"],
@@ -1443,7 +1447,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "vectorized_reduce_with_no_vector_registers_test",
     size = "small",
     srcs = ["vectorized_reduce_with_no_vector_registers_test.cc"],

@@ -2,7 +2,7 @@
 #    Tests for LLVM-based CPU backend for XLA.
 
 load("@tsl//:tsl.default.bzl", "filegroup")
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
+load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -31,13 +31,13 @@ cc_library(
     testonly = True,
     hdrs = ["cpu_codegen_test.h"],
     deps = [
-        "//xla/service:cpu_plugin",
+        # "//xla/service:cpu_plugin",
         "//xla/tests:llvm_irgen_test_base",
         "@tsl//platform:test_main",
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_dyn_shape_test",
     srcs = ["cpu_dyn_shape_test.cc"],
     deps = [
@@ -51,26 +51,26 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_fusion_test",
     srcs = ["cpu_fusion_test.cc"],
     deps = [
+        "@com_google_absl//absl/memory",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:cpu_plugin",
+        # "//xla/service:cpu_plugin",
         "//xla/service/cpu:cpu_instruction_fusion",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
-        "@com_google_absl//absl/memory",
         "@tsl//platform:test",
         "@tsl//platform:test_main",
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_bytesizeof_test",
     srcs = ["cpu_bytesizeof_test.cc"],
     deps = [
@@ -81,7 +81,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_external_constants_test",
     srcs = ["cpu_external_constants_test.cc"],
     deps = [
@@ -94,7 +94,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_noalias_test",
     srcs = ["cpu_noalias_test.cc"],
     deps = [
@@ -115,7 +115,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_intrinsic_test",
     srcs = ["cpu_intrinsic_test.cc"],
     deps = [
@@ -132,7 +132,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_eigen_dot_operation_test",
     srcs = ["cpu_eigen_dot_operation_test.cc"],
     deps = [
@@ -148,7 +148,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_profiling_test",
     srcs = ["cpu_profiling_test.cc"],
     deps = [
@@ -165,7 +165,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "tree_reduction_rewriter_test",
     srcs = ["tree_reduction_rewriter_test.cc"],
     deps = [
@@ -190,7 +190,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_infeed_test",
     srcs = ["cpu_infeed_test.cc"],
     deps = [
@@ -204,7 +204,7 @@ tf_cc_test(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "//xla/client/lib:arithmetic",
-        "//xla/service:cpu_plugin",
+        # "//xla/service:cpu_plugin",
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "@tsl//platform:env",
@@ -214,7 +214,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_literal_caching_test",
     srcs = ["cpu_literal_caching_test.cc"],
     deps = [
@@ -229,7 +229,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_outfeed_test",
     srcs = ["cpu_outfeed_test.cc"],
     deps = [
@@ -243,7 +243,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_key_value_sort_test",
     srcs = ["cpu_key_value_sort_test.cc"],
     deps = [
@@ -257,7 +257,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_spmd_compile_test",
     srcs = ["cpu_spmd_compile_test.cc"],
     deps = [
@@ -274,7 +274,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_topk_test",
     srcs = ["cpu_topk_test.cc"],
     deps = [
@@ -290,7 +290,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_vectorization_test",
     srcs = ["cpu_vectorization_test.cc"],
     deps = [
@@ -307,7 +307,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "cpu_while_test",
     srcs = ["cpu_while_test.cc"],
     deps = [

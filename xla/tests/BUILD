@@ -7,8 +7,11 @@ load(
     "tf_cuda_tests_tags",
 )
 load("@tsl//:tsl.default.bzl", "filegroup")
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
-load("//xla:xla.bzl", "xla_cc_binary")
+load(
+    "//xla:xla.bzl",
+    "xla_cc_binary",
+    "xla_cc_test",
+)
 load("@tsl//platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -2353,25 +2356,25 @@ xla_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "llvm_compiler_test",
     srcs = ["llvm_compiler_test.cc"],
     tags = tf_cuda_tests_tags(),
     deps = [
         ":verified_hlo_module",
+        "@com_google_absl//absl/memory",
+        "@llvm-project//llvm:Core",
         "//xla:literal_util",
         "//xla:test_helpers",
         "//xla/hlo/ir:hlo",
         "//xla/service:backend",
-        "//xla/service:cpu_plugin",
+        # "//xla/service:cpu_plugin",
         "//xla/service:gpu_plugin",
         "//xla/service:llvm_compiler",
         "//xla/service:platform_util",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/gpu:gpu_compiler",
         "//xla/stream_executor",
-        "@com_google_absl//absl/memory",
-        "@llvm-project//llvm:Core",
         "@tsl//platform:test",
         "@tsl//platform:test_main",
     ],
@@ -2455,7 +2458,7 @@ xla_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "local_client_aot_test",
     srcs = [
         "local_client_aot_test.cc",
@@ -2544,7 +2547,7 @@ xla_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_metadata_test",
     srcs = [
         "hlo_metadata_test.cc",
@@ -2554,7 +2557,7 @@ tf_cc_test(
         "//xla:test_helpers",
         "//xla/client:local_client",
         "//xla/client:xla_builder",
-        "//xla/service:cpu_plugin",
+        # "//xla/service:cpu_plugin",
         "//xla/service:local_service",
         "@tsl//platform:test_main",
     ],
@@ -2616,7 +2619,7 @@ xla_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "literal_test_util_test",
     srcs = ["literal_test_util_test.cc"],
     deps = [
@@ -2677,7 +2680,7 @@ xla_test(
 )
 
 # A demo of test that loads an hlo module from a file and compares results on gpu and cpu.
-tf_cc_test(
+xla_cc_test(
     name = "sample_file_test",
     srcs = ["sample_file_test.cc"],
     data = ["isolated_convolution.hlo"],
@@ -2688,7 +2691,7 @@ tf_cc_test(
         ":xla_internal_test_main",  # fixdeps: keep
         "//xla:test",
         "//xla:types",
-        "//xla/service:cpu_plugin",  # reference backend
+        # "//xla/service:cpu_plugin",  # reference backend
         "//xla/service:gpu_plugin",  # test backend
         "//xla/service:platform_util",
         "@tsl//platform:logging",
@@ -2738,19 +2741,19 @@ xla_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "multiple_devices_on_host_test",
     srcs = ["multiple_devices_on_host_test.cc"],
     args = ["--xla_force_host_platform_device_count=4"],
     deps = [
         ":xla_internal_test_main",  # fixdeps: keep
+        "@com_google_absl//absl/synchronization",
         "//xla:shape_util",
         "//xla:test",
         "//xla/client:client_library",
         "//xla/client:xla_builder",
-        "//xla/service:cpu_plugin",
+        # "//xla/service:cpu_plugin",
         "//xla/service:platform_util",
-        "@com_google_absl//absl/synchronization",
         "@tsl//lib/core:status_test_util",
         "@tsl//platform:env",
         "@tsl//platform:logging",

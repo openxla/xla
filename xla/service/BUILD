@@ -3,12 +3,17 @@
 
 load("@tsl//platform:rules_cc.bzl", "cc_library")
 load("//tensorflow/compiler/xla/tests:build_defs.bzl", "xla_test")
-load("//xla:xla.bzl", "xla_cc_binary", "xla_py_proto_library", "xla_py_test_deps")
+load(
+    "//xla:xla.bzl",
+    "xla_cc_binary",
+    "xla_cc_test",
+    "xla_py_proto_library",
+    "xla_py_test_deps",
+)
 load(
     "@tsl//platform:build_config.bzl",
     "tf_proto_library",
 )
-load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 load("@tsl//:tsl.bzl", "if_libtpu")
 load("@tsl//:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
 load(
@@ -90,7 +95,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "async_collective_creator_test",
     srcs = ["async_collective_creator_test.cc"],
     deps = [
@@ -114,7 +119,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "async_op_canonicalizer_test",
     srcs = ["async_op_canonicalizer_test.cc"],
     deps = [
@@ -152,7 +157,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "all_reduce_reassociate_test",
     srcs = ["all_reduce_reassociate_test.cc"],
     deps = [
@@ -181,7 +186,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "all_reduce_folder_test",
     srcs = ["all_reduce_folder_test.cc"],
     deps = [
@@ -214,7 +219,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "broadcast_canonicalizer_test",
     srcs = ["broadcast_canonicalizer_test.cc"],
     deps = [
@@ -244,7 +249,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "bfloat16_conversion_folding_test",
     srcs = ["bfloat16_conversion_folding_test.cc"],
     deps = [
@@ -282,7 +287,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "bfloat16_normalization_test",
     srcs = ["bfloat16_normalization_test.cc"],
     deps = [
@@ -326,7 +331,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "bfloat16_propagation_test",
     srcs = ["bfloat16_propagation_test.cc"],
     deps = [
@@ -397,7 +402,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "shape_inference_test",
     srcs = ["shape_inference_test.cc"],
     deps = [
@@ -416,7 +421,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_opcode_test",
     srcs = ["hlo_opcode_test.cc"],
     deps = [
@@ -452,7 +457,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_live_range_test",
     srcs = ["hlo_live_range_test.cc"],
     deps = [
@@ -507,7 +512,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_sharding_util_test",
     srcs = [
         "hlo_sharding_util_test.cc",
@@ -555,7 +560,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "sharding_propagation_test",
     srcs = [
         "sharding_propagation_test.cc",
@@ -593,7 +598,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "sharding_remover_test",
     size = "small",
     srcs = [
@@ -625,7 +630,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "dynamic_parameter_binding_test",
     srcs = ["dynamic_parameter_binding_test.cc"],
     deps = [
@@ -666,7 +671,7 @@ xla_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "dfs_hlo_visitor_with_default_test",
     srcs = ["dfs_hlo_visitor_with_default_test.cc"],
     deps = [
@@ -696,7 +701,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "pattern_matcher_test",
     srcs = ["pattern_matcher_test.cc"],
     deps = [
@@ -722,7 +727,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "pattern_matcher_gmock_test",
     srcs = ["pattern_matcher_gmock_test.cc"],
     deps = [
@@ -752,7 +757,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_reachability_test",
     srcs = ["hlo_reachability_test.cc"],
     deps = [
@@ -779,7 +784,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_matchers_test",
     srcs = ["hlo_matchers_test.cc"],
     deps = [
@@ -791,7 +796,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_instruction_test",
     srcs = ["hlo_instruction_test.cc"],
     deps = [
@@ -812,7 +817,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_sharding_test",
     srcs = ["hlo_sharding_test.cc"],
     deps = [
@@ -848,7 +853,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "call_graph_test",
     srcs = ["call_graph_test.cc"],
     deps = [
@@ -903,7 +908,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "call_inliner_test",
     size = "small",
     srcs = ["call_inliner_test.cc"],
@@ -938,7 +943,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_computation_deduplicator_test",
     size = "small",
     srcs = ["hlo_computation_deduplicator_test.cc"],
@@ -960,7 +965,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "flatten_call_graph_test",
     srcs = ["flatten_call_graph_test.cc"],
     deps = [
@@ -1153,7 +1158,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "latency_hiding_scheduler_test",
     srcs = ["latency_hiding_scheduler_test.cc"],
     deps = [
@@ -1272,20 +1277,20 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "shaped_buffer_test",
     srcs = ["shaped_buffer_test.cc"],
     deps = [
-        ":cpu_plugin",
+        # ":cpu_plugin",
         ":platform_util",
         ":shaped_buffer",
+        "@com_google_absl//absl/memory",
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/memory",
         "@tsl//platform:test",
         "@tsl//platform:test_benchmark",
         "@tsl//util:ptr_util",
@@ -1474,7 +1479,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "name_uniquer_test",
     srcs = ["name_uniquer_test.cc"],
     deps = [
@@ -1527,7 +1532,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "buffer_assignment_test",
     srcs = ["buffer_assignment_test.cc"],
     deps = [
@@ -1536,12 +1541,15 @@ tf_cc_test(
         ":buffer_value",
         ":call_graph",
         ":copy_insertion",
-        ":cpu_plugin",
+        # ":cpu_plugin",
         ":flatten_call_graph",
         ":hlo_dce",
         ":hlo_memory_scheduler",
         ":hlo_ordering",
         ":hlo_parser",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:test",
@@ -1552,9 +1560,6 @@ tf_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
         "@tsl//lib/core:status_test_util",
         "@tsl//platform:logging",
         "@tsl//platform:status",
@@ -1587,7 +1592,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_ordering_test",
     size = "small",
     srcs = ["hlo_ordering_test.cc"],
@@ -1632,7 +1637,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "heap_simulator_test",
     srcs = ["heap_simulator_test.cc"],
     deps = [
@@ -1658,7 +1663,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_module_group_test",
     srcs = ["hlo_module_group_test.cc"],
     # TODO(b/148211710) Test fails in OSS.
@@ -1740,7 +1745,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_schedule_test",
     srcs = ["hlo_schedule_test.cc"],
     deps = [
@@ -1759,7 +1764,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_input_output_alias_config_test",
     srcs = ["hlo_input_output_alias_config_test.cc"],
     deps = [
@@ -1804,7 +1809,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_memory_scheduler_test",
     srcs = ["hlo_memory_scheduler_test.cc"],
     deps = [
@@ -1870,7 +1875,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "instruction_fusion_test",
     srcs = ["instruction_fusion_test.cc"],
     deps = [
@@ -1942,7 +1947,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "fusion_node_indexing_evaluation_test",
     srcs = ["fusion_node_indexing_evaluation_test.cc"],
     deps = [
@@ -1957,7 +1962,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_creation_utils_test",
     srcs = ["hlo_creation_utils_test.cc"],
     deps = [
@@ -2067,7 +2072,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "scatter_expander_test",
     srcs = ["scatter_expander_test.cc"],
     deps = [
@@ -2113,7 +2118,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "triangular_solve_expander_test",
     size = "medium",
     srcs = ["triangular_solve_expander_test.cc"],
@@ -2199,7 +2204,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "real_imag_expander_test",
     size = "small",
     srcs = ["real_imag_expander_test.cc"],
@@ -2268,7 +2273,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "convolution_4d_expander_test",
     srcs = ["convolution_4d_expander_test.cc"],
     deps = [
@@ -2299,7 +2304,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "convolution_pred_expander_test",
     srcs = ["convolution_pred_expander_test.cc"],
     deps = [
@@ -2312,7 +2317,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "batchnorm_expander_test",
     size = "small",
     srcs = ["batchnorm_expander_test.cc"],
@@ -2393,7 +2398,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "algebraic_simplifier_test",
     srcs = ["algebraic_simplifier_test.cc"],
     deps = [
@@ -2446,7 +2451,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "simplify_fp_conversions_test",
     srcs = ["simplify_fp_conversions_test.cc"],
     deps = [
@@ -2483,7 +2488,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "logistic_expander_test",
     srcs = ["logistic_expander_test.cc"],
     deps = [
@@ -2538,7 +2543,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "collectives_schedule_linearizer_test",
     srcs = ["collectives_schedule_linearizer_test.cc"],
     deps = [
@@ -2633,7 +2638,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "bitcast_dtypes_expander_test",
     srcs = ["bitcast_dtypes_expander_test.cc"],
     deps = [
@@ -2649,7 +2654,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "all_gather_broadcast_reorder_test",
     srcs = ["all_gather_broadcast_reorder_test.cc"],
     deps = [
@@ -2690,7 +2695,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "all_gather_combiner_test",
     srcs = ["all_gather_combiner_test.cc"],
     deps = [
@@ -2740,7 +2745,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "all_reduce_combiner_test",
     srcs = ["all_reduce_combiner_test.cc"],
     deps = [
@@ -2776,7 +2781,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "all_reduce_contiguous_test",
     srcs = ["all_reduce_contiguous_test.cc"],
     deps = [
@@ -2817,7 +2822,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "reduce_scatter_combiner_test",
     srcs = ["reduce_scatter_combiner_test.cc"],
     deps = [
@@ -2852,7 +2857,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "all_reduce_simplifier_test",
     srcs = ["all_reduce_simplifier_test.cc"],
     deps = [
@@ -2896,7 +2901,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "reduce_scatter_decomposer_test",
     srcs = ["reduce_scatter_decomposer_test.cc"],
     deps = [
@@ -2933,7 +2938,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "reduce_scatter_reassociate_test",
     srcs = ["reduce_scatter_reassociate_test.cc"],
     deps = [
@@ -2958,7 +2963,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "batch_dot_simplification_test",
     srcs = ["batch_dot_simplification_test.cc"],
     deps = [
@@ -2980,7 +2985,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "gather_expander_test",
     srcs = ["gather_expander_test.cc"],
     deps = [
@@ -3017,7 +3022,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "conditional_simplifier_test",
     srcs = ["conditional_simplifier_test.cc"],
     deps = [
@@ -3066,7 +3071,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "conditional_code_motion_test",
     srcs = ["conditional_code_motion_test.cc"],
     deps = [
@@ -3109,7 +3114,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "convolution_group_converter_test",
     size = "small",
     srcs = ["convolution_group_converter_test.cc"],
@@ -3157,7 +3162,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "space_to_batch_converter_test",
     size = "small",
     srcs = ["space_to_batch_converter_test.cc"],
@@ -3185,7 +3190,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_loop_analysis_test",
     srcs = ["while_loop_analysis_test.cc"],
     deps = [
@@ -3220,7 +3225,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_loop_simplifier_test",
     srcs = ["while_loop_simplifier_test.cc"],
     deps = [
@@ -3257,7 +3262,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_loop_trip_count_annotator_test",
     srcs = ["while_loop_trip_count_annotator_test.cc"],
     deps = [
@@ -3293,7 +3298,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "defuser_test",
     srcs = ["defuser_test.cc"],
     deps = [
@@ -3306,7 +3311,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "despecializer_test",
     srcs = ["despecializer_test.cc"],
     deps = [
@@ -3338,7 +3343,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "dot_decomposer_test",
     srcs = ["dot_decomposer_test.cc"],
     deps = [
@@ -3363,7 +3368,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "dot_merger_test",
     srcs = ["dot_merger_test.cc"],
     deps = [
@@ -3393,7 +3398,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "convert_mover_test",
     srcs = ["convert_mover_test.cc"],
     deps = [
@@ -3448,7 +3453,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "all_gather_decomposer_test",
     srcs = ["all_gather_decomposer_test.cc"],
     deps = [
@@ -3483,7 +3488,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "tuple_simplifier_test",
     srcs = ["tuple_simplifier_test.cc"],
     deps = [
@@ -3542,7 +3547,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "reduce_decomposer_test",
     srcs = ["reduce_decomposer_test.cc"],
     deps = [
@@ -3566,7 +3571,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "reshape_decomposer_test",
     srcs = ["reshape_decomposer_test.cc"],
     deps = [
@@ -3643,7 +3648,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "dynamic_dimension_simplifier_test",
     srcs = ["dynamic_dimension_simplifier_test.cc"],
     deps = [
@@ -3742,7 +3747,7 @@ xla_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "dynamic_dimension_inference_test",
     srcs = ["dynamic_dimension_inference_test.cc"],
     deps = [
@@ -3766,7 +3771,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "reshape_mover_test",
     srcs = ["reshape_mover_test.cc"],
     deps = [
@@ -3904,11 +3909,11 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_cost_analysis_test",
     srcs = ["hlo_cost_analysis_test.cc"],
     deps = [
-        ":cpu_plugin",
+        # ":cpu_plugin",
         ":hlo_cost_analysis",
         ":hlo_parser",
         ":local_service",
@@ -3948,21 +3953,21 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_execution_profile_test",
     srcs = ["hlo_execution_profile_test.cc"],
     deps = [
-        ":cpu_plugin",
+        # ":cpu_plugin",
         ":hlo_cost_analysis",
         ":hlo_execution_profile",
+        "@com_google_absl//absl/strings",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/strings",
         "@tsl//platform:logging",
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_computation_test",
     srcs = ["hlo_computation_test.cc"],
     deps = [
@@ -3982,7 +3987,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_module_test",
     srcs = ["hlo_module_test.cc"],
     deps = [
@@ -4009,7 +4014,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_module_metadata_test",
     srcs = ["hlo_module_metadata_test.cc"],
     deps = [
@@ -4115,7 +4120,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_dataflow_analysis_test",
     srcs = ["hlo_dataflow_analysis_test.cc"],
     deps = [
@@ -4167,7 +4172,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_phi_graph_test",
     srcs = ["hlo_phi_graph_test.cc"],
     deps = [
@@ -4207,7 +4212,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_replication_analysis_test",
     srcs = ["hlo_replication_analysis_test.cc"],
     deps = [
@@ -4246,7 +4251,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_liveness_analysis_test",
     srcs = ["hlo_liveness_analysis_test.cc"],
     deps = [
@@ -4311,7 +4316,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_alias_analysis_test",
     srcs = ["hlo_alias_analysis_test.cc"],
     deps = [
@@ -4379,7 +4384,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "tuple_points_to_analysis_test",
     srcs = ["tuple_points_to_analysis_test.cc"],
     deps = [
@@ -4516,7 +4521,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "copy_insertion_test",
     srcs = ["copy_insertion_test.cc"],
     deps = [
@@ -4538,7 +4543,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "loop_schedule_linearizer_test",
     srcs = ["loop_schedule_linearizer_test.cc"],
     deps = [
@@ -4602,7 +4607,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "memory_space_assignment_best_fit_repacker_test",
     srcs = ["memory_space_assignment_best_fit_repacker_test.cc"],
     deps = [
@@ -4631,7 +4636,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "memory_space_assignment_test",
     srcs = ["memory_space_assignment_test.cc"],
     deps = [
@@ -4658,7 +4663,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "memory_space_propagation_test",
     srcs = ["memory_space_propagation_test.cc"],
     deps = [
@@ -4734,7 +4739,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_verifier_test",
     srcs = ["hlo_verifier_test.cc"],
     deps = [
@@ -4805,7 +4810,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_rematerialization_test_utils_test",
     srcs = ["hlo_rematerialization_test_utils_test.cc"],
     deps = [
@@ -4825,7 +4830,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_rematerialization_test",
     srcs = ["hlo_rematerialization_test.cc"],
     deps = [
@@ -4845,7 +4850,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_dce_test",
     srcs = ["hlo_dce_test.cc"],
     deps = [
@@ -4868,7 +4873,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_module_dce_test",
     srcs = ["hlo_module_dce_test.cc"],
     deps = [
@@ -4889,7 +4894,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "layout_assignment_test",
     srcs = ["layout_assignment_test.cc"],
     deps = [
@@ -4963,7 +4968,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_pass_pipeline_test",
     srcs = ["hlo_pass_pipeline_test.cc"],
     deps = [
@@ -5002,16 +5007,18 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_cse_test",
     srcs = ["hlo_cse_test.cc"],
     deps = [
-        ":cpu_plugin",
+        # ":cpu_plugin",
         ":hlo_cse",
         ":hlo_matchers",
         ":hlo_parser",
         ":pattern_matcher",
         ":pattern_matcher_gmock",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:types",
@@ -5022,8 +5029,6 @@ tf_cc_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
         "@tsl//platform:logging",
     ],
 )
@@ -5046,7 +5051,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_constant_folding_test",
     srcs = ["hlo_constant_folding_test.cc"],
     deps = [
@@ -5127,7 +5132,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_domain_test",
     srcs = ["hlo_domain_test.cc"],
     deps = [
@@ -5163,7 +5168,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_element_type_converter_test",
     srcs = ["hlo_element_type_converter_test.cc"],
     deps = [
@@ -5185,7 +5190,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "conditional_canonicalizer_test",
     srcs = ["conditional_canonicalizer_test.cc"],
     deps = [
@@ -5343,7 +5348,7 @@ cc_library(
     alwayslink = 1,
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_graph_dumper_test",
     srcs = ["hlo_graph_dumper_test.cc"],
     deps = [
@@ -5379,7 +5384,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "transpose_folding_test",
     srcs = ["transpose_folding_test.cc"],
     deps = [
@@ -5420,7 +5425,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "zero_sized_hlo_elimination_test",
     srcs = ["zero_sized_hlo_elimination_test.cc"],
     deps = [
@@ -5452,7 +5457,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "stream_pool_test",
     srcs = ["stream_pool_test.cc"],
     deps = [
@@ -5478,7 +5483,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_proto_util_test",
     srcs = ["hlo_proto_util_test.cc"],
     deps = [
@@ -5589,7 +5594,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "sort_simplifier_test",
     srcs = ["sort_simplifier_test.cc"],
     deps = [
@@ -5620,7 +5625,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "stable_sort_expander_test",
     srcs = ["stable_sort_expander_test.cc"],
     deps = [
@@ -5649,7 +5654,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "tuple_util_test",
     srcs = ["tuple_util_test.cc"],
     deps = [
@@ -5677,7 +5682,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "root_instruction_sinker_test",
     srcs = ["root_instruction_sinker_test.cc"],
     deps = [
@@ -5706,7 +5711,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_util_test",
     srcs = ["while_util_test.cc"],
     deps = [
@@ -5743,7 +5748,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_loop_all_reduce_code_motion_test",
     srcs = ["while_loop_all_reduce_code_motion_test.cc"],
     deps = [
@@ -5788,7 +5793,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_loop_concat_code_motion_test",
     srcs = ["while_loop_concat_code_motion_test.cc"],
     deps = [
@@ -5831,7 +5836,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_loop_invariant_code_motion_test",
     srcs = ["while_loop_invariant_code_motion_test.cc"],
     deps = [
@@ -5866,7 +5871,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_loop_expensive_invariant_code_motion_test",
     srcs = ["while_loop_expensive_invariant_code_motion_test.cc"],
     deps = [
@@ -5896,7 +5901,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "while_loop_constant_sinking_test",
     srcs = ["while_loop_constant_sinking_test.cc"],
     deps = [
@@ -5955,7 +5960,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "indexed_array_analysis_test",
     srcs = ["indexed_array_analysis_test.cc"],
     deps = [
@@ -5999,7 +6004,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_parser_test",
     size = "small",
     srcs = ["hlo_parser_test.cc"],
@@ -6075,7 +6080,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "optimize_input_output_buffer_alias_test",
     srcs = ["optimize_input_output_buffer_alias_test.cc"],
     deps = [
@@ -6147,7 +6152,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "dynamic_index_splitter_test",
     srcs = ["dynamic_index_splitter_test.cc"],
     deps = [
@@ -6162,7 +6167,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "ar_crs_combiner_test",
     srcs = ["ar_crs_combiner_test.cc"],
     deps = [
@@ -6178,7 +6183,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "map_inliner_test",
     srcs = ["map_inliner_test.cc"],
     deps = [
@@ -6196,7 +6201,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "hlo_casting_utils_test",
     srcs = ["hlo_casting_utils_test.cc"],
     deps = [
@@ -6224,7 +6229,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "conditional_to_select_test",
     srcs = ["conditional_to_select_test.cc"],
     deps = [
@@ -6319,7 +6324,7 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "custom_call_status_test",
     srcs = ["custom_call_status_test.cc"],
     deps = [
@@ -6338,7 +6343,7 @@ cc_library(
     deps = [":custom_call_status"],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "slice_sinker_test",
     srcs = ["slice_sinker_test.cc"],
     deps = [
@@ -6429,7 +6434,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "collective_ops_utils_test",
     srcs = ["collective_ops_utils_test.cc"],
     deps = [
@@ -6457,7 +6462,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "topk_rewriter_test",
     srcs = ["topk_rewriter_test.cc"],
     deps = [
@@ -6487,7 +6492,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "operand_upcaster_test",
     srcs = ["operand_upcaster_test.cc"],
     deps = [
@@ -6511,7 +6516,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "result_caster_test",
     srcs = ["result_caster_test.cc"],
     deps = [
@@ -6549,7 +6554,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "convert_operand_folding_test",
     srcs = ["convert_operand_folding_test.cc"],
     deps = [
@@ -6579,7 +6584,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "xla_debug_info_manager_test",
     srcs = ["xla_debug_info_manager_test.cc"],
     deps = [
@@ -6639,7 +6644,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "mapped_ptr_container_sorter_test",
     srcs = ["mapped_ptr_container_sorter_test.cc"],
     deps = [
@@ -6695,7 +6700,7 @@ tf_proto_library(
     cc_api_version = 2,
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "compilation_environments_test",
     srcs = ["compilation_environments_test.cc"],
     deps = [
@@ -6762,7 +6767,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "scatter_simplifier_test",
     srcs = ["scatter_simplifier_test.cc"],
     deps = [
@@ -6786,7 +6791,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "select_and_scatter_expander_test",
     srcs = ["select_and_scatter_expander_test.cc"],
     deps = [
@@ -6803,7 +6808,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "layout_normalization_test",
     srcs = [
         "layout_normalization_test.cc",
@@ -6882,7 +6887,7 @@ cc_library(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "stochastic_convert_decomposer_test",
     srcs = ["stochastic_convert_decomposer_test.cc"],
     deps = [
@@ -6901,7 +6906,7 @@ cc_library(
     deps = ["@com_google_absl//absl/strings"],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "gather_simplifier_test",
     srcs = ["gather_simplifier_test.cc"],
     deps = [
@@ -6911,7 +6916,7 @@ tf_cc_test(
     ],
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "change_op_data_type_test",
     srcs = ["change_op_data_type_test.cc"],
     deps = [
@@ -6976,7 +6981,7 @@ xla_aot_compile_gpu(
     mhlo = "xla_aot_compile_test_constant.mlir",
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "xla_aot_compile_cpu_test",
     srcs = if_cuda_is_configured(["xla_aot_compile_cpu_test.cc"]),
     data = if_cuda_is_configured([
@@ -6984,7 +6989,7 @@ tf_cc_test(
     ]),
     tags = ["no_oss"],
     deps = if_cuda_is_configured([
-        ":cpu_plugin",
+        # ":cpu_plugin",
         ":platform_util",
         "@com_google_googletest//:gtest_main",
         "//xla:executable_run_options",
@@ -7000,7 +7005,7 @@ tf_cc_test(
     ]),
 )
 
-tf_cc_test(
+xla_cc_test(
     name = "xla_aot_compile_gpu_test",
     srcs = if_cuda_is_configured(["xla_aot_compile_gpu_test.cc"]),
     data = if_cuda_is_configured([
