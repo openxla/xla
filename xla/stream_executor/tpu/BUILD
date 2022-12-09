@@ -32,9 +32,9 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
-        "//xla/pjrt/c:pjrt_c_api_tpu_hdrs",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
+        "@tsl//platform:errors",
     ],
 )
 
