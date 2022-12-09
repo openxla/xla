@@ -6984,25 +6984,31 @@ xla_cc_binary(
         "@tsl//platform:platform_port",
         "@tsl//platform:protobuf",
         "@tsl//util:command_line_flags",
+        "@stablehlo//:register",
     ]),
 )
 
 # A simple test of xla_aot_compile which generates an output file from an mhlo file.
 xla_aot_compile_cpu(
     name = "xla_aot_compile_test_cpu_executable",
-    mhlo = "xla_aot_compile_test.mlir",
+    module = "xla_aot_compile_test.mlir",
+)
+
+xla_aot_compile_cpu(
+    name = "xla_aot_compile_stablehlo_test_cpu_executable",
+    module = "xla_aot_compile_stablehlo_test.mlir",
 )
 
 xla_aot_compile_gpu(
     name = "xla_aot_compile_test_gpu_executable",
     gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
-    mhlo = "xla_aot_compile_test.mlir",
+    module = "xla_aot_compile_test.mlir",
 )
 
 xla_aot_compile_gpu(
     name = "xla_aot_compile_test_gpu_executable_constant",
     gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
-    mhlo = "xla_aot_compile_test_constant.mlir",
+    module = "xla_aot_compile_test_constant.mlir",
 )
 
 tf_cc_test(
@@ -7021,6 +7027,31 @@ tf_cc_test(
         "//xla/client:client_library",
         "//xla/client:local_client",
         "//xla/service/cpu:cpu_compiler",
+        "@tsl//lib/core:status_test_util",
+        "@tsl//platform:env",
+        "@tsl//platform:resource_loader",
+        "@tsl//platform:statusor",
+        "@tsl//platform:test",
+    ]),
+)
+
+tf_cc_test(
+    name = "xla_aot_compile_stablehlo_cpu_test",
+    srcs = if_cuda_is_configured(["xla_aot_compile_stablehlo_cpu_test.cc"]),
+    data = if_cuda_is_configured([
+        ":xla_aot_compile_stablehlo_test_cpu_executable",
+    ]),
+    tags = ["no_oss"],
+    deps = if_cuda_is_configured([
+        ":cpu_plugin",
+        ":platform_util",
+        "@com_google_googletest//:gtest_main",
+        "//xla:executable_run_options",
+        "//xla:literal_util",
+        "//xla/client:client_library",
+        "//xla/client:local_client",
+        "//xla/service/cpu:cpu_compiler",
+        "//xla/tests:literal_test_util",
         "@tsl//lib/core:status_test_util",
         "@tsl//platform:env",
         "@tsl//platform:resource_loader",
