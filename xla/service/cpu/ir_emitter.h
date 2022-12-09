@@ -23,6 +23,7 @@ limitations under the License.
 #include <memory>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -33,12 +34,9 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Target/TargetMachine.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/ir_function.h"
 #include "xla/service/cpu/target_machine_features.h"
@@ -47,11 +45,9 @@ limitations under the License.
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/ir_builder_mixin.h"
-#include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/statusor.h"
-#include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -94,7 +90,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
                 computation_transitively_contains_custom_call,
             const TargetMachineFeatures* target_machine,
             bool emit_code_for_msan);
-  ~IrEmitter() override;
+  ~IrEmitter() override = default;
 
   // Emit and return the given HLO computation as an LLVM IR
   // function.
@@ -149,7 +145,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   Status HandleFft(HloInstruction* fft) override;
   Status HandleAllReduce(HloInstruction* crs) override;
   Status HandleCollectivePermute(HloInstruction* crs) override;
-  Status HandleInfeed(HloInstruction* infeed) override;
+  Status HandleInfeed(HloInstruction* instruction) override;
   Status HandleOutfeed(HloInstruction* outfeed) override;
   Status HandleSort(HloInstruction* hlo) override;
   Status HandleParameter(HloInstruction* parameter) override;
