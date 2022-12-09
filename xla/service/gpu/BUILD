@@ -1696,7 +1696,6 @@ cc_library(
     deps = [
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
-        ":all_reduce_promotion",
         ":conv_layout_normalization",
         ":executable_proto_cc",
         ":fusion_merger",
@@ -1750,6 +1749,7 @@ cc_library(
         "//xla/service:all_reduce_combiner",
         "//xla/service:all_reduce_contiguous",
         "//xla/service:all_reduce_folder",
+        "//xla/service:all_reduce_promotion",
         "//xla/service:all_reduce_reassociate",
         "//xla/service:all_to_all_decomposer",
         "//xla/service:async_collective_creator",
@@ -2074,35 +2074,6 @@ tf_cc_test(
         ":all_reduce_blueconnect",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_matchers",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:test_utils",
-        "@tsl//platform:status_matchers",
-        "@tsl//platform:test_main",
-    ],
-)
-
-cc_library(
-    name = "all_reduce_promotion",
-    srcs = ["all_reduce_promotion.cc"],
-    hdrs = ["all_reduce_promotion.h"],
-    deps = [
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:statusor",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:change_op_data_type",
-        "//xla/service:hlo_pass",
-    ],
-)
-
-tf_cc_test(
-    name = "all_reduce_promotion_test",
-    srcs = ["all_reduce_promotion_test.cc"],
-    deps = [
-        ":all_reduce_promotion",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:pattern_matcher",
-        "//xla/service:pattern_matcher_gmock",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "@tsl//platform:status_matchers",

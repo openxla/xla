@@ -91,6 +91,7 @@ limitations under the License.
 #include "xla/runtime/jit_executable.h"
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/all_gather_decomposer.h"
+#include "xla/service/all_reduce_promotion.h"
 #include "xla/service/all_to_all_decomposer.h"
 #include "xla/service/batch_dot_simplification.h"
 #include "xla/service/batchnorm_expander.h"
@@ -580,6 +581,10 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<CallInliner>(/*single_call_site=*/true);
   pipeline.AddPass<BatchDotSimplification>();
   pipeline.AddPass<DotDecomposer>();
+  // Promote BF16 all-reduce to F32.
+  const std::pair<PrimitiveType, PrimitiveType> ar_promoted_types[] = {
+      {BF16, F32}};
+  pipeline.AddPass<AllReducePromotion>(ar_promoted_types);
   // Convert BF16 operations to F32 operations so that the CPU backend can
   // support BF16 operations without directly implementing a BF16 lowering for
   // most ops.

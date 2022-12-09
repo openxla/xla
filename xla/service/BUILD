@@ -137,6 +137,35 @@ cc_library(
 )
 
 cc_library(
+    name = "all_reduce_promotion",
+    srcs = ["all_reduce_promotion.cc"],
+    hdrs = ["all_reduce_promotion.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:change_op_data_type",
+        "//xla/service:hlo_pass",
+    ],
+)
+
+tf_cc_test(
+    name = "all_reduce_promotion_test",
+    srcs = ["all_reduce_promotion_test.cc"],
+    deps = [
+        ":all_reduce_promotion",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:test_utils",
+        "@tsl//platform:status_matchers",
+        "@tsl//platform:test_main",
+    ],
+)
+
+cc_library(
     name = "all_reduce_reassociate",
     srcs = ["all_reduce_reassociate.cc"],
     hdrs = ["all_reduce_reassociate.h"],

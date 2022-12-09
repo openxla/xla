@@ -241,6 +241,7 @@ cc_library(
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
         "//xla/service:all_gather_decomposer",
+        "//xla/service:all_reduce_promotion",
         "//xla/service:all_to_all_decomposer",
         "//xla/service:bfloat16_normalization",
         "//xla/service:bitcast_dtypes_expander",
