@@ -62,6 +62,34 @@ cc_library(
         "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
         "@com_google_absl//absl/strings",
         "@tsl//platform:logging",
+        "@tsl//python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "float8_hdr",
+    hdrs = [
+        "float8.h",
+    ],
+    deps = [
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+    ],
+)
+
+cc_library(
+    name = "float8_lib",
+    srcs = [
+        "float8.cc",
+    ],
+    hdrs = [
+        "float8.h",
+    ],
+    deps = [
+        ":custom_float",
+        "//third_party/eigen3",
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "@com_google_absl//absl/strings",
+        "@tsl//platform:logging",
         "@tsl//platform:types",
         "@tsl//python/lib/core:numpy",
     ],
@@ -74,5 +102,15 @@ cc_library(
     deps = [
         "//third_party/py/numpy:headers",
         "//third_party/python_runtime:headers",
+    ],
+)
+
+# Directory-level target.
+cc_library(
+    name = "core",
+    deps = [
+        ":bfloat16_lib",
+        ":float8_lib",
+        ":numpy",
     ],
 )
