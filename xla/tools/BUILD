@@ -164,6 +164,7 @@ xla_cc_binary(
         "@tsl//platform:logging",
         "@tsl//platform:platform_port",
         "@tsl//platform:protobuf",
+        "@tsl//protobuf:dnn_proto_cc_impl",
     ],
 )
 

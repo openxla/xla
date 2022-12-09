@@ -820,6 +820,7 @@ xla_cc_binary(
         "//xla/stream_executor:device_description_proto_cc_impl",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream_executor_impl",
+        "//xla/stream_executor:dnn",
         "@tsl//platform:platform_port",
         "@tsl//platform:tensor_float_32_utils",
         "@tsl//protobuf:autotuning_proto_cc_impl",
