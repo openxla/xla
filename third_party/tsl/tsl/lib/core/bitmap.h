@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace tsl {
 namespace core {

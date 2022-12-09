@@ -1,6 +1,6 @@
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
-    default_visibility = ["@tsl//profiler:internal"],
+    default_visibility = ["//tsl/profiler:internal"],
     licenses = ["notice"],
 )
 

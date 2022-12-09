@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {

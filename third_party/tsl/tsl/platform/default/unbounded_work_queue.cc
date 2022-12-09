@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/default/unbounded_work_queue.h"
+#include "tsl/platform/default/unbounded_work_queue.h"
 
 #include "absl/memory/memory.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/numa.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/numa.h"
 
 namespace tsl {
 

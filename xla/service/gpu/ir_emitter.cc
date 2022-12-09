@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/ir_emitter.h"
 
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 // IWYU pragma: no_include "llvm/IR/Intrinsics.gen.inc"
 #include "absl/algorithm/container.h"
 #include "llvm/IR/BasicBlock.h"
@@ -43,7 +43,7 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 // Convenient function to cast the provided llvm::Value* using IRBuilder
 // to default address space. This is useful in particular for generating

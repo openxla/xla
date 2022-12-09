@@ -44,7 +44,7 @@ limitations under the License.
 #include "xla/python/types.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/platform_util.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/python/py_client_gpu.h"

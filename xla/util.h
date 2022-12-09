@@ -39,8 +39,8 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/lib/math/math_util.h"
-#include "third_party/tsl/platform/errors.h"  // IWYU pragma: keep
+#include "tsl/lib/math/math_util.h"
+#include "tsl/platform/errors.h"  // IWYU pragma: keep
 
 namespace xla {
 

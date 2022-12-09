@@ -26,7 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/statusor.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

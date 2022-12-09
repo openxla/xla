@@ -22,8 +22,8 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/regexp.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/regexp.h"
 
 namespace xla {
 

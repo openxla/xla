@@ -13,21 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/oauth_client.h"
+#include "tsl/platform/cloud/oauth_client.h"
 
 #include <fstream>
 
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/base64.h"
-#include "third_party/tsl/platform/cloud/http_request_fake.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/resource_loader.h"
-#include "third_party/tsl/platform/scanner.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/base64.h"
+#include "tsl/platform/cloud/http_request_fake.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/resource_loader.h"
+#include "tsl/platform/scanner.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

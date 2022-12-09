@@ -29,10 +29,10 @@ limitations under the License.
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 

@@ -35,8 +35,8 @@ limitations under the License.
 #include "xla/runtime/logical_result.h"
 #include "xla/runtime/results.h"
 #include "xla/runtime/types.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

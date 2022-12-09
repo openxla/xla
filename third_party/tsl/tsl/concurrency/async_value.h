@@ -30,8 +30,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "third_party/tsl/concurrency/concurrent_vector.h"
-#include "third_party/tsl/concurrency/ref_count.h"
+#include "tsl/concurrency/concurrent_vector.h"
+#include "tsl/concurrency/ref_count.h"
 
 namespace tsl {
 

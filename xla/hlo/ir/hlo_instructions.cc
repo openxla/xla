@@ -45,7 +45,7 @@ limitations under the License.
 #include "xla/protobuf_util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

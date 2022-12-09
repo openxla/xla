@@ -23,7 +23,7 @@ limitations under the License.
 #include "llvm/IR/MDBuilder.h"
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace gpu {

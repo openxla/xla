@@ -30,7 +30,7 @@ limitations under the License.
 #include "xla/hlo/experimental/auto_sharding/cluster_environment.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_pass_interface.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 namespace xla {
 
 class DummyAutoSharding : public HloModulePass {

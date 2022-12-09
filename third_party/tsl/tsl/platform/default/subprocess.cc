@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/subprocess.h"
+#include "tsl/platform/subprocess.h"
 
 #include <fcntl.h>
 #include <poll.h>
@@ -27,7 +27,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 // Android versions older than 28 do not have posix_spawn().
 #define USE_POSIX_SPAWN !defined(__ANDROID_API__) || __ANDROID_API__ >= 28

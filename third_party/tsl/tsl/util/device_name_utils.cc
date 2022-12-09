@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/util/device_name_utils.h"
+#include "tsl/util/device_name_utils.h"
 
 #include <algorithm>
 
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace tsl {
 

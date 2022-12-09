@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/stream_executor/dnn.h"
 
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace stream_executor {
 namespace {

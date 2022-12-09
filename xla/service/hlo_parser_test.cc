@@ -33,10 +33,10 @@ limitations under the License.
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/status_matchers.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/status_matchers.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

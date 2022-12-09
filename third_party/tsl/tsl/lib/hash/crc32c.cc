@@ -16,10 +16,10 @@ limitations under the License.
 // A portable implementation of crc32c, optimized to handle
 // four bytes at a time.
 
-#include "third_party/tsl/lib/hash/crc32c.h"
+#include "tsl/lib/hash/crc32c.h"
 
 #include <stdint.h>
-#include "third_party/tsl/platform/raw_coding.h"
+#include "tsl/platform/raw_coding.h"
 
 namespace tsl {
 namespace crc32c {

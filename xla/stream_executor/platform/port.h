@@ -18,8 +18,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_PORT_H_
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_PORT_H_
 
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/types.h"
 
 namespace stream_executor {
 

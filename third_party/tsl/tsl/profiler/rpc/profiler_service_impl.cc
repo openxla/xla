@@ -13,29 +13,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/rpc/profiler_service_impl.h"
+#include "tsl/profiler/rpc/profiler_service_impl.h"
 
 #include <memory>
 
 #include "grpcpp/support/status.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_replace.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/env_time.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/profiler/lib/profiler_session.h"
-#include "third_party/tsl/profiler/protobuf/profiler_service.grpc.pb.h"
-#include "third_party/tsl/profiler/protobuf/profiler_service.pb.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/rpc/client/save_profile.h"
-#include "third_party/tsl/profiler/utils/file_system_utils.h"
-#include "third_party/tsl/profiler/utils/math_utils.h"
-#include "third_party/tsl/profiler/utils/time_utils.h"
-#include "third_party/tsl/profiler/utils/xplane_utils.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/env_time.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/status.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/rpc/client/save_profile.h"
+#include "tsl/profiler/utils/file_system_utils.h"
+#include "tsl/profiler/utils/math_utils.h"
+#include "tsl/profiler/utils/time_utils.h"
+#include "tsl/profiler/utils/xplane_utils.h"
 
 namespace tsl {
 namespace profiler {

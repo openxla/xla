@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/gcs_throttle.h"
+#include "tsl/platform/cloud/gcs_throttle.h"
 
 #include <algorithm>
 

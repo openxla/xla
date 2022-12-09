@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 // Must be included first
 // clang-format off
-#include "third_party/tsl/python/lib/core/numpy.h" //NOLINT
+#include "tsl/python/lib/core/numpy.h" //NOLINT
 // clang-format on
 
 #include "xla/python/py_values.h"
@@ -42,9 +42,9 @@ limitations under the License.
 #include "xla/python/sharding.h"
 #include "xla/python/types.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace py = pybind11;
 

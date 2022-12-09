@@ -42,8 +42,8 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/fingerprint.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/fingerprint.h"
 
 // API notes:
 // PjRt stands for "Pretty much Just another RunTime".

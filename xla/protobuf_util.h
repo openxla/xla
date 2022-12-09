@@ -20,7 +20,7 @@ limitations under the License.
 #include <string>
 
 #include "xla/status.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace protobuf_util {

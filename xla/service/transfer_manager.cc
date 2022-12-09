@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/notification.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/notification.h"
 
 using absl::StrCat;
 

@@ -25,7 +25,7 @@ limitations under the License.
 #include "pybind11/pytypes.h"
 #include "xla/python/exceptions.h"
 #include "xla/python/python_ref_manager.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package tensorflow;
 
-import "third_party/tsl/profiler/protobuf/profiler_service.proto";
+import "tsl/profiler/protobuf/profiler_service.proto";
 
 message NewProfileSessionRequest {
   ProfileRequest request = 1;

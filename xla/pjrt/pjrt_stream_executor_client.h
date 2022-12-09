@@ -54,9 +54,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/framework/allocator.h"
-#include "third_party/tsl/platform/casts.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/framework/allocator.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 #include <cstdlib>
 
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/net.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/net.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace testing {

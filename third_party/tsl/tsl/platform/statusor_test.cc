@@ -15,17 +15,17 @@ limitations under the License.
 
 // Unit tests for StatusOr
 
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 #include <memory>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace tsl {
 namespace {

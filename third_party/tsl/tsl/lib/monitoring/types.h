@@ -19,7 +19,7 @@ limitations under the License.
 #include <cmath>
 #include <vector>
 
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace monitoring {

@@ -20,15 +20,15 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/lib/traceme_encode.h"  // IWYU pragma: export
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/lib/traceme_encode.h"  // IWYU pragma: export
 
 #if !defined(IS_MOBILE_PLATFORM)
-#include "third_party/tsl/profiler/backends/cpu/traceme_recorder.h"
-#include "third_party/tsl/profiler/utils/time_utils.h"
+#include "tsl/profiler/backends/cpu/traceme_recorder.h"
+#include "tsl/profiler/utils/time_utils.h"
 #endif
 
 namespace tsl {

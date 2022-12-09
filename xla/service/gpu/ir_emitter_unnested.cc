@@ -127,9 +127,9 @@ limitations under the License.
 #include "xla/union_find.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/human_readable_json.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/human_readable_json.h"
+#include "tsl/platform/logging.h"
 
 #if GOOGLE_CUDA
 #include "xla/service/gpu/cublas_lt_matmul_thunk.h"

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/cuda/cudnn_version.h"
+#include "tsl/cuda/cudnn_version.h"
 
 namespace stream_executor {
 namespace gpu {

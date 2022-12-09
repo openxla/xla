@@ -21,7 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/IR/IntrinsicsNVPTX.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 // IWYU pragma: no_include "llvm/IR/Attributes.gen.inc"
 // IWYU pragma: no_include "llvm/IR/Intrinsics.gen.inc"
 #include "absl/strings/str_cat.h"

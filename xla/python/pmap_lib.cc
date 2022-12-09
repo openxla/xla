@@ -53,9 +53,9 @@ limitations under the License.
 #include "xla/python/types.h"
 #include "xla/python/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace jax {
 

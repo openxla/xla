@@ -20,12 +20,12 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/random.h"
-#include "third_party/tsl/platform/retrying_utils.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/random.h"
+#include "tsl/platform/retrying_utils.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 

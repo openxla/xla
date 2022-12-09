@@ -86,8 +86,8 @@ limitations under the License.
 #include "xla/pjrt/transpose_kernels.h"
 #include "xla/status.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/platform/logging.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 

@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_TESTS_MANIFEST_CHECKING_TEST_H_
 #define TENSORFLOW_COMPILER_XLA_TESTS_MANIFEST_CHECKING_TEST_H_
 
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 

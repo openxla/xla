@@ -26,8 +26,8 @@ limitations under the License.
 #include <vector>
 
 #include "xla/backends/profiler/gpu/cupti_interface.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/thread_annotations.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 
 namespace xla {
 namespace profiler {

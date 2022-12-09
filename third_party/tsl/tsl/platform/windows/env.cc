@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 #include <Shlwapi.h>
 #include <Windows.h>
@@ -28,12 +28,12 @@ limitations under the License.
 #include <thread>
 #include <vector>
 
-#include "third_party/tsl/platform/load_library.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/ram_file_system.h"
-#include "third_party/tsl/platform/windows/wide_char.h"
-#include "third_party/tsl/platform/windows/windows_file_system.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/platform/load_library.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/ram_file_system.h"
+#include "tsl/platform/windows/wide_char.h"
+#include "tsl/platform/windows/windows_file_system.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 #pragma comment(lib, "Shlwapi.lib")
 

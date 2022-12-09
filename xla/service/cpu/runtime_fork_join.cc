@@ -23,8 +23,8 @@ limitations under the License.
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "xla/executable_run_options.h"
 #include "xla/service/custom_call_status_internal.h"
-#include "third_party/tsl/platform/blocking_counter.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/logging.h"
 
 using ComputeFunctionType = void (*)(void*, const void*, const void**, void**,
                                      void*, int64_t*, uint64_t*);

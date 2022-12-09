@@ -24,7 +24,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/lib/math/math_util.h"
+#include "tsl/lib/math/math_util.h"
 
 namespace stream_executor {
 

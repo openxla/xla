@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/runtime/executable.h"
 #include "xla/runtime/tracing.h"
 #include "xla/service/gpu/runtime/support.h"
-#include "third_party/tsl/profiler/lib/scoped_annotation_stack.h"
+#include "tsl/profiler/lib/scoped_annotation_stack.h"
 
 namespace xla {
 namespace gpu {

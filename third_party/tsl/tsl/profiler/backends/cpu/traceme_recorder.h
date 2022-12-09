@@ -22,10 +22,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {

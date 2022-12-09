@@ -35,14 +35,14 @@ limitations under the License.
 #include <thread>
 #include <vector>
 
-#include "third_party/tsl/platform/default/posix_file_system.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/load_library.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/ram_file_system.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/platform/default/posix_file_system.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/load_library.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/ram_file_system.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 namespace tsl {
 

@@ -16,16 +16,16 @@ limitations under the License.
 #include <algorithm>
 #include <atomic>
 
-#include "third_party/tsl/framework/allocator.h"
-#include "third_party/tsl/framework/allocator_registry.h"
-#include "third_party/tsl/framework/tracking_allocator.h"
-#include "third_party/tsl/platform/mem.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/stringprintf.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/lib/scoped_memory_debug_annotation.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/framework/allocator.h"
+#include "tsl/framework/allocator_registry.h"
+#include "tsl/framework/tracking_allocator.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/stringprintf.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace tsl {
 

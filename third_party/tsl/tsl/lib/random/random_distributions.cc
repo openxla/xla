@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/random/distribution_sampler.h"
-#include "third_party/tsl/lib/random/philox_random.h"
+#include "tsl/lib/random/distribution_sampler.h"
+#include "tsl/lib/random/philox_random.h"
 
 namespace tsl {
 namespace random {

@@ -20,10 +20,10 @@ limitations under the License.
 
 // Note the following header is used in both TF and TFLite. Particularly, it's
 // used for float TFLite Conv2D.
-#include "third_party/tsl/framework/convolution/eigen_spatial_convolutions-inl.h"
+#include "tsl/framework/convolution/eigen_spatial_convolutions-inl.h"
 
 #if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
-#include "third_party/tsl/framework/contraction/eigen_contraction_kernel.h"
+#include "tsl/framework/contraction/eigen_contraction_kernel.h"
 
 namespace Eigen {
 namespace internal {

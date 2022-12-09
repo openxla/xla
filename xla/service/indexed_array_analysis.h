@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
-#include "third_party/tsl/util/ptr_util.h"
+#include "tsl/util/ptr_util.h"
 
 namespace xla {
 

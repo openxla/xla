@@ -27,11 +27,11 @@ limitations under the License.
 #include "xla/client/xla_builder.h"
 #include "xla/rpc/grpc_stub.h"
 #include "xla/tests/literal_test_util.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/net.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/subprocess.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/net.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/subprocess.h"
+#include "tsl/platform/test.h"
 
 #if defined(PLATFORM_WINDOWS)
 // This is not used on windows, but we define it here to make the test simpler

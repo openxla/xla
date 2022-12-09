@@ -1,8 +1,8 @@
 # Description:
 #   XLA client libraries.
 
-load("@tsl//:tsl.default.bzl", "filegroup")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -38,8 +38,8 @@ cc_library(
         "//xla:xla_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -52,8 +52,8 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "@com_google_absl//absl/types:span",
-        "@tsl//lib/math:math_util",
-        "@tsl//platform:logging",
+        "@tsl//tsl/lib/math:math_util",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -62,8 +62,8 @@ tf_cc_test(
     srcs = ["padding_test.cc"],
     deps = [
         ":padding",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -87,9 +87,9 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:protobuf",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -108,8 +108,8 @@ cc_library(
         "//xla/service:computation_placer",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -184,7 +184,7 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -239,7 +239,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -273,9 +273,9 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//lib/core:bitmap",
-        "@tsl//platform:errors",
-        "@tsl//platform:stacktrace",
+        "@tsl//tsl/lib/core:bitmap",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:stacktrace",
     ],
 )
 
@@ -298,6 +298,6 @@ tf_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_matchers",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )

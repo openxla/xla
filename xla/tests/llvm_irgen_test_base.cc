@@ -20,8 +20,8 @@ limitations under the License.
 
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/tests/filecheck.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 

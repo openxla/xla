@@ -20,9 +20,9 @@ limitations under the License.
 #include <chrono>
 #include <memory>
 
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/profile_utils/i_cpu_utils_helper.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/profile_utils/i_cpu_utils_helper.h"
+#include "tsl/platform/types.h"
 
 #if defined(ARMV6) || defined(__ARM_ARCH_7A__)
 #include <sys/time.h>

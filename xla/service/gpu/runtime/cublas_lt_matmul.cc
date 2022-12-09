@@ -32,7 +32,7 @@ limitations under the License.1
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/xla.pb.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 #if GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"

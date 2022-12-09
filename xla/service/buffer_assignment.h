@@ -38,7 +38,7 @@ limitations under the License.
 #include "xla/service/tuple_points_to_analysis.h"
 #include "xla/statusor.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

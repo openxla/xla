@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/service/gpu/xfeed_queue.h"
 #include "xla/shape_tree.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/platform/notification.h"
+#include "tsl/platform/notification.h"
 
 namespace xla {
 namespace gpu {

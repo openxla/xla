@@ -19,7 +19,7 @@ limitations under the License.
 #include <optional>
 
 #include "xla/runtime/custom_call.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace runtime {

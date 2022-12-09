@@ -32,8 +32,8 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
-#include "third_party/tsl/lib/gtl/map_util.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 

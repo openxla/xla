@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/utils/xplane_visitor.h"
+#include "tsl/profiler/utils/xplane_visitor.h"
 
 #include <string>
 #include <utility>
@@ -21,9 +21,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

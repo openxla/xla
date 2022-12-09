@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/ram_file_block_cache.h"
+#include "tsl/platform/cloud/ram_file_block_cache.h"
 
 #include <cstring>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/blocking_counter.h"
-#include "third_party/tsl/platform/cloud/now_seconds_env.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/notification.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/cloud/now_seconds_env.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/notification.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

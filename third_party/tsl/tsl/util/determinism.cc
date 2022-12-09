@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/util/determinism.h"
+#include "tsl/util/determinism.h"
 
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/util/env_var.h"
 
 namespace tsl {
 

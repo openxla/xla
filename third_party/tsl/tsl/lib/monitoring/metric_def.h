@@ -21,10 +21,10 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/lib/monitoring/types.h"
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/protobuf/histogram.pb.h"
+#include "tsl/lib/monitoring/types.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/types.h"
+#include "tsl/protobuf/histogram.pb.h"
 
 namespace tsl {
 namespace monitoring {

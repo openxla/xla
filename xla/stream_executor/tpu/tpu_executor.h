@@ -35,8 +35,8 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
 #include "xla/stream_executor/tpu/tpu_stream.h"
-#include "third_party/tsl/platform/casts.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/types.h"
 
 namespace tensorflow {
 namespace tpu {

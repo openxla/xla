@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/inputbuffer.h"
+#include "tsl/lib/io/inputbuffer.h"
 
 #include <vector>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/coding.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

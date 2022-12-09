@@ -19,9 +19,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tsl {
 

@@ -20,10 +20,10 @@ limitations under the License.
 #include <memory>
 
 #include "absl/types/optional.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/threadpool_interface.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/threadpool_interface.h"
+#include "tsl/platform/types.h"
 
 namespace Eigen {
 class Allocator;

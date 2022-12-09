@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/threadpool.h"
 
 #define EIGEN_USE_THREADS
 
 #include "absl/types/optional.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "third_party/tsl/platform/blocking_counter.h"
-#include "third_party/tsl/platform/context.h"
-#include "third_party/tsl/platform/denormal.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/numa.h"
-#include "third_party/tsl/platform/setround.h"
-#include "third_party/tsl/platform/tracing.h"
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/context.h"
+#include "tsl/platform/denormal.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/setround.h"
+#include "tsl/platform/tracing.h"
 
 namespace tsl {
 

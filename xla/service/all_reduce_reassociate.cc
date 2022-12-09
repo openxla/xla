@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/service/hlo_query.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {

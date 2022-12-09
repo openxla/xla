@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "xla/service/pattern_matcher.h"
 #include "xla/test.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 

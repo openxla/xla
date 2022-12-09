@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

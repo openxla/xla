@@ -4,13 +4,13 @@
 # Throughout this file, all targets are built with the standard crosstool and
 # do not link against restricted binary blobs.
 
-load("@tsl//platform:build_config_root.bzl", "if_static")
-load("@tsl//:tsl.bzl", "transitive_hdrs", "tsl_gpu_library")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//platform:build_config.bzl", "tf_proto_library")
+load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
+load("@tsl//tsl:tsl.bzl", "transitive_hdrs", "tsl_gpu_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
-load("@tsl//:tsl.default.bzl", "filegroup")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -72,10 +72,10 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
-        "@tsl//platform:types",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -182,9 +182,9 @@ cc_library(
         ":platform",
         ":stream_executor",
         "@com_google_absl//absl/strings",
-        "@tsl//framework:device_id_impl",
-        "@tsl//lib/gtl:int_type",
-        "@tsl//platform:str_util",
+        "@tsl//tsl/framework:device_id_impl",
+        "@tsl//tsl/lib/gtl:int_type",
+        "@tsl//tsl/platform:str_util",
     ],
 )
 
@@ -207,8 +207,8 @@ tf_proto_library(
     name = "dnn_proto",
     srcs = ["dnn.proto"],
     make_default_target_header_only = True,
-    protodeps = ["@tsl//protobuf:dnn_proto"],
-    exports = ["@tsl//protobuf:dnn_proto"],
+    protodeps = ["@tsl//tsl/protobuf:dnn_proto"],
+    exports = ["@tsl//tsl/protobuf:dnn_proto"],
 )
 
 cc_library(
@@ -257,10 +257,10 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":stream_executor",
-        "@tsl//framework:allocator",
-        "@tsl//framework:device_id",
-        "@tsl//platform:macros",
-        "@tsl//profiler/lib:traceme",
+        "@tsl//tsl/framework:allocator",
+        "@tsl//tsl/framework:device_id",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -323,7 +323,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -341,7 +341,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@tsl//platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -395,7 +395,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -435,8 +435,8 @@ tsl_gpu_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:logging",
-        "@tsl//util:env_var",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/util:env_var",
     ],
 )
 
@@ -492,7 +492,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -524,7 +524,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -604,7 +604,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -644,8 +644,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:logging",
-        "@tsl//lib/strings:proto_serialization",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/lib/strings:proto_serialization",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
     ] + if_static(["@com_google_protobuf//:protobuf"]),
@@ -722,10 +722,10 @@ cc_library(
     ],
     deps = [
         ":stream_executor_headers",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
-        "@tsl//platform:types",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:types",
     ] + if_static([":stream_executor_impl"]),
 )
 
@@ -744,7 +744,7 @@ cc_library(
         ":stream_executor_pimpl",
         ":timer",
         "//xla/stream_executor:dnn_proto_cc_impl",
-        "@tsl//protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )
 
@@ -759,9 +759,9 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
-        "@tsl//platform:types",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -786,9 +786,9 @@ xla_cc_test(
         ":stream_executor",
         ":stream_executor_impl",
         "//xla/stream_executor/host:host_platform",
-        "@tsl//platform:env_impl",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:env_impl",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -799,9 +799,9 @@ xla_cc_test(
     deps = [
         ":dnn",
         ":stream_executor_impl",
-        "@tsl//platform:env_impl",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:env_impl",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -816,8 +816,8 @@ cc_library(
         ":stream_executor_headers",
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/synchronization",
-        "@tsl//framework:allocator",
-        "@tsl//platform:errors",
+        "@tsl//tsl/framework:allocator",
+        "@tsl//tsl/platform:errors",
     ],
 )
 

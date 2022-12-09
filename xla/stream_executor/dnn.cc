@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "third_party/tsl/lib/strings/proto_serialization.h"
+#include "tsl/lib/strings/proto_serialization.h"
 
 namespace stream_executor {
 namespace dnn {

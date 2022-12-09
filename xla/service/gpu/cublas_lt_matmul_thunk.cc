@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"
 #include "xla/stream_executor/device_memory.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace gpu {

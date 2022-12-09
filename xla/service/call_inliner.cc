@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_domain_isolator.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {

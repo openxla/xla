@@ -40,7 +40,7 @@ limitations under the License.
 #include "xla/stream_executor/rng.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_internal.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/util/env_var.h"
 
 namespace {
 bool FLAGS_check_device_leaks = false;

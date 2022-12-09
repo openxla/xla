@@ -33,7 +33,7 @@ limitations under the License.
 #include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace xla {
 namespace gpu {

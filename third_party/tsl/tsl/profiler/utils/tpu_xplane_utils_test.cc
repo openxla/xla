@@ -12,14 +12,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/utils/tpu_xplane_utils.h"
+#include "tsl/profiler/utils/tpu_xplane_utils.h"
 
 #include <vector>
 
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/utils/xplane_schema.h"
-#include "third_party/tsl/profiler/utils/xplane_utils.h"
+#include "tsl/platform/test.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/xplane_schema.h"
+#include "tsl/profiler/utils/xplane_utils.h"
 
 namespace tsl {
 namespace profiler {

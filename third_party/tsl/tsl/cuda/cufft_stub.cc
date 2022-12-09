@@ -14,8 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "third_party/gpus/cuda/include/cufft.h"
 #include "third_party/gpus/cuda/include/cufftXt.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the cuFFT API by forwarding to cuFFT loaded from the DSO.
 
@@ -49,8 +49,8 @@ cufftResult GetSymbolNotFoundError() { return CUFFT_INTERNAL_ERROR; }
 }  // namespace
 
 #if CUFFT_VERSION < 10000
-#include "third_party/tsl/cuda/cufft_9_0.inc"
+#include "tsl/cuda/cufft_9_0.inc"
 #else
 // All CUDA-10+ implementations use the same API.
-#include "third_party/tsl/cuda/cufft_10_0.inc"
+#include "tsl/cuda/cufft_10_0.inc"
 #endif

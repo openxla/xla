@@ -43,10 +43,10 @@ limitations under the License.
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logger.h"
-#include "third_party/tsl/platform/numbers.h"
-#include "third_party/tsl/util/env_var.h"
-#include "third_party/tsl/util/proto/proto_utils.h"
+#include "tsl/platform/logger.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/util/env_var.h"
+#include "tsl/util/proto/proto_utils.h"
 
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
 #include "third_party/gpus/cudnn/cudnn.h"

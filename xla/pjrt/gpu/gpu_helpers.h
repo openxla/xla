@@ -26,7 +26,7 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
-#include "third_party/tsl/framework/bfc_allocator.h"
+#include "tsl/framework/bfc_allocator.h"
 
 namespace xla {
 

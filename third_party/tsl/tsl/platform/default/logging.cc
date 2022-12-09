@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/default/logging.h"
+#include "tsl/platform/default/logging.h"
 
 // TODO(b/142492876): Avoid depending on absl internal.
 #include "absl/base/internal/cycleclock.h"
 #include "absl/base/internal/sysinfo.h"
-#include "third_party/tsl/platform/env_time.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/mutex.h"
+#include "tsl/platform/env_time.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/mutex.h"
 
 #if defined(PLATFORM_POSIX_ANDROID)
 #include <android/log.h>

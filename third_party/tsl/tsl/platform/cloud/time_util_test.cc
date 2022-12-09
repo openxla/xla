@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/time_util.h"
+#include "tsl/platform/cloud/time_util.h"
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 

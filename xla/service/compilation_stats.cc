@@ -22,7 +22,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace xla {
 

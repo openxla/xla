@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 

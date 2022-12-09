@@ -1,4 +1,4 @@
-load("@tsl//:tsl.default.bzl", "filegroup")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//third_party/tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
 
 package(

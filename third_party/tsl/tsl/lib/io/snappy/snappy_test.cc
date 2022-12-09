@@ -15,14 +15,14 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/lib/io/inputbuffer.h"
-#include "third_party/tsl/lib/io/random_inputstream.h"
-#include "third_party/tsl/lib/io/snappy/snappy_inputbuffer.h"
-#include "third_party/tsl/lib/io/snappy/snappy_inputstream.h"
-#include "third_party/tsl/lib/io/snappy/snappy_outputbuffer.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/lib/io/inputbuffer.h"
+#include "tsl/lib/io/random_inputstream.h"
+#include "tsl/lib/io/snappy/snappy_inputbuffer.h"
+#include "tsl/lib/io/snappy/snappy_inputstream.h"
+#include "tsl/lib/io/snappy/snappy_outputbuffer.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 

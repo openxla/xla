@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "absl/strings/match.h"
 #include "llvm/Support/CommandLine.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace llvm_ir {

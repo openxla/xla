@@ -1,7 +1,7 @@
 # Description:
 #    Tests for LLVM-based CPU backend for XLA.
 
-load("@tsl//:tsl.default.bzl", "filegroup")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -33,7 +33,7 @@ cc_library(
     deps = [
         "//xla/service:cpu_plugin",
         "//xla/tests:llvm_irgen_test_base",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -45,9 +45,9 @@ tf_cc_test(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:test_header_helper",
         "//xla/service/cpu/tests:cpu_codegen_test",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -65,8 +65,8 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -76,8 +76,8 @@ tf_cc_test(
     deps = [
         "//xla:shape_util",
         "//xla/service/llvm_ir:llvm_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -90,7 +90,7 @@ tf_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/service/cpu/tests:cpu_codegen_test",
         "//xla/tests:filecheck",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -110,8 +110,8 @@ tf_cc_test(
         "//xla/tests:filecheck",
         "@com_google_absl//absl/memory",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -126,9 +126,9 @@ tf_cc_test(
         "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -142,9 +142,9 @@ tf_cc_test(
         "//xla/service/cpu/tests:cpu_codegen_test",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -159,9 +159,9 @@ tf_cc_test(
         "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -183,10 +183,10 @@ tf_cc_test(
         "//xla/tests:llvm_irgen_test_base",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/strings",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -207,10 +207,10 @@ tf_cc_test(
         "//xla/service:cpu_plugin",
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -223,9 +223,9 @@ tf_cc_test(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:test_header_helper",
         "//xla/service/cpu/tests:cpu_codegen_test",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -237,9 +237,9 @@ tf_cc_test(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:test_header_helper",
         "//xla/service/cpu/tests:cpu_codegen_test",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -251,9 +251,9 @@ tf_cc_test(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:test_header_helper",
         "//xla/service/cpu/tests:cpu_codegen_test",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -268,9 +268,9 @@ tf_cc_test(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:test_header_helper",
         "//xla/tests:hlo_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -284,9 +284,9 @@ tf_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:test_header_helper",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -301,9 +301,9 @@ tf_cc_test(
         "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -318,8 +318,8 @@ tf_cc_test(
         "@llvm-project//llvm:ARMCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )

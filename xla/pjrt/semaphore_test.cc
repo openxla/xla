@@ -17,8 +17,8 @@ limitations under the License.
 
 #include "absl/synchronization/notification.h"
 #include "xla/test.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace {

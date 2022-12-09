@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

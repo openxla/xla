@@ -14,10 +14,10 @@ limitations under the License.
 ==============================================================================*/
 // Must be included first
 // clang-format off
-#include "third_party/tsl/python/lib/core/numpy.h" //NOLINT
+#include "tsl/python/lib/core/numpy.h" //NOLINT
 // clang-format on
 
-#include "third_party/tsl/python/lib/core/bfloat16.h"
+#include "tsl/python/lib/core/bfloat16.h"
 
 #include <array>   // NOLINT
 #include <cmath>   // NOLINT
@@ -29,10 +29,10 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "third_party/eigen3/Eigen/Core"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/python/lib/core/custom_float.h"
-#include "third_party/tsl/python/lib/core/float8_e4m3b11.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
+#include "tsl/python/lib/core/custom_float.h"
+#include "tsl/python/lib/core/float8_e4m3b11.h"
 
 namespace tsl {
 namespace custom_float_internal {

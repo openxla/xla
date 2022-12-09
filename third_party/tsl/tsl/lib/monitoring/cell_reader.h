@@ -21,9 +21,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "third_party/tsl/lib/monitoring/cell_reader-inl.h"
-#include "third_party/tsl/lib/monitoring/collected_metrics.h"
-#include "third_party/tsl/lib/monitoring/metric_def.h"
+#include "tsl/lib/monitoring/cell_reader-inl.h"
+#include "tsl/lib/monitoring/collected_metrics.h"
+#include "tsl/lib/monitoring/metric_def.h"
 
 namespace tsl {
 namespace monitoring {

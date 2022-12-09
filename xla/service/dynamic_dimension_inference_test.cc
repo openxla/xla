@@ -31,8 +31,8 @@ limitations under the License.
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace op = xla::testing::opcode_matchers;
 

@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/rpc/coordination/grpc_coordination_service_impl.h"
+#include "tsl/distributed_runtime/rpc/coordination/grpc_coordination_service_impl.h"
 
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/threadpool.h"
 
 namespace tsl {
 

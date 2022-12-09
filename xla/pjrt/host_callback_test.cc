@@ -22,7 +22,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/tests/literal_test_util.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
+#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

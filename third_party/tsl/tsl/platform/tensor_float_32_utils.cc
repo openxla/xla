@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/tensor_float_32_utils.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 #include <atomic>
 

@@ -1,5 +1,5 @@
 # MHLO -> TOSA bridge.
-load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 
 package(

@@ -1,13 +1,13 @@
 # Description:
 # profile_utils targets.
 
-load("@tsl//:tsl.default.bzl", "filegroup")
+load("//tsl:tsl.default.bzl", "filegroup")
 load(
-    "@tsl//platform:rules_cc.bzl",
+    "//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 load(
-    "@tsl//:tsl.bzl",
+    "//tsl:tsl.bzl",
     "tsl_copts",
 )
 
@@ -15,9 +15,9 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
         "//third_party/tensorflow/core/platform:__subpackages__",
+        "//tsl:__pkg__",
+        "//tsl/platform/default:__pkg__",
         "//xla/stream_executor:__subpackages__",
-        "@tsl//:__pkg__",
-        "@tsl//platform/default:__pkg__",
     ],
     licenses = ["notice"],
 )
@@ -40,7 +40,7 @@ filegroup(
     ],
     visibility = [
         "//third_party/tensorflow/core/platform:__subpackages__",
-        "@tsl//platform:__pkg__",
+        "//tsl/platform:__pkg__",
     ],
 )
 
@@ -56,10 +56,10 @@ cc_library(
     ],
     copts = tsl_copts(),
     deps = [
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:types",
         "@com_google_absl//absl/base",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:types",
     ],
     alwayslink = 1,
 )

@@ -31,11 +31,11 @@ limitations under the License.
 #include "xla/stream_executor/device_id_utils.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/framework/allocator.h"
-#include "third_party/tsl/framework/device_id.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/framework/allocator.h"
+#include "tsl/framework/device_id.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/util/env_var.h"
 
 namespace stream_executor {
 

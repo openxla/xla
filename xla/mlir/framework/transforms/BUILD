@@ -1,6 +1,6 @@
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
-load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],

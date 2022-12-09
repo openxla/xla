@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <string.h>
 
-#include "third_party/tsl/platform/byte_order.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/byte_order.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace core {

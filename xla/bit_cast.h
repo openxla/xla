@@ -29,7 +29,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "third_party/eigen3/Eigen/Core"
 #include "xla/types.h"
-#include "third_party/tsl/platform/bfloat16.h"
+#include "tsl/platform/bfloat16.h"
 
 namespace xla {
 

@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

@@ -26,7 +26,7 @@ limitations under the License.
 #include "xla/service/gather_scatter_utils.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape_util.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 

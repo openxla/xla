@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/backends/cpu/traceme_recorder.h"
+#include "tsl/profiler/backends/cpu/traceme_recorder.h"
 
 #include <atomic>
 #include <set>
@@ -23,14 +23,14 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/notification.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/threadpool.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/utils/math_utils.h"
-#include "third_party/tsl/profiler/utils/time_utils.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/notification.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/threadpool.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/utils/math_utils.h"
+#include "tsl/profiler/utils/time_utils.h"
 
 namespace tsl {
 namespace profiler {

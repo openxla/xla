@@ -1,7 +1,7 @@
 # Common computation builders for XLA.
 
-load("@tsl//:tsl.default.bzl", "filegroup")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//tensorflow/compiler/xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 
 package(
@@ -144,8 +144,8 @@ cc_library(
     deps = [
         "//xla:status_macros",
         "//xla/client:padding",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -316,8 +316,8 @@ cc_library(
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -341,10 +341,10 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:tensor_float_32_hdr_lib",
-        "@tsl//platform:tensor_float_32_utils",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
+        "@tsl//tsl/platform:tensor_float_32_utils",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -458,8 +458,8 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
-        "@tsl//platform:bfloat16",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:bfloat16",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -501,8 +501,8 @@ cc_library(
         "//xla/client:xla_computation",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
-        "@tsl//platform:protobuf",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -525,8 +525,8 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -554,8 +554,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -577,8 +577,8 @@ cc_library(
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -606,10 +606,10 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:tensor_float_32_hdr_lib",
-        "@tsl//platform:tensor_float_32_utils",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
+        "@tsl//tsl/platform:tensor_float_32_utils",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -672,8 +672,8 @@ cc_library(
         "//xla:status_macros",
         "//xla:statusor",
         "//xla/client:xla_builder",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -696,7 +696,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )

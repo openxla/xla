@@ -18,7 +18,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/stream_executor/gpu/gpu_stream.h"

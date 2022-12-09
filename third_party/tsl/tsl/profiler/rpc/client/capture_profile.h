@@ -19,10 +19,10 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "third_party/tsl/profiler/protobuf/profiler_service.pb.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/platform/status.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

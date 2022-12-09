@@ -23,10 +23,10 @@ limitations under the License.
 #include <iterator>
 #include <utility>
 
-#include "third_party/tsl/lib/gtl/flatrep.h"
-#include "third_party/tsl/platform/hash.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/lib/gtl/flatrep.h"
+#include "tsl/platform/hash.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace gtl {

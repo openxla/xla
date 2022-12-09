@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/framework/bfc_allocator.h"
+#include "tsl/framework/bfc_allocator.h"
 
 #include <algorithm>
 #include <atomic>
@@ -21,21 +21,21 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/framework/allocator_retry.h"
-#include "third_party/tsl/lib/core/bits.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/numbers.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/framework/allocator_retry.h"
+#include "tsl/lib/core/bits.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/types.h"
 #ifdef TENSORFLOW_MEM_DEBUG
-#include "third_party/tsl/stacktrace.h"
+#include "tsl/stacktrace.h"
 #endif
-#include "third_party/tsl/profiler/lib/scoped_memory_debug_annotation.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
-#include "third_party/tsl/protobuf/bfc_memory_map.pb.h"
+#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/protobuf/bfc_memory_map.pb.h"
 
 namespace tsl {
 

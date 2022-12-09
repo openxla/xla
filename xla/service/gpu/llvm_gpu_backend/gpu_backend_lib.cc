@@ -61,12 +61,12 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/random.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/random.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/util/env_var.h"
 
 #if !defined(PLATFORM_GOOGLE) && TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"

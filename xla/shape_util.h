@@ -37,9 +37,9 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/cpu_info.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 

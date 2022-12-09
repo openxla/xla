@@ -23,13 +23,13 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/notification.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/notification.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

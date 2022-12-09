@@ -1,12 +1,12 @@
 # copybara:uncomment(oss-unused) load("//net/grpc/go/build_defs:go_grpc_library.bzl", "go_grpc_library")
-load("@tsl//platform:build_config.bzl", "tf_proto_library")
+load("//tsl/platform:build_config.bzl", "tf_proto_library")
 
 # copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
 
 package_group(
     name = "friends",
     includes = [
-        "@tsl//profiler:friends",
+        "//tsl/profiler:friends",
     ],
 )
 
@@ -68,7 +68,7 @@ exports_files(
     srcs = ["xplane.proto"],
     visibility = [
         "//third_party/tensorflow/core:__pkg__",
-        "@tsl//:__pkg__",
+        "//tsl:__pkg__",
     ],
 )
 
@@ -77,8 +77,8 @@ tf_proto_library(
     srcs = ["profile.proto"],
     cc_api_version = 2,
     visibility = [
+        "//tsl/profiler:internal",
         "//xla/python:__pkg__",
-        "@tsl//profiler:internal",
     ],
 )
 

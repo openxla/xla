@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 #include <errno.h>
 #include <string.h>
 
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/strcat.h"
 
 namespace tsl {
 namespace errors {

@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/client/xla_computation.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/util.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme.h"
 
 // Implementation notes:
 //

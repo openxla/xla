@@ -20,9 +20,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/file_system_helper.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/file_system_helper.h"
 
 namespace tsl {
 

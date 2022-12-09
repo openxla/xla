@@ -22,7 +22,7 @@ limitations under the License.
 #include <functional>
 #include <utility>
 
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/threadpool.h"
 #include "tfrt/concurrency/async_value.h"  // from @tf_runtime
 #include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 

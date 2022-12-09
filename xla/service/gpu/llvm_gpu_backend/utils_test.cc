@@ -20,9 +20,9 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/resource_loader.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/resource_loader.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

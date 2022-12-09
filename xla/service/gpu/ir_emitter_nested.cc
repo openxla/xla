@@ -36,7 +36,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/llvm_ir/tuple_ops.h"
 #include "xla/service/name_uniquer.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

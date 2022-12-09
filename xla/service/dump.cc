@@ -31,13 +31,13 @@ limitations under the License.
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_proto_util.h"
 #include "xla/util.h"
-#include "third_party/tsl/lib/io/zlib_compression_options.h"
-#include "third_party/tsl/lib/io/zlib_outputbuffer.h"
-#include "third_party/tsl/lib/strings/proto_serialization.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/regexp.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/lib/io/zlib_compression_options.h"
+#include "tsl/lib/io/zlib_outputbuffer.h"
+#include "tsl/lib/strings/proto_serialization.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/regexp.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

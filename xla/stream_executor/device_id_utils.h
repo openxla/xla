@@ -25,10 +25,10 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/framework/device_id.h"
-#include "third_party/tsl/framework/device_id_manager.h"
-#include "third_party/tsl/lib/gtl/int_type.h"
-#include "third_party/tsl/platform/str_util.h"
+#include "tsl/framework/device_id.h"
+#include "tsl/framework/device_id_manager.h"
+#include "tsl/lib/gtl/int_type.h"
+#include "tsl/platform/str_util.h"
 
 namespace stream_executor {
 

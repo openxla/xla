@@ -17,9 +17,9 @@ limitations under the License.
 #include "xla/client/client_library.h"
 #include "xla/client/xla_builder.h"
 #include "xla/shape_util.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

@@ -28,11 +28,11 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/types.h"
 
 #ifdef PLATFORM_WINDOWS
 #undef DeleteFile

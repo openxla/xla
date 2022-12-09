@@ -40,7 +40,7 @@ limitations under the License.
 #include "xla/index_util.h"
 #include "xla/service/hlo_sharding_util.h"
 #include "xla/shape_util.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace spmd {

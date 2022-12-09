@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_C_TSL_STATUS_INTERNAL_H_
 #define TENSORFLOW_TSL_C_TSL_STATUS_INTERNAL_H_
 
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 // Internal structures used by the status C API. These are likely to change
 // and should not be depended on.

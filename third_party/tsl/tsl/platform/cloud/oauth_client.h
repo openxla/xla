@@ -19,9 +19,9 @@ limitations under the License.
 #include <memory>
 
 #include "json/json.h"
-#include "third_party/tsl/platform/cloud/http_request.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/cloud/http_request.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 

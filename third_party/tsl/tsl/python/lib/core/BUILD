@@ -45,10 +45,10 @@ cc_library(
         ":custom_float",
         "//third_party/eigen3",
         "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "//tsl/platform:logging",
+        "//tsl/platform:types",
+        "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
-        "@tsl//platform:types",
-        "@tsl//python/lib/core:numpy",
     ],
 )
 
@@ -60,10 +60,10 @@ cc_library(
     deps = [
         "//third_party/eigen3",
         "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "//tsl/platform:logging",
+        "//tsl/platform:types",
+        "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
-        "@tsl//platform:types",
-        "@tsl//python/lib/core:numpy",
     ],
 )
 

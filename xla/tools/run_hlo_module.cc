@@ -39,9 +39,9 @@ limitations under the License.
 #include "xla/tools/run_hlo_module.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace {

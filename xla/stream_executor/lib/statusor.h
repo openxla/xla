@@ -17,7 +17,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LIB_STATUSOR_H_
 
 #include "xla/stream_executor/lib/status.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace port {

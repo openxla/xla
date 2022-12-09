@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/c/tsl_status.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/c/tsl_status.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 // Set the attribute of "tsl_status" from the attributes of "status".

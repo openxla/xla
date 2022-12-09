@@ -25,7 +25,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace xla {
 

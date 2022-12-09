@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/util/use_cudnn.h"
+#include "tsl/util/use_cudnn.h"
 
 #include <cstdint>
 
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/util/env_var.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cudnn/cudnn.h"

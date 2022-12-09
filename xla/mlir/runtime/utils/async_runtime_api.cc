@@ -27,7 +27,7 @@ limitations under the License.
 #include "absl/base/dynamic_annotations.h"
 #include "mlir/ExecutionEngine/AsyncRuntime.h"  // from @llvm-project
 #include "xla/runtime/async_runtime.h"
-#include "third_party/tsl/platform/mem.h"
+#include "tsl/platform/mem.h"
 #include "tfrt/concurrency/async_value.h"  // from @tf_runtime
 #include "tfrt/concurrency/async_value_ref.h"  // from @tf_runtime
 #include "tfrt/concurrency/chain.h"  // from @tf_runtime

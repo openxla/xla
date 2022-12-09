@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/retrying_file_system.h"
+#include "tsl/platform/retrying_file_system.h"
 
 #include <fstream>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

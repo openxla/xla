@@ -1,11 +1,11 @@
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//platform:build_config.bzl", "tsl_cc_test")
-load("@tsl//:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "@tsl//:internal",
+        "//tsl:internal",
     ],
     licenses = ["notice"],
 )
@@ -16,13 +16,13 @@ cc_library(
     hdrs = ["preemption_notifier.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:gce"],
     deps = [
+        "//tsl/platform:env",
+        "//tsl/platform:errors",
+        "//tsl/platform:mutex",
+        "//tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@tsl//platform:env",
-        "@tsl//platform:errors",
-        "@tsl//platform:mutex",
-        "@tsl//platform:statusor",
     ],
 )
 
@@ -32,16 +32,16 @@ tsl_cc_test(
     srcs = ["preemption_notifier_test.cc"],
     deps = [
         ":preemption_notifier",
+        "//tsl/platform:env",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:errors",
+        "//tsl/platform:mutex",
+        "//tsl/platform:status",
+        "//tsl/platform:statusor",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@tsl//platform:env",
-        "@tsl//platform:env_impl",
-        "@tsl//platform:errors",
-        "@tsl//platform:mutex",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
     ],
 )
 
@@ -51,17 +51,17 @@ cc_library(
     hdrs = ["preemption_sync_manager.h"],
     deps = [
         ":preemption_notifier",
+        "//tsl/distributed_runtime:call_options",
+        "//tsl/distributed_runtime/coordination:coordination_service_agent",
+        "//tsl/lib/monitoring:gauge",
+        "//tsl/platform:env",
+        "//tsl/platform:mutex",
+        "//tsl/platform:status",
+        "//tsl/platform:statusor",
+        "//tsl/protobuf:coordination_service_proto_cc",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@tsl//distributed_runtime:call_options",
-        "@tsl//distributed_runtime/coordination:coordination_service_agent",
-        "@tsl//lib/monitoring:gauge",
-        "@tsl//platform:env",
-        "@tsl//platform:mutex",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
-        "@tsl//protobuf:coordination_service_proto_cc",
     ],
 )
 
@@ -74,22 +74,22 @@ tsl_cc_test(
         ":preemption_sync_manager",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/time",
-        "@tsl//distributed_runtime/coordination:coordination_client",
-        "@tsl//distributed_runtime/coordination:coordination_service",
-        "@tsl//distributed_runtime/coordination:coordination_service_agent",
-        "@tsl//distributed_runtime/coordination:coordination_service_impl",
-        "@tsl//distributed_runtime/rpc:async_service_interface",
-        "@tsl//distributed_runtime/rpc/coordination:grpc_coordination_client",
-        "@tsl//distributed_runtime/rpc/coordination:grpc_coordination_service_impl",
-        "@tsl//platform:env",
-        "@tsl//platform:env_impl",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
-        "@tsl//protobuf:coordination_config_proto_cc_impl",
-        "@tsl//protobuf:coordination_service_proto_cc_impl",
-        "@tsl//protobuf:distributed_runtime_payloads_proto_cc_impl",
+        "//tsl/distributed_runtime/coordination:coordination_client",
+        "//tsl/distributed_runtime/coordination:coordination_service",
+        "//tsl/distributed_runtime/coordination:coordination_service_agent",
+        "//tsl/distributed_runtime/coordination:coordination_service_impl",
+        "//tsl/distributed_runtime/rpc:async_service_interface",
+        "//tsl/distributed_runtime/rpc/coordination:grpc_coordination_client",
+        "//tsl/distributed_runtime/rpc/coordination:grpc_coordination_service_impl",
+        "//tsl/platform:env",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:errors",
+        "//tsl/platform:status",
+        "//tsl/platform:statusor",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+        "//tsl/protobuf:coordination_config_proto_cc_impl",
+        "//tsl/protobuf:coordination_service_proto_cc_impl",
+        "//tsl/protobuf:distributed_runtime_payloads_proto_cc_impl",
     ] + tsl_grpc_cc_dependencies(),
 )

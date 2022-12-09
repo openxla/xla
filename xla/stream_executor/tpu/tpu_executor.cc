@@ -24,7 +24,7 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_event.h"
 #include "xla/stream_executor/tpu/tpu_stream.h"
 #include "xla/stream_executor/tpu/tpu_timer.h"
-#include "third_party/tsl/c/tsl_status.h"
+#include "tsl/c/tsl_status.h"
 
 using stream_executor::DeviceMemoryBase;
 

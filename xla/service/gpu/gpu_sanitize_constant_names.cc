@@ -22,8 +22,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

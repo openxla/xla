@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/lib/monitoring/cell_reader-inl.h"
+#include "tsl/lib/monitoring/cell_reader-inl.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -21,13 +21,13 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_join.h"
-#include "third_party/tsl/lib/monitoring/collected_metrics.h"
-#include "third_party/tsl/lib/monitoring/collection_registry.h"
-#include "third_party/tsl/lib/monitoring/metric_def.h"
-#include "third_party/tsl/lib/monitoring/test_utils.h"
-#include "third_party/tsl/lib/monitoring/types.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/lib/monitoring/collected_metrics.h"
+#include "tsl/lib/monitoring/collection_registry.h"
+#include "tsl/lib/monitoring/metric_def.h"
+#include "tsl/lib/monitoring/test_utils.h"
+#include "tsl/lib/monitoring/types.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 namespace tsl {
 namespace monitoring {

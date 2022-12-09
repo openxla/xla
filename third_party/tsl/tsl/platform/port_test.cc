@@ -15,12 +15,12 @@ limitations under the License.
 
 #include <condition_variable>
 
-#include "third_party/tsl/platform/cpu_info.h"
-#include "third_party/tsl/platform/env_time.h"
-#include "third_party/tsl/platform/mem.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/env_time.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/threadpool.h"
 
 namespace tsl {
 namespace port {

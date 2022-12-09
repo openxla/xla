@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <vector>
 
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

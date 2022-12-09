@@ -21,17 +21,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "third_party/tsl/platform/cloud/auth_provider.h"
-#include "third_party/tsl/platform/cloud/compute_engine_metadata_client.h"
-#include "third_party/tsl/platform/cloud/compute_engine_zone_provider.h"
-#include "third_party/tsl/platform/cloud/expiring_lru_cache.h"
-#include "third_party/tsl/platform/cloud/file_block_cache.h"
-#include "third_party/tsl/platform/cloud/gcs_dns_cache.h"
-#include "third_party/tsl/platform/cloud/gcs_throttle.h"
-#include "third_party/tsl/platform/cloud/http_request.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/retrying_file_system.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/cloud/auth_provider.h"
+#include "tsl/platform/cloud/compute_engine_metadata_client.h"
+#include "tsl/platform/cloud/compute_engine_zone_provider.h"
+#include "tsl/platform/cloud/expiring_lru_cache.h"
+#include "tsl/platform/cloud/file_block_cache.h"
+#include "tsl/platform/cloud/gcs_dns_cache.h"
+#include "tsl/platform/cloud/gcs_throttle.h"
+#include "tsl/platform/cloud/http_request.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/retrying_file_system.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 

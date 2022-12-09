@@ -18,10 +18,10 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/platform/cord.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/cord.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace io {

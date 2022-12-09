@@ -19,11 +19,11 @@ limitations under the License.
 
 #include "xla/types.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/resource_loader.h"
-#include "third_party/tsl/platform/subprocess.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/resource_loader.h"
+#include "tsl/platform/subprocess.h"
 
 namespace xla {
 

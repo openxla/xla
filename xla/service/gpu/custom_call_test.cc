@@ -37,7 +37,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/client_library_test_base.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
+#include "tsl/lib/core/status_test_util.h"
 
 #if GOOGLE_CUDA
 #define gpuSuccess cudaSuccess

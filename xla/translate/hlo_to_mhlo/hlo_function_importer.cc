@@ -53,7 +53,7 @@ limitations under the License.
 #include "xla/translate/hlo_to_mhlo/location_importer.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 using llvm::APInt;
 using llvm::makeArrayRef;

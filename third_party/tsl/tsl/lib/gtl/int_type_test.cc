@@ -15,13 +15,13 @@ limitations under the License.
 
 // Unit test cases for IntType.
 
-#include "third_party/tsl/lib/gtl/int_type.h"
+#include "tsl/lib/gtl/int_type.h"
 
 #include <memory>
 #include <unordered_map>
 
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

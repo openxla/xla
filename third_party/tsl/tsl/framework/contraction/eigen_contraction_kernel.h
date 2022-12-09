@@ -34,13 +34,13 @@ limitations under the License.
 //   #endif
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "third_party/tsl/framework/fixedpoint/FixedPoint.h"
+#include "tsl/framework/fixedpoint/FixedPoint.h"
 
 #if defined(TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL)
 #include "dnnl.h"
 #endif
 
-#include "third_party/tsl/platform/dynamic_annotations.h"
+#include "tsl/platform/dynamic_annotations.h"
 
 namespace Eigen {
 namespace internal {

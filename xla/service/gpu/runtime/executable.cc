@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/support.h"
 #include "xla/service/gpu/runtime/tracing.h"
 #include "xla/service/service_executable_run_options.h"
-#include "third_party/tsl/protobuf/dnn.pb.h"
+#include "tsl/protobuf/dnn.pb.h"
 
 #if GOOGLE_CUDA
 #include "xla/stream_executor/gpu/gpu_stream.h"

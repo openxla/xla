@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/monitoring/sampler.h"
+#include "tsl/lib/monitoring/sampler.h"
 
 // clang-format off
 // Required for IS_MOBILE_PLATFORM
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 // clang-format on
 
 // We replace this implementation with a null implementation for mobile

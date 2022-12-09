@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/resource.h"
+#include "tsl/platform/resource.h"
 
-#include "third_party/tsl/platform/stringpiece.h"
+#include "tsl/platform/stringpiece.h"
 
 namespace tsl {
 

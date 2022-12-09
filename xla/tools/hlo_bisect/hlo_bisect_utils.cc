@@ -35,8 +35,8 @@ limitations under the License.
 #include "xla/tests/test_utils.h"
 #include "xla/tools/prepare_reference_module.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/subprocess.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/subprocess.h"
 
 namespace xla {
 namespace bisect {

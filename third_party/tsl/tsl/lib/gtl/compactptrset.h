@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <type_traits>
 
-#include "third_party/tsl/lib/gtl/flatset.h"
+#include "tsl/lib/gtl/flatset.h"
 
 namespace tsl {
 namespace gtl {

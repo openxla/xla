@@ -18,7 +18,7 @@ limitations under the License.
 #include <string>
 #include <string_view>
 
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
 

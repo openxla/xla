@@ -29,7 +29,7 @@ limitations under the License.
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {

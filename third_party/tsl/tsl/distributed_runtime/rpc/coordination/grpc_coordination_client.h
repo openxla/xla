@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/distributed_runtime/coordination/coordination_client.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_channel.h"
+#include "tsl/distributed_runtime/coordination/coordination_client.h"
+#include "tsl/distributed_runtime/rpc/grpc_channel.h"
 
 namespace tsl {
 

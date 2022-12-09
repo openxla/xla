@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/google_auth_provider.h"
+#include "tsl/platform/cloud/google_auth_provider.h"
 
 #include <stdlib.h>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/cloud/http_request_fake.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/resource_loader.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/cloud/http_request_fake.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/resource_loader.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 

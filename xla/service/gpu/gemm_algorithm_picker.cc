@@ -35,11 +35,11 @@ limitations under the License.
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logger.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/protobuf/autotuning.pb.h"
-#include "third_party/tsl/util/proto/proto_utils.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logger.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/protobuf/autotuning.pb.h"
+#include "tsl/util/proto/proto_utils.h"
 
 namespace xla {
 namespace gpu {

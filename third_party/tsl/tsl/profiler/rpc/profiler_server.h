@@ -18,8 +18,8 @@ limitations under the License.
 #include <memory>
 
 #include "grpcpp/grpcpp.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/profiler_service.grpc.pb.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
 
 namespace tsl {
 namespace profiler {

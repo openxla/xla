@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/lib/io/inputstream_interface.h"
+#include "tsl/lib/io/inputstream_interface.h"
 
 namespace tsl {
 namespace io {

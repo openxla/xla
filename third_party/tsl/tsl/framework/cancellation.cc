@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/framework/cancellation.h"
+#include "tsl/framework/cancellation.h"
 
 #include <forward_list>
 
 #include "absl/memory/memory.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 

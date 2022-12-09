@@ -19,8 +19,8 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"  // IWYU pragma: export
 // TODO(kramerb): This is kept only because lots of targets transitively depend
 // on it. Remove all targets' dependencies.
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace gtl {

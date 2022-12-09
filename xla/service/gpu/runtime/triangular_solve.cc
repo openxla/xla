@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/runtime/custom_call.h"
 #include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/runtime/support.h"
-#include "third_party/tsl/platform/human_readable_json.h"
+#include "tsl/platform/human_readable_json.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/service/gpu/triangular_solve_thunk.h"

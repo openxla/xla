@@ -437,7 +437,7 @@ package_group(
         "//third_party/tensorflow_decision_forests/...",
         "//third_party/tensorflow_federated/...",
         "//third_party/yggdrasil_decision_forests/...",
-        "@tsl//...",
+        "//tsl/...",
     ],
 )
 
@@ -449,11 +449,11 @@ bzl_library(
         "//third_party/compute_library:build_defs_bzl",
         "//third_party/mkl:build_defs_bzl",
         "//third_party/mkl_dnn:build_defs_bzl",
+        "//tsl/platform:rules_cc_bzl",
         "@bazel_skylib//lib:new_sets",
         "@local_config_cuda//cuda:build_defs_bzl",
         "@local_config_rocm//rocm:build_defs_bzl",
         "@local_config_tensorrt//:build_defs_bzl",
-        "@tsl//platform:rules_cc_bzl",
     ],
 )
 

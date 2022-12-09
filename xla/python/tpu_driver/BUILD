@@ -1,6 +1,6 @@
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//platform:build_config.bzl", "tf_proto_library")
-load("@tsl//:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
+load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load(
     "//xla/python/tpu_driver:platform/external/tools.bzl",
     "external_deps",
@@ -47,7 +47,7 @@ cc_library(
         "tpu_driver.h",
     ],
     deps = [
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
@@ -66,7 +66,7 @@ cc_library(
     hdrs = ["grpc_tpu_driver.h"],
     deps = [
         ":tpu_driver",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
         "//xla:status",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -86,7 +86,7 @@ cc_library(
         ":tpu_driver",
         "@com_google_absl//absl/strings:str_format",
         "//xla:statusor",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
         "//xla:status",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -106,8 +106,8 @@ cc_library(
     deps = [
         ":tpu_driver",
         "@com_google_absl//absl/base",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
         "//xla:status",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -131,9 +131,9 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "//xla/pjrt:semaphore",
         "//xla/pjrt:worker_thread",
-        "@tsl//platform:env",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ] + tsl_grpc_cc_dependencies() + external_deps(),
     alwayslink = 1,
 )

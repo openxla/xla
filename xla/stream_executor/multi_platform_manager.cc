@@ -26,7 +26,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace stream_executor {
 namespace {

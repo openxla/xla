@@ -33,8 +33,8 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

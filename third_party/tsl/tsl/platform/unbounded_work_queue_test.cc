@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/unbounded_work_queue.h"
+#include "tsl/platform/unbounded_work_queue.h"
 
 #include "absl/memory/memory.h"
-#include "third_party/tsl/platform/random.h"
-#include "third_party/tsl/platform/blocking_counter.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/random.h"
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

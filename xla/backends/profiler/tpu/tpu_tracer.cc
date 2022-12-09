@@ -22,14 +22,14 @@ limitations under the License.
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_ops_c_api.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/lib/profiler_factory.h"
-#include "third_party/tsl/profiler/lib/profiler_interface.h"
-#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/utils/xplane_schema.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/xplane_schema.h"
 
 namespace xla {
 namespace profiler {

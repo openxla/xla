@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/histogram/histogram.h"
+#include "tsl/lib/histogram/histogram.h"
 
 #include <float.h>
 
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/protobuf/histogram.pb.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/test.h"
+#include "tsl/protobuf/histogram.pb.h"
 
 namespace tsl {
 namespace histogram {

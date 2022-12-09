@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
+#include "tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 
 #include <algorithm>
 #include <functional>
@@ -24,14 +24,14 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/distributed_runtime/call_options.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service_agent.h"
-#include "third_party/tsl/distributed_runtime/preemption/preemption_notifier.h"
-#include "third_party/tsl/lib/monitoring/gauge.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/protobuf/coordination_service.pb.h"
+#include "tsl/distributed_runtime/call_options.h"
+#include "tsl/distributed_runtime/coordination/coordination_service_agent.h"
+#include "tsl/distributed_runtime/preemption/preemption_notifier.h"
+#include "tsl/lib/monitoring/gauge.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 namespace {

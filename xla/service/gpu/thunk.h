@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

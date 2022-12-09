@@ -26,7 +26,7 @@ limitations under the License.
 #include "xla/cpu_function_runtime.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/mem.h"
+#include "tsl/platform/mem.h"
 #include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
 
 namespace xla {

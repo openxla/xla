@@ -86,7 +86,7 @@ tf_cc_test(
         ":ifrt",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@tsl//lib/core:status_test_util",
+        "@tsl//tsl/lib/core:status_test_util",
     ],
 )
 
@@ -108,7 +108,7 @@ tf_cc_test(
         ":ifrt",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
-        "@tsl//lib/core:status_test_util",
+        "@tsl//tsl/lib/core:status_test_util",
     ],
 )
 
@@ -140,8 +140,8 @@ cc_library(
     deps = [
         ":ifrt",
         ":test_util",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
     alwayslink = 1,
 )
@@ -162,7 +162,7 @@ cc_library(
     deps = [
         ":ifrt",
         ":test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
     alwayslink = 1,
 )
@@ -186,9 +186,9 @@ cc_library(
         ":test_util",
         "//xla/pjrt:mlir_to_hlo",
         "@com_google_absl//absl/strings",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:statusor",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
     alwayslink = 1,
 )

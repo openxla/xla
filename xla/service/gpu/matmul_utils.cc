@@ -37,7 +37,7 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"

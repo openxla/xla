@@ -12,20 +12,20 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/platform/default/dso_loader.h"
+#include "tsl/platform/default/dso_loader.h"
 
 #include <stdlib.h>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/cuda_config.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "third_party/tensorrt/tensorrt_config.h"
 
 #if TENSORFLOW_USE_ROCM

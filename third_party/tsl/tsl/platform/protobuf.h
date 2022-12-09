@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_PROTOBUF_H_
 #define TENSORFLOW_TSL_PLATFORM_PROTOBUF_H_
 
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/types.h"
 
 // Import whatever namespace protobuf comes from into the
 // ::tsl::protobuf namespace.

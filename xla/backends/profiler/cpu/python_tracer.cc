@@ -17,12 +17,12 @@ limitations under the License.
 #include <memory>
 
 #include "xla/python/profiler/internal/python_hooks.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/profiler/lib/profiler_interface.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

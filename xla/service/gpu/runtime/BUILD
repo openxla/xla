@@ -1,4 +1,4 @@
-load("@tsl//platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
+load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -122,7 +122,7 @@ cc_library(
         "//xla/service/gpu:buffer_allocations",
         "//xla/stream_executor/gpu:gpu_stream",
         "@com_google_absl//absl/strings",
-        "@tsl//protobuf:dnn_proto_cc",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -234,7 +234,7 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor/cuda:cublas_lt_header",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -294,7 +294,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//profiler/lib:scoped_annotation_stack",
+        "@tsl//tsl/profiler/lib:scoped_annotation_stack",
     ],
 )
 
@@ -310,6 +310,6 @@ cc_library(
         "//xla/service:executable",
         "//xla/service/gpu:gpu_asm_opts_util",
         "//xla/service/gpu:triangular_solve_thunk",
-        "@tsl//platform:human_readable_json",
+        "@tsl//tsl/platform:human_readable_json",
     ],
 )

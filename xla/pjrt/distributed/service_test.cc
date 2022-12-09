@@ -16,8 +16,8 @@ limitations under the License.
 #include "xla/pjrt/distributed/service.h"
 
 #include "xla/pjrt/distributed/protocol.pb.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cpu_info.h"
+#include "tsl/platform/cpu_info.h"
 
 #include "absl/base/call_once.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/types.h"
 #if defined(PLATFORM_IS_X86)
 #include <mutex>  // NOLINT
 #endif

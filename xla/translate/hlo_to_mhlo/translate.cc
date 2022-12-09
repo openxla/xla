@@ -20,7 +20,7 @@ limitations under the License.
 #include "xla/service/hlo_parser.h"
 #include "xla/status.h"
 #include "xla/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 

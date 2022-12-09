@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_DEFAULT_POSIX_FILE_SYSTEM_H_
 #define TENSORFLOW_TSL_PLATFORM_DEFAULT_POSIX_FILE_SYSTEM_H_
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/path.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
 
 namespace tsl {
 

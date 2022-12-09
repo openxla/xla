@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_WINDOWS_WINDOWS_FILE_SYSTEM_H_
 #define TENSORFLOW_TSL_PLATFORM_WINDOWS_WINDOWS_FILE_SYSTEM_H_
 
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
 
 #ifdef PLATFORM_WINDOWS
 #undef DeleteFile

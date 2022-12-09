@@ -115,14 +115,14 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/fingerprint.h"
-#include "third_party/tsl/platform/mem.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/profiler/lib/connected_traceme.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 

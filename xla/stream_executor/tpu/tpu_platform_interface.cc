@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/multi_platform_manager.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace tensorflow {
 namespace tpu {

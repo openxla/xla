@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

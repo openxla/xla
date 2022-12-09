@@ -19,7 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/protobuf/autotuning.pb.h"
+#include "tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {

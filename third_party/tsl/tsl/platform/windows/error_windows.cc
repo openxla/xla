@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/windows/error_windows.h"
+#include "tsl/platform/windows/error_windows.h"
 
 #include <Windows.h>
 #include <Winsock2.h>

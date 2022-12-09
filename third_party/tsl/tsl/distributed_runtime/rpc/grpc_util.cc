@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/rpc/grpc_util.h"
+#include "tsl/distributed_runtime/rpc/grpc_util.h"
 
 #include <algorithm>
 #include <limits>
 #include <vector>
 
 #include "grpcpp/impl/codegen/proto_utils.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/random.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/random.h"
 
 namespace tsl {
 

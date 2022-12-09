@@ -22,8 +22,8 @@ limitations under the License.
 #include "grpcpp/server_context.h"
 #include "grpcpp/support/async_stream.h"
 #include "grpcpp/support/async_unary_call.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/refcount.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/refcount.h"
 
 namespace tsl {
 

@@ -12,16 +12,16 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_factory.h"
 
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/profiler/lib/profiler_controller.h"
-#include "third_party/tsl/profiler/lib/profiler_interface.h"
-#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/profiler/lib/profiler_controller.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
 
 namespace tsl {
 namespace profiler {

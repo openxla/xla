@@ -34,10 +34,10 @@ limitations under the License.
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/statusor.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/init_main.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/util/command_line_flags.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/util/command_line_flags.h"
 
 namespace xla {
 namespace xla_compile {

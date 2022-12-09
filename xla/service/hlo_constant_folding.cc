@@ -32,7 +32,7 @@ limitations under the License.
 #include "xla/service/slow_operation_alarm.h"
 #include "xla/shape_util.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 

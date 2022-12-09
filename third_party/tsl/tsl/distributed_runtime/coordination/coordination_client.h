@@ -19,9 +19,9 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "third_party/tsl/distributed_runtime/call_options.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/protobuf/coordination_service.pb.h"
+#include "tsl/distributed_runtime/call_options.h"
+#include "tsl/platform/status.h"
+#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 using tensorflow::BarrierRequest;

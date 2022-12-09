@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 
 #ifdef PLATFORM_WINDOWS
 const absl::string_view kPathSep = "\\";

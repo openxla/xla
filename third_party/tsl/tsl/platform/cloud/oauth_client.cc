@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/oauth_client.h"
+#include "tsl/platform/cloud/oauth_client.h"
 #ifndef _WIN32
 #include <pwd.h>
 #include <sys/types.h>
@@ -27,10 +27,10 @@ limitations under the License.
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
-#include "third_party/tsl/platform/base64.h"
-#include "third_party/tsl/platform/cloud/curl_http_request.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/base64.h"
+#include "tsl/platform/cloud/curl_http_request.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
 
 namespace tsl {
 

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include "third_party/gpus/cudnn/cudnn.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the cuDNN API by forwarding to cuDNN loaded from the DSO.
 
@@ -50,18 +50,18 @@ cudnnStatus_t GetSymbolNotFoundError() { return CUDNN_STATUS_INTERNAL_ERROR; }
 #if CUDNN_MAJOR < 6
 #error cuDNN version earlier than 6 is not supported.
 #elif CUDNN_MAJOR < 7
-#include "third_party/tsl/cuda/cudnn_6_0.inc"
+#include "tsl/cuda/cudnn_6_0.inc"
 #elif CUDNN_MAJOR == 7 && CUDNN_MINOR < 1
-#include "third_party/tsl/cuda/cudnn_7_0.inc"
+#include "tsl/cuda/cudnn_7_0.inc"
 // 2 instead of 3: see https://github.com/tensorflow/tensorflow/issues/32350
 #elif CUDNN_MAJOR == 7 && CUDNN_MINOR < 2
-#include "third_party/tsl/cuda/cudnn_7_1.inc"
+#include "tsl/cuda/cudnn_7_1.inc"
 #elif CUDNN_MAJOR == 7 && CUDNN_MINOR < 4
-#include "third_party/tsl/cuda/cudnn_7_3.inc"
+#include "tsl/cuda/cudnn_7_3.inc"
 #elif CUDNN_MAJOR == 7 && CUDNN_MINOR < 6
-#include "third_party/tsl/cuda/cudnn_7_4.inc"
+#include "tsl/cuda/cudnn_7_4.inc"
 #elif CUDNN_MAJOR == 7
-#include "third_party/tsl/cuda/cudnn_7_6.inc"
+#include "tsl/cuda/cudnn_7_6.inc"
 #else
-#include "third_party/tsl/cuda/cudnn_8_0.inc"
+#include "tsl/cuda/cudnn_8_0.inc"
 #endif

@@ -17,7 +17,7 @@ limitations under the License.
 #define TENSORFLOW_TSL_PLATFORM_LOGGER_H_
 
 #include "google/protobuf/any.pb.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/protobuf.h"
 
 namespace tsl {
 

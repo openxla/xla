@@ -31,8 +31,8 @@ limitations under the License.
 #include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/stream_executor_internal.h"
-#include "third_party/tsl/platform/mem.h"
-#include "third_party/tsl/platform/profile_utils/cpu_utils.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/profile_utils/cpu_utils.h"
 
 namespace stream_executor {
 namespace host {

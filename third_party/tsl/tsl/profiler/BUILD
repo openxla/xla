@@ -2,7 +2,7 @@
 
 package_group(
     name = "friends",
-    includes = ["@tsl//:internal"],
+    includes = ["//tsl:internal"],
 )
 
 package_group(
@@ -12,8 +12,8 @@ package_group(
         "//third_party/tensorflow/python/eager/...",
         "//third_party/tensorflow/python/profiler/...",
         "//third_party/tensorflow/python/tpu/profiler/...",
+        "//tsl/profiler/...",
         "//xla/backends/profiler/gpu/...",
-        "@tsl//profiler/...",
     ],
 )
 

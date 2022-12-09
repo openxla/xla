@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/compute_engine_zone_provider.h"
+#include "tsl/platform/cloud/compute_engine_zone_provider.h"
 
-#include "third_party/tsl/platform/cloud/http_request_fake.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/cloud/http_request_fake.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 

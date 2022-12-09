@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace interpreter {

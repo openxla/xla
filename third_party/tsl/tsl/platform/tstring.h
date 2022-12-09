@@ -21,9 +21,9 @@ limitations under the License.
 #include <ostream>
 #include <string>
 
-#include "third_party/tsl/platform/cord.h"
-#include "third_party/tsl/platform/ctstring.h"
-#include "third_party/tsl/platform/stringpiece.h"
+#include "tsl/platform/cord.h"
+#include "tsl/platform/ctstring.h"
+#include "tsl/platform/stringpiece.h"
 
 namespace tsl {
 

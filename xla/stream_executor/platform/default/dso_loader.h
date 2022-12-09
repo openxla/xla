@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/lib/statusor.h"
-#include "third_party/tsl/platform/dso_loader.h"
+#include "tsl/platform/dso_loader.h"
 
 namespace stream_executor {
 namespace internal {

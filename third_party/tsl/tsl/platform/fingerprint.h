@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_FINGERPRINT_H_
 #define TENSORFLOW_TSL_PLATFORM_FINGERPRINT_H_
 
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/types.h"
 
 // The following line is used by copybara to set or unset the USE_OSS_FARMHASH
 // preprocessor symbol as needed. Please do not remove.

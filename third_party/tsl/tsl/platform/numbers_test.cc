@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/numbers.h"
+#include "tsl/platform/numbers.h"
 
 #include <cmath>
 #include <string>
 
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace strings {

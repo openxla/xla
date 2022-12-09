@@ -23,8 +23,8 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
 
 namespace tsl {
 namespace profiler {

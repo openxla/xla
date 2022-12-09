@@ -4,17 +4,17 @@
 # TODO(jlebar): None of these tests actually use the GPU, so they should not
 # need to run on machines with GPUs present.
 
-load("@tsl//:tsl.default.bzl", "filegroup")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//tensorflow/compiler/xla/tests:build_defs.bzl", "xla_test")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 load("//xla:xla.bzl", "xla_cc_binary")
 load(
-    "@tsl//platform:build_config_root.bzl",
+    "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
 load("//third_party/tensorflow/compiler/mlir:glob_lit_test.bzl", "glob_lit_tests")
 load(
-    "@tsl//platform/default:cuda_build_defs.bzl",
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 load(
@@ -63,8 +63,8 @@ cc_library(
         "//xla/tests:verified_hlo_module",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -107,7 +107,7 @@ tf_cc_test(
     deps = [
         ":gpu_codegen_test",
         "//xla:literal_util",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -117,9 +117,9 @@ tf_cc_test(
     tags = tf_cuda_tests_tags(),
     deps = [
         ":mlir_gpu_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -129,9 +129,9 @@ tf_cc_test(
     tags = tf_cuda_tests_tags(),
     deps = [
         ":mlir_gpu_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -141,9 +141,9 @@ tf_cc_test(
     tags = tf_cuda_tests_tags(),
     deps = [
         ":mlir_gpu_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -153,9 +153,9 @@ tf_cc_test(
     tags = tf_cuda_tests_tags(),
     deps = [
         ":mlir_gpu_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -173,8 +173,8 @@ tf_cc_test(
         "//xla/service/gpu:gpu_reduce_scatter_creator",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -189,9 +189,9 @@ tf_cc_test(
         "//xla/service:hlo_parser",
         "//xla/service:hlo_query",
         "//xla/tests:hlo_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -220,9 +220,9 @@ tf_cc_test(
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -240,8 +240,8 @@ tf_cc_test(
         "//xla/service:gpu_plugin",
         "//xla/service/gpu:gemm_broadcast_folding_rewriter",
         "//xla/service/gpu:gemm_rewriter",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -255,9 +255,9 @@ tf_cc_test(
         ":gpu_codegen_test",
         "//xla:statusor",
         "//xla/tests:hlo_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -278,10 +278,10 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:llvm_irgen_test_base",
         "@com_google_absl//absl/memory",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -301,10 +301,10 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:llvm_irgen_test_base",
         "@com_google_absl//absl/memory",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -326,10 +326,10 @@ tf_cc_test(
         "//xla/tests:llvm_irgen_test_base",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -354,9 +354,9 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:llvm_irgen_test_base",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -382,10 +382,10 @@ tf_cc_test(
         "//xla/tests:llvm_irgen_test_base",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -406,10 +406,10 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:llvm_irgen_test_base",
         "@com_google_absl//absl/memory",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -429,9 +429,9 @@ tf_cc_test(
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "//xla/tests:llvm_irgen_test_base",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -445,7 +445,7 @@ tf_cc_test(
         ":gpu_codegen_test",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -461,8 +461,8 @@ tf_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -476,7 +476,7 @@ tf_cc_test(
         ":gpu_codegen_test",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -490,8 +490,8 @@ tf_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -502,7 +502,7 @@ tf_cc_test(
     deps = [
         ":gpu_codegen_test",
         "//xla/tests:verified_hlo_module",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -522,8 +522,8 @@ tf_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -543,9 +543,9 @@ tf_cc_test(
         "//xla/client/lib:arithmetic",
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -560,8 +560,8 @@ tf_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -576,8 +576,8 @@ tf_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -592,8 +592,8 @@ tf_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -609,9 +609,9 @@ tf_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/memory",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -627,8 +627,8 @@ tf_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -643,8 +643,8 @@ tf_cc_test(
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:instruction_fusion",
         "//xla/tests:hlo_test_base",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -663,8 +663,8 @@ tf_cc_test(
         "//xla/service/gpu:instruction_fusion",
         "//xla/service/gpu:multi_output_fusion",
         "//xla/tests:hlo_test_base",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -677,8 +677,8 @@ tf_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -694,8 +694,8 @@ tf_cc_test(
         "//xla/service/llvm_ir:alias_analysis",
         "//xla/tests:filecheck",
         "//xla/tests:llvm_irgen_test_base",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -706,8 +706,8 @@ tf_cc_test(
     deps = [
         ":gpu_codegen_test",
         "//xla/tests:filecheck",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -725,8 +725,8 @@ xla_test(
     deps = [
         ":gpu_codegen_test",
         "//xla/tests:filecheck",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -740,8 +740,8 @@ tf_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -772,7 +772,7 @@ tf_cc_test(
         ":gpu_codegen_test",
         "//xla:error_spec",
         "//xla/tests:hlo_test_base",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -795,10 +795,10 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:llvm_irgen_test_base",
         "@com_google_absl//absl/memory",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -815,19 +815,19 @@ xla_cc_binary(
         "//xla/service/gpu:target_constants",
         "//xla/service/gpu/llvm_gpu_backend",
         "//xla/tools:hlo_module_loader",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor:device_description_proto_cc_impl",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream_executor_impl",
         "//xla/stream_executor:dnn",
-        "@tsl//platform:platform_port",
-        "@tsl//platform:tensor_float_32_utils",
-        "@tsl//protobuf:autotuning_proto_cc_impl",
-        "@tsl//protobuf:dnn_proto_cc_impl",
-        "@tsl//profiler/backends/cpu:annotation_stack_impl",
-        "@tsl//util:command_line_flags",
-        "@tsl//util:determinism",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:tensor_float_32_utils",
+        "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
+        "@tsl//tsl/util:command_line_flags",
+        "@tsl//tsl/util:determinism",
     ] + if_cuda_is_configured([
         "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/service/gpu:nvptx_helper",
@@ -868,9 +868,9 @@ tf_cc_test(
     deps = [
         ":gpu_codegen_test",
         "//xla/tests:hlo_test_base",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -881,6 +881,6 @@ tf_cc_test(
     deps = [
         "//xla/service:gpu_plugin",
         "//xla/tests:hlo_test_base",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )

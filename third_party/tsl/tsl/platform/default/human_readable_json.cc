@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/human_readable_json.h"
+#include "tsl/platform/human_readable_json.h"
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/strcat.h"
 
 namespace tsl {
 

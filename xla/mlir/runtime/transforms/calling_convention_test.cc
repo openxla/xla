@@ -22,7 +22,7 @@
 #include "mlir/IR/TypeRange.h"  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
 #include "xla/mlir/runtime/ir/rt_ops.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace runtime {

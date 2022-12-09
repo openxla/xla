@@ -21,12 +21,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "third_party/tsl/lib/monitoring/collected_metrics.h"
-#include "third_party/tsl/lib/monitoring/metric_def.h"
-#include "third_party/tsl/lib/monitoring/test_utils.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/lib/monitoring/collected_metrics.h"
+#include "tsl/lib/monitoring/metric_def.h"
+#include "tsl/lib/monitoring/test_utils.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tsl {
 namespace monitoring {

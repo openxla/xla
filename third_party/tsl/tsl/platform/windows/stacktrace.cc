@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/windows/stacktrace.h"
+#include "tsl/platform/windows/stacktrace.h"
 
 // clang-format off
 #include <windows.h>  // Windows.h must be declared above dgbhelp.
@@ -22,7 +22,7 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/platform/mutex.h"
+#include "tsl/platform/mutex.h"
 
 #pragma comment(lib, "dbghelp.lib")
 

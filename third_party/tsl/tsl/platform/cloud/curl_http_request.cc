@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/curl_http_request.h"
+#include "tsl/platform/cloud/curl_http_request.h"
 
 #include <algorithm>
 
-#include "third_party/tsl/lib/gtl/map_util.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/scanner.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/scanner.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/types.h"
+#include "tsl/util/env_var.h"
 
 #define CHECK_CURL_OK(expr) CHECK_EQ(expr, CURLE_OK)
 

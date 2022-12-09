@@ -61,12 +61,12 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/util.h"
-#include "third_party/tsl/lib/gtl/map_util.h"
-#include "third_party/tsl/platform/casts.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/profiler/lib/scoped_annotation.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {

@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/curl_http_request.h"
+#include "tsl/platform/cloud/curl_http_request.h"
 
 #include <fstream>
 #include <string>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/mem.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

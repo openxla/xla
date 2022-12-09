@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/monitoring/percentile_sampler.h"
+#include "tsl/lib/monitoring/percentile_sampler.h"
 
 #include <algorithm>
 #include <cmath>

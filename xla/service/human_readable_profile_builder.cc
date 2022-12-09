@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "xla/metric_table_report.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/numbers.h"
+#include "tsl/platform/numbers.h"
 
 namespace xla {
 

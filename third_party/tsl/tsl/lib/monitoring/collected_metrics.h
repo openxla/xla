@@ -25,9 +25,9 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/lib/monitoring/metric_def.h"
-#include "third_party/tsl/lib/monitoring/types.h"
-#include "third_party/tsl/protobuf/histogram.pb.h"
+#include "tsl/lib/monitoring/metric_def.h"
+#include "tsl/lib/monitoring/types.h"
+#include "tsl/protobuf/histogram.pb.h"
 
 namespace tsl {
 namespace monitoring {

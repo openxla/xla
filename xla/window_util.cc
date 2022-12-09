@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/strings/str_cat.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace window_util {

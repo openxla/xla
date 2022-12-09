@@ -22,9 +22,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 // We emulate a GraphCycles object with a node vector and an edge vector.
 // We then compare the two implementations.

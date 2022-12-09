@@ -44,8 +44,8 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/numbers.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/numbers.h"
 
 namespace xla {
 namespace {

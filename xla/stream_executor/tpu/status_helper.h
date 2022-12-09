@@ -18,8 +18,8 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/platform/status.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 class StatusHelper {
  public:

@@ -20,7 +20,7 @@ limitations under the License.
 #include "mlir/Parser/Parser.h"  // from @llvm-project
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/tests/hlo_test_base.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

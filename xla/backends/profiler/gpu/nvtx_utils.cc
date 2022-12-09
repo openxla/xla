@@ -16,7 +16,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/nvtx_utils.h"
 
 #include "third_party/gpus/cuda/include/nvtx3/nvToolsExt.h"
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 
 namespace xla {
 namespace profiler {

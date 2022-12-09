@@ -28,7 +28,7 @@ limitations under the License.
 #endif
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "third_party/tsl/platform/fingerprint.h"
+#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 

@@ -9,7 +9,7 @@ package tensorflow;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/duration.proto";
-import "third_party/tsl/protobuf/dnn.proto";
+import "tsl/protobuf/dnn.proto";
 
 option go_package = "github.com/google/tsl/tsl/go/protobuf/for_core_protos_go_proto";
 

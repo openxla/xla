@@ -26,9 +26,9 @@ limitations under the License.
 #include "xla/service/hlo_query.h"
 #include "xla/status_macros.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

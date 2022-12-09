@@ -18,9 +18,9 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/profiler/lib/profiler_interface.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/platform/status.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

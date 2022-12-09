@@ -16,19 +16,19 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_IO_RECORD_WRITER_H_
 #define TENSORFLOW_TSL_LIB_IO_RECORD_WRITER_H_
 
-#include "third_party/tsl/lib/hash/crc32c.h"
-#include "third_party/tsl/platform/coding.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/stringpiece.h"
+#include "tsl/lib/hash/crc32c.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/stringpiece.h"
 #if !defined(IS_SLIM_BUILD)
-#include "third_party/tsl/lib/io/snappy/snappy_compression_options.h"
-#include "third_party/tsl/lib/io/snappy/snappy_outputbuffer.h"
-#include "third_party/tsl/lib/io/zlib_compression_options.h"
-#include "third_party/tsl/lib/io/zlib_outputbuffer.h"
+#include "tsl/lib/io/snappy/snappy_compression_options.h"
+#include "tsl/lib/io/snappy/snappy_outputbuffer.h"
+#include "tsl/lib/io/zlib_compression_options.h"
+#include "tsl/lib/io/zlib_outputbuffer.h"
 #endif  // IS_SLIM_BUILD
-#include "third_party/tsl/platform/cord.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/cord.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

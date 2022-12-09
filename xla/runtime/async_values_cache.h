@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_RUNTIME_ASYNC_VALUES_CACHE_H_
 #define TENSORFLOW_COMPILER_XLA_RUNTIME_ASYNC_VALUES_CACHE_H_
 
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 
 #if defined(PLATFORM_GOOGLE)
 #include "xla/runtime/google/async_values_cache.h"

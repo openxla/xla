@@ -7,7 +7,7 @@ load(
     "if_gpu_is_configured",
 )
 load(
-    "@tsl//platform:build_config_root.bzl",
+    "@tsl//tsl/platform:build_config_root.bzl",
     "tf_gpu_tests_tags",
 )
 
@@ -251,6 +251,6 @@ def generate_backend_test_macros(backends = []):
                 "-DXLA_DISABLED_MANIFEST=\\\"%s\\\"" % manifest,
             ],
             deps = [
-                "@tsl//platform:logging",
+                "@tsl//tsl/platform:logging",
             ],
         )

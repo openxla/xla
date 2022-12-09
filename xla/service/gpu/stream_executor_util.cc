@@ -27,12 +27,12 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/regexp.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
-#include "third_party/tsl/util/determinism.h"
-#include "third_party/tsl/util/env_var.h"
-#include "third_party/tsl/util/proto/proto_utils.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/regexp.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/util/determinism.h"
+#include "tsl/util/env_var.h"
+#include "tsl/util/proto/proto_utils.h"
 
 namespace xla {
 namespace gpu {

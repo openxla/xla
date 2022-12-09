@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/cublas_cudnn.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

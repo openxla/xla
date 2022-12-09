@@ -12,19 +12,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/backends/cpu/host_tracer_utils.h"
+#include "tsl/profiler/backends/cpu/host_tracer_utils.h"
 
 #include <string>
 #include <utility>
 
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/backends/cpu/traceme_recorder.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/utils/parse_annotation.h"
-#include "third_party/tsl/profiler/utils/tf_op_utils.h"
-#include "third_party/tsl/profiler/utils/xplane_builder.h"
-#include "third_party/tsl/profiler/utils/xplane_utils.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/backends/cpu/traceme_recorder.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/parse_annotation.h"
+#include "tsl/profiler/utils/tf_op_utils.h"
+#include "tsl/profiler/utils/xplane_builder.h"
+#include "tsl/profiler/utils/xplane_utils.h"
 
 namespace tsl {
 namespace profiler {

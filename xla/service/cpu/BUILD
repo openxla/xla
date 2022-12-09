@@ -1,22 +1,22 @@
 # Description:
 #    LLVM-based CPU backend for XLA.
 
-load("@tsl//:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("//xla:xla.bzl", "ORC_JIT_MEMORY_MAPPER_TARGETS", "xla_cc_binary")
 load(
     "//third_party/mkl:build_defs.bzl",
     "mkl_deps",
 )
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
-load("@tsl//:tsl.bzl", "tf_openmp_copts", "tsl_copts")
+load("@tsl//tsl:tsl.bzl", "tf_openmp_copts", "tsl_copts")
 load(
     "//third_party/compute_library:build_defs.bzl",
     "acl_deps",
     "if_enable_acl",
 )
 load(":build_defs.bzl", "runtime_copts")
-load("@tsl//platform:build_config.bzl", "if_llvm_system_z_available", "tf_proto_library")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:build_config.bzl", "if_llvm_system_z_available", "tf_proto_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -45,7 +45,7 @@ cc_library(
     testonly = True,
     hdrs = ["test_target_triple_helper.h"],
     deps = [
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -127,9 +127,9 @@ cc_library(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:notification",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:notification",
     ],
 )
 
@@ -156,8 +156,8 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
     alwayslink = True,  # Contains per-platform transfer manager registration
 )
@@ -325,9 +325,9 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/host:host_platform",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
-        "@tsl//protobuf:error_codes_proto_impl_cc",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Object",
         "@llvm-project//llvm:MC",
@@ -335,13 +335,13 @@ cc_library(
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
     ] + select({
-        "@tsl//:arm_any": [
+        "@tsl//tsl:arm_any": [
             "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
         ],
-        "@tsl//:linux_ppc64le": [
+        "@tsl//tsl:linux_ppc64le": [
             "@llvm-project//llvm:PowerPCCodeGen",  # fixdeps: keep
         ],
-        "@tsl//:macos_arm64": [
+        "@tsl//tsl:macos_arm64": [
             "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
         ],
         "//conditions:default": [
@@ -407,8 +407,8 @@ cc_library(
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:VectorToSCF",
         "@llvm-project//mlir:VectorTransforms",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
     alwayslink = 1,  # has pipeline registration
 )
@@ -455,7 +455,7 @@ cc_library(
         "//xla/service:custom_call_target_registry",
         "//xla:types",
         "//xla:util",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ] + ORC_JIT_MEMORY_MAPPER_TARGETS,
 )
 
@@ -529,8 +529,8 @@ cc_library(
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:Parser",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -590,9 +590,9 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//mlir:IR",
-        "@tsl//lib/math:math_util",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/lib/math:math_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -608,7 +608,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Target",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -653,7 +653,7 @@ cc_library(
         "//xla/service/llvm_ir:loop_emitter",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -669,7 +669,7 @@ cc_library(
         "//xla/service/llvm_ir:kernel_support_library",
         "//xla/service/llvm_ir:llvm_util",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -708,8 +708,8 @@ cc_library(
         "@llvm-project//mlir:LinalgDialect",
         "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:Pass",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -729,8 +729,8 @@ xla_cc_binary(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//platform:logging",
-        "@tsl//platform:platform_port",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -757,7 +757,7 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -792,11 +792,11 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:logging",
-        "@tsl//platform:mutex",
-        "@tsl//platform:platform_port",
-        "@tsl//platform:status",
-        "@tsl//profiler/lib:traceme",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -814,7 +814,7 @@ cc_library(
         "//xla/service/llvm_ir:math_ops",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:TransformUtils",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -833,9 +833,9 @@ cc_library(
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl//framework/contraction:eigen_contraction_kernel",
-        "@tsl//framework/convolution:eigen_helpers",
-        "@tsl//platform:mutex",
+        "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
+        "@tsl//tsl/framework/convolution:eigen_helpers",
+        "@tsl//tsl/platform:mutex",
     ],
 )
 
@@ -854,9 +854,9 @@ cc_library(
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl//framework/contraction:eigen_contraction_kernel",
-        "@tsl//framework/convolution:eigen_helpers",
-        "@tsl//platform:mutex",
+        "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
+        "@tsl//tsl/framework/convolution:eigen_helpers",
+        "@tsl//tsl/platform:mutex",
     ],
 )
 
@@ -887,7 +887,7 @@ cc_library(
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl//framework/convolution:eigen_helpers",
+        "@tsl//tsl/framework/convolution:eigen_helpers",
         "//third_party/eigen3",
     ] + mkl_deps(),
 )
@@ -908,7 +908,7 @@ cc_library(
         "//xla:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl//platform:mutex",
+        "@tsl//tsl/platform:mutex",
     ],
 )
 
@@ -924,8 +924,8 @@ cc_library(
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl//framework/contraction:eigen_contraction_kernel",
-        "@tsl//platform:mutex",
+        "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
+        "@tsl//tsl/platform:mutex",
     ],
 )
 
@@ -951,10 +951,10 @@ cc_library(
         ":runtime_lightweight_check",
         ":runtime_matmul",
         "//xla:executable_run_options",
-        "@tsl//platform:types",
+        "@tsl//tsl/platform:types",
         "//third_party/eigen3",
-        "@tsl//platform:dynamic_annotations",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:dynamic_annotations",
+        "@tsl//tsl/platform:logging",
     ] + acl_deps(),
 )
 
@@ -970,11 +970,11 @@ cc_library(
         ":runtime_conv2d",
         ":runtime_single_threaded_conv2d",
         "//xla:executable_run_options",
-        "@tsl//platform:dynamic_annotations",
-        "@tsl//platform:types",
-        "@tsl//framework/convolution:eigen_helpers",
+        "@tsl//tsl/platform:dynamic_annotations",
+        "@tsl//tsl/platform:types",
+        "@tsl//tsl/framework/convolution:eigen_helpers",
         "//third_party/eigen3",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ] + acl_deps(),
 )
 
@@ -992,8 +992,8 @@ cc_library(
         "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl//framework/contraction:eigen_contraction_kernel",
-        "@tsl//framework/convolution:eigen_helpers",
+        "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
+        "@tsl//tsl/framework/convolution:eigen_helpers",
     ],
 )
 
@@ -1011,8 +1011,8 @@ cc_library(
         "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl//framework/contraction:eigen_contraction_kernel",
-        "@tsl//framework/convolution:eigen_helpers",
+        "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
+        "@tsl//tsl/framework/convolution:eigen_helpers",
     ],
 )
 
@@ -1058,7 +1058,7 @@ cc_library(
         ":runtime_single_threaded_matmul_impl",
         "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//framework/contraction:eigen_contraction_kernel",
+        "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
     ],
 )
 
@@ -1071,7 +1071,7 @@ cc_library(
         ":runtime_single_threaded_matmul_impl",
         "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//framework/contraction:eigen_contraction_kernel_no_mkl",
+        "@tsl//tsl/framework/contraction:eigen_contraction_kernel_no_mkl",
     ],
 )
 
@@ -1112,9 +1112,9 @@ cc_library(
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//platform:blocking_counter",
-        "@tsl//platform:logging",
-        "@tsl//platform:mutex",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:mutex",
     ],
 )
 
@@ -1139,9 +1139,9 @@ tf_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1157,8 +1157,8 @@ tf_cc_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1175,7 +1175,7 @@ tf_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1187,10 +1187,10 @@ tf_cc_test(
         ":cpu_runtime",
         "//xla:shape_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1250,8 +1250,8 @@ cc_library(
         "//xla/service:computation_layout",
         "//xla/service:layout_assignment",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1286,7 +1286,7 @@ tf_cc_test(
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1304,8 +1304,8 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1384,9 +1384,9 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1397,7 +1397,7 @@ cc_library(
     deps = [
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1409,7 +1409,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:ExecutionEngine",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1427,7 +1427,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 

@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 #include <sstream>
 #include <vector>
 
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 

@@ -32,7 +32,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/shape_layout.h"
 #include "xla/xla.pb.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 

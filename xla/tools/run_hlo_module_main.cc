@@ -26,11 +26,11 @@ limitations under the License.
 #include "xla/service/hlo_runner.h"
 #include "xla/service/platform_util.h"
 #include "xla/tools/run_hlo_module.h"
-#include "third_party/tsl/platform/init_main.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/util/command_line_flags.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/test.h"
+#include "tsl/util/command_line_flags.h"
 
 namespace {
 const char* const kUsage = R"(

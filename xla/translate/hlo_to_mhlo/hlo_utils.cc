@@ -23,7 +23,7 @@ limitations under the License.
 #include "mlir/IR/TypeUtilities.h"  // from @llvm-project
 #include "xla/literal.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
-#include "third_party/tsl/platform/bfloat16.h"
+#include "tsl/platform/bfloat16.h"
 
 namespace xla {
 namespace {

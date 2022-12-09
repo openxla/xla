@@ -1,9 +1,9 @@
 # Platform-specific build configurations.
 
 load("@com_google_protobuf//:protobuf.bzl", "proto_gen")
-load("@tsl//platform:build_config_root.bzl", "if_static")
+load("//tsl/platform:build_config_root.bzl", "if_static")
 load(
-    "@tsl//:tsl.bzl",
+    "//tsl:tsl.bzl",
     "clean_dep",
     "if_not_windows",
     "if_tsl_link_protobuf",
@@ -243,7 +243,7 @@ def cc_proto_library(
 
     if use_grpc_plugin:
         cc_libs += select({
-            clean_dep("@tsl//:linux_s390x"): ["//external:grpc_lib_unsecure"],
+            clean_dep("//tsl:linux_s390x"): ["//external:grpc_lib_unsecure"],
             "//conditions:default": ["//external:grpc_lib"],
         })
 
@@ -326,7 +326,7 @@ def cc_grpc_library(
     proto_targets += srcs
 
     extra_deps += select({
-        clean_dep("@tsl//:linux_s390x"): ["//external:grpc_lib_unsecure"],
+        clean_dep("//tsl:linux_s390x"): ["//external:grpc_lib_unsecure"],
         "//conditions:default": ["//external:grpc_lib"],
     })
 
@@ -644,29 +644,29 @@ def tf_proto_library(
 
 def tf_additional_lib_hdrs():
     return [
-        "@tsl//platform/default:casts.h",
-        "@tsl//platform/default:context.h",
-        "@tsl//platform/default:cord.h",
-        "@tsl//platform/default:dynamic_annotations.h",
-        "@tsl//platform/default:integral_types.h",
-        "@tsl//platform/default:logging.h",
-        "@tsl//platform/default:mutex.h",
-        "@tsl//platform/default:mutex_data.h",
-        "@tsl//platform/default:notification.h",
-        "@tsl//platform/default:stacktrace.h",
-        "@tsl//platform/default:tracing_impl.h",
-        "@tsl//platform/default:unbounded_work_queue.h",
+        "//tsl/platform/default:casts.h",
+        "//tsl/platform/default:context.h",
+        "//tsl/platform/default:cord.h",
+        "//tsl/platform/default:dynamic_annotations.h",
+        "//tsl/platform/default:integral_types.h",
+        "//tsl/platform/default:logging.h",
+        "//tsl/platform/default:mutex.h",
+        "//tsl/platform/default:mutex_data.h",
+        "//tsl/platform/default:notification.h",
+        "//tsl/platform/default:stacktrace.h",
+        "//tsl/platform/default:tracing_impl.h",
+        "//tsl/platform/default:unbounded_work_queue.h",
     ] + select({
-        "@tsl//:windows": [
-            "@tsl//platform/windows:intrinsics_port.h",
-            "@tsl//platform/windows:stacktrace.h",
-            "@tsl//platform/windows:subprocess.h",
-            "@tsl//platform/windows:wide_char.h",
-            "@tsl//platform/windows:windows_file_system.h",
+        "//tsl:windows": [
+            "//tsl/platform/windows:intrinsics_port.h",
+            "//tsl/platform/windows:stacktrace.h",
+            "//tsl/platform/windows:subprocess.h",
+            "//tsl/platform/windows:wide_char.h",
+            "//tsl/platform/windows:windows_file_system.h",
         ],
         "//conditions:default": [
-            "@tsl//platform/default:posix_file_system.h",
-            "@tsl//platform/default:subprocess.h",
+            "//tsl/platform/default:posix_file_system.h",
+            "//tsl/platform/default:subprocess.h",
         ],
     })
 
@@ -678,17 +678,17 @@ def tf_protos_all():
         extra_deps = [
             clean_dep("//third_party/tensorflow/core/protobuf:conv_autotuning_proto_cc_impl"),
             clean_dep("//third_party/tensorflow/core:protos_all_cc_impl"),
-            clean_dep("@tsl//protobuf:autotuning_proto_cc_impl"),
-            clean_dep("@tsl//protobuf:protos_all_cc_impl"),
+            clean_dep("//tsl/protobuf:autotuning_proto_cc_impl"),
+            clean_dep("//tsl/protobuf:protos_all_cc_impl"),
         ],
         otherwise = [clean_dep("//third_party/tensorflow/core:protos_all_cc")],
     )
 
 def tf_protos_profiler_service():
     return [
-        clean_dep("@tsl//profiler/protobuf:profiler_analysis_proto_cc_impl"),
-        clean_dep("@tsl//profiler/protobuf:profiler_service_proto_cc_impl"),
-        clean_dep("@tsl//profiler/protobuf:profiler_service_monitor_result_proto_cc_impl"),
+        clean_dep("//tsl/profiler/protobuf:profiler_analysis_proto_cc_impl"),
+        clean_dep("//tsl/profiler/protobuf:profiler_service_proto_cc_impl"),
+        clean_dep("//tsl/profiler/protobuf:profiler_service_monitor_result_proto_cc_impl"),
     ]
 
 def tf_protos_grappler_impl():
@@ -723,11 +723,11 @@ def tf_additional_lib_deps():
 
 def tf_additional_core_deps():
     return select({
-        clean_dep("@tsl//:android"): [],
-        clean_dep("@tsl//:ios"): [],
-        clean_dep("@tsl//:linux_s390x"): [],
+        clean_dep("//tsl:android"): [],
+        clean_dep("//tsl:ios"): [],
+        clean_dep("//tsl:linux_s390x"): [],
         "//conditions:default": [
-            "@tsl//platform/cloud:gcs_file_system",
+            "//tsl/platform/cloud:gcs_file_system",
         ],
     })
 
@@ -735,7 +735,7 @@ def tf_lib_proto_parsing_deps():
     return [
         ":protos_all_cc",
         clean_dep("//third_party/eigen3"),
-        clean_dep("@tsl//platform/default/build_config:proto_parsing"),
+        clean_dep("//tsl/platform/default/build_config:proto_parsing"),
     ]
 
 def tf_py_clif_cc(name, visibility = None, **kwargs):
@@ -787,10 +787,10 @@ def tsl_cc_test(
                 clean_dep("@com_google_protobuf//:protobuf"),
                 # TODO(ddunleavy) remove these and add proto deps to tests
                 # granularly
-                "@tsl//protobuf:error_codes_proto_impl_cc_impl",
-                "@tsl//protobuf:histogram_proto_cc_impl",
-                "@tsl//profiler/protobuf:xplane_proto_cc_impl",
-                "@tsl//profiler/protobuf:profiler_options_proto_cc_impl",
+                "//tsl/protobuf:error_codes_proto_impl_cc_impl",
+                "//tsl/protobuf:histogram_proto_cc_impl",
+                "//tsl/profiler/protobuf:xplane_proto_cc_impl",
+                "//tsl/profiler/protobuf:profiler_options_proto_cc_impl",
             ],
         ),
         **kwargs
@@ -809,31 +809,31 @@ def tf_protobuf_compiler_deps():
 
 def tf_windows_aware_platform_deps(name):
     return select({
-        "@tsl//:windows": [
-            "@tsl//platform/windows:" + name,
+        "//tsl:windows": [
+            "//tsl/platform/windows:" + name,
         ],
         "//conditions:default": [
-            "@tsl//platform/default:" + name,
+            "//tsl/platform/default:" + name,
         ],
     })
 
-def tf_platform_deps(name, platform_dir = "@tsl//platform/"):
+def tf_platform_deps(name, platform_dir = "//tsl/platform/"):
     return [platform_dir + "default:" + name]
 
-def tf_testing_deps(name, platform_dir = "@tsl//platform/"):
+def tf_testing_deps(name, platform_dir = "//tsl/platform/"):
     return tf_platform_deps(name, platform_dir)
 
-def tf_stream_executor_deps(name, platform_dir = "@tsl//platform/"):
+def tf_stream_executor_deps(name, platform_dir = "//tsl/platform/"):
     return tf_platform_deps(name, platform_dir)
 
-def tf_platform_alias(name, platform_dir = "@tsl//platform/"):
+def tf_platform_alias(name, platform_dir = "//tsl/platform/"):
     return [platform_dir + "default:" + name]
 
 def tf_logging_deps():
-    return ["@tsl//platform/default:logging"]
+    return ["//tsl/platform/default:logging"]
 
 def tf_resource_deps():
-    return ["@tsl//platform/default:resource"]
+    return ["//tsl/platform/default:resource"]
 
 def tf_portable_deps_no_runtime():
     return [
@@ -855,7 +855,7 @@ def if_llvm_aarch64_available(then, otherwise = []):
 
 def if_llvm_system_z_available(then, otherwise = []):
     return select({
-        "@tsl//:linux_s390x": then,
+        "//tsl:linux_s390x": then,
         "//conditions:default": otherwise,
     })
 

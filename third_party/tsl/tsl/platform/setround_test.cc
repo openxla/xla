@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/setround.h"
+#include "tsl/platform/setround.h"
 
 #include <cmath>
 
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 // LLVM does not support <cfenv>. Disable these tests when building with it.
 // See b/35384639 for more information.

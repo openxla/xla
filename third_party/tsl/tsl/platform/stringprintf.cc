@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/stringprintf.h"
+#include "tsl/platform/stringprintf.h"
 
 #include <errno.h>
 #include <stdarg.h>  // For va_list and related operations

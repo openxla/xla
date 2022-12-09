@@ -22,8 +22,8 @@ limitations under the License.
 #include <chrono>              // NOLINT
 #include <condition_variable>  // NOLINT
 
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

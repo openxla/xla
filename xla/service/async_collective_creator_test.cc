@@ -20,7 +20,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/util.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
+#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

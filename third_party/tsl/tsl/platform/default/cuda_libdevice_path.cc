@@ -13,19 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cuda_libdevice_path.h"
+#include "tsl/platform/cuda_libdevice_path.h"
 
 #include <stdlib.h>
 
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 
 #if !defined(PLATFORM_GOOGLE)
 #include "third_party/gpus/cuda/cuda_config.h"
 #endif
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace tsl {
 

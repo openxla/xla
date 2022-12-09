@@ -20,9 +20,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_util.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mutex.h"
+#include "tsl/distributed_runtime/rpc/grpc_util.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mutex.h"
 
 namespace tsl {
 

@@ -37,14 +37,14 @@ limitations under the License.
 //     num_restarts: uint32
 // restarts[i] contains the offset within the block of the ith restart point.
 
-#include "third_party/tsl/lib/io/block_builder.h"
+#include "tsl/lib/io/block_builder.h"
 
 #include <assert.h>
 
 #include <algorithm>
 
-#include "third_party/tsl/lib/io/table_builder.h"
-#include "third_party/tsl/platform/coding.h"
+#include "tsl/lib/io/table_builder.h"
+#include "tsl/platform/coding.h"
 
 namespace tsl {
 namespace table {

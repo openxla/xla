@@ -20,7 +20,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/test.h"
-#include "third_party/tsl/platform/status_matchers.h"
+#include "tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace gpu {

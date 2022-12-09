@@ -19,8 +19,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_DEFAULT_DSO_LOADER_H_
 #define TENSORFLOW_TSL_PLATFORM_DEFAULT_DSO_LOADER_H_
 
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tsl {
 namespace internal {

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/snappy/snappy_outputbuffer.h"
+#include "tsl/lib/io/snappy/snappy_outputbuffer.h"
 
 #include <algorithm>
 

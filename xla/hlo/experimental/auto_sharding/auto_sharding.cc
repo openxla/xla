@@ -49,8 +49,8 @@ limitations under the License.
 #include "xla/service/hlo_ordering.h"
 #include "xla/service/hlo_sharding_util.h"
 #include "xla/service/sharding_propagation.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
 #include "ortools/linear_solver/linear_solver.h"
 #include "ortools/linear_solver/linear_solver.pb.h"
 

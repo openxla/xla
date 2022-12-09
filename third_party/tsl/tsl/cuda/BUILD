@@ -2,15 +2,15 @@
 #   Stubs for dynamically loading CUDA.
 
 load(
-    "@tsl//platform/default:cuda_build_defs.bzl",
+    "//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 load(
-    "@tsl//platform:build_config.bzl",
+    "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
 load(
-    "@tsl//platform:rules_cc.bzl",
+    "//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -26,15 +26,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
 alias(
     name = "cublas_lib",
     actual = select({
-        "@tsl//:oss": ":cublas_stub",
+        "//tsl:oss": ":cublas_stub",
         "//conditions:default": "@local_config_cuda//cuda:cublas",
     }),
     visibility = ["//visibility:public"],
@@ -47,15 +47,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
 alias(
     name = "cublas_lt_lib",
     actual = select({
-        "@tsl//:oss": ":cublas_lt_stub",
+        "//tsl:oss": ":cublas_lt_stub",
         "//conditions:default": "@local_config_cuda//cuda:cublasLt",
     }),
     visibility = ["//visibility:public"],
@@ -68,8 +68,8 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
@@ -77,17 +77,17 @@ cc_library(
     name = "cudart_stub",
     srcs = select({
         # include dynamic loading implementation only when if_cuda_is_configured and build dynamically
-        "@tsl//:is_cuda_enabled_and_oss": ["cudart_stub.cc"],
+        "//tsl:is_cuda_enabled_and_oss": ["cudart_stub.cc"],
         "//conditions:default": [],
     }),
     textual_hdrs = glob(["cuda_runtime_*.inc"]),
     visibility = ["//visibility:public"],
     deps = select({
-        "@tsl//:is_cuda_enabled_and_oss": [
+        "//tsl:is_cuda_enabled_and_oss": [
             ":cuda_stub",
             "@local_config_cuda//cuda:cuda_headers",
-            "@tsl//platform:dso_loader",
-            "@tsl//platform:env",
+            "//tsl/platform:dso_loader",
+            "//tsl/platform:env",
         ],
         "//conditions:default": [],
     }),
@@ -107,15 +107,15 @@ cc_library(
     deps = if_cuda_is_configured([
         ":cudnn_version",
         "@local_config_cuda//cuda:cudnn_header",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
 alias(
     name = "cudnn_lib",
     actual = select({
-        "@tsl//:oss": ":cudnn_stub",
+        "//tsl:oss": ":cudnn_stub",
         "//conditions:default": "@local_config_cuda//cuda:cudnn",
     }),
     visibility = ["//visibility:public"],
@@ -136,8 +136,8 @@ tsl_cc_test(
     srcs = ["cudnn_version_test.cc"],
     deps = [
         ":cudnn_version",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
 
@@ -148,15 +148,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
 alias(
     name = "cufft_lib",
     actual = select({
-        "@tsl//:oss": ":cufft_stub",
+        "//tsl:oss": ":cufft_stub",
         "//conditions:default": "@local_config_cuda//cuda:cufft",
     }),
     visibility = ["//visibility:public"],
@@ -171,8 +171,8 @@ cc_library(
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cupti_headers",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
@@ -183,15 +183,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
 alias(
     name = "curand_lib",
     actual = select({
-        "@tsl//:oss": ":curand_stub",
+        "//tsl:oss": ":curand_stub",
         "//conditions:default": "@local_config_cuda//cuda:curand",
     }),
     visibility = ["//visibility:public"],
@@ -204,15 +204,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
 alias(
     name = "cusolver_lib",
     actual = select({
-        "@tsl//:oss": ":cusolver_stub",
+        "//tsl:oss": ":cusolver_stub",
         "//conditions:default": "@local_config_cuda//cuda:cusolver",
     }),
     visibility = ["//visibility:public"],
@@ -225,15 +225,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform:dso_loader",
-        "@tsl//platform:env",
+        "//tsl/platform:dso_loader",
+        "//tsl/platform:env",
     ]),
 )
 
 alias(
     name = "cusparse_lib",
     actual = select({
-        "@tsl//:oss": ":cusparse_stub",
+        "//tsl:oss": ":cusparse_stub",
         "//conditions:default": "@local_config_cuda//cuda:cusparse",
     }),
     visibility = ["//visibility:public"],

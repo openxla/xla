@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/service/cpu/tests/cpu_codegen_test.h"
 #include "xla/shape_util.h"
 #include "xla/tests/filecheck.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {

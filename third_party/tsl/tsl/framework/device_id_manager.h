@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_FRAMEWORK_DEVICE_ID_MANAGER_H_
 #define TENSORFLOW_TSL_FRAMEWORK_DEVICE_ID_MANAGER_H_
 
-#include "third_party/tsl/framework/device_id.h"
-#include "third_party/tsl/framework/device_type.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/framework/device_id.h"
+#include "tsl/framework/device_type.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 

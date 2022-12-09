@@ -20,9 +20,9 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_cat.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/utils/math_utils.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/utils/math_utils.h"
 
 namespace tsl {
 namespace profiler {

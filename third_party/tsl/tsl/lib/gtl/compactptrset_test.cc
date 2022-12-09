@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/gtl/compactptrset.h"
+#include "tsl/lib/gtl/compactptrset.h"
 
-#include "third_party/tsl/platform/hash.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/hash.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace gtl {

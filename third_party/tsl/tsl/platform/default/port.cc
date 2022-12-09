@@ -14,13 +14,13 @@ limitations under the License.
 ==============================================================================*/
 
 #include "absl/base/internal/sysinfo.h"
-#include "third_party/tsl/platform/cpu_info.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mem.h"
-#include "third_party/tsl/platform/numa.h"
-#include "third_party/tsl/platform/profile_utils/cpu_utils.h"
-#include "third_party/tsl/platform/snappy.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/profile_utils/cpu_utils.h"
+#include "tsl/platform/snappy.h"
+#include "tsl/platform/types.h"
 
 #if defined(__linux__) && !defined(__ANDROID__)
 #include <sched.h>

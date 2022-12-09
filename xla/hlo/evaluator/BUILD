@@ -1,7 +1,7 @@
 # Description:
 #   XLA evaluator implementation.
 
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -68,13 +68,13 @@ cc_library(
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//lib/core:bitmap",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:protobuf",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
-        "@tsl//platform:types",
+        "@tsl//tsl/lib/core:bitmap",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -103,10 +103,10 @@ tf_cc_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )

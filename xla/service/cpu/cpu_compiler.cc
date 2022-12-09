@@ -182,9 +182,9 @@ limitations under the License.
 #include "xla/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 namespace {
 

@@ -23,14 +23,14 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_occupancy.h"
-#include "third_party/tsl/platform/abi.h"
-#include "third_party/tsl/platform/host_info.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/profiler/utils/parse_annotation.h"
-#include "third_party/tsl/profiler/utils/trace_utils.h"
-#include "third_party/tsl/profiler/utils/xplane_builder.h"
-#include "third_party/tsl/profiler/utils/xplane_schema.h"
-#include "third_party/tsl/profiler/utils/xplane_utils.h"
+#include "tsl/platform/abi.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/profiler/utils/parse_annotation.h"
+#include "tsl/profiler/utils/trace_utils.h"
+#include "tsl/profiler/utils/xplane_builder.h"
+#include "tsl/profiler/utils/xplane_schema.h"
+#include "tsl/profiler/utils/xplane_utils.h"
 
 namespace xla {
 namespace profiler {

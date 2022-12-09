@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/python/lib/core/float8_e4m3b11.h"
+#include "tsl/python/lib/core/float8_e4m3b11.h"
 
 #include <stdio.h>
 

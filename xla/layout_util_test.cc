@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "xla/shape_util.h"
 #include "xla/test_helpers.h"
-#include "third_party/tsl/platform/status_matchers.h"
+#include "tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace {

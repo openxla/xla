@@ -20,8 +20,8 @@ limitations under the License.
 
 #include "xla/service/test_compilation_environment.pb.h"
 #include "xla/test.h"
-#include "third_party/tsl/platform/casts.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 

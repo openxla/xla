@@ -20,7 +20,7 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "third_party/tsl/lib/random/philox_random.h"
+#include "tsl/lib/random/philox_random.h"
 
 #ifndef M_PI
 #define M_PI (3.14159265358979323846)

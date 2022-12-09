@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/table.h"
+#include "tsl/lib/io/table.h"
 
 #include <algorithm>
 #include <map>
@@ -21,16 +21,16 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/escaping.h"
-#include "third_party/tsl/lib/io/block.h"
-#include "third_party/tsl/lib/io/block_builder.h"
-#include "third_party/tsl/lib/io/format.h"
-#include "third_party/tsl/lib/io/iterator.h"
-#include "third_party/tsl/lib/io/table_builder.h"
-#include "third_party/tsl/lib/random/simple_philox.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/snappy.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/io/block.h"
+#include "tsl/lib/io/block_builder.h"
+#include "tsl/lib/io/format.h"
+#include "tsl/lib/io/iterator.h"
+#include "tsl/lib/io/table_builder.h"
+#include "tsl/lib/random/simple_philox.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/snappy.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace table {

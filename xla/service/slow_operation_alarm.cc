@@ -29,7 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace xla {
 namespace {

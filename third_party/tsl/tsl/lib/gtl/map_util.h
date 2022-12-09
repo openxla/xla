@@ -27,7 +27,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "third_party/tsl/lib/gtl/subtle/map_traits.h"
+#include "tsl/lib/gtl/subtle/map_traits.h"
 
 namespace tsl {
 namespace gtl {

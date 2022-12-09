@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/backends/cpu/annotation_stack.h"
+#include "tsl/profiler/backends/cpu/annotation_stack.h"
 
 #include <atomic>
 
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace profiler {

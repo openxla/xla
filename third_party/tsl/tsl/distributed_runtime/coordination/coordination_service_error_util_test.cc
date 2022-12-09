@@ -12,14 +12,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service_error_util.h"
+#include "tsl/distributed_runtime/coordination/coordination_service_error_util.h"
 
 #include <string>
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/protobuf/coordination_service.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/test.h"
+#include "tsl/protobuf/coordination_service.pb.h"
 namespace tsl {
 namespace {
 using ::tensorflow::CoordinatedTask;

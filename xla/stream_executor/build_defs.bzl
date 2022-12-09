@@ -8,7 +8,7 @@ def tf_additional_cuda_platform_deps():
     return []
 
 def tf_additional_cuda_driver_deps():
-    return ["@tsl//cuda:cuda_stub"]
+    return ["@tsl//tsl/cuda:cuda_stub"]
 
 def tf_additional_cupti_deps():
     return ["//xla/stream_executor/cuda:cupti_stub"]

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/net.h"
+#include "tsl/platform/net.h"
 
 #include <sys/types.h>
 #include <winsock2.h>
@@ -21,9 +21,9 @@ limitations under the License.
 #include <cstdlib>
 #include <unordered_set>
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/windows/error_windows.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/windows/error_windows.h"
 
 #undef ERROR
 

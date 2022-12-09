@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/google_auth_provider.h"
+#include "tsl/platform/cloud/google_auth_provider.h"
 #ifndef _WIN32
 #include <pwd.h>
 #include <unistd.h>
@@ -25,11 +25,11 @@ limitations under the License.
 
 #include "absl/strings/match.h"
 #include "json/json.h"
-#include "third_party/tsl/platform/base64.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/retrying_utils.h"
+#include "tsl/platform/base64.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/retrying_utils.h"
 
 namespace tsl {
 

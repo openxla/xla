@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/iterator.h"
+#include "tsl/lib/io/iterator.h"
 
 namespace tsl {
 namespace table {

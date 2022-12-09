@@ -1,6 +1,6 @@
 # Description: SPMD partitioning pass.
 
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -71,9 +71,9 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:logging",
-        "@tsl//platform:numbers",
-        "@tsl//platform:statusor",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:numbers",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -94,8 +94,8 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -112,8 +112,8 @@ tf_cc_test(
         "//xla/service:hlo_verifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -142,8 +142,8 @@ tf_cc_test(
         "//xla/service:hlo_verifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -187,8 +187,8 @@ tf_cc_test(
         "//xla/service:sharding_propagation",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/concurrency/async_value.h"
+#include "tsl/concurrency/async_value.h"
 
 #include <cstdlib>
 #include <functional>
@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/synchronization/blocking_counter.h"
-#include "third_party/tsl/concurrency/async_value_ref.h"
+#include "tsl/concurrency/async_value_ref.h"
 
 namespace tsl {
 

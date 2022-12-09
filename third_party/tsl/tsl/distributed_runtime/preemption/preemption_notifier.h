@@ -24,9 +24,9 @@ limitations under the License.
 
 #include "absl/strings/str_join.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/statusor.h"
 
 namespace tsl {
 

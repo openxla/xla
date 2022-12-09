@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/zlib_inputstream.h"
+#include "tsl/lib/io/zlib_inputstream.h"
 
 #include <zlib.h>
 
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/strcat.h"
 
 namespace tsl {
 namespace io {

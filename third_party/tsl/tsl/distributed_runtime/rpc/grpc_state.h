@@ -21,14 +21,14 @@ limitations under the License.
 
 #include "grpcpp/generic/generic_stub.h"
 #include "grpcpp/grpcpp.h"
-#include "third_party/tsl/distributed_runtime/call_options.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_client_cq_tag.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_util.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/threadpool.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/distributed_runtime/call_options.h"
+#include "tsl/distributed_runtime/rpc/grpc_client_cq_tag.h"
+#include "tsl/distributed_runtime/rpc/grpc_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/threadpool.h"
+#include "tsl/util/env_var.h"
 
 namespace tsl {
 

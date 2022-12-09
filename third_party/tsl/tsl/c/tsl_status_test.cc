@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/c/tsl_status.h"
+#include "tsl/c/tsl_status.h"
 
 #include <utility>
 
-#include "third_party/tsl/c/tsl_status_internal.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/c/tsl_status_internal.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

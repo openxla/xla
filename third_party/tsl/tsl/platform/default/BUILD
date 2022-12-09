@@ -1,14 +1,14 @@
 # Tensorflow default + linux implementations of tensorflow/core/platform libraries.
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("@tsl//:tsl.default.bzl", "filegroup")
-load("@tsl//:tsl.bzl", "if_not_fuchsia", "if_not_windows", "tsl_copts")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("//tsl:tsl.default.bzl", "filegroup")
+load("//tsl:tsl.bzl", "if_not_fuchsia", "if_not_windows", "tsl_copts")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
         "//third_party/tensorflow/core/platform:__pkg__",
-        "@tsl//platform:__pkg__",
+        "//tsl/platform:__pkg__",
     ],
     licenses = ["notice"],
 )
@@ -25,7 +25,7 @@ cc_library(
 
 cc_library(
     name = "context",
-    hdrs = ["@tsl//platform:context.h"],
+    hdrs = ["//tsl/platform:context.h"],
     tags = [
         "manual",
         "no_oss",
@@ -33,7 +33,7 @@ cc_library(
     ],
     textual_hdrs = ["context.h"],
     deps = [
-        "@tsl//platform",
+        "//tsl/platform",
     ],
 )
 
@@ -51,7 +51,7 @@ cc_library(
 cc_library(
     name = "cuda_libdevice_path",
     srcs = ["cuda_libdevice_path.cc"],
-    hdrs = ["@tsl//platform:cuda_libdevice_path.h"],
+    hdrs = ["//tsl/platform:cuda_libdevice_path.h"],
     compatible_with = [],
     tags = [
         "manual",
@@ -59,11 +59,11 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//tsl/platform",
+        "//tsl/platform:logging",
+        "//tsl/platform:path",
+        "//tsl/platform:types",
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform",
-        "@tsl//platform:logging",
-        "@tsl//platform:path",
-        "@tsl//platform:types",
     ],
 )
 
@@ -71,7 +71,7 @@ cc_library(
     name = "dso_loader",
     srcs = ["dso_loader.cc"] + select({
         # include dynamic loading checker only for open source build
-        "@tsl//:oss": ["dlopen_checker.cc"],
+        "//tsl:oss": ["dlopen_checker.cc"],
         "//conditions:default": ["dlopen_checker_stub.cc"],
     }),
     hdrs = ["dso_loader.h"],
@@ -82,17 +82,17 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//tsl/platform:env",
+        "//tsl/platform:errors",
+        "//tsl/platform:logging",
+        "//tsl/platform:path",
+        "//tsl/platform:status",
+        "//tsl/platform:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_rocm//rocm:rocm_headers",
         "@local_config_tensorrt//:tensorrt_headers",
-        "@tsl//platform:env",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:path",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
     ],
 )
 
@@ -110,18 +110,18 @@ cc_library(
     name = "env",
     srcs = [
         "posix_file_system.cc",
-        "@tsl//platform:env.cc",
-        "@tsl//platform:file_system.cc",
-        "@tsl//platform:file_system_helper.cc",
-        "@tsl//platform:threadpool.cc",
+        "//tsl/platform:env.cc",
+        "//tsl/platform:file_system.cc",
+        "//tsl/platform:file_system_helper.cc",
+        "//tsl/platform:threadpool.cc",
     ],
     hdrs = [
         "posix_file_system.h",
-        "@tsl//platform:env.h",
-        "@tsl//platform:file_system.h",
-        "@tsl//platform:file_system_helper.h",
-        "@tsl//platform:ram_file_system.h",
-        "@tsl//platform:threadpool.h",
+        "//tsl/platform:env.h",
+        "//tsl/platform:file_system.h",
+        "//tsl/platform:file_system_helper.h",
+        "//tsl/platform:ram_file_system.h",
+        "//tsl/platform:threadpool.h",
     ],
     tags = [
         "manual",
@@ -130,36 +130,36 @@ cc_library(
     ],
     deps = [
         "//third_party/eigen3",
+        "//tsl/platform",
+        "//tsl/platform:blocking_counter",
+        "//tsl/platform:context",
+        "//tsl/platform:cord",
+        "//tsl/platform:denormal",
+        "//tsl/platform:env_time",
+        "//tsl/platform:errors",
+        "//tsl/platform:file_statistics",
+        "//tsl/platform:load_library",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:path",
+        "//tsl/platform:platform_port",
+        "//tsl/platform:protobuf",
+        "//tsl/platform:regexp",
+        "//tsl/platform:scanner",
+        "//tsl/platform:setround",
+        "//tsl/platform:status",
+        "//tsl/platform:statusor",
+        "//tsl/platform:str_util",
+        "//tsl/platform:strcat",
+        "//tsl/platform:stringpiece",
+        "//tsl/platform:stringprintf",
+        "//tsl/platform:threadpool_interface",
+        "//tsl/platform:tracing",
+        "//tsl/platform:types",
+        "//tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:optional",
-        "@tsl//platform",
-        "@tsl//platform:blocking_counter",
-        "@tsl//platform:context",
-        "@tsl//platform:cord",
-        "@tsl//platform:denormal",
-        "@tsl//platform:env_time",
-        "@tsl//platform:errors",
-        "@tsl//platform:file_statistics",
-        "@tsl//platform:load_library",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:path",
-        "@tsl//platform:platform_port",
-        "@tsl//platform:protobuf",
-        "@tsl//platform:regexp",
-        "@tsl//platform:scanner",
-        "@tsl//platform:setround",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
-        "@tsl//platform:str_util",
-        "@tsl//platform:strcat",
-        "@tsl//platform:stringpiece",
-        "@tsl//platform:stringprintf",
-        "@tsl//platform:threadpool_interface",
-        "@tsl//platform:tracing",
-        "@tsl//platform:types",
-        "@tsl//protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -175,62 +175,62 @@ cc_library(
     ],
     deps = [
         ":env",
-        "@tsl//platform:load_library",
-        "@tsl//platform:logging",
-        "@tsl//platform:mutex",
-        "@tsl//platform:strcat",
-        "@tsl//protobuf:error_codes_proto_impl_cc",
+        "//tsl/platform:load_library",
+        "//tsl/platform:logging",
+        "//tsl/platform:mutex",
+        "//tsl/platform:strcat",
+        "//tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
 cc_library(
     name = "env_time",
     srcs = ["env_time.cc"],
-    hdrs = ["@tsl//platform:env_time.h"],
+    hdrs = ["//tsl/platform:env_time.h"],
     tags = [
         "manual",
         "no_oss",
         "nobuilder",
     ],
-    deps = ["@tsl//platform:types"],
+    deps = ["//tsl/platform:types"],
 )
 
 cc_library(
     name = "human_readable_json",
     srcs = ["human_readable_json.cc"],
-    hdrs = ["@tsl//platform:human_readable_json.h"],
+    hdrs = ["//tsl/platform:human_readable_json.h"],
     tags = [
         "manual",
         "no_oss",
         "nobuilder",
     ],
     deps = [
-        "@tsl//platform:errors",
-        "@tsl//platform:protobuf",
-        "@tsl//platform:status",
-        "@tsl//platform:strcat",
+        "//tsl/platform:errors",
+        "//tsl/platform:protobuf",
+        "//tsl/platform:status",
+        "//tsl/platform:strcat",
     ],
 )
 
 cc_library(
     name = "load_library",
     srcs = ["load_library.cc"],
-    hdrs = ["@tsl//platform:load_library.h"],
+    hdrs = ["//tsl/platform:load_library.h"],
     tags = [
         "manual",
         "no_oss",
         "nobuilder",
     ],
     deps = [
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
+        "//tsl/platform:errors",
+        "//tsl/platform:status",
     ],
 )
 
 cc_library(
     name = "logging",
     srcs = ["logging.cc"],
-    hdrs = ["@tsl//platform:logging.h"],
+    hdrs = ["//tsl/platform:logging.h"],
     tags = [
         "manual",
         "no_oss",
@@ -238,13 +238,13 @@ cc_library(
     ],
     textual_hdrs = ["logging.h"],
     deps = [
+        "//tsl/platform",
+        "//tsl/platform:env_time",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:types",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
-        "@tsl//platform",
-        "@tsl//platform:env_time",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:types",
     ],
 )
 
@@ -262,7 +262,7 @@ cc_library(
     srcs = [
         "mutex.cc",
         "mutex_data.h",
-        "@tsl//platform:mutex.h",
+        "//tsl/platform:mutex.h",
     ],
     tags = [
         "manual",
@@ -271,11 +271,11 @@ cc_library(
     ],
     textual_hdrs = ["mutex.h"],
     deps = [
+        "//tsl/platform",
+        "//tsl/platform:macros",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:types",
         "@nsync//:nsync_cpp",
-        "@tsl//platform",
-        "@tsl//platform:macros",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:types",
     ],
 )
 
@@ -283,7 +283,7 @@ cc_library(
     name = "net",
     srcs = ["net.cc"],
     hdrs = [
-        "@tsl//platform:net.h",
+        "//tsl/platform:net.h",
     ],
     tags = [
         "manual",
@@ -291,8 +291,8 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "@tsl//platform:logging",
-        "@tsl//platform:strcat",
+        "//tsl/platform:logging",
+        "//tsl/platform:strcat",
     ],
     alwayslink = True,
 )
@@ -306,8 +306,8 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "@tsl//platform:mutex",
-        "@tsl//platform:types",
+        "//tsl/platform:mutex",
+        "//tsl/platform:types",
     ],
 )
 
@@ -315,22 +315,22 @@ cc_library(
     name = "platform_port",
     srcs = [
         "port.cc",
-        "@tsl//platform:cpu_info.cc",
+        "//tsl/platform:cpu_info.cc",
     ],
     hdrs = [
-        "@tsl//platform:cpu_info.h",
-        "@tsl//platform:demangle.h",
-        "@tsl//platform:host_info.h",
-        "@tsl//platform:init_main.h",
-        "@tsl//platform:mem.h",
-        "@tsl//platform:numa.h",
-        "@tsl//platform:snappy.h",
-        "@tsl//platform/profile_utils:cpu_utils.h",
+        "//tsl/platform:cpu_info.h",
+        "//tsl/platform:demangle.h",
+        "//tsl/platform:host_info.h",
+        "//tsl/platform:init_main.h",
+        "//tsl/platform:mem.h",
+        "//tsl/platform:numa.h",
+        "//tsl/platform:snappy.h",
+        "//tsl/platform/profile_utils:cpu_utils.h",
     ],
     copts = tsl_copts(),
     defines = ["TF_USE_SNAPPY"] + select({
         # TF Additional NUMA defines
-        "@tsl//:with_numa_support": ["TENSORFLOW_USE_NUMA"],
+        "//tsl:with_numa_support": ["TENSORFLOW_USE_NUMA"],
         "//conditions:default": [],
     }),
     features = ["-layering_check"],
@@ -341,17 +341,17 @@ cc_library(
     ],
     deps = [
         "@com_google_absl//absl/base",
-        "@tsl//platform:byte_order",
-        "@tsl//platform:dynamic_annotations",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform/profile_utils:profile_utils_cpu_utils",
-        "@tsl//platform:types",
-        "@tsl//platform:platform",
+        "//tsl/platform:byte_order",
+        "//tsl/platform:dynamic_annotations",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform/profile_utils:profile_utils_cpu_utils",
+        "//tsl/platform:types",
+        "//tsl/platform:platform",
         "@snappy",
     ] + select({
         # TF Additional NUMA dependencies
-        "@tsl//:with_numa_support": [
+        "//tsl:with_numa_support": [
             # Don't merge in a single line
             "@hwloc",
         ],
@@ -362,14 +362,14 @@ cc_library(
 cc_library(
     name = "resource",
     srcs = ["resource.cc"],
-    hdrs = ["@tsl//platform:resource.h"],
+    hdrs = ["//tsl/platform:resource.h"],
     tags = [
         "manual",
         "no_oss",
         "nobuilder",
     ],
     deps = [
-        "@tsl//platform:stringpiece",
+        "//tsl/platform:stringpiece",
     ],
 )
 
@@ -377,23 +377,23 @@ cc_library(
     name = "resource_loader",
     testonly = 1,
     srcs = ["resource_loader.cc"],
-    hdrs = ["@tsl//platform:resource_loader.h"],
+    hdrs = ["//tsl/platform:resource_loader.h"],
     tags = [
         "manual",
         "no_oss",
         "nobuilder",
     ],
     deps = [
+        "//tsl/platform:logging",
+        "//tsl/platform:path",
         "@bazel_tools//tools/cpp/runfiles",
-        "@tsl//platform:logging",
-        "@tsl//platform:path",
     ],
 )
 
 cc_library(
     name = "rocm_rocdl_path",
     srcs = ["rocm_rocdl_path.cc"],
-    hdrs = ["@tsl//platform:rocm_rocdl_path.h"],
+    hdrs = ["//tsl/platform:rocm_rocdl_path.h"],
     compatible_with = [],
     tags = [
         "manual",
@@ -401,10 +401,10 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//tsl/platform:logging",
+        "//tsl/platform:path",
+        "//tsl/platform:types",
         "@local_config_rocm//rocm:rocm_headers",
-        "@tsl//platform:logging",
-        "@tsl//platform:path",
-        "@tsl//platform:types",
     ],
 )
 
@@ -413,19 +413,19 @@ cc_library(
     hdrs = ["stacktrace.h"],
     linkopts = ["-ldl"],
     deps = [
-        "@tsl//platform",
-        "@tsl//platform:abi",
+        "//tsl/platform",
+        "//tsl/platform:abi",
     ],
 )
 
 cc_library(
     name = "stacktrace_handler",
     srcs = ["stacktrace_handler.cc"],
-    hdrs = ["@tsl//platform:stacktrace_handler_hdrs"],
+    hdrs = ["//tsl/platform:stacktrace_handler_hdrs"],
     linkstatic = 1,
     deps = [
-        "@tsl//platform",
-        "@tsl//platform:stacktrace",
+        "//tsl/platform",
+        "//tsl/platform:stacktrace",
     ],
     alwayslink = 1,
 )
@@ -433,7 +433,7 @@ cc_library(
 cc_library(
     name = "subprocess",
     srcs = ["subprocess.cc"],
-    hdrs = ["@tsl//platform:subprocess.h"],
+    hdrs = ["//tsl/platform:subprocess.h"],
     tags = [
         "manual",
         "no_oss",
@@ -441,11 +441,11 @@ cc_library(
     ],
     textual_hdrs = ["subprocess.h"],
     deps = [
-        "@tsl//platform",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:types",
+        "//tsl/platform",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -454,21 +454,21 @@ cc_library(
     name = "test",
     testonly = True,
     srcs = ["test.cc"],
-    hdrs = ["@tsl//platform:test.h"],
+    hdrs = ["//tsl/platform:test.h"],
     tags = [
         "manual",
         "no_oss",
         "nobuilder",
     ],
     deps = [
+        "//tsl/platform",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:net",
+        "//tsl/platform:path",
+        "//tsl/platform:strcat",
+        "//tsl/platform:types",
         "@com_google_googletest//:gtest",
-        "@tsl//platform",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:net",
-        "@tsl//platform:path",
-        "@tsl//platform:strcat",
-        "@tsl//platform:types",
     ],
 )
 
@@ -476,9 +476,9 @@ cc_library(
     name = "tracing",
     srcs = [
         "tracing.cc",
-        "@tsl//platform:tracing.cc",
+        "//tsl/platform:tracing.cc",
     ],
-    hdrs = ["@tsl//platform:tracing.h"],
+    hdrs = ["//tsl/platform:tracing.h"],
     tags = [
         "manual",
         "no_oss",
@@ -486,14 +486,14 @@ cc_library(
     ],
     textual_hdrs = ["tracing_impl.h"],
     deps = [
-        "@tsl//platform",
-        "@tsl//platform:hash",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:str_util",
-        "@tsl//platform:strcat",
-        "@tsl//platform:stringpiece",
-        "@tsl//platform:types",
+        "//tsl/platform",
+        "//tsl/platform:hash",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:str_util",
+        "//tsl/platform:strcat",
+        "//tsl/platform:stringpiece",
+        "//tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -518,11 +518,11 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//tsl/platform:env",
+        "//tsl/platform:mutex",
+        "//tsl/platform:notification",
+        "//tsl/platform:platform_port",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:env",
-        "@tsl//platform:mutex",
-        "@tsl//platform:notification",
-        "@tsl//platform:platform_port",
     ],
 )
 
@@ -531,7 +531,7 @@ cc_library(
     srcs = [
         "crash_analysis.cc",
     ],
-    hdrs = ["@tsl//platform:crash_analysis.h"],
+    hdrs = ["//tsl/platform:crash_analysis.h"],
     tags = [
         "manual",
         "no_oss",
@@ -540,8 +540,8 @@ cc_library(
     textual_hdrs = ["crash_analysis.h"],
     visibility = ["//third_party/tensorflow:__subpackages__"],
     deps = [
-        "@tsl//platform",
-        "@tsl//platform:protobuf",
+        "//tsl/platform",
+        "//tsl/platform:protobuf",
     ],
 )
 
@@ -576,12 +576,12 @@ filegroup(
         "posix_file_system.h",
         "stacktrace.h",
         "tracing_impl.h",
-        "@tsl//platform/profile_utils:cpu_utils.h",
-        "@tsl//platform/profile_utils:i_cpu_utils_helper.h",
+        "//tsl/platform/profile_utils:cpu_utils.h",
+        "//tsl/platform/profile_utils:i_cpu_utils_helper.h",
     ],
     visibility = [
         "//third_party/tensorflow/core/platform:__pkg__",
-        "@tsl//platform:__pkg__",
+        "//tsl/platform:__pkg__",
     ],
 )
 

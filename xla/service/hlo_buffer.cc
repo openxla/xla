@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

@@ -25,10 +25,10 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_client.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/protobuf/coordination_config.pb.h"
+#include "tsl/distributed_runtime/coordination/coordination_client.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/protobuf/coordination_config.pb.h"
 
 namespace tsl {
 class Env;

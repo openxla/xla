@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include "third_party/gpus/cuda/include/curand.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the cuRAND API by forwarding to cuRAND loaded from the DSO.
 
@@ -47,4 +47,4 @@ T LoadSymbol(const char* symbol_name) {
 curandStatus_t GetSymbolNotFoundError() { return CURAND_STATUS_INTERNAL_ERROR; }
 }  // namespace
 
-#include "third_party/tsl/cuda/curand_10_0.inc"
+#include "tsl/cuda/curand_10_0.inc"

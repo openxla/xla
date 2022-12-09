@@ -15,7 +15,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_STRINGS_PROTO_SERIALIZATION_H_
 #define TENSORFLOW_TSL_LIB_STRINGS_PROTO_SERIALIZATION_H_
 
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/protobuf.h"
 
 namespace tsl {
 

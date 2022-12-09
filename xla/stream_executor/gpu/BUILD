@@ -10,21 +10,21 @@ load(
     "if_rocm_is_configured",
 )
 load(
-    "@tsl//:tsl.bzl",
+    "@tsl//tsl:tsl.bzl",
     "if_libtpu",
     "tsl_copts",
     "tsl_gpu_library",
 )
 load(
-    "@tsl//platform:build_config_root.bzl",
+    "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
 )
 load(
-    "@tsl//platform:rules_cc.bzl",
+    "@tsl//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 load(
-    "@tsl//platform/default:cuda_build_defs.bzl",
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 
@@ -128,8 +128,8 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:fingerprint",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -138,7 +138,7 @@ cc_library(
     hdrs = if_gpu_is_configured(["gpu_helpers.h"]),
     deps = [
         ":gpu_types_header",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -148,7 +148,7 @@ tsl_gpu_library(
         "gpu_init.h",
     ],
     visibility = [
-        "@tsl//:internal",
+        "@tsl//tsl:internal",
     ],
     deps = [
         "//xla/stream_executor/lib",
@@ -171,7 +171,7 @@ tsl_gpu_library(
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
         "//xla/stream_executor/lib",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
     alwayslink = True,
 )
@@ -290,12 +290,12 @@ cc_library(
         ":gpu_helpers_header",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//platform:regexp",
-        "@tsl//platform:mutex",
-        "@tsl//platform:errors",
-        "@tsl//platform:subprocess",
-        "@tsl//platform:path",
-        "@tsl//platform:cuda_libdevice_path",
+        "@tsl//tsl/platform:regexp",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:subprocess",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:cuda_libdevice_path",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
@@ -330,13 +330,13 @@ cc_library(
         ":gpu_helpers_header",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//platform:regexp",
-        "@tsl//platform:mutex",
-        "@tsl//platform:errors",
-        "@tsl//platform:env",
-        "@tsl//platform:subprocess",
-        "@tsl//platform:path",
-        "@tsl//platform:cuda_libdevice_path",
+        "@tsl//tsl/platform:regexp",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:subprocess",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:cuda_libdevice_path",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
@@ -375,15 +375,15 @@ cc_library(
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:optional",
-        "@tsl//lib/math:math_util",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//framework:allocator",
+        "@tsl//tsl/lib/math:math_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/framework:allocator",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor:stream_executor_headers",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:status",
     ]),
 )
 
@@ -395,10 +395,10 @@ tsl_gpu_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl//framework:allocator",
-        "@tsl//framework:device_id",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
+        "@tsl//tsl/framework:allocator",
+        "@tsl//tsl/framework:device_id",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:mutex",
     ],
 )
 
@@ -419,11 +419,11 @@ tsl_gpu_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
-        "@tsl//framework:allocator",
-        "@tsl//framework:device_id",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//util:env_var",
+        "@tsl//tsl/framework:allocator",
+        "@tsl//tsl/framework:device_id",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/util:env_var",
     ],
 )

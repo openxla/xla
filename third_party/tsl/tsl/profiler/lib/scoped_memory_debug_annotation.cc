@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/lib/scoped_memory_debug_annotation.h"
+#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
 
 namespace tsl {
 namespace profiler {

@@ -20,7 +20,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/lib/error.h"  // IWYU pragma: export
 #include "xla/stream_executor/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace stream_executor {
 namespace port {

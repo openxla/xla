@@ -1,5 +1,5 @@
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
 
 package(
     default_visibility = ["//visibility:public"],

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/strcat.h"
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -23,7 +23,7 @@ limitations under the License.
 #include <algorithm>
 
 #include "absl/meta/type_traits.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace tsl {
 namespace strings {

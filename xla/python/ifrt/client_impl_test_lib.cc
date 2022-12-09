@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/test_util.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {

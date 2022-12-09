@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/metrics.h"
 
-#include "third_party/tsl/lib/monitoring/sampler.h"
+#include "tsl/lib/monitoring/sampler.h"
 
 namespace xla {
 namespace {

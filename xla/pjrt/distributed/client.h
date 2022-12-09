@@ -25,7 +25,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/protocol.grpc.pb.h"
 #include "xla/statusor.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace tsl {
 class CoordinationServiceAgent;

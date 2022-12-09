@@ -15,8 +15,8 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
 #include "third_party/gpus/cuda/include/cusolverSp.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the cusolver API by forwarding to cusolver loaded from the DSO.
 
@@ -52,13 +52,13 @@ cusolverStatus_t GetSymbolNotFoundError() {
 }  // namespace
 
 #if CUDA_VERSION < 10000
-#include "third_party/tsl/cuda/cusolver_dense_9_0.inc"
+#include "tsl/cuda/cusolver_dense_9_0.inc"
 #elif CUDA_VERSION < 10010
-#include "third_party/tsl/cuda/cusolver_dense_10_0.inc"
+#include "tsl/cuda/cusolver_dense_10_0.inc"
 #elif CUDA_VERSION < 10020
-#include "third_party/tsl/cuda/cusolver_dense_10_1.inc"
+#include "tsl/cuda/cusolver_dense_10_1.inc"
 #elif CUDA_VERSION < 11000
-#include "third_party/tsl/cuda/cusolver_dense_10_2.inc"
+#include "tsl/cuda/cusolver_dense_10_2.inc"
 #else
-#include "third_party/tsl/cuda/cusolver_dense_11_0.inc"
+#include "tsl/cuda/cusolver_dense_11_0.inc"
 #endif

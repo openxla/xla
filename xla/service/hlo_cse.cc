@@ -36,7 +36,7 @@ limitations under the License.
 #include "xla/service/hlo_domain_map.h"
 #include "xla/shape_util.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 

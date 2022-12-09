@@ -19,17 +19,17 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 #if !defined(IS_MOBILE_PLATFORM)
-#include "third_party/tsl/profiler/lib/profiler_interface.h"
-#include "third_party/tsl/profiler/lib/profiler_lock.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/lib/profiler_lock.h"
 #endif
 
 namespace tsl {

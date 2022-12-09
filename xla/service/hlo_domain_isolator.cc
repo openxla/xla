@@ -25,7 +25,7 @@ limitations under the License.
 #include "xla/service/hlo_domain_remover.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 

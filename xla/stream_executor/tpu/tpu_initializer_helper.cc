@@ -36,14 +36,14 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_api_dlsym_set_fn.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 #include "xla/stream_executor/tpu/tpu_ops_c_api.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 
 #if !defined(PLATFORM_GOOGLE)
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_platform.h"
-#include "third_party/tsl/platform/cloud/gcs_file_system.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/cloud/gcs_file_system.h"
+#include "tsl/platform/env.h"
 #elif defined(LIBTPU_STATIC)
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_platform.h"

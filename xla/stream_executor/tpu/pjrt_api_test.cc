@@ -15,9 +15,9 @@ limitations under the License.
 #include "xla/stream_executor/tpu/pjrt_api.h"
 
 #include <gtest/gtest.h>
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/status_matchers.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/status_matchers.h"
+#include "tsl/protobuf/error_codes.pb.h"
 namespace {
 
 using ::testing::HasSubstr;

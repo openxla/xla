@@ -30,9 +30,9 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "third_party/tsl/lib/gtl/iterator_range.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/lib/gtl/iterator_range.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

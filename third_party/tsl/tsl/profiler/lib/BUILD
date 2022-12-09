@@ -1,10 +1,10 @@
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//platform:build_config_root.bzl", "if_static")
-load("@tsl//:tsl.default.bzl", "filegroup")
-load("@tsl//:tsl.bzl", "if_not_android")
-load("@tsl//platform:build_config.bzl", "tsl_cc_test")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl/platform:build_config_root.bzl", "if_static")
+load("//tsl:tsl.default.bzl", "filegroup")
+load("//tsl:tsl.bzl", "if_not_android")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load(
-    "@tsl//profiler/builds:build_config.bzl",
+    "//tsl/profiler/builds:build_config.bzl",
     "tf_profiler_copts",
     "tf_profiler_pybind_cc_library_wrapper",
 )
@@ -50,14 +50,14 @@ cc_library(
     srcs = ["profiler_controller.cc"],
     hdrs = ["profiler_controller.h"],
     visibility = [
-        "@tsl//profiler:internal",
+        "//tsl/profiler:internal",
     ],
     deps = [
         ":profiler_interface",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
-        "@tsl//profiler/protobuf:xplane_proto_cc",
+        "//tsl/platform:errors",
+        "//tsl/platform:logging",
+        "//tsl/platform:status",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
@@ -65,12 +65,12 @@ cc_library(
     name = "profiler_factory",
     hdrs = ["profiler_factory.h"],
     visibility = [
-        "@tsl//profiler:internal",
-        "@tsl//profiler:xla_profiler_backends",
+        "//tsl/profiler:internal",
+        "//tsl/profiler:xla_profiler_backends",
     ],
     deps = [
         ":profiler_interface",
-        "@tsl//profiler/protobuf:profiler_options_proto_cc",
+        "//tsl/profiler/protobuf:profiler_options_proto_cc",
     ] + if_static([
         ":profiler_factory_impl",
     ]),
@@ -84,13 +84,13 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = [
-        "@tsl//profiler:internal",
+        "//tsl/profiler:internal",
     ],
     deps = [
         ":profiler_interface",
-        "@tsl//platform:mutex",
-        "@tsl//profiler/lib:profiler_controller",
-        "@tsl//profiler/protobuf:profiler_options_proto_cc",
+        "//tsl/platform:mutex",
+        "//tsl/profiler/lib:profiler_controller",
+        "//tsl/profiler/protobuf:profiler_options_proto_cc",
     ],
     alwayslink = True,
 )
@@ -102,13 +102,13 @@ tsl_cc_test(
         ":profiler_factory",
         ":profiler_factory_impl",
         ":profiler_interface",
+        "//tsl/platform:macros",
+        "//tsl/platform:status",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+        "//tsl/profiler/protobuf:profiler_options_proto_cc",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:macros",
-        "@tsl//platform:status",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
-        "@tsl//profiler/protobuf:profiler_options_proto_cc",
-        "@tsl//profiler/protobuf:xplane_proto_cc",
     ],
 )
 
@@ -117,13 +117,13 @@ cc_library(
     hdrs = ["profiler_interface.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "@tsl//:internal",
-        "@tsl//profiler:internal",
-        "@tsl//profiler:xla_profiler_backends",
+        "//tsl:internal",
+        "//tsl/profiler:internal",
+        "//tsl/profiler:xla_profiler_backends",
     ],
     deps = [
-        "@tsl//platform:status",
-        "@tsl//profiler/protobuf:xplane_proto_cc",
+        "//tsl/platform:status",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
@@ -132,12 +132,12 @@ cc_library(
     srcs = ["profiler_lock.cc"],
     hdrs = ["profiler_lock.h"],
     copts = tf_profiler_copts(),
-    visibility = ["@tsl//profiler:internal"],
+    visibility = ["//tsl/profiler:internal"],
     deps = [
-        "@tsl//platform:errors",
-        "@tsl//platform:macros",
-        "@tsl//platform:statusor",
-        "@tsl//util:env_var",
+        "//tsl/platform:errors",
+        "//tsl/platform:macros",
+        "//tsl/platform:statusor",
+        "//tsl/util:env_var",
     ],
 )
 
@@ -146,24 +146,24 @@ tsl_cc_test(
     srcs = ["profiler_lock_test.cc"],
     deps = [
         ":profiler_lock",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
 
 cc_library(
     name = "profiler_session",
     hdrs = ["profiler_session.h"],
-    visibility = ["@tsl//:internal"],
+    visibility = ["//tsl:internal"],
     deps = [
-        "@tsl//profiler/protobuf:xplane_proto_cc",
-        "@tsl//profiler/protobuf:profiler_options_proto_cc",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:errors",
-        "@tsl//platform:mutex",
-        "@tsl//platform:platform",
-        "@tsl//platform:status",
-        "@tsl//platform:types",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
+        "//tsl/profiler/protobuf:profiler_options_proto_cc",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:errors",
+        "//tsl/platform:mutex",
+        "//tsl/platform:platform",
+        "//tsl/platform:status",
+        "//tsl/platform:types",
     ] + if_not_android([
         ":profiler_interface",
         ":profiler_lock",
@@ -181,27 +181,27 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = [
         "//third_party/tensorflow/python:__pkg__",
-        "@tsl//profiler:internal",
+        "//tsl/profiler:internal",
     ],
     deps = [
-        "@tsl//platform:errors",
-        "@tsl//platform:mutex",
-        "@tsl//platform:logging",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:types",
-        "@tsl//profiler/protobuf:xplane_proto_cc",
-        "@tsl//profiler/protobuf:profiler_options_proto_cc",
+        "//tsl/platform:errors",
+        "//tsl/platform:mutex",
+        "//tsl/platform:logging",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:types",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
+        "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@com_google_absl//absl/memory",
     ] + if_not_android([
         ":profiler_collection",
         ":profiler_factory",
         ":profiler_interface",
         ":profiler_lock",
-        "@tsl//platform",
-        "@tsl//platform:platform_port",
-        "@tsl//platform:status",
-        "@tsl//profiler/convert:post_process_single_host_xplane",
-        "@tsl//profiler/utils:time_utils",
+        "//tsl/platform",
+        "//tsl/platform:platform_port",
+        "//tsl/platform:status",
+        "//tsl/profiler/convert:post_process_single_host_xplane",
+        "//tsl/profiler/utils:time_utils",
     ]),
     alwayslink = True,
 )
@@ -211,9 +211,9 @@ cc_library(
     hdrs = ["traceme_encode.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
     ],
 )
 
@@ -222,17 +222,17 @@ tsl_cc_test(
     srcs = ["traceme_encode_test.cc"],
     deps = [
         ":traceme_encode",
+        "//tsl/platform",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
         "@com_google_absl//absl/strings",
-        "@tsl//platform",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
     ],
 )
 
 tf_profiler_pybind_cc_library_wrapper(
     name = "traceme_for_pybind",
     actual = ":traceme",
-    visibility = ["@tsl//profiler:xla_internal"],
+    visibility = ["//tsl/profiler:xla_internal"],
 )
 
 cc_library(
@@ -242,13 +242,13 @@ cc_library(
     deps = [
         ":traceme_encode",
         "@com_google_absl//absl/strings",
-        "@tsl//platform",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:types",
+        "//tsl/platform",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:types",
     ] + if_not_android([
-        "@tsl//profiler/backends/cpu:traceme_recorder",
-        "@tsl//profiler/utils:time_utils",
+        "//tsl/profiler/backends/cpu:traceme_recorder",
+        "//tsl/profiler/utils:time_utils",
     ]),
 )
 
@@ -258,9 +258,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/strings",
-        "@tsl//platform:types",
+        "//tsl/platform:types",
     ] + if_not_android([
-        "@tsl//profiler/backends/cpu:annotation_stack",
+        "//tsl/profiler/backends/cpu:annotation_stack",
     ]),
 )
 
@@ -268,13 +268,13 @@ cc_library(
     name = "scoped_annotation_stack",
     hdrs = ["scoped_annotation_stack.h"],
     visibility = [
-        "@tsl//profiler:internal",
-        "@tsl//profiler:xla_internal",
+        "//tsl/profiler:internal",
+        "//tsl/profiler:xla_internal",
     ],
     deps = [
         "@com_google_absl//absl/strings",
     ] + if_not_android([
-        "@tsl//profiler/backends/cpu:annotation_stack",
+        "//tsl/profiler/backends/cpu:annotation_stack",
     ]),
 )
 
@@ -285,12 +285,12 @@ tsl_cc_test(
     deps = [
         ":scoped_annotation",
         ":scoped_annotation_stack",
+        "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
+        "//tsl/platform:test_main",
+        "//tsl/profiler/backends/cpu:annotation_stack",
+        "//tsl/profiler/backends/cpu:annotation_stack_impl",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
-        "@tsl//profiler/backends/cpu:annotation_stack",
-        "@tsl//profiler/backends/cpu:annotation_stack_impl",
     ],
 )
 
@@ -313,8 +313,8 @@ cc_library(
     hdrs = ["profiler_collection.h"],
     deps = [
         ":profiler_interface",
-        "@tsl//platform:status",
-        "@tsl//profiler/protobuf:xplane_proto_cc",
+        "//tsl/platform:status",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 

@@ -1,5 +1,5 @@
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//:tsl.default.bzl", "get_compatible_with_portable")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -67,13 +67,13 @@ cc_library(
     srcs = ["eigen_contraction_kernel.cc"],
     hdrs = ["eigen_contraction_kernel.h"],
     defines = select({
-        "@tsl//:android_x86": [],
-        "@tsl//:arm_any": [],
-        "@tsl//:fuchsia_x86_64": [],
-        "@tsl//:ios": [],
-        "@tsl//:linux_ppc64le": [],
-        "@tsl//:linux_s390x": [],
-        "@tsl//:macos_arm64": [],
+        "//tsl:android_x86": [],
+        "//tsl:arm_any": [],
+        "//tsl:fuchsia_x86_64": [],
+        "//tsl:ios": [],
+        "//tsl:linux_ppc64le": [],
+        "//tsl:linux_s390x": [],
+        "//tsl:macos_arm64": [],
         "//conditions:default": [
             "TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL",
             "TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL",
@@ -82,16 +82,16 @@ cc_library(
     deps = [
         "@com_google_absl//absl/base",
         "//third_party/eigen3",
-        "@tsl//platform:dynamic_annotations",
-        "@tsl//framework/fixedpoint",
+        "//tsl/platform:dynamic_annotations",
+        "//tsl/framework/fixedpoint",
     ] + select({
-        "@tsl//:android_x86": [],
-        "@tsl//:arm_any": [],
-        "@tsl//:fuchsia_x86_64": [],
-        "@tsl//:ios": [],
-        "@tsl//:linux_ppc64le": [],
-        "@tsl//:linux_s390x": [],
-        "@tsl//:macos_arm64": [],
+        "//tsl:android_x86": [],
+        "//tsl:arm_any": [],
+        "//tsl:fuchsia_x86_64": [],
+        "//tsl:ios": [],
+        "//tsl:linux_ppc64le": [],
+        "//tsl:linux_s390x": [],
+        "//tsl:macos_arm64": [],
         "//conditions:default": ["@mkl_dnn_v1//:mkl_dnn"],
     }),
 )
@@ -113,13 +113,13 @@ cc_library(
     # Somehow the following code works with fixedpoint, but not here.
     # visibility = [
     #     "//third_party/tensorflow:__subpackages__",
-    #     "@tsl//:internal",
+    #     "//tsl:internal",
     # ],
     deps = [
         "//third_party/eigen3",
+        "//tsl/framework/fixedpoint",
+        "//tsl/platform:dynamic_annotations",
         "@com_google_absl//absl/base",
-        "@tsl//framework/fixedpoint",
-        "@tsl//platform:dynamic_annotations",
     ],
 )
 

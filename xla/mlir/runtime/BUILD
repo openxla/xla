@@ -1,5 +1,5 @@
 load("//xla:xla.bzl", "xla_cc_binary")
-load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
 
 package_group(
     name = "friends",
@@ -41,6 +41,6 @@ xla_cc_binary(
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",
-        "@tsl//protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )

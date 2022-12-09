@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/platform/stringpiece.h"
+#include "tsl/platform/stringpiece.h"
 
 namespace tsl {
 

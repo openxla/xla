@@ -29,8 +29,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

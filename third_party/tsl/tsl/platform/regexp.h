@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_REGEXP_H_
 #define TENSORFLOW_TSL_PLATFORM_REGEXP_H_
 
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 
 
 #if defined(PLATFORM_GOOGLE) || defined(PLATFORM_GOOGLE_ANDROID) || \

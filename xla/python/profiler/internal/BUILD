@@ -1,6 +1,6 @@
-load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
-load("@tsl//profiler/builds:build_config.bzl", "tf_profiler_copts")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -25,15 +25,15 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@pybind11",
-        "@tsl//platform:env",
-        "@tsl//platform:macros",
-        "@tsl//platform:path",
-        "@tsl//platform:types",
-        "@tsl//profiler/protobuf:xplane_proto_cc",
-        "@tsl//profiler/utils:time_utils",
-        "@tsl//profiler/utils:xplane_builder",
-        "@tsl//profiler/utils:xplane_schema",
-        "@tsl//profiler/utils:xplane_utils",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:types",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/profiler/utils:time_utils",
+        "@tsl//tsl/profiler/utils:xplane_builder",
+        "@tsl//tsl/profiler/utils:xplane_schema",
+        "@tsl//tsl/profiler/utils:xplane_utils",
     ],
     alwayslink = True,
 )
@@ -49,8 +49,8 @@ cc_library(
     deps = [
         "@com_google_absl//absl/strings",
         "@pybind11",
-        "@tsl//platform:macros",
-        "@tsl//platform:types",
-        "@tsl//profiler/lib:traceme_for_pybind",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:types",
+        "@tsl//tsl/profiler/lib:traceme_for_pybind",
     ],
 )

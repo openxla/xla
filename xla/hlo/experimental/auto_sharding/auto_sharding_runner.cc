@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/service/hlo_parser.h"
 #include "xla/status.h"
 #include "xla/tools/hlo_module_loader.h"
-#include "third_party/tsl/platform/init_main.h"
+#include "tsl/platform/init_main.h"
 
 namespace xla {
 namespace spmd {

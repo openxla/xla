@@ -1,7 +1,7 @@
 # Description:
 #   MLIR-GPU-specific convolution in XLA service implementation.
 
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
 
 package(
@@ -59,8 +59,8 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:TransformUtils",
-        "@tsl//platform:logging",
-        "@tsl//platform:types",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -85,7 +85,7 @@ tf_cc_test(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFToControlFlow",
         "@llvm-project//mlir:Transforms",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )

@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_CORE_STATUS_TEST_UTIL_H_
 #define TENSORFLOW_TSL_LIB_CORE_STATUS_TEST_UTIL_H_
 
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/test.h"
 
 // Macros for testing the results of functions that return tensorflow::Status.
 #define TF_EXPECT_OK(statement) EXPECT_EQ(::tsl::OkStatus(), (statement))

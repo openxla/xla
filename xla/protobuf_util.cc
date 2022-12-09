@@ -21,9 +21,9 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace protobuf_util {

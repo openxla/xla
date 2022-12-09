@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_IO_SNAPPY_SNAPPY_COMPRESSION_OPTIONS_H_
 #define TENSORFLOW_TSL_LIB_IO_SNAPPY_SNAPPY_COMPRESSION_OPTIONS_H_
 
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace io {

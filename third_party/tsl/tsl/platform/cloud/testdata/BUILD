@@ -1,6 +1,6 @@
 # Cloud test data files.
 
-load("@tsl//:tsl.default.bzl", "filegroup")
+load("//tsl:tsl.default.bzl", "filegroup")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -12,7 +12,7 @@ filegroup(
     srcs = [
         "application_default_credentials.json",
     ],
-    visibility = ["@tsl//platform/cloud:__pkg__"],
+    visibility = ["//tsl/platform/cloud:__pkg__"],
 )
 
 filegroup(
@@ -20,7 +20,7 @@ filegroup(
     srcs = [
         "service_account_credentials.json",
     ],
-    visibility = ["@tsl//platform/cloud:__pkg__"],
+    visibility = ["//tsl/platform/cloud:__pkg__"],
 )
 
 filegroup(
@@ -28,5 +28,5 @@ filegroup(
     srcs = [
         "service_account_public_key.txt",
     ],
-    visibility = ["@tsl//platform/cloud:__pkg__"],
+    visibility = ["//tsl/platform/cloud:__pkg__"],
 )

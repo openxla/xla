@@ -23,8 +23,8 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_split.h"
 #include "xla/tests/test_macros.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/regexp.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/regexp.h"
 
 namespace xla {
 

@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/llvm_compiler.h"
 
-#include "third_party/tsl/platform/denormal.h"
+#include "tsl/platform/denormal.h"
 
 #ifdef __FAST_MATH__
 #error "Don't build XLA with -ffast-math"

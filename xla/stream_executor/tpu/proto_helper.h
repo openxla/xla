@@ -19,7 +19,7 @@ limitations under the License.
 #include <cstddef>
 
 #include "xla/stream_executor/tpu/c_api_decl.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 extern "C" {
 

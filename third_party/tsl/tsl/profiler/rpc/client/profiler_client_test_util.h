@@ -24,13 +24,13 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/lib/profiler_session.h"
-#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "third_party/tsl/profiler/protobuf/profiler_service.pb.h"
-#include "third_party/tsl/profiler/rpc/profiler_server.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/rpc/profiler_server.h"
 
 namespace tsl {
 namespace profiler {

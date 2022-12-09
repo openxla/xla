@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/gcs_file_system.h"
+#include "tsl/platform/cloud/gcs_file_system.h"
 
 #include <fstream>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/cloud/http_request_fake.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/cloud/http_request_fake.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/test.h"
 
 // Undef DeleteFile macro defined in wndows.h.
 #ifdef PLATFORM_WINDOWS

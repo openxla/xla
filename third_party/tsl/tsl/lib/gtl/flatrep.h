@@ -20,8 +20,8 @@ limitations under the License.
 
 #include <utility>
 
-#include "third_party/tsl/platform/prefetch.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/prefetch.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace gtl {

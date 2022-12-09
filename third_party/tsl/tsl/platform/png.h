@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_PNG_H_
 #define TENSORFLOW_TSL_PLATFORM_PNG_H_
 
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 
 #if defined(PLATFORM_GOOGLE) && !defined(IS_MOBILE_PLATFORM)
 #include "png.h"  // from @png  // IWYU pragma: export

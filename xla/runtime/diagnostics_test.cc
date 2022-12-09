@@ -20,7 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace runtime {

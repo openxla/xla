@@ -32,7 +32,7 @@ limitations under the License.
 #include "xla/runtime/ffi/ffi_c_api.h"
 #include "xla/runtime/jit_executable.h"
 #include "xla/runtime/results.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace runtime {

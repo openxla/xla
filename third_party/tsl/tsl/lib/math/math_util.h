@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_MATH_MATH_UTIL_H_
 #define TENSORFLOW_TSL_LIB_MATH_MATH_UTIL_H_
 
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

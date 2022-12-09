@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/mlir/framework/transforms/passes.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/translate/mhlo_to_lhlo_with_xla/mhlo_to_lhlo_with_xla.h"
-#include "third_party/tsl/platform/init_main.h"
+#include "tsl/platform/init_main.h"
 
 int main(int argc, char **argv) {
   // TODO(jreiffers): Move this to a more appropriate place. It is used by both

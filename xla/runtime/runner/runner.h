@@ -22,7 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "xla/runtime/executable.h"
 #include "xla/runtime/jit_executable.h"
-#include "third_party/tsl/util/command_line_flags.h"
+#include "tsl/util/command_line_flags.h"
 
 namespace xla {
 namespace runtime {

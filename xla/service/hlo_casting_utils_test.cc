@@ -16,7 +16,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

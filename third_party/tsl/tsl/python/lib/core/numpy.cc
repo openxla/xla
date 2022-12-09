@@ -17,7 +17,7 @@ limitations under the License.
 // ImportNumpy function to populate it.
 #define XLA_IMPORT_NUMPY
 
-#include "third_party/tsl/python/lib/core/numpy.h"
+#include "tsl/python/lib/core/numpy.h"
 
 namespace tsl {
 

@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/util/env_var.h"
 
 #include <stdlib.h>
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/numbers.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
 
 namespace tsl {
 

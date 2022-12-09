@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/rpc/coordination/grpc_coordination_client.h"
+#include "tsl/distributed_runtime/rpc/coordination/grpc_coordination_client.h"
 
 #include <memory>
 #include <string>
@@ -21,17 +21,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "third_party/tsl/distributed_runtime/call_options.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_client.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_channel.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_client_cq_tag.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_state.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_util.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/protobuf/coordination_service.pb.h"
+#include "tsl/distributed_runtime/call_options.h"
+#include "tsl/distributed_runtime/coordination/coordination_client.h"
+#include "tsl/distributed_runtime/rpc/grpc_channel.h"
+#include "tsl/distributed_runtime/rpc/grpc_client_cq_tag.h"
+#include "tsl/distributed_runtime/rpc/grpc_state.h"
+#include "tsl/distributed_runtime/rpc/grpc_util.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 namespace {

@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 
 #include <string>
 
 #include "absl/strings/str_cat.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
-#include "third_party/tsl/profiler/backends/cpu/annotation_stack.h"
-#include "third_party/tsl/profiler/lib/scoped_annotation_stack.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
+#include "tsl/profiler/backends/cpu/annotation_stack.h"
+#include "tsl/profiler/lib/scoped_annotation_stack.h"
 
 namespace tsl {
 namespace profiler {

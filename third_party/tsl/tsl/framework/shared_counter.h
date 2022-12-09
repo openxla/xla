@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <atomic>
 
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 // A lightweight thread-safe monotone counter for establishing

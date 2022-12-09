@@ -35,10 +35,10 @@ limitations under the License.
 #include <utility>
 
 #include "absl/types/span.h"
-#include "third_party/tsl/lib/random/simple_philox.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/lib/random/simple_philox.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace random {

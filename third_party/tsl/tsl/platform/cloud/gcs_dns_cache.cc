@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/gcs_dns_cache.h"
+#include "tsl/platform/cloud/gcs_dns_cache.h"
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <netdb.h>

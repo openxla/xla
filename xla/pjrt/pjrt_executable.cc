@@ -22,7 +22,7 @@ limitations under the License.
 
 #include "xla/client/executable_build_options.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 

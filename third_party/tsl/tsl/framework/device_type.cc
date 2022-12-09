@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/framework/device_type.h"
+#include "tsl/framework/device_type.h"
 
 #include <ostream>
 

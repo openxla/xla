@@ -6,7 +6,7 @@ package xla.gpu;
 
 import "xla/service/hlo.proto";
 import "xla/xla_data.proto";
-import "third_party/tsl/protobuf/autotuning.proto";
+import "tsl/protobuf/autotuning.proto";
 
 message ConvInstructionLog {
   xla.HloInstructionProto instruction = 1;

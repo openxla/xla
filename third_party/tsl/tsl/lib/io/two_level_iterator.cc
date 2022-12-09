@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/two_level_iterator.h"
+#include "tsl/lib/io/two_level_iterator.h"
 
-#include "third_party/tsl/lib/io/block.h"
-#include "third_party/tsl/lib/io/format.h"
-#include "third_party/tsl/lib/io/iterator.h"
-#include "third_party/tsl/lib/io/table.h"
+#include "tsl/lib/io/block.h"
+#include "tsl/lib/io/format.h"
+#include "tsl/lib/io/iterator.h"
+#include "tsl/lib/io/table.h"
 
 namespace tsl {
 namespace table {

@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/table_builder.h"
+#include "tsl/lib/io/table_builder.h"
 
 #include <assert.h>
 
-#include "third_party/tsl/lib/hash/crc32c.h"
-#include "third_party/tsl/lib/io/block_builder.h"
-#include "third_party/tsl/lib/io/format.h"
-#include "third_party/tsl/lib/io/table_options.h"
-#include "third_party/tsl/platform/coding.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/snappy.h"
+#include "tsl/lib/hash/crc32c.h"
+#include "tsl/lib/io/block_builder.h"
+#include "tsl/lib/io/format.h"
+#include "tsl/lib/io/table_options.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/snappy.h"
 
 namespace tsl {
 namespace table {

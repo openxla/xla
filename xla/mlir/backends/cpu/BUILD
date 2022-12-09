@@ -25,6 +25,6 @@ xla_cc_binary(
         "@llvm-project//mlir:MlirOptLib",
         "@llvm-project//mlir:TensorDialect",
         "@stablehlo//:register",
-        "@tsl//protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )

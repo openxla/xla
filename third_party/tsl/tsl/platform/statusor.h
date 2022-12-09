@@ -69,10 +69,10 @@ limitations under the License.
 #define TENSORFLOW_TSL_PLATFORM_STATUSOR_H_
 
 #include "absl/base/attributes.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor_internals.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor_internals.h"
 
 namespace tsl {
 

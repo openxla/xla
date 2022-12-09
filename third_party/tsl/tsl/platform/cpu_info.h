@@ -20,7 +20,7 @@ limitations under the License.
 
 // TODO(ahentz): This is not strictly required here but, for historical
 // reasons, many people depend on cpu_info.h in order to use kLittleEndian.
-#include "third_party/tsl/platform/byte_order.h"
+#include "tsl/platform/byte_order.h"
 
 #if defined(_MSC_VER)
 // included so __cpuidex function is available for GETCPUID on Windows

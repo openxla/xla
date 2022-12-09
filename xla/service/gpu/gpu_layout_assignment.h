@@ -20,7 +20,7 @@ limitations under the License.
 #include "xla/service/computation_layout.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

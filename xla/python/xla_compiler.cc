@@ -61,7 +61,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/lib/strings/proto_serialization.h"
+#include "tsl/lib/strings/proto_serialization.h"
 
 namespace xla {
 namespace {

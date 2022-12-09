@@ -24,7 +24,7 @@ limitations under the License.
 #include "xla/python/tpu_driver/client/tpu_client.h"
 #include "xla/python/types.h"
 #include "xla/python/util.h"
-#include "third_party/tsl/python/lib/core/bfloat16.h"
+#include "tsl/python/lib/core/bfloat16.h"
 
 namespace xla {
 

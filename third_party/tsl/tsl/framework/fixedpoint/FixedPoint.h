@@ -17,34 +17,34 @@ limitations under the License.
 #define TENSORFLOW_TSL_FRAMEWORK_FIXEDPOINT_FIXEDPOINT_H_
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "third_party/tsl/framework/fixedpoint_types.h"
+#include "tsl/framework/fixedpoint_types.h"
 
 // Use optimized implementations whenever available
 #if defined(EIGEN_VECTORIZE_AVX512DQ) || defined(EIGEN_VECTORIZE_AVX512BW)
-#include "third_party/tsl/framework/fixedpoint/PacketMathAVX512.h"
-#include "third_party/tsl/framework/fixedpoint/TypeCastingAVX512.h"
+#include "tsl/framework/fixedpoint/PacketMathAVX512.h"
+#include "tsl/framework/fixedpoint/TypeCastingAVX512.h"
 
 #elif defined EIGEN_VECTORIZE_AVX2
 #define EIGEN_USE_OPTIMIZED_INT8_UINT8_MAT_MAT_PRODUCT
 #define EIGEN_USE_OPTIMIZED_INT16_INT16_MAT_MAT_PRODUCT
-#include "third_party/tsl/framework/fixedpoint/PacketMathAVX2.h"
+#include "tsl/framework/fixedpoint/PacketMathAVX2.h"
 // Disable clang-format to prevent 'MatMatProductAVX2.h' header from being
 // included before 'PacketMathAVX2' header on which it depends.
 // clang-format off
-#include "third_party/tsl/framework/fixedpoint/MatMatProductAVX2.h"
+#include "tsl/framework/fixedpoint/MatMatProductAVX2.h"
 // clang-format on
-#include "third_party/tsl/framework/fixedpoint/TypeCastingAVX2.h"
+#include "tsl/framework/fixedpoint/TypeCastingAVX2.h"
 
 #elif defined EIGEN_VECTORIZE_AVX
-#include "third_party/tsl/framework/fixedpoint/PacketMathAVX.h"
+#include "tsl/framework/fixedpoint/PacketMathAVX.h"
 
 #elif defined EIGEN_VECTORIZE_NEON
 #define EIGEN_USE_OPTIMIZED_INT8_UINT8_MAT_MAT_PRODUCT
-#include "third_party/tsl/framework/fixedpoint/MatMatProductNEON.h"
+#include "tsl/framework/fixedpoint/MatMatProductNEON.h"
 #endif
 
 // Use the default implementation when no optimized code is available
-#include "third_party/tsl/framework/fixedpoint/MatMatProduct.h"
-#include "third_party/tsl/framework/fixedpoint/MatVecProduct.h"
+#include "tsl/framework/fixedpoint/MatMatProduct.h"
+#include "tsl/framework/fixedpoint/MatVecProduct.h"
 
 #endif  // TENSORFLOW_TSL_FRAMEWORK_FIXEDPOINT_FIXEDPOINT_H_

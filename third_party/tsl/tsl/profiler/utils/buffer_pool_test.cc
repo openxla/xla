@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/utils/buffer_pool.h"
+#include "tsl/profiler/utils/buffer_pool.h"
 
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace profiler {

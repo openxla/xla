@@ -25,7 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "xla/util.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 #define EIGEN_USE_THREADS
 
@@ -55,9 +55,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/denormal.h"
-#include "third_party/tsl/platform/setround.h"
-#include "third_party/tsl/profiler/lib/connected_traceme.h"
+#include "tsl/platform/denormal.h"
+#include "tsl/platform/setround.h"
+#include "tsl/profiler/lib/connected_traceme.h"
 #include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
 #include "tfrt/support/forward_decls.h"  // from @tf_runtime
 

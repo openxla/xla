@@ -24,8 +24,8 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace {

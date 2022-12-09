@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/record_writer.h"
+#include "tsl/lib/io/record_writer.h"
 
-#include "third_party/tsl/lib/hash/crc32c.h"
-#include "third_party/tsl/lib/io/compression.h"
-#include "third_party/tsl/platform/coding.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/lib/hash/crc32c.h"
+#include "tsl/lib/io/compression.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/env.h"
 
 namespace tsl {
 namespace io {

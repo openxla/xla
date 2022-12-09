@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/client/padding.h"
 
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

@@ -17,10 +17,10 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
-#include "third_party/tsl/platform/hash.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/hash.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace tsl {
 

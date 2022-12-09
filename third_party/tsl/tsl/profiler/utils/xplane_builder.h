@@ -27,12 +27,12 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/utils/math_utils.h"
-#include "third_party/tsl/profiler/utils/timespan.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/math_utils.h"
+#include "tsl/profiler/utils/timespan.h"
 
 namespace tsl {
 namespace profiler {

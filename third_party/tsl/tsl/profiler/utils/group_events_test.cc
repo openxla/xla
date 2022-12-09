@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/utils/group_events.h"
+#include "tsl/profiler/utils/group_events.h"
 
 #include <optional>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/utils/tf_xplane_visitor.h"
-#include "third_party/tsl/profiler/utils/xplane_builder.h"
-#include "third_party/tsl/profiler/utils/xplane_schema.h"
-#include "third_party/tsl/profiler/utils/xplane_test_utils.h"
-#include "third_party/tsl/profiler/utils/xplane_visitor.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/tf_xplane_visitor.h"
+#include "tsl/profiler/utils/xplane_builder.h"
+#include "tsl/profiler/utils/xplane_schema.h"
+#include "tsl/profiler/utils/xplane_test_utils.h"
+#include "tsl/profiler/utils/xplane_visitor.h"
 
 namespace tsl {
 namespace profiler {

@@ -18,8 +18,8 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_join.h"
-#include "third_party/tsl/platform/cuda_libdevice_path.h"
-#include "third_party/tsl/platform/path.h"
+#include "tsl/platform/cuda_libdevice_path.h"
+#include "tsl/platform/path.h"
 
 namespace xla {
 namespace gpu {

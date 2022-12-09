@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/monitoring/collection_registry.h"
+#include "tsl/lib/monitoring/collection_registry.h"
 
 // We replace this implementation with a null implementation for mobile
 // platforms.
 #ifndef IS_MOBILE_PLATFORM
 
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace tsl {
 namespace monitoring {

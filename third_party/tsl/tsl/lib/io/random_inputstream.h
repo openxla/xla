@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_IO_RANDOM_INPUTSTREAM_H_
 #define TENSORFLOW_TSL_LIB_IO_RANDOM_INPUTSTREAM_H_
 
-#include "third_party/tsl/lib/io/inputstream_interface.h"
-#include "third_party/tsl/platform/cord.h"
-#include "third_party/tsl/platform/file_system.h"
+#include "tsl/lib/io/inputstream_interface.h"
+#include "tsl/platform/cord.h"
+#include "tsl/platform/file_system.h"
 
 namespace tsl {
 namespace io {

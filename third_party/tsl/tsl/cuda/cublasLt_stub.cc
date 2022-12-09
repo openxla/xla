@@ -14,8 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "third_party/gpus/cuda/include/cublasLt.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the cuBLASLt API by forwarding to cuBLASLt loaded from the DSO.
 
@@ -55,5 +55,5 @@ cublasStatus_t GetSymbolNotFoundError() { return CUBLAS_STATUS_INTERNAL_ERROR; }
 
 // We only use cublasLt from CUDA 11.0 onward.
 #if CUDA_VERSION >= 11000
-#include "third_party/tsl/cuda/cublasLt_11_0.inc"
+#include "tsl/cuda/cublasLt_11_0.inc"
 #endif

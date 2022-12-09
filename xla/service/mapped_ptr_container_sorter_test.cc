@@ -24,7 +24,7 @@ limitations under the License.
 
 #include "absl/functional/bind_front.h"
 #include "xla/test.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
+#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

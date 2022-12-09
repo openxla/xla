@@ -1,5 +1,5 @@
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load(
     "//third_party/tensorflow:tensorflow.bzl",
     "tf_cc_test",
@@ -10,11 +10,11 @@ load(
     "xla_py_grpc_library",
 )
 load(
-    "@tsl//:tsl.bzl",
+    "@tsl//tsl:tsl.bzl",
     "if_libtpu",
 )
 load(
-    "@tsl//platform:build_config.bzl",
+    "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
 
@@ -48,7 +48,7 @@ cc_library(
         "//xla:service_interface",
         "//xla:xla_data_cc_grpc_proto",
         "//xla:xla_data_proto_cc",
-        "@tsl//distributed_runtime/rpc:grpc_util",
+        "@tsl//tsl/distributed_runtime/rpc:grpc_util",
     ],
 )
 
@@ -59,9 +59,9 @@ cc_library(
         ":grpc_service",
         "@com_google_absl//absl/strings:str_format",
         "//xla/service:platform_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:platform_port",
-        "@tsl//util:command_line_flags",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/util:command_line_flags",
     ] + tsl_grpc_cc_dependencies() + if_libtpu(
         if_false = ["//xla/service:cpu_plugin"],
         if_true = [],
@@ -73,7 +73,7 @@ xla_cc_binary(
     deps = [
         ":grpc_service_main_library",
         "//xla/service:cpu_plugin",
-        "@tsl//protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )
 
@@ -89,12 +89,12 @@ tf_cc_test(
         "//xla/client",
         "//xla/client:xla_builder",
         "//xla/tests:literal_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:net",
-        "@tsl//platform:subprocess",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
-        "@tsl//platform:path",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:net",
+        "@tsl//tsl/platform:subprocess",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+        "@tsl//tsl/platform:path",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -107,7 +107,7 @@ cc_library(
         ":xla_service_cc_grpc_proto",
         "//xla/service",
         "//xla/service:platform_util",
-        "@tsl//distributed_runtime/rpc:grpc_util",
+        "@tsl//tsl/distributed_runtime/rpc:grpc_util",
     ] + tsl_grpc_cc_dependencies(),
 )
 

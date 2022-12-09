@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the CUDA driver API by forwarding to CUDA loaded from the DSO.
 
@@ -93,15 +93,15 @@ typedef struct CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS_st
 typedef void(CUDA_CB* CUhostFn)(void* userData);
 
 #if CUDA_VERSION < 10000
-#include "third_party/tsl/cuda/cuda_9_0.inc"
+#include "tsl/cuda/cuda_9_0.inc"
 #elif CUDA_VERSION < 10010
-#include "third_party/tsl/cuda/cuda_10_0.inc"
+#include "tsl/cuda/cuda_10_0.inc"
 #elif CUDA_VERSION < 10020
-#include "third_party/tsl/cuda/cuda_10_1.inc"
+#include "tsl/cuda/cuda_10_1.inc"
 #elif CUDA_VERSION < 11000
-#include "third_party/tsl/cuda/cuda_10_2.inc"
+#include "tsl/cuda/cuda_10_2.inc"
 #elif CUDA_VERSION < 11020
-#include "third_party/tsl/cuda/cuda_11_0.inc"
+#include "tsl/cuda/cuda_11_0.inc"
 #else
-#include "third_party/tsl/cuda/cuda_11_2.inc"
+#include "tsl/cuda/cuda_11_2.inc"
 #endif

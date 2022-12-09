@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 
 namespace tsl {
 namespace internal_statusor {

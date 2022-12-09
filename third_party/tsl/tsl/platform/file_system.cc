@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/file_system.h"
+#include "tsl/platform/file_system.h"
 
 #include <sys/stat.h>
 
@@ -27,16 +27,16 @@ limitations under the License.
     defined(PLATFORM_GOOGLE)
 #include <fnmatch.h>
 #else
-#include "third_party/tsl/platform/regexp.h"
+#include "tsl/platform/regexp.h"
 #endif  // defined(PLATFORM_POSIX) || defined(IS_MOBILE_PLATFORM) || \
         // defined(PLATFORM_GOOGLE)
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/scanner.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/scanner.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
 
 namespace tsl {
 

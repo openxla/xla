@@ -12,14 +12,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/utils/xplane_builder.h"
+#include "tsl/profiler/utils/xplane_builder.h"
 
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/utils/xplane_visitor.h"
+#include "tsl/platform/test.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/xplane_visitor.h"
 
 namespace tsl {
 namespace profiler {

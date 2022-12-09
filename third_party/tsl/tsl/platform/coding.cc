@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/coding.h"
+#include "tsl/platform/coding.h"
 
-#include "third_party/tsl/platform/byte_order.h"
+#include "tsl/platform/byte_order.h"
 
 namespace tsl {
 namespace core {

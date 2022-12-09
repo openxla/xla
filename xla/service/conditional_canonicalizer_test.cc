@@ -27,7 +27,7 @@ limitations under the License.
 #include "xla/tests/test_utils.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
+#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

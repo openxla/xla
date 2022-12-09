@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/time_util.h"
+#include "tsl/platform/cloud/time_util.h"
 
 #include <time.h>
 
@@ -23,7 +23,7 @@ limitations under the License.
 #ifdef _WIN32
 #define timegm _mkgmtime
 #endif
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace tsl {
 

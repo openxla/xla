@@ -37,7 +37,7 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_initializer_helper.h"  // NOLINT(unused-includes): required for tensorflow::tpu::FindAndLoadTpuLibrary
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 // TODO(b/238999986): Remove this when we have decomposed shape.
 #include "xla/stream_executor/tpu/c_api_conversions.h"

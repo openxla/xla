@@ -33,9 +33,9 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/lib/io/buffered_inputstream.h"
-#include "third_party/tsl/lib/io/random_inputstream.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/lib/io/buffered_inputstream.h"
+#include "tsl/lib/io/random_inputstream.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 

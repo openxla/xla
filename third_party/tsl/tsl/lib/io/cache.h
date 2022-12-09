@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_IO_CACHE_H_
 #define TENSORFLOW_TSL_LIB_IO_CACHE_H_
 
-#include "third_party/tsl/platform/stringpiece.h"
+#include "tsl/platform/stringpiece.h"
 
 // A Cache is an interface that maps keys to values.  It has internal
 // synchronization and may be safely accessed concurrently from

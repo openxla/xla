@@ -19,11 +19,11 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_runtime.h"
 #include "xla/shape_util.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace {

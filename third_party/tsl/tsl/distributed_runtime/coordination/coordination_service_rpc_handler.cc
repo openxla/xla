@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service_rpc_handler.h"
+#include "tsl/distributed_runtime/coordination/coordination_service_rpc_handler.h"
 
 #include <iterator>
 #include <string>
@@ -22,14 +22,14 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service_agent.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service_error_util.h"
-#include "third_party/tsl/platform/casts.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/protobuf/coordination_service.pb.h"
+#include "tsl/distributed_runtime/coordination/coordination_service.h"
+#include "tsl/distributed_runtime/coordination/coordination_service_agent.h"
+#include "tsl/distributed_runtime/coordination/coordination_service_error_util.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 namespace {

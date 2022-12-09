@@ -1,10 +1,10 @@
 # Description:
 # Platform-specific build configurations.
 
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//:tsl.bzl", "tsl_copts")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl:tsl.bzl", "tsl_copts")
 
-package(default_visibility = ["@tsl//:internal"])
+package(default_visibility = ["//tsl:internal"])
 
 licenses(["notice"])  # Apache 2.0
 
@@ -53,7 +53,7 @@ cc_library(
     name = "proto_parsing",
     copts = tsl_copts(),
     deps = [
-        "@tsl//protobuf:protos_all_cc",
+        "//tsl/protobuf:protos_all_cc",
     ],
 )
 
@@ -104,7 +104,7 @@ cc_library(
         "@local_config_cuda//cuda:cudart",
     ],
     linkopts = select({
-        "@tsl//:macos": [
+        "//tsl:macos": [
             "-Wl,-rpath,../local_config_cuda/cuda/lib",
             "-Wl,-rpath,../local_config_cuda/cuda/extras/CUPTI/lib",
         ],

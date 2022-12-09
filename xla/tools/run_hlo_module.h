@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_runner.h"
 #include "xla/tools/run_hlo_module.pb.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

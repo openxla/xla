@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {

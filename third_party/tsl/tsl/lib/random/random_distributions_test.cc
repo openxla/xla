@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/random/random_distributions.h"
+#include "tsl/lib/random/random_distributions.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,12 +22,12 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
-#include "third_party/tsl/lib/math/math_util.h"
-#include "third_party/tsl/lib/random/philox_random.h"
-#include "third_party/tsl/lib/random/philox_random_test_utils.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/random.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/math/math_util.h"
+#include "tsl/lib/random/philox_random.h"
+#include "tsl/lib/random/philox_random_test_utils.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/random.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace random {

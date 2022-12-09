@@ -27,7 +27,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "xla/literal_util.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 using absl::StrAppend;
 using absl::StrAppendFormat;

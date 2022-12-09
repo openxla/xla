@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/rpc/grpc_channel.h"
+#include "tsl/distributed_runtime/rpc/grpc_channel.h"
 
 #include <cstdlib>
 #include <limits>
@@ -23,20 +23,20 @@ limitations under the License.
 #include "grpcpp/create_channel.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_split.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_channel_common.h"
-#include "third_party/tsl/lib/gtl/map_util.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/numbers.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/protobuf/rpc_options.pb.h"
-#include "third_party/tsl/util/device_name_utils.h"
+#include "tsl/distributed_runtime/rpc/grpc_channel_common.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/platform/types.h"
+#include "tsl/protobuf/rpc_options.pb.h"
+#include "tsl/util/device_name_utils.h"
 
 namespace tsl {
 

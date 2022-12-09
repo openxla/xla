@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/ctstring.h"
+#include "tsl/platform/ctstring.h"
 
 #include <memory>
 #include <string>
 
-#include "third_party/tsl/platform/ctstring_internal.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/ctstring_internal.h"
+#include "tsl/platform/test.h"
 
 static const char kLongString[] =
     "abcdefghij"

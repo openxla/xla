@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_UTIL_BYTE_SWAP_ARRAY_H_
 #define TENSORFLOW_TSL_UTIL_BYTE_SWAP_ARRAY_H_
 
-#include "third_party/tsl/platform/byte_order.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/byte_order.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
 
 // Define basic byte swapping operations.
 // These operations must be macros to use compiler intrinsics.

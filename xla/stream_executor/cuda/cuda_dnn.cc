@@ -47,11 +47,11 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
-#include "third_party/tsl/cuda/cudnn_version.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/tensor_float_32_utils.h"
-#include "third_party/tsl/util/determinism.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/cuda/cudnn_version.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/tensor_float_32_utils.h"
+#include "tsl/util/determinism.h"
+#include "tsl/util/env_var.h"
 
 // clang-format off
 #include "third_party/gpus/cudnn/cudnn.h"

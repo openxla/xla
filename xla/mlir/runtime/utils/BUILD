@@ -1,5 +1,5 @@
-load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -19,7 +19,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:mlir_async_runtime_api",
         "@tf_runtime//:async_value",
-        "@tsl//platform:platform_port",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 

@@ -19,7 +19,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/base/integral_types.h"
-#include "third_party/tsl/lib/monitoring/counter.h"
+#include "tsl/lib/monitoring/counter.h"
 
 namespace xla {
 namespace metrics {

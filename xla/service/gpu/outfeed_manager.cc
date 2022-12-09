@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "xla/map_util.h"
 #include "xla/shape_util.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/service/gpu/xla_executor_state.h"

@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/intrusive_ptr.h"
+#include "tsl/platform/intrusive_ptr.h"
 
-#include "third_party/tsl/platform/refcount.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/refcount.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace core {

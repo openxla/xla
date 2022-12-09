@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
+#include "tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 
 #include <memory>
 #include <string>
@@ -24,19 +24,19 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_client.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service_agent.h"
-#include "third_party/tsl/distributed_runtime/preemption/preemption_notifier.h"
-#include "third_party/tsl/distributed_runtime/rpc/async_service_interface.h"
-#include "third_party/tsl/distributed_runtime/rpc/coordination/grpc_coordination_client.h"
-#include "third_party/tsl/distributed_runtime/rpc/coordination/grpc_coordination_service_impl.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/threadpool.h"
-#include "third_party/tsl/protobuf/coordination_config.pb.h"
+#include "tsl/distributed_runtime/coordination/coordination_client.h"
+#include "tsl/distributed_runtime/coordination/coordination_service.h"
+#include "tsl/distributed_runtime/coordination/coordination_service_agent.h"
+#include "tsl/distributed_runtime/preemption/preemption_notifier.h"
+#include "tsl/distributed_runtime/rpc/async_service_interface.h"
+#include "tsl/distributed_runtime/rpc/coordination/grpc_coordination_client.h"
+#include "tsl/distributed_runtime/rpc/coordination/grpc_coordination_service_impl.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/threadpool.h"
+#include "tsl/protobuf/coordination_config.pb.h"
 
 namespace tsl {
 namespace {

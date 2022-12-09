@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "absl/base/dynamic_annotations.h"
 #include "xla/executable_run_options.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 class LocalClientAotTest : public ::testing::Test {};
 

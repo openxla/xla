@@ -21,7 +21,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/platform/port.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace stream_executor {
 namespace port {

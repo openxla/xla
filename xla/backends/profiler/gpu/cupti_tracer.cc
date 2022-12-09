@@ -24,12 +24,12 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/generated_nvtx_meta.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/nvtx_utils.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/host_info.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/profiler/backends/cpu/annotation_stack.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/profiler/backends/cpu/annotation_stack.h"
 
 namespace xla {
 namespace profiler {

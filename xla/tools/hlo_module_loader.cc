@@ -29,11 +29,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_parser.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/regexp.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/regexp.h"
 
 namespace xla {
 namespace {

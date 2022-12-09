@@ -46,9 +46,9 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace cpu {

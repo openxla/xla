@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/service/hlo_replication_analysis.h"
 #include "xla/status.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 

@@ -43,8 +43,8 @@ limitations under the License.
 #include "xla/service/name_uniquer.h"
 #include "xla/types.h"
 #include "xla/xla.pb.h"
-#include "third_party/tsl/lib/gtl/iterator_range.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/lib/gtl/iterator_range.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

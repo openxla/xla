@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/rpc/grpc_util.h"
+#include "tsl/distributed_runtime/rpc/grpc_util.h"
 
 #include <algorithm>
 #include <vector>
 
 #include "grpcpp/grpcpp.h"
-#include "third_party/tsl/distributed_runtime/rpc/test_request.pb.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/distributed_runtime/rpc/test_request.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace tsl {
 

@@ -21,7 +21,7 @@ limitations under the License.
 #include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/multi_platform_manager.h"
 #include "xla/stream_executor/platform.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace stream_executor {
 

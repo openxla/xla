@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 #include <sys/stat.h>
 
@@ -21,13 +21,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "third_party/tsl/platform/env_time.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/host_info.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/stringprintf.h"
+#include "tsl/platform/env_time.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/stringprintf.h"
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -39,7 +39,7 @@ limitations under the License.
 #include <windows.h>
 #undef DeleteFile
 #undef CopyFile
-#include "third_party/tsl/platform/windows/wide_char.h"
+#include "tsl/platform/windows/wide_char.h"
 #define PATH_MAX MAX_PATH
 #else
 #include <fcntl.h>

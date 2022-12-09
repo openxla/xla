@@ -33,8 +33,8 @@ limitations under the License.
 #include "xla/stream_executor/dnn.pb.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {

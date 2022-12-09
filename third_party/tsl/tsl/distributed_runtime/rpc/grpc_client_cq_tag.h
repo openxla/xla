@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_DISTRIBUTED_RUNTIME_RPC_GRPC_CLIENT_CQ_TAG_H_
 #define TENSORFLOW_TSL_DISTRIBUTED_RUNTIME_RPC_GRPC_CLIENT_CQ_TAG_H_
 
-#include "third_party/tsl/platform/macros.h"
+#include "tsl/platform/macros.h"
 
 namespace tsl {
 

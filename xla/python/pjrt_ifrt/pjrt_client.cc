@@ -22,7 +22,7 @@ limitations under the License.
 
 #include "absl/types/span.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {

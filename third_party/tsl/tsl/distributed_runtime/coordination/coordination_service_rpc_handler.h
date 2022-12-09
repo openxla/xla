@@ -16,12 +16,12 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_DISTRIBUTED_RUNTIME_COORDINATION_COORDINATION_SERVICE_RPC_HANDLER_H_
 #define TENSORFLOW_TSL_DISTRIBUTED_RUNTIME_COORDINATION_COORDINATION_SERVICE_RPC_HANDLER_H_
 
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service_agent.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/protobuf/coordination_service.pb.h"
+#include "tsl/distributed_runtime/coordination/coordination_service.h"
+#include "tsl/distributed_runtime/coordination/coordination_service_agent.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 class CoordinationServiceRpcHandler {

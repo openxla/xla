@@ -19,9 +19,9 @@ limitations under the License.
 #include <vector>
 
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/framework/allocator.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/framework/allocator.h"
+#include "tsl/platform/macros.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace stream_executor {
 // Allocator for pinned CPU RAM that is made known to a StreamExecutor-based

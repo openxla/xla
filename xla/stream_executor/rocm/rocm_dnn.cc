@@ -43,8 +43,8 @@ limitations under the License.
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
-#include "third_party/tsl/platform/hash.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/platform/hash.h"
+#include "tsl/util/env_var.h"
 
 namespace {
 

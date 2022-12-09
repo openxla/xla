@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/random_inputstream.h"
+#include "tsl/lib/io/random_inputstream.h"
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace io {

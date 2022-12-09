@@ -45,8 +45,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_ortools//ortools/linear_solver",
         "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -80,7 +80,7 @@ cc_library(
     ],
     deps = [
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -125,7 +125,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -135,7 +135,7 @@ cc_library(
     hdrs = ["metrics.h"],
     deps = [
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//lib/monitoring:counter",
+        "@tsl//tsl/lib/monitoring:counter",
     ],
 )
 
@@ -149,7 +149,7 @@ xla_cc_binary(
         "//xla/service:hlo_parser",
         "//xla/stream_executor:dnn",
         "//xla/tools:hlo_module_loader",
-        "@tsl//platform:platform_port",
-        "@tsl//protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )

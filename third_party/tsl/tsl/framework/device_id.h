@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_FRAMEWORK_DEVICE_ID_H_
 #define TENSORFLOW_TSL_FRAMEWORK_DEVICE_ID_H_
 
-#include "third_party/tsl/lib/gtl/int_type.h"
+#include "tsl/lib/gtl/int_type.h"
 
 namespace tsl {
 

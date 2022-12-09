@@ -33,7 +33,7 @@ limitations under the License.
 #include "xla/map_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
-#include "third_party/tsl/lib/gtl/map_util.h"
+#include "tsl/lib/gtl/map_util.h"
 
 namespace xla {
 

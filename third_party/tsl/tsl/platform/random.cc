@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/random.h"
+#include "tsl/platform/random.h"
 
 #include <memory>
 #include <random>
 
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace random {

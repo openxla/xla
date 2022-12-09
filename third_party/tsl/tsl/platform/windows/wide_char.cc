@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/windows/wide_char.h"
+#include "tsl/platform/windows/wide_char.h"
 
 #include <Windows.h>
 

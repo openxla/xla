@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 // Tests the Reduce HLO in ways that can't be done using the ComputationBuilder
 // API.

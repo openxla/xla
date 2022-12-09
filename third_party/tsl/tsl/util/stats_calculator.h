@@ -26,7 +26,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/util/stat_summarizer_options.h"
+#include "tsl/util/stat_summarizer_options.h"
 
 namespace tsl {
 

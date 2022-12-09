@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/init_main.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/logging.h"
 
 namespace {
 

@@ -29,8 +29,8 @@ limitations under the License.
 #include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "third_party/tsl/platform/blocking_counter.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

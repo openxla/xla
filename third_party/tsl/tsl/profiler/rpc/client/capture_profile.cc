@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/rpc/client/capture_profile.h"
+#include "tsl/profiler/rpc/client/capture_profile.h"
 
 #include <iostream>
 #include <limits>
@@ -24,16 +24,16 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/host_info.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/profiler_analysis.pb.h"
-#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "third_party/tsl/profiler/protobuf/profiler_service.pb.h"
-#include "third_party/tsl/profiler/rpc/client/profiler_client.h"
-#include "third_party/tsl/profiler/rpc/client/remote_profiler_session_manager.h"
-#include "third_party/tsl/profiler/rpc/client/save_profile.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/profiler_analysis.pb.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/rpc/client/profiler_client.h"
+#include "tsl/profiler/rpc/client/remote_profiler_session_manager.h"
+#include "tsl/profiler/rpc/client/save_profile.h"
 
 namespace tsl {
 namespace profiler {

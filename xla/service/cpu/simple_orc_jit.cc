@@ -55,7 +55,7 @@ limitations under the License.
 #include "xla/service/cpu/windows_compatibility.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 // Provided by compiler-rt and MLIR.
 // Converts an F32 value to a BF16.

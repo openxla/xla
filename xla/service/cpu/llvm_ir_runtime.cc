@@ -22,7 +22,7 @@ limitations under the License.
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "xla/service/cpu/vector_support_library.h"
 #include "xla/service/llvm_ir/math_ops.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace cpu {

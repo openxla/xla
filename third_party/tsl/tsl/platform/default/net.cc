@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/net.h"
+#include "tsl/platform/net.h"
 
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -26,8 +26,8 @@ limitations under the License.
 #include <random>
 #include <unordered_set>
 
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/strcat.h"
 
 // https://en.wikipedia.org/wiki/Ephemeral_port
 #define MAX_EPHEMERAL_PORT 60999

@@ -1,6 +1,6 @@
-load("@tsl//:tsl.default.bzl", "get_compatible_with_portable")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//platform:build_config.bzl", "tsl_cc_test")
+load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -37,8 +37,8 @@ tsl_cc_test(
     srcs = ["async_value_test.cc"],
     deps = [
         ":async_value",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
 
@@ -47,8 +47,8 @@ tsl_cc_test(
     srcs = ["async_value_ref_test.cc"],
     deps = [
         ":async_value",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
 
@@ -67,10 +67,10 @@ tsl_cc_test(
     srcs = ["concurrent_vector_test.cc"],
     deps = [
         ":concurrent_vector",
-        "@tsl//platform:env",
-        "@tsl//platform:env_impl",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/platform:env",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
 

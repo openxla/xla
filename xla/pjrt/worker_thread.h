@@ -22,7 +22,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/synchronization/mutex.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace xla {
 

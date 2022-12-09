@@ -33,7 +33,7 @@ limitations under the License.
 #include "xla/python/status_casters.h"
 #include "xla/python/util.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

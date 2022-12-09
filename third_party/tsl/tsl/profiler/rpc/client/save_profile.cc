@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/rpc/client/save_profile.h"
+#include "tsl/profiler/rpc/client/save_profile.h"
 
 #include <memory>
 #include <ostream>
@@ -28,16 +28,16 @@ limitations under the License.
 #include "absl/strings/strip.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/lib/io/zlib_compression_options.h"
-#include "third_party/tsl/lib/io/zlib_outputbuffer.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/profiler/protobuf/profiler_service.pb.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/utils/file_system_utils.h"
+#include "tsl/lib/io/zlib_compression_options.h"
+#include "tsl/lib/io/zlib_outputbuffer.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/file_system_utils.h"
 
 namespace tsl {
 namespace profiler {

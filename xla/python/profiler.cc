@@ -21,9 +21,9 @@ limitations under the License.
 #include "xla/python/profiler/internal/traceme_wrapper.h"
 #include "xla/python/types.h"
 #include "xla/status.h"
-#include "third_party/tsl/profiler/lib/profiler_session.h"
-#include "third_party/tsl/profiler/rpc/client/capture_profile.h"
-#include "third_party/tsl/profiler/rpc/profiler_server.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/rpc/client/capture_profile.h"
+#include "tsl/profiler/rpc/profiler_server.h"
 
 namespace xla {
 

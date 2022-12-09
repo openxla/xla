@@ -1,15 +1,15 @@
-load("@tsl//:tsl.default.bzl", "filegroup")
+load("//tsl:tsl.default.bzl", "filegroup")
 load(
-    "@tsl//:tsl.bzl",
+    "//tsl:tsl.bzl",
     "if_linux_x86_64",
     "tsl_copts",
 )
 load(
-    "@tsl//platform:build_config.bzl",
+    "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
 load(
-    "@tsl//platform:rules_cc.bzl",
+    "//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -17,7 +17,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
         # tensorflow/tsl/lib/io/table_builder.cc uses crc functionality
-        "@tsl//lib/io:__pkg__",
+        "//tsl/lib/io:__pkg__",
         # tensorflow/core/lib/hash aliases hash for now
         "//third_party/tensorflow/core/lib/hash:__pkg__",
     ],
@@ -34,10 +34,10 @@ cc_library(
     # -msse4.2 enables the use of crc32c compiler builtins.
     copts = tsl_copts() + if_linux_x86_64(["-msse4.2"]),
     deps = [
-        "@tsl//platform",
-        "@tsl//platform:cord",
-        "@tsl//platform:raw_coding",
-        "@tsl//platform:types",
+        "//tsl/platform",
+        "//tsl/platform:cord",
+        "//tsl/platform:raw_coding",
+        "//tsl/platform:types",
     ],
 )
 
@@ -66,9 +66,9 @@ tsl_cc_test(
     srcs = ["crc32c_test.cc"],
     deps = [
         ":crc32c",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "//tsl/platform:logging",
+        "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
+        "//tsl/platform:test_main",
     ],
 )

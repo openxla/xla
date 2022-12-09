@@ -3,18 +3,18 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
-    "@tsl//platform:build_config.bzl",
+    "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
 load(
-    "@tsl//platform:build_config_root.bzl",
+    "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
 load(
     "//third_party/tensorflow:tensorflow.bzl",
     "tf_cc_test",
 )
-load("@tsl//:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
+load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
@@ -24,10 +24,10 @@ load(
     "if_gpu_is_configured",
 )
 load(
-    "@tsl//platform/default:cuda_build_defs.bzl",
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
-load("@tsl//:tsl.default.bzl", "filegroup", "get_compatible_with_cloud")
+load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_cloud")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -109,7 +109,7 @@ cc_library(
     deps = [
         ":gpu_device_info",
         "//xla:shape_util",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -129,7 +129,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_types_header",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -152,8 +152,8 @@ tf_cc_test(
         "//xla/runtime/ffi:ffi_api_hdrs",
         "//xla/runtime:module_registry",
         "//xla/tests:client_library_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
         "//xla/stream_executor/gpu:gpu_types_header",
     ] + if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
@@ -180,7 +180,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -197,7 +197,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -208,7 +208,7 @@ tf_cc_test(
         ":target_util",
         "//xla/tests:xla_internal_test_main",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -245,7 +245,7 @@ tf_cc_test(
         "//xla/stream_executor/cuda:cuda_gpu_executor",
         "@com_google_googletest//:gtest_main",
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -367,10 +367,10 @@ cc_library(
         "//xla/service/llvm_ir:tuple_ops",
         "//xla/translate/mhlo_to_hlo:attribute_exporter",
         "//xla/translate/mhlo_to_hlo:location_exporter",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:human_readable_json",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:human_readable_json",
+        "@tsl//tsl/platform:status",
     ] + if_gpu_is_configured([
         ":triangular_solve_thunk",
         ":cholesky_thunk",
@@ -395,8 +395,8 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -428,7 +428,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -449,9 +449,9 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//lib/gtl:map_util",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/lib/gtl:map_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -467,7 +467,7 @@ cc_library(
         "//xla/service:executable",
         "//xla/stream_executor",
         "@llvm-project//mlir:IR",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -516,7 +516,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//mlir:IR",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -554,8 +554,8 @@ tsl_gpu_library(
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
         "//xla/service:rendezvous",
-        "@tsl//platform:logging",
-        "@tsl//platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:env",
     ]) + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
     ]) + if_rocm_is_configured([
@@ -680,22 +680,22 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/stream_executor/gpu:gpu_types_header",
-        "@tsl//platform:casts",
-        "@tsl//profiler/lib:scoped_annotation",
-        "@tsl//profiler/lib:traceme",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
-        "@tsl//lib/gtl:map_util",
+        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/lib/gtl:map_util",
     ] + if_gpu_is_configured([
         ":cholesky_thunk",
         ":precompiled_kernels",
         ":triangular_solve_thunk",
     ]) + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_stream",
-        "@tsl//platform/default/build_config:cublas_plugin",
-        "@tsl//platform/default/build_config:cudnn_plugin",
-        "@tsl//platform/default/build_config:cufft_plugin",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
+        "@tsl//tsl/platform/default/build_config:cudnn_plugin",
+        "@tsl//tsl/platform/default/build_config:cufft_plugin",
         "//xla/stream_executor/cuda:stream_executor_cuda",
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm_is_configured([
@@ -738,7 +738,7 @@ tf_cc_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -749,7 +749,7 @@ cc_library(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         "//xla/hlo/ir:hlo",
-        "@tsl//platform:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -772,12 +772,12 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/hlo/ir:hlo",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_asm_opts",
-    ]) + ["@tsl//platform:status"],
+    ]) + ["@tsl//tsl/platform:status"],
 )
 
 # TODO(ezhulenev): Extract `RunTriangularSolve` into a separate library.
@@ -799,12 +799,12 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/hlo/ir:hlo",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_asm_opts",
-    ]) + ["@tsl//platform:status"],
+    ]) + ["@tsl//tsl/platform:status"],
 )
 
 cc_library(
@@ -825,8 +825,8 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -851,7 +851,7 @@ cc_library(
         "//xla/stream_executor:blas",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -866,7 +866,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_headers",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -879,11 +879,11 @@ cc_library(
         ":thunk",
         "//xla/service:buffer_assignment",
         "//xla:status",
-        "@tsl//platform/default/build_config:cublas_plugin",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/cuda:cublas_lt_header",
-    ]) + ["@tsl//platform:logging"],
+    ]) + ["@tsl//tsl/platform:logging"],
 )
 
 cc_library(
@@ -910,13 +910,13 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor/gpu:redzone_allocator",
         "//xla:util",
-        "@tsl//platform:errors",
-        "@tsl//platform/default/build_config:cublas_plugin",
-        "@tsl//platform:logger",
-        "@tsl//platform:logging",
-        "@tsl//platform:statusor",
-        "@tsl//protobuf:autotuning_proto_cc",
-        "@tsl//util/proto:proto_utils",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
+        "@tsl//tsl/platform:logger",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
+        "@tsl//tsl/util/proto:proto_utils",
     ]),
 )
 
@@ -937,11 +937,11 @@ tf_cc_test(
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
         "//xla/tests:hlo_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:statusor",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
-        "@tsl//protobuf:dnn_proto_cc",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -965,11 +965,11 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "@tsl//platform:statusor",
+        "@tsl//tsl/platform:statusor",
         "//xla/stream_executor:stream_executor_headers",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cublas_lt_header",
-        "@tsl//platform/default/build_config:cublas_plugin",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
         "//xla/stream_executor:host_or_device_scalar",
         "//xla/stream_executor:scratch_allocator",
     ]),
@@ -984,7 +984,7 @@ tf_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
         "@com_google_absl//absl/strings",
-        "@tsl//platform:status_matchers",
+        "@tsl//tsl/platform:status_matchers",
     ],
 )
 
@@ -1014,16 +1014,16 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "//xla:xla_data_proto_cc",
-        "@tsl//platform:logger",
-        "@tsl//platform:logging",
-        "@tsl//platform:numbers",
-        "@tsl//protobuf:autotuning_proto_cc",
+        "@tsl//tsl/platform:logger",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:numbers",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
         "//xla/stream_executor",
         "//xla/stream_executor:scratch_allocator",
-        "@tsl//util/proto:proto_utils",
+        "@tsl//tsl/util/proto:proto_utils",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:dnn_proto_cc",
-        "@tsl//util:env_var",
+        "@tsl//tsl/util:env_var",
     ] + if_cuda_is_configured([
         ":buffer_comparator",
         "@local_config_cuda//cuda:cudnn_header",
@@ -1049,10 +1049,10 @@ tf_cc_test(
         "//xla/service:pattern_matcher_gmock",
         "//xla/service:tuple_simplifier",
         "//xla/tests:hlo_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:statusor",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -1093,8 +1093,8 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1113,7 +1113,7 @@ cc_library(
         "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1131,9 +1131,9 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:llvm_irgen_test_base",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -1152,7 +1152,7 @@ tf_cc_test(
         "//xla/service:shape_inference",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1168,9 +1168,9 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla:xla_data_proto_cc",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
         "//xla/stream_executor:blas",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:status",
     ] + if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "//xla/stream_executor/cuda:cusolver_lib",
@@ -1196,11 +1196,11 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "//xla/stream_executor",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory_allocator",
         "@com_google_absl//absl/algorithm:container",
-    ]) + ["@tsl//platform:status"],
+    ]) + ["@tsl//tsl/platform:status"],
 )
 
 cc_library(
@@ -1265,7 +1265,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1300,8 +1300,8 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:errors",
-        "@tsl//platform:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1320,9 +1320,9 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
         "@com_google_absl//absl/strings",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:statusor",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1334,8 +1334,8 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "//xla/service/llvm_ir:buffer_assignment_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1361,7 +1361,7 @@ tf_cc_test(
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1384,7 +1384,7 @@ cc_library(
         "//xla/service/llvm_ir:fused_ir_emitter",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -1440,7 +1440,7 @@ tf_cc_test(
         "//xla/service:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1455,7 +1455,7 @@ cc_library(
         "//xla:window_util",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:stream_executor_headers",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1479,9 +1479,9 @@ tf_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
-        "@tsl//platform:status_matchers",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:status_matchers",
     ],
 )
 
@@ -1500,7 +1500,7 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/stream_executor:stream_executor_headers",
         "@com_google_absl//absl/functional:bind_front",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1519,7 +1519,7 @@ tf_cc_test(
         "//xla/service:pattern_matcher_gmock",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1553,7 +1553,7 @@ tf_cc_test(
         "//xla/service:pattern_matcher_gmock",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
-        "@tsl//platform:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1590,9 +1590,9 @@ tf_cc_test(
         "//xla/service:tuple_simplifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:statusor",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1667,8 +1667,8 @@ cc_library(
         "//xla/stream_executor/rocm:rocm_platform_id",
         "@com_google_absl//absl/cleanup",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
     alwayslink = True,  # Contains per-platform transfer manager registration
 )
@@ -1838,13 +1838,13 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@tsl//platform:blocking_counter",
-        "@tsl//platform:casts",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
-        "@tsl//profiler/lib:traceme",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -1869,7 +1869,7 @@ cc_library(
     deps = if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_platform_id",
         ":nvptx_compiler_impl",
-        "@tsl//platform:path",
+        "@tsl//tsl/platform:path",
     ]),
     alwayslink = True,  # Contains compiler registration
 )
@@ -1881,9 +1881,9 @@ cc_library(
     deps = [
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:cuda_libdevice_path",
-        "@tsl//platform:logging",
-        "@tsl//platform:path",
+        "@tsl//tsl/platform:cuda_libdevice_path",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:path",
     ],
 )
 
@@ -1938,17 +1938,17 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
-        "@tsl//platform:logging",
-        "@tsl//platform:cuda_libdevice_path",
-        "@tsl//profiler/lib:traceme",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:cuda_libdevice_path",
+        "@tsl//tsl/profiler/lib:traceme",
         "//xla/stream_executor/cuda:cuda_diagnostics",
         "//xla/stream_executor/gpu:asm_compiler",
         "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor:stream_executor_headers",
-        "@tsl//platform:path",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
-        "@tsl//util:env_var",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/util:env_var",
         ":triangular_solve_rewriter",
     ]),
 )
@@ -2045,7 +2045,7 @@ cc_library(
         "//xla/service/gpu/llvm_gpu_backend",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor/rocm:rocm_platform_id",
-        "@tsl//platform:rocm_rocdl_path",
+        "@tsl//tsl/platform:rocm_rocdl_path",
     ]),
 )
 
@@ -2076,8 +2076,8 @@ tf_cc_test(
         "//xla/service:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
-        "@tsl//platform:status_matchers",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -2086,7 +2086,7 @@ cc_library(
     hdrs = ["xfeed_queue.h"],
     deps = [
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2113,8 +2113,8 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_executor_header",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
-        "@tsl//platform:logging",
-        "@tsl//platform:notification",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:notification",
     ],
 )
 
@@ -2146,8 +2146,8 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -2170,7 +2170,7 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
         "@com_google_absl//absl/strings",
-        "@tsl//platform:status_matchers",
+        "@tsl//tsl/platform:status_matchers",
     ],
 )
 
@@ -2223,8 +2223,8 @@ tf_cc_test(
         "//xla/service:while_loop_analysis",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2248,15 +2248,15 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:cuda_libdevice_path",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:regexp",
-        "@tsl//profiler/lib:traceme",
-        "@tsl//protobuf:autotuning_proto_cc",
-        "@tsl//util:determinism_for_kernels",
-        "@tsl//util:env_var",
-        "@tsl//util/proto:proto_utils",
+        "@tsl//tsl/platform:cuda_libdevice_path",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:regexp",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
+        "@tsl//tsl/util:determinism_for_kernels",
+        "@tsl//tsl/util:env_var",
+        "@tsl//tsl/util/proto:proto_utils",
     ],
 )
 
@@ -2342,10 +2342,10 @@ tf_cc_test(
     srcs = if_cuda_is_configured(["buffer_comparator_test.cc"]),
     tags = tf_cuda_tests_tags(),
     deps = [
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test_main",
         "//xla:shape_util",
         "//xla:types",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ] + if_cuda_is_configured([
         ":buffer_comparator",
         "//xla/stream_executor/cuda:stream_executor_cuda",
@@ -2395,8 +2395,8 @@ cc_library(
         "//xla/service:pattern_matcher",
         "//xla/stream_executor",
         "//xla/stream_executor:dnn_proto_cc",
-        "@tsl//platform:errors",
-        "@tsl//platform:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -2431,10 +2431,10 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:statusor",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -2454,9 +2454,9 @@ tf_cc_test(
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -2472,8 +2472,8 @@ cc_library(
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2517,7 +2517,7 @@ tf_proto_library(
     protodeps = [
         "//xla:xla_data_proto",
         "//xla/service:hlo_proto",
-        "@tsl//protobuf:autotuning_proto",
+        "@tsl//tsl/protobuf:autotuning_proto",
     ],
 )
 
@@ -2530,7 +2530,7 @@ cc_library(
         "//xla:debug_options_flags",
         "//xla/stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl//protobuf:autotuning_proto_cc",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 
@@ -2542,12 +2542,12 @@ tf_cc_test(
     deps = [
         ":hlo_algorithm_denylist",
         "//xla/stream_executor:dnn",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
-        "@tsl//platform:path",
-        "@tsl//platform:resource_loader",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:resource_loader",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -2571,9 +2571,9 @@ tf_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2590,8 +2590,8 @@ cc_library(
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2617,7 +2617,7 @@ tf_cc_test(
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
+        "@tsl//tsl/lib/core:status_test_util",
     ],
 )
 
@@ -2635,8 +2635,8 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2674,8 +2674,8 @@ cc_library(
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2734,8 +2734,8 @@ cc_library(
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2771,7 +2771,7 @@ cc_library(
         "//xla/service:pattern_matcher",
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/algorithm:container",
-        "@tsl//platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -2951,7 +2951,7 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = [
-        "@tsl//lib/monitoring:sampler",
+        "@tsl//tsl/lib/monitoring:sampler",
     ],
 )
 
@@ -3018,8 +3018,8 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:errors",
-        "@tsl//platform:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -3035,8 +3035,8 @@ tf_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -3082,6 +3082,6 @@ cc_library(
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )

@@ -34,8 +34,8 @@ limitations under the License.
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status_matchers.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace {

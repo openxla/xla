@@ -18,7 +18,7 @@ limitations under the License.
 
 // Must be included first
 // clang-format off
-#include "third_party/tsl/python/lib/core/numpy.h" // NOLINT
+#include "tsl/python/lib/core/numpy.h" // NOLINT
 // clang-format on
 
 // Support utilities for adding custom floating-point dtypes to TensorFlow,
@@ -35,8 +35,8 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "third_party/eigen3/Eigen/Core"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
 
 #undef copysign  // TODO(ddunleavy): temporary fix for Windows bazel build
                  // Possible this has to do with numpy.h being included before

@@ -17,8 +17,8 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 // IWYU pragma: no_include "llvm/IR/Intrinsics.gen.inc"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Value.h"

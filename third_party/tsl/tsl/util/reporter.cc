@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/util/reporter.h"
+#include "tsl/util/reporter.h"
 
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/str_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/str_util.h"
 
 namespace tsl {
 

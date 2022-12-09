@@ -20,9 +20,9 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
-#include "third_party/tsl/profiler/lib/context_types.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
-#include "third_party/tsl/profiler/lib/traceme_encode.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace tsl {
 namespace profiler {

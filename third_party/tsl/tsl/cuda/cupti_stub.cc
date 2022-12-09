@@ -15,8 +15,8 @@ limitations under the License.
 
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the CUPTI API by forwarding to CUPTI loaded from the DSO.
 
@@ -56,4 +56,4 @@ CUptiResult GetSymbolNotFoundError() { return CUPTI_ERROR_UNKNOWN; }
 //
 // Calling a function that is not yet available in the loaded CUPTI version will
 // return CUPTI_ERROR_UNKNOWN.
-#include "third_party/tsl/cuda/cupti_10_0.inc"
+#include "tsl/cuda/cupti_10_0.inc"

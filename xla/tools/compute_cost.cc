@@ -23,7 +23,7 @@ limitations under the License.
 
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/tools/hlo_module_loader.h"
-#include "third_party/tsl/platform/init_main.h"
+#include "tsl/platform/init_main.h"
 
 namespace {
 const char* const kUsage = R"(

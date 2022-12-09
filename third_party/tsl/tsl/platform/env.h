@@ -23,17 +23,17 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
-#include "third_party/tsl/platform/env_time.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/numa.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/env_time.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/types.h"
 
 // Delete leaked Windows definitions.
 #ifdef PLATFORM_WINDOWS

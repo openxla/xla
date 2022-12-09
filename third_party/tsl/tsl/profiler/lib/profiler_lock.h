@@ -15,7 +15,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PROFILER_LIB_PROFILER_LOCK_H_
 #define TENSORFLOW_TSL_PROFILER_LIB_PROFILER_LOCK_H_
 
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace tsl {
 namespace profiler {

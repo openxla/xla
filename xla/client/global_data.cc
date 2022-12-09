@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace {

@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/rpc/profiler_server.h"
+#include "tsl/profiler/rpc/profiler_server.h"
 
 #include <memory>
 #include <string>
 
 #include "grpcpp/grpcpp.h"
 #include "absl/strings/str_cat.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/profiler_service.grpc.pb.h"
-#include "third_party/tsl/profiler/rpc/profiler_service_impl.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
+#include "tsl/profiler/rpc/profiler_service_impl.h"
 
 namespace tsl {
 namespace profiler {

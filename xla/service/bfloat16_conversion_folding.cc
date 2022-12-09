@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

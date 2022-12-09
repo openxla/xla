@@ -1,7 +1,7 @@
 # Description:
 #   XLA’s HLO Intermediate Representation implementation.
 
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -85,16 +85,16 @@ cc_library(
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//lib/gtl:iterator_range",
-        "@tsl//lib/gtl:map_util",
-        "@tsl//platform:env",
-        "@tsl//platform:errors",
-        "@tsl//platform:fingerprint",
-        "@tsl//platform:human_readable_json",
-        "@tsl//platform:logging",
-        "@tsl//platform:protobuf",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
+        "@tsl//tsl/lib/gtl:iterator_range",
+        "@tsl//tsl/lib/gtl:map_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:human_readable_json",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

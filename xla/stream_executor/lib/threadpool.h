@@ -18,7 +18,7 @@ limitations under the License.
 
 #include "xla/stream_executor/lib/env.h"
 #include "xla/stream_executor/lib/thread_options.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/threadpool.h"
 
 namespace stream_executor {
 namespace port {

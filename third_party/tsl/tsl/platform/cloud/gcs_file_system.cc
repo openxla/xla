@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/gcs_file_system.h"
+#include "tsl/platform/cloud/gcs_file_system.h"
 
 #include <stdio.h>
 
@@ -31,29 +31,29 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "third_party/tsl/platform/file_statistics.h"
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/file_statistics.h"
+#include "tsl/platform/strcat.h"
 #ifdef _WIN32
 #include <io.h>  // for _mktemp
 #endif
 #include "absl/base/macros.h"
 #include "json/json.h"
-#include "third_party/tsl/platform/cloud/curl_http_request.h"
-#include "third_party/tsl/platform/cloud/file_block_cache.h"
-#include "third_party/tsl/platform/cloud/google_auth_provider.h"
-#include "third_party/tsl/platform/cloud/ram_file_block_cache.h"
-#include "third_party/tsl/platform/cloud/time_util.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/numbers.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/retrying_utils.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/stringprintf.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/platform/cloud/curl_http_request.h"
+#include "tsl/platform/cloud/file_block_cache.h"
+#include "tsl/platform/cloud/google_auth_provider.h"
+#include "tsl/platform/cloud/ram_file_block_cache.h"
+#include "tsl/platform/cloud/time_util.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/retrying_utils.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/stringprintf.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/profiler/lib/traceme.h"
 
 #ifdef _WIN32
 #ifdef DeleteFile

@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/distributed_runtime/preemption/preemption_notifier.h"
+#include "tsl/distributed_runtime/preemption/preemption_notifier.h"
 
 #include <csignal>
 #include <functional>
@@ -22,11 +22,11 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #if defined(PLATFORM_GOOGLE)
 #include "thread/executor.h"
 #include "thread/signal.h"

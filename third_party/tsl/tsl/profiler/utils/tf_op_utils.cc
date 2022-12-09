@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/utils/tf_op_utils.h"
+#include "tsl/profiler/utils/tf_op_utils.h"
 
 #include <string>
 #include <vector>
@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
-#include "third_party/tsl/platform/regexp.h"
+#include "tsl/platform/regexp.h"
 
 namespace tsl {
 namespace profiler {

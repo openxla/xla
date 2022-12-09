@@ -27,9 +27,9 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/status_macros.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 

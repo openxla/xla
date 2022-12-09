@@ -13,22 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/file_system_helper.h"
+#include "tsl/platform/file_system_helper.h"
 
 #include <deque>
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/platform/cpu_info.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/threadpool.h"
 
 namespace tsl {
 namespace internal {

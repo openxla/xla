@@ -26,7 +26,7 @@ limitations under the License.
 #include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/xla.pb.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 

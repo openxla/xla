@@ -29,9 +29,9 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/test.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/test_benchmark.h"
-#include "third_party/tsl/platform/threadpool.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/platform/test_benchmark.h"
+#include "tsl/platform/threadpool.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 namespace xla {
 

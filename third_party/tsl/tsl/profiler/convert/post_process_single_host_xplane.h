@@ -15,8 +15,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PROFILER_CONVERT_POST_PROCESS_SINGLE_HOST_XPLANE_H_
 #define TENSORFLOW_TSL_PROFILER_CONVERT_POST_PROCESS_SINGLE_HOST_XPLANE_H_
 
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

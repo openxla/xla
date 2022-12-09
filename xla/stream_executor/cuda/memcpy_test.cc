@@ -19,7 +19,7 @@ limitations under the License.
 #include "xla/stream_executor/multi_platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace stream_executor {
 

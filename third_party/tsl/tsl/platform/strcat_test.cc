@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/strcat.h"
+#include "tsl/platform/strcat.h"
 
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/stringprintf.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/stringprintf.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/types.h"
 
 #ifdef _MSC_VER
 // ssize_t is not a standard C++ type.

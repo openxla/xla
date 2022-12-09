@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/compute_engine_metadata_client.h"
+#include "tsl/platform/cloud/compute_engine_metadata_client.h"
 
 #include <utility>
 
-#include "third_party/tsl/platform/cloud/curl_http_request.h"
+#include "tsl/platform/cloud/curl_http_request.h"
 
 namespace tsl {
 

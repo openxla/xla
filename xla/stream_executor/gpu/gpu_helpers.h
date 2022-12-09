@@ -26,7 +26,7 @@ limitations under the License.
 #include <complex>
 
 #include "xla/stream_executor/gpu/gpu_types.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace stream_executor {
 

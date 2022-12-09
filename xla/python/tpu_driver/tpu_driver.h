@@ -35,7 +35,7 @@
 #include "xla/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 // This API is EXPERIMENTAL and under active development. It is subject to
 // change without notice.

@@ -22,10 +22,10 @@ limitations under the License.
 #include "absl/container/node_hash_set.h"
 #include "absl/types/optional.h"
 #include "xla/stream_executor/rocm/roctracer_wrapper.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/types.h"
 
 namespace xla {
 namespace profiler {

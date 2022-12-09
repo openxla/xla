@@ -46,7 +46,7 @@ limitations under the License.
 #include "xla/service/hlo_module_util.h"
 #include "xla/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
 
 namespace xla {

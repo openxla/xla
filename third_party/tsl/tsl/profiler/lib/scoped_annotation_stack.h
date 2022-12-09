@@ -24,7 +24,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #if !defined(IS_MOBILE_PLATFORM)
-#include "third_party/tsl/profiler/backends/cpu/annotation_stack.h"
+#include "tsl/profiler/backends/cpu/annotation_stack.h"
 #endif
 
 namespace tsl {

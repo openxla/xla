@@ -27,8 +27,8 @@ limitations under the License.
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/util.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {

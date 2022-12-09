@@ -20,7 +20,7 @@ limitations under the License.
 #define EIGEN_USE_THREADS
 #endif
 
-#include "third_party/tsl/platform/float8.h"
+#include "tsl/platform/float8.h"
 
 #include <cmath>
 #include <limits>
@@ -28,7 +28,7 @@ limitations under the License.
 #include <utility>
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

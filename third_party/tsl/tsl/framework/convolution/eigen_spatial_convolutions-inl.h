@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_FRAMEWORK_CONVOLUTION_EIGEN_SPATIAL_CONVOLUTIONS_INL_H_
 #define TENSORFLOW_TSL_FRAMEWORK_CONVOLUTION_EIGEN_SPATIAL_CONVOLUTIONS_INL_H_
 
-#include "third_party/tsl/framework/convolution/eigen_convolution_helpers.h"
+#include "tsl/framework/convolution/eigen_convolution_helpers.h"
 
 // Note this header is used in both TF and TFLite.
 namespace Eigen {

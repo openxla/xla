@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/coordination/coordination_service.h"
+#include "tsl/distributed_runtime/coordination/coordination_service.h"
 
 #include <memory>
 #include <string>
@@ -24,20 +24,20 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/distributed_runtime/call_options.h"
-#include "third_party/tsl/distributed_runtime/coordination/coordination_client.h"
-#include "third_party/tsl/distributed_runtime/coordination/test_device.pb.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/random.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/protobuf/coordination_config.pb.h"
-#include "third_party/tsl/protobuf/coordination_service.pb.h"
+#include "tsl/distributed_runtime/call_options.h"
+#include "tsl/distributed_runtime/coordination/coordination_client.h"
+#include "tsl/distributed_runtime/coordination/test_device.pb.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/random.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/platform/types.h"
+#include "tsl/protobuf/coordination_config.pb.h"
+#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 namespace {

@@ -35,7 +35,7 @@ limitations under the License.
 #include "xla/python/sharding.h"
 #include "xla/python/status_casters.h"
 #include "xla/python/util.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace jax {
 namespace {

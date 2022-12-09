@@ -56,11 +56,11 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/gpu/asm_compiler.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/util/env_var.h"
 
 namespace xla {
 namespace gpu {

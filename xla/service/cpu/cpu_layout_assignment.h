@@ -19,7 +19,7 @@ limitations under the License.
 #include "xla/service/computation_layout.h"
 #include "xla/service/cpu/target_machine_features.h"
 #include "xla/service/layout_assignment.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace cpu {

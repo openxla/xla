@@ -25,7 +25,7 @@ limitations under the License.
 #include "xla/test.h"
 #include "xla/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/protobuf.h"
 
 using mlir::Builder;
 using mlir::MemRefType;

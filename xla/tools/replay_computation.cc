@@ -70,14 +70,14 @@ limitations under the License.
 #include "xla/tests/test_utils.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/lib/io/record_reader.h"
-#include "third_party/tsl/platform/cpu_info.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/init_main.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/threadpool.h"
-#include "third_party/tsl/platform/tstring.h"
-#include "third_party/tsl/util/command_line_flags.h"
+#include "tsl/lib/io/record_reader.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/threadpool.h"
+#include "tsl/platform/tstring.h"
+#include "tsl/util/command_line_flags.h"
 
 namespace xla {
 namespace tools {

@@ -28,8 +28,8 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/stream_executor/device_memory.h"
-#include "third_party/tsl/framework/bfc_allocator.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/framework/bfc_allocator.h"
+#include "tsl/platform/errors.h"
 
 #ifdef GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -52,8 +52,8 @@ limitations under the License.
 #include "xla/stream_executor/device_mem_allocator.h"
 #include "xla/stream_executor/tf_allocator_adapter.h"
 #include "xla/util.h"
-#include "third_party/tsl/framework/device_id.h"
-#include "third_party/tsl/util/env_var.h"
+#include "tsl/framework/device_id.h"
+#include "tsl/util/env_var.h"
 
 namespace xla {
 namespace {

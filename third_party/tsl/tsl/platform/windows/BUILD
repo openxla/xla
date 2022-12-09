@@ -1,12 +1,12 @@
-load("@tsl//:tsl.default.bzl", "filegroup")
+load("//tsl:tsl.default.bzl", "filegroup")
 
 # Tensorflow windows-specific implementations of tensorflow/core/platform libraries.
 load(
-    "@tsl//:tsl.bzl",
+    "//tsl:tsl.bzl",
     "tsl_copts",
 )
 load(
-    "@tsl//platform:rules_cc.bzl",
+    "//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -14,7 +14,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
         "//third_party/tensorflow/core/platform:__pkg__",
-        "@tsl//platform:__pkg__",
+        "//tsl/platform:__pkg__",
     ],
     licenses = ["notice"],
 )
@@ -24,17 +24,17 @@ cc_library(
     srcs = [
         "windows_file_system.cc",
         "windows_file_system.h",
-        "@tsl//platform:env.cc",
-        "@tsl//platform:file_system.cc",
-        "@tsl//platform:file_system_helper.cc",
-        "@tsl//platform:ram_file_system.h",
-        "@tsl//platform:threadpool.cc",
+        "//tsl/platform:env.cc",
+        "//tsl/platform:file_system.cc",
+        "//tsl/platform:file_system_helper.cc",
+        "//tsl/platform:ram_file_system.h",
+        "//tsl/platform:threadpool.cc",
     ],
     hdrs = [
-        "@tsl//platform:env.h",
-        "@tsl//platform:file_system.h",
-        "@tsl//platform:file_system_helper.h",
-        "@tsl//platform:threadpool.h",
+        "//tsl/platform:env.h",
+        "//tsl/platform:file_system.h",
+        "//tsl/platform:file_system_helper.h",
+        "//tsl/platform:threadpool.h",
     ],
     tags = [
         "manual",
@@ -45,35 +45,35 @@ cc_library(
         ":error_windows",
         ":wide_char",
         "//third_party/eigen3",
+        "//tsl/platform",
+        "//tsl/platform:blocking_counter",
+        "//tsl/platform:context",
+        "//tsl/platform:cord",
+        "//tsl/platform:denormal",
+        "//tsl/platform:env_time",
+        "//tsl/platform:errors",
+        "//tsl/platform:file_statistics",
+        "//tsl/platform:load_library",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:path",
+        "//tsl/platform:platform_port",
+        "//tsl/platform:protobuf",
+        "//tsl/platform:regexp",
+        "//tsl/platform:setround",
+        "//tsl/platform:status",
+        "//tsl/platform:statusor",
+        "//tsl/platform:str_util",
+        "//tsl/platform:strcat",
+        "//tsl/platform:stringpiece",
+        "//tsl/platform:stringprintf",
+        "//tsl/platform:threadpool_interface",
+        "//tsl/platform:tracing",
+        "//tsl/platform:types",
+        "//tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:optional",
-        "@tsl//platform",
-        "@tsl//platform:blocking_counter",
-        "@tsl//platform:context",
-        "@tsl//platform:cord",
-        "@tsl//platform:denormal",
-        "@tsl//platform:env_time",
-        "@tsl//platform:errors",
-        "@tsl//platform:file_statistics",
-        "@tsl//platform:load_library",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:path",
-        "@tsl//platform:platform_port",
-        "@tsl//platform:protobuf",
-        "@tsl//platform:regexp",
-        "@tsl//platform:setround",
-        "@tsl//platform:status",
-        "@tsl//platform:statusor",
-        "@tsl//platform:str_util",
-        "@tsl//platform:strcat",
-        "@tsl//platform:stringpiece",
-        "@tsl//platform:stringprintf",
-        "@tsl//platform:threadpool_interface",
-        "@tsl//platform:tracing",
-        "@tsl//platform:types",
-        "@tsl//protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -95,14 +95,14 @@ cc_library(
 cc_library(
     name = "env_time",
     srcs = ["env_time.cc"],
-    hdrs = ["@tsl//platform:env_time.h"],
+    hdrs = ["//tsl/platform:env_time.h"],
     tags = [
         "manual",
         "no_oss",
         "nobuilder",
     ],
     deps = [
-        "@tsl//platform:types",
+        "//tsl/platform:types",
     ],
 )
 
@@ -129,13 +129,13 @@ cc_library(
         "no_oss",
         "nobuilder",
     ],
-    deps = ["@tsl//platform:types"],
+    deps = ["//tsl/platform:types"],
 )
 
 cc_library(
     name = "load_library",
     srcs = ["load_library.cc"],
-    hdrs = ["@tsl//platform:load_library.h"],
+    hdrs = ["//tsl/platform:load_library.h"],
     tags = [
         "manual",
         "no_oss",
@@ -143,8 +143,8 @@ cc_library(
     ],
     deps = [
         ":wide_char",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
+        "//tsl/platform:errors",
+        "//tsl/platform:status",
     ],
 )
 
@@ -152,7 +152,7 @@ cc_library(
     name = "net",
     srcs = ["net.cc"],
     hdrs = [
-        "@tsl//platform:net.h",
+        "//tsl/platform:net.h",
     ],
     linkopts = ["-DEFAULTLIB:ws2_32.lib"],
     tags = [
@@ -162,8 +162,8 @@ cc_library(
     ],
     deps = [
         ":error_windows",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "//tsl/platform:errors",
+        "//tsl/platform:logging",
     ],
 )
 
@@ -171,16 +171,16 @@ cc_library(
     name = "platform_port",
     srcs = [
         "port.cc",
-        "@tsl//platform:cpu_info.cc",
+        "//tsl/platform:cpu_info.cc",
     ],
     hdrs = [
-        "@tsl//platform:cpu_info.h",
-        "@tsl//platform:demangle.h",
-        "@tsl//platform:host_info.h",
-        "@tsl//platform:init_main.h",
-        "@tsl//platform:mem.h",
-        "@tsl//platform:numa.h",
-        "@tsl//platform:snappy.h",
+        "//tsl/platform:cpu_info.h",
+        "//tsl/platform:demangle.h",
+        "//tsl/platform:host_info.h",
+        "//tsl/platform:init_main.h",
+        "//tsl/platform:mem.h",
+        "//tsl/platform:numa.h",
+        "//tsl/platform:snappy.h",
     ],
     copts = tsl_copts(),
     defines = ["TF_USE_SNAPPY"],
@@ -190,12 +190,12 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//tsl/platform",
+        "//tsl/platform:byte_order",
+        "//tsl/platform:dynamic_annotations",
+        "//tsl/platform:logging",
+        "//tsl/platform:types",
         "@snappy",
-        "@tsl//platform",
-        "@tsl//platform:byte_order",
-        "@tsl//platform:dynamic_annotations",
-        "@tsl//platform:logging",
-        "@tsl//platform:types",
     ],
 )
 
@@ -208,29 +208,29 @@ cc_library(
         "no_oss",
         "nobuilder",
     ],
-    deps = ["@tsl//platform:mutex"],
+    deps = ["//tsl/platform:mutex"],
 )
 
 cc_library(
     name = "stacktrace_handler",
     srcs = ["stacktrace_handler.cc"],
-    hdrs = ["@tsl//platform:stacktrace_handler.h"],
+    hdrs = ["//tsl/platform:stacktrace_handler.h"],
     tags = [
         "manual",
         "no_oss",
         "nobuilder",
     ],
     deps = [
-        "@tsl//platform:mutex",
-        "@tsl//platform:stacktrace",
-        "@tsl//platform:types",
+        "//tsl/platform:mutex",
+        "//tsl/platform:stacktrace",
+        "//tsl/platform:types",
     ],
 )
 
 cc_library(
     name = "subprocess",
     srcs = ["subprocess.cc"],
-    hdrs = ["@tsl//platform:subprocess.h"],
+    hdrs = ["//tsl/platform:subprocess.h"],
     tags = [
         "manual",
         "no_oss",
@@ -238,12 +238,12 @@ cc_library(
     ],
     textual_hdrs = ["subprocess.h"],
     deps = [
-        "@tsl//platform",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:strcat",
-        "@tsl//platform:types",
+        "//tsl/platform",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:strcat",
+        "//tsl/platform:types",
     ],
 )
 

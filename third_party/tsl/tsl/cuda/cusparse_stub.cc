@@ -14,8 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cusparse.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the cusparse API by forwarding to cusparse loaded from the DSO.
 
@@ -52,13 +52,13 @@ cusparseStatus_t GetSymbolNotFoundError() {
 }  // namespace
 
 #if CUDA_VERSION < 10000
-#include "third_party/tsl/cuda/cusparse_9_0.inc"
+#include "tsl/cuda/cusparse_9_0.inc"
 #elif CUDA_VERSION < 10010
-#include "third_party/tsl/cuda/cusparse_10_0.inc"
+#include "tsl/cuda/cusparse_10_0.inc"
 #elif CUDA_VERSION < 10020
-#include "third_party/tsl/cuda/cusparse_10_1.inc"
+#include "tsl/cuda/cusparse_10_1.inc"
 #elif CUDA_VERSION < 11000
-#include "third_party/tsl/cuda/cusparse_10_2.inc"
+#include "tsl/cuda/cusparse_10_2.inc"
 #else
-#include "third_party/tsl/cuda/cusparse_11_0.inc"
+#include "tsl/cuda/cusparse_11_0.inc"
 #endif

@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/logical_buffer.h"
-#include "third_party/tsl/lib/gtl/compactptrset.h"
+#include "tsl/lib/gtl/compactptrset.h"
 
 namespace xla {
 

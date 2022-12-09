@@ -24,7 +24,7 @@ limitations under the License.
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/protobuf/autotuning.pb.h"
+#include "tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {

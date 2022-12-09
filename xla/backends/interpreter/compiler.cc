@@ -41,7 +41,7 @@ limitations under the License.
 #include "xla/service/triangular_solve_expander.h"
 #include "xla/service/while_loop_simplifier.h"
 #include "xla/status_macros.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace interpreter {

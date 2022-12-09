@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/rpc/grpc_channel.h"
+#include "tsl/distributed_runtime/rpc/grpc_channel.h"
 
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/protobuf/rpc_options.pb.h"
-#include "third_party/tsl/util/device_name_utils.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/test.h"
+#include "tsl/protobuf/rpc_options.pb.h"
+#include "tsl/util/device_name_utils.h"
 
 namespace tsl {
 #define IsSameAddrSp DeviceNameUtils::IsSameAddressSpace

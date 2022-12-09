@@ -38,7 +38,7 @@ limitations under the License.
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 

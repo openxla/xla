@@ -15,7 +15,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_UTIL_DETERMINISM_TEST_UTIL_H_
 #define TENSORFLOW_TSL_UTIL_DETERMINISM_TEST_UTIL_H_
 
-#include "third_party/tsl/util/determinism.h"
+#include "tsl/util/determinism.h"
 
 namespace tsl {
 namespace test {

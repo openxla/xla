@@ -18,7 +18,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "xla/python/exceptions.h"
 #include "xla/status_macros.h"
-#include "third_party/tsl/python/lib/core/bfloat16.h"
+#include "tsl/python/lib/core/bfloat16.h"
 
 namespace xla {
 

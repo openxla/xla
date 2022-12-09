@@ -21,14 +21,14 @@ limitations under the License.
 #include "xla/backends/profiler/cpu/metadata_utils.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/xla_debug_info_manager.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/profiler/lib/profiler_factory.h"
-#include "third_party/tsl/profiler/lib/profiler_interface.h"
-#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
-#include "third_party/tsl/profiler/utils/xplane_schema.h"
-#include "third_party/tsl/profiler/utils/xplane_utils.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/xplane_schema.h"
+#include "tsl/profiler/utils/xplane_utils.h"
 
 namespace xla {
 namespace profiler {

@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/zlib_outputbuffer.h"
+#include "tsl/lib/io/zlib_outputbuffer.h"
 
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace tsl {
 namespace io {

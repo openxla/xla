@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <functional>
 
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 

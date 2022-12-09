@@ -21,8 +21,8 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 namespace xla {
 

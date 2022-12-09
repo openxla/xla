@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/service/tuple_simplifier.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

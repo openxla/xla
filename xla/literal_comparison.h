@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "xla/error_spec.h"
 #include "xla/literal.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace literal_comparison {

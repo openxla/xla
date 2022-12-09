@@ -12,13 +12,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/profiler/lib/traceme_encode.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 #include <string>
 
 #include "absl/strings/str_cat.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace profiler {

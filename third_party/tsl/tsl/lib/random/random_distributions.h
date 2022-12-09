@@ -21,9 +21,9 @@ limitations under the License.
 #include <type_traits>
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "third_party/tsl/lib/random/philox_random.h"
-#include "third_party/tsl/lib/random/random_distributions_utils.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/lib/random/philox_random.h"
+#include "tsl/lib/random/random_distributions_utils.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace random {

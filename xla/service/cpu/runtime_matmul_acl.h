@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <iostream>
 
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/types.h"
 
 #ifdef XLA_CPU_USE_ACL
 #include "arm_compute/runtime/NEON/NEFunctions.h"

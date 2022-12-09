@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/profiler/protobuf/profiler_service.grpc.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
 
 namespace tsl {
 namespace profiler {

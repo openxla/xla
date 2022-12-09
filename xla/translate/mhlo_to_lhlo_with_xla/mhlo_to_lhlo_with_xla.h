@@ -26,8 +26,8 @@ limitations under the License.
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape_util.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace mlir {
 

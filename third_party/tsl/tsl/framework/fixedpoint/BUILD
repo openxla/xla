@@ -1,5 +1,5 @@
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//:tsl.default.bzl", "get_compatible_with_portable")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -28,7 +28,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//third_party/eigen3",
-        "@tsl//framework:fixedpoint_types",
+        "//tsl/framework:fixedpoint_types",
     ],
 )
 
@@ -49,7 +49,7 @@ filegroup(
     compatible_with = get_compatible_with_portable(),
     visibility = [
         "//third_party/tensorflow:__subpackages__",
-        "@tsl//:internal",
+        "//tsl:internal",
     ],
 )
 

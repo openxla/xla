@@ -19,7 +19,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/container/node_hash_map.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

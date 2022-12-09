@@ -24,9 +24,9 @@ limitations under the License.
 #include "grpcpp/server_builder.h"
 #include "xla/rpc/grpc_service.h"
 #include "xla/service/platform_util.h"
-#include "third_party/tsl/platform/init_main.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/util/command_line_flags.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/logging.h"
+#include "tsl/util/command_line_flags.h"
 
 namespace xla {
 namespace {

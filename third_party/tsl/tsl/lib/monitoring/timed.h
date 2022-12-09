@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_MONITORING_TIMED_H_
 #define TENSORFLOW_TSL_LIB_MONITORING_TIMED_H_
 
-#include "third_party/tsl/platform/env_time.h"
+#include "tsl/platform/env_time.h"
 
 namespace tsl {
 namespace monitoring {

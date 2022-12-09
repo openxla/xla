@@ -23,10 +23,10 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/framework/allocator.h"
-#include "third_party/tsl/framework/device_id.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/mutex.h"
+#include "tsl/framework/allocator.h"
+#include "tsl/framework/device_id.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/mutex.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"

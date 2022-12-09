@@ -34,8 +34,8 @@ limitations under the License.
 
 #include "absl/base/log_severity.h"
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/types.h"
 
 // TODO(mrry): Prevent this Windows.h #define from leaking out of our headers.
 #undef ERROR

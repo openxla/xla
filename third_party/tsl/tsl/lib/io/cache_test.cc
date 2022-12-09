@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/cache.h"
+#include "tsl/lib/io/cache.h"
 
 #include <string>
 #include <vector>
 
-#include "third_party/tsl/platform/coding.h"
-#include "third_party/tsl/platform/raw_coding.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/raw_coding.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 

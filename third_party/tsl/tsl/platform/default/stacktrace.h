@@ -17,7 +17,7 @@ limitations under the License.
 #define TENSORFLOW_TSL_PLATFORM_DEFAULT_STACKTRACE_H_
 
 // clang-format off
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 // clang-format on
 
 #if !defined(IS_MOBILE_PLATFORM) && (defined(__clang__) || defined(__GNUC__))
@@ -35,7 +35,7 @@ limitations under the License.
 #include <sstream>
 #include <string>
 
-#include "third_party/tsl/platform/abi.h"
+#include "tsl/platform/abi.h"
 
 namespace tsl {
 

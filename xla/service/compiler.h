@@ -43,8 +43,8 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 

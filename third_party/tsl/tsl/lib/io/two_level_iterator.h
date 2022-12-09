@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_LIB_IO_TWO_LEVEL_ITERATOR_H_
 #define TENSORFLOW_TSL_LIB_IO_TWO_LEVEL_ITERATOR_H_
 
-#include "third_party/tsl/lib/io/iterator.h"
+#include "tsl/lib/io/iterator.h"
 
 namespace tsl {
 namespace table {

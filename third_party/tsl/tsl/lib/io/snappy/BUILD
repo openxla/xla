@@ -1,12 +1,12 @@
 load(
-    "@tsl//platform:build_config.bzl",
+    "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
 
 # Snappy targets.
 
 load(
-    "@tsl//platform:rules_cc.bzl",
+    "//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -14,7 +14,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
         "//third_party/tensorflow/core/lib/io:__pkg__",
-        "@tsl//lib/io:__pkg__",
+        "//tsl/lib/io:__pkg__",
     ],
     licenses = ["notice"],
 )
@@ -33,12 +33,12 @@ cc_library(
     srcs = ["snappy_inputbuffer.cc"],
     hdrs = ["snappy_inputbuffer.h"],
     deps = [
-        "@tsl//lib/io:inputstream_interface",
-        "@tsl//platform:env",
-        "@tsl//platform:macros",
-        "@tsl//platform:platform_port",
-        "@tsl//platform:status",
-        "@tsl//platform:types",
+        "//tsl/lib/io:inputstream_interface",
+        "//tsl/platform:env",
+        "//tsl/platform:macros",
+        "//tsl/platform:platform_port",
+        "//tsl/platform:status",
+        "//tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -48,12 +48,12 @@ cc_library(
     srcs = ["snappy_outputbuffer.cc"],
     hdrs = ["snappy_outputbuffer.h"],
     deps = [
-        "@tsl//platform",
-        "@tsl//platform:env",
-        "@tsl//platform:macros",
-        "@tsl//platform:platform_port",
-        "@tsl//platform:status",
-        "@tsl//platform:types",
+        "//tsl/platform",
+        "//tsl/platform:env",
+        "//tsl/platform:macros",
+        "//tsl/platform:platform_port",
+        "//tsl/platform:status",
+        "//tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -63,10 +63,10 @@ cc_library(
     srcs = ["snappy_inputstream.cc"],
     hdrs = ["snappy_inputstream.h"],
     deps = [
+        "//tsl/lib/io:inputstream_interface",
+        "//tsl/platform:errors",
+        "//tsl/platform:platform_port",
         "@com_google_absl//absl/memory",
-        "@tsl//lib/io:inputstream_interface",
-        "@tsl//platform:errors",
-        "@tsl//platform:platform_port",
     ],
     alwayslink = True,
 )
@@ -75,7 +75,7 @@ cc_library(
     name = "snappy_compression_options",
     hdrs = ["snappy_compression_options.h"],
     deps = [
-        "@tsl//platform:types",
+        "//tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -88,12 +88,12 @@ tsl_cc_test(
         ":snappy_inputbuffer",
         ":snappy_inputstream",
         ":snappy_outputbuffer",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//lib/io:inputbuffer",
-        "@tsl//lib/io:random_inputstream",
-        "@tsl//platform:env",
-        "@tsl//platform:env_impl",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/lib/core:status_test_util",
+        "//tsl/lib/io:inputbuffer",
+        "//tsl/lib/io:random_inputstream",
+        "//tsl/platform:env",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )

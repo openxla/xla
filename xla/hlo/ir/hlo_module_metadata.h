@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace xla {
 

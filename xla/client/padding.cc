@@ -18,8 +18,8 @@ limitations under the License.
 #include <algorithm>
 
 #include "xla/util.h"
-#include "third_party/tsl/lib/math/math_util.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/lib/math/math_util.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

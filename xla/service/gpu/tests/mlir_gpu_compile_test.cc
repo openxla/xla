@@ -14,8 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/service/gpu/tests/mlir_gpu_test_base.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/lib/io/inputstream_interface.h"
-#include "third_party/tsl/platform/file_system.h"
+#include "tsl/lib/io/inputstream_interface.h"
+#include "tsl/platform/file_system.h"
 
 namespace tsl {
 namespace io {

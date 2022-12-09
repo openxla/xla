@@ -16,9 +16,9 @@ limitations under the License.
 #define TENSORFLOW_TSL_DISTRIBUTED_RUNTIME_COORDINATION_COORDINATION_SERVICE_ERROR_UTIL_H_
 
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/protobuf/coordination_service.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/protobuf/coordination_service.pb.h"
 
 namespace tsl {
 

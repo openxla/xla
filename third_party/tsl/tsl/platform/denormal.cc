@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/denormal.h"
+#include "tsl/platform/denormal.h"
 
-#include "third_party/tsl/platform/cpu_info.h"
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/platform.h"
 
 // If we're on gcc 4.8 or older, there's a known bug that prevents the use of
 // intrinsics when the architecture is not defined in the flags. See

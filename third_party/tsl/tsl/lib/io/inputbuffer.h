@@ -18,11 +18,11 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/platform/coding.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/coding.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace io {

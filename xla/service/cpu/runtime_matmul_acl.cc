@@ -20,12 +20,12 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
 #include "xla/service/cpu/runtime_matmul.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
 
 #define EIGEN_USE_THREADS
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "third_party/tsl/platform/dynamic_annotations.h"
+#include "tsl/platform/dynamic_annotations.h"
 
 namespace {
 // ACL GEMM API for 32-bit Matrix Multiplication.

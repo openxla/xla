@@ -23,7 +23,7 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/llvm_ir/ir_array.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace llvm_ir {

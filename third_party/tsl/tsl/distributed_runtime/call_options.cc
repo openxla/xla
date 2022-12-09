@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/distributed_runtime/call_options.h"
+#include "tsl/distributed_runtime/call_options.h"
 
-#include "third_party/tsl/platform/mutex.h"
+#include "tsl/platform/mutex.h"
 
 namespace tsl {
 

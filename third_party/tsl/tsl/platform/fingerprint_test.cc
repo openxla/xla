@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/fingerprint.h"
+#include "tsl/platform/fingerprint.h"
 
 #include <unordered_set>
 
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace {

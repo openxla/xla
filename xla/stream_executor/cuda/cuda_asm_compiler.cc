@@ -25,8 +25,8 @@ limitations under the License.
 #include "xla/stream_executor/gpu/asm_compiler.h"
 #include "xla/stream_executor/gpu/gpu_diagnostics.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/subprocess.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/subprocess.h"
 
 namespace stream_executor {
 

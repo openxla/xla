@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/utils/time_utils.h"
+#include "tsl/profiler/utils/time_utils.h"
 
 #include "absl/time/clock.h"
 #include "absl/time/time.h"

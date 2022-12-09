@@ -52,7 +52,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "xla/types.h"
-#include "third_party/tsl/util/command_line_flags.h"
+#include "tsl/util/command_line_flags.h"
 
 namespace xla {
 

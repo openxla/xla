@@ -1,14 +1,14 @@
 # Description:
 #   RPC communication interfaces and implementations for TensorFlow.
 
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//platform:build_config.bzl", "tf_proto_library", "tsl_cc_test")
-load("@tsl//:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl/platform:build_config.bzl", "tf_proto_library", "tsl_cc_test")
+load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "@tsl//:internal",
+        "//tsl:internal",
     ],
     licenses = ["notice"],
 )
@@ -25,8 +25,8 @@ cc_library(
     srcs = [],
     hdrs = ["grpc_call.h"],
     deps = [
-        "@tsl//platform:mutex",
-        "@tsl//platform:refcount",
+        "//tsl/platform:mutex",
+        "//tsl/platform:refcount",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -35,12 +35,12 @@ cc_library(
     srcs = ["grpc_util.cc"],
     hdrs = ["grpc_util.h"],
     deps = [
-        "@tsl//platform:random",
-        "@tsl//platform:status",
-        "@tsl//platform:stringpiece",
-        "@tsl//platform:stringprintf",
-        "@tsl//platform:protobuf",
-        "@tsl//protobuf:distributed_runtime_payloads_proto_cc",
+        "//tsl/platform:random",
+        "//tsl/platform:status",
+        "//tsl/platform:stringpiece",
+        "//tsl/platform:stringprintf",
+        "//tsl/platform:protobuf",
+        "//tsl/protobuf:distributed_runtime_payloads_proto_cc",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -54,11 +54,11 @@ tsl_cc_test(
     deps = [
         ":test_request_proto_cc_impl",
         ":grpc_util",
-        "@tsl//platform:errors",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
-        "@tsl//protobuf:distributed_runtime_payloads_proto_cc_impl",
+        "//tsl/platform:errors",
+        "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
+        "//tsl/platform:test_main",
+        "//tsl/protobuf:distributed_runtime_payloads_proto_cc_impl",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -67,9 +67,9 @@ cc_library(
     hdrs = ["grpc_channel_common.h"],
     deps = [
         ":grpc_util",
+        "//tsl/platform:logging",
+        "//tsl/platform:mutex",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl//platform:logging",
-        "@tsl//platform:mutex",
     ],
 )
 
@@ -81,19 +81,19 @@ cc_library(
         ":grpc_channel_common",
         ":grpc_util",
         "@com_google_absl//absl/strings",
-        "@tsl//lib/gtl:map_util",
-        "@tsl//util:device_name_utils",
-        "@tsl//platform:numbers",
-        "@tsl//platform:str_util",
-        "@tsl//platform:strcat",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:status",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:types",
-        "@tsl//protobuf:rpc_options_proto_cc",
+        "//tsl/lib/gtl:map_util",
+        "//tsl/util:device_name_utils",
+        "//tsl/platform:numbers",
+        "//tsl/platform:str_util",
+        "//tsl/platform:strcat",
+        "//tsl/platform:errors",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:status",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:types",
+        "//tsl/protobuf:rpc_options_proto_cc",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -105,12 +105,12 @@ tsl_cc_test(
     ],
     deps = [
         ":grpc_channel",
-        "@tsl//lib/core:status_test_util",
-        "@tsl//platform:strcat",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
-        "@tsl//protobuf:rpc_options_proto_cc_impl",
-        "@tsl//util:device_name_utils",
+        "//tsl/lib/core:status_test_util",
+        "//tsl/platform:strcat",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+        "//tsl/protobuf:rpc_options_proto_cc_impl",
+        "//tsl/util:device_name_utils",
     ],
 )
 
@@ -120,12 +120,12 @@ cc_library(
     deps = [
         ":grpc_client_cq_tag",
         ":grpc_util",
-        "@tsl//distributed_runtime:call_options",
-        "@tsl//platform:errors",
-        "@tsl//platform:status",
-        "@tsl//platform:strcat",
-        "@tsl//platform:env",
-        "@tsl//util:env_var",
+        "//tsl/distributed_runtime:call_options",
+        "//tsl/platform:errors",
+        "//tsl/platform:status",
+        "//tsl/platform:strcat",
+        "//tsl/platform:env",
+        "//tsl/util:env_var",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -134,7 +134,7 @@ cc_library(
     srcs = [],
     hdrs = ["grpc_client_cq_tag.h"],
     deps = [
-        "@tsl//platform:macros",
+        "//tsl/platform:macros",
     ],
 )
 

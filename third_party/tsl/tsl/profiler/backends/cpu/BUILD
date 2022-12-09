@@ -1,7 +1,7 @@
-load("@tsl//platform:build_config_root.bzl", "if_static")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
-load("@tsl//profiler/builds:build_config.bzl", "tf_profiler_copts")
-load("@tsl//platform:build_config.bzl", "tsl_cc_test")
+load("//tsl/platform:build_config_root.bzl", "if_static")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 
 # copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
 
@@ -10,15 +10,15 @@ cc_library(
     hdrs = ["traceme_recorder.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "@tsl//profiler:internal",
-        "@tsl//profiler:xla_profiler_backends",
+        "//tsl/profiler:internal",
+        "//tsl/profiler:xla_profiler_backends",
     ],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:types",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:types",
     ] + if_static([
         ":traceme_recorder_impl",
     ]),
@@ -33,19 +33,19 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = [
         "//third_party/tensorflow/python:__pkg__",
-        "@tsl//platform/cloud:__pkg__",
-        "@tsl//profiler:__pkg__",
-        "@tsl//profiler:internal",
-        "@tsl//profiler:xla_internal",
+        "//tsl/platform/cloud:__pkg__",
+        "//tsl/profiler:__pkg__",
+        "//tsl/profiler:internal",
+        "//tsl/profiler:xla_internal",
     ],
     deps = [
+        "//tsl/platform:env",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:types",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -56,18 +56,18 @@ tsl_cc_test(
     deps = [
         ":traceme_recorder",
         ":traceme_recorder_impl",
+        "//tsl/platform:env",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:logging",
+        "//tsl/platform:notification",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+        "//tsl/platform:types",
+        "//tsl/profiler/utils:math_utils",
+        "//tsl/profiler/utils:time_utils",
+        "//tsl/profiler/utils:time_utils_impl",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:env",
-        "@tsl//platform:env_impl",
-        "@tsl//platform:logging",
-        "@tsl//platform:notification",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
-        "@tsl//platform:types",
-        "@tsl//profiler/utils:math_utils",
-        "@tsl//profiler/utils:time_utils",
-        "@tsl//profiler/utils:time_utils_impl",
     ],
 )
 
@@ -76,12 +76,12 @@ cc_library(
     hdrs = ["annotation_stack.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "@tsl//profiler:internal",
+        "//tsl/profiler:internal",
     ],
     deps = [
         "@com_google_absl//absl/strings",
-        "@tsl//platform:macros",
-        "@tsl//platform:types",
+        "//tsl/platform:macros",
+        "//tsl/platform:types",
     ] + if_static([
         ":annotation_stack_impl",
     ]),
@@ -95,13 +95,13 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = [
+        "//tsl/profiler:internal",
         "//xla/service/gpu/tests:__pkg__",
-        "@tsl//profiler:internal",
     ],
     deps = [
+        "//tsl/platform:macros",
+        "//tsl/platform:types",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:macros",
-        "@tsl//platform:types",
     ],
     alwayslink = True,
 )
@@ -112,17 +112,17 @@ cc_library(
     hdrs = ["host_tracer_utils.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "@tsl//profiler:internal",
-        "@tsl//profiler:xla_internal",
+        "//tsl/profiler:internal",
+        "//tsl/profiler:xla_internal",
     ],
     deps = [
         ":traceme_recorder",
+        "//tsl/platform:types",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
+        "//tsl/profiler/utils:parse_annotation",
+        "//tsl/profiler/utils:tf_op_utils",
+        "//tsl/profiler/utils:xplane_builder",
+        "//tsl/profiler/utils:xplane_utils",
         "@com_google_absl//absl/strings",
-        "@tsl//platform:types",
-        "@tsl//profiler/protobuf:xplane_proto_cc",
-        "@tsl//profiler/utils:parse_annotation",
-        "@tsl//profiler/utils:tf_op_utils",
-        "@tsl//profiler/utils:xplane_builder",
-        "@tsl//profiler/utils:xplane_utils",
     ],
 )

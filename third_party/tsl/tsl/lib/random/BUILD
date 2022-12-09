@@ -1,9 +1,9 @@
 load(
-    "@tsl//platform:build_config.bzl",
+    "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
-load("@tsl//:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -13,9 +13,9 @@ package(
         # tensorflow/core/platform/cloud depends on random.h
         "//third_party/tensorflow/core/platform:__subpackages__",
         # All of the following packages depend on random/simple_philox.h for tests
-        "@tsl//lib/core:__pkg__",
+        "//tsl/lib/core:__pkg__",
         "//third_party/tensorflow/core/lib/gtl:__pkg__",
-        "@tsl//lib/io:__pkg__",
+        "//tsl/lib/io:__pkg__",
         "//third_party/tensorflow/core/lib/strings:__pkg__",
         # tensorflow/core/platform/random aliases this package
         "//third_party/tensorflow/core/lib/random:__pkg__",
@@ -45,10 +45,10 @@ cc_library(
         ":philox_random",
         ":random_distributions_utils",
         "//third_party/eigen3",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:types",
         "@com_google_absl//absl/types:span",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:types",
     ],
     alwayslink = 1,
 )
@@ -81,8 +81,8 @@ cc_library(
     hdrs = ["philox_random_test_utils.h"],
     deps = [
         ":philox_random",
-        "@tsl//platform:logging",
-        "@tsl//platform:random",
+        "//tsl/platform:logging",
+        "//tsl/platform:random",
     ],
 )
 
@@ -92,9 +92,9 @@ cc_library(
     hdrs = ["weighted_picker.h"],
     deps = [
         ":philox",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:types",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:types",
     ],
     alwayslink = 1,
 )
@@ -179,11 +179,11 @@ tsl_cc_test(
     srcs = ["distribution_sampler_test.cc"],
     deps = [
         ":philox",
-        "@tsl//platform:macros",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
-        "@tsl//platform:types",
+        "//tsl/platform:macros",
+        "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
+        "//tsl/platform:test_main",
+        "//tsl/platform:types",
     ],
 )
 
@@ -195,10 +195,10 @@ tsl_cc_test(
         ":philox",
         ":philox_random",
         ":philox_random_test_utils",
-        "@tsl//platform:logging",
-        "@tsl//platform:random",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/platform:logging",
+        "//tsl/platform:random",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
 
@@ -210,11 +210,11 @@ tsl_cc_test(
         ":philox",
         ":philox_random",
         ":philox_random_test_utils",
-        "@tsl//lib/math:math_util",
-        "@tsl//platform:logging",
-        "@tsl//platform:random",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/lib/math:math_util",
+        "//tsl/platform:logging",
+        "//tsl/platform:random",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
 
@@ -224,10 +224,10 @@ tsl_cc_test(
     srcs = ["simple_philox_test.cc"],
     deps = [
         ":philox",
-        "@tsl//platform:logging",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
-        "@tsl//platform:types",
+        "//tsl/platform:logging",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+        "//tsl/platform:types",
     ],
 )
 
@@ -238,11 +238,11 @@ tsl_cc_test(
     deps = [
         ":philox",
         ":weighted_picker",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
-        "@tsl//platform:types",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
+        "//tsl/platform:test_main",
+        "//tsl/platform:types",
     ],
 )

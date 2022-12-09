@@ -25,8 +25,8 @@ limitations under the License.
 #include "xla/runtime/arguments.h"
 #include "xla/runtime/constraints.h"
 #include "xla/runtime/types.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

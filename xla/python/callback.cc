@@ -24,7 +24,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/python/exceptions.h"
 #include "xla/service/custom_call_status.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace py = pybind11;
 

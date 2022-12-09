@@ -18,6 +18,6 @@ xla_cc_binary(
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",
-        "@tsl//protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )

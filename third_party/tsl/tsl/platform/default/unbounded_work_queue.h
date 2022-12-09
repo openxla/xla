@@ -19,9 +19,9 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/notification.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/notification.h"
 
 namespace tsl {
 

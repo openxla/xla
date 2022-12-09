@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/py_buffer.h"
 #include "xla/python/python_utils.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace jax {
 

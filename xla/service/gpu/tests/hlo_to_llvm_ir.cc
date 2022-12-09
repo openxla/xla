@@ -26,9 +26,9 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/tools/hlo_module_loader.h"
-#include "third_party/tsl/platform/init_main.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/util/command_line_flags.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/logging.h"
+#include "tsl/util/command_line_flags.h"
 
 const char* const kUsage = R"(
 This tool reads in an HloModule from a file, compiles it using the NVPTX

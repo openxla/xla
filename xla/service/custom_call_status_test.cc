@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/service/custom_call_status_test_c_caller.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 TEST(XlaCustomCallStatusTest, DefaultIsSuccess) {
   XlaCustomCallStatus status;

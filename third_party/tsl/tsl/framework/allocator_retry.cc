@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/framework/allocator_retry.h"
+#include "tsl/framework/allocator_retry.h"
 
 #include "absl/types/optional.h"
-#include "third_party/tsl/framework/metrics.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/framework/metrics.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

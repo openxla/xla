@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/stream_executor/lib/statusor.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/status_matchers.h"
+#include "tsl/platform/status_matchers.h"
 
 namespace xla {
 namespace gpu {

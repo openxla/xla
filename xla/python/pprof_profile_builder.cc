@@ -20,7 +20,7 @@ limitations under the License.
 #include "xla/python/traceback.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 

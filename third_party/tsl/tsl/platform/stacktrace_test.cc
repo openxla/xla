@@ -14,12 +14,12 @@ limitations under the License.
 ==============================================================================*/
 // Testing proper operation of the stacktrace handler.
 
-#include "third_party/tsl/platform/stacktrace.h"
+#include "tsl/platform/stacktrace.h"
 
 #include <string>
 
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace {

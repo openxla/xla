@@ -18,7 +18,7 @@ limitations under the License.
 #include <algorithm>
 
 #include "absl/container/flat_hash_set.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace xla {
 

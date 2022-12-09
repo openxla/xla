@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/ram_file_block_cache.h"
+#include "tsl/platform/cloud/ram_file_block_cache.h"
 
 #include <cstring>
 #include <memory>
 
 #include "absl/cleanup/cleanup.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/env.h"
 
 namespace tsl {
 

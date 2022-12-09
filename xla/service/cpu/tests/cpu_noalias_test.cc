@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tests/filecheck.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {

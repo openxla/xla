@@ -20,8 +20,8 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
-#include "third_party/tsl/framework/numeric_types.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/framework/numeric_types.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

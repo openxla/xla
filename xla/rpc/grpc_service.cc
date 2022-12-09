@@ -20,7 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "xla/service/platform_util.h"
-#include "third_party/tsl/distributed_runtime/rpc/grpc_util.h"
+#include "tsl/distributed_runtime/rpc/grpc_util.h"
 
 namespace xla {
 

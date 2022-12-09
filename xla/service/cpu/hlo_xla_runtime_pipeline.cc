@@ -50,8 +50,8 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/interfaces/bufferizable_op_interface_impl.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/status.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace cpu {

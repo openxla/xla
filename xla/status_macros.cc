@@ -20,8 +20,8 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/stacktrace.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 namespace status_macros {

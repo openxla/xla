@@ -14,14 +14,14 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/executable_run_options.h"
-#include "third_party/tsl/platform/dynamic_annotations.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/dynamic_annotations.h"
+#include "tsl/platform/types.h"
 #ifdef XLA_CPU_USE_ACL
 #include "absl/base/call_once.h"
 #include "xla/service/cpu/runtime_conv2d.h"
 #include "xla/service/cpu/runtime_conv2d_acl.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 #define EIGEN_USE_THREADS
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 

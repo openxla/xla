@@ -29,7 +29,7 @@ limitations under the License.
 #include "xla/service/hlo_reachability.h"
 #include "xla/status.h"
 #include "xla/statusor.h"
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

@@ -174,14 +174,14 @@ limitations under the License.
 #include "xla/translate/mhlo_to_hlo/location_exporter.h"
 #include "xla/translate/mhlo_to_lhlo_with_xla/mhlo_to_lhlo_with_xla.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/blocking_counter.h"
-#include "third_party/tsl/platform/casts.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/platform/threadpool.h"
-#include "third_party/tsl/profiler/lib/traceme.h"
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/threadpool.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {

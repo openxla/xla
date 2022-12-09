@@ -80,7 +80,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel_cache_config.h"
 #include "xla/stream_executor/lib/array_slice.h"
 #include "xla/stream_executor/platform/port.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace stream_executor {
 

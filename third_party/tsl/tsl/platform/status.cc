@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/status.h"
+#include "tsl/platform/status.h"
 
 #include <stdio.h>
 
@@ -27,12 +27,12 @@ limitations under the License.
 #include "absl/strings/escaping.h"
 #include "absl/strings/match.h"
 #include "absl/types/optional.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/stacktrace.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/stringprintf.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/stacktrace.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/stringprintf.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 namespace tsl {
 namespace error {

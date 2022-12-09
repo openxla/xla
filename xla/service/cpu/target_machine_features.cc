@@ -18,7 +18,7 @@ limitations under the License.
 #include <algorithm>
 
 #include "xla/cpu_function_runtime.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace cpu {

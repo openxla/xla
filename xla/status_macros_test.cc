@@ -21,7 +21,7 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/test.h"
 #include "xla/test_helpers.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 

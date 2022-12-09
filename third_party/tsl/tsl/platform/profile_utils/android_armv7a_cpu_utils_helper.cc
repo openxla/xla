@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/profile_utils/android_armv7a_cpu_utils_helper.h"
+#include "tsl/platform/profile_utils/android_armv7a_cpu_utils_helper.h"
 
 #if defined(__ANDROID__) && (__ANDROID_API__ >= 21) && \
     (defined(__ARM_ARCH_7A__) || defined(__aarch64__))
@@ -29,8 +29,8 @@ limitations under the License.
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/stringprintf.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/stringprintf.h"
 
 namespace tsl {
 namespace profile_utils {

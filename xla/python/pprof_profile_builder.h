@@ -22,7 +22,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "pybind11/pybind11.h"
 #include "xla/statusor.h"
-#include "third_party/tsl/profiler/protobuf/profile.pb.h"
+#include "tsl/profiler/protobuf/profile.pb.h"
 
 namespace xla {
 

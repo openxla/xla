@@ -58,7 +58,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/lib/gtl/map_util.h"
+#include "tsl/lib/gtl/map_util.h"
 
 namespace xla {
 

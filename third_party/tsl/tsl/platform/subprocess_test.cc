@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/subprocess.h"
+#include "tsl/platform/subprocess.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #include <algorithm>
 
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/resource_loader.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/resource_loader.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/test.h"
 
 #ifdef PLATFORM_WINDOWS
 #define WIFEXITED(code) ((code) != 3)

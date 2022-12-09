@@ -1,7 +1,7 @@
 load("//third_party/tensorflow:tensorflow.bzl", "tf_cc_test")
-load("@tsl//:tsl.default.bzl", "get_compatible_with_cloud")
-load("@tsl//platform:build_config.bzl", "tf_platform_deps")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl//tsl/platform:build_config.bzl", "tf_platform_deps")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -38,9 +38,9 @@ tf_cc_test(
         ":arguments",
         ":types",
         "@llvm-project//llvm:Support",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -54,8 +54,8 @@ cc_library(
         "@com_google_absl//absl/status",
         "@tf_runtime//:async_value",
         "@tf_runtime//:ref_count",
-        "@tsl//platform:env",
-        "@tsl//platform:platform_port",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -64,7 +64,7 @@ cc_library(
     hdrs = ["async_values_cache.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "@tsl//platform",
+        "@tsl//tsl/platform",
     ] + tf_platform_deps(
         "async_values_cache",
         platform_dir = "//xla/runtime/",
@@ -121,9 +121,9 @@ tf_cc_test(
         "//xla/mlir/runtime/ir/tests:testlib",
         "//xla/mlir/runtime/transforms:compilation_pipeline_gpu",
         "//xla/mlir/runtime/transforms:custom_call_encoding",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -147,7 +147,7 @@ cc_library(
         ":logical_result",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -157,8 +157,8 @@ tf_cc_test(
     deps = [
         ":diagnostics",
         "@com_google_absl//absl/status",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -217,9 +217,9 @@ tf_cc_test(
         "//xla/mlir/runtime/utils:async_runtime_api",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@llvm-project//mlir:Support",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -277,9 +277,9 @@ tf_cc_test(
         "//xla/runtime/ffi:ffi_c_api_hdrs",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -326,9 +326,9 @@ tf_cc_test(
     srcs = ["map_by_type_test.cc"],
     deps = [
         ":map_by_type",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -338,7 +338,7 @@ cc_library(
     hdrs = ["memory_mapper.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "@tsl//platform",
+        "@tsl//tsl/platform",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:Support",
     ] + tf_platform_deps(
@@ -375,8 +375,8 @@ tf_cc_test(
     deps = [
         ":custom_call",
         ":module",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -397,9 +397,9 @@ tf_cc_test(
         ":logical_result",
         ":results",
         ":types",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -424,9 +424,9 @@ tf_cc_test(
     srcs = ["state_test.cc"],
     deps = [
         ":state",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -455,9 +455,9 @@ tf_cc_test(
         ":symbolic_shape",
         ":types",
         "@llvm-project//llvm:Support",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -511,8 +511,8 @@ tf_cc_test(
     srcs = ["type_id_test.cc"],
     deps = [
         ":type_id",
-        "@tsl//platform:test",
-        "@tsl//platform:test_benchmark",
-        "@tsl//platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )

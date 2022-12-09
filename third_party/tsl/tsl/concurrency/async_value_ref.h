@@ -24,8 +24,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "third_party/tsl/concurrency/async_value.h"
-#include "third_party/tsl/concurrency/ref_count.h"
+#include "tsl/concurrency/async_value.h"
+#include "tsl/concurrency/ref_count.h"
 
 namespace tsl {
 

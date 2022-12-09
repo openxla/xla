@@ -19,9 +19,9 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/types/variant.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/utils/xplane_builder.h"
-#include "third_party/tsl/profiler/utils/xplane_schema.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/utils/xplane_builder.h"
+#include "tsl/profiler/utils/xplane_schema.h"
 
 namespace tsl {
 namespace profiler {

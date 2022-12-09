@@ -16,14 +16,14 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_LOGGING_H_
 #define TENSORFLOW_TSL_PLATFORM_LOGGING_H_
 
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 
 #if defined(PLATFORM_GOOGLE) || defined(PLATFORM_GOOGLE_ANDROID) || \
     defined(PLATFORM_GOOGLE_IOS) || defined(GOOGLE_LOGGING) ||      \
     defined(__EMSCRIPTEN__) || defined(PLATFORM_CHROMIUMOS)
-#include "third_party/tsl/platform/google/logging.h"  // IWYU pragma: export
+#include "tsl/platform/google/logging.h"  // IWYU pragma: export
 #else
-#include "third_party/tsl/platform/default/logging.h"  // IWYU pragma: export
+#include "tsl/platform/default/logging.h"  // IWYU pragma: export
 #endif
 
 #endif  // TENSORFLOW_TSL_PLATFORM_LOGGING_H_

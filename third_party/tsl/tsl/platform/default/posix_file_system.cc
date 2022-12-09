@@ -29,14 +29,14 @@ limitations under the License.
 #include <time.h>
 #include <unistd.h>
 
-#include "third_party/tsl/platform/default/posix_file_system.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/file_system_helper.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/protobuf/error_codes.pb.h"
+#include "tsl/platform/default/posix_file_system.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/file_system_helper.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 namespace tsl {
 

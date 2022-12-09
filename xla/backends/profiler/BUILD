@@ -1,4 +1,4 @@
-load("@tsl//:tsl.bzl", "if_libtpu", "tsl_gpu_library")
+load("@tsl//tsl:tsl.bzl", "if_libtpu", "tsl_gpu_library")
 
 # copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
 

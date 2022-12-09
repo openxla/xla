@@ -18,8 +18,8 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cublas.h"
 #endif
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 // Implements the cuBLAS API by forwarding to cuBLAS loaded from the DSO.
 // Note that it does not implement the v1 interface.
@@ -62,13 +62,13 @@ typedef enum {} cublasMath_t;
 #endif
 
 #if CUDA_VERSION < 10000
-#include "third_party/tsl/cuda/cublas_9_0.inc"
+#include "tsl/cuda/cublas_9_0.inc"
 #elif CUDA_VERSION < 10010
-#include "third_party/tsl/cuda/cublas_10_0.inc"
+#include "tsl/cuda/cublas_10_0.inc"
 #elif CUDA_VERSION < 10020
-#include "third_party/tsl/cuda/cublas_10_1.inc"
+#include "tsl/cuda/cublas_10_1.inc"
 #elif CUDA_VERSION < 11000
-#include "third_party/tsl/cuda/cublas_10_2.inc"
+#include "tsl/cuda/cublas_10_2.inc"
 #else
-#include "third_party/tsl/cuda/cublas_11_0.inc"
+#include "tsl/cuda/cublas_11_0.inc"
 #endif

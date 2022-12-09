@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "third_party/tsl/profiler/utils/math_utils.h"
+#include "tsl/profiler/utils/math_utils.h"
 
 namespace tsl {
 namespace profiler {

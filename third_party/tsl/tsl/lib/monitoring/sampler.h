@@ -18,7 +18,7 @@ limitations under the License.
 
 // clang-format off
 // Required for IS_MOBILE_PLATFORM
-#include "third_party/tsl/platform/platform.h"
+#include "tsl/platform/platform.h"
 // clang-format on
 
 // We replace this implementation with a null implementation for mobile
@@ -27,11 +27,11 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/lib/monitoring/metric_def.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/protobuf/histogram.pb.h"
+#include "tsl/lib/monitoring/metric_def.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/types.h"
+#include "tsl/protobuf/histogram.pb.h"
 
 namespace tsl {
 namespace monitoring {
@@ -118,14 +118,14 @@ class Sampler {
 #include <utility>
 #include <vector>
 
-#include "third_party/tsl/lib/histogram/histogram.h"
-#include "third_party/tsl/lib/monitoring/collection_registry.h"
-#include "third_party/tsl/lib/monitoring/metric_def.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/protobuf/histogram.pb.h"
+#include "tsl/lib/histogram/histogram.h"
+#include "tsl/lib/monitoring/collection_registry.h"
+#include "tsl/lib/monitoring/metric_def.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/protobuf/histogram.pb.h"
 
 namespace tsl {
 namespace monitoring {

@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/io/record_reader.h"
+#include "tsl/lib/io/record_reader.h"
 
 #include <limits.h>
 
-#include "third_party/tsl/lib/hash/crc32c.h"
-#include "third_party/tsl/lib/io/buffered_inputstream.h"
-#include "third_party/tsl/lib/io/compression.h"
-#include "third_party/tsl/lib/io/random_inputstream.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/raw_coding.h"
+#include "tsl/lib/hash/crc32c.h"
+#include "tsl/lib/io/buffered_inputstream.h"
+#include "tsl/lib/io/compression.h"
+#include "tsl/lib/io/random_inputstream.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/raw_coding.h"
 
 namespace tsl {
 namespace io {

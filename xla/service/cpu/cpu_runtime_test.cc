@@ -30,9 +30,9 @@ limitations under the License.
 #include "xla/service/cpu/runtime_single_threaded_matmul.h"
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

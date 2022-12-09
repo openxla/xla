@@ -36,8 +36,8 @@ limitations under the License.
 #include "xla/runtime/jit_executable.h"
 #include "xla/runtime/module.h"
 #include "xla/runtime/state.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

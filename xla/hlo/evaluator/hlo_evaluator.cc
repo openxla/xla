@@ -60,13 +60,13 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
-#include "third_party/tsl/lib/core/bitmap.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/statusor.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/lib/core/bitmap.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/types.h"
 
 namespace xla {
 

@@ -18,9 +18,9 @@ limitations under the License.
 
 #include <stddef.h>
 
-#include "third_party/tsl/platform/cord.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/cord.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace crc32c {

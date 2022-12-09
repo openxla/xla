@@ -80,7 +80,7 @@ def _initialize_third_party():
     vulkan_headers()
     tensorrt()
 
-    native.local_repository(name = "tsl", path = "//third_party/tsl")
+    native.local_repository(name = "tsl", path = "third_party/tsl")
 
 # Toolchains & platforms required by Tensorflow to build.
 def _tf_toolchains():

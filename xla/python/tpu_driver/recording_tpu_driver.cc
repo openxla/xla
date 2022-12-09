@@ -23,8 +23,8 @@
 #include "xla/python/tpu_driver/tpu_driver.h"
 #include "xla/python/tpu_driver/tpu_driver.pb.h"
 #include "xla/python/tpu_driver/tpu_service.grpc.pb.h"
-#include "third_party/tsl/platform/file_system.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/file_system.h"
+#include "tsl/platform/threadpool.h"
 
 /*
  * The ReplayDriver wraps a concrete TpuDriver implementation and records the

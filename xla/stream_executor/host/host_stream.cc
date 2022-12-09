@@ -18,8 +18,8 @@ limitations under the License.
 #include "xla/stream_executor/host/host_stream.h"
 
 #include "absl/synchronization/notification.h"
-#include "third_party/tsl/platform/denormal.h"
-#include "third_party/tsl/platform/setround.h"
+#include "tsl/platform/denormal.h"
+#include "tsl/platform/setround.h"
 
 namespace stream_executor {
 namespace host {

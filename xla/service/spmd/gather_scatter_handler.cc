@@ -34,7 +34,7 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/stream_executor/lib/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace spmd {

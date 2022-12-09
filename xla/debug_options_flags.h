@@ -20,8 +20,8 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "xla/xla.pb.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/util/command_line_flags.h"
+#include "tsl/platform/logging.h"
+#include "tsl/util/command_line_flags.h"
 
 namespace xla {
 

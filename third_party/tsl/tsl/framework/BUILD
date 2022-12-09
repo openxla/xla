@@ -4,17 +4,17 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
-load("@tsl//:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
-    "@tsl//platform:build_config_root.bzl",
+    "//tsl/platform:build_config_root.bzl",
     "if_static",
 )
 load(
-    "@tsl//platform:rules_cc.bzl",
+    "//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 load(
-    "@tsl//platform:build_config.bzl",
+    "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
 
@@ -116,24 +116,24 @@ cc_library(
     ] + if_static(
         extra_deps = [
             ":allocator_registry_impl",
-            "@tsl//lib/gtl:inlined_vector",
-            "@tsl//platform:strcat",
-            "@tsl//platform:stringprintf",
-            "@tsl//platform:env",
-            "@tsl//platform:env_impl",
-            "@tsl//platform:logging",
-            "@tsl//platform:macros",
-            "@tsl//platform:mutex",
-            "@tsl//platform:platform_port",
-            "@tsl//platform:thread_annotations",
-            "@tsl//platform:types",
+            "//tsl/lib/gtl:inlined_vector",
+            "//tsl/platform:strcat",
+            "//tsl/platform:stringprintf",
+            "//tsl/platform:env",
+            "//tsl/platform:env_impl",
+            "//tsl/platform:logging",
+            "//tsl/platform:macros",
+            "//tsl/platform:mutex",
+            "//tsl/platform:platform_port",
+            "//tsl/platform:thread_annotations",
+            "//tsl/platform:types",
         ],
         otherwise = [
-            "@tsl//lib/gtl:inlined_vector",
-            "@tsl//platform:logging",
-            "@tsl//platform:platform_port",
-            "@tsl//platform:strcat",
-            "@tsl//platform:env",
+            "//tsl/lib/gtl:inlined_vector",
+            "//tsl/platform:logging",
+            "//tsl/platform:platform_port",
+            "//tsl/platform:strcat",
+            "//tsl/platform:env",
         ],
     ),
     alwayslink = 1,
@@ -154,25 +154,25 @@ cc_library(
     ],
     visibility = [
         "//third_party/tensorflow/core:__subpackages__",
+        "//tsl:__subpackages__",
         "//xla/stream_executor:__subpackages__",
-        "@tsl//:__subpackages__",
     ],
     deps = [
         ":numeric_types",
         ":type_traits",
+        "//tsl/lib/gtl:inlined_vector",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:platform_port",
+        "//tsl/platform:strcat",
+        "//tsl/platform:stringprintf",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:types",
+        "//tsl/profiler/lib:scoped_memory_debug_annotation",
+        "//tsl/profiler/lib:traceme",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
-        "@tsl//lib/gtl:inlined_vector",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:platform_port",
-        "@tsl//platform:strcat",
-        "@tsl//platform:stringprintf",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:types",
-        "@tsl//profiler/lib:scoped_memory_debug_annotation",
-        "@tsl//profiler/lib:traceme",
     ],
     alwayslink = 1,
 )
@@ -191,26 +191,26 @@ cc_library(
         ":allocator",
         ":metrics",
         ":shared_counter",
+        "//tsl/lib/core:bits",
+        "//tsl/lib/monitoring:counter",
+        "//tsl/lib/monitoring:gauge",
+        "//tsl/platform:env",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:numbers",
+        "//tsl/platform:statusor",
+        "//tsl/platform:str_util",
+        "//tsl/platform:strcat",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:types",
+        "//tsl/profiler/lib:scoped_memory_debug_annotation",
+        "//tsl/profiler/lib:traceme",
+        "//tsl/protobuf:bfc_memory_map_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
-        "@tsl//lib/core:bits",
-        "@tsl//lib/monitoring:counter",
-        "@tsl//lib/monitoring:gauge",
-        "@tsl//platform:env",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:numbers",
-        "@tsl//platform:statusor",
-        "@tsl//platform:str_util",
-        "@tsl//platform:strcat",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:types",
-        "@tsl//profiler/lib:scoped_memory_debug_annotation",
-        "@tsl//profiler/lib:traceme",
-        "@tsl//protobuf:bfc_memory_map_proto_cc",
     ],
 )
 
@@ -232,7 +232,7 @@ cc_library(
         "device_id_manager.h",
     ],
     deps = [
-        "@tsl//platform:types",
+        "//tsl/platform:types",
     ] + if_static([
         ":device_id_impl",
     ]),
@@ -247,13 +247,13 @@ cc_library(
     ],
     deps = [
         ":device_type",
-        "@tsl//lib/gtl:int_type",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:macros",
-        "@tsl//platform:mutex",
-        "@tsl//platform:status",
-        "@tsl//platform:types",
+        "//tsl/lib/gtl:int_type",
+        "//tsl/platform:errors",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:mutex",
+        "//tsl/platform:status",
+        "//tsl/platform:types",
     ],
 )
 
@@ -274,7 +274,7 @@ cc_library(
     ],
     deps = [
         ":fixedpoint_types",
-        "@tsl//platform:types",
+        "//tsl/platform:types",
     ],
 )
 
@@ -284,7 +284,7 @@ cc_library(
     features = ["parse_headers"],
     visibility = ["//visibility:public"],
     deps = [
-        "@tsl//platform:types",
+        "//tsl/platform:types",
     ],
 )
 
@@ -293,7 +293,7 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = [
-        "@tsl//lib/monitoring:counter",
+        "//tsl/lib/monitoring:counter",
     ],
 )
 
@@ -315,7 +315,7 @@ cc_library(
     ],
     deps = [
         ":numeric_types",
-        "@tsl//platform:types",
+        "//tsl/platform:types",
     ],
 )
 
@@ -337,17 +337,17 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        "//tsl/lib/gtl:flatmap",
+        "//tsl/platform:errors",
+        "//tsl/platform:hash",
+        "//tsl/platform:logging",
+        "//tsl/platform:mutex",
+        "//tsl/platform:notification",
+        "//tsl/platform:status",
+        "//tsl/platform:stringpiece",
+        "//tsl/platform:thread_annotations",
+        "//tsl/platform:types",
         "@com_google_absl//absl/memory",
-        "@tsl//lib/gtl:flatmap",
-        "@tsl//platform:errors",
-        "@tsl//platform:hash",
-        "@tsl//platform:logging",
-        "@tsl//platform:mutex",
-        "@tsl//platform:notification",
-        "@tsl//platform:status",
-        "@tsl//platform:stringpiece",
-        "@tsl//platform:thread_annotations",
-        "@tsl//platform:types",
     ],
 )
 
@@ -357,12 +357,12 @@ tsl_cc_test(
     srcs = ["cancellation_test.cc"],
     deps = [
         ":cancellation",
-        "@tsl//platform:env",
-        "@tsl//platform:env_impl",
-        "@tsl//platform:notification",
-        "@tsl//platform:status",
-        "@tsl//platform:test",
-        "@tsl//platform:test_main",
+        "//tsl/platform:env",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:notification",
+        "//tsl/platform:status",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
 

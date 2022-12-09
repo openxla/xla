@@ -70,7 +70,7 @@ limitations under the License.
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/platform/tensor_float_32_utils.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace stream_executor {
 namespace cuda {

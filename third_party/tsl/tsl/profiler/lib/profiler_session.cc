@@ -13,29 +13,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/lib/profiler_session.h"
 
 #include <memory>
 #include <utility>
 
 #include "absl/memory/memory.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/platform.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/protobuf/profiler_options.pb.h"
-#include "third_party/tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 #if !defined(IS_MOBILE_PLATFORM)
-#include "third_party/tsl/platform/host_info.h"
-#include "third_party/tsl/profiler/convert/post_process_single_host_xplane.h"
-#include "third_party/tsl/profiler/lib/profiler_collection.h"
-#include "third_party/tsl/profiler/lib/profiler_factory.h"
-#include "third_party/tsl/profiler/lib/profiler_interface.h"
-#include "third_party/tsl/profiler/lib/profiler_lock.h"
-#include "third_party/tsl/profiler/utils/time_utils.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/profiler/convert/post_process_single_host_xplane.h"
+#include "tsl/profiler/lib/profiler_collection.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "tsl/profiler/lib/profiler_lock.h"
+#include "tsl/profiler/utils/time_utils.h"
 #endif
 
 namespace tsl {

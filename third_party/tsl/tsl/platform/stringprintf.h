@@ -26,8 +26,8 @@ limitations under the License.
 
 #include <string>
 
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace strings {

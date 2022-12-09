@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/cloud/gcs_dns_cache.h"
+#include "tsl/platform/cloud/gcs_dns_cache.h"
 
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 

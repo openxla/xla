@@ -18,11 +18,11 @@ limitations under the License.
 
 #include <unordered_map>
 
-#include "third_party/tsl/framework/allocator.h"
-#include "third_party/tsl/lib/gtl/inlined_vector.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/thread_annotations.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/framework/allocator.h"
+#include "tsl/lib/gtl/inlined_vector.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

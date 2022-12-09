@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/path.h"
+#include "tsl/platform/path.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -29,11 +29,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/scanner.h"
-#include "third_party/tsl/platform/strcat.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/scanner.h"
+#include "tsl/platform/strcat.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 namespace io {

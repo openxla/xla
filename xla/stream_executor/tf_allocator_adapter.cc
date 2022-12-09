@@ -19,7 +19,7 @@ limitations under the License.
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace stream_executor {
 

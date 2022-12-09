@@ -12,7 +12,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/numbers.h"
+#include "tsl/platform/numbers.h"
 
 #include <ctype.h>
 #include <float.h>
@@ -27,11 +27,11 @@ limitations under the License.
 #include <unordered_map>
 
 #include "double-conversion/double-conversion.h"
-#include "third_party/tsl/platform/str_util.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/stringprintf.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/str_util.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/stringprintf.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

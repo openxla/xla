@@ -17,8 +17,8 @@ limitations under the License.
 // have explicit linking to libcuda.
 
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/tsl/platform/dso_loader.h"
-#include "third_party/tsl/platform/env.h"
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
 
 namespace {
 void *GetDsoHandle() {
@@ -51,17 +51,17 @@ cudaError_t GetSymbolNotFoundError() {
 
 // A bunch of new symbols were introduced in version 10
 #if CUDART_VERSION < 10000
-#include "third_party/tsl/cuda/cuda_runtime_9_0.inc"
+#include "tsl/cuda/cuda_runtime_9_0.inc"
 #elif CUDART_VERSION < 10010
-#include "third_party/tsl/cuda/cuda_runtime_10_0.inc"
+#include "tsl/cuda/cuda_runtime_10_0.inc"
 #elif CUDART_VERSION < 10020
-#include "third_party/tsl/cuda/cuda_runtime_10_1.inc"
+#include "tsl/cuda/cuda_runtime_10_1.inc"
 #elif CUDART_VERSION < 11000
-#include "third_party/tsl/cuda/cuda_runtime_10_2.inc"
+#include "tsl/cuda/cuda_runtime_10_2.inc"
 #elif CUDART_VERSION < 11020
-#include "third_party/tsl/cuda/cuda_runtime_11_0.inc"
+#include "tsl/cuda/cuda_runtime_11_0.inc"
 #else
-#include "third_party/tsl/cuda/cuda_runtime_11_2.inc"
+#include "tsl/cuda/cuda_runtime_11_2.inc"
 #endif
 #undef __dv
 #undef __CUDA_DEPRECATED

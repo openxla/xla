@@ -12,16 +12,16 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "third_party/tsl/lib/strings/proto_serialization.h"
+#include "tsl/lib/strings/proto_serialization.h"
 
 #include <cstring>
 
 #include "absl/memory/memory.h"
 #include "absl/strings/string_view.h"
-#include "third_party/tsl/lib/gtl/inlined_vector.h"
-#include "third_party/tsl/platform/hash.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/macros.h"
+#include "tsl/lib/gtl/inlined_vector.h"
+#include "tsl/platform/hash.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
 
 namespace tsl {
 namespace {

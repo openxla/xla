@@ -18,11 +18,11 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/tsl/platform/cloud/auth_provider.h"
-#include "third_party/tsl/platform/cloud/compute_engine_metadata_client.h"
-#include "third_party/tsl/platform/cloud/oauth_client.h"
-#include "third_party/tsl/platform/mutex.h"
-#include "third_party/tsl/platform/thread_annotations.h"
+#include "tsl/platform/cloud/auth_provider.h"
+#include "tsl/platform/cloud/compute_engine_metadata_client.h"
+#include "tsl/platform/cloud/oauth_client.h"
+#include "tsl/platform/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 

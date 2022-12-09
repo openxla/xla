@@ -27,7 +27,7 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/numbers.h"
+#include "tsl/platform/numbers.h"
 
 namespace xla {
 namespace {

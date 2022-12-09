@@ -25,10 +25,10 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/statusor.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/init_main.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/protobuf.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace tools {

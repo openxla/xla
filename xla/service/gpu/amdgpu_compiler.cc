@@ -38,7 +38,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/tuple_simplifier.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
-#include "third_party/tsl/platform/rocm_rocdl_path.h"
+#include "tsl/platform/rocm_rocdl_path.h"
 
 namespace xla {
 namespace gpu {

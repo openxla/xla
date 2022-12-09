@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/profiler/utils/xplane_schema.h"
+#include "tsl/profiler/utils/xplane_schema.h"
 
 #include <cstdint>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
-#include "third_party/tsl/lib/gtl/map_util.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/types.h"
-#include "third_party/tsl/profiler/utils/tf_op_utils.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/types.h"
+#include "tsl/profiler/utils/tf_op_utils.h"
 
 namespace tsl {
 namespace profiler {

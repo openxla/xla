@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/random/simple_philox.h"
+#include "tsl/lib/random/simple_philox.h"
 
-#include "third_party/tsl/lib/random/exact_uniform_int.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/lib/random/exact_uniform_int.h"
+#include "tsl/platform/logging.h"
 
 namespace tsl {
 namespace random {

@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/framework/tracking_allocator.h"
+#include "tsl/framework/tracking_allocator.h"
 
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
 
 namespace tsl {
 

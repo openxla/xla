@@ -22,15 +22,15 @@ limitations under the License.
 #include <vector>
 
 #include <curl/curl.h>
-#include "third_party/tsl/lib/core/status_test_util.h"
-#include "third_party/tsl/platform/cloud/curl_http_request.h"
-#include "third_party/tsl/platform/errors.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/cloud/curl_http_request.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

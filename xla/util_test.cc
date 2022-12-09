@@ -25,7 +25,7 @@ limitations under the License.
 
 #include "xla/test.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace {

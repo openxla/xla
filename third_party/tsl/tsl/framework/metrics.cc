@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/framework/metrics.h"
+#include "tsl/framework/metrics.h"
 
 #include <cstdint>
 
-#include "third_party/tsl/lib/monitoring/counter.h"
+#include "tsl/lib/monitoring/counter.h"
 
 namespace tsl {
 namespace metrics {

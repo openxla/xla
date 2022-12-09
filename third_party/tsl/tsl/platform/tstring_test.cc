@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/tstring.h"
+#include "tsl/platform/tstring.h"
 
 #include <memory>
 #include <string>
 
-#include "third_party/tsl/platform/cord.h"
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/cord.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/test.h"
 
 using ::tsl::tstring;
 

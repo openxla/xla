@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {

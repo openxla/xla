@@ -32,7 +32,7 @@ limitations under the License.
 #include "xla/tests/test_macros.h"
 #include "xla/tests/test_utils.h"
 #include "xla/xla_data.pb.h"
-#include "third_party/tsl/lib/core/status_test_util.h"
+#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {

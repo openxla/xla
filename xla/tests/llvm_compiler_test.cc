@@ -27,7 +27,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/verified_hlo_module.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

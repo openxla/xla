@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/service/graphcycles/ordered_set.h"
 
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace tensorflow {
 namespace {

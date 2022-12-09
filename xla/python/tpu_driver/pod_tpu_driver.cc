@@ -23,8 +23,8 @@
 #include "xla/python/tpu_driver/grpc_tpu_driver.h"
 #include "xla/python/tpu_driver/tpu_driver.h"
 #include "xla/python/tpu_driver/tpu_driver.pb.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
 
 namespace tpu_driver {
 namespace {

@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/lib/core/bitmap.h"
+#include "tsl/lib/core/bitmap.h"
 
-#include "third_party/tsl/lib/random/simple_philox.h"
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/lib/random/simple_philox.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/test.h"
 
 namespace tsl {
 namespace core {

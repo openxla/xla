@@ -24,7 +24,7 @@ limitations under the License.
 #include "xla/service/cpu/test_target_triple_helper.h"
 #include "xla/service/cpu/tests/cpu_codegen_test.h"
 #include "xla/tests/test_utils.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {

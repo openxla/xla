@@ -36,9 +36,9 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "xla/types.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/numbers.h"
-#include "third_party/tsl/platform/stacktrace.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/stacktrace.h"
 
 namespace xla {
 

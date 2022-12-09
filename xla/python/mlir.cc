@@ -33,7 +33,7 @@ limitations under the License.
 #include "xla/python/types.h"
 #include "xla/status.h"
 #include "xla/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
-#include "third_party/tsl/platform/errors.h"
+#include "tsl/platform/errors.h"
 
 namespace py = pybind11;
 

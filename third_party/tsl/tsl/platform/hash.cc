@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/tsl/platform/hash.h"
+#include "tsl/platform/hash.h"
 
 #include <string.h>
 
-#include "third_party/tsl/platform/macros.h"
-#include "third_party/tsl/platform/raw_coding.h"
-#include "third_party/tsl/platform/types.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/raw_coding.h"
+#include "tsl/platform/types.h"
 
 namespace tsl {
 

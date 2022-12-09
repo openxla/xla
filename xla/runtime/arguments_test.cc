@@ -20,7 +20,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

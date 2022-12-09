@@ -21,11 +21,11 @@ limitations under the License.
 
 #include "grpcpp/grpcpp.h"
 #include "grpcpp/support/byte_buffer.h"
-#include "third_party/tsl/platform/protobuf.h"
-#include "third_party/tsl/platform/status.h"
-#include "third_party/tsl/platform/stringpiece.h"
-#include "third_party/tsl/platform/stringprintf.h"
-#include "third_party/tsl/protobuf/distributed_runtime_payloads.pb.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/stringprintf.h"
+#include "tsl/protobuf/distributed_runtime_payloads.pb.h"
 
 namespace tsl {
 

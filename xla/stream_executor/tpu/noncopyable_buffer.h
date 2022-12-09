@@ -25,8 +25,8 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/types/optional.h"
 #include "absl/types/span.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/mem.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/mem.h"
 
 namespace tensorflow {
 namespace tpu {

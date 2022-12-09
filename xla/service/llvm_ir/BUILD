@@ -1,8 +1,8 @@
 # Description:
 #    Libraries for helping construct LLVM IR for XLA backends.
 
-load("@tsl//:tsl.default.bzl", "filegroup")
-load("@tsl//platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//third_party/tensorflow:tensorflow.bzl",
     "tf_cc_test",
@@ -45,7 +45,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -59,7 +59,7 @@ tf_cc_test(
         "//xla/service:hlo_parser",
         "//xla/service/cpu/tests:cpu_codegen_test",
         "//xla/tests:filecheck",
-        "@tsl//platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -88,9 +88,9 @@ cc_library(
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//mlir:IR",
-        "@tsl//platform:env",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -110,7 +110,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -131,7 +131,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -149,7 +149,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -167,9 +167,9 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:protobuf",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -190,9 +190,9 @@ cc_library(
         "//xla/service:fusion_node_indexing_evaluation",
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:errors",
-        "@tsl//platform:logging",
-        "@tsl//platform:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -233,7 +233,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
-        "@tsl//platform:status",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -250,7 +250,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
-        "@tsl//platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 

@@ -22,10 +22,10 @@ limitations under the License.
 
 #include "absl/strings/str_join.h"
 #include "xla/test_helpers.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/logging.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/platform/test.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

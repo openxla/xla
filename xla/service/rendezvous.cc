@@ -17,7 +17,7 @@ limitations under the License.
 
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 

@@ -15,8 +15,8 @@ limitations under the License.
 
 #include "xla/runtime/map_by_type.h"
 
-#include "third_party/tsl/platform/test.h"
-#include "third_party/tsl/platform/test_benchmark.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace runtime {

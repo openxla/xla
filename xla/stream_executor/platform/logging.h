@@ -17,7 +17,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_LOGGING_H_
 
 #include "xla/stream_executor/platform/port.h"
-#include "third_party/tsl/platform/logging.h"
+#include "tsl/platform/logging.h"
 
 #if !(defined(PLATFORM_GOOGLE) || defined(PLATFORM_GOOGLE_ANDROID) || \
       defined(PLATFORM_GOOGLE_IOS) || defined(GOOGLE_LOGGING) ||      \

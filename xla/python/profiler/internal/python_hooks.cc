@@ -19,12 +19,12 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
-#include "third_party/tsl/platform/env.h"
-#include "third_party/tsl/platform/path.h"
-#include "third_party/tsl/profiler/utils/time_utils.h"
-#include "third_party/tsl/profiler/utils/xplane_builder.h"
-#include "third_party/tsl/profiler/utils/xplane_schema.h"
-#include "third_party/tsl/profiler/utils/xplane_utils.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/utils/time_utils.h"
+#include "tsl/profiler/utils/xplane_builder.h"
+#include "tsl/profiler/utils/xplane_schema.h"
+#include "tsl/profiler/utils/xplane_utils.h"
 
 namespace xla {
 namespace profiler {

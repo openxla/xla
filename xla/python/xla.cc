@@ -22,7 +22,7 @@ limitations under the License.
 // clang-format off
 // Must be included first
 #include "xla/python/py_client.h"
-#include "third_party/tsl/python/lib/core/numpy.h"  //NOLINT
+#include "tsl/python/lib/core/numpy.h"  //NOLINT
 // clang-format on
 
 #include "absl/strings/str_format.h"
@@ -84,8 +84,8 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/tpu/pjrt_api.h"
 #include "xla/util.h"
-#include "third_party/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
-#include "third_party/tsl/python/lib/core/bfloat16.h"
+#include "tsl/distributed_runtime/preemption/preemption_sync_manager.h"
+#include "tsl/python/lib/core/bfloat16.h"
 
 // TODO(phawkins): remove host_id properties after JAX is update to avoid them.
 

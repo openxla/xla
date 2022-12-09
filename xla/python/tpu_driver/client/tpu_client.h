@@ -36,7 +36,7 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
-#include "third_party/tsl/platform/threadpool.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 
