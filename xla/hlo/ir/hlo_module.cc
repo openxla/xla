@@ -855,12 +855,12 @@ std::vector<HloComputation*> HloModule::MakeComputationSorted(
 
 std::vector<HloComputation*> HloModule::MakeNonfusionComputations(
     const absl::flat_hash_set<absl::string_view>& execution_threads) const {
-  std::vector<HloComputation*> result =
-      MakeComputationPostOrder(execution_threads);
-  result.erase(std::remove_if(
-                   result.begin(), result.end(),
-                   [](HloComputation* c) { return c->IsFusionComputation(); }),
-               result.end());
+  std::vector<HloComputation*> result;
+  for (const auto& comp : computations(execution_threads)) {
+    if (!comp->IsFusionComputation()) {
+      result.push_back(comp);
+    }
+  }
   return result;
 }
 

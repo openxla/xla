@@ -709,11 +709,10 @@ class HloComputation {
   // Internal helper to collect unreachable roots.
   std::vector<HloInstruction*> CollectUnreachableRoots() const;
 
-  enum VisitState { kVisiting, kVisited };
+  enum VisitState { kNotVisited, kVisiting, kVisited };
   void ComputeInstructionPostOrder(
       HloInstruction* root,
       HloComputation::ChannelDependencyGroup& channel_dependencies,
-      absl::flat_hash_map<HloInstruction*, VisitState>& visited,
       std::vector<HloInstruction*>& post_order) const;
 
   Status RemoveUnusedParametersImpl(bool allow_non_fusion);
@@ -736,6 +735,13 @@ class HloComputation {
   // need to regard such computations as fusion computations for HLO scheduling
   // purposes.
   bool is_fusion_computation_;
+
+  // True if this computation ever contained an instruction with a channel_id().
+  // (That is, this is set to true when the first such instruction is added, and
+  // it's never set to false.)  This is used as an optimization in
+  // ComputeChannelDependencies() -- we don't have to do anything if there are
+  // no relevant instructions.
+  bool may_contain_channel_id_instrs_ = false;
 
   // If this computation is a custom-call computation, this field points to the
   // corresponding custom-call instruction (if it is live). Otherwise, this is

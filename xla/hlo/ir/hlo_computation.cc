@@ -53,8 +53,27 @@ limitations under the License.
 #include "third_party/tsl/platform/status.h"
 
 namespace xla {
-
+namespace {
 using absl::StrCat;
+
+std::optional<int64_t> GetChannelId(const HloInstruction& inst) {
+  // Note that we only include Send and RecvDone, as we want to create a
+  // dependency between those, but not SendDone and Recv.
+  switch (inst.opcode()) {
+    case HloOpcode::kSend:
+    case HloOpcode::kRecvDone:
+    case HloOpcode::kAllReduce:
+    case HloOpcode::kAllGather:
+    case HloOpcode::kAllToAll:
+    case HloOpcode::kCollectivePermute:
+    case HloOpcode::kReduceScatter:
+      return inst.channel_id();
+    default:
+      return std::nullopt;
+  }
+}
+
+}  // namespace
 
 std::unique_ptr<HloComputation> HloComputation::Builder::Build(
     HloInstruction* root_instruction) {
@@ -144,6 +163,9 @@ HloInstruction* HloComputation::AddInstructionInternal(
     instruction->SetUniqueId(parent()->NewUniqueInstructionId());
   }
   instruction->set_parent(this);
+  if (GetChannelId(*instruction) != std::nullopt) {
+    may_contain_channel_id_instrs_ = true;
+  }
   HloInstruction* pinst = instruction.get();
   instruction_iterators_[pinst] =
       instructions_.insert(instructions_.end(), std::move(instruction));
@@ -424,61 +446,51 @@ void ComputeComputationPostOrder(HloComputation* computation,
   }
 }
 
-std::optional<int64_t> GetChannelId(const HloInstruction& inst) {
-  // Note that we only include Send and RecvDone, as we want to create a
-  // dependency between those, but not SendDone and Recv.
-  switch (inst.opcode()) {
-    case HloOpcode::kSend:
-    case HloOpcode::kRecvDone:
-    case HloOpcode::kAllReduce:
-    case HloOpcode::kAllGather:
-    case HloOpcode::kAllToAll:
-    case HloOpcode::kCollectivePermute:
-    case HloOpcode::kReduceScatter:
-      return inst.channel_id();
-    default:
-      return std::nullopt;
-  }
-}
-
 }  // namespace
 
 void HloComputation::ComputeInstructionPostOrder(
     HloInstruction* root,
     HloComputation::ChannelDependencyGroup& channel_dependencies,
-    absl::flat_hash_map<HloInstruction*, VisitState>& visited,
     std::vector<HloInstruction*>& post_order) const {
   std::vector<HloInstruction*> dfs_stack = {root};
+  dfs_stack.reserve(instruction_count());
   while (!dfs_stack.empty()) {
     HloInstruction& current = *dfs_stack.back();
 
-    auto result = visited.insert({&current, kVisiting});
-    if (!result.second) {  // We've already seen this instruction.
-      dfs_stack.pop_back();
-      if (result.first->second != kVisited) {
+    switch (static_cast<VisitState>(current.visit_state_)) {
+      case kNotVisited:
+        current.visit_state_ = kVisiting;
+        break;
+      case kVisiting:
         DCHECK_EQ(current.parent(), this)
             << "Instruction " << current.name()
             << " is not in the current computation (" << name() << ").";
         post_order.push_back(&current);
-        result.first->second = kVisited;
-      }
-      continue;
+        current.visit_state_ = kVisited;
+        dfs_stack.pop_back();
+        continue;
+      case kVisited:
+        dfs_stack.pop_back();
+        continue;
     }
 
     // Add channel dependencies.
-    // A RecvDone op must be preceded by the corresponding Send op.
-    // Collectives with the same channel ID must be performed together, as these
-    // represent MPMD-partitioned that will later be split into separate modules
-    // and the order must be preserved.
-    std::optional<int64_t> channel_id =
-        ((&current != root) && (current.opcode() != HloOpcode::kSend))
-            ? GetChannelId(current)
-            : std::nullopt;
-    if (channel_id) {
-      auto it = channel_dependencies.find(*channel_id);
-      if (it != channel_dependencies.end()) {
-        dfs_stack.insert(dfs_stack.end(), it->second.begin(), it->second.end());
-        channel_dependencies.erase(it);
+    // - A RecvDone op must be preceded by the corresponding Send op.
+    // - Collectives with the same channel ID must be performed together, as
+    //   these represent MPMD-partitioned that will later be split into separate
+    //   modules and the order must be preserved.
+    if (may_contain_channel_id_instrs_) {
+      std::optional<int64_t> channel_id =
+          ((&current != root) && (current.opcode() != HloOpcode::kSend))
+              ? GetChannelId(current)
+              : std::nullopt;
+      if (channel_id) {
+        auto it = channel_dependencies.find(*channel_id);
+        if (it != channel_dependencies.end()) {
+          dfs_stack.insert(dfs_stack.end(), it->second.begin(),
+                           it->second.end());
+          channel_dependencies.erase(it);
+        }
       }
     }
 
@@ -496,6 +508,14 @@ void HloComputation::ComputeInstructionPostOrder(
 
 HloComputation::ChannelDependencyGroup
 HloComputation::ComputeChannelDependencies() const {
+  if (!may_contain_channel_id_instrs_) {
+#ifndef NDEBUG
+    for (const auto& instruction : instructions_) {
+      CHECK(GetChannelId(*instruction) == std::nullopt);
+    }
+#endif
+    return {};
+  }
   if (parent() && parent()->config().has_static_device_assignment() &&
       (parent()->config().static_device_assignment().computation_count() == 1 ||
        parent()->config().use_spmd_partitioning())) {
@@ -515,16 +535,31 @@ std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder() const {
   ChannelDependencyGroup channel_dependencies = ComputeChannelDependencies();
   std::vector<HloInstruction*> post_order;
   post_order.reserve(instruction_count());
-  absl::flat_hash_map<HloInstruction*, VisitState> visited;
-  visited.reserve(instruction_count());
-  for (auto& instruction : instructions_) {
-    if (instruction->users().empty()) {
-      ComputeInstructionPostOrder(instruction.get(), channel_dependencies,
-                                  visited, post_order);
+
+  // Common case: No dead instructions.  In this case, we need only iterate
+  // starting at the root.
+  ComputeInstructionPostOrder(root_instruction(), channel_dependencies,
+                              post_order);
+
+  // If this missed anything, find dead instructions, which are also effectively
+  // roots for the purposes of our postorder iteration.
+  if (post_order.size() != instructions_.size()) {
+    for (auto& instruction : instructions_) {
+      if (instruction->users().empty() &&
+          instruction.get() != root_instruction()) {
+        ComputeInstructionPostOrder(instruction.get(), channel_dependencies,
+                                    post_order);
+      }
     }
   }
   CHECK_EQ(instructions_.size(), post_order.size())
       << "number of instructions does not match post order size";
+
+  // Clear visited state.
+  for (HloInstruction* instr : post_order) {
+    instr->visit_state_ = kNotVisited;
+  }
+
   return post_order;
 }
 
