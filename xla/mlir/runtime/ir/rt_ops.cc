@@ -62,7 +62,7 @@ LogicalResult ExportOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 Optional<unsigned> ExportOp::ordinal() {
   if (auto ordinal = getOrdinal()) return ordinal->getLimitedValue();
-  return llvm::None;
+  return std::nullopt;
 }
 
 FunctionOpInterface ExportOp::exported(mlir::SymbolTable &sym_table) {

@@ -87,7 +87,7 @@ struct LoopToSCFPattern : public OpRewritePattern<LoopOp> {
     };
 
     if (parIVs.empty()) {
-      generateForLoopNestAndCloneBody(rewriter, loc, llvm::None);
+      generateForLoopNestAndCloneBody(rewriter, loc, std::nullopt);
     } else {
       rewriter.create<scf::ParallelOp>(loc, parLBs, parUBs, parSteps,
                                        generateForLoopNestAndCloneBody);

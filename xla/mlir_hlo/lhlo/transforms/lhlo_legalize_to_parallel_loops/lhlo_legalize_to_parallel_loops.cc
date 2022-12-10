@@ -208,7 +208,7 @@ class ReduceOpConverter : public OpConversionPattern<lmhlo::ReduceOp> {
         createReduceOpInNestedParallelLoops(reduceOp, &rewriter);
     convertToReductionOperator(reduceOp.getLoc(), scfReduceOp,
                                &reduceOp.getBody().front(), &rewriter);
-    rewriter.replaceOp(reduceOp, llvm::None);
+    rewriter.replaceOp(reduceOp, std::nullopt);
     return success();
   }
 
@@ -384,7 +384,7 @@ class ReduceWindowOpConverter
 
     convertToReductionOperator(reduceWindowOp.getLoc(), reduceOp,
                                &reduceWindowOp.getBody().front(), &rewriter);
-    rewriter.replaceOp(reduceWindowOp, llvm::None);
+    rewriter.replaceOp(reduceWindowOp, std::nullopt);
     return success();
   }
 
@@ -519,7 +519,7 @@ class SelectAndScatterOpConverter
                                   &sAndSOp.getScatter().front(), &rmwBuilder);
     rmwBuilder.create<memref::AtomicYieldOp>(loc, accResult);
 
-    rewriter.replaceOp(sAndSOp, llvm::None);
+    rewriter.replaceOp(sAndSOp, std::nullopt);
     return success();
   }
 

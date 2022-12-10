@@ -151,7 +151,7 @@ struct CustomCallOpInterface
     }
 
     auto lhloOp = rewriter.create<lmhlo::CustomCallOp>(
-        op->getLoc(), llvm::None, bufferArgs, op->getAttrs());
+        op->getLoc(), std::nullopt, bufferArgs, op->getAttrs());
     if (targetMapping) lhloOp.setTargetArgMappingAttr(targetMapping);
     // lmhlo.custom_call uses a segment_size attribute to tell input from output
     // arguments.
@@ -183,7 +183,7 @@ struct InfeedOpInterface
       bufferArgs.push_back(rewriter.create<bufferization::ToMemrefOp>(
           op->getLoc(), memrefType, *tensorAlloc));
     }
-    rewriter.create<lmhlo::InfeedOp>(op->getLoc(), llvm::None, bufferArgs,
+    rewriter.create<lmhlo::InfeedOp>(op->getLoc(), std::nullopt, bufferArgs,
                                      op->getAttrs());
     // Pass the token along.
     bufferArgs.push_back((op->getOperand(0)));
@@ -216,8 +216,8 @@ struct OutfeedOpInterface
     FailureOr<Value> operandBuffer =
         getBuffer(rewriter, op->getOperand(0), options);
     if (failed(operandBuffer)) return failure();
-    rewriter.create<lmhlo::OutfeedOp>(op->getLoc(), llvm::None, *operandBuffer,
-                                      op->getAttrs());
+    rewriter.create<lmhlo::OutfeedOp>(op->getLoc(), std::nullopt,
+                                      *operandBuffer, op->getAttrs());
     bufferization::replaceOpWithBufferizedValues(rewriter, op,
                                                  {op->getOperand(1)});
     return success();
