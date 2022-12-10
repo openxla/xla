@@ -18,7 +18,7 @@ cc_library(
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:mlir_async_runtime_api",
-        "@tsl//tsl/concurrency:async_value",
+        "@tf_runtime//:async_value",
         "@tsl//tsl/platform:platform_port",
     ],
 )
