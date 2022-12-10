@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <optional>
+
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -46,7 +48,7 @@ StatusOr<unsigned> GetTargetVectorRegisterByteSize(std::string triple) {
   std::unique_ptr<llvm::TargetMachine> target_machine =
       absl::WrapUnique(target->createTargetMachine(
           /*TT=*/triple, /*CPU=*/"", /*Features=*/"", llvm::TargetOptions{},
-          /*RM=*/llvm::None));
+          /*RM=*/std::nullopt));
   cpu::LLVMTargetMachineFeatures target_machine_features(target_machine.get());
   return target_machine_features.vector_register_byte_size(*function);
 }

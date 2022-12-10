@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/mlir/runtime/ir/rt_ops.h"  // IWYU pragma: keep
 
 #include <iterator>
+#include <optional>
 
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/STLExtras.h"
@@ -62,7 +63,7 @@ LogicalResult ExportOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 Optional<unsigned> ExportOp::ordinal() {
   if (auto ordinal = getOrdinal()) return ordinal->getLimitedValue();
-  return llvm::None;
+  return std::nullopt;
 }
 
 FunctionOpInterface ExportOp::exported(mlir::SymbolTable &sym_table) {

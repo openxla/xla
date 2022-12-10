@@ -258,7 +258,7 @@ template <typename OpType>
 OpType LhloDialectEmitter::CreateOpWithoutAttrs(const HloInstruction* instr,
                                                 ValueRange operands) {
   Location loc = getLocation(instr);
-  return builder_.create<OpType>(loc, llvm::None, operands,
+  return builder_.create<OpType>(loc, std::nullopt, operands,
                                  llvm::ArrayRef<NamedAttribute>{});
 }
 
@@ -1325,7 +1325,7 @@ LhloDialectEmitter::EmitAllReduceDoneOp(const HloInstruction* instr) {
   }
   // We don't need to add buffers for the outputs, as these always alias inputs.
   return builder_.create<lmhlo_gpu::AllReduceDoneOp>(
-      getLocation(instr), /*resultTypes=*/llvm::None, operands);
+      getLocation(instr), /*resultTypes=*/std::nullopt, operands);
 }
 
 tsl::StatusOr<lmhlo::ReduceScatterOp> LhloDialectEmitter::EmitReduceScatterOp(

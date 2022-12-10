@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef MLIR_HLO_DIALECT_MHLO_TRANSFORMS_MAP_MHLO_TO_SCALAR_OP_H
 #define MLIR_HLO_DIALECT_MHLO_TRANSFORMS_MAP_MHLO_TO_SCALAR_OP_H
 
+#include <optional>
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -342,7 +344,7 @@ inline Value mapMhloOpToStdScalarOp<mhlo::CbrtOp>(Location loc,
 template <typename PredicateType>
 inline Optional<PredicateType> getCmpPredicate(mhlo::ComparisonDirection,
                                                bool) {
-  return llvm::None;
+  return std::nullopt;
 }
 
 template <>
@@ -357,7 +359,7 @@ inline Optional<arith::CmpFPredicate> getCmpPredicate<arith::CmpFPredicate>(
       .Case("GT", arith::CmpFPredicate::OGT)
       .Case("LE", arith::CmpFPredicate::OLE)
       .Case("LT", arith::CmpFPredicate::OLT)
-      .Default(llvm::None);
+      .Default(std::nullopt);
 }
 
 template <>
@@ -375,7 +377,7 @@ inline Optional<arith::CmpIPredicate> getCmpPredicate<arith::CmpIPredicate>(
             isSigned ? arith::CmpIPredicate::sle : arith::CmpIPredicate::ule)
       .Case("LT",
             isSigned ? arith::CmpIPredicate::slt : arith::CmpIPredicate::ult)
-      .Default(llvm::None);
+      .Default(std::nullopt);
 }
 
 template <>

@@ -17,6 +17,7 @@ limitations under the License.
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -666,7 +667,7 @@ void ConvertRuntimeToLLVMPass::runOnOperation() {
       // opaque pointer
       return LLVM::LLVMPointerType::get(IntegerType::get(type.getContext(), 8));
 
-    return llvm::None;
+    return std::nullopt;
   });
 
   // Use UnrealizedConversionCast as the bridge so that we don't need to pull
