@@ -52,8 +52,8 @@ cc_library(
     deps = [
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/status",
-        "@tf_runtime//:async_value",
-        "@tf_runtime//:ref_count",
+        "@tsl//tsl/concurrency:async_value",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -300,7 +300,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Support",
-        "@tf_runtime//:async_value",
+        "@tsl//tsl/concurrency:async_value",
     ],
 )
 

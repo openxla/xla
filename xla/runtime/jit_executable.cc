@@ -27,7 +27,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "xla/mlir/runtime/utils/constraints.h"
 #include "xla/runtime/errors.h"
-#include "tfrt/concurrency/async_value.h"  // from @tf_runtime
+#include "tsl/concurrency/async_value.h"
 
 namespace xla {
 namespace runtime {

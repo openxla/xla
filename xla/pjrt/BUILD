@@ -448,8 +448,8 @@ cc_library(
     deps = [
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/types:span",
-        "@tf_runtime//:hostcontext",
-        "@tf_runtime//:support",
+        "@tsl//tsl/concurrency:async_value",
+        "@tsl//tsl/concurrency:ref_count",
     ],
 )
 
@@ -465,7 +465,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tf_runtime//:hostcontext",
+        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/platform:platform_port",
     ],
 )
@@ -476,7 +476,7 @@ tf_cc_test(
     deps = [
         ":tracked_tfrt_cpu_device_buffer",
         "@com_google_googletest//:gtest_main",
-        "@tf_runtime//:hostcontext",
+        "@tsl//tsl/concurrency:async_value",
     ],
 )
 
@@ -520,8 +520,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tf_runtime//:hostcontext",
-        "@tf_runtime//:support",
+        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:setround",
