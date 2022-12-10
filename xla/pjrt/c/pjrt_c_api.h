@@ -609,6 +609,27 @@ typedef PJRT_Error* PJRT_Device_ToString(PJRT_Device_ToString_Args* args);
 
 // ------------------------------- Executables ---------------------------------
 
+typedef struct PJRT_Buffer PJRT_Buffer;
+typedef struct PJRT_TransferMetadata PJRT_TransferMetadata;
+typedef struct PJRT_Chunk PJRT_Chunk;
+typedef struct PJRT_CopyToDeviceStream PJRT_CopyToDeviceStream;
+
+// typedef void (*PJRT_SendCallback)();
+// typedef void (*PJRT_RecvCallback)();
+typedef PJRT_Error* (*PJRT_SendCallback)(PJRT_TransferMetadata* metadata,
+                                         PJRT_Chunk* chunk,
+                                         size_t total_size_in_bytes, bool done,
+                                         void* args);
+typedef void (*PJRT_RecvCallback)(PJRT_TransferMetadata* metadata,
+                                  PJRT_CopyToDeviceStream* stream, void* args);
+
+struct PJRT_Callback {
+  int64_t channel_id;
+  void* user_arg;
+  PJRT_SendCallback send_callback = nullptr;
+  PJRT_RecvCallback recv_callback = nullptr;
+};
+
 typedef struct {
   size_t struct_size;
   void* priv;
@@ -684,6 +705,15 @@ typedef PJRT_Error* PJRT_Executable_IsDeleted(
 typedef struct {
   size_t struct_size;
   void* priv;
+  // The send/recv callbacks for PjRt execution. The first level span is for
+  // multi-device parallel execution, the second level vector contains the
+  // callbacks for all send/recv ops in the executable. These callbacks can be
+  // stateful and the user code is responsible for managing the states here.
+  // These callbacks must outlive the execution.
+  PJRT_Callback*** send_callbacks;
+  PJRT_Callback*** recv_callbacks;
+  size_t num_send_ops;
+  size_t num_recv_ops;
   // If non-zero, identifies this execution as part of a potentially
   // multi-device launch. This can be used to detect scheduling errors, e.g. if
   // multi-host programs are launched in different orders on different hosts,

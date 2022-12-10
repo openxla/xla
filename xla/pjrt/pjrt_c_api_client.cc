@@ -587,6 +587,99 @@ Convert2DCBuffersToCppBuffers(PJRT_Buffer*** c_lists, size_t outer_size,
   return ret;
 }
 
+// Convert `xla::SendCallback` to `PJRT_Callback` in
+// the input lists. The caller is responsible for deleting the `PJRT_Callback`s.
+static PJRT_Callback* CppSendCallbackToCSendCallback(
+    SendCallback cpp_send_callback) {
+  return new PJRT_Callback{
+      cpp_send_callback.channel_id,
+      // this is the void* user_args to capture `cpp_send_callback.callback`
+      new std::function<PJRT_Error*(PJRT_TransferMetadata*, PJRT_Chunk*, size_t,
+                                    bool)>(
+          [send_callback = std::move(cpp_send_callback.callback)](
+              PJRT_TransferMetadata* metadata, PJRT_Chunk* chunk,
+              size_t total_size_in_bytes, bool done) {
+            xla::Status status = send_callback(
+                xla::PjRtTransferMetadata{*metadata->device_shape},
+                xla::PjRtChunk(std::move(*chunk->chunk)), total_size_in_bytes,
+                done);
+
+            PJRT_Error* error = nullptr;
+            if (!status.ok()) {
+              error = new PJRT_Error{status};
+            }
+            return error;
+          }),
+      // this is the function pointer, `PJRT_SendCallback`
+      [](PJRT_TransferMetadata* metadata, PJRT_Chunk* chunk,
+         size_t total_size_in_bytes, bool done, void* args) {
+        std::function<PJRT_Error*(PJRT_TransferMetadata*, PJRT_Chunk*, size_t,
+                                  bool)>* send_callback =
+            reinterpret_cast<std::function<PJRT_Error*(
+                PJRT_TransferMetadata*, PJRT_Chunk*, size_t, bool)>*>(args);
+        PJRT_Error* error =
+            (*send_callback)(metadata, chunk, total_size_in_bytes, done);
+        delete send_callback;
+        return error;
+      },
+      // `PJRT_RecvCallback` is set to null
+      nullptr};
+}
+static std::vector<PJRT_Callback**> Convert2DCppSendCallbacksToCCallbacks(
+    absl::Span<const std::vector<xla::SendCallback>> cpp_lists) {
+  std::vector<PJRT_Callback**> c_lists;
+  c_lists.reserve(cpp_lists.size());
+  for (const auto& cpp_list : cpp_lists) {
+    std::vector<PJRT_Callback*> c_list;
+    c_list.reserve(cpp_list.size());
+    for (const auto& cpp_callback : cpp_list) {
+      c_list.push_back(CppSendCallbackToCSendCallback(cpp_callback));
+    }
+    c_lists.push_back(c_list.data());
+  }
+  return c_lists;
+}
+
+// Convert `xla::RecvCallback` to `PJRT_Callback` in
+// the input lists. The caller is responsible for deleting the `PJRT_Callback`s.
+static PJRT_Callback* CppRecvCallbackToCRecvCallback(
+    RecvCallback cpp_recv_callback) {
+  return new PJRT_Callback{
+      cpp_recv_callback.channel_id,
+      // this is the void* user_args to capture `cpp_recv_callback.callback`
+      new std::function<void(PJRT_TransferMetadata*, PJRT_CopyToDeviceStream*)>(
+          [recv_callback = std::move(cpp_recv_callback.callback)](
+              PJRT_TransferMetadata* metadata,
+              PJRT_CopyToDeviceStream* stream) {
+            recv_callback(xla::PjRtTransferMetadata{*metadata->device_shape},
+                          std::move(stream->stream));
+          }),
+      // `PJRT_SendCallback` is set to null
+      nullptr,
+      // this is the function pointer, `PJRT_RecvCallback`
+      [](PJRT_TransferMetadata* metadata, PJRT_CopyToDeviceStream* stream,
+         void* args) {
+        std::function<void(PJRT_TransferMetadata*, PJRT_CopyToDeviceStream*)>*
+            recv_callback = reinterpret_cast<std::function<void(
+                PJRT_TransferMetadata*, PJRT_CopyToDeviceStream*)>*>(args);
+        (*recv_callback)(metadata, stream);
+        delete recv_callback;
+      }};
+}
+static std::vector<PJRT_Callback**> Convert2DCppRecvCallbacksToCCallbacks(
+    absl::Span<const std::vector<xla::RecvCallback>> cpp_lists) {
+  std::vector<PJRT_Callback**> c_lists;
+  c_lists.reserve(cpp_lists.size());
+  for (const auto& cpp_list : cpp_lists) {
+    std::vector<PJRT_Callback*> c_list;
+    c_list.reserve(cpp_list.size());
+    for (const auto& cpp_callback : cpp_list) {
+      c_list.push_back(CppRecvCallbackToCRecvCallback(cpp_callback));
+    }
+    c_lists.push_back(c_list.data());
+  }
+  return c_lists;
+}
 
 xla::StatusOr<PJRT_Executable_Execute_Args>
 PjRtCApiExecutable::GetCommonExecuteArgs(
@@ -614,6 +707,28 @@ PjRtCApiExecutable::GetCommonExecuteArgs(
     c_arguments.push_back(argument_list.data());
   }
   args.argument_lists = c_arguments.data();
+
+  // TODO(yeounoh) Allocates memory for callbacks. `c_send_callbacks` and
+  // `c_recv_callbacks` need to stay alive during the call of
+  // `PJRT_Executable_Execute`.
+  if (!options.send_callbacks.empty()) {
+    std::vector<PJRT_Callback**> c_send_callbacks =
+        Convert2DCppSendCallbacksToCCallbacks(options.send_callbacks);
+    args.options->send_callbacks = c_send_callbacks.data();
+    args.options->num_send_ops = options.send_callbacks[0].size();
+  } else {
+    args.options->send_callbacks = nullptr;
+    args.options->num_send_ops = 0;
+  }
+  if (!options.recv_callbacks.empty()) {
+    std::vector<PJRT_Callback**> c_recv_callbacks =
+        Convert2DCppRecvCallbacksToCCallbacks(options.recv_callbacks);
+    args.options->recv_callbacks = c_recv_callbacks.data();
+    args.options->num_recv_ops = options.recv_callbacks[0].size();
+  } else {
+    args.options->recv_callbacks = nullptr;
+    args.options->num_recv_ops = 0;
+  }
 
   // Allocates memory for output. `c_buffer_lists_storage` and `c_buffer_lists`
   // needs to stay alive during the call of `PJRT_Executable_Execute`.

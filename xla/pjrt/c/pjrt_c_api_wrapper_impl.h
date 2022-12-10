@@ -81,8 +81,19 @@ struct PJRT_SerializedExecutable {
   std::string serialized;
 };
 
-namespace pjrt {
+struct PJRT_TransferMetadata {
+  std::unique_ptr<xla::Shape> device_shape;
+};
 
+struct PJRT_Chunk {
+  std::unique_ptr<xla::PjRtChunk> chunk;
+};
+
+struct PJRT_CopyToDeviceStream {
+  std::unique_ptr<xla::CopyToDeviceStream> stream;
+};
+
+namespace pjrt {
 // C API definitions
 
 void PJRT_Error_Destroy(PJRT_Error_Destroy_Args* args);
