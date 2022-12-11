@@ -259,6 +259,7 @@ static port::Status InternalInit() {
     res = cuInit(0 /* = flags */);
   }
 
+  Diagnostician::LogDiagnosticInformation();
   if (res == CUDA_SUCCESS) {
     return ::tsl::OkStatus();
   } else if (res == CUDA_ERROR_SHARED_OBJECT_INIT_FAILED) {

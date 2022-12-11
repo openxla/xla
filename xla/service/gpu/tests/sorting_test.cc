@@ -66,6 +66,7 @@ ENTRY TestComputation {
 )";
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, ErrorSpec{1e-5, 1e-5}));
+  ASSERT_FALSE(true);
 }
 
 }  // namespace
