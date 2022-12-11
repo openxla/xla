@@ -151,6 +151,16 @@ func.func @attr_custom_call_api_version_status_returning_unified(%arg0: tensor<f
 }
 // CHECK-LABEL: "attr_custom_call_api_version_status_returning_unified"
 
+func.func @attr_custom_call_api_version_typed_ffi(%arg0: tensor<f32>) -> tensor<f32> {
+  %0 = "stablehlo.custom_call"(%arg0) {
+    call_target_name = "mhlo.custom_call",
+    // CHECK: api_version = 4 : i32
+    backend_config = "{api_version = 4 : i32, call_target_name = \22foo\22}"
+  } : (tensor<f32>) -> tensor<f32>
+  return %0 : tensor<f32>
+}
+// CHECK-LABEL: "attr_custom_call_api_version_typed_ffi"
+
 // DotDimensionNumbers aka #stablehlo.dot is covered below.
 
 func.func @attr_fft_type_fft(%arg0: tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>> {
@@ -195,32 +205,42 @@ func.func @attr_fft_type_irfft(%arg0: tensor<9xcomplex<f32>>) -> tensor<16xf32> 
 
 // GatherDimensionNumbers aka #stablehlo.gather is covered below.
 
-func.func @attr_precision_config_default(%arg0: tensor<8x16xf32>, %arg1: tensor<16x8xf32>) -> tensor<8x8xf32> {
+func.func @attr_precision_default(%arg0: tensor<8x16xf32>, %arg1: tensor<16x8xf32>) -> tensor<8x8xf32> {
   %0 = "stablehlo.dot"(%arg0, %arg1) {
     // CHECK: precision_config = [#mhlo<precision DEFAULT>]
     precision_config = [#stablehlo<precision DEFAULT>]
   } : (tensor<8x16xf32>, tensor<16x8xf32>) -> tensor<8x8xf32>
   func.return %0 : tensor<8x8xf32>
 }
-// CHECK-LABEL: "attr_precision_config_default"
+// CHECK-LABEL: "attr_precision_default"
 
-func.func @attr_precision_config_high(%arg0: tensor<8x16xf32>, %arg1: tensor<16x8xf32>) -> tensor<8x8xf32> {
+func.func @attr_precision_high(%arg0: tensor<8x16xf32>, %arg1: tensor<16x8xf32>) -> tensor<8x8xf32> {
   %0 = "stablehlo.dot"(%arg0, %arg1) {
     // CHECK: precision_config = [#mhlo<precision HIGH>]
     precision_config = [#stablehlo<precision HIGH>]
   } : (tensor<8x16xf32>, tensor<16x8xf32>) -> tensor<8x8xf32>
   func.return %0 : tensor<8x8xf32>
 }
-// CHECK-LABEL: "attr_precision_config_high"
+// CHECK-LABEL: "attr_precision_high"
 
-func.func @attr_precision_config_highest(%arg0: tensor<8x16xf32>, %arg1: tensor<16x8xf32>) -> tensor<8x8xf32> {
+func.func @attr_precision_highest(%arg0: tensor<8x16xf32>, %arg1: tensor<16x8xf32>) -> tensor<8x8xf32> {
   %0 = "stablehlo.dot"(%arg0, %arg1) {
     // CHECK: precision_config = [#mhlo<precision HIGHEST>]
     precision_config = [#stablehlo<precision HIGHEST>]
   } : (tensor<8x16xf32>, tensor<16x8xf32>) -> tensor<8x8xf32>
   func.return %0 : tensor<8x8xf32>
 }
-// CHECK-LABEL: "attr_precision_config_highest"
+// CHECK-LABEL: "attr_precision_highest"
+
+func.func @attr_precision_packed_nibble(%arg0: tensor<8x16xf32>, %arg1: tensor<16x8xf32>) -> tensor<8x8xf32> {
+  %0 = "stablehlo.custom_call"(%arg0, %arg1) {
+     call_target_name = "mhlo.dot",
+     // CHECK: precision_config = [#mhlo<precision PACKED_NIBBLE>]
+     backend_config = "{precision_config = [#mhlo<precision PACKED_NIBBLE>]}"
+  } : (tensor<8x16xf32>, tensor<16x8xf32>) -> tensor<8x8xf32>
+  func.return %0 : tensor<8x8xf32>
+}
+// CHECK-LABEL: "attr_precision_packed_nibble"
 
 func.func @attr_rng_algorithm_default(%arg0: tensor<f32>) -> (tensor<f32>, tensor<f32>) {
   %0:2 = "stablehlo.rng_bit_generator"(%arg0) {
@@ -395,6 +415,34 @@ func.func @op_all_to_all(%arg0: tensor<4x16xf32>) -> tensor<16x4xf32> {
   func.return %0 : tensor<16x4xf32>
 }
 // CHECK-LABEL: "op_all_to_all"
+
+func.func @op_all_to_all_channel_handle(%arg0: tensor<4x16xf32>) -> tensor<16x4xf32> {
+  //               CHECK: "mhlo.all_to_all"(%arg0) {
+  //          CHECK-SAME:   channel_handle = #mhlo.channel_handle<handle = 1, type = 0>,
+  //          CHECK-SAME:   concat_dimension = 0 : i64,
+  // CHECK-SAME{LITERAL}:   replica_groups = dense<[[0, 1, 2, 3]]> : tensor<1x4xi64>,
+  //          CHECK-SAME:   split_count = 4 : i64,
+  //          CHECK-SAME:   split_dimension = 1 : i64
+  //          CHECK-SAME: } : (tensor<4x16xf32>) -> tensor<16x4xf32>
+  %0 = "stablehlo.custom_call"(%arg0) {
+    call_target_name = "mhlo.all_to_all",
+    backend_config = "{channel_handle = #mhlo.channel_handle<handle = 1, type = 0>, concat_dimension = 0 : i64, replica_groups = dense<[[0, 1, 2, 3]]> : tensor<1x4xi64>, split_count = 4 : i64, split_dimension = 1 : i64}"
+  } : (tensor<4x16xf32>) -> tensor<16x4xf32>
+  return %0 : tensor<16x4xf32>
+}
+// CHECK-LABEL: "op_all_to_all_channel_handle"
+
+func.func @op_all_to_all_tuple(%arg0: tensor<128x4xf32>, %arg1: tensor<128x4xf32>) -> (tensor<128x4xf32>, tensor<128x4xf32>) {
+  //               CHECK: "mhlo.all_to_all"(%arg0, %arg1) {
+  // CHECK-SAME{LITERAL}:   replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>
+  //          CHECK-SAME: } : (tensor<128x4xf32>, tensor<128x4xf32>) -> (tensor<128x4xf32>, tensor<128x4xf32>)
+  %0:2 = "stablehlo.custom_call"(%arg0, %arg1) {
+    call_target_name = "mhlo.all_to_all",
+    backend_config = "{replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>}"
+  } : (tensor<128x4xf32>, tensor<128x4xf32>) -> (tensor<128x4xf32>, tensor<128x4xf32>)
+  return %0#0, %0#1 : tensor<128x4xf32>, tensor<128x4xf32>
+}
+// CHECK-LABEL: "op_all_to_all_tuple"
 
 func.func @op_and(%arg0: tensor<i1>, %arg1: tensor<i1>) -> tensor<i1> {
   // CHECK: "mhlo.and"(%arg0, %arg1) : (tensor<i1>, tensor<i1>) -> tensor<i1>
