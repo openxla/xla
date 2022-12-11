@@ -38,10 +38,10 @@ using ::testing::SizeIs;
 static const char* const module_add_one =
     R"(module {
 func.func @main(%arg0: tensor<2x3xf32>) -> tensor<2x3xf32> {
-  %0 = "mhlo.copy"(%arg0) : (tensor<2x3xf32>) -> tensor<2x3xf32>
-  %1 = mhlo.constant dense<1.000000e+00> : tensor<f32>
-  %2 = "mhlo.broadcast"(%1) {broadcast_sizes = dense<[2, 3]> : tensor<2xi64>} : (tensor<f32>) -> tensor<2x3xf32>
-  %3 = mhlo.add %0, %2 : tensor<2x3xf32>
+  %0 = "stablehlo.copy"(%arg0) : (tensor<2x3xf32>) -> tensor<2x3xf32>
+  %1 = stablehlo.constant dense<1.000000e+00> : tensor<f32>
+  %2 = "stablehlo.broadcast"(%1) {broadcast_sizes = dense<[2, 3]> : tensor<2xi64>} : (tensor<f32>) -> tensor<2x3xf32>
+  %3 = stablehlo.add %0, %2 : tensor<2x3xf32>
   return %3 : tensor<2x3xf32>
 }})";
 

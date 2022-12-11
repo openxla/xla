@@ -77,19 +77,26 @@ void EnablePrintBeforeAndAfter(mlir::PassManager& pm) {
   pm.enableIRPrinting(print_before, print_after);
 }
 
-// Converts an XlaComputation to an MHLO mlir::Module string. Exists for
+// Converts an XlaComputation to a StableHLO mlir::Module string. Exists for
 // backwards compatibility.
 // TODO(phawkins): port remaining users of XlaComputations to use mlir::Modules
 // instead and delete this function.
 StatusOr<std::string> PyXlaComputationToMlirModule(
     const XlaComputation& computation) {
   mlir::MLIRContext context;
+  if (VLOG_IS_ON(3)) context.disableMultithreading();
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::ModuleOp::create(mlir::UnknownLoc::get(&context));
   context.loadDialect<mlir::func::FuncDialect>();
   context.loadDialect<mlir::mhlo::MhloDialect>();
   TF_RETURN_IF_ERROR(ConvertHloToMlirHlo(*module, &computation.proto(),
                                          /*import_all_computations=*/true));
+  mlir::PassManager pm(&context);
+  if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
+  pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
+  if (!mlir::succeeded(pm.run(*module))) {
+    return tsl::errors::InvalidArgument("MHLO => StableHLO failed");
+  }
   return PrintModule(*module);
 }
 
