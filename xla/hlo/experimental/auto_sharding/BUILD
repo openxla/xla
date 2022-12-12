@@ -133,10 +133,7 @@ cc_library(
     name = "metrics",
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@tsl//tsl/lib/monitoring:counter",
-    ],
+    deps = ["@tsl//tsl/lib/monitoring:counter"],
 )
 
 xla_cc_binary(
