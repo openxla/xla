@@ -5,6 +5,10 @@ load(
     "clean_dep",
     "if_tsl_link_protobuf",
 )
+load(
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 def xla_py_proto_library(**kwargs):
     # Note: we don't currently define a proto library target for Python in OSS.
@@ -48,19 +52,35 @@ def xla_cc_test(
     native.cc_test(
         name = name,
         deps = deps + if_tsl_link_protobuf(
-            [],
-            [
-                clean_dep("//google/protobuf"),
-                # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
-                "//xla:xla_proto_cc_impl",
-                "//xla:xla_data_proto_cc_impl",
-                "//xla/service:hlo_proto_cc_impl",
-                "//xla/service/gpu:backend_configs_cc_impl",
-                "//xla/stream_executor:dnn_proto_cc_impl",
-                "@tsl//tsl/profiler/utils:time_utils_impl",
-                "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
-                "@tsl//tsl/protobuf:protos_all_cc_impl",
-            ],
-        ),
+                   [],
+                   [
+                       clean_dep("//google/protobuf"),
+                       # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
+                       "//third_party/tensorflow/core/common_runtime/gpu:gpu_runtime_impl",
+                       "//xla:xla_proto_cc_impl",
+                       "//xla:xla_data_proto_cc_impl",
+                       "//xla/service:hlo_proto_cc_impl",
+                       "//xla/service/gpu:backend_configs_cc_impl",
+                       "//xla/stream_executor:dnn_proto_cc_impl",
+                       "//xla/stream_executor:stream_executor_impl",
+                       "//xla/stream_executor:device_id_utils",
+                       "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
+                       "//xla/stream_executor/gpu:gpu_init_impl",
+                       "@tsl//tsl/profiler/utils:time_utils_impl",
+                       "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
+                       "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
+                       "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
+                       "@tsl//tsl/protobuf:dnn_proto_cc_impl",
+                       "@tsl//tsl/protobuf:protos_all_cc_impl",
+                       "@tsl//tsl/platform:env_impl",
+                       "@tsl//tsl/framework:allocator",
+                       "@tsl//tsl/framework:allocator_registry_impl",
+                   ],
+               ) +
+               if_cuda_is_configured([
+                   "//xla/stream_executor/cuda:cuda_stream",
+                   "//xla/stream_executor/cuda:all_runtime",
+                   "//xla/stream_executor/cuda:stream_executor_cuda",
+               ]),
         **kwargs
     )
