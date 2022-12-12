@@ -34,6 +34,7 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla/client:xla_computation",
+        "//xla/hlo/ir:hlo",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",

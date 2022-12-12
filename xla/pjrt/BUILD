@@ -620,9 +620,11 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/pjrt/c:pjrt_c_api_wrapper_impl",  # TODO(skyewm): remove
+        "//xla/service:hlo_proto_cc",
         "//xla/stream_executor/tpu:c_api_conversions",  # TODO(b/238999986): Remove this.
         "//xla/stream_executor/tpu:pjrt_api",
         "//xla/stream_executor/tpu:tpu_initializer_helper",
