@@ -1823,7 +1823,7 @@ cc_library(
         "//xla/service/spmd:collective_permute_motion",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
         "//xla/stream_executor",
-        "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:device_description_proto_cc_impl",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
