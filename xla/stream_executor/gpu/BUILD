@@ -34,6 +34,7 @@ package(
         "//third_party/tensorflow/compiler/tf2xla:__subpackages__",
         "//third_party/tensorflow/core/common_runtime/gpu:__subpackages__",
         "//third_party/tensorflow/stream_executor:__subpackages__",
+        "//xla:__subpackages__",
         "//xla/pjrt:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
