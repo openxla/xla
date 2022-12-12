@@ -96,7 +96,7 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = [
         "//tsl/profiler:internal",
-        "//xla/service/gpu/tests:__pkg__",
+        "//xla:__subpackages__",
     ],
     deps = [
         "//tsl/platform:macros",
