@@ -36,7 +36,7 @@ def xla_cc_binary(deps = None, **kwargs):
     # TODO(ddunleavy): some of these should be removed from here and added to
     # specific targets.
     deps += [
-        clean_dep("//google/protobuf"),
+        clean_dep("@com_google_protobuf//:protobuf"),
         "//xla:xla_proto_cc_impl",
         "//xla:xla_data_proto_cc_impl",
         "//xla/service:hlo_proto_cc_impl",
@@ -60,7 +60,7 @@ def xla_cc_test(
         deps = deps + if_tsl_link_protobuf(
                    [],
                    [
-                       clean_dep("//google/protobuf"),
+                       clean_dep("@com_google_protobuf//:protobuf"),
                        # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
                        "//xla:xla_proto_cc_impl",
                        "//xla:xla_data_proto_cc_impl",
