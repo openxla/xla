@@ -1,7 +1,7 @@
 # Description:
 #   Base testing infrastructure for XLA.
 
-load("//tensorflow/compiler/xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
+load("//xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",

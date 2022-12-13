@@ -2,7 +2,7 @@
 #   XLA service implementation.
 
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/compiler/xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla:xla.bzl",
     "xla_cc_binary",

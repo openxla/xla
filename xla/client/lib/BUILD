@@ -2,7 +2,7 @@
 
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow/compiler/xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
+load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
