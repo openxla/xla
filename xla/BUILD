@@ -1,4 +1,4 @@
-load("//tensorflow:tensorflow.default.bzl", "cc_header_only_library")
+load("@tsl//tsl:tsl.bzl", "cc_header_only_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
@@ -1118,6 +1118,15 @@ cc_library(
         "//xla/service/gpu:gemm_algorithm_picker",
         "//xla/service/gpu:gpu_conv_algorithm_picker",
     ]),
+)
+
+filegroup(
+    name = "litfiles",
+    srcs = [
+        "runlit.cfg.py",
+        "runlit.site.cfg.py",
+    ],
+    visibility = ["//third_party/compiler/xla:__subpackages__"],
 )
 
 # -----------------------------------------------------------------------------

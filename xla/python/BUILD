@@ -11,12 +11,12 @@ load(
     "xla_py_test_deps",
 )
 load(
-    "//third_party/tensorflow:tensorflow.bzl",
+    "@tsl//tsl:tsl.bzl",
     "if_cuda_or_rocm",
 )
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
-load("//third_party/tensorflow:pytype.default.bzl", "pytype_library")
+load("//xla:pytype.default.bzl", "pytype_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],

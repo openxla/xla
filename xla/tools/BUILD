@@ -3,7 +3,7 @@
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
-    "//third_party/tensorflow:tensorflow.bzl",
+    "@tsl//tsl:tsl.bzl",
     "if_cuda_or_rocm",
 )
 load(
