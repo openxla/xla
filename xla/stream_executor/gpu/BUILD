@@ -33,7 +33,6 @@ package(
     default_visibility = [
         "//third_party/tensorflow/compiler/tf2xla:__subpackages__",
         "//third_party/tensorflow/core/common_runtime/gpu:__subpackages__",
-        "//third_party/tensorflow/stream_executor:__subpackages__",
         "//xla:__subpackages__",
         "//xla/pjrt:__subpackages__",
         "//xla/service/gpu:__subpackages__",
@@ -77,7 +76,6 @@ cc_library(
     visibility = [
         "//third_party/tensorflow/core/common_runtime/gpu:__subpackages__",
         "//third_party/tensorflow/core/util/autotune_maps:__subpackages__",
-        "//third_party/tensorflow/stream_executor:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
@@ -270,7 +268,6 @@ cc_library(
     hdrs = ["gpu_asm_opts.h"],
     visibility = [
         "//third_party/tensorflow/core/kernels:__subpackages__",
-        "//third_party/tensorflow/stream_executor:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
@@ -287,7 +284,6 @@ cc_library(
     visibility = [
         "//third_party/tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
         "//third_party/tensorflow/core/kernels:__subpackages__",
-        "//third_party/tensorflow/stream_executor:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
@@ -327,7 +323,6 @@ cc_library(
     visibility = [
         "//third_party/tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
         "//third_party/tensorflow/core/kernels:__subpackages__",
-        "//third_party/tensorflow/stream_executor:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
@@ -371,7 +366,6 @@ cc_library(
     copts = tsl_copts(),
     visibility = [
         "//third_party/tensorflow/core/kernels:__subpackages__",
-        "//third_party/tensorflow/stream_executor:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],

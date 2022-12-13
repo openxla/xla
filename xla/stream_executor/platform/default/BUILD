@@ -6,7 +6,6 @@ licenses(["notice"])
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/stream_executor:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
 )

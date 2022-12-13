@@ -17,7 +17,6 @@ package(
         "//third_party/tensorflow/core/common_runtime/next_pluggable_device:__subpackages__",
         "//third_party/tensorflow/core/tpu:__subpackages__",
         "//third_party/tensorflow/dtensor:__subpackages__",
-        "//third_party/tensorflow/stream_executor:__subpackages__",
         "//xla:__subpackages__",
         "//xla/backends/profiler/tpu:__subpackages__",
     ],
