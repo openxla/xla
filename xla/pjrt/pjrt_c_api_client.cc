@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/tpu/pjrt_api.h"
+#include "xla/stream_executor/tpu/tpu_initializer_helper.h"  // NOLINT(unused-includes): required for tensorflow::tpu::FindAndLoadTpuLibrary
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/status.h"
