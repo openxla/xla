@@ -439,7 +439,9 @@ message DebugOptions {
 
   bool xla_dump_latency_hiding_schedule = 182;
 
-  // Next id: 184
+  bool xla_gpu_enable_latency_hiding_scheduler = 184;
+
+  // Next id: 185
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

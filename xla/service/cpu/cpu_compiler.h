@@ -175,7 +175,7 @@ class CpuCompiler : public LLVMCompiler {
       const CompileOptions& options) override;
 
   StatusOr<std::unique_ptr<BufferAssignment>> AssignBuffers(
-      const HloModule* module) override;
+      HloModule* module) override;
 
   StatusOr<std::unique_ptr<Executable>> RunBackend(
       std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,

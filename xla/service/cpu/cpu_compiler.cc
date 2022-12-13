@@ -938,7 +938,7 @@ StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
 }
 
 StatusOr<std::unique_ptr<BufferAssignment>> CpuCompiler::AssignBuffers(
-    const HloModule* module) {
+    HloModule* module) {
   // Select an order for emitting the HLO instructions for each computation.
   // Using this sequence enables tighter buffer liveness analysis and reduced
   // memory usage (as compared to using DependencyHloOrdering).
@@ -946,14 +946,15 @@ StatusOr<std::unique_ptr<BufferAssignment>> CpuCompiler::AssignBuffers(
                       ScheduleModule(module, BufferSizeBytesFunction(),
                                      ComputationSchedulerToModuleScheduler(
                                          DFSMemoryScheduler)));
+  TF_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   // Run buffer allocation on the HLO graph.
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> assignment,
-      BufferAssigner::Run(module,
-                          std::make_unique<SequentialHloOrdering>(schedule),
-                          BufferSizeBytesFunction(), memory_alignment,
-                          /*allocate_buffers_for_constants=*/true));
+      BufferAssigner::Run(
+          module, std::make_unique<SequentialHloOrdering>(module->schedule()),
+          BufferSizeBytesFunction(), memory_alignment,
+          /*allocate_buffers_for_constants=*/true));
 
   return std::move(assignment);
 }
