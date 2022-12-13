@@ -5,7 +5,7 @@
 # need to run on machines with GPUs present.
 
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
-load("//tensorflow/compiler/xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla:xla.bzl",
     "xla_cc_binary",

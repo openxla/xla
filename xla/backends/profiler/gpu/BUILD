@@ -25,7 +25,7 @@ load(
 )
 
 package(
-    default_visibility = ["//third_party/tensorflow:internal"],
+    default_visibility = ["//xla:internal"],
     features = [
         "-layering_check",
     ],

@@ -1,7 +1,7 @@
 # Description:
 #   Computationally expensive, exhaustive tests for XLA
 
-load("//tensorflow/compiler/xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "xla_test")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(

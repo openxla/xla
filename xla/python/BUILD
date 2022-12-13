@@ -27,8 +27,8 @@ package(
 package_group(
     name = "friends",
     includes = [
-        "//third_party/tensorflow:internal",
         "//xla:friends",
+        "//xla:internal",
     ],
 )
 
