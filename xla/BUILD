@@ -14,13 +14,13 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
-    default_visibility = ["//third_party/tensorflow:internal"],
+    default_visibility = ["//xla:internal"],
     licenses = ["notice"],
 )
 
 package_group(
     name = "friends",
-    includes = ["//third_party/tensorflow:internal"],
+    includes = ["//xla:internal"],
     packages = [
         # copybara:uncomment "//learning/infra/mira/...",
         "//third_party/australis/...",

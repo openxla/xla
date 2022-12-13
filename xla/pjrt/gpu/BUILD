@@ -6,7 +6,7 @@ load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
-    default_visibility = ["//third_party/tensorflow:internal"],
+    default_visibility = ["//xla:internal"],
     licenses = ["notice"],
 )
 

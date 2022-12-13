@@ -7,15 +7,15 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
-    default_visibility = ["//third_party/tensorflow:internal"],
+    default_visibility = ["//xla:internal"],
     licenses = ["notice"],
 )
 
 package_group(
     name = "friends",
     includes = [
-        "//third_party/tensorflow:internal",
         "//xla:friends",
+        "//xla:internal",
     ],
     packages = [
         "//third_party/australis/...",
@@ -79,7 +79,7 @@ cc_library(
     hdrs = ["tracked_device_buffer.h"],
     visibility = [
         "//learning/pathways/data_parallel:__pkg__",
-        "//third_party/tensorflow:internal",
+        "//xla:internal",
     ],
     deps = [
         ":event_pool",
