@@ -149,6 +149,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_computation",
+        "//xla/hlo/ir:hlo",
         "//xla/service:hlo_cost_analysis",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -289,7 +290,6 @@ cc_library(
         "//xla:cpu_function_runtime",
         "//xla:executable_run_options",
         "//xla:literal",
-        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
@@ -332,7 +332,6 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:traceme",
-        "@tsl//tsl/profiler/lib:traceme_encode",
     ],
 )
 
