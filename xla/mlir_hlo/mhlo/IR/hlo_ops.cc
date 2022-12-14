@@ -737,6 +737,62 @@ void ConstantOp::print(::mlir::OpAsmPrinter& p) {
 }
 
 //===----------------------------------------------------------------------===//
+// Helper function to verify output operand aliasing (FusionOp and CustomCallOp)
+//===----------------------------------------------------------------------===//
+
+template <typename CallableOpType>
+LogicalResult verifyOutputOperandAliasing(CallableOpType* op) {
+  auto aliasArrayAttr = op->getOutputOperandAliases();
+  for (auto attr : aliasArrayAttr) {
+    auto alias = attr.template cast<OutputOperandAliasAttr>();
+    auto outputTupleIndices = alias.getOutputTupleIndices();
+    auto operandIndex = alias.getOperandIndex();
+    auto operandTupleIndices = alias.getOperandTupleIndices();
+    if (operandIndex < 0 ||
+        operandIndex >= static_cast<int64_t>(op->getInputs().size()))
+      return op->emitOpError()
+             << "expects operandIndex in the output_operand_alias attribute "
+                "to be in range [0, "
+             << op->getInputs().size() << "); got: " << operandIndex << ".";
+    Type operandPart = op->getOperand(operandIndex).getType();
+    for (auto i : operandTupleIndices) {
+      if (!operandPart.isa<TupleType>() ||
+          i >= static_cast<int64_t>(operandPart.cast<TupleType>().size()) ||
+          i < 0)
+        return op->emitOpError()
+               << "operand_tuple_indices in the output_operand_alias "
+                  "attribute out of bounds";
+      operandPart = operandPart.cast<TupleType>().getType(i);
+    }
+    Type outputPart =
+        op->getNumResults() > 1
+            ? TupleType::get(op->getContext(), op->getResultTypes())
+            : op->getResult(0).getType();
+    for (auto i : outputTupleIndices) {
+      if (!outputPart.isa<TupleType>() ||
+          i >= static_cast<int64_t>(outputPart.cast<TupleType>().size()) ||
+          i < 0)
+        return op->emitOpError()
+               << "output_tuple_indices in the output_operand_alias "
+                  "attribute out of bounds";
+      outputPart = outputPart.cast<TupleType>().getType(i);
+    }
+    if (operandPart != outputPart)
+      return op->emitOpError()
+             << "shapes mismatch in the output_operand_alias attribute: "
+             << "operand part has type " << operandPart
+             << " and output part has type " << outputPart;
+  }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// FusionOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult FusionOp::verify() { return verifyOutputOperandAliasing(this); }
+
+//===----------------------------------------------------------------------===//
 // CustomCallOp
 //===----------------------------------------------------------------------===//
 
@@ -847,49 +903,7 @@ LogicalResult CustomCallOp::verify() {
   }
 
   // Check output_operand_aliases
-
-  auto aliasArrayAttr = getOutputOperandAliases();
-  for (auto attr : aliasArrayAttr) {
-    auto alias = attr.cast<OutputOperandAliasAttr>();
-    auto outputTupleIndices = alias.getOutputTupleIndices();
-    auto operandIndex = alias.getOperandIndex();
-    auto operandTupleIndices = alias.getOperandTupleIndices();
-
-    if (operandIndex < 0 ||
-        operandIndex >= static_cast<int64_t>(getInputs().size()))
-      return emitOpError()
-             << "expects operandIndex in the output_operand_alias attribute "
-                "to be in range [0, "
-             << getInputs().size() << "); got: " << operandIndex << ".";
-
-    Type operandPart = getOperand(operandIndex).getType();
-    for (auto i : operandTupleIndices) {
-      if (!operandPart.isa<TupleType>() ||
-          i >= static_cast<int64_t>(operandPart.cast<TupleType>().size()) ||
-          i < 0)
-        return emitOpError()
-               << "operand_tuple_indices in the output_operand_alias "
-                  "attribute out of bounds";
-      operandPart = operandPart.cast<TupleType>().getType(i);
-    }
-    Type outputPart = getNumResults() > 1
-                          ? TupleType::get(getContext(), getResultTypes())
-                          : getResult(0).getType();
-    for (auto i : outputTupleIndices) {
-      if (!outputPart.isa<TupleType>() ||
-          i >= static_cast<int64_t>(outputPart.cast<TupleType>().size()) ||
-          i < 0)
-        return emitOpError()
-               << "output_tuple_indices in the output_operand_alias "
-                  "attribute out of bounds";
-      outputPart = outputPart.cast<TupleType>().getType(i);
-    }
-    if (operandPart != outputPart)
-      return emitOpError()
-             << "shapes mismatch in the output_operand_alias attribute: "
-             << "operand part has type " << operandPart
-             << " and output part has type " << outputPart;
-  }
+  if (failed(verifyOutputOperandAliasing(this))) return failure();
 
   // Check backend_config attribute.
   if (auto backendConfig = getBackendConfig()) {

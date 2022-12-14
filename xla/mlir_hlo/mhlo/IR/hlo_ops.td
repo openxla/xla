@@ -3117,7 +3117,12 @@ def MHLO_FusionOp : MHLO_Op<"fusion", []> {
 
   let arguments = (ins
     Variadic<MHLO_TensorOrToken>:$inputs,
-    OptionalAttr<MHLO_FusionKindAttr>:$fusion_kind
+    OptionalAttr<MHLO_FusionKindAttr>:$fusion_kind,
+    DefaultValuedOptionalAttr<
+        TypedArrayAttrBase<
+            MHLO_OutputOperandAlias,
+            "Aliasing attribute for outputs and operands of Fusion">,
+        "{}">:$output_operand_aliases
   );
 
   let results = (outs
@@ -3126,6 +3131,8 @@ def MHLO_FusionOp : MHLO_Op<"fusion", []> {
 
   // FusionOp has special conversion logic to HLO.
   let hasCustomHLOConverter = 1;
+
+  let hasVerifier = 1;
 }
 
 // This is an op for purposes internal to XLA/GPU.
