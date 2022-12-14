@@ -264,6 +264,7 @@ static LLVM::GlobalOp EncodeTypeTable(Globals &g, ImplicitLocOpBuilder &b,
 
 struct EncodedArguments {
   std::variant<LLVM::AllocaOp, LLVM::GlobalOp> encoded;  // `args` argument
+  SmallVector<LLVM::AllocaOp> allocas;                   // encoded arguments
 };
 
 static FailureOr<EncodedArguments> EncodeArguments(
@@ -274,8 +275,10 @@ static FailureOr<EncodedArguments> EncodeArguments(
 
   // Encode empty arguments as a global array (skip the status type).
   if (operands.drop_front().empty()) {
-    return EncodedArguments{EncodeEmptyArgsRets(g, b, "__rt_empty_args")};
+    return EncodedArguments{EncodeEmptyArgsRets(g, b, "__rt_empty_args"), {}};
   }
+
+  EncodedArguments arguments;
 
   // Encode all arguments as a set of pointers (skip the execution context).
   for (auto tuple : llvm::drop_begin(llvm::zip(operands, converted))) {
@@ -329,6 +332,7 @@ static FailureOr<EncodedArguments> EncodeArguments(
     CustomCallArgEncoding::Encoded encoded = pair.value();
     int64_t offset = 2 + pair.index();
     insert_value(encoded.value, offset);
+    arguments.allocas.push_back(encoded.value);
   }
 
   // Always create an `alloca` in the parent function entry block.
@@ -347,8 +351,10 @@ static FailureOr<EncodedArguments> EncodeArguments(
   // Store constructed arguments array on the stack.
   b.create<LLVM::StoreOp>(arr, alloca.getRes());
 
-  // Return an alloca that encodes the custom call arguments.
-  return EncodedArguments{alloca};
+  // Alloca that encodes the custom call arguments.
+  arguments.encoded = alloca;
+
+  return arguments;
 }
 
 // Encodes attributes into the global constant (array of pointers to the
@@ -376,19 +382,20 @@ static FailureOr<LLVM::GlobalOp> EncodeAttributes(
 
 struct EncodedResults {
   std::variant<LLVM::AllocaOp, LLVM::GlobalOp> encoded;  // `rets` argument
-  SmallVector<LLVM::AllocaOp> allocas;  // storage for values of results
+  SmallVector<LLVM::AllocaOp> allocas;                   // encoded returns
 };
 
 static FailureOr<EncodedResults> EncodeResults(
     CallOp op, CustomCallRetEncodingSet &encodings, Globals &g,
     ImplicitLocOpBuilder &b, TypeRange ret_types, TypeRange converted_types) {
   llvm::SmallVector<CustomCallRetEncoding::Encoded> encoded;
-  EncodedResults results;
 
   // Encode empty returns as a global array (skip the status type).
   if (ret_types.drop_front().empty()) {
     return EncodedResults{EncodeEmptyArgsRets(g, b, "__rt_empty_rets"), {}};
   }
+
+  EncodedResults results;
 
   // Encode all returns as a set of pointers (skip the status type).
   for (auto tuple : llvm::drop_begin(llvm::zip(ret_types, converted_types))) {
