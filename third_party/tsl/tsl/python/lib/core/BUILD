@@ -1,9 +1,16 @@
 # Description:
 # Implementation of custom numpy floats.
+load("//tsl:tsl.bzl", "if_windows")
+load("//tsl:tsl.default.bzl", "tsl_pybind_extension")
+load("//tsl/platform:rules_cc.bzl", "cc_shared_library")
 
 package(
     default_visibility = [
         "//visibility:public",
+    ],
+    features = [
+        # For bfloat16.so (see b/259896740)
+        "windows_export_all_symbols",
     ],
     licenses = ["notice"],
 )
@@ -17,16 +24,6 @@ filegroup(
     name = "basic_hdrs",
     srcs = [
         "numpy.h",
-    ],
-)
-
-cc_library(
-    name = "bfloat16_hdr",
-    hdrs = [
-        "bfloat16.h",
-    ],
-    deps = [
-        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -48,6 +45,36 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
         "@xla//third_party/eigen3",
+    ],
+)
+
+cc_shared_library(
+    name = "bfloat16.so",
+    roots = [":bfloat16_lib"],
+    # TODO(b/259896740): Not specifying the correct shared_lib_name results in "specified module not
+    # found" errors on DLL import.
+    # shared_lib_name = if_windows("bfloat16_lib.dll", None),
+    static_deps = [
+        "@//:__subpackages__",
+        "@com_google_absl//:__subpackages__",
+        "@eigen_archive//:__subpackages__",
+        "@local_config_python//:__subpackages__",
+        "@nsync//:__subpackages__",
+    ],
+)
+
+tsl_pybind_extension(
+    name = "_pywrap_bfloat16",
+    srcs = ["bfloat16_wrapper.cc"],
+    dynamic_deps = [":bfloat16.so"],
+    static_deps = [
+        "@pybind11//:__subpackages__",
+        "@local_config_python//:__subpackages__",
+    ],
+    deps = [
+        ":bfloat16_lib",
+        "//third_party/pybind11",
+        "@local_config_python//:python_headers",
     ],
 )
 
