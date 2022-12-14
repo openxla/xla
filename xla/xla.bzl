@@ -10,6 +10,10 @@ load(
     "if_cuda_is_configured",
 )
 load(
+    "//tensorflow/third_party/rocm/google:build_defs.bzl",
+    "if_rocm_is_configured",
+)
+load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_exec_properties",
 )
@@ -87,6 +91,11 @@ def xla_cc_test(
                    "//xla/stream_executor/cuda:cuda_stream",
                    "//xla/stream_executor/cuda:all_runtime",
                    "//xla/stream_executor/cuda:stream_executor_cuda",
+               ]) +
+               if_rocm_is_configured([
+                   "//xla/stream_executor/gpu:gpu_stream",
+                   "//xla/stream_executor/rocm:all_runtime",
+                   "//xla/stream_executor/rocm:stream_executor_rocm",
                ]),
         exec_properties = tf_exec_properties(kwargs),
         **kwargs
