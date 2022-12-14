@@ -644,29 +644,29 @@ def tf_proto_library(
 
 def tf_additional_lib_hdrs():
     return [
-        "//tsl/platform/default:casts.h",
-        "//tsl/platform/default:context.h",
-        "//tsl/platform/default:cord.h",
-        "//tsl/platform/default:dynamic_annotations.h",
-        "//tsl/platform/default:integral_types.h",
-        "//tsl/platform/default:logging.h",
-        "//tsl/platform/default:mutex.h",
-        "//tsl/platform/default:mutex_data.h",
-        "//tsl/platform/default:notification.h",
-        "//tsl/platform/default:stacktrace.h",
-        "//tsl/platform/default:tracing_impl.h",
-        "//tsl/platform/default:unbounded_work_queue.h",
+        clean_dep("//tsl/platform/default:casts.h"),
+        clean_dep("//tsl/platform/default:context.h"),
+        clean_dep("//tsl/platform/default:cord.h"),
+        clean_dep("//tsl/platform/default:dynamic_annotations.h"),
+        clean_dep("//tsl/platform/default:integral_types.h"),
+        clean_dep("//tsl/platform/default:logging.h"),
+        clean_dep("//tsl/platform/default:mutex.h"),
+        clean_dep("//tsl/platform/default:mutex_data.h"),
+        clean_dep("//tsl/platform/default:notification.h"),
+        clean_dep("//tsl/platform/default:stacktrace.h"),
+        clean_dep("//tsl/platform/default:tracing_impl.h"),
+        clean_dep("//tsl/platform/default:unbounded_work_queue.h"),
     ] + select({
-        "//tsl:windows": [
-            "//tsl/platform/windows:intrinsics_port.h",
-            "//tsl/platform/windows:stacktrace.h",
-            "//tsl/platform/windows:subprocess.h",
-            "//tsl/platform/windows:wide_char.h",
-            "//tsl/platform/windows:windows_file_system.h",
+        clean_dep("//tsl:windows"): [
+            clean_dep("//tsl/platform/windows:intrinsics_port.h"),
+            clean_dep("//tsl/platform/windows:stacktrace.h"),
+            clean_dep("//tsl/platform/windows:subprocess.h"),
+            clean_dep("//tsl/platform/windows:wide_char.h"),
+            clean_dep("//tsl/platform/windows:windows_file_system.h"),
         ],
         "//conditions:default": [
-            "//tsl/platform/default:posix_file_system.h",
-            "//tsl/platform/default:subprocess.h",
+            clean_dep("//tsl/platform/default:posix_file_system.h"),
+            clean_dep("//tsl/platform/default:subprocess.h"),
         ],
     })
 
@@ -727,7 +727,7 @@ def tf_additional_core_deps():
         clean_dep("//tsl:ios"): [],
         clean_dep("//tsl:linux_s390x"): [],
         "//conditions:default": [
-            "//tsl/platform/cloud:gcs_file_system",
+            clean_dep("//tsl/platform/cloud:gcs_file_system"),
         ],
     })
 
@@ -830,10 +830,10 @@ def tf_platform_alias(name, platform_dir = "//tsl/platform/"):
     return [platform_dir + "default:" + name]
 
 def tf_logging_deps():
-    return ["//tsl/platform/default:logging"]
+    return [clean_dep("//tsl/platform/default:logging")]
 
 def tf_resource_deps():
-    return ["//tsl/platform/default:resource"]
+    return [clean_dep("//tsl/platform/default:resource")]
 
 def tf_portable_deps_no_runtime():
     return [
@@ -855,7 +855,7 @@ def if_llvm_aarch64_available(then, otherwise = []):
 
 def if_llvm_system_z_available(then, otherwise = []):
     return select({
-        "//tsl:linux_s390x": then,
+        clean_dep("//tsl:linux_s390x"): then,
         "//conditions:default": otherwise,
     })
 
