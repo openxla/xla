@@ -28,9 +28,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/hlo_pass_interface.h"
-#include "xla/service/tuple_points_to_analysis.h"
 #include "xla/xla.pb.h"
 
 namespace xla {

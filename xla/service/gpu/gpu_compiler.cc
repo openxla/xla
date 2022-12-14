@@ -128,7 +128,6 @@ limitations under the License.
 #include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/hlo_dce.h"
-#include "xla/service/hlo_parser.h"
 #include "xla/service/hlo_pass_fix.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/hlo_verifier.h"
