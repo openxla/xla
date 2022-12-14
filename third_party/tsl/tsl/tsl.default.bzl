@@ -84,7 +84,7 @@ def tsl_gpu_cc_test(
         linkopts = linkopts,
         linkstatic = select({
             # TODO(allenl): Remove Mac static linking when Bazel 0.6 is out.
-            clean_dep("//third_party/tensorflow:macos"): 1,
+            clean_dep("//tsl:macos"): 1,
             "@local_config_cuda//cuda:using_nvcc": 1,
             "@local_config_cuda//cuda:using_clang": 1,
             "//conditions:default": 0,
@@ -107,7 +107,7 @@ def tsl_gpu_cc_test(
             linkopts = linkopts,
             linkstatic = select({
                 # TODO(allenl): Remove Mac static linking when Bazel 0.6 is out.
-                clean_dep("//third_party/tensorflow:macos"): 1,
+                clean_dep("//tsl:macos"): 1,
                 "@local_config_cuda//cuda:using_nvcc": 1,
                 "@local_config_cuda//cuda:using_clang": 1,
                 "//conditions:default": 0,
