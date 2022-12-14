@@ -930,6 +930,7 @@ xla_cc_test(
     deps = [
         ":gemm_algorithm_picker",
         ":gemm_rewriter",
+        "//xla:autotune_results_proto_cc",
         "//xla/service:gpu_plugin",
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
