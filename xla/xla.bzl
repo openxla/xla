@@ -10,7 +10,7 @@ load(
     "if_cuda_is_configured",
 )
 load(
-    "//tensorflow/third_party/rocm/google:build_defs.bzl",
+    "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
 load(
