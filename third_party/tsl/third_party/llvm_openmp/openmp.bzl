@@ -33,9 +33,9 @@ def dict_add(*dictionaries):
 
 def select_os_specific(L, M, W):
     return select({
-        "@org_tensorflow//tensorflow:linux_x86_64": L,
-        "@org_tensorflow//tensorflow:macos": M,
-        "@org_tensorflow//tensorflow:windows": W,
+        "@tsl//tsl:linux_x86_64": L,
+        "@tsl//tsl:macos": M,
+        "@tsl//tsl:windows": W,
         "//conditions:default": L,
     })
 
