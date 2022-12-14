@@ -47,6 +47,10 @@ struct TileMapPattern : public OpRewritePattern<linalg::MapOp> {
 
   LogicalResult matchAndRewrite(linalg::MapOp op,
                                 PatternRewriter &rewriter) const override {
+    // Check if the op had already been tiled by another pass.
+    if (isa<gml_st::ParallelOp, gml_st::ForOp>(op->getParentOp()))
+      return failure();
+
     auto fuseFilterFn = [](Operation *op) {
       return isa<linalg::BroadcastOp, linalg::MapOp>(op);
     };
