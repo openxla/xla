@@ -129,7 +129,7 @@ cc_library(
     testonly = 1,
     srcs = ["no_impl_test_main.cc"],
     deps = [
-        "//testing/base/public:gunit_for_library_testonly",
+        "@com_google_googletest//:gtest",
     ],
 )
 
