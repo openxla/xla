@@ -15,10 +15,12 @@ limitations under the License.
 
 #include "xla/service/compiler.h"
 
+#include <functional>
+#include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
-#include "xla/types.h"
 #include "xla/util.h"
 #include "tsl/platform/logging.h"
 
@@ -53,16 +55,17 @@ Compiler::CompileAheadOfTime(
   return CompileAheadOfTime(std::move(module_group), options);
 }
 
-/* static */ std::map<se::Platform::Id, Compiler::CompilerFactory>*
+/* static */ absl::flat_hash_map<se::Platform::Id, Compiler::CompilerFactory>*
 Compiler::GetPlatformCompilerFactories() {
-  static auto* r = new std::map<se::Platform::Id, CompilerFactory>;
+  static auto* r = new absl::flat_hash_map<se::Platform::Id, CompilerFactory>;
   return r;
 }
 
 /* static */
-std::map<se::Platform::Id, std::unique_ptr<Compiler>>*
+absl::flat_hash_map<se::Platform::Id, std::unique_ptr<Compiler>>*
 Compiler::GetPlatformCompilers() {
-  static auto* r = new std::map<se::Platform::Id, std::unique_ptr<Compiler>>;
+  static auto* r =
+      new absl::flat_hash_map<se::Platform::Id, std::unique_ptr<Compiler>>;
   return r;
 }
 
