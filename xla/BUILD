@@ -144,6 +144,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:float8",
     ],
 )
 
@@ -306,6 +307,7 @@ xla_cc_test(
         ":test",
         ":types",
         ":util",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
@@ -398,6 +400,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -527,6 +530,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:bitmap",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
@@ -550,6 +554,7 @@ xla_cc_test(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -601,6 +606,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:status",
     ],
 )
