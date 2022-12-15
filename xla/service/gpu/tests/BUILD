@@ -827,7 +827,6 @@ xla_cc_binary(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:tensor_float_32_utils",
         "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
         "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
         "@tsl//tsl/util:command_line_flags",
         "@tsl//tsl/util:determinism",

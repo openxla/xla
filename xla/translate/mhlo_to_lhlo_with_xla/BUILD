@@ -81,7 +81,6 @@ xla_cc_binary(
         "@llvm-project//mlir:MlirOptLib",
         "@stablehlo//:register",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )
 
@@ -102,6 +101,5 @@ xla_cc_binary(
         "@llvm-project//mlir:MlirOptLib",
         "@stablehlo//:register",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )

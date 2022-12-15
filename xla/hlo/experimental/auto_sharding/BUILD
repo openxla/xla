@@ -147,6 +147,5 @@ xla_cc_binary(
         "//xla/stream_executor:dnn",
         "//xla/tools:hlo_module_loader",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )

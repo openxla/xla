@@ -231,7 +231,6 @@ xla_cc_binary(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )
 

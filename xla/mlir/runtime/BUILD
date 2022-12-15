@@ -41,6 +41,5 @@ xla_cc_binary(
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )

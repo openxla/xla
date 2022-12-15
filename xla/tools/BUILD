@@ -168,7 +168,6 @@ xla_cc_binary(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )
 
@@ -278,7 +277,6 @@ xla_cc_binary(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:subprocess",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
         "@tsl//tsl/util:command_line_flags",
     ] + if_cuda_or_rocm([

@@ -70,7 +70,6 @@ xla_cc_binary(
     deps = [
         ":grpc_service_main_library",
         "//xla/service:cpu_plugin",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ],
 )
 

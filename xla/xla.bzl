@@ -4,6 +4,7 @@ load(
     "@tsl//tsl:tsl.bzl",
     "clean_dep",
     "if_tsl_link_protobuf",
+    "tsl_copts",
 )
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
@@ -33,7 +34,7 @@ ORC_JIT_MEMORY_MAPPER_TARGETS = []
 def xla_py_test_deps():
     return []
 
-def xla_cc_binary(deps = None, **kwargs):
+def xla_cc_binary(deps = None, copts = tsl_copts(), **kwargs):
     if not deps:
         deps = []
 
@@ -50,8 +51,9 @@ def xla_cc_binary(deps = None, **kwargs):
         "@tsl//tsl/profiler/utils:time_utils_impl",
         "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
         "@tsl//tsl/protobuf:protos_all_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ]
-    native.cc_binary(deps = deps, **kwargs)
+    native.cc_binary(deps = deps, copts = copts, **kwargs)
 
 def xla_cc_test(
         name,
