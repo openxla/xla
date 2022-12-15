@@ -570,7 +570,14 @@ Status HloFunctionImporter::ImportInstructions(
 
   // Create terminator op depending on the parent op of this region.
   if (llvm::isa<FuncOp>(block->getParentOp())) {
-    builder.create<mlir::func::ReturnOp>(loc, result);
+    if (flatten_region_arg_tuple) {
+      // Flatten tuples in results of this region.
+      llvm::SmallVector<Value> flattened_return_operands;
+      FlattenTupleValue(&builder, loc, result, flattened_return_operands);
+      builder.create<mlir::func::ReturnOp>(loc, flattened_return_operands);
+    } else {
+      builder.create<mlir::func::ReturnOp>(loc, result);
+    }
   } else {
     if (flatten_region_arg_tuple) {
       // Flatten tuples in results of this region.
