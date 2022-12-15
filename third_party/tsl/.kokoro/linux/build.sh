@@ -19,6 +19,11 @@
 # -o history: record shell history
 set -euo pipefail -o history
 
+function is_linux_gpu_job() {
+  [[ "$KOKORO_JOB_NAME" =~ tensorflow/xla/linux/.*gpu.* ]]
+}
+
+
 # Pull the container (in case it was updated since the instance started) and
 # store its SHA in the Sponge log.
 docker pull "$DOCKER_IMAGE"
@@ -37,6 +42,26 @@ docker exec xla bazel build \
     --nocheck_visibility \
     --keep_going \
     -- //xla/...
+
+if is_linux_gpu_job(); then
+    # Test XLA gpu
+    docker exec xla bazel test \
+        --test_tag_filters=gpu,requires-gpu,-no_gpu \
+        --output_filter="" \
+        --nocheck_visibility \
+        --keep_going \
+        --flaky_test_attempts=3 \
+        -- //xla/...
+else
+    # Test XLA cpu
+    docker exec xla bazel test \
+        --test_tag_filters=-gpu \
+        --output_filter="" \
+        --nocheck_visibility \
+        --keep_going \
+        --flaky_test_attempts=3 \
+        -- //xla/...
+fi
 
 # Stop container
 docker stop xla
