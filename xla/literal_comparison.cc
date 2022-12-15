@@ -218,10 +218,23 @@ Status Equal(LiteralSlice expected, LiteralSlice actual,
 
   Status result;
   int64_t upper_bound = expected.shape().dimensions(dimension);
+  const bool expect_dynamic = expected.shape().is_dynamic_dimension(dimension);
+  const bool actual_is_dynamic = actual.shape().is_dynamic_dimension(dimension);
+  if (expect_dynamic != actual_is_dynamic) {
+    result.Update(InvalidArgument(
+        "Dimension %d type mismatch: expected %s, actual is %s.", dimension,
+        (expect_dynamic ? "dynamic" : "static"),
+        (actual_is_dynamic ? "dynamic" : "static")));
+  }
   if (expected.shape().is_dynamic_dimension(dimension)) {
     // If the dimension is dynamic, we only want to check up until the actual
     // dynamic size specified by the literal.
     upper_bound = expected.GetDynamicSize(dimension);
+    if (upper_bound != actual.GetDynamicSize(dimension)) {
+      result.Update(InvalidArgument(
+          "Dimension %d dynamic sizes mismatch: expected %d, actual %d.",
+          dimension, upper_bound, actual.GetDynamicSize(dimension)));
+    }
   }
 
   for (int64_t i = 0; i < upper_bound; ++i) {
@@ -394,6 +407,31 @@ class NearComparator {
     if (!expected_.shape().IsArray()) {
       return InvalidArgument("Expected array shape; got %s.",
                              ShapeUtil::HumanString(expected_.shape()));
+    }
+
+    // Check that dimension kinds (static/dynamic) match, as well as their sizes
+    // if both are dynamic.
+    for (int64_t dimension = 0; dimension < expected_.shape().dimensions_size();
+         dimension++) {
+      const bool expect_dynamic =
+          expected_.shape().is_dynamic_dimension(dimension);
+      const bool actual_is_dynamic =
+          actual_.shape().is_dynamic_dimension(dimension);
+      if (expect_dynamic != actual_is_dynamic) {
+        return InvalidArgument(
+            "Dimension %d type mismatch: expected %s, actual is %s.", dimension,
+            (expect_dynamic ? "dynamic" : "static"),
+            (actual_is_dynamic ? "dynamic" : "static"));
+      }
+      if (expected_.shape().is_dynamic_dimension(dimension)) {
+        if (expected_.GetDynamicSize(dimension) !=
+            actual_.GetDynamicSize(dimension)) {
+          return InvalidArgument(
+              "Dimension %d dynamic sizes mismatch: expected %d, actual %d.",
+              dimension, expected_.GetDynamicSize(dimension),
+              actual_.GetDynamicSize(dimension));
+        }
+      }
     }
 
     mismatches_ = Literal(ShapeUtil::ChangeElementType(actual_.shape(), PRED));
