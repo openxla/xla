@@ -2836,16 +2836,6 @@ PjRtStreamExecutorClient::DeserializeExecutable(
       "PjRtStreamExecutorClient::DeserializeExecutable");
   VLOG(1) << "PjRtStreamExecutorClient::DeserializeExecutable";
 
-  if (char* xla_flags = std::getenv("XLA_FLAGS")) {
-    std::string xla_flags_str(xla_flags);
-    if (!absl::StrContains(xla_flags_str,
-                           "--xla_gpu_enable_xla_runtime_executable=true")) {
-      return InternalError("Deserialization requires XLA Runtime enabled");
-    }
-  } else {
-    return InternalError("Deserialization requires XLA Runtime enabled");
-  }
-
   TF_ASSIGN_OR_RETURN(ExecutableExtras extras, GetExecutableExtras(&*options));
   std::shared_ptr<DeviceAssignment>& device_assignment =
       extras.device_assignment;
@@ -2853,6 +2843,8 @@ PjRtStreamExecutorClient::DeserializeExecutable(
       addressable_device_logical_ids = extras.addressable_device_logical_ids;
   std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
 
+  if (serialized.empty())
+    return InternalError("Serialized executable is empty");
   std::string str(serialized);
   TF_ASSIGN_OR_RETURN(std::unique_ptr<LocalExecutable> loaded,
                       client()->Load(str, options->executable_build_options));
