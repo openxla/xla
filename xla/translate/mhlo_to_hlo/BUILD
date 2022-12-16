@@ -1,7 +1,7 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_binary", "cc_library")
+load("@tsl/platform:rules_cc.bzl", "cc_binary", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl:tsl.default.bzl", "get_compatible_with_cloud")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -176,7 +176,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/translate/hlo_to_mhlo:hlo_utils",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/platform:protobuf",
+        "@tsl/platform:test_main",
     ],
 )

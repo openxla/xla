@@ -1,6 +1,6 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("@tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl/platform:build_config.bzl", "tf_proto_library")
+load("@tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load("//xla:xla.bzl", "xla_cc_test")
 
 licenses(["notice"])
@@ -54,14 +54,14 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_service",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_service_impl",
-        "@tsl//tsl/distributed_runtime/rpc/coordination:grpc_coordination_service_impl",
-        "@tsl//tsl/distributed_runtime/rpc:async_service_interface",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:random",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/protobuf:coordination_config_proto_cc",
+        "@tsl/distributed_runtime/coordination:coordination_service",
+        "@tsl/distributed_runtime/coordination:coordination_service_impl",
+        "@tsl/distributed_runtime/rpc/coordination:grpc_coordination_service_impl",
+        "@tsl/distributed_runtime/rpc:async_service_interface",
+        "@tsl/platform:env",
+        "@tsl/platform:random",
+        "@tsl/platform:errors",
+        "@tsl/protobuf:coordination_config_proto_cc",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -76,9 +76,9 @@ xla_cc_test(
         ":service",
         "//xla/service:cpu_plugin",
         "//xla/service:gpu_plugin",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/lib/core:status_test_util",
+        "@tsl/platform:test",
+        "@tsl/platform:test_main",
     ],
 )
 
@@ -99,16 +99,16 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_service_error_util",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_client",
-        "@tsl//tsl/distributed_runtime/rpc/coordination:grpc_coordination_client",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_service_agent",
-        "@tsl//tsl/platform:random",
-        "@tsl//tsl/protobuf:coordination_service_proto_cc",
-        "@tsl//tsl/protobuf:coordination_config_proto_cc",
+        "@tsl/distributed_runtime/coordination:coordination_service_error_util",
+        "@tsl/platform:env",
+        "@tsl/platform:errors",
+        "@tsl/platform:logging",
+        "@tsl/distributed_runtime/coordination:coordination_client",
+        "@tsl/distributed_runtime/rpc/coordination:grpc_coordination_client",
+        "@tsl/distributed_runtime/coordination:coordination_service_agent",
+        "@tsl/platform:random",
+        "@tsl/protobuf:coordination_service_proto_cc",
+        "@tsl/protobuf:coordination_config_proto_cc",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -148,10 +148,10 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "//xla:protobuf_util",
         "//xla:status_macros",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/platform:errors",
+        "@tsl/lib/core:status_test_util",
+        "@tsl/platform:env",
+        "@tsl/platform:test",
+        "@tsl/platform:test_main",
+        "@tsl/platform:errors",
     ] + tsl_grpc_cc_dependencies(),
 )

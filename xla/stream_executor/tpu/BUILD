@@ -1,6 +1,6 @@
 # Description: StreamExecutor Interface for TPUs
 
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 
 package(
@@ -33,7 +33,7 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
+        "@tsl/platform:errors",
     ],
 )
 
@@ -99,8 +99,8 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
     ],
 )
 
@@ -110,8 +110,8 @@ cc_library(
     deps = [
         ":tpu_api",
         ":tpu_executor_c_api_hdrs",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
+        "@tsl/platform:status",
+        "@tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -121,7 +121,7 @@ cc_library(
     hdrs = ["proto_helper.h"],
     deps = [
         ":c_api_decl",
-        "@tsl//tsl/platform:logging",
+        "@tsl/platform:logging",
     ],
 )
 
@@ -173,8 +173,8 @@ cc_library(
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:types",
+        "@tsl/platform:casts",
+        "@tsl/platform:types",
     ],
     alwayslink = True,
 )
@@ -194,7 +194,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:types",
+        "@tsl/platform:types",
     ],
 )
 
@@ -220,8 +220,8 @@ cc_library(
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:types",
+        "@tsl/platform:casts",
+        "@tsl/platform:types",
     ],
 )
 
@@ -261,10 +261,10 @@ cc_library(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/c:tsl_status",
-        "@tsl//tsl/c:tsl_status_helper",
-        "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:types",
+        "@tsl/c:tsl_status",
+        "@tsl/c:tsl_status_helper",
+        "@tsl/platform:casts",
+        "@tsl/platform:types",
     ],
 )
 
@@ -290,7 +290,7 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/memory",
-        "@tsl//tsl/platform:macros",
+        "@tsl/platform:macros",
     ],
 )
 
@@ -354,7 +354,7 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "@com_google_absl//absl/cleanup",
-        "@tsl//tsl/platform:status",
+        "@tsl/platform:status",
     ],
 )
 
@@ -381,7 +381,7 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
+        "@tsl/platform:casts",
     ],
 )
 
@@ -395,8 +395,8 @@ cc_library(
         ":tpu_topology_external",
         "//xla/stream_executor",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:types",
+        "@tsl/platform:env",
+        "@tsl/platform:types",
     ],
 )
 
@@ -432,10 +432,10 @@ cc_library(
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform/cloud:gcs_file_system",
+        "@tsl/platform:env",
+        "@tsl/platform:errors",
+        "@tsl/platform:logging",
+        "@tsl/platform/cloud:gcs_file_system",
     ],
 )
 
@@ -537,7 +537,7 @@ cc_library(
     deps = [
         ":c_api_decl",
         ":tpu_api",
-        "@tsl//tsl/platform:types",
+        "@tsl/platform:types",
     ],
 )
 
@@ -547,8 +547,8 @@ xla_cc_test(
     deps = [
         ":pjrt_api",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
+        "@tsl/lib/core:status_test_util",
+        "@tsl/platform:status_matchers",
+        "@tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )

@@ -1,4 +1,4 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 
 package(
@@ -57,7 +57,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
-        "@tsl//tsl/platform:statusor",
+        "@tsl/platform:statusor",
     ],
 )
 
@@ -88,7 +88,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
-        "@tsl//tsl/platform:bfloat16",
+        "@tsl/platform:bfloat16",
     ],
 )
 
@@ -101,8 +101,8 @@ xla_cc_test(
         "//xla:test",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/platform:protobuf",
+        "@tsl/platform:test_main",
     ],
 )
 
@@ -158,9 +158,9 @@ xla_cc_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/lib/core:status_test_util",
+        "@tsl/platform:status",
+        "@tsl/platform:test_main",
     ],
 )
 
@@ -176,7 +176,7 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:protobuf",
+        "@tsl/platform:protobuf",
     ],
 )
 

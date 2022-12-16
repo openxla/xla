@@ -1,5 +1,5 @@
 load("//xla:xla.bzl", "xla_cc_binary")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
+load("@tsl:tsl.default.bzl", "get_compatible_with_cloud")
 
 package_group(
     name = "friends",

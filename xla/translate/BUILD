@@ -22,6 +22,6 @@ xla_cc_binary(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TranslateLib",
-        "@tsl//tsl/platform:platform_port",
+        "@tsl/platform:platform_port",
     ],
 )

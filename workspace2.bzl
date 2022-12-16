@@ -184,7 +184,7 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "mkl_dnn",
-        build_file = "//third_party/mkl_dnn:mkldnn.BUILD",
+        build_file = "@//third_party/mkl_dnn:mkldnn.BUILD",
         sha256 = "a0211aeb5e7dad50b97fa5dffc1a2fe2fe732572d4164e1ee8750a2ede43fbec",
         strip_prefix = "oneDNN-0.21.3",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/v0.21.3.tar.gz"),
@@ -192,7 +192,7 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "mkl_dnn_v1",
-        build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
+        build_file = "@//third_party/mkl_dnn:mkldnn_v1.BUILD",
         sha256 = "dc2b9bc851cd8d5a6c4622f7dc215bdb6b32349962875f8bf55cceed45a4c449",
         strip_prefix = "oneDNN-2.7.1",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v2.7.1.tar.gz"),
@@ -200,8 +200,8 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "mkl_dnn_acl_compatible",
-        build_file = "//third_party/mkl_dnn:mkldnn_acl.BUILD",
-        patch_file = ["//third_party/mkl_dnn:onednn_acl_threadcap.patch", "//third_party/mkl_dnn:onednn_acl_fixed_format_kernels.patch", "//third_party/mkl_dnn:onednn_acl_depthwise_convolution.patch"],
+        build_file = "@//third_party/mkl_dnn:mkldnn_acl.BUILD",
+        patch_file = ["@//third_party/mkl_dnn:onednn_acl_threadcap.patch", "@//third_party/mkl_dnn:onednn_acl_fixed_format_kernels.patch", "@//third_party/mkl_dnn:onednn_acl_depthwise_convolution.patch"],
         sha256 = "fc2b617ec8dbe907bb10853ea47c46f7acd8817bc4012748623d911aca43afbb",
         strip_prefix = "oneDNN-2.7",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/v2.7.tar.gz"),

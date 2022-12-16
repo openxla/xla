@@ -2,7 +2,7 @@
 #   Host-platform specific StreamExecutor support code.
 
 load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 
 package(
@@ -65,8 +65,8 @@ cc_library(
         "//xla/stream_executor:kernel",
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:denormal",
-        "@tsl//tsl/platform:setround",
+        "@tsl/platform:denormal",
+        "@tsl/platform:setround",
     ],
 )
 
@@ -107,8 +107,8 @@ cc_library(
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform/profile_utils:profile_utils_cpu_utils",
+        "@tsl/platform:platform_port",
+        "@tsl/platform/profile_utils:profile_utils_cpu_utils",
     ],
     alwayslink = True,
 )
@@ -122,9 +122,9 @@ xla_cc_test(
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/lib/core:status_test_util",
+        "@tsl/platform:errors",
+        "@tsl/platform:test",
+        "@tsl/platform:test_main",
     ],
 )

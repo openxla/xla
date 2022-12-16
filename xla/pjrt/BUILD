@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load(
-    "@tsl//tsl/platform:build_config.bzl",
+    "@tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
 
@@ -29,8 +29,8 @@ cc_library(
     hdrs = ["worker_thread.h"],
     deps = [
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
     ],
 )
 
@@ -56,7 +56,7 @@ cc_library(
         "//xla:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:logging",
+        "@tsl/platform:logging",
     ],
 )
 
@@ -67,9 +67,9 @@ xla_cc_test(
         ":semaphore",
         "//xla:test",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:test_main",
     ],
 )
 
@@ -93,7 +93,7 @@ cc_library(
         "//xla/stream_executor:event",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:logging",
+        "@tsl/platform:logging",
     ],
 )
 
@@ -110,7 +110,7 @@ xla_cc_test(
         "//xla/service:cpu_plugin",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/platform:test_main",
     ],
 )
 
@@ -129,8 +129,8 @@ cc_library(
         "//xla/stream_executor:event",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/profiler/lib:traceme",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
+        "@tsl/profiler/lib:traceme",
+        "@tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -159,8 +159,8 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:fingerprint",
+        "@tsl/platform:errors",
+        "@tsl/platform:fingerprint",
     ],
 )
 
@@ -185,7 +185,7 @@ xla_cc_test(
     deps = [
         ":pjrt_client_test_common",
         ":tfrt_cpu_pjrt_client",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/platform:test_main",
     ],
 )
 
@@ -201,7 +201,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:statusor",
+        "@tsl/platform:statusor",
     ],
 )
 
@@ -268,7 +268,7 @@ cc_library(
     hdrs = ["metrics.h"],
     deps = [
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/monitoring:counter",
+        "@tsl/lib/monitoring:counter",
     ],
 )
 
@@ -322,16 +322,16 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/framework:allocator",
-        "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:fingerprint",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/profiler/lib:connected_traceme",
-        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl/framework:allocator",
+        "@tsl/platform:casts",
+        "@tsl/platform:env",
+        "@tsl/platform:errors",
+        "@tsl/platform:fingerprint",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:status",
+        "@tsl/platform:statusor",
+        "@tsl/profiler/lib:connected_traceme",
+        "@tsl/profiler/lib:traceme",
     ],
 )
 
@@ -380,8 +380,8 @@ cc_library(
         "//xla/stream_executor/tpu:tpu_platform_interface",
         "//xla/stream_executor/tpu:tpu_topology_external",
         "//xla/stream_executor/tpu:tpu_transfer_manager",
-        "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:errors",
+        "@tsl/platform:casts",
+        "@tsl/platform:errors",
     ],
 )
 
@@ -464,7 +464,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tf_runtime//:hostcontext",
-        "@tsl//tsl/platform:platform_port",
+        "@tsl/platform:platform_port",
     ],
 )
 
@@ -520,11 +520,11 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:support",
-        "@tsl//tsl/platform:denormal",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:setround",
-        "@tsl//tsl/profiler/lib:connected_traceme",
-        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl/platform:denormal",
+        "@tsl/platform:errors",
+        "@tsl/platform:setround",
+        "@tsl/profiler/lib:connected_traceme",
+        "@tsl/profiler/lib:traceme",
     ],
 )
 
@@ -545,7 +545,7 @@ cc_library(
     hdrs = ["lru_cache.h"],
     deps = [
         "@com_google_absl//absl/container:node_hash_map",
-        "@tsl//tsl/platform:logging",
+        "@tsl/platform:logging",
     ],
 )
 
@@ -555,8 +555,8 @@ xla_cc_test(
     deps = [
         ":lru_cache",
         "//xla:test",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test_main",
+        "@tsl/platform:logging",
+        "@tsl/platform:test_main",
     ],
 )
 
@@ -582,8 +582,8 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl/platform:logging",
+        "@tsl/profiler/lib:traceme",
     ],
 )
 
@@ -600,10 +600,10 @@ xla_cc_test(
         "//xla:util",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/numeric:int128",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
+        "@tsl/platform:env",
+        "@tsl/platform:test_benchmark",
+        "@tsl/platform:test_main",
+        "@tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -628,7 +628,7 @@ cc_library(
         "//xla/stream_executor/tpu:tpu_initializer_helper",
         "@com_google_absl//absl/strings",
         "@llvm-project//mlir:BytecodeWriter",
-        "@tsl//tsl/platform:status",
+        "@tsl/platform:status",
     ],
 )
 
@@ -648,7 +648,7 @@ xla_cc_test(
         ":pjrt_client",
         "//xla/tests:literal_test_util",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl/lib/core:status_test_util",
     ],
 )
 

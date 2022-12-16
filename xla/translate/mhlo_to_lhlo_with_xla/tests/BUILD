@@ -1,7 +1,7 @@
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
+load("@tsl:tsl.default.bzl", "filegroup")
 load("//xla:glob_lit_test.bzl", "glob_lit_tests")
 load(
-    "@tsl//tsl/platform:build_config_root.bzl",
+    "@tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
 

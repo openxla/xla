@@ -1,7 +1,7 @@
 """Default (OSS) build versions of TSL general-purpose build extensions."""
 
 load(
-    "//tsl:tsl.bzl",
+    "@tsl:tsl.bzl",
     "clean_dep",
     "two_gpu_tags",
     _filegroup = "filegroup",
@@ -12,11 +12,11 @@ load(
     _tsl_pybind_extension = "tsl_pybind_extension",
 )
 load(
-    "//tsl/platform:build_config.bzl",
+    "@tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
 load(
-    "//tsl/platform:build_config_root.bzl",
+    "@tsl/platform:build_config_root.bzl",
     "tf_gpu_tests_tags",
 )
 load(
@@ -84,7 +84,7 @@ def tsl_gpu_cc_test(
         linkopts = linkopts,
         linkstatic = select({
             # TODO(allenl): Remove Mac static linking when Bazel 0.6 is out.
-            clean_dep("//tsl:macos"): 1,
+            clean_dep("@tsl:macos"): 1,
             "@local_config_cuda//cuda:using_nvcc": 1,
             "@local_config_cuda//cuda:using_clang": 1,
             "//conditions:default": 0,
@@ -107,7 +107,7 @@ def tsl_gpu_cc_test(
             linkopts = linkopts,
             linkstatic = select({
                 # TODO(allenl): Remove Mac static linking when Bazel 0.6 is out.
-                clean_dep("//tsl:macos"): 1,
+                clean_dep("@tsl:macos"): 1,
                 "@local_config_cuda//cuda:using_nvcc": 1,
                 "@local_config_cuda//cuda:using_clang": 1,
                 "//conditions:default": 0,

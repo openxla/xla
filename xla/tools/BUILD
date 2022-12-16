@@ -1,9 +1,9 @@
 # Tools and utilities that aid in XLA development and usage.
 
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl:tsl.default.bzl", "filegroup")
+load("@tsl/platform:rules_cc.bzl", "cc_library")
 load(
-    "@tsl//tsl:tsl.bzl",
+    "@tsl:tsl.bzl",
     "if_cuda_or_rocm",
 )
 load(
@@ -13,7 +13,7 @@ load(
     "xla_py_proto_library",
 )
 load(
-    "@tsl//tsl/platform:build_config.bzl",
+    "@tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
 
@@ -40,13 +40,13 @@ xla_cc_binary(
         "//xla:types",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/io:buffered_inputstream",
-        "@tsl//tsl/lib/io:random_inputstream",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/util:command_line_flags",
+        "@tsl/lib/io:buffered_inputstream",
+        "@tsl/lib/io:random_inputstream",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:status",
+        "@tsl/util:command_line_flags",
     ],
 )
 
@@ -64,9 +64,9 @@ xla_cc_binary(
         "//xla/service:hlo_proto_cc",
         "//xla/service:interpreter_plugin",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
     ],
 )
 
@@ -93,12 +93,12 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/lib/io:record_reader",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:tstring",
-        "@tsl//tsl/util:command_line_flags",
+        "@tsl/lib/io:record_reader",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:tstring",
+        "@tsl/util:command_line_flags",
     ],
     alwayslink = True,
 )
@@ -135,10 +135,10 @@ xla_cc_binary(
         "//xla:literal",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:status",
     ],
 )
 
@@ -149,10 +149,10 @@ xla_cc_binary(
         "//xla:statusor",
         "//xla:types",
         "//xla/service:hlo_proto_cc",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:protobuf",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:protobuf",
     ],
 )
 
@@ -165,9 +165,9 @@ xla_cc_binary(
         "//xla:text_literal_reader",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:protobuf",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:protobuf",
     ],
 )
 
@@ -186,9 +186,9 @@ xla_cc_binary(
         "//xla/service:hlo_proto_cc",
         "//xla/service:interpreter_plugin",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
     ],
 )
 
@@ -209,9 +209,9 @@ xla_cc_binary(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
     ],
 )
 
@@ -222,11 +222,11 @@ xla_cc_binary(
         "//xla:statusor",
         "//xla:util",
         "//xla/service:hlo_proto_cc",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/util:command_line_flags",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:status",
+        "@tsl/util:command_line_flags",
     ],
 )
 
@@ -238,7 +238,7 @@ xla_cc_test(
         "//xla/service:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/platform:test",
+        "@tsl/platform:test",
     ],
 )
 
@@ -273,12 +273,12 @@ xla_cc_binary(
         "//xla/service:hlo_runner",
         "//xla/service:local_service",
         "//xla/service:platform_util",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:subprocess",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
-        "@tsl//tsl/util:command_line_flags",
+        "@tsl/platform:logging",
+        "@tsl/platform:path",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:subprocess",
+        "@tsl/protobuf:error_codes_proto_impl_cc",
+        "@tsl/util:command_line_flags",
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
     ]),
@@ -301,11 +301,11 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:regexp",
+        "@tsl/platform:env",
+        "@tsl/platform:logging",
+        "@tsl/platform:path",
+        "@tsl/platform:protobuf",
+        "@tsl/platform:regexp",
     ],
 )
 
@@ -316,8 +316,8 @@ xla_cc_test(
         ":hlo_module_loader",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
+        "@tsl/lib/core:status_test_util",
+        "@tsl/platform:test",
     ],
 )
 
@@ -335,7 +335,7 @@ cc_library(
         "//xla/service:hlo_runner_interface",
         "//xla/stream_executor:platform",
         "//xla/stream_executor/lib",
-        "@tsl//tsl/platform:errors",
+        "@tsl/platform:errors",
     ],
 )
 
@@ -377,9 +377,9 @@ cc_library(
         "//xla/service:hlo_verifier",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:status",
+        "@tsl/platform:logging",
+        "@tsl/platform:path",
+        "@tsl/platform:status",
     ],
 )
 
@@ -398,12 +398,12 @@ xla_cc_binary(
         "//xla/service:interpreter_plugin",
         "//xla/service:platform_util",
         "//xla:debug_options_flags",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/util:command_line_flags",
+        "@tsl/platform:logging",
+        "@tsl/platform:path",
+        "@tsl/platform:platform_port",
+        "@tsl/platform:status",
+        "@tsl/platform:test",
+        "@tsl/util:command_line_flags",
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
     ]),
@@ -438,8 +438,8 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
+        "@tsl/lib/core:status_test_util",
+        "@tsl/platform:test",
     ],
 )
 
@@ -458,6 +458,6 @@ xla_cc_binary(
     deps = [
         ":hlo_module_loader",
         "//xla/service:hlo_cost_analysis",
-        "@tsl//tsl/platform:platform_port",
+        "@tsl/platform:platform_port",
     ],
 )
