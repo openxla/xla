@@ -18,7 +18,8 @@ xla_compile_tool = "//xla/service:xla_compile"
 
 def xla_aot_compile_cpu(
         name,
-        module):
+        module,
+        **kwargs):
     """Runs xla_compile to compile an MHLO or StableHLO module into an AotCompilationResult for CPU
 
     Args:
@@ -36,6 +37,7 @@ def xla_aot_compile_cpu(
                " --output_file=$(location " + name + ")" +
                " --platform=cpu"),
         tools = [xla_compile_tool],
+        **kwargs
     )
 
     return
@@ -43,7 +45,8 @@ def xla_aot_compile_cpu(
 def xla_aot_compile_gpu(
         name,
         module,
-        gpu_target_config):
+        gpu_target_config,
+        **kwargs):
     """Runs xla_compile to compile an MHLO or StableHLO module into an AotCompilationResult for GPU
 
     Args:
@@ -69,6 +72,7 @@ def xla_aot_compile_gpu(
             "//conditions:default": ["@platforms//:incompatible"],
         }),
         # copybara:comment_end
+        **kwargs
     )
 
     return

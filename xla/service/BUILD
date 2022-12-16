@@ -7007,12 +7007,20 @@ xla_aot_compile_gpu(
     name = "xla_aot_compile_test_gpu_executable",
     gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
     module = "xla_aot_compile_test.mlir",
+    tags = [
+        "gpu",
+        "no_rocm",
+    ],
 )
 
 xla_aot_compile_gpu(
     name = "xla_aot_compile_test_gpu_executable_constant",
     gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
     module = "xla_aot_compile_test_constant.mlir",
+    tags = [
+        "gpu",
+        "no_rocm",
+    ],
 )
 
 xla_cc_test(
