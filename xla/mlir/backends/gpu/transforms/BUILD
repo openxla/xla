@@ -53,6 +53,7 @@ cc_library(
         "//xla/service/gpu:nccl_collective_thunks",
         "//xla/stream_executor:blas",
         "//xla/translate/mhlo_to_hlo:location_exporter",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
