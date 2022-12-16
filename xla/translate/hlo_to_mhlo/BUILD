@@ -89,7 +89,6 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
         "@tsl//tsl/platform:bfloat16",
-        "@tsl//tsl/platform:float8",
     ],
 )
 
