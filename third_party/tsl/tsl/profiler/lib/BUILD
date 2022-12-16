@@ -253,13 +253,29 @@ cc_library(
 )
 
 cc_library(
+    name = "nvtx_utils",
+    hdrs = ["nvtx_utils.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@tsl/platform:logging",
+        "@tsl/platform:macros",
+        "@tsl/platform:types",
+    ] + if_not_android([
+        "@tsl/profiler/backends/cpu:annotation_stack",
+    ]),
+)
+
+cc_library(
     name = "scoped_annotation",
     hdrs = ["scoped_annotation.h"],
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/strings",
+        "@tsl/platform:macros",
         "@tsl/platform:types",
     ] + if_not_android([
+        ":nvtx_utils",
         "@tsl/profiler/backends/cpu:annotation_stack",
     ]),
 )

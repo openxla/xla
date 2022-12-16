@@ -368,6 +368,8 @@ cc_library(
         "@tsl/platform:logging",
         "@tsl/platform:human_readable_json",
         "@tsl/platform:status",
+        "@tsl/profiler/lib:nvtx_utils",
+        "@tsl/protobuf:dnn_proto_cc_impl",
     ] + if_gpu_is_configured([
         ":triangular_solve_thunk",
         ":cholesky_thunk",
