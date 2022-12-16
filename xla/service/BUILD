@@ -4222,6 +4222,36 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "hlo_activation_analysis",
+    srcs = ["hlo_activation_analysis.cc"],
+    hdrs = ["hlo_activation_analysis.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_activation_analysis_test",
+    srcs = ["hlo_activation_analysis_test.cc"],
+    deps = [
+        ":hlo_activation_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
     name = "hlo_replication_analysis",
     srcs = ["hlo_replication_analysis.cc"],
     hdrs = ["hlo_replication_analysis.h"],
