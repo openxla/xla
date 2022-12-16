@@ -80,8 +80,10 @@ install_build_env_tools
 
 python -m pip install numpy==1.21.4
 
+TARGET_FILTER=-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/...
+
 bazel build \
     --output_filter="" \
     --nocheck_visibility \
     --keep_going \
-    -- //xla/...
+    -- //xla/... $TARGET_FILTER
