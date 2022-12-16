@@ -192,14 +192,7 @@ class GpuBfloat16Support : public BFloat16Support {
   explicit GpuBfloat16Support(bool supports_matrix_multiplication,
                               se::StreamExecutor* stream_exec)
       : supports_matrix_multiplication_(supports_matrix_multiplication),
-        is_conv_bf16_supported_(IsConvBf16Supported(stream_exec)) {}
-
-  explicit GpuBfloat16Support(bool supports_matrix_multiplication,
-                              se::dnn::VersionInfo cudnn_version,
-                              se::CudaComputeCapability cuda_compute_capability)
-      : supports_matrix_multiplication_(supports_matrix_multiplication),
-        is_conv_bf16_supported_(
-            IsConvBf16Supported(cudnn_version, cuda_compute_capability)) {}
+        stream_exec_(stream_exec) {}
 
   bool SupportsBF16Operand(const HloInstruction& hlo,
                            int64_t operand_index) const override {
@@ -242,41 +235,30 @@ class GpuBfloat16Support : public BFloat16Support {
       case HloOpcode::kBitcast:
         return true;
       case HloOpcode::kConvolution:
-        return is_conv_bf16_supported_;
+        return IsConvBF16Supported();
       default:
         return supports_matrix_multiplication_ &&
                gpu::IsMatrixMultiplication(hlo);
     }
   }
 
-  static bool IsConvBf16Supported(se::StreamExecutor* stream_exec) {
-    if (se::dnn::DnnSupport* dnn = stream_exec->AsDnn()) {
+  bool IsConvBF16Supported() const {
+    if (se::dnn::DnnSupport* dnn = stream_exec_->AsDnn()) {
       se::port::StatusOr<se::dnn::VersionInfo> cudnn_version =
           dnn->GetVersion();
-      if (cudnn_version.ok()) {
-        auto cuda_compute_capability =
-            stream_exec->GetDeviceDescription().cuda_compute_capability();
-        return (cudnn_version->major_version() > 8 ||
-                (cudnn_version->major_version() == 8 &&
-                 cudnn_version->minor_version() >= 2)) &&
-               cuda_compute_capability.IsAtLeast(
-                   se::CudaComputeCapability::AMPERE);
-      }
+      return cudnn_version.ok() &&
+             (cudnn_version->major_version() > 8 ||
+              (cudnn_version->major_version() == 8 &&
+               cudnn_version->minor_version() >= 2)) &&
+             stream_exec_->GetDeviceDescription()
+                 .cuda_compute_capability()
+                 .IsAtLeast(se::CudaComputeCapability::AMPERE);
     }
     return false;
   }
 
-  static bool IsConvBf16Supported(
-      se::dnn::VersionInfo cudnn_version,
-      se::CudaComputeCapability cuda_compute_capability) {
-    return (cudnn_version.major_version() > 8 ||
-            (cudnn_version.major_version() == 8 &&
-             cudnn_version.minor_version() >= 2)) &&
-           cuda_compute_capability.IsAtLeast(se::CudaComputeCapability::AMPERE);
-  }
-
   bool supports_matrix_multiplication_;
-  bool is_conv_bf16_supported_;
+  se::StreamExecutor* stream_exec_;
 };
 
 int64_t GetSizeOfShape(const Shape& shape, int pointer_size) {
