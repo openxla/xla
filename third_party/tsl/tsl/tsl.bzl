@@ -20,7 +20,7 @@ load(
     "if_rocm_is_configured",
 )
 load(
-    "@org_tensorflow//third_party/mkl:build_defs.bzl",
+    "//tsl/mkl:build_defs.bzl",
     "if_enable_mkl",
     "if_mkl",
 )
@@ -280,11 +280,11 @@ def tf_openmp_copts():
     # We assume when compiling on Linux gcc/clang will be used and MSVC on Windows
     return select({
         # copybara:uncomment_begin
-        # "//third_party/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
-        # "//third_party/mkl:build_with_mkl_windows_openmp": ["/openmp"],
+        # "//tsl/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
+        # "//tsl/mkl:build_with_mkl_windows_openmp": ["/openmp"],
         # copybara:uncomment_end_and_comment_begin
-        "@org_tensorflow//third_party/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
-        "@org_tensorflow//third_party/mkl:build_with_mkl_windows_openmp": ["/openmp:llvm"],
+        clean_dep("//tsl/mkl:build_with_mkl_lnx_openmp"): ["-fopenmp"],
+        clean_dep("//tsl/mkl:build_with_mkl_windows_openmp"): ["/openmp:llvm"],
         # copybara:comment_end
         "//conditions:default": [],
     })

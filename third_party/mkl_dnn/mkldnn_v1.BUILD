@@ -1,3 +1,4 @@
+load("@org_tensorflow//tensorflow:tensorflow.bzl", "lrt_if_needed")
 load("@tsl//tsl:tsl.bzl", "tf_openmp_copts")
 load("@org_tensorflow//third_party/mkl:build_defs.bzl", "if_mkl")
 load("@org_tensorflow//third_party/mkl_dnn:build_defs.bzl", "if_mkldnn_openmp")
@@ -160,13 +161,7 @@ cc_library(
     ),
     copts = _COPTS_LIST,
     includes = _INCLUDES_LIST,
-    # TODO(penpornk): Use lrt_if_needed from tensorflow.bzl instead.
-    linkopts = select({
-        "@tsl//tsl:linux_aarch64": ["-lrt"],
-        "@tsl//tsl:linux_x86_64": ["-lrt"],
-        "@tsl//tsl:linux_ppc64le": ["-lrt"],
-        "//conditions:default": [],
-    }),
+    linkopts = lrt_if_needed(),
     textual_hdrs = _TEXTUAL_HDRS_LIST,
     visibility = ["//visibility:public"],
     deps = [":onednn_autogen"] + if_mkl_ml(

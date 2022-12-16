@@ -451,8 +451,8 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = [
         "//third_party/compute_library:build_defs_bzl",
-        "//third_party/mkl:build_defs_bzl",
         "//third_party/mkl_dnn:build_defs_bzl",
+        "//tsl/mkl:build_defs_bzl",
         "//tsl/platform:rules_cc_bzl",
         "@bazel_skylib//lib:new_sets",
         "@local_config_cuda//cuda:build_defs_bzl",
