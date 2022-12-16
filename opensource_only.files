@@ -88,8 +88,6 @@ third_party/llvm_openmp/expand_cmake_vars:.py
 third_party/llvm_openmp/openmp.bzl:
 third_party/lmdb.BUILD:
 third_party/mkl/BUILD:
-third_party/mkl/LICENSE:
-third_party/mkl/MKL_LICENSE:
 third_party/mkl/build_defs.bzl:
 third_party/mkl_dnn/LICENSE:
 third_party/mkl_dnn/build_defs.bzl:
@@ -211,4 +209,8 @@ tools/toolchains/win_1803/py36/BUILD:
 tools/toolchains/win_1803/py37/BUILD:
 tools/toolchains/win_1803/py38/BUILD:
 tools/toolchains/win_1803/py39/BUILD:
+tsl/mkl/BUILD:
+tsl/mkl/LICENSE:
+tsl/mkl/MKL_LICENSE:
+tsl/mkl/build_defs.bzl:
 tsl/platform/default/build_config/BUILD:
