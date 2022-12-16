@@ -1,7 +1,7 @@
 # Description:
 #   Implementation of XLA’s HLO transformations.
 
-load("@tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 
 package(
@@ -34,6 +34,6 @@ xla_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/lib/core:status_test_util",
+        "@tsl//tsl/lib/core:status_test_util",
     ],
 )

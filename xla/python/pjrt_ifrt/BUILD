@@ -57,7 +57,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@tf_runtime//:ref_count",
-        "@tsl/platform:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

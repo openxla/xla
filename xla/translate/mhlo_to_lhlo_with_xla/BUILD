@@ -1,4 +1,4 @@
-load("@tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_binary")
 
 package(
@@ -48,9 +48,9 @@ cc_library(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:TranslateLib",
-        "@tsl/platform:errors",
-        "@tsl/platform:status",
-        "@tsl/platform:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -80,7 +80,7 @@ xla_cc_binary(
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:MlirOptLib",
         "@stablehlo//:register",
-        "@tsl/platform:platform_port",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -100,6 +100,6 @@ xla_cc_binary(
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:MlirOptLib",
         "@stablehlo//:register",
-        "@tsl/platform:platform_port",
+        "@tsl//tsl/platform:platform_port",
     ],
 )

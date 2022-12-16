@@ -1,8 +1,8 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("@tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl/platform:build_config.bzl", "pyx_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:build_config.bzl", "pyx_library")
 load(
-    "@tsl/platform/default:cuda_build_defs.bzl",
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 load(
@@ -11,11 +11,11 @@ load(
     "xla_py_test_deps",
 )
 load(
-    "@tsl:tsl.bzl",
+    "@tsl//tsl:tsl.bzl",
     "if_cuda_or_rocm",
 )
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("@tsl:tsl.default.bzl", "tsl_pybind_extension")
+load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("//xla:pytype.default.bzl", "pytype_library")
 
 package(
@@ -174,9 +174,9 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "@tsl/platform:logging",
-        "@tsl/platform:protobuf",
-        "@tsl/python/lib/core:bfloat16_lib",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/python/lib/core:bfloat16_lib",
     ],
 )
 
@@ -208,9 +208,9 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        "//third_party/python_runtime:headers",  # buildcleaner: keep
         "//xla:status_macros",
         "//xla:util",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
     ],
 )
@@ -234,7 +234,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@pybind11",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -254,8 +254,8 @@ cc_library(
         "//xla:util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@pybind11",
-        "@tsl/platform:protobuf",
-        "@tsl/profiler/protobuf:profile_proto_cc",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/profiler/protobuf:profile_proto_cc",
     ],
 )
 
@@ -298,7 +298,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":exceptions",
-        "@tsl/python/lib/core:numpy",
+        "@tsl//tsl/python/lib/core:numpy",
         ":pprof_profile_builder",
         ":python_ref_manager",
         ":python_utils",
@@ -331,10 +331,10 @@ cc_library(
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",
-        "@tsl/platform:errors",
-        "@tsl/platform:statusor",
-        "@tsl/profiler/lib:traceme",
-        "@tsl/platform:fingerprint",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/platform:fingerprint",
     ] + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
     ]) + select({
@@ -365,7 +365,6 @@ cc_library(
         ":py_client",
         ":python_ref_manager",
         ":traceback",
-        "//third_party/python_runtime:headers",  # buildcleaner: keep
         "//xla:types",
         "//xla:util",
         "//xla/pjrt:pjrt_client",
@@ -375,6 +374,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@dlpack",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
     ],
 )
@@ -409,7 +409,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@pybind11",
-        "//third_party/python_runtime:headers",  # build_cleaner: keep
+        "@local_config_python//:python_headers",  # build_cleaner: keep
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:types",
@@ -417,8 +417,8 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:lru_cache",
         "//xla/pjrt:pjrt_client",
-        "@tsl/platform:status",
-        "@tsl/profiler/lib:traceme",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/profiler/lib:traceme",
     ] + select({
         ":ifrt_enabled": [
             "//xla/python/ifrt",
@@ -496,7 +496,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -523,7 +523,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@pybind11",
         "//xla/pjrt:lru_cache",
-        "@tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme",
     ] + select({
         ":ifrt_enabled": [
             "//xla/python/ifrt",
@@ -565,9 +565,9 @@ cc_library(
         "@pybind11_abseil//pybind11_abseil:absl_casters",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
-        "@tsl/platform:logging",
-        "@tsl/platform:statusor",
-        "@tsl/profiler/lib:traceme",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
     ] + select({
         ":ifrt_enabled": [
             "//xla/python/ifrt",
@@ -594,8 +594,8 @@ xla_cc_test(
         "//xla/service:platform_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl/platform:test",
-        "@tsl/platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -643,7 +643,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -675,7 +675,7 @@ cc_library(
         "@pybind11",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
-        "@tsl/platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -697,10 +697,10 @@ cc_library(
         "//xla/backends/profiler/cpu:python_tracer",
         "//xla/python/profiler/internal:traceme_wrapper",
         "@pybind11",
-        "@tsl/profiler/lib:profiler_session",
-        "@tsl/profiler/rpc:profiler_server_impl",
-        "@tsl/profiler/rpc/client:capture_profile",
-        "@tsl/profiler/rpc/client:profiler_client",
+        "@tsl//tsl/profiler/lib:profiler_session",
+        "@tsl//tsl/profiler/rpc:profiler_server_impl",
+        "@tsl//tsl/profiler/rpc/client:capture_profile",
+        "@tsl//tsl/profiler/rpc/client:profiler_client",
     ],
 )
 
@@ -813,7 +813,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@pybind11",
-        "@tsl/lib/strings:proto_serialization",
+        "@tsl//tsl/lib/strings:proto_serialization",
     ],
 )
 
@@ -936,7 +936,7 @@ tsl_pybind_extension(
         ":custom_call_sharding",
         ":jax_jit",
         ":mlir",
-        "@tsl/python/lib/core:numpy",
+        "@tsl//tsl/python/lib/core:numpy",
         ":ops",
         ":util",
         ":pmap_lib",
@@ -956,7 +956,7 @@ tsl_pybind_extension(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@pybind11",
-        "//third_party/python_runtime:headers",  # buildcleaner: keep
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
@@ -972,9 +972,9 @@ tsl_pybind_extension(
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
         "//xla/stream_executor/tpu:pjrt_api",
-        "@tsl/platform:logging",
-        "@tsl/distributed_runtime/preemption:preemption_sync_manager",
-        "@tsl/python/lib/core:bfloat16_lib",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
+        "@tsl//tsl/python/lib/core:bfloat16_lib",
     ] + select({
         ":gpu_enabled": [
             "//xla/pjrt/gpu:se_gpu_pjrt_client",

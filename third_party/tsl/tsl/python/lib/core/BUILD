@@ -26,7 +26,7 @@ cc_library(
         "bfloat16.h",
     ],
     deps = [
-        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -42,12 +42,12 @@ cc_library(
     ],
     deps = [
         ":custom_float",
-        "//third_party/eigen3",
-        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "//tsl/platform:logging",
+        "//tsl/platform:types",
+        "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:types",
-        "@tsl/python/lib/core:numpy",
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "@org_tensorflow//third_party/eigen3",
     ],
 )
 
@@ -57,11 +57,11 @@ cc_library(
         "custom_float.h",
     ],
     deps = [
-        "//third_party/eigen3",
-        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "//tsl/platform:logging",
+        "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/python/lib/core:numpy",
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "@org_tensorflow//third_party/eigen3",
     ],
 )
 
@@ -71,7 +71,7 @@ cc_library(
         "float8.h",
     ],
     deps = [
-        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -85,12 +85,12 @@ cc_library(
     ],
     deps = [
         ":custom_float",
-        "//third_party/eigen3",
-        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
+        "//tsl/platform:logging",
+        "//tsl/platform:types",
+        "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:types",
-        "@tsl/python/lib/core:numpy",
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "@org_tensorflow//third_party/eigen3",
     ],
 )
 
@@ -101,9 +101,9 @@ cc_library(
     deps = [
         ":bfloat16_lib",
         ":float8_lib",
-        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
-        "@tsl/platform:types",
-        "@tsl/python/lib/core:numpy",
+        "//tsl/platform:types",
+        "//tsl/python/lib/core:numpy",
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -119,8 +119,8 @@ cc_library(
     srcs = ["numpy.cc"],
     hdrs = ["numpy.h"],
     deps = [
-        "//third_party/py/numpy:headers",
-        "//third_party/python_runtime:headers",
+        "@local_config_python//:numpy_headers",
+        "@local_config_python//:python_headers",
     ],
 )
 

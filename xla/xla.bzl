@@ -1,13 +1,13 @@
 """Wrapper around proto libraries used inside the XLA codebase."""
 
 load(
-    "@tsl:tsl.bzl",
+    "@tsl//tsl:tsl.bzl",
     "clean_dep",
     "if_tsl_link_protobuf",
     "tsl_copts",
 )
 load(
-    "@tsl/platform/default:cuda_build_defs.bzl",
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
 load(
@@ -15,7 +15,7 @@ load(
     "if_rocm_is_configured",
 )
 load(
-    "@tsl/platform:build_config_root.bzl",
+    "@tsl//tsl/platform:build_config_root.bzl",
     "tf_exec_properties",
 )
 
@@ -47,11 +47,11 @@ def xla_cc_binary(deps = None, copts = tsl_copts(), **kwargs):
         "//xla/service:hlo_proto_cc_impl",
         "//xla/service/gpu:backend_configs_cc_impl",
         "//xla/stream_executor:dnn_proto_cc_impl",
-        "@tsl/platform:env_impl",
-        "@tsl/profiler/utils:time_utils_impl",
-        "@tsl/profiler/backends/cpu:traceme_recorder_impl",
-        "@tsl/protobuf:protos_all_cc_impl",
-        "@tsl/protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/platform:env_impl",
+        "@tsl//tsl/profiler/utils:time_utils_impl",
+        "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
+        "@tsl//tsl/protobuf:protos_all_cc_impl",
+        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
     ]
     native.cc_binary(deps = deps, copts = copts, **kwargs)
 
@@ -77,16 +77,16 @@ def xla_cc_test(
                        "//xla/stream_executor:device_id_utils",
                        "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
                        "//xla/stream_executor/gpu:gpu_init_impl",
-                       "@tsl/profiler/utils:time_utils_impl",
-                       "@tsl/profiler/backends/cpu:annotation_stack_impl",
-                       "@tsl/profiler/backends/cpu:traceme_recorder_impl",
-                       "@tsl/protobuf:autotuning_proto_cc_impl",
-                       "@tsl/protobuf:dnn_proto_cc_impl",
-                       "@tsl/protobuf:protos_all_cc_impl",
-                       "@tsl/platform:env_impl",
-                       "@tsl/framework:allocator",
-                       "@tsl/framework:allocator_registry_impl",
-                       "@tsl/util:determinism",
+                       "@tsl//tsl/profiler/utils:time_utils_impl",
+                       "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
+                       "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
+                       "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
+                       "@tsl//tsl/protobuf:dnn_proto_cc_impl",
+                       "@tsl//tsl/protobuf:protos_all_cc_impl",
+                       "@tsl//tsl/platform:env_impl",
+                       "@tsl//tsl/framework:allocator",
+                       "@tsl//tsl/framework:allocator_registry_impl",
+                       "@tsl//tsl/util:determinism",
                    ],
                ) +
                if_cuda_is_configured([

@@ -1,6 +1,6 @@
-load("@tsl:tsl.default.bzl", "filegroup")
+load("//tsl:tsl.default.bzl", "filegroup")
 load(
-    "@tsl/platform:rules_cc.bzl",
+    "//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 
@@ -11,19 +11,19 @@ cc_library(
     srcs = ["proto_serialization.cc"],
     hdrs = ["proto_serialization.h"],
     visibility = [
+        "//third_party/tensorflow/compiler/xla/python:__pkg__",
+        "//third_party/tensorflow/compiler/xla/service:__pkg__",
+        "//third_party/tensorflow/compiler/xla/stream_executor:__pkg__",
         "//third_party/tensorflow/core/lib/strings:__pkg__",
-        "//xla/python:__pkg__",
-        "//xla/service:__pkg__",
-        "//xla/stream_executor:__pkg__",
     ],
     deps = [
+        "//tsl/lib/gtl:inlined_vector",
+        "//tsl/platform:hash",
+        "//tsl/platform:logging",
+        "//tsl/platform:macros",
+        "//tsl/platform:protobuf",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
-        "@tsl/lib/gtl:inlined_vector",
-        "@tsl/platform:hash",
-        "@tsl/platform:logging",
-        "@tsl/platform:macros",
-        "@tsl/platform:protobuf",
     ],
 )
 

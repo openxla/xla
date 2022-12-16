@@ -32,9 +32,9 @@ def if_mkl(if_true, if_false = []):
       may need it. It may be deleted in future with refactoring.
     """
     return select({
-        "@org_tensorflow//tensorflow/tsl/mkl:build_with_mkl_aarch64": if_true,
-        "@org_tensorflow//tensorflow/tsl:linux_x86_64": if_true,
-        "@org_tensorflow//tensorflow/tsl:windows": if_true,
+        "@tsl//tsl/mkl:build_with_mkl_aarch64": if_true,
+        "@tsl//tsl:linux_x86_64": if_true,
+        "@tsl//tsl:windows": if_true,
         "//conditions:default": if_false,
     })
 
@@ -51,7 +51,7 @@ def if_mkl_ml(if_true, if_false = []):
     """
     return select({
         "@org_tensorflow//third_party/mkl_dnn:build_with_mkl_opensource": if_false,
-        "@org_tensorflow//tensorflow/tsl/mkl:build_with_mkl": if_true,
+        "@tsl//tsl/mkl:build_with_mkl": if_true,
         "//conditions:default": if_false,
     })
 
@@ -68,7 +68,7 @@ def if_mkl_lnx_x64(if_true, if_false = []):
       a select evaluating to either if_true or if_false as appropriate.
     """
     return select({
-        "@org_tensorflow//tensorflow/tsl/mkl:build_with_mkl_lnx_x64": if_true,
+        "@tsl//tsl/mkl:build_with_mkl_lnx_x64": if_true,
         "//conditions:default": if_false,
     })
 
@@ -85,7 +85,7 @@ def if_enable_mkl(if_true, if_false = []):
       A select evaluating to either if_true or if_false as appropriate.
     """
     return select({
-        "@org_tensorflow//tensorflow/tsl/mkl:enable_mkl": if_true,
+        "@tsl//tsl/mkl:enable_mkl": if_true,
         "//conditions:default": if_false,
     })
 
@@ -101,9 +101,9 @@ def mkl_deps():
       inclusion in the deps attribute of rules.
     """
     return select({
-        "@org_tensorflow//tensorflow/tsl/mkl:build_with_mkl_aarch64": ["@mkl_dnn_acl_compatible//:mkl_dnn_acl"],
-        "@org_tensorflow//tensorflow/tsl:linux_x86_64": ["@mkl_dnn_v1//:mkl_dnn"],
-        "@org_tensorflow//tensorflow/tsl:windows": ["@mkl_dnn_v1//:mkl_dnn"],
+        "@tsl//tsl/mkl:build_with_mkl_aarch64": ["@mkl_dnn_acl_compatible//:mkl_dnn_acl"],
+        "@tsl//tsl:linux_x86_64": ["@mkl_dnn_v1//:mkl_dnn"],
+        "@tsl//tsl:windows": ["@mkl_dnn_v1//:mkl_dnn"],
         "//conditions:default": [],
     })
 

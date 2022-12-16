@@ -22,8 +22,8 @@ xla_cc_binary(
         "//xla/service:cpu_plugin",
         "//xla/service:gpu_plugin",
         "//xla/service:interpreter_plugin",
-        "@tsl/platform:platform_port",
-        "@tsl/util:command_line_flags",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/util:command_line_flags",
     ],
 )
 
@@ -43,7 +43,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:errors",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -87,7 +87,7 @@ cc_library(
         "//xla/tools:prepare_reference_module",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl/platform:path",
-        "@tsl/platform:subprocess",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:subprocess",
     ],
 )

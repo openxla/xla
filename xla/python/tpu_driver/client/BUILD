@@ -1,5 +1,5 @@
-load("@tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -39,10 +39,10 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
-        "@tsl/framework:allocator",
-        "@tsl/platform:casts",
-        "@tsl/platform:env",
-        "@tsl/profiler/lib:traceme",
+        "@tsl//tsl/framework:allocator",
+        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -60,7 +60,6 @@ tsl_pybind_extension(
     deps = [
         ":tpu_client",
         "//third_party/py/numpy:headers",
-        "//third_party/python_runtime:headers",  # buildcleaner: keep
         "//xla/pjrt:mlir_to_hlo",
         "//xla/python:python_ref_manager",
         "//xla/python:types",
@@ -68,8 +67,9 @@ tsl_pybind_extension(
         "//xla/service:computation_placer",
         "//xla/service:hlo_graph_dumper",
         "@llvm-project//mlir:IR",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
-        "@tsl/python/lib/core:bfloat16_lib",
+        "@tsl//tsl/python/lib/core:bfloat16_lib",
     ],
 )
 

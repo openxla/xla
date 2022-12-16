@@ -1,11 +1,10 @@
-load("@tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/compiler/tf2xla:internal",
-        "//xla:internal",
+        "//third_party/tensorflow/compiler:__subpackages__",
     ],
     licenses = ["notice"],
 )
@@ -21,7 +20,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -31,7 +30,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -41,10 +40,10 @@ xla_cc_test(
     deps = [
         ":graphcycles",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
-        "@tsl/platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -53,9 +52,9 @@ xla_cc_test(
     srcs = ["ordered_set_test.cc"],
     deps = [
         ":ordered_set",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
-        "@tsl/platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )

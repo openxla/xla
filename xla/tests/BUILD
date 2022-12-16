@@ -3,12 +3,12 @@
 
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
 load(
-    "@tsl/platform:build_config_root.bzl",
+    "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
-load("@tsl:tsl.default.bzl", "filegroup")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test")
-load("@tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -45,9 +45,9 @@ cc_library(
     deps = [
         "//xla:debug_options_flags",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
     alwayslink = True,
 )
@@ -70,9 +70,9 @@ cc_library(
         ":test_macros_header",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:regexp",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:regexp",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -114,10 +114,10 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:errors",
-        "@tsl/platform:logging",
-        "@tsl/platform:path",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -136,10 +136,10 @@ cc_library(
         "//xla/service:hlo_parser",
         "//xla/service:hlo_verifier",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:errors",
-        "@tsl/platform:logging",
-        "@tsl/platform:status",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -211,9 +211,9 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/types:span",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -229,8 +229,8 @@ xla_cc_binary(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/llvm_ir:llvm_util",
         "@llvm-project//llvm:Support",
-        "@tsl/platform:logging",
-        "@tsl/platform:platform_port",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -273,10 +273,10 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/lib/core:bitmap",
-        "@tsl/platform:float8",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:bitmap",
+        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -290,8 +290,8 @@ cc_library(
         ":filecheck",
         "//xla/service:llvm_compiler",
         "//xla/service/llvm_ir:llvm_util",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -320,12 +320,12 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
-        "@tsl/platform:env",
-        "@tsl/platform:errors",
-        "@tsl/platform:logging",
-        "@tsl/platform:path",
-        "@tsl/platform:resource_loader",
-        "@tsl/platform:subprocess",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:resource_loader",
+        "@tsl//tsl/platform:subprocess",
     ],
 )
 
@@ -360,9 +360,9 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:env",
-        "@tsl/platform:errors",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -380,8 +380,8 @@ xla_test(
         "//xla/client:xla_computation",
         "//xla/tests:client_library_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -401,8 +401,8 @@ xla_test(
         "//xla/service:backend",
         "//xla/service:executable",
         "@com_google_absl//absl/memory",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -489,7 +489,7 @@ xla_test(
         "//xla/client:xla_computation",
         "//xla/tests:client_library_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -506,7 +506,7 @@ xla_test(
         "//xla/client:xla_computation",
         "//xla/tests:client_library_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -529,10 +529,10 @@ xla_test(
         "//xla/client:xla_computation",
         "//xla/client/lib:arithmetic",
         "//xla/service:platform_util",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -559,10 +559,10 @@ xla_test(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:regexp",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:regexp",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -577,7 +577,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -629,9 +629,9 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:protobuf",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -646,8 +646,8 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "//xla/client/lib:arithmetic",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -664,8 +664,8 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -683,8 +683,8 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -702,8 +702,8 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -728,8 +728,8 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -769,7 +769,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -796,7 +796,7 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -839,7 +839,7 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -879,9 +879,9 @@ xla_test(
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -915,9 +915,9 @@ xla_test(
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -955,9 +955,9 @@ xla_test(
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -1022,9 +1022,9 @@ xla_test(
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -1044,7 +1044,7 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1065,9 +1065,9 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/client/lib:constants",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:float8",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1090,8 +1090,8 @@ CONVOLUTION_TEST_DEPS = [
     "//xla/tests:hlo_test_base",
     "//xla/tests:literal_test_util",
     "//xla/tests:xla_internal_test_main",
-    "@tsl/platform:logging",
-    "@tsl/platform:test",
+    "@tsl//tsl/platform:logging",
+    "@tsl//tsl/platform:test",
     "//xla/stream_executor/cuda:cuda_platform_id",
 ]
 
@@ -1258,8 +1258,8 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1284,8 +1284,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/memory",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1324,9 +1324,9 @@ xla_test(
         "//xla/client/lib:math",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/strings",
-        "@tsl/lib/math:math_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/math:math_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1358,8 +1358,8 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1383,8 +1383,8 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1406,7 +1406,7 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1423,7 +1423,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1451,9 +1451,9 @@ xla_test(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -1478,8 +1478,8 @@ xla_test(
         "//xla/client:xla_computation",
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/memory",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1498,7 +1498,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1533,9 +1533,9 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1564,9 +1564,9 @@ xla_test_library(
         "//xla/client/lib:arithmetic",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:status",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1608,8 +1608,8 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1630,8 +1630,8 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_runner_pjrt",
-        "@tsl/platform:protobuf",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1643,8 +1643,8 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1657,7 +1657,7 @@ xla_test(
         ":test_utils",
         ":xla_internal_test_main",
         "//xla/service:hlo_verifier",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1676,8 +1676,8 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1701,7 +1701,7 @@ xla_test(
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1719,7 +1719,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1761,8 +1761,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/memory",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1777,7 +1777,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1792,7 +1792,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1818,8 +1818,8 @@ xla_test(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1845,9 +1845,9 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
-        "@tsl/platform:protobuf",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1874,7 +1874,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1892,8 +1892,8 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1916,8 +1916,8 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1940,7 +1940,7 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1959,9 +1959,9 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
-        "@tsl/platform:float8",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1989,8 +1989,8 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "//xla/stream_executor",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2036,11 +2036,11 @@ xla_test(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:blocking_counter",
-        "@tsl/platform:env",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2079,9 +2079,9 @@ xla_test(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2099,8 +2099,8 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/stream_executor",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2124,8 +2124,8 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/stream_executor",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2148,7 +2148,7 @@ xla_test(
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2164,8 +2164,8 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2187,12 +2187,12 @@ xla_test(
         "//xla:test_helpers",
         "//xla/service:hlo_proto_cc",
         "@com_google_googletest//:gtest_main",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:env",
-        "@tsl/platform:logging",
-        "@tsl/platform:status",
-        "@tsl/platform:statusor",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2220,11 +2220,11 @@ xla_test(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:status",
-        "@tsl/platform:statusor",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2247,9 +2247,9 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "@com_google_absl//absl/strings",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2271,8 +2271,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2290,7 +2290,7 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2310,8 +2310,8 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2333,8 +2333,8 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2353,7 +2353,7 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/memory",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2376,8 +2376,8 @@ xla_cc_test(
         "//xla/stream_executor",
         "@com_google_absl//absl/memory",
         "@llvm-project//llvm:Core",
-        "@tsl/platform:test",
-        "@tsl/platform:test_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -2398,9 +2398,9 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:env",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2424,10 +2424,10 @@ xla_test(
         "//xla/service:platform_util",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
-        "@tsl/platform:protobuf",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -2451,11 +2451,11 @@ xla_test(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:protobuf",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -2469,9 +2469,9 @@ xla_cc_test(
     deps = [
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -2489,8 +2489,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:local_client_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2525,10 +2525,10 @@ xla_test(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor/host:host_platform",
         "//xla/stream_executor/host:host_platform_id",
-        "@tsl/platform:env",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -2543,8 +2543,8 @@ xla_test(
         ":local_client_test_base",
         ":test_macros_header",
         ":xla_internal_test_main",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2560,7 +2560,7 @@ xla_cc_test(
         "//xla/client:xla_builder",
         "//xla/service:cpu_plugin",
         "//xla/service:local_service",
-        "@tsl/platform:test_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -2580,8 +2580,8 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2605,8 +2605,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2627,11 +2627,11 @@ xla_cc_test(
         "//xla:test_helpers",
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/strings",
-        "@tsl/platform:env",
-        "@tsl/platform:logging",
-        "@tsl/platform:path",
-        "@tsl/platform:test",
-        "@tsl/platform:test_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -2654,9 +2654,9 @@ xla_test(
         "//xla/service:stream_pool",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
-        "@tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
@@ -2676,7 +2676,7 @@ xla_test(
         "//xla:types",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2695,10 +2695,10 @@ xla_cc_test(
         "//xla/service:cpu_plugin",  # reference backend
         "//xla/service:gpu_plugin",  # test backend
         "//xla/service:platform_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:path",
-        "@tsl/platform:resource_loader",
-        "@tsl/platform:test",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:resource_loader",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2717,9 +2717,9 @@ xla_test(
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2737,8 +2737,8 @@ xla_test(
         ":test_macros_header",
         ":xla_internal_test_main",
         "//xla:error_spec",
-        "@tsl/platform:errors",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2755,10 +2755,10 @@ xla_cc_test(
         "//xla/service:cpu_plugin",
         "//xla/service:platform_util",
         "@com_google_absl//absl/synchronization",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:env",
-        "@tsl/platform:logging",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2818,8 +2818,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2843,10 +2843,10 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client/lib:arithmetic",
         "//xla/client/lib:matrix",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:tensor_float_32_hdr_lib",
-        "@tsl/platform:tensor_float_32_utils",
-        "@tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
+        "@tsl//tsl/platform:tensor_float_32_utils",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2860,7 +2860,7 @@ xla_test(
         "//xla:types",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2872,13 +2872,14 @@ xla_test(
     backends = ["gpu"],
     deps = [
         "//xla/pjrt:mlir_to_hlo",
+        "//xla/runtime:ffi",
         "//xla/runtime/ffi:ffi_api_hdrs",
         "//xla/service:custom_call_target_registry",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/strings",
-        "@tsl/lib/core:status_test_util",
-        "@tsl/platform:test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test_main",
     ],
 )
