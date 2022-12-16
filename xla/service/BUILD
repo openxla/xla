@@ -776,13 +776,10 @@ cc_library(
     hdrs = ["hlo_reachability.h"],
     deps = [
         "//xla:types",
-        "//xla:util",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 
