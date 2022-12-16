@@ -56,7 +56,7 @@ class CompareIConvert : public OpRewritePattern<mhlo::CompareOp> {
         !rhsType.getElementType().isSignlessInteger())
       return failure();
 
-    Optional<arith::CmpIPredicate> comparePredicate = llvm::None;
+    Optional<arith::CmpIPredicate> comparePredicate = std::nullopt;
     switch (op.getComparisonDirection()) {
       case ComparisonDirection::EQ:
         comparePredicate = arith::CmpIPredicate::eq;
@@ -104,7 +104,7 @@ class CompareFConvert : public OpRewritePattern<mhlo::CompareOp> {
         !rhsType.getElementType().isa<FloatType>())
       return failure();
 
-    Optional<arith::CmpFPredicate> comparePredicate = llvm::None;
+    Optional<arith::CmpFPredicate> comparePredicate = std::nullopt;
     switch (op.getComparisonDirection()) {
       case ComparisonDirection::EQ:
         comparePredicate = arith::CmpFPredicate::OEQ;

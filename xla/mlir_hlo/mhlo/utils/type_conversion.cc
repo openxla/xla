@@ -53,7 +53,7 @@ llvm::Optional<Value> materializeCastFromIllegal(OpBuilder& builder, Type type,
   Type toType = getElementTypeOrSelf(type);
   if ((!fromType.isSignedInteger() && !fromType.isUnsignedInteger()) ||
       !toType.isSignlessInteger())
-    return llvm::None;
+    return std::nullopt;
   // Use unrealized conversion casts to do signful->signless conversions.
   return builder.create<UnrealizedConversionCastOp>(loc, type, inputs[0])
       ->getResult(0);
@@ -66,7 +66,7 @@ llvm::Optional<Value> materializeCastToIllegal(OpBuilder& builder, Type type,
   Type toType = getElementTypeOrSelf(type);
   if (!fromType.isSignlessInteger() ||
       (!toType.isSignedInteger() && !toType.isUnsignedInteger()))
-    return llvm::None;
+    return std::nullopt;
   // Use unrealized conversion casts to do signless->signful conversions.
   return builder.create<UnrealizedConversionCastOp>(loc, type, inputs[0])
       ->getResult(0);
@@ -76,7 +76,7 @@ llvm::Optional<Value> scalarToTensor(OpBuilder& builder, Type /*type*/,
                                      ValueRange inputs, Location loc) {
   assert(inputs.size() == 1);
   if (inputs.front().getType().isa<ShapedType>()) {
-    return llvm::None;
+    return std::nullopt;
   }
   return builder
       .create<tensor::FromElementsOp>(

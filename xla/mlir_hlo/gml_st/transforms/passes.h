@@ -104,12 +104,12 @@ std::unique_ptr<OperationPass<func::FuncOp>> createTransformScatterForCpuPass();
 
 /// Pass to transform a linalg.matmul op for CPU backend.
 std::unique_ptr<OperationPass<func::FuncOp>> createTransformMatmulForCpuPass(
-    ArrayRef<int64_t> matmulTileSizes = llvm::None,
+    ArrayRef<int64_t> matmulTileSizes = std::nullopt,
     bool lowerToMmt4DOp = false);
 
 /// Pass to transform a linalg.matmul op for Triton.
 std::unique_ptr<OperationPass<func::FuncOp>> createTransformMatmulForTritonPass(
-    ArrayRef<int64_t> matmulTileSizes = llvm::None,
+    ArrayRef<int64_t> matmulTileSizes = std::nullopt,
     StringRef distributionLabel = "");
 
 /// Pass to fuse linalg on tensor operations.
@@ -126,7 +126,7 @@ createTransformReduceForCpuPass(int64_t vectorSize = 8, int64_t tileSize1D = 32,
 
 /// Pass to transform a linalg.transpose op for CPU backend.
 std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
-createTransformTransposeForCpuPass(ArrayRef<int64_t> tileSizes = llvm::None);
+createTransformTransposeForCpuPass(ArrayRef<int64_t> tileSizes = std::nullopt);
 
 /// Pass to transform a thlo.sort op for CPU backend.
 std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>

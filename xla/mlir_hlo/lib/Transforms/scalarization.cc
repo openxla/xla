@@ -125,7 +125,7 @@ Optional<SmallVector<Value>> extractStartIndices(
     ImplicitLocOpBuilder &b, TypedValue<TensorType> startIndices) {
   if (startIndices.getType().getRank() != 2 ||
       startIndices.getType().getDimSize(0) != 1) {
-    return llvm::None;
+    return std::nullopt;
   }
 
   int64_t indexVectorSize = startIndices.getType().getDimSize(1);

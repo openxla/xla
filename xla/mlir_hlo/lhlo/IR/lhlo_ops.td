@@ -1426,7 +1426,7 @@ def TerminatorOp :
   }];
   let builders = [
     OpBuilder<(ins "ValueRange":$operands),
-    [{ build($_builder, $_state, llvm::None, operands, llvm::None); }]>];
+    [{ build($_builder, $_state, std::nullopt, operands, llvm::None); }]>];
 }
 
 def LHLO_RealDynamicSliceOp: LHLO_Op<

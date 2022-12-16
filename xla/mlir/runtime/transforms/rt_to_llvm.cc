@@ -698,7 +698,7 @@ void ConvertRuntimeToLLVMPass::runOnOperation() {
       // opaque pointer
       return LLVM::LLVMPointerType::get(IntegerType::get(type.getContext(), 8));
 
-    return llvm::None;
+    return std::nullopt;
   });
 
   // Use UnrealizedConversionCast as the bridge so that we don't need to pull
