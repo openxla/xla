@@ -118,18 +118,9 @@ class GpuCompiler : public LLVMCompiler {
 
   using LLVMCompiler::Compile;
 
-  // An attached device is passed in via stream_exec. We get GPU configuration
-  // from the attached device. GemmAlgorithmPicker and GpuConvAlgorithmPicker
-  // can run on the attached device.
   StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
       std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
       const CompileOptions& options) override;
-
-  // Run HloPasses without an attached deivce. So GemmAlgorithmPicker and
-  // GpuConvAlgorithmPicker can not run.
-  StatusOr<std::unique_ptr<HloModule>> RunHloPassesWithoutDevice(
-      std::unique_ptr<HloModule> module, const CompileOptions& options,
-      const GpuTargetConfig& gpu_target_config);
 
   StatusOr<std::unique_ptr<BufferAssignment>> AssignBuffers(
       const HloModule* hlo_module) override;
@@ -184,18 +175,15 @@ class GpuCompiler : public LLVMCompiler {
  protected:
   virtual Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
-      se::DeviceMemoryAllocator* device_allocator,
-      const GpuTargetConfig& gpu_target_config);
+      se::DeviceMemoryAllocator* device_allocator);
 
  private:
-  // Stream_executor is null during AOT compilation.
   Status OptimizeHloModule(HloModule* hlo_module,
                            se::StreamExecutor* stream_exec,
-                           se::DeviceMemoryAllocator* device_allocator,
-                           const GpuTargetConfig& gpu_target_config);
+                           se::DeviceMemoryAllocator* device_allocator);
 
   virtual Status OptimizeHloConvolutionCanonicalization(
-      HloModule* hlo_module, se::CudaComputeCapability cuda_compute_capability,
+      HloModule* hlo_module, se::StreamExecutor* stream_exec,
       se::DeviceMemoryAllocator* device_allocator) = 0;
 
   virtual HloDataflowAnalysis::CanShareBuffer GetCanShareBuffer() {
