@@ -22,10 +22,7 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tests/literal_test_util.h"
-#include "xla/types.h"
 #include "tsl/platform/path.h"
-#include "tsl/platform/resource_loader.h"
 #include "tsl/platform/test.h"
 
 namespace xla {
@@ -40,9 +37,8 @@ class SampleFileTest : public HloTestBase {
 };
 
 TEST_F(SampleFileTest, Convolution) {
-  const std::string& filename = tsl::GetDataDependencyFilepath(
-      tsl::io::JoinPath("tensorflow", "compiler", "xla", "tests",
-                        "isolated_convolution.hlo"));
+  const std::string& filename = tsl::io::JoinPath(
+      tsl::testing::XlaSrcRoot(), "tests", "isolated_convolution.hlo");
   EXPECT_TRUE(RunAndCompareFromFile(filename, ErrorSpec{0.01}));
 }
 
