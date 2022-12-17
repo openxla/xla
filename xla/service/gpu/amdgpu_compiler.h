@@ -39,7 +39,8 @@ class AMDGPUCompiler : public GpuCompiler {
 
   Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
-      se::DeviceMemoryAllocator* device_allocator) override;
+      se::DeviceMemoryAllocator* device_allocator,
+      const GpuTargetConfig& gpu_target_config) override;
 
   GpuVersion GetGpuVersion(se::StreamExecutor* stream_exec) override;
 
