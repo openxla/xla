@@ -7054,51 +7054,47 @@ xla_aot_compile_gpu(
 
 xla_cc_test(
     name = "xla_aot_compile_cpu_test",
-    srcs = if_cuda_is_configured(["xla_aot_compile_cpu_test.cc"]),
-    data = if_cuda_is_configured([
-        ":xla_aot_compile_test_cpu_executable",
-    ]),
+    srcs = ["xla_aot_compile_cpu_test.cc"],
+    data = [":xla_aot_compile_test_cpu_executable"],
     tags = ["no_oss"],
-    deps = if_cuda_is_configured([
+    deps = [
         ":cpu_plugin",
         ":platform_util",
-        "@com_google_googletest//:gtest_main",
         "//xla:executable_run_options",
         "//xla:literal_util",
         "//xla/client:client_library",
         "//xla/client:local_client",
         "//xla/service/cpu:cpu_compiler",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:resource_loader",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-    ]),
+    ],
 )
 
 xla_cc_test(
     name = "xla_aot_compile_stablehlo_cpu_test",
-    srcs = if_cuda_is_configured(["xla_aot_compile_stablehlo_cpu_test.cc"]),
-    data = if_cuda_is_configured([
-        ":xla_aot_compile_stablehlo_test_cpu_executable",
-    ]),
+    srcs = ["xla_aot_compile_stablehlo_cpu_test.cc"],
+    data = [":xla_aot_compile_stablehlo_test_cpu_executable"],
     tags = ["no_oss"],
-    deps = if_cuda_is_configured([
+    deps = [
         ":cpu_plugin",
         ":platform_util",
-        "@com_google_googletest//:gtest_main",
         "//xla:executable_run_options",
         "//xla:literal_util",
         "//xla/client:client_library",
         "//xla/client:local_client",
         "//xla/service/cpu:cpu_compiler",
         "//xla/tests:literal_test_util",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:resource_loader",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-    ]),
+    ],
 )
 
 xla_cc_test(
