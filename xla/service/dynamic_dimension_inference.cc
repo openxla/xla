@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/dynamic_dimension_inference.h"
 
+#include <functional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -667,7 +670,7 @@ Status DynamicDimensionInferenceVisitor::HandleConcatenate(
 }
 
 Status DynamicDimensionInferenceVisitor::HandleGetDimensionSize(
-    HloInstruction* gds) {
+    HloInstruction* hlo) {
   // Dynamic dimension doesn't propagate through GetDimensionSize:
   //
   //   Input: F32[x, y, z]
@@ -677,23 +680,23 @@ Status DynamicDimensionInferenceVisitor::HandleGetDimensionSize(
   // The returned value is a scalar, which doesn't have any dynamic dimension in
   // the shape (although the value contains the real size of the dynamic
   // dimension of the input).
-  int64_t dim = gds->dimension();
-  HloInstruction* operand = gds->mutable_operand(0);
+  int64_t dim = hlo->dimension();
+  HloInstruction* operand = hlo->mutable_operand(0);
   HloInstruction* dynamic_size = parent_->GetDynamicSize(operand, {}, dim);
-  HloComputation* computation = gds->parent();
+  HloComputation* computation = hlo->parent();
   if (dynamic_size != nullptr) {
-    TF_RETURN_IF_ERROR(gds->ReplaceAllUsesWith(dynamic_size));
+    TF_RETURN_IF_ERROR(hlo->ReplaceAllUsesWith(dynamic_size));
     // The dependency between an instruction and its dynamic dimensions is not
     // modeled in the IR. As instr is being replaced by dynamic_size, also tell
     // dynamic dimension inference that the instruction is being replaced.
-    parent_->ReplaceAllDynamicDimensionUsesWith(gds, dynamic_size);
+    parent_->ReplaceAllDynamicDimensionUsesWith(hlo, dynamic_size);
   } else {
-    TF_RET_CHECK(dim < gds->operand(0)->shape().rank());
-    int32_t size = gds->operand(0)->shape().dimensions(dim);
+    TF_RET_CHECK(dim < hlo->operand(0)->shape().rank());
+    int32_t size = hlo->operand(0)->shape().dimensions(dim);
     HloInstruction* new_instr = computation->AddInstruction(
         HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(size)));
-    TF_RETURN_IF_ERROR(gds->ReplaceAllUsesWith(new_instr));
-    parent_->ReplaceAllDynamicDimensionUsesWith(gds, new_instr);
+    TF_RETURN_IF_ERROR(hlo->ReplaceAllUsesWith(new_instr));
+    parent_->ReplaceAllDynamicDimensionUsesWith(hlo, new_instr);
   }
   return OkStatus();
 }
@@ -1569,7 +1572,7 @@ Status DynamicDimensionInferenceVisitor::HandleConditional(
           DynamicParameterBinding::DynamicParameter dynamic_parameter{
               0, {dynamic_size_to_operand_id_index_map[dynamic_size]}};
           DynamicParameterBinding::DynamicDimension dynamic_dimension{
-              0, {index}, dimension};
+              DynamicParameterBinding::kParam, 0, {index}, dimension};
           TF_RETURN_IF_ERROR(dynamic_parameter_binding.Bind(dynamic_parameter,
                                                             dynamic_dimension));
 
@@ -1829,7 +1832,7 @@ Status DynamicDimensionInferenceVisitor::HandleWhile(HloInstruction* hlo) {
           DynamicParameterBinding::DynamicParameter dynamic_parameter{
               0, {output_dynamic_size_index}};
           DynamicParameterBinding::DynamicDimension dynamic_dimension{
-              0, index, dimension};
+              DynamicParameterBinding::kParam, 0, index, dimension};
           TF_RETURN_IF_ERROR(
               binding_for_while.Bind(dynamic_parameter, dynamic_dimension));
           // This is the updated output dynamic size coming out of hlo while
@@ -1917,12 +1920,13 @@ Status DynamicDimensionInferenceVisitor::HandleParameter(HloInstruction* hlo) {
   return param_bindings_.ForEachBinding(
       [&](const DynamicParameterBinding::DynamicParameter& dynamic_parameter,
           const DynamicParameterBinding::DynamicDimension& dynamic_dimension) {
-        if (dynamic_dimension.parameter_num != hlo->parameter_number()) {
+        if (dynamic_dimension.target_num != hlo->parameter_number() ||
+            dynamic_dimension.target != DynamicParameterBinding::kParam) {
           return OkStatus();
         }
         HloComputation* computation = hlo->parent();
         HloInstruction* target_parameter =
-            computation->parameter_instruction(dynamic_dimension.parameter_num);
+            computation->parameter_instruction(dynamic_dimension.target_num);
 
         HloInstruction* dynamic_size =
             computation->parameter_instruction(dynamic_parameter.parameter_num);
@@ -1934,7 +1938,7 @@ Status DynamicDimensionInferenceVisitor::HandleParameter(HloInstruction* hlo) {
         }
 
         parent_->SetDynamicSize(target_parameter,
-                                dynamic_dimension.parameter_index,
+                                dynamic_dimension.target_index,
                                 dynamic_dimension.dimension, dynamic_size);
         return OkStatus();
       });

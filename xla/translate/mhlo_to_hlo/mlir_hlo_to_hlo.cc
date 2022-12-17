@@ -2994,14 +2994,14 @@ void AddDynamicParameterBindingEntry(xla::DynamicParameterBindingProto* binding,
                                      int32_t padding_arg_index,
                                      bool use_tuple_args) {
   auto* entry = binding->add_entries();
-  entry->set_target_param_dim_num(shape_index);
+  entry->set_target_dim_num(shape_index);
   if (use_tuple_args) {
-    entry->set_target_param_num(0);
-    entry->add_target_param_index(arg_index);
+    entry->set_target_num(0);
+    entry->add_target_index(arg_index);
     entry->set_dynamic_param_num(0);
     entry->add_dynamic_param_index(padding_arg_index);
   } else {
-    entry->set_target_param_num(arg_index);
+    entry->set_target_num(arg_index);
     entry->set_dynamic_param_num(padding_arg_index);
   }
 }
