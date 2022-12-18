@@ -92,6 +92,7 @@ cc_library(
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
+        "@tsl//tsl/platform:float8",
     ],
 )
 

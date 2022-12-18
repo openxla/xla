@@ -2099,6 +2099,7 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/stream_executor",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
     ],
