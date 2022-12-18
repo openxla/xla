@@ -23,7 +23,7 @@ cd "${KOKORO_ARTIFACTS_DIR}/github/xla"
 
 export PATH="$PATH:/c/Python38"
 
-TARGET_FILTER=-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/...
+TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/..."
 
 /c/tools/bazel.exe build \
   --output_filter="" \

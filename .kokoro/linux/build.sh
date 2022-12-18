@@ -36,13 +36,14 @@ docker run --name xla -w /tf/xla -itd --rm \
     "$DOCKER_IMAGE" \
     bash
 
-TARGET_FILTER=-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/...
+TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/..."
 
 # Build XLA
 docker exec xla bazel build \
     --output_filter="" \
     --nocheck_visibility \
     --keep_going \
+    --config=nonccl \
     -- //xla/... $TARGET_FILTER
 
 if is_linux_gpu_job(); then
@@ -52,6 +53,7 @@ if is_linux_gpu_job(); then
         --output_filter="" \
         --nocheck_visibility \
         --keep_going \
+        --config=nonccl \
         --flaky_test_attempts=3 \
         -- //xla/... $TARGET_FILTER
 else
@@ -61,6 +63,7 @@ else
         --output_filter="" \
         --nocheck_visibility \
         --keep_going \
+        --config=nonccl \
         --flaky_test_attempts=3 \
         -- //xla/... $TARGET_FILTER
 fi
