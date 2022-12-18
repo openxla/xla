@@ -17,18 +17,19 @@
 # -u: error if undefined variable used
 # -o pipefail: entire command fails if pipe fails. watch out for yes | ...
 # Note: set -x <code> +x around anything you want to have logged.
-set -euo pipefail
+set -euox pipefail
 
 cd "${KOKORO_ARTIFACTS_DIR}/github/xla"
 
 export PATH="$PATH:/c/Python38"
 
 TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/..."
-
-/c/tools/bazel.exe build \
+TAGS_FILTER="-no_oss,-gpu,-no_windows"
+/c/tools/bazel.exe test \
   --output_filter="" \
   --nocheck_visibility \
   --keep_going \
+  --build_tag_filters=$TAGS_FILTER  --test_tag_filters=$TAGS_FILTER \
   -- //xla/... $TARGET_FILTER \
   || { exit 1; }
 

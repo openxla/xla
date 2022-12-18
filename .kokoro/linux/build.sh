@@ -17,7 +17,7 @@
 # -u: error if undefined variable used
 # -o pipefail: entire command fails if pipe fails. watch out for yes | ...
 # -o history: record shell history
-set -euo pipefail -o history
+set -euox pipefail -o history
 
 function is_linux_gpu_job() {
   [[ "$KOKORO_JOB_NAME" =~ tensorflow/xla/linux/.*gpu.* ]]
@@ -37,36 +37,26 @@ docker run --name xla -w /tf/xla -itd --rm \
     bash
 
 TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/..."
+TAGS_FILTER="-no_oss"
 
-# Build XLA
-docker exec xla bazel build \
-    --output_filter="" \
-    --nocheck_visibility \
-    --keep_going \
-    --config=nonccl \
-    -- //xla/... $TARGET_FILTER
 
-if is_linux_gpu_job(); then
-    # Test XLA gpu
-    docker exec xla bazel test \
-        --test_tag_filters=gpu,requires-gpu,-no_gpu \
-        --output_filter="" \
-        --nocheck_visibility \
-        --keep_going \
-        --config=nonccl \
-        --flaky_test_attempts=3 \
-        -- //xla/... $TARGET_FILTER
+if is_linux_gpu_job ; then
+    TAGS_FILTER="$TAGS_FILTER,gpu,requires-gpu,-no_gpu"
+    # disable three tests that fail to build at the moment (b/263149095)
+    TARGET_FILTER="$TARGET_FILTER -//xla/service/gpu:gpu_device_info_test -//xla/stream_executor/cuda:cuda_driver_test_cpu -//xla/stream_executor/cuda:cuda_driver_test_gpu"
 else
-    # Test XLA cpu
-    docker exec xla bazel test \
-        --test_tag_filters=-gpu \
+    TAGS_FILTER="$TAGS_FILTER,-gpu,-requires-gpu"
+fi
+
+# Build & test XLA
+docker exec xla bazel test \
+        --build_tag_filters=$TAGS_FILTER  --test_tag_filters=$TAGS_FILTER \
         --output_filter="" \
         --nocheck_visibility \
         --keep_going \
         --config=nonccl \
         --flaky_test_attempts=3 \
         -- //xla/... $TARGET_FILTER
-fi
 
 # Stop container
 docker stop xla
