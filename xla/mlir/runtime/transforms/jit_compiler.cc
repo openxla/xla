@@ -27,6 +27,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/PassTimingInfo.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/TargetSelect.h"
 #include "mlir/ExecutionEngine/OptUtils.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
@@ -76,6 +77,12 @@ static void InitializeLlvmCompiler() {
     return true;
   })();
   (void)initialized;
+
+  std::vector<const char*> llvm_argv = {""};
+  if (DebugJitCompiler()) {
+    llvm_argv.push_back("-print-after-all");
+  }
+  llvm::cl::ParseCommandLineOptions(llvm_argv.size(), &llvm_argv[0]);
 }
 
 static void SetupPassDebugging(MLIRContext* context, mlir::PassManager& pm) {
