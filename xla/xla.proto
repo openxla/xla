@@ -359,9 +359,6 @@ message DebugOptions {
   // Convert synchronous all-reduces ops into asynchronous.
   bool xla_gpu_enable_async_all_reduce = 152;
 
-  // Convert synchronous collective-permute ops into asynchronous.
-  bool xla_gpu_enable_async_collective_permute = 183;
-
   // Size threshold (in bytes) for the GPU all-reduce combiner.
   int64 xla_gpu_all_reduce_combine_threshold_bytes = 157;
 

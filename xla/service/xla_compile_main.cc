@@ -25,7 +25,6 @@ limitations under the License.
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
 #include "stablehlo/dialect/Register.h"  // from @stablehlo
-#include "xla/debug_options_flags.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/service/compiler.h"
@@ -72,14 +71,7 @@ StatusOr<std::string> AotCompileGpuExecutable(
     std::unique_ptr<HloModule> hlo_module,
     const gpu::GpuTargetConfig& gpu_target_config) {
   gpu::NVPTXCompiler nvptx_compiler;
-  Compiler::CompileOptions compile_options;
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<HloModule> module_after_opt,
-      nvptx_compiler.RunHloPassesWithoutDevice(
-          std::move(hlo_module), compile_options, gpu_target_config));
-
-  auto module_group =
-      std::make_unique<HloModuleGroup>(std::move(module_after_opt));
+  auto module_group = std::make_unique<HloModuleGroup>(std::move(hlo_module));
   AotCompilationOptions aot_options(nvptx_compiler.PlatformId());
   aot_options.set_target_config(gpu_target_config);
   TF_ASSIGN_OR_RETURN(
@@ -118,9 +110,9 @@ xla::Status XlaCompileMain(const std::string& module_path,
   HloModuleProto hlo_module_proto = xla_computation.proto();
 
   TF_ASSIGN_OR_RETURN(ProgramShape shape, xla_computation.GetProgramShape());
-  DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
-  // Disable autotuning because there is no attached device.
-  debug_options.set_xla_gpu_autotune_level(0);
+  DebugOptions debug_options;
+  debug_options.set_xla_gpu_enable_xla_runtime_executable(true);
+  debug_options.set_xla_backend_optimization_level(2);
   HloModuleConfig config(shape);
   config.set_debug_options(debug_options);
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
