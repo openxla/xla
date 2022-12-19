@@ -18,9 +18,11 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_PRIMITIVE_UTIL_H_
 #define TENSORFLOW_COMPILER_XLA_PRIMITIVE_UTIL_H_
 
+#include <optional>
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 
 #include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
@@ -149,15 +151,26 @@ inline PrimitiveType NativeToPrimitiveType<complex128>() {
   return C128;
 }
 
-bool IsFloatingPointType(PrimitiveType type);
+inline constexpr bool IsFloatingPointType(PrimitiveType type) {
+  return type == F16 || type == F32 || type == F64 || type == BF16 ||
+         type == F8E5M2 || type == F8E4M3FN;
+}
 
-bool IsComplexType(PrimitiveType type);
+inline constexpr bool IsComplexType(PrimitiveType type) {
+  return type == C64 || type == C128;
+}
 
-bool IsSignedIntegralType(PrimitiveType type);
+inline constexpr bool IsSignedIntegralType(PrimitiveType type) {
+  return type == S8 || type == S16 || type == S32 || type == S64;
+}
 
-bool IsUnsignedIntegralType(PrimitiveType type);
+inline constexpr bool IsUnsignedIntegralType(PrimitiveType type) {
+  return type == U8 || type == U16 || type == U32 || type == U64;
+}
 
-bool IsIntegralType(PrimitiveType type);
+inline constexpr bool IsIntegralType(PrimitiveType type) {
+  return IsUnsignedIntegralType(type) || IsSignedIntegralType(type);
+}
 
 // Returns true if values of the given primitive type are held in array shapes.
 inline constexpr bool IsArrayType(PrimitiveType primitive_type) {
@@ -510,6 +523,75 @@ bool IsCanonicalRepresentation(PrimitiveType type) {
     case PrimitiveType_INT_MAX_SENTINEL_DO_NOT_USE_:
     case PrimitiveType_INT_MIN_SENTINEL_DO_NOT_USE_:
       return false;
+  }
+}
+
+template <typename R, typename F>
+R PrimitiveTypeSwitch(F&& f, PrimitiveType type) {
+  switch (type) {
+    case PRED:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::PRED>());
+    case S8:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::S8>());
+    case S16:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::S16>());
+    case S32:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::S32>());
+    case S64:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::S64>());
+    case U8:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::U8>());
+    case U16:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::U16>());
+    case U32:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::U32>());
+    case U64:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::U64>());
+    case F8E4M3FN:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::F8E4M3FN>());
+    case F8E5M2:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::F8E5M2>());
+    case F16:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::F16>());
+    case BF16:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::BF16>());
+    case F32:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::F32>());
+    case F64:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::F64>());
+    case C64:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::C64>());
+    case C128:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::C128>());
+    case TUPLE:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::TUPLE>());
+    case OPAQUE_TYPE:
+      return std::invoke(
+          f,
+          std::integral_constant<PrimitiveType, PrimitiveType::OPAQUE_TYPE>());
+    case TOKEN:
+      return std::invoke(
+          f, std::integral_constant<PrimitiveType, PrimitiveType::TOKEN>());
+    default:
+      LOG(FATAL) << "unhandled type " << type;
   }
 }
 

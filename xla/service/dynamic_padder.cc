@@ -802,7 +802,7 @@ StatusOr<bool> RewriteDynamicReshapeSingleGroup(
   }
 
   // Shouldn't get here.
-  TF_RET_CHECK(false);
+  TF_RET_CHECK_FAIL();
   return false;
 }
 

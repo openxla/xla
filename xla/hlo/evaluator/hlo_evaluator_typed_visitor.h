@@ -52,8 +52,7 @@ namespace xla {
 template <typename T>
 T Nibble0(T t) {
   if constexpr (std::is_integral_v<T>) {
-    constexpr auto shift = (8 * sizeof(T)) - 4;
-    return (t << shift) >> shift;
+    return t & 0b1111;
   }
   return t;
 }
@@ -61,7 +60,7 @@ T Nibble0(T t) {
 template <typename T>
 T Nibble1(T t) {
   if constexpr (std::is_integral_v<T>) {
-    return t >> 4;
+    return (t >> 4) & 0b1111;
   }
   return t;
 }
@@ -72,14 +71,6 @@ T Nibble1(T t) {
 //
 // Anyway this is relatively safe as-is because hlo_evaluator_typed_visitor.h is
 // a "private" header that's not exposed outside of hlo_evaluator.cc.
-template <typename T>
-struct is_complex_t : std::false_type {};
-template <typename T>
-struct is_complex_t<std::complex<T>> : std::true_type {};
-
-template <typename T>
-inline constexpr bool is_complex_v = is_complex_t<T>::value;
-
 namespace detail {
 template <typename T>
 using unsigned_promoted_type_t =
@@ -140,7 +131,7 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     // static_cast value to a double so just CHECK fail. This method is not used
     // at run-time, but must be available at compile-time to keep the compiler
     // happy.
-    if (is_complex_v<NativeT>) {
+    if constexpr (is_complex_v<NativeT>) {
       LOG(FATAL) << "Trying to get complex literal as double: "
                  << literal.ToString();
     }

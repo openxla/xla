@@ -84,25 +84,6 @@ int OverflowExponent(PrimitiveType type) {
   }
 }
 
-bool IsFloatingPointType(PrimitiveType type) {
-  return type == F16 || type == F32 || type == F64 || type == BF16 ||
-         type == F8E5M2 || type == F8E4M3FN;
-}
-
-bool IsComplexType(PrimitiveType type) { return type == C64 || type == C128; }
-
-bool IsSignedIntegralType(PrimitiveType type) {
-  return type == S8 || type == S16 || type == S32 || type == S64;
-}
-
-bool IsUnsignedIntegralType(PrimitiveType type) {
-  return type == U8 || type == U16 || type == U32 || type == U64;
-}
-
-bool IsIntegralType(PrimitiveType type) {
-  return IsUnsignedIntegralType(type) || IsSignedIntegralType(type);
-}
-
 xla::PrimitiveType UnsignedIntegralTypeForBitWidth(int64_t src_bitwidth) {
   switch (src_bitwidth) {
     case 8:
