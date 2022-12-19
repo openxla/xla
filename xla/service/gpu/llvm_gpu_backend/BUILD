@@ -54,6 +54,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
+        "@tsl//tsl/platform:cuda_libdevice_path",
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:gpu_types",
         "//xla/service/llvm_ir:llvm_command_line_options",

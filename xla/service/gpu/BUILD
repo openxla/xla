@@ -1869,19 +1869,6 @@ cc_library(
 )
 
 cc_library(
-    name = "nvptx_helper",
-    srcs = ["nvptx_helper.cc"],
-    hdrs = ["nvptx_helper.h"],
-    deps = [
-        "//xla/service:hlo_module_config",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:cuda_libdevice_path",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:path",
-    ],
-)
-
-cc_library(
     name = "nvptx_compiler_impl",
     srcs = if_cuda_is_configured([
         "nvptx_compiler.cc",
@@ -1906,7 +1893,6 @@ cc_library(
         ":gpu_layout_assignment",
         ":ir_emission_utils",
         ":metrics",
-        ":nvptx_helper",
         ":target_constants",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings:str_format",
