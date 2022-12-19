@@ -303,6 +303,7 @@ cc_library(
         "//xla/service:computation_layout",
         "//xla/service:computation_placer",
         "//xla/service:executable",
+        "//xla/service:generic_transfer_manager",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:maybe_owning_device_memory",
         "//xla/service:shaped_buffer",
