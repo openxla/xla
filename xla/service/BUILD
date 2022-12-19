@@ -7024,7 +7024,6 @@ xla_cc_binary(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
-        "//xla:debug_options_flags",
         "//xla:statusor",
         "//xla/mlir_hlo",
         "//xla/pjrt:mlir_to_hlo",
@@ -7063,18 +7062,6 @@ xla_aot_compile_gpu(
     name = "xla_aot_compile_test_gpu_executable_constant",
     gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
     module = "xla_aot_compile_test_constant.mlir",
-)
-
-xla_aot_compile_gpu(
-    name = "xla_aot_compile_test_gpu_executable_gemm",
-    gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
-    module = "xla_aot_compile_test_gemm.mlir",
-)
-
-xla_aot_compile_gpu(
-    name = "xla_aot_compile_test_gpu_executable_convolution",
-    gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
-    module = "xla_aot_compile_test_convolution.mlir",
 )
 
 xla_cc_test(
@@ -7128,8 +7115,6 @@ xla_cc_test(
     data = if_cuda_is_configured([
         ":xla_aot_compile_test_gpu_executable",
         ":xla_aot_compile_test_gpu_executable_constant",
-        ":xla_aot_compile_test_gpu_executable_gemm",
-        ":xla_aot_compile_test_gpu_executable_convolution",
     ]),
     env = {
         "XLA_FLAGS": "--xla_gpu_enable_xla_runtime_executable",

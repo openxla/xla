@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/container/node_hash_map.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/statusor.h"
-#include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {
@@ -39,13 +38,12 @@ class NVPTXCompiler : public GpuCompiler {
   ~NVPTXCompiler() override {}
 
   Status OptimizeHloConvolutionCanonicalization(
-      HloModule* hlo_module, se::CudaComputeCapability cuda_compute_capability,
+      HloModule* hlo_module, se::StreamExecutor* stream_exec,
       se::DeviceMemoryAllocator* device_allocator) override;
 
   Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
-      se::DeviceMemoryAllocator* device_allocator,
-      const GpuTargetConfig& gpu_target_config) override;
+      se::DeviceMemoryAllocator* device_allocator) override;
 
   HloDataflowAnalysis::CanShareBuffer GetCanShareBuffer() override;
 
