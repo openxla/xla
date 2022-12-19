@@ -293,10 +293,12 @@ xla_cc_test(
     srcs = [
         "reduction_layout_normalizer_test.cc",
     ],
+    tags = tf_cuda_tests_tags(),
     deps = [
         "//xla:debug_options_flags",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
+        "//xla/service:gpu_plugin",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_parser",
         "//xla/service/gpu:reduction_layout_normalizer",

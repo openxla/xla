@@ -2610,6 +2610,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
+        "//xla/service:gpu_plugin",
         "//xla/service:hlo_dce",
         "//xla/service:hlo_matchers",
         "//xla/service:hlo_parser",
