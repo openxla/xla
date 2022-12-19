@@ -177,6 +177,24 @@ template <typename F>
 
 namespace {
 
+bool ShouldClearAttributeOnInstruction(const HloInstruction* hlo) {
+  // Keep sharding annotation on Infeed, Send/Recv with maximal device sharding
+  // (for outside compilation) and entry parameters since they're used by
+  // HloReplicationAnalysis later (for ArCrsCombiner).
+  if (hlo->opcode() == HloOpcode::kInfeed) {
+    return false;
+  }
+  if (DynCast<HloSendRecvInstruction>(hlo) != nullptr &&
+      hlo->sharding().IsReservedDevice(0)) {
+    return false;
+  }
+  if (hlo->opcode() == HloOpcode::kParameter &&
+      hlo->parent() == hlo->GetModule()->entry_computation()) {
+    return false;
+  }
+  return true;
+}
+
 // Clears all sharding attributes from instructions in the module. This must be
 // called only after all SPMD transformation is complete.
 Status ClearShardingAttributes(
@@ -184,13 +202,7 @@ Status ClearShardingAttributes(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   for (HloComputation* computation : module->computations(execution_threads)) {
     for (HloInstruction* hlo : computation->instructions()) {
-      // Keep sharding annotation on Infeed and entry parameters since they're
-      // used by HloReplicationAnalysis later (for ArCrsCombiner).
-      if (hlo->HasSideEffect()) {
-        continue;
-      }
-      if (hlo->opcode() == HloOpcode::kParameter &&
-          computation == module->entry_computation()) {
+      if (!ShouldClearAttributeOnInstruction(hlo)) {
         continue;
       }
       hlo->clear_sharding();
