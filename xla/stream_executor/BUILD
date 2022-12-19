@@ -311,7 +311,6 @@ cc_library(
         ":device_description_proto_cc",
         ":device_memory",
         ":device_options",
-        ":dnn_proto_cc",
         ":fft",
         ":kernel_cache_config",
         ":kernel_spec",
@@ -328,6 +327,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -400,6 +400,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -440,6 +441,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
         "@tsl//tsl/util:env_var",
     ],
 )
@@ -479,7 +481,6 @@ cc_library(
         ":device_description_proto_cc",
         ":device_memory",
         ":device_options",
-        ":dnn_proto_cc",
         ":fft",
         ":kernel_cache_config",
         ":kernel_spec",
@@ -497,6 +498,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -518,7 +520,6 @@ cc_library(
         ":data_type",
         ":device_description",
         ":device_description_proto_cc",
-        ":dnn_proto_cc",
         ":kernel_cache_config",
         ":platform",
         ":stream_executor_headers",
@@ -529,6 +530,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -538,12 +540,12 @@ cc_library(
     hdrs = ["blas.h"],
     deps = [
         ":data_type",
-        ":dnn_proto_cc",
         ":host_or_device_scalar",
         ":stream_executor_headers",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -592,7 +594,6 @@ cc_library(
         ":device_description_proto_cc",
         ":device_memory",
         ":device_options",
-        ":dnn_proto_cc",
         ":fft",
         ":kernel_cache_config",
         ":kernel_spec",
@@ -609,6 +610,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
