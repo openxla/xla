@@ -34,6 +34,7 @@ limitations under the License.
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -177,10 +178,11 @@ static absl::Status SetUpExportedFunction(llvm::Module &module,
 
   // Move loads used only once into the entry block where they are used.
   for (auto &[ptr_load, arg_load] : args) {
-    if (arg_load->getNumUses() != 1) continue;
+    if (!arg_load->hasOneUse()) continue;
 
     for (llvm::User *user : arg_load->users()) {
       auto *inst = cast<llvm::Instruction>(user);
+      if (llvm::isa<llvm::PHINode>(inst)) continue;
       arg_load->moveBefore(inst);
       ptr_load->moveBefore(arg_load);
     }
