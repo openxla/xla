@@ -618,8 +618,9 @@ TEST_F(XlaBuilderTest, DynamicParameter) {
   Parameter(&b, 1, ShapeUtil::MakeShape(U32, {}), "p1");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/1,
                                    /*dynamic_size_param_index=*/{},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{1},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{1},
                                    /*target_dim_num=*/0));
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b, /*root=*/p0));
   const Shape& param_shape = module->entry_computation()
@@ -679,8 +680,9 @@ TEST_F(XlaBuilderTest, DynamicUnary) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   auto gte = GetTupleElement(p0, 0);
   Neg(gte);
@@ -698,13 +700,15 @@ TEST_F(XlaBuilderTest, DynamicBinary) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{1},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{1},
                                    /*target_dim_num=*/0));
   auto gte0 = GetTupleElement(p0, 0);
   auto gte1 = GetTupleElement(p0, 1);
@@ -723,13 +727,15 @@ TEST_F(XlaBuilderTest, DynamicBinaryHasBroadcast) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{1},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{1},
                                    /*target_dim_num=*/0));
   auto gte0 = GetTupleElement(p0, 0);
   auto gte1 = GetTupleElement(p0, 1);
@@ -749,8 +755,9 @@ TEST_F(XlaBuilderTest, DynamicBroadcast) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   auto gte = GetTupleElement(p0, 0);
   BroadcastInDim(gte, /*out_dim_size=*/{3, 5, 4},
@@ -771,8 +778,9 @@ TEST_F(XlaBuilderTest, DynamicBinaryHasDegenerateBroadcast) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   auto gte0 = GetTupleElement(p0, 0);
   auto gte1 = GetTupleElement(p0, 1);
@@ -792,8 +800,9 @@ TEST_F(XlaBuilderTest, DynamicSelectOnlyPredDynamic) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   auto gte0 = GetTupleElement(p0, 0);
   auto gte1 = GetTupleElement(p0, 1);
@@ -844,8 +853,9 @@ TEST_F(XlaBuilderTest, DynamicPad) {
   auto pad_val = ConstantR0<float>(&b, -1);
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   auto gte = GetTupleElement(p0, 0);
   PaddingConfig padding_config;
@@ -872,13 +882,15 @@ TEST_F(XlaBuilderTest, DynamicConvolution) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{3},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{1},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{1},
                                    /*target_dim_num=*/2));
   auto input = GetTupleElement(p0, 0);
   auto filter = GetTupleElement(p0, 1);
@@ -914,18 +926,21 @@ TEST_F(XlaBuilderTest, DynamicDot) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{1},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{1},
                                    /*target_dim_num=*/0));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{3},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/1));
 
   auto lhs = GetTupleElement(p0, 0);
@@ -953,8 +968,9 @@ TEST_F(XlaBuilderTest, DynamicReduce) {
   auto init = ConstantR0<float>(&b, 0);
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/1));
   auto gte = GetTupleElement(p0, 0);
   XlaBuilder bsum(TestName());
@@ -978,8 +994,9 @@ TEST_F(XlaBuilderTest, DynamicReduceWindow) {
   auto init = ConstantR0<float>(&b, 0.f);
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   auto gte = GetTupleElement(p0, 0);
   XlaBuilder bsum(TestName());
@@ -1007,8 +1024,9 @@ TEST_F(XlaBuilderTest, VariadicDynamicReduceWindow) {
   auto p1 = Parameter(&b, 1, tuple_param_shape, "p1");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   auto gte0 = GetTupleElement(p0, 0);
   auto gte1 = GetTupleElement(p1, 0);
@@ -1057,13 +1075,15 @@ TEST_F(XlaBuilderTest, DynamicSelectAndScatter) {
 
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{1},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{1},
                                    /*target_dim_num=*/0));
   auto gte0 = GetTupleElement(p0, 0);
   auto source = GetTupleElement(p0, 1);
@@ -1086,13 +1106,15 @@ TEST_F(XlaBuilderTest, DynamicReshape) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/2));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/3));
   auto gte = GetTupleElement(p0, 0);  // f32[2, 3, <=4, <=5, 6]
   Reshape(gte, /*new_sizes=*/{6, 4, 5, 2, 3});
@@ -1116,13 +1138,15 @@ TEST_F(XlaBuilderTest, DynamicSelect) {
   auto pred = Parameter(&b, 1, ShapeUtil::MakeShape(PRED, {}), "pred");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/1));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{3},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{1},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{1},
                                    /*target_dim_num=*/1));
   auto gte0 = GetTupleElement(p0, 0);
   auto gte1 = GetTupleElement(p0, 1);
@@ -1147,13 +1171,15 @@ TEST_F(XlaBuilderTest, DynamicSelectNotCompatible) {
   auto pred = Parameter(&b, 1, ShapeUtil::MakeShape(PRED, {}), "pred");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{2},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/1));
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{3},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{1},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{1},
                                    /*target_dim_num=*/2));
   auto gte0 = GetTupleElement(p0, 0);  // f32[4,<=5,6]
   auto gte1 = GetTupleElement(p0, 1);  // f32[4,5,<=6]
@@ -1170,8 +1196,9 @@ TEST_F(XlaBuilderTest, DynamicTranspose) {
   auto p0 = Parameter(&b, 0, tuple_param_shape, "p0");
   ASSERT_IS_OK(b.SetDynamicBinding(/*dynamic_size_param_num=*/0,
                                    /*dynamic_size_param_index=*/{1},
-                                   /*target_param_num=*/0,
-                                   /*target_param_index=*/{0},
+                                   /*target=*/DynamicParameterBinding::kParam,
+                                   /*target_num=*/0,
+                                   /*target_index=*/{0},
                                    /*target_dim_num=*/0));
   auto gte = GetTupleElement(p0, 0);
   Transpose(gte, /*permutation=*/{1, 0});

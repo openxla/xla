@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "absl/algorithm/container.h"
@@ -61,14 +62,14 @@ ENTRY main {
 
   TF_EXPECT_OK(
       binding.Bind(DynamicParameterBinding::DynamicParameter{0, {}},
-                   DynamicParameterBinding::DynamicDimension{1, {}, 0}));
+                   DynamicParameterBinding::DynamicDimension::Param(1, {}, 0)));
 
   auto test = [&](const DynamicParameterBinding& binding) {
     std::optional<DynamicParameterBinding::DynamicParameter> param =
-        binding.GetBinding(
-            DynamicParameterBinding::DynamicDimension{/*parameter_num=*/1,
-                                                      /*parameter_index=*/{},
-                                                      /*dimension=*/0});
+        binding.GetBinding(DynamicParameterBinding::DynamicDimension::Param(
+            /*param_num=*/1,
+            /*param_index=*/{},
+            /*param_dimension=*/0));
     EXPECT_TRUE(param);
     EXPECT_EQ(param->parameter_num, 0);
     EXPECT_EQ(param->parameter_index, ShapeIndex({}));
@@ -97,16 +98,16 @@ ENTRY main {
 
   DynamicParameterBinding binding;
 
-  TF_EXPECT_OK(
-      binding.Bind(DynamicParameterBinding::DynamicParameter{0, {0}},
-                   DynamicParameterBinding::DynamicDimension{0, {1}, 0}));
+  TF_EXPECT_OK(binding.Bind(
+      DynamicParameterBinding::DynamicParameter{0, {0}},
+      DynamicParameterBinding::DynamicDimension::Param(0, {1}, 0)));
 
   auto test = [&](const DynamicParameterBinding& binding) {
     std::optional<DynamicParameterBinding::DynamicParameter> param =
-        binding.GetBinding(
-            DynamicParameterBinding::DynamicDimension{/*parameter_num=*/0,
-                                                      /*parameter_index=*/{1},
-                                                      /*dimension=*/0});
+        binding.GetBinding(DynamicParameterBinding::DynamicDimension::Param(
+            /*param_num=*/0,
+            /*param_index=*/{1},
+            /*param_dimension=*/0));
 
     EXPECT_TRUE(param);
     EXPECT_EQ(param->parameter_num, 0);
@@ -136,31 +137,28 @@ ENTRY main {
 
   DynamicParameterBinding binding;
 
-  TF_EXPECT_OK(
-      binding.Bind(DynamicParameterBinding::DynamicParameter{0, {0}},
-                   DynamicParameterBinding::DynamicDimension{0, {1}, 0}));
+  TF_EXPECT_OK(binding.Bind(
+      DynamicParameterBinding::DynamicParameter{0, {0}},
+      DynamicParameterBinding::DynamicDimension::Param(0, {1}, 0)));
 
-  TF_EXPECT_OK(
-      binding.Bind(DynamicParameterBinding::DynamicParameter{0, {0}},
-                   DynamicParameterBinding::DynamicDimension{0, {1}, 1}));
+  TF_EXPECT_OK(binding.Bind(
+      DynamicParameterBinding::DynamicParameter{0, {0}},
+      DynamicParameterBinding::DynamicDimension::Param(0, {1}, 1)));
 
   auto test = [&](const DynamicParameterBinding& binding) {
     std::optional<DynamicParameterBinding::DynamicParameter> param =
         binding.GetBinding(
-            DynamicParameterBinding::DynamicDimension{/*parameter_num=*/0,
-                                                      /*parameter_index=*/{1},
-                                                      /*dimension=*/0});
+            DynamicParameterBinding::DynamicDimension::Param(0, {1}, 0));
 
     EXPECT_TRUE(param);
     EXPECT_EQ(param->parameter_num, 0);
     EXPECT_EQ(param->parameter_index, ShapeIndex({0}));
 
     std::optional<DynamicParameterBinding::DynamicParameter> param2 =
-
-        binding.GetBinding(
-            DynamicParameterBinding::DynamicDimension{/*parameter_num=*/0,
-                                                      /*parameter_index=*/{1},
-                                                      /*dimension=*/0});
+        binding.GetBinding(DynamicParameterBinding::DynamicDimension::Param(
+            /*param_num=*/0,
+            /*param_index=*/{1},
+            /*param_dimension=*/0));
     EXPECT_TRUE(param2);
     EXPECT_EQ(param2->parameter_num, 0);
     EXPECT_EQ(param2->parameter_index, ShapeIndex({0}));

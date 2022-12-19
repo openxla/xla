@@ -176,7 +176,7 @@ TEST_F(DynamicPadderTest, ReduceTest) {
   // Set up dynamic parameter binding.
   TF_CHECK_OK(module_->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{1, {}},
-      DynamicParameterBinding::DynamicDimension{0, {}, 2}));
+      DynamicParameterBinding::DynamicDimension::Param(0, {}, 2)));
 
   TF_ASSERT_OK(RunPadder().status());
 
@@ -363,7 +363,7 @@ TEST_F(DynamicPadderTest, ConvolutionTest) {
   // Set up binding for contracting dimensions.
   TF_CHECK_OK(module_->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{2, {}},
-      DynamicParameterBinding::DynamicDimension{0, {}, 1}));
+      DynamicParameterBinding::DynamicDimension::Param(0, {}, 1)));
 
   TF_ASSERT_OK(RunPadder().status());
 
@@ -406,7 +406,7 @@ TEST_F(DynamicPadderTest, ConvolutionNoPad) {
   // Set up dynamic parameter binding for non-contracting dimension.
   TF_CHECK_OK(module_->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{2, {}},
-      DynamicParameterBinding::DynamicDimension{0, {}, 0}));
+      DynamicParameterBinding::DynamicDimension::Param(0, {}, 0)));
 
   TF_ASSERT_OK(RunPadder().status());
 
@@ -433,7 +433,7 @@ TEST_F(DynamicPadderTest, ReduceWindowNoPadForTrivialWindow) {
   // Set up dynamic parameter binding.
   TF_CHECK_OK(module_->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{1, {}},
-      DynamicParameterBinding::DynamicDimension{0, {}, 1}));
+      DynamicParameterBinding::DynamicDimension::Param(0, {}, 1)));
 
   TF_ASSERT_OK(RunPadder().status());
 
@@ -471,7 +471,7 @@ ENTRY main {
   for (int i = 0; i < kNumParams; ++i) {
     TF_CHECK_OK(module_->dynamic_parameter_binding().Bind(
         DynamicParameterBinding::DynamicParameter{2, {}},
-        DynamicParameterBinding::DynamicDimension{i, {}, 1}));
+        DynamicParameterBinding::DynamicDimension::Param(i, {}, 1)));
   }
 
   TF_ASSERT_OK(RunPadder().status());
@@ -582,7 +582,7 @@ ENTRY main {
   // Set up dynamic parameter binding.
   TF_CHECK_OK(module_->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{1, {}},
-      DynamicParameterBinding::DynamicDimension{0, {}, 0}));
+      DynamicParameterBinding::DynamicDimension::Param(0, {}, 0)));
   TF_ASSERT_OK(RunPadder(/*slice_dynamic_output=*/true).status());
   VLOG(3) << module_->ToString();
   CHECK(module_->is_dynamic());
@@ -667,10 +667,10 @@ ENTRY main {
   // Set up dynamic parameter binding.
   TF_CHECK_OK(module_padded->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{3, {}},
-      DynamicParameterBinding::DynamicDimension{1, {}, 0}));
+      DynamicParameterBinding::DynamicDimension::Param(1, {}, 0)));
   TF_CHECK_OK(module_padded->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{3, {}},
-      DynamicParameterBinding::DynamicDimension{2, {}, 0}));
+      DynamicParameterBinding::DynamicDimension::Param(2, {}, 0)));
   // Pad the rest of input with garbage data.
   Literal scatter_indices_padded = LiteralUtil::CreateR1<int32_t>({0, 2, 0, 4});
   Literal updates_padded = LiteralUtil::CreateR2<int32_t>(
@@ -765,10 +765,10 @@ ENTRY main {
   // Set up dynamic parameter binding.
   TF_CHECK_OK(module_padded->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{3, {}},
-      DynamicParameterBinding::DynamicDimension{1, {}, 0}));
+      DynamicParameterBinding::DynamicDimension::Param(1, {}, 0)));
   TF_CHECK_OK(module_padded->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{3, {}},
-      DynamicParameterBinding::DynamicDimension{2, {}, 0}));
+      DynamicParameterBinding::DynamicDimension::Param(2, {}, 0)));
   DynamicPadder padder;
   TF_CHECK_OK(padder.Run(module_padded.get()).status());
   Literal not_padded =
@@ -872,10 +872,10 @@ ENTRY main {
   // Set up dynamic parameter binding.
   TF_CHECK_OK(module_padded->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{1, {}},
-      DynamicParameterBinding::DynamicDimension{0, {}, 0}));
+      DynamicParameterBinding::DynamicDimension::Param(0, {}, 0)));
   TF_CHECK_OK(module_padded->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{1, {}},
-      DynamicParameterBinding::DynamicDimension{0, {}, 1}));
+      DynamicParameterBinding::DynamicDimension::Param(0, {}, 1)));
   // Pad the rest of input with garbage data.
   Literal operand_padded = LiteralUtil::CreateR2<int32_t>(
       {{1, 2, 3, 4}, {4, 5, 6, 7}, {1, 2, 3, 4}, {4, 5, 6, 7}});
