@@ -1,8 +1,5 @@
 # Description: GPU-specific XLA tests. For example, codegen tests that
 # verify the IR emitted.
-#
-# TODO(jlebar): None of these tests actually use the GPU, so they should not
-# need to run on machines with GPUs present.
 
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -886,4 +883,26 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "@tsl//tsl/platform:test_main",
     ],
+)
+
+xla_cc_test(
+    name = "dynamic_shared_memory_test",
+    srcs = if_cuda_is_configured(["dynamic_shared_memory_test.cc"]),
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:statusor",
+        "//xla:xla_proto_cc",
+        "@tsl//tsl/platform:test_main",
+        "//xla:shape_util",
+        "//xla:types",
+        "@tsl//tsl/platform:test",
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/gpu:asm_compiler",
+        "//xla/service/gpu:gpu_asm_opts_util",
+        "//xla/stream_executor",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/stream_executor:device_memory",
+    ]),
 )
