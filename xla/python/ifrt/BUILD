@@ -40,6 +40,8 @@ cc_library(
         "future.cc",
         "shape.cc",
         "sharding.cc",
+        "tuple.cc",
+        "value.cc",
     ],
     hdrs = [
         "array.h",
@@ -51,6 +53,8 @@ cc_library(
         "future.h",
         "shape.h",
         "sharding.h",
+        "tuple.h",
+        "value.h",
     ],
     deps = [
         "//xla:status",
@@ -201,5 +205,30 @@ xla_cc_test(
         ":executable_impl_test_lib",
         ":no_impl_test_main",
         "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "tuple_impl_test_lib",
+    testonly = 1,
+    srcs = ["tuple_impl_test_lib.cc"],
+    deps = [
+        ":ifrt",
+        ":test_util",
+        "@com_google_absl//absl/types:span",
+        "@tf_runtime//:ref_count",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+    alwayslink = 1,
+)
+
+xla_cc_test(
+    name = "tuple_test_no_impl",
+    srcs = [],
+    deps = [
+        ":no_impl_test_main",
+        ":tuple_impl_test_lib",
     ],
 )

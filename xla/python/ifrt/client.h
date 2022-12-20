@@ -26,6 +26,8 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/compiler.h"
+#include "xla/python/ifrt/tuple.h"
+#include "xla/python/ifrt/value.h"
 #include "xla/statusor.h"
 
 namespace xla {
@@ -70,6 +72,10 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
       Shape shape, std::shared_ptr<const Sharding> sharding,
       absl::Span<tsl::RCReference<Array>> arrays,
       ArrayCopySemantics semantics) = 0;
+
+  // Builds a tuple from a sequence of values.
+  virtual StatusOr<tsl::RCReference<Tuple>> MakeTuple(
+      absl::Span<tsl::RCReference<Value>> values) = 0;
 
   // The following APIs are taken from `xla::PjRtClient` for fast prototyping.
   // Most of the APIs will be factored out as a `Platform`/`Topology` in the
