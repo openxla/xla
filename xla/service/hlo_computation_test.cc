@@ -420,7 +420,7 @@ TEST_F(HloComputationTest, CycleDetection) {
   auto visit_status = computation->Accept(&visitor);
   ASSERT_FALSE(visit_status.ok());
   ASSERT_THAT(visit_status.error_message(),
-              ::testing::ContainsRegex("cycle is detecte"));
+              ::testing::ContainsRegex("Detected cycle"));
 }
 
 TEST_F(HloComputationTest, RemoveInstructionWithDuplicateOperand) {

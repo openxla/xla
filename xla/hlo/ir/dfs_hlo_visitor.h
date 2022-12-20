@@ -308,6 +308,11 @@ class DfsHloVisitorBase {
     kVisited = 2,
   };
 
+  const absl::flat_hash_map<int, VisitState>& visit_states() const {
+    return visit_state_;
+  }
+  absl::flat_hash_map<int, VisitState>& visit_states() { return visit_state_; }
+
   VisitState GetVisitState(int id) {
     auto iter = visit_state_.find(id);
     if (iter == visit_state_.end()) {
