@@ -1,4 +1,5 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
 
 # copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
 
@@ -57,5 +58,29 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_future",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_cpu",
+    srcs = ["pjrt_c_api_cpu.cc"],
+    hdrs = ["pjrt_c_api_cpu.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt:tfrt_cpu_pjrt_client",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_c_api_cpu_test",
+    srcs = ["pjrt_c_api_cpu_test.cc"],
+    deps = [
+        ":pjrt_c_api_cpu",
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt:pjrt_client",
+        "@com_google_googletest//:gtest_main",
     ],
 )
