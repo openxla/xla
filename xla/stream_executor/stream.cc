@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/str_cat.h"
+#include "absl/synchronization/notification.h"
 #include "third_party/eigen3/Eigen/Core"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/lib/stacktrace.h"
@@ -2559,12 +2560,20 @@ Stream &Stream::ThenEnqueueOnBackgroundThread(
     std::function<void(StreamExecutor *)> task) {
   VLOG_CALL(PARAM(task));
 
-  StreamExecutor *stream_executor = this->parent_;
-  std::function<void()> bound_task = std::bind(task, stream_executor);
+  // `EnqueueOnBackgroundThread` may actually execute on the current thread if
+  // the work queues are full, so we cannot enqueue from the host callback.
+  // Instead, we signal to the background thread via a notification.
+  auto notification = std::make_shared<absl::Notification>();
+  ThenDoHostCallback([notification] { notification->Notify(); });
 
-  return ThenDoHostCallback([stream_executor, bound_task]() {
-    stream_executor->EnqueueOnBackgroundThread(bound_task);
-  });
+  StreamExecutor *stream_executor = this->parent_;
+  stream_executor->EnqueueOnBackgroundThread(
+      [notification = std::move(notification), stream_executor,
+       task = std::move(task)] {
+        notification->WaitForNotification();
+        task(stream_executor);
+      });
+  return *this;
 }
 
 port::Status Stream::BlockHostUntilDone() {

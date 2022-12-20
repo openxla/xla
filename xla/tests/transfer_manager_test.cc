@@ -14,7 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "xla/layout_util.h"
@@ -307,6 +309,31 @@ XLA_TEST_F(TransferManagerTest, TransferTokenFromDevice) {
       Literal result,
       transfer_manager_->TransferLiteralFromDevice(stream_, device_buffer));
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateToken(), result));
+}
+
+XLA_TEST_F(TransferManagerTest, TransferFromDeviceAsync) {
+  Literal literal = LiteralUtil::CreateR0<float>(42);
+  auto device_buffer = AllocateDeviceBuffer(literal.shape());
+
+  ASSERT_IS_OK(transfer_manager_->TransferLiteralToDevice(stream_, literal,
+                                                          device_buffer));
+
+  Literal result(literal.shape());
+  absl::Notification notify1, notify2;
+  std::optional<Status> status;
+  transfer_manager_->TransferLiteralFromDevice(
+      stream_, device_buffer, &result, [&](Status s) {
+        if (notify1.WaitForNotificationWithTimeout(absl::Seconds(5))) {
+          status = std::move(s);
+          notify2.Notify();
+        }
+      });
+  EXPECT_FALSE(status.has_value());
+  notify1.Notify();
+  EXPECT_TRUE(notify2.WaitForNotificationWithTimeout(absl::Seconds(5)));
+  EXPECT_TRUE(status.has_value());
+  EXPECT_TRUE(status->ok());
+  EXPECT_TRUE(LiteralTestUtil::Equal(literal, result));
 }
 
 XLA_TEST_F(TransferManagerTest, MultiStreamRoundTripSoak) {
