@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace spmd {
@@ -4683,18 +4682,6 @@ Status SpmdPartitioner::PreprocessSharding(
           hlo->set_sharding(
               HloSharding::Single(hlo->shape(), HloSharding::Replicate()));
         }
-      } else if (!hlo->sharding().IsTileMaximal() &&
-                 !hlo->sharding().IsManual()) {
-        std::vector<int64_t> available(num_partitions_);
-        std::iota(available.begin(), available.end(), 0);
-        TF_RET_CHECK(num_partitions_ == hlo_sharding_util::DevicesForSharding(
-                                            hlo->sharding(), available)
-                                            .size())
-            << "num_partitions:" << num_partitions_ << "\n"
-            << "SPMD partitioner only supports tile sharding that includes all "
-               "partitions. If you didn't add this sharding annotation in the "
-               "model, please file a bug to XLA team.\n"
-            << hlo->ToString();
       }
     }
   }
