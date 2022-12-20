@@ -140,13 +140,13 @@ class PjRtLoadedExecutable final
       PjRtCompatibleClient* client,
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable);
 
-  // Creates PjRtExecutable from xla::XlaComputation. We expect that
-  // xla::PjRtLoadedExecutable has fixed output dtypes/shapes/shardings. If
+  // Creates PjRtExecutable from an MHLO or StableHLO MLIR module. We expect
+  // that xla::PjRtLoadedExecutable has fixed output dtypes/shapes/shardings. If
   // options.executable_build_options has use_auto_spmd_partitioning or
   // allow_spmd_sharding_propagation_to_output enabled,
   // PjRtLoadedExecutable::GetHloModules() must be implemented.
   static StatusOr<std::unique_ptr<LoadedExecutable>> Create(
-      PjRtCompatibleClient* client, const XlaComputation& computation,
+      PjRtCompatibleClient* client, mlir::ModuleOp module,
       CompileOptions options);
 
   // PjRtCompatibleLoadedExecutable implementation.
