@@ -1976,8 +1976,8 @@ CallORToolsSolver(int64_t N, int64_t M, const std::vector<int>& s_len,
   solver->MutableObjective()->SetMinimization();
   std::string solver_parameter_str;
 #if !defined(__APPLE__)
-  if (solver->ProblemType() ==
-      operations_research::MPSolver::SAT_INTEGER_PROGRAMMING) {
+  if (solver->ProblemType() !=
+      operations_research::MPSolver::SCIP_MIXED_INTEGER_PROGRAMMING) {
     // Set random_seed, interleave_search and share_binary_clauses for
     // determinism, and num_workers for parallelism.
     solver_parameter_str = absl::StrCat(
