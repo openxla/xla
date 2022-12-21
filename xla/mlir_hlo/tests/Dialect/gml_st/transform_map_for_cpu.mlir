@@ -51,14 +51,24 @@ func.func @map_unary(%input: tensor<?x?xf32>, %init: tensor<?x?xf32>)
 // CHECK-SAME:                          [1, %[[MAP_DIM]]] [1, 1]
 // CHECK-NEXT:   %[[INPUT_SLICE:.*]] = gml_st.materialize %[[INPUT]]
 // CHECK-NEXT:   %[[INIT_SLICE:.*]] = gml_st.materialize %[[MAIN_PAR]]
-// CHECK-NEXT:   %[[MAPPED:.*]] = linalg.map
-// CHECK-SAME:     ins(%[[INPUT_SLICE]] : tensor<1x?xf32>)
-// CHECK-SAME:     outs(%[[INIT_SLICE]] : tensor<1x?xf32>)
-// CHECK-NEXT:     (%[[IN_ELEM:.*]]: f32) {
-// CHECK-NEXT:       %[[RES_ELEM:.*]] = math.absf %[[IN_ELEM]] : f32
-// CHECK-NEXT:       linalg.yield %[[RES_ELEM]] : f32
-// CHECK-NEXT:     }
-// CHECK-NEXT:   gml_st.set_yield %[[MAPPED]] into %[[MAIN_PAR]][%[[TILE]]]
+
+// CHECK:        %[[RESULT1:.*]] = gml_st.parallel (%[[I1:.*]], %[[J1:.*]]) =
+// CHECK-NEXT:     %[[TILE1:.*]] = gml_st.tile [%[[I1]], %[[J1]]]
+// CHECK-SAME:                                 [1, 1] [1, 1]
+// CHECK-NEXT:     %[[INPUT_SLICE1:.*]] = gml_st.materialize %[[INPUT_SLICE]]
+// CHECK-NEXT:     %[[INIT_SLICE1:.*]] = gml_st.materialize %[[INIT_SLICE]]
+// CHECK-NEXT:     %[[MAPPED:.*]] = linalg.map
+// CHECK-SAME:       ins(%[[INPUT_SLICE1]] : tensor<1x1xf32>)
+// CHECK-SAME:       outs(%[[INIT_SLICE1]] : tensor<1x1xf32>)
+// CHECK-NEXT:       (%[[IN_ELEM:.*]]: f32) {
+// CHECK-NEXT:         %[[RES_ELEM:.*]] = math.absf %[[IN_ELEM]] : f32
+// CHECK-NEXT:         linalg.yield %[[RES_ELEM]] : f32
+// CHECK-NEXT:       }
+// CHECK-NEXT:     gml_st.set_yield %[[MAPPED]]
+// CHECK-SAME:         into %[[INIT_SLICE]][%[[TILE1]]]
+// CHECK-NEXT:   }
+
+// CHECK-NEXT:   gml_st.set_yield %[[RESULT1]] into %[[MAIN_PAR]][%[[TILE]]]
 // CHECK-NEXT: }
 // CHECK-NEXT: return %[[RESULT]]
 
@@ -142,20 +152,29 @@ func.func @map_broadcast_fuse(%arg0: tensor<?xf32>, %arg1: tensor<?x?x?xf32>,
 // CHECK-DAG:    %[[INIT1_TILE:.*]] = gml_st.tile [%[[I]], %[[J]], %[[K]]]
 // CHECK-DAG:    %[[ARG0_SLICE:.*]] = gml_st.materialize %[[ARG0]]
 // CHECK-DAG:    %[[INIT0_SLICE:.*]] = gml_st.materialize %[[INIT0]]
+// CHECK-DAG:    %[[INIT1_SLICE:.*]] = gml_st.materialize %[[MAIN_PAR]]
+// CHECK-DAG:    %[[ARG1_SLICE:.*]] = gml_st.materialize %[[ARG1]]
 
-// CHECK:        %[[ABS:.*]] = linalg.map
-// CHECK-SAME:     ins(%[[ARG0_SLICE]]
-// CHECK-SAME:     outs(%[[INIT0_SLICE]]
+// CHECK:        %[[RESULT1:.*]] = gml_st.parallel
+// CHECK-SAME:       (%[[I1:.*]], %[[J1:.*]], %[[K1:.*]]) =
+// CHECK-DAG:      %[[ARG0_TILE1:.*]] = gml_st.tile [%[[I1]]]
+// CHECK-DAG:      %[[INIT1_TILE1:.*]] = gml_st.tile [%[[I1]], %[[J1]], %[[K1]]]
+// CHECK-DAG:      %[[ARG0_SLICE1:.*]] = gml_st.materialize %[[ARG0_SLICE]]
+// CHECK-DAG:      %[[INIT0_SLICE1:.*]] = gml_st.materialize %[[INIT0_SLICE]]
+// CHECK:          %[[ABS1:.*]] = linalg.map
+// CHECK-SAME:       ins(%[[ARG0_SLICE1]]
+// CHECK-SAME:       outs(%[[INIT0_SLICE1]]
 
-// CHECK:        %[[INIT1_SLICE:.*]] = gml_st.materialize %[[MAIN_PAR]]
-// CHECK:        %[[BCAST:.*]] = linalg.broadcast
-// CHECK-SAME:     ins(%[[ABS]]
-// CHECK-SAME:     outs(%[[INIT1_SLICE]]
-// CHECK:        %[[ARG1_SLICE:.*]] = gml_st.materialize %[[ARG1]]
-// CHECK-NEXT:   %[[MAPPED:.*]] = linalg.map
-// CHECK-SAME:     ins(%[[BCAST]], %[[ARG1_SLICE]] : tensor<1x1x?xf32>
-// CHECK-SAME:     outs(%[[INIT1_SLICE]] : tensor<1x1x?xf32>)
-// CHECK:        gml_st.set_yield %[[MAPPED]] into %[[MAIN_PAR]][%[[INIT1_TILE]]]
+// CHECK:          %[[INIT1_SLICE1:.*]] = gml_st.materialize %[[INIT1_SLICE]]
+// CHECK:          %[[BCAST:.*]] = linalg.broadcast
+// CHECK-SAME:       ins(%[[ABS1]]
+// CHECK-SAME:       outs(%[[INIT1_SLICE1]]
+// CHECK:          %[[ARG1_SLICE1:.*]] = gml_st.materialize %[[ARG1_SLICE]]
+// CHECK-NEXT:     %[[MAPPED:.*]] = linalg.map
+// CHECK-SAME:       ins(%[[BCAST]], %[[ARG1_SLICE1]] : tensor<1x1x1xf32>
+// CHECK-SAME:       outs(%[[INIT1_SLICE1]] : tensor<1x1x1xf32>)
+// CHECK:          gml_st.set_yield %[[MAPPED]] into %[[INIT1_SLICE]][%[[INIT1_TILE1]]]
+// CHECK:        gml_st.set_yield %[[RESULT1]] into %[[MAIN_PAR]][%[[INIT1_TILE]]]
 // CHECK-NEXT: }
 // CHECK-NEXT: return %[[RESULT]]
 
