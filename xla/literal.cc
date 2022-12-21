@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -122,52 +123,15 @@ const Shape& ScalarShapeImpl() {
 }
 
 const Shape& ScalarShape(PrimitiveType type) {
-  switch (type) {
-    case U8:
-      return ScalarShapeImpl<U8>();
-    case U16:
-      return ScalarShapeImpl<U16>();
-    case U32:
-      return ScalarShapeImpl<U32>();
-    case U64:
-      return ScalarShapeImpl<U64>();
-    case S8:
-      return ScalarShapeImpl<S8>();
-    case S16:
-      return ScalarShapeImpl<S16>();
-    case S32:
-      return ScalarShapeImpl<S32>();
-    case S64:
-      return ScalarShapeImpl<S64>();
-    case F8E5M2:
-      return ScalarShapeImpl<F8E5M2>();
-    case F8E4M3FN:
-      return ScalarShapeImpl<F8E4M3FN>();
-    case F16:
-      return ScalarShapeImpl<F16>();
-    case BF16:
-      return ScalarShapeImpl<BF16>();
-    case F32:
-      return ScalarShapeImpl<F32>();
-    case F64:
-      return ScalarShapeImpl<F64>();
-    case C64:
-      return ScalarShapeImpl<C64>();
-    case C128:
-      return ScalarShapeImpl<C128>();
-    case PRED:
-      return ScalarShapeImpl<PRED>();
-    case TUPLE:
-      LOG(FATAL) << "Tuple element type cannot be a scalar type.";
-    case OPAQUE_TYPE:
-      LOG(FATAL) << "Opaque element type cannot be a scalar type.";
-    case TOKEN:
-      LOG(FATAL) << "Token element type cannot be a scalar type.";
-    case PRIMITIVE_TYPE_INVALID:
-      LOG(FATAL) << "Invalid primitive type.";
-    default:
-      LOG(FATAL) << "Unhandled primitive type " << type;
-  }
+  return primitive_util::PrimitiveTypeSwitch<const Shape&>(
+      [&](auto primitive_type_constant) -> const Shape& {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          return ScalarShapeImpl<primitive_type_constant>();
+        }
+        LOG(FATAL) << PrimitiveType_Name(primitive_type_constant())
+                   << " element type cannot be a scalar type.";
+      },
+      type);
 }
 
 const Shape& NilShape() {
@@ -808,64 +772,19 @@ Status MutableLiteralBase::CopySliceFrom(const LiteralSlice& src_literal,
       << ShapeUtil::HumanString(src_literal.shape());
   TF_RET_CHECK(ShapeUtil::SameElementType(src_literal.shape(), shape()));
 
-  switch (shape().element_type()) {
-    case U8:
-      return CopySliceFromInternal<uint8_t>(src_literal, src_base, dest_base,
-                                            copy_size);
-    case U16:
-      return CopySliceFromInternal<uint16_t>(src_literal, src_base, dest_base,
-                                             copy_size);
-    case U32:
-      return CopySliceFromInternal<uint32_t>(src_literal, src_base, dest_base,
-                                             copy_size);
-    case U64:
-      return CopySliceFromInternal<uint64_t>(src_literal, src_base, dest_base,
-                                             copy_size);
-    case S8:
-      return CopySliceFromInternal<int8_t>(src_literal, src_base, dest_base,
-                                           copy_size);
-    case S16:
-      return CopySliceFromInternal<int16_t>(src_literal, src_base, dest_base,
-                                            copy_size);
-    case S32:
-      return CopySliceFromInternal<int32_t>(src_literal, src_base, dest_base,
-                                            copy_size);
-    case S64:
-      return CopySliceFromInternal<int64_t>(src_literal, src_base, dest_base,
-                                            copy_size);
-    case F8E5M2:
-      return CopySliceFromInternal<tsl::float8_e5m2>(src_literal, src_base,
-                                                     dest_base, copy_size);
-    case F8E4M3FN:
-      return CopySliceFromInternal<tsl::float8_e4m3fn>(src_literal, src_base,
-                                                       dest_base, copy_size);
-    case F16:
-      return CopySliceFromInternal<half>(src_literal, src_base, dest_base,
-                                         copy_size);
-    case BF16:
-      return CopySliceFromInternal<bfloat16>(src_literal, src_base, dest_base,
-                                             copy_size);
-    case F32:
-      return CopySliceFromInternal<float>(src_literal, src_base, dest_base,
-                                          copy_size);
-    case F64:
-      return CopySliceFromInternal<double>(src_literal, src_base, dest_base,
-                                           copy_size);
-    case C64:
-      return CopySliceFromInternal<complex64>(src_literal, src_base, dest_base,
-                                              copy_size);
-    case C128:
-      return CopySliceFromInternal<complex128>(src_literal, src_base, dest_base,
-                                               copy_size);
-    case PRED:
-      return CopySliceFromInternal<bool>(src_literal, src_base, dest_base,
-                                         copy_size);
-    default:
-      break;
-  }
-  return Unimplemented(
-      "Copying a slice from a Literal object with element type %d is not "
-      "implemented.",
+  return primitive_util::PrimitiveTypeSwitch<Status>(
+      [&](auto primitive_type_constant) -> Status {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return CopySliceFromInternal<NativeT>(src_literal, src_base,
+                                                dest_base, copy_size);
+        }
+        return Unimplemented(
+            "Copying a slice from a Literal object with element type %d is not "
+            "implemented.",
+            shape().element_type());
+      },
       shape().element_type());
 }
 
@@ -1117,45 +1036,17 @@ Literal LiteralBase::Slice(absl::Span<const int64_t> start_indices,
       shape().element_type(), result_dimensions,
       LayoutUtil::MinorToMajor(shape()));
   ShapeUtil::CopyDynamicDimensions(&result_shape, shape());
-  switch (result_shape.element_type()) {
-    case PRED:
-      return SliceInternal<bool>(result_shape, start_indices);
-    case U8:
-      return SliceInternal<uint8_t>(result_shape, start_indices);
-    case U16:
-      return SliceInternal<uint16_t>(result_shape, start_indices);
-    case U32:
-      return SliceInternal<uint32_t>(result_shape, start_indices);
-    case U64:
-      return SliceInternal<uint64_t>(result_shape, start_indices);
-    case S8:
-      return SliceInternal<int8_t>(result_shape, start_indices);
-    case S16:
-      return SliceInternal<int16_t>(result_shape, start_indices);
-    case S32:
-      return SliceInternal<int32_t>(result_shape, start_indices);
-    case S64:
-      return SliceInternal<int64_t>(result_shape, start_indices);
-    case F8E5M2:
-      return SliceInternal<tsl::float8_e5m2>(result_shape, start_indices);
-    case F8E4M3FN:
-      return SliceInternal<tsl::float8_e4m3fn>(result_shape, start_indices);
-    case F16:
-      return SliceInternal<half>(result_shape, start_indices);
-    case BF16:
-      return SliceInternal<bfloat16>(result_shape, start_indices);
-    case F32:
-      return SliceInternal<float>(result_shape, start_indices);
-    case F64:
-      return SliceInternal<double>(result_shape, start_indices);
-    case C64:
-      return SliceInternal<complex64>(result_shape, start_indices);
-    case C128:
-      return SliceInternal<complex128>(result_shape, start_indices);
-    default:
-      LOG(FATAL) << "not yet implemented: "
-                 << PrimitiveType_Name(result_shape.element_type());
-  }
+  return primitive_util::PrimitiveTypeSwitch<Literal>(
+      [&](auto primitive_type_constant) -> Literal {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return SliceInternal<NativeT>(result_shape, start_indices);
+        }
+        LOG(FATAL) << "not yet implemented: "
+                   << PrimitiveType_Name(result_shape.element_type());
+      },
+      shape().element_type());
 }
 
 Literal LiteralBase::Clone() const {
@@ -1182,185 +1073,122 @@ std::string LiteralBase::GetAsString(absl::Span<const int64_t> multi_index,
                                      const ShapeIndex& shape_index) const {
   const Shape& subshape = ShapeUtil::GetSubshape(shape(), shape_index);
   CHECK(LayoutUtil::IsDenseArray(subshape));
-  switch (subshape.element_type()) {
-    case PRED:
-      return Get<bool>(multi_index, shape_index) ? "true" : "false";
-    case S8:
-      return StrCat(Get<int8_t>(multi_index, shape_index));
-    case S16:
-      return StrCat(Get<int16_t>(multi_index, shape_index));
-    case S32:
-      return StrCat(Get<int32_t>(multi_index, shape_index));
-    case S64:
-      return StrCat(Get<int64_t>(multi_index, shape_index));
-    case U8:
-      return StrCat(Get<uint8_t>(multi_index, shape_index));
-    case U16:
-      return StrCat(Get<uint16_t>(multi_index, shape_index));
-    case U32:
-      return StrCat(Get<uint32_t>(multi_index, shape_index));
-    case U64:
-      return StrCat(Get<uint64_t>(multi_index, shape_index));
-    case F16:
-      return RoundTripFpToString(Get<half>(multi_index, shape_index));
-    case F32:
-      return RoundTripFpToString(Get<float>(multi_index, shape_index));
-    case BF16:
-      return RoundTripFpToString(Get<bfloat16>(multi_index, shape_index));
-    case F8E5M2:
-      return RoundTripFpToString(
-          Get<tsl::float8_e5m2>(multi_index, shape_index));
-    case F8E4M3FN:
-      return RoundTripFpToString(
-          Get<tsl::float8_e4m3fn>(multi_index, shape_index));
-    case F64:
-      return RoundTripFpToString(Get<double>(multi_index, shape_index));
-    case C64: {
-      complex64 c = Get<complex64>(multi_index, shape_index);
-      return StrCat("(", RoundTripFpToString(c.real()), ", ",
-                    RoundTripFpToString(c.imag()), ")");
-    }
-    case C128: {
-      complex128 c = Get<complex128>(multi_index, shape_index);
-      return StrCat("(", RoundTripFpToString(c.real()), ", ",
-                    RoundTripFpToString(c.imag()), ")");
-    }
-    default:
-      LOG(FATAL) << PrimitiveType_Name(subshape.element_type());
-  }
+  return primitive_util::PrimitiveTypeSwitch<std::string>(
+      [&](auto primitive_type_constant) -> std::string {
+        if constexpr (primitive_type_constant == PRED) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return Get<NativeT>(multi_index, shape_index) ? "true" : "false";
+        }
+        if constexpr (primitive_util::IsIntegralType(primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return StrCat(Get<NativeT>(multi_index, shape_index));
+        }
+        if constexpr (primitive_util::IsFloatingPointType(
+                          primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return RoundTripFpToString(Get<NativeT>(multi_index, shape_index));
+        }
+        if constexpr (primitive_util::IsComplexType(primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          NativeT c = Get<NativeT>(multi_index, shape_index);
+          return StrCat("(", RoundTripFpToString(c.real()), ", ",
+                        RoundTripFpToString(c.imag()), ")");
+        }
+        LOG(FATAL) << PrimitiveType_Name(subshape.element_type());
+      },
+      subshape.element_type());
 }
 
 std::optional<int64_t> LiteralBase::GetIntegralAsS64(
     absl::Span<const int64_t> multi_index) const {
   CHECK(LayoutUtil::IsDenseArray(shape()));
-  switch (shape().element_type()) {
-    case PRED:
-      return Get<bool>(multi_index);
-    case S8:
-      return Get<int8_t>(multi_index);
-    case U8:
-      return Get<uint8_t>(multi_index);
-    case S16:
-      return Get<int16_t>(multi_index);
-    case U16:
-      return Get<uint16_t>(multi_index);
-    case S32:
-      return Get<int32_t>(multi_index);
-    case U32:
-      return Get<uint32_t>(multi_index);
-    case S64:
-      return Get<int64_t>(multi_index);
-    case U64:
-      return Get<uint64_t>(multi_index);
-    default:
-      return std::nullopt;
-  }
+  return primitive_util::PrimitiveTypeSwitch<std::optional<int64_t>>(
+      [&](auto primitive_type_constant) -> std::optional<int64_t> {
+        if constexpr (primitive_util::IsIntegralType(primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return static_cast<int64_t>(Get<NativeT>(multi_index));
+        }
+        return std::nullopt;
+      },
+      shape().element_type());
 }
 
 std::optional<double> LiteralBase::GetAsDouble(
     absl::Span<const int64_t> multi_index) const {
   CHECK(LayoutUtil::IsDenseArray(shape()));
-  switch (shape().element_type()) {
-    case F8E5M2:
-      return static_cast<double>(Get<tsl::float8_e5m2>(multi_index));
-    case F8E4M3FN:
-      return static_cast<double>(Get<tsl::float8_e4m3fn>(multi_index));
-    case F16:
-      return static_cast<double>(Get<half>(multi_index));
-    case F32:
-      return static_cast<double>(Get<float>(multi_index));
-    case F64:
-      return Get<double>(multi_index);
-    case BF16:
-      return static_cast<double>(Get<bfloat16>(multi_index));
-    default:
-      return std::nullopt;
-  }
+  return primitive_util::PrimitiveTypeSwitch<std::optional<double>>(
+      [&](auto primitive_type_constant) -> std::optional<double> {
+        if constexpr (primitive_util::IsFloatingPointType(
+                          primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return static_cast<double>(Get<NativeT>(multi_index));
+        }
+        return std::nullopt;
+      },
+      shape().element_type());
 }
 
 std::optional<complex128> LiteralBase::GetAsComplex128(
     absl::Span<const int64_t> multi_index) const {
-  switch (shape().element_type()) {
-    case F8E5M2:
-      return {{static_cast<double>(Get<tsl::float8_e5m2>(multi_index)), 0}};
-    case F8E4M3FN:
-      return {{static_cast<double>(Get<tsl::float8_e4m3fn>(multi_index)), 0}};
-    case BF16:
-      return {{static_cast<double>(Get<bfloat16>(multi_index)), 0}};
-    case F16:
-      return {{static_cast<double>(Get<Eigen::half>(multi_index)), 0}};
-    case F32:
-      return {{Get<float>(multi_index), 0}};
-    case F64:
-      return {{Get<double>(multi_index), 0}};
-    case C64:
-      return {Get<complex64>(multi_index)};
-    case C128:
-      return {Get<complex128>(multi_index)};
-    case S8:
-      return {Get<int8_t>(multi_index)};
-    default:
-      return std::nullopt;
-  }
+  return primitive_util::PrimitiveTypeSwitch<std::optional<complex128>>(
+      [&](auto primitive_type_constant) -> std::optional<complex128> {
+        if constexpr (primitive_util::IsFloatingPointType(
+                          primitive_type_constant) ||
+                      primitive_type_constant == S8) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return {{static_cast<double>(Get<NativeT>(multi_index)), 0}};
+        }
+        if constexpr (primitive_util::IsComplexType(primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return {Get<NativeT>(multi_index)};
+        }
+        return std::nullopt;
+      },
+      shape().element_type());
 }
 
 Status MutableLiteralBase::SetIntegralAsS64(
     absl::Span<const int64_t> multi_index, int64_t value) {
   CHECK(LayoutUtil::IsDenseArray(shape()));
-  switch (shape().element_type()) {
-    case PRED:
-      Set<bool>(multi_index, value);
-      break;
-    case U8:
-      Set<uint8_t>(multi_index, value);
-      break;
-    case S32:
-      Set<int32_t>(multi_index, value);
-      break;
-    case S64:
-      Set<int64_t>(multi_index, value);
-      break;
-    case U32:
-      Set<uint32_t>(multi_index, value);
-      break;
-    case U64:
-      Set<uint64_t>(multi_index, value);
-      break;
-    default:
-      return FailedPrecondition("Array element type is not integral: %s",
-                                PrimitiveType_Name(shape().element_type()));
-  }
-  return OkStatus();
+  return primitive_util::PrimitiveTypeSwitch<Status>(
+      [&](auto primitive_type_constant) -> Status {
+        if constexpr (primitive_util::IsIntegralType(primitive_type_constant) ||
+                      primitive_type_constant == PRED) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          Set<NativeT>(multi_index, value);
+          return OkStatus();
+        }
+        return FailedPrecondition("Array element type is not integral: %s",
+                                  PrimitiveType_Name(shape().element_type()));
+      },
+      shape().element_type());
 }
 
 Status MutableLiteralBase::SetFromDouble(absl::Span<const int64_t> multi_index,
                                          double value) {
   CHECK(LayoutUtil::IsDenseArray(shape()));
-  switch (shape().element_type()) {
-    case F16:
-      Set<half>(multi_index, Eigen::half(value));
-      break;
-    case F32:
-      Set<float>(multi_index, value);
-      break;
-    case F64:
-      Set<double>(multi_index, value);
-      break;
-    case BF16:
-      Set<bfloat16>(multi_index, static_cast<bfloat16>(value));
-      break;
-    case F8E5M2:
-      Set<tsl::float8_e5m2>(multi_index, static_cast<tsl::float8_e5m2>(value));
-      break;
-    case F8E4M3FN:
-      Set<tsl::float8_e4m3fn>(multi_index,
-                              static_cast<tsl::float8_e4m3fn>(value));
-      break;
-    default:
-      return FailedPrecondition("Array element type is not floating: %s",
-                                PrimitiveType_Name(shape().element_type()));
-  }
-  return OkStatus();
+  return primitive_util::PrimitiveTypeSwitch<Status>(
+      [&](auto primitive_type_constant) -> Status {
+        if constexpr (primitive_util::IsFloatingPointType(
+                          primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          Set<NativeT>(multi_index, static_cast<NativeT>(value));
+          return OkStatus();
+        }
+        return FailedPrecondition("Array element type is not floating: %s",
+                                  PrimitiveType_Name(shape().element_type()));
+      },
+      shape().element_type());
 }
 
 namespace {
@@ -1658,44 +1486,22 @@ template <PrimitiveType primitive_src_type>
 StatusOr<Literal> ConvertIfDestTypeMatches(const LiteralBase& src_literal,
                                            PrimitiveType primitive_dest_type,
                                            bool bitcast) {
-  switch (primitive_dest_type) {
-#define CONVERT_IF_TYPES_MATCH(type)                                    \
-  case (type):                                                          \
-    return ConvertIfTypesMatch<primitive_src_type, (type)>(src_literal, \
-                                                           bitcast);
-    CONVERT_IF_TYPES_MATCH(PRED)
-    CONVERT_IF_TYPES_MATCH(S8)
-    CONVERT_IF_TYPES_MATCH(S16)
-    CONVERT_IF_TYPES_MATCH(S32)
-    CONVERT_IF_TYPES_MATCH(S64)
-    CONVERT_IF_TYPES_MATCH(U8)
-    CONVERT_IF_TYPES_MATCH(U16)
-    CONVERT_IF_TYPES_MATCH(U32)
-    CONVERT_IF_TYPES_MATCH(U64)
-    CONVERT_IF_TYPES_MATCH(F16)
-    CONVERT_IF_TYPES_MATCH(F32)
-    CONVERT_IF_TYPES_MATCH(F64)
-    CONVERT_IF_TYPES_MATCH(BF16)
-    CONVERT_IF_TYPES_MATCH(F8E5M2)
-    CONVERT_IF_TYPES_MATCH(F8E4M3FN)
-#undef CONVERT_IF_TYPES_MATCH
-    case C64:
-      if (bitcast) {
-        break;
-      }
-      return ConvertIfTypesMatch<primitive_src_type, C64>(src_literal, false);
-    case C128:
-      if (bitcast) {
-        break;
-      }
-      return ConvertIfTypesMatch<primitive_src_type, C128>(src_literal, false);
-    // Other types are not yet supported.
-    default:
-      break;
-  }
-  return Unimplemented("Converting from type %s to type %s is not implemented.",
-                       PrimitiveType_Name(src_literal.shape().element_type()),
-                       PrimitiveType_Name(primitive_dest_type));
+  return primitive_util::PrimitiveTypeSwitch<StatusOr<Literal>>(
+      [&](auto primitive_type_constant) -> StatusOr<Literal> {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          if (!primitive_util::IsComplexType(primitive_type_constant) ||
+              !bitcast) {
+            return ConvertIfTypesMatch<primitive_src_type,
+                                       primitive_type_constant>(src_literal,
+                                                                bitcast);
+          }
+        }
+        return Unimplemented(
+            "Converting from type %s to type %s is not implemented.",
+            PrimitiveType_Name(src_literal.shape().element_type()),
+            PrimitiveType_Name(primitive_dest_type));
+      },
+      primitive_dest_type);
 }
 
 StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
@@ -1705,34 +1511,19 @@ StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
   if (literal.shape().element_type() == primitive_dest_type) {
     return literal.Clone();
   }
-  switch (literal.shape().element_type()) {
-#define CONVERT_IF_DEST_TYPE_MATCHES(type)                                \
-  case (type):                                                            \
-    return ConvertIfDestTypeMatches<(type)>(literal, primitive_dest_type, \
-                                            bitcast);
-    CONVERT_IF_DEST_TYPE_MATCHES(PRED)
-    CONVERT_IF_DEST_TYPE_MATCHES(S8)
-    CONVERT_IF_DEST_TYPE_MATCHES(S16)
-    CONVERT_IF_DEST_TYPE_MATCHES(S32)
-    CONVERT_IF_DEST_TYPE_MATCHES(S64)
-    CONVERT_IF_DEST_TYPE_MATCHES(U8)
-    CONVERT_IF_DEST_TYPE_MATCHES(U16)
-    CONVERT_IF_DEST_TYPE_MATCHES(U32)
-    CONVERT_IF_DEST_TYPE_MATCHES(U64)
-    CONVERT_IF_DEST_TYPE_MATCHES(F16)
-    CONVERT_IF_DEST_TYPE_MATCHES(F32)
-    CONVERT_IF_DEST_TYPE_MATCHES(F64)
-    CONVERT_IF_DEST_TYPE_MATCHES(BF16)
-    CONVERT_IF_DEST_TYPE_MATCHES(F8E5M2)
-    CONVERT_IF_DEST_TYPE_MATCHES(F8E4M3FN)
-#undef CONVERT_IF_DEST_TYPE_MATCHES
-      // Other types are not yet supported.
-    default:
-      return Unimplemented("%s from type %s to type %s is not implemented.",
-                           (bitcast ? "Bitcast converting" : "Converting"),
-                           PrimitiveType_Name(literal.shape().element_type()),
-                           PrimitiveType_Name(primitive_dest_type));
-  }
+  return primitive_util::PrimitiveTypeSwitch<StatusOr<Literal>>(
+      [&](auto primitive_type_constant) -> StatusOr<Literal> {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant) &&
+                      !primitive_util::IsComplexType(primitive_type_constant)) {
+          return ConvertIfDestTypeMatches<primitive_type_constant>(
+              literal, primitive_dest_type, bitcast);
+        }
+        return Unimplemented("%s from type %s to type %s is not implemented.",
+                             (bitcast ? "Bitcast converting" : "Converting"),
+                             PrimitiveType_Name(literal.shape().element_type()),
+                             PrimitiveType_Name(primitive_dest_type));
+      },
+      literal.shape().element_type());
 }
 
 }  // namespace
@@ -1887,45 +1678,18 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
   }
 
   std::vector<int64_t> multi_index;
-  switch (subshape().element_type()) {
-    case PRED:
-      return EqualElementsInternal<bool>(other, &multi_index);
-    case S8:
-      return EqualElementsInternal<int8_t>(other, &multi_index);
-    case S16:
-      return EqualElementsInternal<int16_t>(other, &multi_index);
-    case S32:
-      return EqualElementsInternal<int32_t>(other, &multi_index);
-    case S64:
-      return EqualElementsInternal<int64_t>(other, &multi_index);
-    case U8:
-      return EqualElementsInternal<uint8_t>(other, &multi_index);
-    case U16:
-      return EqualElementsInternal<uint16_t>(other, &multi_index);
-    case U32:
-      return EqualElementsInternal<uint32_t>(other, &multi_index);
-    case U64:
-      return EqualElementsInternal<uint64_t>(other, &multi_index);
-    case F32:
-      return EqualElementsInternal<float>(other, &multi_index);
-    case F64:
-      return EqualElementsInternal<double>(other, &multi_index);
-    case F16:
-      return EqualElementsInternal<half>(other, &multi_index);
-    case BF16:
-      return EqualElementsInternal<bfloat16>(other, &multi_index);
-    case F8E5M2:
-      return EqualElementsInternal<tsl::float8_e5m2>(other, &multi_index);
-    case F8E4M3FN:
-      return EqualElementsInternal<tsl::float8_e4m3fn>(other, &multi_index);
-    case C64:
-      return EqualElementsInternal<complex64>(other, &multi_index);
-    case C128:
-      return EqualElementsInternal<complex128>(other, &multi_index);
-    default:
-      LOG(FATAL) << "Unimplemented: LiteralBase::Piece::EqualElements for type "
-                 << PrimitiveType_Name(subshape().element_type());
-  }
+  return primitive_util::PrimitiveTypeSwitch<bool>(
+      [&](auto primitive_type_constant) -> bool {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return EqualElementsInternal<NativeT>(other, &multi_index);
+        }
+        LOG(FATAL)
+            << "Unimplemented: LiteralBase::Piece::EqualElements for type "
+            << PrimitiveType_Name(subshape().element_type());
+      },
+      subshape().element_type());
 }
 
 bool LiteralBase::operator==(const LiteralBase& other) const {
@@ -1998,62 +1762,17 @@ bool Literal::Piece::IsAll(const Literal& scalar) const {
   CHECK(LayoutUtil::IsDenseArray(subshape()))
       << __func__ << " is only supported for dense arrays: " << subshape();
   CHECK_EQ(subshape().element_type(), scalar.shape().element_type());
-  switch (subshape().element_type()) {
-    case U8:
-      return AllElementsEqualValue(data<uint8_t>(),
-                                   scalar.GetFirstElement<uint8_t>());
-    case U16:
-      return AllElementsEqualValue(data<uint16_t>(),
-                                   scalar.GetFirstElement<uint16_t>());
-    case U32:
-      return AllElementsEqualValue(data<uint32_t>(),
-                                   scalar.GetFirstElement<uint32_t>());
-    case U64:
-      return AllElementsEqualValue(data<uint64_t>(),
-                                   scalar.GetFirstElement<uint64_t>());
-    case S8:
-      return AllElementsEqualValue(data<int8_t>(),
-                                   scalar.GetFirstElement<int8_t>());
-    case S16:
-      return AllElementsEqualValue(data<int16_t>(),
-                                   scalar.GetFirstElement<int16_t>());
-    case S32:
-      return AllElementsEqualValue(data<int32_t>(),
-                                   scalar.GetFirstElement<int32_t>());
-    case S64:
-      return AllElementsEqualValue(data<int64_t>(),
-                                   scalar.GetFirstElement<int64_t>());
-    case PRED:
-      return AllElementsEqualValue(data<bool>(),
-                                   scalar.GetFirstElement<bool>());
-    case F8E5M2:
-      return AllElementsEqualValue(data<tsl::float8_e5m2>(),
-                                   scalar.GetFirstElement<tsl::float8_e5m2>());
-    case F8E4M3FN:
-      return AllElementsEqualValue(
-          data<tsl::float8_e4m3fn>(),
-          scalar.GetFirstElement<tsl::float8_e4m3fn>());
-    case F16:
-      return AllElementsEqualValue(data<half>(),
-                                   scalar.GetFirstElement<half>());
-    case BF16:
-      return AllElementsEqualValue(data<bfloat16>(),
-                                   scalar.GetFirstElement<bfloat16>());
-    case F32:
-      return AllElementsEqualValue(data<float>(),
-                                   scalar.GetFirstElement<float>());
-    case F64:
-      return AllElementsEqualValue(data<double>(),
-                                   scalar.GetFirstElement<double>());
-    case C64:
-      return AllElementsEqualValue(data<complex64>(),
-                                   scalar.GetFirstElement<complex64>());
-    case C128:
-      return AllElementsEqualValue(data<complex128>(),
-                                   scalar.GetFirstElement<complex128>());
-    default:
-      return false;
-  }
+  return primitive_util::PrimitiveTypeSwitch<bool>(
+      [&](auto primitive_type_constant) -> bool {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          using NativeT = typename primitive_util::PrimitiveTypeToNative<
+              primitive_type_constant>::type;
+          return AllElementsEqualValue(data<NativeT>(),
+                                       scalar.GetFirstElement<NativeT>());
+        }
+        return false;
+      },
+      subshape().element_type());
 }
 
 bool LiteralBase::IsAll(const Literal& scalar) const {
@@ -2072,42 +1791,23 @@ bool LiteralBase::IsAll(int8_t value) const {
     return false;
   }
   Literal scalar(ShapeUtil::MakeScalarShape(ty));
-  switch (ty) {
-    case U8:
-      scalar.Set<uint8_t>({}, value);
-      break;
-    case U16:
-      scalar.Set<uint16_t>({}, value);
-      break;
-    case U32:
-      scalar.Set<uint32_t>({}, value);
-      break;
-    case U64:
-      scalar.Set<uint64_t>({}, value);
-      break;
-    case S8:
-      scalar.Set<int8_t>({}, value);
-      break;
-    case S16:
-      scalar.Set<int16_t>({}, value);
-      break;
-    case S32:
-      scalar.Set<int32_t>({}, value);
-      break;
-    case S64:
-      scalar.Set<int64_t>({}, value);
-      break;
-    case PRED:
-      if (value == 0) {
-        scalar.Set<bool>({}, false);
-      } else if (value == 1) {
-        scalar.Set<bool>({}, true);
-      } else {
-        return false;
-      }
-      break;
-    default:
-      return false;
+  if (!primitive_util::PrimitiveTypeSwitch<bool>(
+          [&](auto primitive_type_constant) -> bool {
+            if constexpr (primitive_util::IsIntegralType(
+                              primitive_type_constant) ||
+                          primitive_type_constant == PRED) {
+              using NativeT = typename primitive_util::PrimitiveTypeToNative<
+                  primitive_type_constant>::type;
+              if (value != static_cast<int8_t>(static_cast<NativeT>(value))) {
+                return false;
+              }
+              scalar.Set<NativeT>({}, value);
+              return true;
+            }
+            return false;
+          },
+          ty)) {
+    return false;
   }
   return root_piece().IsAll(scalar);
 }
@@ -2122,30 +1822,23 @@ bool LiteralBase::IsAllFloatImpl(float value, bool round_value) const {
   }
   PrimitiveType ty = shape().element_type();
   Literal scalar(ShapeUtil::MakeScalarShape(ty));
-  switch (ty) {
-    case F8E5M2:
-      scalar.Set<tsl::float8_e5m2>({}, static_cast<tsl::float8_e5m2>(value));
-      break;
-    case F8E4M3FN:
-      scalar.Set<tsl::float8_e4m3fn>({},
-                                     static_cast<tsl::float8_e4m3fn>(value));
-      break;
-    case F16:
-      scalar.Set<half>({}, static_cast<half>(value));
-      break;
-    case BF16:
-      scalar.Set<bfloat16>({}, static_cast<bfloat16>(value));
-      break;
-    case F32:
-      scalar.Set<float>({}, value);
-      break;
-    case F64:
-      scalar.Set<double>({}, value);
-      break;
-    default:
-      return false;
-  }
-  if (!round_value && scalar.GetAsDouble({}) != value) {
+  if (!primitive_util::PrimitiveTypeSwitch<bool>(
+          [&](auto primitive_type_constant) -> bool {
+            if constexpr (primitive_util::IsFloatingPointType(
+                              primitive_type_constant)) {
+              using NativeT = typename primitive_util::PrimitiveTypeToNative<
+                  primitive_type_constant>::type;
+              if (!round_value &&
+                  !EqualIncludingNan(
+                      value, static_cast<float>(static_cast<NativeT>(value)))) {
+                return false;
+              }
+              scalar.Set<NativeT>({}, static_cast<NativeT>(value));
+              return true;
+            }
+            return false;
+          },
+          ty)) {
     return false;
   }
   return root_piece().IsAll(scalar);
@@ -2199,45 +1892,30 @@ bool LiteralBase::IsR1Iota() const {
   }
 
   auto is_iota_at_idx = [&](const int64_t idx) {
-    switch (shape().element_type()) {
-      case U8:
-        return static_cast<int64_t>(Get<uint8_t>({idx})) == idx;
-      case U16:
-        return static_cast<int64_t>(Get<uint16_t>({idx})) == idx;
-      case U32:
-        return static_cast<int64_t>(Get<uint32_t>({idx})) == idx;
-      case U64:
-        return static_cast<int64_t>(Get<uint64_t>({idx})) == idx;
-      case S8:
-        return Get<int8_t>({idx}) == idx;
-      case S16:
-        return Get<int16_t>({idx}) == idx;
-      case S32:
-        return Get<int32_t>({idx}) == idx;
-      case S64:
-        return Get<int64_t>({idx}) == idx;
-      case F32:
-        return Get<float>({idx}) == idx;
-      case F64:
-        return Get<double>({idx}) == idx;
-      case F16:
-        return Get<half>({idx}) == static_cast<half>(idx);
-      case BF16:
-        return Get<bfloat16>({idx}) == static_cast<bfloat16>(idx);
-      case F8E5M2:
-        return Get<tsl::float8_e5m2>({idx}) ==
-               static_cast<tsl::float8_e5m2>(idx);
-      case F8E4M3FN:
-        return Get<tsl::float8_e4m3fn>({idx}) ==
-               static_cast<tsl::float8_e4m3fn>(idx);
-      case C64:
-        return Get<complex64>({idx}) == complex64(idx, 0.0f);
-      case C128:
-        return Get<complex128>({idx}) == complex128(idx, 0.0f);
-      // pred, token, opaque, tuple, etc. are all not iota.
-      default:
-        return false;
-    }
+    return primitive_util::PrimitiveTypeSwitch<bool>(
+        [&](auto primitive_type_constant) -> bool {
+          if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+            using NativeT = typename primitive_util::PrimitiveTypeToNative<
+                primitive_type_constant>::type;
+            if constexpr (primitive_util::IsIntegralType(
+                              primitive_type_constant)) {
+              return static_cast<int64_t>(Get<NativeT>({idx})) == idx;
+            }
+            if constexpr (primitive_util::IsFloatingPointType(
+                              primitive_type_constant)) {
+              return Get<NativeT>({idx}) == static_cast<NativeT>(idx);
+            }
+            if constexpr (primitive_util::IsComplexType(
+                              primitive_type_constant)) {
+              return Get<NativeT>({idx}) ==
+                     NativeT(static_cast<typename NativeT::value_type>(idx),
+                             static_cast<typename NativeT::value_type>(0.0));
+            }
+          }
+          // pred, token, opaque, tuple, etc. are all not iota.
+          return false;
+        },
+        shape().element_type());
   };
 
   const int64_t elements = ShapeUtil::ElementsIn(shape());
@@ -2268,27 +1946,17 @@ std::optional<int64_t> LiteralBase::IsR1StridedIota() const {
   }
 
   auto get_element_at = [&](const int64_t idx) -> int64_t {
-    switch (type) {
-      case U8:
-        return static_cast<int64_t>(Get<uint8_t>({idx}));
-      case U16:
-        return static_cast<int64_t>(Get<uint16_t>({idx}));
-      case U32:
-        return static_cast<int64_t>(Get<uint32_t>({idx}));
-      case U64:
-        return static_cast<int64_t>(Get<uint64_t>({idx}));
-      case S8:
-        return Get<int8_t>({idx});
-      case S16:
-        return Get<int16_t>({idx});
-      case S32:
-        return Get<int32_t>({idx});
-      case S64:
-        return Get<int64_t>({idx});
-      default:
-        CHECK(0);
-        return 0;
-    }
+    return primitive_util::PrimitiveTypeSwitch<int64_t>(
+        [&](auto primitive_type_constant) -> int64_t {
+          if constexpr (primitive_util::IsIntegralType(
+                            primitive_type_constant)) {
+            using NativeT = typename primitive_util::PrimitiveTypeToNative<
+                primitive_type_constant>::type;
+            return static_cast<int64_t>(Get<NativeT>({idx}));
+          }
+          LOG(FATAL) << "unexpected type";
+        },
+        shape().element_type());
   };
 
   // Infer the stride as the second element (since first element is supposed

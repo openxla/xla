@@ -137,6 +137,7 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":shape_util",
+        ":status_macros",
         ":statusor",
         ":types",
         ":util",
@@ -601,7 +602,9 @@ cc_library(
         ":error_spec",
         ":literal",
         ":literal_util",
+        ":shape_util",
         ":util",
+        ":xla_data_proto_cc",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -638,12 +641,13 @@ cc_library(
 
 cc_library(
     name = "array",
-    srcs = ["array.cc"],
+    srcs = [],
     hdrs = ["array.h"],
     visibility = [":friends"],
     deps = [
         ":status",
         ":types",
+        ":util",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",

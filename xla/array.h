@@ -21,6 +21,7 @@ limitations under the License.
 #include <functional>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -34,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/status.h"
 #include "xla/types.h"
+#include "xla/util.h"
 #include "tsl/platform/logging.h"
 
 namespace xla {
@@ -99,17 +101,15 @@ class Array {
         ++idx;
       }
     }
-    CHECK(idx == num_elements());
+    CHECK_EQ(idx, num_elements());
   }
 
   // Creates a 1D array of a floating-point type (half, bfloat16, float,
   // or double) from an initializer list of float values.
-  template <typename T2, typename = typename std::enable_if<
-                             (std::is_same<T, Eigen::half>::value ||
-                              std::is_same<T, bfloat16>::value ||
-                              std::is_same<T, float>::value ||
-                              std::is_same<T, double>::value) &&
-                             std::is_same<T2, float>::value>::type>
+  template <typename T2,
+            typename = std::enable_if_t<!is_complex_v<T> &&
+                                        !std::numeric_limits<T>::is_integer &&
+                                        std::is_same_v<T2, float>>>
   Array(std::initializer_list<T2> values)
       : Array(ToInt64Vector({values.size()})) {
     int64_t idx = 0;
@@ -117,19 +117,15 @@ class Array {
       values_[idx] = static_cast<T>(it1);
       ++idx;
     }
-    CHECK(idx == num_elements());
+    CHECK_EQ(idx, num_elements());
   }
 
   // Creates a 2D array of a floating-point type (float8, half, bfloat16, float,
   // or double) from an initializer list of float values.
-  template <typename T2, typename = typename std::enable_if<
-                             (std::is_same<T, tsl::float8_e4m3fn>::value ||
-                              std::is_same<T, tsl::float8_e5m2>::value ||
-                              std::is_same<T, Eigen::half>::value ||
-                              std::is_same<T, bfloat16>::value ||
-                              std::is_same<T, float>::value ||
-                              std::is_same<T, double>::value) &&
-                             std::is_same<T2, float>::value>::type>
+  template <typename T2,
+            typename = std::enable_if_t<!is_complex_v<T> &&
+                                        !std::numeric_limits<T>::is_integer &&
+                                        std::is_same_v<T2, float>>>
   Array(std::initializer_list<std::initializer_list<T2>> values)
       : Array(ToInt64Vector({values.size(), values.begin()->size()})) {
     int64_t idx = 0;
@@ -139,7 +135,7 @@ class Array {
         ++idx;
       }
     }
-    CHECK(idx == num_elements());
+    CHECK_EQ(idx, num_elements());
   }
 
   // Creates a 3D array from the given nested initializer list. The outer
@@ -156,17 +152,15 @@ class Array {
         }
       }
     }
-    CHECK(idx == num_elements());
+    CHECK_EQ(idx, num_elements());
   }
 
   // Creates a 3D array of a floating-point type (half, bfloat16, float,
   // or double) from an initializer list of float values.
-  template <typename T2, typename = typename std::enable_if<
-                             (std::is_same<T, Eigen::half>::value ||
-                              std::is_same<T, bfloat16>::value ||
-                              std::is_same<T, float>::value ||
-                              std::is_same<T, double>::value) &&
-                             std::is_same<T2, float>::value>::type>
+  template <typename T2,
+            typename = std::enable_if_t<!is_complex_v<T> &&
+                                        !std::numeric_limits<T>::is_integer &&
+                                        std::is_same_v<T2, float>>>
   Array(std::initializer_list<std::initializer_list<std::initializer_list<T2>>>
             values)
       : Array(ToInt64Vector({values.size(), values.begin()->size(),
@@ -180,7 +174,7 @@ class Array {
         }
       }
     }
-    CHECK(idx == num_elements());
+    CHECK_EQ(idx, num_elements());
   }
 
   // Creates a 4D array from the given nested initializer list. The outer
@@ -200,17 +194,15 @@ class Array {
         }
       }
     }
-    CHECK(idx == num_elements());
+    CHECK_EQ(idx, num_elements());
   }
 
   // Creates a 4D array of a floating-point type (half, bfloat16, float,
   // or double) from an initializer list of float values.
-  template <typename T2, typename = typename std::enable_if<
-                             (std::is_same<T, Eigen::half>::value ||
-                              std::is_same<T, bfloat16>::value ||
-                              std::is_same<T, float>::value ||
-                              std::is_same<T, double>::value) &&
-                             std::is_same<T2, float>::value>::type>
+  template <typename T2,
+            typename = std::enable_if_t<!is_complex_v<T> &&
+                                        !std::numeric_limits<T>::is_integer &&
+                                        std::is_same_v<T2, float>>>
   Array(std::initializer_list<
         std::initializer_list<std::initializer_list<std::initializer_list<T2>>>>
             values)
@@ -228,7 +220,7 @@ class Array {
         }
       }
     }
-    CHECK(idx == num_elements());
+    CHECK_EQ(idx, num_elements());
   }
 
   Array(const Array<T>& other)
@@ -282,14 +274,25 @@ class Array {
 
   // Fills the array with random normal variables with the specified mean.
   void FillRandom(const T& stddev, double mean = 0.0, int seed = 12345) {
-    FillRandomDouble(static_cast<double>(stddev), mean, seed);
+    // Specialization of FillRandom() method for complex64 type. Uses real part
+    // of the stddev parameter as the standard deviation value.
+    if constexpr (is_complex_v<T>) {
+      std::mt19937 g(seed);
+      std::normal_distribution<double> distribution(mean, std::real(stddev));
+      for (int64_t i = 0; i < num_elements(); ++i) {
+        values_[i] = T(distribution(g), distribution(g));
+      }
+    }
+    if constexpr (!is_complex_v<T> && !std::numeric_limits<T>::is_integer) {
+      FillRandomDouble(static_cast<double>(stddev), mean, seed);
+    }
   }
 
   void FillRandomDouble(double stddev, double mean = 0.0, int seed = 12345) {
     std::mt19937 g(seed);
     std::normal_distribution<double> distribution(mean, stddev);
     for (int64_t i = 0; i < num_elements(); ++i) {
-      if (std::is_same<T, bool>()) {
+      if constexpr (std::is_same_v<T, bool>) {
         values_[i] = static_cast<T>(distribution(g) > 0.0);
       } else {
         values_[i] = static_cast<T>(distribution(g));
@@ -299,7 +302,7 @@ class Array {
 
   // Fills the array with random uniform variables in the [min_value, max_value]
   // range. Defined for integral types.
-  template <typename = typename std::enable_if<std::is_integral<T>::value>>
+  template <typename T2 = T>
   void FillRandomUniform(const T& min_value, const T& max_value,
                          int seed = 12345) {
     std::mt19937 g(seed);
@@ -381,8 +384,7 @@ class Array {
   // eagerly; a parameter pack can take zero or more elements, so we must
   // restrict this to only parameter packs that are all of integral type.
   template <typename... Dims>
-  typename std::enable_if<array_impl::pack_is_integral<Dims...>::value,
-                          const T&>::type
+  std::enable_if_t<array_impl::pack_is_integral<Dims...>::value, const T&>
   operator()(Dims... dims) const {
     // We are using a std::array to avoid having to allocate memory in this
     // function for performance reasons.
@@ -394,9 +396,8 @@ class Array {
   // Returns the value at the cell specified by the indexes. The number of
   // arguments have to match with the number of dimensions for the array.
   template <typename... Dims>
-  typename std::enable_if<array_impl::pack_is_integral<Dims...>::value,
-                          T&>::type
-  operator()(Dims... dims) {
+  std::enable_if_t<array_impl::pack_is_integral<Dims...>::value, T&> operator()(
+      Dims... dims) {
     // We are using a std::array to avoid having to allocate memory in this
     // function for performance reasons.
     std::array<int64_t, sizeof...(dims)> indexes{
@@ -630,12 +631,6 @@ class Array {
   std::vector<int64_t> sizes_;
   std::unique_ptr<T[]> values_;
 };
-
-// Specialization of FillRandom() method for complex64 type. Uses real part of
-// the stddev parameter as the standard deviation value.
-template <>
-void Array<complex64>::FillRandom(const complex64& stddev, const double mean,
-                                  const int seed);
 
 }  // namespace xla
 

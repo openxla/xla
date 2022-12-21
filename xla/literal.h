@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_LITERAL_H_
 
 #include <algorithm>
+#include <complex>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -151,13 +152,7 @@ class LiteralBase {
   //
   // Precondition: must be an array.
   template <typename T>
-  typename std::enable_if<(std::is_arithmetic<T>::value ||
-                           std::is_same<T, Eigen::half>::value ||
-                           std::is_same<T, bfloat16>::value ||
-                           std::is_same<T, tsl::float8_e5m2>::value ||
-                           std::is_same<T, tsl::float8_e4m3fn>::value),
-                          bool>::type
-  IsEqualAt(absl::Span<const int64_t> multi_index, T value) const {
+  bool IsEqualAt(absl::Span<const int64_t> multi_index, T value) const {
     if (auto as_s64 = GetIntegralAsS64(multi_index)) {
       return *as_s64 == value;
     }
@@ -165,13 +160,14 @@ class LiteralBase {
     return as_complex128.imag() == 0 && as_complex128.real() == value;
   }
 
+  template <typename T>
   bool IsEqualAt(absl::Span<const int64_t> multi_index,
-                 complex128 value) const {
+                 std::complex<T> value) const {
     if (auto as_s64 = GetIntegralAsS64(multi_index)) {
       return *as_s64 == value.real() && value.imag() == 0;
     }
     auto as_complex128 = GetAsComplex128(multi_index);
-    return *as_complex128 == value;
+    return *as_complex128 == static_cast<complex128>(value);
   }
 
   // As Get(), but determines the correct type and converts the value into

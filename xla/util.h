@@ -514,6 +514,14 @@ template <size_t kBytes>
 using SignedIntegerTypeForSizeType =
     std::make_signed_t<UnsignedIntegerTypeForSizeType<kBytes>>;
 
+template <typename T>
+struct is_complex_t : std::false_type {};
+template <typename T>
+struct is_complex_t<std::complex<T>> : std::true_type {};
+
+template <typename T>
+inline constexpr bool is_complex_v = is_complex_t<T>::value;
+
 // Returns the signed magnitude of T.
 template <typename T>
 SignedIntegerTypeForSizeType<sizeof(T)> ToSignMagnitude(T input) {

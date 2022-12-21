@@ -194,4 +194,10 @@ class StatusAdaptorForMacros {
       .with_log_stack_trace()                                        \
       .add_ret_check_failure(#condition)
 
+#define TF_RET_CHECK_FAIL()                                          \
+  return xla::status_macros::MakeErrorStream(__FILE__, __LINE__,     \
+                                             ::tsl::error::INTERNAL) \
+      .with_log_stack_trace()                                        \
+      .add_ret_check_failure(nullptr)
+
 #endif  // TENSORFLOW_COMPILER_XLA_STATUS_MACROS_H_
