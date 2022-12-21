@@ -14,7 +14,8 @@ load("@//tools/toolchains:cpus/arm/arm_compiler_configure.bzl", "arm_compiler_co
 load("@//tools/toolchains/embedded/arm-linux:arm_linux_toolchain_configure.bzl", "arm_linux_toolchain_configure")
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 load("//third_party/clang_toolchain:cc_configure_clang.bzl", "cc_download_clang_toolchain")
-load("@//tools/def_file_filter:def_file_filter_configure.bzl", "def_file_filter_configure")
+
+#load("@//tools/def_file_filter:def_file_filter_configure.bzl", "def_file_filter_configure")
 load("//third_party/llvm:setup.bzl", "llvm_setup")
 
 # Import third party repository rules. See go/tfbr-thirdparty.
@@ -105,7 +106,7 @@ def _tf_toolchains():
 
     # For windows bazel build
     # TODO: Remove def file filter when TensorFlow can export symbols properly on Windows.
-    def_file_filter_configure(name = "local_config_def_file_filter")
+    #def_file_filter_configure(name = "local_config_def_file_filter")
 
     # Point //external/local_config_arm_compiler to //external/arm_compiler
     arm_compiler_configure(
