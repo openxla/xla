@@ -31,10 +31,7 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
     ThunkInfo thunk_info, cublas_lt::MatmulPlan plan, int64_t algorithm_idx,
     BufferAllocation::Slice a_buffer, BufferAllocation::Slice b_buffer,
     BufferAllocation::Slice c_buffer, BufferAllocation::Slice d_buffer,
-    BufferAllocation::Slice bias_buffer, BufferAllocation::Slice aux_buffer,
-    BufferAllocation::Slice a_scale, BufferAllocation::Slice b_scale,
-    BufferAllocation::Slice c_scale, BufferAllocation::Slice d_scale,
-    BufferAllocation::Slice d_amax)
+    BufferAllocation::Slice bias_buffer, BufferAllocation::Slice aux_buffer)
     : Thunk(Kind::kCublasLtMatmul, thunk_info),
       plan_(std::move(plan)),
       algorithm_idx_(algorithm_idx),
@@ -43,12 +40,7 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
       c_buffer_(c_buffer),
       d_buffer_(d_buffer),
       bias_buffer_(bias_buffer),
-      aux_buffer_(aux_buffer),
-      a_scale_buffer_(a_scale),
-      b_scale_buffer_(b_scale),
-      c_scale_buffer_(c_scale),
-      d_scale_buffer_(d_scale),
-      d_amax_buffer_(d_amax) {}
+      aux_buffer_(aux_buffer) {}
 
 Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
   if (!algorithm_) {
@@ -62,24 +54,9 @@ Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Running cublas_lt matmul thunk";
   const BufferAllocations& allocs = *params.buffer_allocations;
 
-  se::DeviceMemoryBase bias, a_scale, b_scale, c_scale, d_scale, d_amax;
+  se::DeviceMemoryBase bias;
   if (bias_buffer_.allocation() != nullptr) {
     bias = allocs.GetDeviceAddress(bias_buffer_);
-  }
-  if (a_scale_buffer_.allocation() != nullptr) {
-    a_scale = allocs.GetDeviceAddress(a_scale_buffer_);
-  }
-  if (b_scale_buffer_.allocation() != nullptr) {
-    b_scale = allocs.GetDeviceAddress(b_scale_buffer_);
-  }
-  if (c_scale_buffer_.allocation() != nullptr) {
-    c_scale = allocs.GetDeviceAddress(c_scale_buffer_);
-  }
-  if (d_scale_buffer_.allocation() != nullptr) {
-    d_scale = allocs.GetDeviceAddress(d_scale_buffer_);
-  }
-  if (d_amax_buffer_.allocation() != nullptr) {
-    d_amax = allocs.GetDeviceAddress(d_amax_buffer_);
   }
 
   se::DeviceMemoryBase aux;
@@ -92,8 +69,8 @@ Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
   return plan_.ExecuteOnStream(
       params.stream, allocs.GetDeviceAddress(a_buffer_),
       allocs.GetDeviceAddress(b_buffer_), allocs.GetDeviceAddress(c_buffer_),
-      allocs.GetDeviceAddress(d_buffer_), bias, aux, a_scale, b_scale, c_scale,
-      d_scale, d_amax, *algorithm_, scratch_allocator);
+      allocs.GetDeviceAddress(d_buffer_), bias, aux, *algorithm_,
+      scratch_allocator);
 }
 
 }  // namespace gpu

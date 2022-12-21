@@ -840,7 +840,6 @@ cc_library(
         ":cublas_cudnn",
         ":ir_emission_utils",
         ":matmul_utils",
-        "//xla:literal_comparison",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
@@ -853,7 +852,6 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 

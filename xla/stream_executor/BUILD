@@ -172,11 +172,7 @@ cc_library(
 cc_library(
     name = "data_type",
     hdrs = ["data_type.h"],
-    deps = [
-        ":dnn_proto_cc",
-        "@tsl//tsl/platform:float8",
-        "@tsl//tsl/protobuf:dnn_proto_cc",
-    ],
+    deps = [":dnn_proto_cc"],
 )
 
 cc_library(
@@ -655,7 +651,6 @@ cc_library(
         "@tsl//tsl/lib/strings:proto_serialization",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
-        "@tsl//tsl/protobuf:dnn_proto_cc",
     ] + if_static(["@com_google_protobuf//:protobuf"]),
 )
 
