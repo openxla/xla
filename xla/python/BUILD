@@ -312,6 +312,7 @@ cc_library(
         "@com_google_absl//absl/types:variant",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
+        "@llvm-project//llvm:Support",
         "//xla/pjrt:host_callback",
         "//xla/pjrt:pjrt_future",
         "//xla:comparison_util",
@@ -324,6 +325,8 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_stream_executor_client",
         "//xla/pjrt:transpose",
+        "//xla/python/ifrt",
+        "//xla/python/pjrt_ifrt",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",
@@ -333,14 +336,7 @@ cc_library(
         "@tsl//tsl/platform:fingerprint",
     ] + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
-    ]) + select({
-        ":ifrt_enabled": [
-            "@llvm-project//llvm:Support",
-            "//xla/python/ifrt",
-            "//xla/python/pjrt_ifrt",
-        ],
-        "//conditions:default": [],
-    }),
+    ]),
 )
 
 cc_library(
@@ -389,14 +385,6 @@ cc_library(
         ":pytree",
         ":types",
         ":util",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@pybind11",
-        "@local_config_python//:python_headers",  # build_cleaner: keep
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:types",
@@ -404,14 +392,18 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:lru_cache",
         "//xla/pjrt:pjrt_client",
+        "//xla/python/ifrt",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@local_config_python//:python_headers",  # build_cleaner: keep
+        "@pybind11",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/profiler/lib:traceme",
-    ] + select({
-        ":ifrt_enabled": [
-            "//xla/python/ifrt",
-        ],
-        "//conditions:default": [],
-    }),
+    ],
 )
 
 cc_library(
@@ -503,17 +495,13 @@ cc_library(
         ":py_client",
         ":status_casters",
         ":util",
+        "//xla/pjrt:lru_cache",
+        "//xla/python/ifrt",
+        "//xla/python/pjrt_ifrt",
         "@com_google_absl//absl/synchronization",
         "@pybind11",
-        "//xla/pjrt:lru_cache",
         "@tsl//tsl/profiler/lib:traceme",
-    ] + select({
-        ":ifrt_enabled": [
-            "//xla/python/ifrt",
-            "//xla/python/pjrt_ifrt",
-        ],
-        "//conditions:default": [],
-    }),
+    ],
 )
 
 cc_library(
@@ -534,6 +522,10 @@ cc_library(
         ":python_utils",
         ":types",
         ":util",
+        "//xla:xla_data_proto_cc",
+        "//xla/pjrt:pjrt_client",
+        "//xla/python/ifrt",
+        "//xla/python/pjrt_ifrt",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -542,18 +534,10 @@ cc_library(
         "@com_google_absl//absl/types:variant",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "//xla:xla_data_proto_cc",
-        "//xla/pjrt:pjrt_client",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-    ] + select({
-        ":ifrt_enabled": [
-            "//xla/python/ifrt",
-            "//xla/python/pjrt_ifrt",
-        ],
-        "//conditions:default": [],
-    }),
+    ],
 )
 
 xla_cc_test(
@@ -714,18 +698,14 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        "@com_google_absl//absl/strings:str_format",
-        "@pybind11",
         "//xla:status",
         "//xla:util",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_future",
-    ] + select({
-        ":ifrt_enabled": [
-            "//xla/python/ifrt",
-        ],
-        "//conditions:default": [],
-    }),
+        "//xla/python/ifrt",
+        "@com_google_absl//absl/strings:str_format",
+        "@pybind11",
+    ],
 )
 
 cc_library(
@@ -836,18 +816,6 @@ config_setting(
     },
 )
 
-bool_flag(
-    name = "enable_ifrt",
-    build_setting_default = True,
-)
-
-config_setting(
-    name = "ifrt_enabled",
-    flag_values = {
-        ":enable_ifrt": "True",
-    },
-)
-
 # If this flag is enabled, it sets RPATH on the xla_extension to values that are suitable for
 # finding NVIDIA's CUDA libraries when they are installed as pip packages.
 bool_flag(
@@ -943,6 +911,8 @@ tsl_pybind_extension(
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
+        "//xla/python/ifrt",
+        "//xla/python/pjrt_ifrt",
         "//xla/stream_executor/tpu:pjrt_api",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
@@ -966,12 +936,6 @@ tsl_pybind_extension(
     }) + select({
         ":plugin_device_enabled": [
             "//xla/pjrt:pjrt_plugin_device_client",
-        ],
-        "//conditions:default": [],
-    }) + select({
-        ":ifrt_enabled": [
-            "//xla/python/ifrt",
-            "//xla/python/pjrt_ifrt",
         ],
         "//conditions:default": [],
     }),
