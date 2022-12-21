@@ -511,6 +511,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/mlir/runtime/transforms:compiler",
         "//xla/runtime:executable",
+        "//xla/runtime:ffi",
         "//xla/runtime:jit_executable",
         "//xla/service:buffer_assignment",
         "//xla/service:computation_layout",
