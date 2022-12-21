@@ -23,7 +23,6 @@ function is_linux_gpu_job() {
   [[ "$KOKORO_JOB_NAME" =~ tensorflow/xla/linux/.*gpu.* ]]
 }
 
-
 # Pull the container (in case it was updated since the instance started) and
 # store its SHA in the Sponge log.
 docker pull "$DOCKER_IMAGE"
@@ -33,15 +32,20 @@ echo "TF_INFO_DOCKER_SHA,$(docker pull "$DOCKER_IMAGE" | sed -n '/Digest:/s/Dige
 # Start a container in the background
 docker run --name xla -w /tf/xla -itd --rm \
     -v "$KOKORO_ARTIFACTS_DIR/github/xla:/tf/xla" \
+    -v "$KOKORO_ARTIFACTS_DIR/pkg:/tf/pkg" \
     "$DOCKER_IMAGE" \
     bash
 
+# bazelrc Files currently come from https://github.com/tensorflow/tensorflow/tree/master/tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools
+RC_FILE="/usertools/cpu.bazelrc"
 TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/..."
-TAGS_FILTER="-no_oss"
-
+TAGS_FILTER="-no_oss,-oss_serial"
+ADDITIONAL_FLAGS=""
 
 if is_linux_gpu_job ; then
     TAGS_FILTER="$TAGS_FILTER,gpu,requires-gpu,-no_gpu"
+    ADDITIONAL_FLAGS="$ADDITIONAL_FLAGS --run_under=//tools/ci_build/gpu_build:parallel_gpu_execute"
+    RC_FILE="/usertools/gpu.bazelrc"
     # disable three tests that fail to build at the moment (b/263149095)
     TARGET_FILTER="$TARGET_FILTER -//xla/service/gpu:gpu_device_info_test -//xla/stream_executor/cuda:cuda_driver_test_cpu -//xla/stream_executor/cuda:cuda_driver_test_gpu"
 else
@@ -49,14 +53,23 @@ else
 fi
 
 # Build & test XLA
-docker exec xla bazel test \
-        --build_tag_filters=$TAGS_FILTER  --test_tag_filters=$TAGS_FILTER \
+docker exec xla bazel --bazelrc=$RC_FILE \
+        test \
+        --build_tag_filters=$TAGS_FILTER  \
+        --test_tag_filters=$TAGS_FILTER \
         --output_filter="" \
         --nocheck_visibility \
         --keep_going \
+        --profile=/tf/pkg/profile.json.gz \
         --config=nonccl \
         --flaky_test_attempts=3 \
+        --config=rbe \
+        --jobs=150 \
+        $ADDITIONAL_FLAGS \
         -- //xla/... $TARGET_FILTER
-
+# Print build time statistics, including critical path.
+docker exec xla bazel analyze-profile "/tf/pkg/profile.json.gz"
 # Stop container
 docker stop xla
+
+
