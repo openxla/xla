@@ -226,6 +226,13 @@ LogicalResult MaterializeOp::verify() {
                                          getType(), getStaticSizes());
 }
 
+LogicalResult MaterializeOp::reifyResultShapes(
+    OpBuilder &builder, ReifiedRankedShapedTypeDims &reifiedReturnShapes) {
+  reifiedReturnShapes.push_back(
+      getAsValues(builder, getLoc(), getMixedSizes()));
+  return success();
+}
+
 namespace {
 
 /// Adapted from OpWithOffsetSizesAndStridesConstantArgumentFolder, which makes

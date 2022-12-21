@@ -149,7 +149,9 @@ def GMLST_TileOp : GMLST_Op<"tile", [
 }
 
 def GMLST_MaterializeOp : GMLST_Op<"materialize", [
-    AttrSizedOperandSegments, OffsetSizeAndStrideOpInterface, Pure]> {
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<ReifyRankedShapedTypeOpInterface>,
+    OffsetSizeAndStrideOpInterface, Pure]> {
   let summary = "Operation to extract values from tensor or vector";
   let description = [{
     The "materialize" operation extracts a tensor or a vector from another
