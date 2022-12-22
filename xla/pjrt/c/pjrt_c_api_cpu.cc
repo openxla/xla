@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/tfrt_cpu_pjrt_client.h"
 
