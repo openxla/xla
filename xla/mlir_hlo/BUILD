@@ -26,7 +26,7 @@ td_library(
     srcs = glob(["mhlo/IR/*.td"]),
     compatible_with = get_compatible_with_cloud(),
     includes = [
-        ".",
+        # copybara:uncomment ".",
         "include",
     ],
     deps = [
@@ -331,7 +331,7 @@ td_library(
     srcs = glob(["lhlo_gpu/IR/*.td"]),
     compatible_with = get_compatible_with_cloud(),
     includes = [
-        ".",
+        # copybara:uncomment ".",
         "include",
     ],
     deps = [
@@ -381,7 +381,7 @@ td_library(
     srcs = glob(["lhlo/IR/*.td"]),
     compatible_with = get_compatible_with_cloud(),
     includes = [
-        ".",
+        # copybara:uncomment ".",
         "include",
     ],
     deps = [
@@ -1335,7 +1335,7 @@ cc_library(
     srcs = ["analysis/userange_analysis.cc"],
     hdrs = ["analysis/userange_analysis.h"],
     includes = [
-        ".",
+        # copybara:uncomment ".",
         "include",
     ],
     deps = [
@@ -1352,7 +1352,7 @@ cc_library(
     srcs = ["mhlo/analysis/shape_component_analysis.cc"],
     hdrs = ["mhlo/analysis/shape_component_analysis.h"],
     includes = [
-        ".",
+        # copybara:uncomment ".",
         "include",
     ],
     deps = [
@@ -1570,7 +1570,7 @@ td_library(
     srcs = glob(["gml_st/IR/*.td"]),
     compatible_with = get_compatible_with_cloud(),
     includes = [
-        ".",
+        # copybara:uncomment ".",
         "include",
     ],
     deps = [
@@ -1661,7 +1661,7 @@ td_library(
     name = "tiling_interface_td_files",
     srcs = ["gml_st/interfaces/tiling_interface.td"],
     includes = [
-        ".",
+        # copybara:uncomment ".",
         "include",
     ],
     deps = ["@llvm-project//mlir:OpBaseTdFiles"],
@@ -1800,7 +1800,7 @@ td_library(
     srcs = glob(["thlo/IR/*.td"]),
     compatible_with = get_compatible_with_cloud(),
     includes = [
-        ".",
+        # copybara:uncomment ".",
         "include",
     ],
     deps = [
