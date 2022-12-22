@@ -9,7 +9,7 @@ load(
     "xla_cc_test",
 )
 load(
-    "//third_party/mkl:build_defs.bzl",
+    "@tsl//tsl/mkl:build_defs.bzl",
     "mkl_deps",
 )
 load("@tsl//tsl:tsl.bzl", "tf_openmp_copts", "tsl_copts")
