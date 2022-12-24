@@ -1697,7 +1697,7 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client/lib:constants",
         "//xla/hlo/ir:hlo",
-        "//xla/runtime/ffi:ffi_api_hdrs",
+        "//xla/runtime/ffi:ffi_api",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -2876,7 +2876,7 @@ xla_test(
     deps = [
         "//xla/pjrt:mlir_to_hlo",
         "//xla/runtime:ffi",
-        "//xla/runtime/ffi:ffi_api_hdrs",
+        "//xla/runtime/ffi:ffi_api",
         "//xla/service:custom_call_target_registry",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",

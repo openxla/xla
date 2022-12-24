@@ -146,7 +146,7 @@ xla_cc_test(
         "//xla/service:custom_call_target_registry",
         "//xla/service:gpu_plugin",
         "//xla/runtime:module",
-        "//xla/runtime/ffi:ffi_api_hdrs",
+        "//xla/runtime/ffi:ffi_api",
         "//xla/runtime:module_registry",
         "//xla/tests:client_library_test_base",
         "@tsl//tsl/lib/core:status_test_util",
