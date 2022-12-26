@@ -290,6 +290,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/strings",
     ] + if_not_android([
+        ":nvtx_utils",
         "//tsl/profiler/backends/cpu:annotation_stack",
     ]),
 )
