@@ -177,6 +177,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/python/lib/core:bfloat16_lib",
+        "@tsl//tsl/python/lib/core:float8_hdr",
     ],
 )
 
@@ -294,6 +295,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":exceptions",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/python/lib/core:numpy",
         ":pprof_profile_builder",
         ":python_ref_manager",
@@ -917,6 +919,7 @@ tsl_pybind_extension(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/python/lib/core:bfloat16_lib",
+        "@tsl//tsl/python/lib/core:float8_lib",
     ] + select({
         ":gpu_enabled": [
             "//xla/pjrt/gpu:se_gpu_pjrt_client",
