@@ -2120,14 +2120,42 @@ void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
 
     // Outfeed takes a token as its second operand. Generate the token to pass
     // to the outfeed.
-    HloInstructionProto token_instr;
-    *token_instr.mutable_shape() = ShapeUtil::MakeTokenShape().ToProto();
-    TF_ASSIGN_OR_RETURN(XlaOp token, AddInstruction(std::move(token_instr),
-                                                    HloOpcode::kAfterAll, {}));
+    XlaOp token;
+    auto make_token = [&]() {
+      HloInstructionProto token_instr;
+      *token_instr.mutable_shape() = ShapeUtil::MakeTokenShape().ToProto();
+      return AddInstruction(std::move(token_instr), HloOpcode::kAfterAll, {});
+    };
+    if (sharding()) {
+      // Arbitrarily assign token to device 0.
+      OpSharding sharding = sharding_builder::AssignDevice(0);
+      XlaScopedShardingAssignment scoped_sharding(this, sharding);
+      TF_ASSIGN_OR_RETURN(token, make_token());
+    } else {
+      TF_ASSIGN_OR_RETURN(token, make_token());
+    }
 
-    TF_RETURN_IF_ERROR(
-        AddInstruction(std::move(instr), HloOpcode::kOutfeed, {operand, token})
-            .status());
+    // The sharding is set by the client according to the data tuple shape.
+    // However, the shape of the outfeed instruction is a tuple containing the
+    // data and a token. For tuple sharding type, the sharding must be changed
+    // to accommodate the token.
+    if (sharding() && sharding()->type() == OpSharding::TUPLE) {
+      // TODO(b/80000000): Remove this when clients have been updated to handle
+      // tokens.
+      OpSharding outfeed_instruction_sharding = *sharding();
+      // Arbitrarily assign the token to device 0.
+      *outfeed_instruction_sharding.add_tuple_shardings() =
+          sharding_builder::AssignDevice(0);
+      XlaScopedShardingAssignment scoped_sharding(this,
+                                                  outfeed_instruction_sharding);
+      TF_RETURN_IF_ERROR(AddInstruction(std::move(instr), HloOpcode::kOutfeed,
+                                        {operand, token})
+                             .status());
+    } else {
+      TF_RETURN_IF_ERROR(AddInstruction(std::move(instr), HloOpcode::kOutfeed,
+                                        {operand, token})
+                             .status());
+    }
 
     // The outfeed instruction produces a token. However, existing users expect
     // a nil shape (empty tuple). This should only be relevant if the outfeed is
