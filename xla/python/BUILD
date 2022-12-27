@@ -177,7 +177,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/python/lib/core:bfloat16_lib",
-        "@tsl//tsl/python/lib/core:float8_hdr",
+        "@tsl//tsl/python/lib/core:float8_lib",
     ],
 )
 
