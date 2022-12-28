@@ -2262,6 +2262,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:elemental_ir_emitter",
         "//xla/service:hlo_cost_analysis",
+        "@com_google_absl//absl/container:node_hash_map",
     ],
 )
 
