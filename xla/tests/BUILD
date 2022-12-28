@@ -2627,8 +2627,9 @@ xla_cc_test(
     name = "literal_test_util_test",
     srcs = ["literal_test_util_test.cc"],
     deps = [
+        ":literal_test_util",
+        "//xla:literal",
         "//xla:test_helpers",
-        "//xla/tests:literal_test_util",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",

@@ -601,6 +601,7 @@ cc_library(
         ":error_spec",
         ":literal",
         ":literal_util",
+        ":shape_util",
         ":util",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
