@@ -498,6 +498,7 @@ class ArrayImpl:
   shape: Tuple[int, ...]
   _arrays: Any
   _npy_value: Any
+  _cached_addressable_shards: Any
   traceback: Traceback
 
 class Token:
