@@ -108,6 +108,7 @@ cc_library(
         ":kernel_launch",
         ":memcpy",
         ":memset",
+        ":send_recv",
         ":support",
         ":tracing",
         "//xla:xla_proto_cc",
@@ -275,6 +276,24 @@ cc_library(
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory",
         "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
+    name = "send_recv",
+    srcs = ["send_recv.cc"],
+    hdrs = ["send_recv.h"],
+    deps = [
+        ":support",
+        "//xla/mlir/runtime/transforms:custom_call_encoding",
+        "//xla/mlir_hlo",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/service:executable",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
     ],
 )
 
