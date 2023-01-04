@@ -67,10 +67,6 @@ tf_proto_library(
     name = "metrics_proto",
     srcs = ["metrics.proto"],
     cc_api_version = 2,
-    protodeps = [
-        "//google/protobuf:duration",
-        "//google/protobuf:timestamp",
-    ],
 )
 
 # Filegroup used to collect source files for dependency checking.
