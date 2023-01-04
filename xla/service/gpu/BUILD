@@ -971,7 +971,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "//xla/stream_executor:stream_executor_headers",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cublas_lt_header",

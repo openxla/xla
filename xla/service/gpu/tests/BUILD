@@ -221,7 +221,6 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
