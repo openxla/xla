@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/lib/statusor.h"
 #include "xla/types.h"
@@ -6364,7 +6365,6 @@ Status AlgebraicSimplifierVisitor::HandleSelect(HloInstruction* select) {
 
   return OkStatus();
 }
-
 Status AlgebraicSimplifierVisitor::HandleScatter(HloInstruction* hlo) {
   auto* scatter = Cast<HloScatterInstruction>(hlo);
 
@@ -6375,8 +6375,13 @@ Status AlgebraicSimplifierVisitor::HandleScatter(HloInstruction* hlo) {
       ReplaceInstructionIfCompatible(scatter, scatter->scatter_operands())) {
     return OkStatus();
   }
-  if (scatter->scatter_operand_count() == 1 &&
-      ShapeUtil::IsZeroElementArray(scatter->scatter_indices()->shape()) &&
+  if (scatter->scatter_operand_count() != 1) {
+    return OkStatus();
+  }
+
+  const Shape& indices_shape = scatter->scatter_indices()->shape();
+
+  if (ShapeUtil::IsZeroElementArray(indices_shape) &&
       SameShape(scatter, scatter->scatter_operands()[0]) &&
       SameShape(scatter, scatter->scatter_updates()[0])) {
     return ReplaceWithNewInstruction(
@@ -6385,6 +6390,7 @@ Status AlgebraicSimplifierVisitor::HandleScatter(HloInstruction* hlo) {
                                             scatter->scatter_updates()[0]},
                                            scatter->to_apply()));
   }
+
   return OkStatus();
 }
 
@@ -6459,9 +6465,10 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
                                            transpose->dimensions())));
   }
 
-  // Convert transpose(dot(a,b)) to dot(b,a).
+  // Convert transpose(dot(a,b)) to dot(b,a) for canonical dots only.
   auto do_transpose_of_dot = [&]() -> StatusOr<bool> {
-    if (operand->opcode() != HloOpcode::kDot || operand->user_count() != 1) {
+    if (options_.supports_non_canonical_dots() ||
+        operand->opcode() != HloOpcode::kDot || operand->user_count() != 1) {
       return false;
     }
     HloInstruction* dot = operand;
@@ -6488,7 +6495,8 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
       return false;
     }
 
-    // Transpose must just be over the two last dims (i.e. the non-batch dims).
+    // Transpose must just be over the two last dims (i.e. the non-batch
+    // dims).
     DimensionVector expected_perm(rank);
     absl::c_iota(expected_perm, 0);
     std::swap(expected_perm.rbegin()[0], expected_perm.rbegin()[1]);
@@ -6509,6 +6517,62 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
   TF_ASSIGN_OR_RETURN(bool did_transpose_of_dot, do_transpose_of_dot());
   if (did_transpose_of_dot) {
     return OkStatus();
+  }
+
+  // Transpose(dot(a,b))->dot(b,a) for any dot.
+  HloInstruction *lhs, *rhs, *dot;
+  if (options_.supports_non_canonical_dots() &&
+      Match(operand, m::Dot(&dot, m::Op(&lhs), m::Op(&rhs))) &&
+      dot->user_count() == 1) {
+    TF_ASSIGN_OR_RETURN(bool did_transform, [&]() -> StatusOr<bool> {
+      const auto& dnums = dot->dot_dimension_numbers();
+      const int64 num_batch_dims = dnums.lhs_batch_dimensions_size();
+      for (int64 i = 0; i < num_batch_dims; ++i) {
+        if (transpose->dimensions(i) >= num_batch_dims) {
+          return false;
+        }
+      }
+      const int64 num_rhs_outer_dims =
+          rhs->shape().rank() - (dnums.rhs_contracting_dimensions_size() +
+                                 dnums.rhs_batch_dimensions_size());
+      const int64 num_lhs_outer_dims =
+          lhs->shape().rank() - (dnums.lhs_contracting_dimensions_size() +
+                                 dnums.lhs_batch_dimensions_size());
+      for (int64 i = 0; i < num_rhs_outer_dims; ++i) {
+        if (transpose->dimensions(i + num_batch_dims) !=
+            i + num_batch_dims + num_lhs_outer_dims) {
+          return false;
+        }
+      }
+      for (int64 i = 0; i < num_lhs_outer_dims; ++i) {
+        if (transpose->dimensions(i + num_batch_dims + num_rhs_outer_dims) !=
+            i + num_batch_dims) {
+          return false;
+        }
+      }
+      DotDimensionNumbers new_dnums;
+      *new_dnums.mutable_lhs_contracting_dimensions() =
+          dnums.rhs_contracting_dimensions();
+      *new_dnums.mutable_rhs_contracting_dimensions() =
+          dnums.lhs_contracting_dimensions();
+      for (int64 batch_dim = 0; batch_dim < num_batch_dims; ++batch_dim) {
+        new_dnums.add_lhs_batch_dimensions(
+            dnums.rhs_batch_dimensions(transpose->dimensions(batch_dim)));
+        new_dnums.add_rhs_batch_dimensions(
+            dnums.lhs_batch_dimensions(transpose->dimensions(batch_dim)));
+      }
+      HloInstruction* new_dot =
+          MakeDotHlo(rhs, lhs, new_dnums,
+                     SwapOperandsInDotPrecisionConfig(dot->precision_config()),
+                     dot->shape().element_type())
+              .value();
+      dot->SetupDerivedInstruction(new_dot);
+      TF_CHECK_OK(ReplaceInstruction(transpose, new_dot));
+      return true;
+    }());
+    if (did_transform) {
+      return OkStatus();
+    }
   }
 
   // Replace transpose with a reshape if more than one degenerate method is
@@ -6576,15 +6640,16 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
           const int64_t num_chunks = operand->shape().dimensions(split_dim);
           const int64_t chunk_size = operand->shape().dimensions(split_dim + 1);
 
-          // This optimization is only beneficial for a small number of chunks.
+          // This optimization is only beneficial for a small number of
+          // chunks.
           // TODO(b/196832483): Determine the appropriate upper bound here.
           const int64_t kMaxChunksForTransformation = 5;
           if (num_chunks > kMaxChunksForTransformation) {
             return false;
           }
 
-          // Determine where the smaller split dimension is being placed in the
-          // transpose
+          // Determine where the smaller split dimension is being placed in
+          // the transpose
           int64_t transpose_dim = 0;
           bool found_transpose_dim = false;
           for (int64_t dim = 0; dim < operand->shape().rank(); dim++) {
@@ -6617,7 +6682,8 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
           }
 
           // Check that the outer reshape has the same shape as the input,
-          // with the transformed dimensions appropriately scaled by num_chunks.
+          // with the transformed dimensions appropriately scaled by
+          // num_chunks.
           for (int64_t dim = 0; dim < reshape_operand->shape().rank(); dim++) {
             if (dim == transpose_dim - 1) {
               if (outer_reshape->shape().dimensions(dim) !=
@@ -6635,8 +6701,8 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
             }
           }
 
-          // Create a concat-of-slices, slicing to create chunks of the expected
-          // size on the smaller split dimension.
+          // Create a concat-of-slices, slicing to create chunks of the
+          // expected size on the smaller split dimension.
           std::vector<HloInstruction*> slices;
           for (int64_t i = 0; i < num_chunks; i++) {
             std::vector<int64_t> start_indices;
@@ -6710,8 +6776,8 @@ StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvInputPad(
       const auto& p = padding.dimensions(dnums.input_spatial_dimensions(dim));
       // Edge padding composes with itself in the straightforward way, but
       // composing interior padding is nontrivial, and we cowardly refuse to
-      // think about it. If we see interior padding in either the kPad or conv,
-      // bail if there's any sort of padding in the other.
+      // think about it. If we see interior padding in either the kPad or
+      // conv, bail if there's any sort of padding in the other.
       if (p.interior_padding() != 0 &&
           (w.padding_low() != 0 || w.padding_high() != 0 ||
            w.base_dilation() != 1)) {
@@ -6867,7 +6933,8 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SwapConvOperands(
 
     auto new_dim = swapped_window.add_dimensions();
     new_dim->set_size(input_size);
-    // If the kernel is not reversed, the activations must be manually reversed.
+    // If the kernel is not reversed, the activations must be manually
+    // reversed.
     if (!window_dims[spatial_dim].window_reversal()) {
       reverse_dimensions.push_back(
           dnums.kernel_spatial_dimensions(spatial_dim));
@@ -6887,8 +6954,8 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SwapConvOperands(
                               dilated_kernel_size);
   }
 
-  // Don't transform if a naive convolution implementation would not have fewer
-  // flops.
+  // Don't transform if a naive convolution implementation would not have
+  // fewer flops.
   if (kernel_product <= swapped_kernel_product) {
     return false;
   }
@@ -6976,11 +7043,11 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
     }
   }
 
-  // Stride ignores part of the output, which matrix multiplication does not do,
-  // so require no stride. Padding and base (lhs) dilation both implicitly
+  // Stride ignores part of the output, which matrix multiplication does not
+  // do, so require no stride. Padding and base (lhs) dilation both implicitly
   // extend the data, which matrix multiplication also does not do, so require
-  // no padding and no base (lhs) dilation. Window (rhs) dilation has no effect
-  // for a 1x1 window, so window dilation is no problem.
+  // no padding and no base (lhs) dilation. Window (rhs) dilation has no
+  // effect for a 1x1 window, so window dilation is no problem.
   if (window_util::HasStride(window) || window_util::HasPadding(window) ||
       window_util::HasBaseDilation(window)) {
     return false;
@@ -7037,8 +7104,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
     }
   }
 
-  // We already checked feature_dimension is most minor, so data in input_shape
-  // and row-major {conv_width,input_channels} are bitwise identical.
+  // We already checked feature_dimension is most minor, so data in
+  // input_shape and row-major {conv_width,input_channels} are bitwise
+  // identical.
   Shape new_input_shape = ShapeUtil::MakeShapeWithDescendingLayout(
       input_shape.element_type(), {conv_width, input_channels});
   simplifier_->UpdateLayout(&new_input_shape);

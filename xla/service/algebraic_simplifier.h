@@ -91,6 +91,14 @@ class AlgebraicSimplifierOptions {
     return enable_dot_to_multiply_rewrite_;
   }
 
+  // This platform will not run the DotDecomposer to canonicalize dots.
+  void set_supports_non_canonical_dots(bool supports_non_canonical_dots) {
+    supports_non_canonical_dots_ = supports_non_canonical_dots;
+  }
+  bool supports_non_canonical_dots() const {
+    return supports_non_canonical_dots_;
+  }
+
   // Enable convolution simplification on platforms where it is profitable.
   void set_enable_conv_simplification(bool enable_conv_simplification) {
     enable_conv_simplification_ = enable_conv_simplification;
@@ -196,6 +204,7 @@ class AlgebraicSimplifierOptions {
   ConvIsLowerableCallback conv_is_lowerable_callback_;
   bool is_layout_sensitive_{false};
   bool enable_dot_strength_reduction_{true};
+  bool supports_non_canonical_dots_{true};
   bool enable_dot_to_multiply_rewrite_{true};
   bool enable_conv_simplification_{true};
   bool enable_conv_operand_swap_{true};

@@ -5610,6 +5610,29 @@ TEST_F(AlgebraicSimplifierTest, DynamicSliceOfTrivialReshape) {
                         m::Constant(), m::Parameter(3)))));
 }
 
+TEST_F(AlgebraicSimplifierTest, TransposeOfBatchDotNonCanonical) {
+  const char* hlo_string = R"(
+    HloModule module
+
+    ENTRY test {
+      lhs = f32[3,2,7,4,5] parameter(0)
+      rhs = f32[7,2,3,4,6] parameter(1)
+      dot = f32[7,2,3,5,6] dot(lhs,rhs),
+        lhs_batch_dims={2,1,0}, lhs_contracting_dims={2},
+        rhs_batch_dims={0,1,2}, rhs_contracting_dims={2}
+      ROOT transpose = f32[2,3,7,6,5] transpose(dot), dimensions={1,2,0,4,3}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifierOptions options;
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_TRUE(simplifier.Run(module.get()).ValueOrDie());
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Dot(m::Parameter(1), m::Parameter(0))));
+}
+
 TEST_F(AlgebraicSimplifierTest, SliceOfPadLow) {
   const char* hlo_string = R"(
     HloModule module

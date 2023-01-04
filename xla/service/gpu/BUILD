@@ -1779,7 +1779,6 @@ cc_library(
         "//xla/service:hlo_cse",
         "//xla/service:hlo_dataflow_analysis",
         "//xla/service:hlo_dce",
-        "//xla/service:hlo_parser",
         "//xla/service:hlo_pass",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_proto_cc",

@@ -411,6 +411,10 @@ Status GpuCompiler::OptimizeHloModule(
 
   AlgebraicSimplifierOptions layout_insensitive_algsimp_opts({},
                                                              ConvIsLowerable);
+
+  // GPU only supports canonical convolutions.
+  layout_insensitive_algsimp_opts.set_supports_non_canonical_dots(false);
+
   // "slow" minmax means we propagate nan.
   layout_insensitive_algsimp_opts.set_minmax_propagate_nan(
       !debug_options.xla_gpu_enable_fast_min_max());
@@ -833,6 +837,7 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // The LayoutAssignment pass may leave behind kCopy instructions which are
     // duplicate or NOPs, so remove them with algebraic simplification and CSE.
     AlgebraicSimplifierOptions options;
+    options.set_supports_non_canonical_dots(false);
     options.set_is_layout_sensitive(true);
     options.set_enable_conv_operand_swap(false);
     // "slow" minmax means we propagate nan.
@@ -947,6 +952,7 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // The LayoutAssignment pass may leave behind kCopy instructions which are
     // duplicate or NOPs, so remove them with algebraic simplification and CSE.
     AlgebraicSimplifierOptions options;
+    options.set_supports_non_canonical_dots(false);
     options.set_is_layout_sensitive(true);
     options.set_enable_conv_operand_swap(false);
     // "slow" minmax means we propagate nan.
@@ -1048,18 +1054,14 @@ StatusOr<std::unique_ptr<BufferAssignment>> GpuCompiler::AssignBuffers(
 static Status LowerToXlaGpuRuntime(mlir::ModuleOp module,
                                    llvm::StringRef entry_function_name,
                                    llvm::ArrayRef<int64_t> buffer_sizes,
-                                   ThunkSequence* thunk_sequence,
-                                   const DebugOptions& debug_options) {
+                                   ThunkSequence* thunk_sequence) {
   if (!module) {
     return InternalError("No MLIR module to lower.");
   }
 
   mlir::PassManager pm(module.getContext(),
                        mlir::PassManager::Nesting::Implicit);
-
-  GpuPipelineOpts opts;
-  opts.enable_cuda_graphs = debug_options.xla_gpu_enable_cuda_graphs();
-  populateXlaGpuRuntimePasses(pm, thunk_sequence, opts);
+  populateXlaGpuRuntimePasses(pm, thunk_sequence);
 
   if (pm.run(module).failed()) {
     return InternalError("Failed to lower LMHLO to Gpu runtime custom calls.");
@@ -1086,8 +1088,7 @@ static StatusOr<OwnedGpuRuntimeProgram> LowerToJitRt(
   // Lower LMHLO operations to the JitRt compatible custom calls.
   TF_RETURN_IF_ERROR(LowerToXlaGpuRuntime(
       mlir_module, {entry_function_name.data(), entry_function_name.size()},
-      buffer_sizes, thunk_sequence.get(),
-      hlo_module->config().debug_options()));
+      buffer_sizes, thunk_sequence.get()));
   // Serialize module to pass it to GpuExecutable for compilation.
   std::string serialized_module;
   llvm::raw_string_ostream os(serialized_module);

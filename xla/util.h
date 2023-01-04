@@ -285,6 +285,15 @@ int64_t PositionInContainer(const Container& container, int64_t value) {
   return std::distance(container.begin(), absl::c_find(container, value));
 }
 
+// Converts Dimension numbers from the output of a transpose to the input of a
+// transpose.
+template <typename Dnums>
+void TransposeDnums(Dnums* dnums, absl::Span<const int64> dims) {
+  for (auto& dnum : *dnums) {
+    dnum = dims[dnum];
+  }
+}
+
 // Formats the container as a comma-separated string. StrAppend must support
 // appending the elements of the container. Prefix is prepended and suffix is
 // appended to the returned string.
@@ -611,6 +620,11 @@ struct ConvertedDimensionNumbers {
 ConvertedDimensionNumbers ConvertDimensionNumbers(
     absl::Span<const int64_t> from_dimensions,
     absl::Span<const int64_t> from_sizes, absl::Span<const int64_t> to_sizes);
+
+// Returns the non-contracting dimensions of a dot operand
+DimensionVector GetNonContractingDims(
+    const int64_t rank, absl::Span<const int64_t> contracting_dim_numbers,
+    absl::Span<const int64_t> batch_dim_numbers);
 
 // Removes illegal characters from filenames.
 std::string SanitizeFileName(std::string file_name);

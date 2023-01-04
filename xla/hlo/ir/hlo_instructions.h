@@ -1624,6 +1624,9 @@ class HloConvolutionInstruction : public HloInstruction {
   const ConvolutionDimensionNumbers& convolution_dimension_numbers() const {
     return convolution_dimension_numbers_;
   }
+  ConvolutionDimensionNumbers* mutable_convolution_dimension_numbers() {
+    return &convolution_dimension_numbers_;
+  }
   void set_convolution_dimension_numbers(
       const ConvolutionDimensionNumbers& dnums) {
     convolution_dimension_numbers_ = dnums;
@@ -2256,6 +2259,9 @@ class HloDotInstruction : public HloInstruction {
   // Returns data on the dimension numbers used for a dot operation.
   const DotDimensionNumbers& dot_dimension_numbers() const {
     return dot_dimension_numbers_;
+  }
+  DotDimensionNumbers* mutable_dot_dimension_numbers() {
+    return &dot_dimension_numbers_;
   }
 
   // Returns the information used to tell the implementation information about
