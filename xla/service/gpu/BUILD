@@ -8,6 +8,7 @@ load(
 )
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
+    "if_static",
     "tf_cuda_tests_tags",
 )
 load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
@@ -978,6 +979,8 @@ cc_library(
         "@tsl//tsl/platform/default/build_config:cublas_plugin",
         "//xla/stream_executor:host_or_device_scalar",
         "//xla/stream_executor:scratch_allocator",
+    ]) + if_static([
+        "@tsl//tsl/platform:tensor_float_32_utils",
     ]),
 )
 
