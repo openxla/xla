@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 #if GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"
@@ -411,7 +412,11 @@ StatusOr<se::blas::ComputationType> GetBlasComputationType(
       return se::blas::ComputationType::kF32;
     case F32:  // fall-through
     case C64:
-      return se::blas::ComputationType::kTF32AsF32;
+      if (tsl::tensor_float_32_execution_enabled()) {
+        return se::blas::ComputationType::kTF32AsF32;
+      } else {
+        return se::blas::ComputationType::kF32;
+      }
     case F64:  // fall-through
     case C128:
       return se::blas::ComputationType::kF64;
