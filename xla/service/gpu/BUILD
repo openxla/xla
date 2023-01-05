@@ -749,6 +749,7 @@ cc_library(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:statusor",
     ],
 )
