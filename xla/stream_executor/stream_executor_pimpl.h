@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -102,9 +103,7 @@ class StreamExecutor {
   // This string is not guaranteed to be stable between versions.  Please DO NOT
   // rely on it never changing.  (Within one version of the code, it won't
   // change, don't worry.)
-  absl::string_view device_description_str() const {
-    return device_description_str_;
-  }
+  absl::string_view device_description_str() const;
 
   // Retrieves (loads) a kernel for the platform this StreamExecutor is acting
   // upon, if one exists.
@@ -790,7 +789,11 @@ class StreamExecutor {
 
   StreamExecutorMemoryAllocator allocator_;
 
-  std::string device_description_str_;
+  // Lazily populated.  It's important to generate this string lazily because on
+  // nvidia GPUs, doing so is tantamount to "initializing the GPU", which
+  // consumes memory on the GPU itself.
+  mutable std::optional<std::string> device_description_str_
+      ABSL_GUARDED_BY(mu_);
 
   SE_DISALLOW_COPY_AND_ASSIGN(StreamExecutor);
 };
