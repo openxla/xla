@@ -36,7 +36,6 @@ limitations under the License.
 namespace tensorflow {
 namespace tpu {
 
-using Status = stream_executor::port::Status;
 template <typename T>
 using StatusOr = stream_executor::port::StatusOr<T>;
 
@@ -68,7 +67,7 @@ xla::Shape TpuTransferManager::HostShapeToDeviceShape(
   return device_shape;
 }
 
-Status TpuTransferManager::TransferLiteralToDeviceAsync(
+tsl::Status TpuTransferManager::TransferLiteralToDeviceAsync(
     stream_executor::Stream* stream, const xla::LiteralSlice& literal,
     const xla::ShapedBuffer& device_buffer,
     const TransferMetadata* transfer_metadata) {
@@ -91,7 +90,7 @@ Status TpuTransferManager::TransferLiteralToDeviceAsync(
   return status.status();
 }
 
-Status TpuTransferManager::TransferLiteralToInfeed(
+tsl::Status TpuTransferManager::TransferLiteralToInfeed(
     stream_executor::StreamExecutor* executor,
     const xla::LiteralSlice& literal) {
   StatusHelper status;
@@ -109,7 +108,7 @@ Status TpuTransferManager::TransferLiteralToInfeed(
   return status.status();
 }
 
-Status TpuTransferManager::TransferBuffersToInfeed(
+tsl::Status TpuTransferManager::TransferBuffersToInfeed(
     se::StreamExecutor* executor,
     const std::deque<tensorflow::tpu::NoncopyableBuffer>& buffers) {
   StatusHelper status;
@@ -135,7 +134,7 @@ Status TpuTransferManager::TransferBuffersToInfeed(
   return status.status();
 }
 
-Status TpuTransferManager::TransferLiteralFromOutfeed(
+tsl::Status TpuTransferManager::TransferLiteralFromOutfeed(
     stream_executor::StreamExecutor* executor,
     xla::MutableBorrowingLiteral literal) {
   StatusHelper status;
@@ -158,7 +157,7 @@ Status TpuTransferManager::TransferLiteralFromOutfeed(
   return status.status();
 }
 
-Status TpuTransferManager::ResetDevices(
+tsl::Status TpuTransferManager::ResetDevices(
     absl::Span<stream_executor::StreamExecutor* const> executor) {
   StatusHelper status;
   std::vector<SE_StreamExecutor*> se;
@@ -178,7 +177,7 @@ struct TransferFromDeviceState {
   std::atomic<int64_t> remaining_transfers;
   TF_Status* overall_status = stream_executor::tpu::ExecutorApiFn()
                                   ->TpuStatus_NewFn();  // OK or the first error
-  std::function<void(Status)> done;
+  std::function<void(tsl::Status)> done;
 
   void TransferFinished(TF_Status* status) {
     if (!stream_executor::tpu::ExecutorApiFn()->TpuStatus_OkFn(status) &&
@@ -201,7 +200,7 @@ void TransferLiteralFromDeviceTrampoline(void* ctx, TF_Status* status) {
 
 void TpuTransferManager::TransferLiteralFromDevice(
     stream_executor::Stream* stream, const xla::ShapedBuffer& device_buffer,
-    xla::MutableBorrowingLiteral literal, std::function<void(Status)> done,
+    xla::MutableBorrowingLiteral literal, std::function<void(tsl::Status)> done,
     const TransferMetadata* transfer_metadata) {
   TransferFromDeviceState* state = new TransferFromDeviceState;
   state->remaining_transfers = 1;
@@ -283,7 +282,7 @@ bool TpuTransferManager::CanBufferBeAccessedNow(
           manager_, tpu_executor->se_executor(), &c_device_buffer);
 }
 
-Status TpuTransferManager::WriteSingleTupleIndexTable(
+tsl::Status TpuTransferManager::WriteSingleTupleIndexTable(
     stream_executor::Stream* stream,
     absl::Span<const stream_executor::DeviceMemoryBase> elements,
     const xla::Shape& shape, stream_executor::DeviceMemoryBase* region) {
@@ -314,7 +313,7 @@ Status TpuTransferManager::WriteSingleTupleIndexTable(
   return status.status();
 }
 
-Status TpuTransferManager::LinearizeToBuffers(
+tsl::Status TpuTransferManager::LinearizeToBuffers(
     const xla::LiteralSlice& literal,
     std::deque<tensorflow::tpu::NoncopyableBuffer>* buffers) {
   XLA_Literal c_literal;
@@ -344,9 +343,9 @@ Status TpuTransferManager::LinearizeToBuffers(
   return status.status();
 }
 
-Status TpuTransferManager::ReadDynamicShapes(se::Stream* stream,
-                                             xla::ShapedBuffer* device_buffer,
-                                             xla::Shape* device_shape) {
+tsl::Status TpuTransferManager::ReadDynamicShapes(
+    se::Stream* stream, xla::ShapedBuffer* device_buffer,
+    xla::Shape* device_shape) {
   XLA_ShapedBuffer c_device_buffer;
   XLA_Shape c_device_shape;
   ApiConverter::ToC(*device_buffer, &c_device_buffer);
