@@ -1378,6 +1378,7 @@ cc_library(
         "gml_st/transforms/gml_st_to_scf/gml_st_to_scf.cc",
         "gml_st/transforms/greedy_tiling_and_fusion/greedy_tiling_and_fusion.cc",
         "gml_st/transforms/lower_vector_contract/lower_vector_contract.cc",
+        "gml_st/transforms/optimize_vector_transfer/optimize_vector_transfer.cc",
         "gml_st/transforms/passes.h.inc",
         "gml_st/transforms/peeling/peeling.cc",
         "gml_st/transforms/scalarization/scalarization.cc",

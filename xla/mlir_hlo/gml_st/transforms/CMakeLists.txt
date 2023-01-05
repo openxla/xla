@@ -36,6 +36,7 @@ add_mlir_library(GmlStPasses
   gml_st_to_gpu/gml_st_to_gpu.cc
   greedy_tiling_and_fusion/greedy_tiling_and_fusion.cc
   lower_vector_contract/lower_vector_contract.cc
+  optimize_vector_transfer/optimize_vector_transfer.cc
   peeling/peeling.cc
   scalarization/scalarization.cc
   tiling/tiling.cc
