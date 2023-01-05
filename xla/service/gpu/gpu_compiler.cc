@@ -47,7 +47,7 @@ limitations under the License.
 #include "xla/hlo/transforms/hlo_constant_splitter.h"
 #include "xla/mlir/backends/gpu/transforms/passes.h"
 #include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
-#include "xla/mlir_hlo/include/mlir-hlo/Transforms/gpu_passes.h"
+#include "xla/mlir_hlo/transforms/gpu_passes.h"
 #include "xla/runtime/jit_executable.h"
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/all_gather_broadcast_reorder.h"

@@ -46,9 +46,9 @@ limitations under the License.
 #include "xla/mlir/runtime/transforms/compiler.h"
 #include "xla/mlir_hlo/gml_st/interfaces/bufferizable_op_interface_impl.h"
 #include "xla/mlir_hlo/gml_st/transforms/passes.h"
-#include "xla/mlir_hlo/include/mlir-hlo/Transforms/passes.h"
 #include "xla/mlir_hlo/mhlo/interfaces/bufferizable_op_interface_impl.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
+#include "xla/mlir_hlo/transforms/passes.h"
 #include "xla/status.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -146,7 +146,7 @@ static Status CreateHloXlaPipeline(
 
   // Lower shape dialect to standard to enable linalg canonicalizations (e.g.
   // use linalg inputs instead of outputs for memref.dim operations).
-  pm.addNestedPass<mlir::func::FuncOp>(mlir::createShapeSimplification());
+  pm.addNestedPass<mlir::func::FuncOp>(mlir::mhlo::createShapeSimplification());
   pm.addNestedPass<mlir::func::FuncOp>(mlir::createShapeToShapeLowering());
   pm.addPass(mlir::createConvertShapeToStandardPass());
   pm.addNestedPass<mlir::func::FuncOp>(
