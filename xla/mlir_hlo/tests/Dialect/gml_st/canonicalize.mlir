@@ -559,3 +559,29 @@ func.func @collapse_empty_for_vector(%in: vector<8x8xf32>) -> vector<8x8xf32> {
 // CHECK:         linalg.fill
 // CHECK:         %[[READ:.*]] = vector.transfer_read
 // CHECK:         return %[[READ]] : vector<8x8xf32>
+
+// -----
+
+func.func @collapse_0_to_0_parallel(%in: tensor<8x8xf32>) -> tensor<8x8xf32> {
+  %c8 = arith.constant 8 : index
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c16 = arith.constant 16 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %13 = gml_st.parallel (%arg4, %arg5) = (%c0, %c0) to (%c0, %c16)
+        step (%c8, %c8) {
+    %19 = gml_st.tile [%arg4, %arg5] [8, 8] [1, 1] : !gml_st.tile<8x8>
+    %11 = linalg.fill ins(%cst : f32) outs(%0 : tensor<8x8xf32>)
+          -> tensor<8x8xf32>
+    gml_st.set_yield %11 into %0[%19] : tensor<8x8xf32>
+          into tensor<8x8xf32>[!gml_st.tile<8x8>]
+  } : tensor<8x8xf32>
+  return %13 : tensor<8x8xf32>
+}
+
+// CHECK-LABEL: @collapse_0_to_0_parallel
+// CHECK:         gml_st.parallel (%[[ARG:.*]]) = (%c0) to (%c16) step (%c8)
+// CHECK:           gml_st.tile [0, %[[ARG]]]
+// CHECK:           linalg.fill
+// CHECK:           gml_st.set_yield

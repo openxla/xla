@@ -733,7 +733,7 @@ struct CollapseSingleIterationLoops : public OpRewritePattern<LoopLikeOp> {
       // Replace the loop induction variable by the lower bound if the loop
       // performs a single iteration. Otherwise, copy the loop bounds.
       if (lowerBoundConstant && upperBoundConstant && stepConstant &&
-          (*upperBoundConstant - *lowerBoundConstant) > 0 &&
+          (*upperBoundConstant - *lowerBoundConstant) >= 0 &&
           (*upperBoundConstant - *lowerBoundConstant) <= *stepConstant) {
         mapping.map(iv, lowerBound);
       } else {
