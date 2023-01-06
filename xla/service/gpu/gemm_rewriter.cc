@@ -448,42 +448,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   Status HandleConvert(HloInstruction *instr) override {
-    HloInstruction *bias, *clamp_lower, *clamp_upper, *d_scale, *existing_gemm,
+    HloInstruction *clamp_lower, *clamp_upper, *d_scale, *existing_gemm,
         *binary;
-    HloInstruction *optional_slice = nullptr;
 
-    // First, try to match vector bias add, so we might elide the broadcast.
-    if (Match(
-            instr,
-            m::Convert(
-                m::AddAnyOrder(
-                    m::Convert(OptionalSlice(
-                                   &optional_slice,
-                                   CublasLtMatmul(&existing_gemm).WithOneUser())
-                                   .WithOneUser()
-                                   .WithElementType(BF16))
-                        .WithOneUser(),
-                    m::Broadcast(&bias,
-                                 m::Convert(m::Op().WithElementType(BF16)))))
-                .WithElementType(BF16))) {
-      TF_ASSIGN_OR_RETURN(
-          bool was_fused,
-          FuseVectorBiasAdd(instr, bias, existing_gemm, optional_slice));
-      if (was_fused) return OkStatus();
-    }
-
-    if (Match(instr,
-              m::Convert(
-                  m::AddAnyOrder(m::Convert(GemmOrCublasLtMatmul(&existing_gemm)
-                                                .WithOneUser()
-                                                .WithElementType(BF16))
-                                     .WithOneUser(),
-                                 m::Convert(m::Op(&bias).WithElementType(BF16))
-                                     .WithOneUser())
-                      .WithOneUser())
-                  .WithElementType(BF16))) {
-      return FuseMatrixBiasAdd(instr, bias, existing_gemm);
-    }
     // Attempt to elide the scaling and conversion of the result of an FP8
     // GEMM, including the optional calculation of the maximum of the absolute
     // values before scaling, and adapt the Custom Call.
@@ -836,10 +803,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return false;
     }
 
-    HloInstruction *bias =
-        (gemm->shape().element_type() == BF16)
-            ? broadcast_bias->mutable_operand(0)->mutable_operand(0)
-            : broadcast_bias->mutable_operand(0);
+    HloInstruction *bias = broadcast_bias->mutable_operand(0);
 
     TF_ASSIGN_OR_RETURN(auto config, gemm->backend_config<GemmBackendConfig>());
 
