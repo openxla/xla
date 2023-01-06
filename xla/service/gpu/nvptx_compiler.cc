@@ -460,6 +460,8 @@ std::vector<uint8_t> NVPTXCompiler::CompileGpuAsmOrGetCachedResult(
         }
         uint64_t start_usecs = tsl::Env::Default()->NowMicros();
 
+        LOG(INFO) << "CC MAJOR=" << cc.major << ", CC MINOR=" << cc.minor;
+        LOG(INFO) << "\n\nCOMPILING PTX:\n" << ptx << "\n\n";
         StatusOr<std::vector<uint8_t>> maybe_cubin = se::CompileGpuAsm(
             cc.major, cc.minor, cache_ptx->c_str(), ptxas_config);
 

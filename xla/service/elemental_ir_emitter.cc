@@ -239,7 +239,8 @@ StatusOr<llvm::Value*> EmitF16ToF8e5m2(llvm::Value* f16_value,
   return b->CreateBitCast(truncated, b->getInt8Ty());
 }
 
-llvm::Value* EmitF8e5m2ToF16(llvm::Value* f8_value, llvm::IRBuilder<>* b) {
+llvm::Value* DefaultEmitF8e5m2ToF16(llvm::Value* f8_value,
+                                    llvm::IRBuilder<>* b) {
   llvm::Value* as_int8 = b->CreateBitCast(f8_value, b->getInt8Ty());
   llvm::Value* as_int16 = b->CreateZExt(as_int8, b->getInt16Ty());
   llvm::Value* shifted = b->CreateShl(as_int16, 8);
@@ -369,7 +370,8 @@ llvm::Value* EmitF16ToF8e4m3fn(llvm::Value* f16_value, llvm::IRBuilder<>* b) {
   return f8_bits;
 }
 
-llvm::Value* EmitF8e4m3fnToF16(llvm::Value* f8_value, llvm::IRBuilder<>* b) {
+llvm::Value* DefaultEmitF8e4m3fnToF16(llvm::Value* f8_value,
+                                      llvm::IRBuilder<>* b) {
   using llvm::APInt;
   using llvm::Value;
 
@@ -660,7 +662,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
       }
       if (from_type == F8E5M2) {
         TF_RET_CHECK(to_type != F8E5M2);
-        operand_value = EmitF8e5m2ToF16(operand_value, b_);
+        operand_value = EmitF8e5m2ToF16(operand_value);
         from_type = F16;
         if (from_type == to_type) {
           return operand_value;
@@ -668,7 +670,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
       }
       if (from_type == F8E4M3FN) {
         TF_RET_CHECK(to_type != F8E4M3FN);
-        operand_value = EmitF8e4m3fnToF16(operand_value, b_);
+        operand_value = EmitF8e4m3fnToF16(operand_value);
         from_type = F16;
         if (from_type == to_type) {
           return operand_value;
@@ -3056,6 +3058,14 @@ llvm::Value* ElementalIrEmitter::EmitExtractImag(llvm::Value* value) {
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitF32ToBF16(
     llvm::Value* f32_value) {
   return DefaultEmitF32ToBF16Impl(f32_value, b_);
+}
+
+llvm::Value* ElementalIrEmitter::EmitF8e5m2ToF16(llvm::Value* f8_value) {
+  return DefaultEmitF8e5m2ToF16(f8_value, b_);
+}
+
+llvm::Value* ElementalIrEmitter::EmitF8e4m3fnToF16(llvm::Value* f8_value) {
+  return DefaultEmitF8e4m3fnToF16(f8_value, b_);
 }
 
 llvm::Value* ElementalIrEmitter::EmitComposeComplex(const HloInstruction* op,

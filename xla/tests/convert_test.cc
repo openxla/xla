@@ -602,7 +602,9 @@ XLA_TEST_F(ConvertTest, ConvertF16F8e5m2Roundtrip) {
   auto f8 =
       ConvertElementType(ConstantR1<Eigen::half>(&builder, inputs), F8E5M2);
   ConvertElementType(f8, F16);
-  ComputeAndCompareR1<Eigen::half>(&builder, expected_roundtrip, {});
+  // Pass in ErrorSpec, as this causes all NaNs to be treated as equal.
+  ComputeAndCompareR1<Eigen::half>(&builder, expected_roundtrip, {},
+                                   ErrorSpec(0.));
 }
 
 XLA_TEST_F(ConvertTest, ConvertF8e5m2F16RoundtripExhaustive) {
@@ -620,8 +622,6 @@ XLA_TEST_F(ConvertTest, ConvertF8e5m2F16RoundtripExhaustive) {
   ConvertElementType(all_f8_as_f16, F8E5M2);
 
   // Pass in ErrorSpec, as this causes all NaNs to be treated as equal.
-  // Round-tripping a NaN will turn it into a quiet NaN and doesn't necessarily
-  // preserve the payload.
   ComputeAndCompareR1<tsl::float8_e5m2>(&builder, all_f8, {}, ErrorSpec(0.));
 }
 
@@ -671,7 +671,9 @@ XLA_TEST_F(ConvertTest, ConvertF16F8e4m3fnRoundtrip) {
   auto f8 =
       ConvertElementType(ConstantR1<Eigen::half>(&builder, inputs), F8E4M3FN);
   ConvertElementType(f8, F16);
-  ComputeAndCompareR1<Eigen::half>(&builder, expected_roundtrip, {});
+  // Pass in ErrorSpec, as this causes all NaNs to be treated as equal.
+  ComputeAndCompareR1<Eigen::half>(&builder, expected_roundtrip, {},
+                                   ErrorSpec(0.));
 }
 
 XLA_TEST_F(ConvertTest, ConvertF8e4m3fnF16RoundtripExhaustive) {
@@ -687,7 +689,8 @@ XLA_TEST_F(ConvertTest, ConvertF8e4m3fnF16RoundtripExhaustive) {
   xla::XlaOp all_f8_as_f8 = ConstantR1<tsl::float8_e4m3fn>(&builder, all_f8);
   xla::XlaOp all_f8_as_f16 = ConvertElementType(all_f8_as_f8, F16);
   ConvertElementType(all_f8_as_f16, F8E4M3FN);
-  ComputeAndCompareR1<tsl::float8_e4m3fn>(&builder, all_f8, {});
+  // Pass in ErrorSpec, as this causes all NaNs to be treated as equal.
+  ComputeAndCompareR1<tsl::float8_e4m3fn>(&builder, all_f8, {}, ErrorSpec(0.));
 }
 
 }  // namespace

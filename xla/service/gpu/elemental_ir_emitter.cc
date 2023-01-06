@@ -29,6 +29,7 @@ limitations under the License.
 #include "llvm/ADT/APInt.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
@@ -353,6 +354,57 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitF32ToBF16(
   } else {
     // More complex fallback solution.
     return ElementalIrEmitter::EmitF32ToBF16(f32_value);
+  }
+}
+
+namespace {
+
+llvm::Value* EmitF8ToF16InlineAsm(llvm::Value* f8_value, PrimitiveType f8_type,
+                                  llvm::IRBuilder<>* b) {
+  // LLVM IR does not yet have an FP8 support, so we represent FP8 values using
+  // int8 and use inline PTX assembly to convert to a wider type.
+  // TODO(b/259609697): Once LLVM IR supports FP8, use LLVM conversions instead
+  // of inline assembly
+  //
+  // PTX only supports converting from two packed FP8 values, so we extend the
+  // input width and truncate the output.
+  llvm::Value* as_int16 = b->CreateZExt(f8_value, b->getInt16Ty());
+  std::string ptx_packed_f8_type;
+  if (f8_type == F8E5M2) {
+    ptx_packed_f8_type = "e5m2x2";
+  } else {
+    CHECK(f8_type == F8E4M3FN);  // Crash OK
+    ptx_packed_f8_type = "e4m3x2";
+  }
+  llvm::FunctionType* func_type =
+      llvm::FunctionType::get(b->getInt32Ty(), {b->getInt16Ty()},
+                              /*isVarArg=*/false);
+  llvm::InlineAsm* inline_asm = llvm::InlineAsm::get(
+      func_type,
+      absl::StrCat("{ cvt.rn.f16x2.", ptx_packed_f8_type, " $0, $1; }"), "=r,h",
+      /*hasSideEffects=*/false);
+  llvm::Value* asm_output = b->CreateCall(inline_asm, {as_int16});
+  llvm::Value* truncated = b->CreateTrunc(asm_output, b->getInt16Ty());
+  return b->CreateBitCast(truncated, b->getHalfTy());
+}
+
+}  // namespace
+
+llvm::Value* GpuElementalIrEmitter::EmitF8e5m2ToF16(llvm::Value* f8_value) {
+  if (ir_emitter_context_->cuda_compute_capability().IsAtLeast(9)) {
+    return EmitF8ToF16InlineAsm(f8_value, F8E5M2, b());
+  } else {
+    // More complex fallback solution.
+    return ElementalIrEmitter::EmitF8e5m2ToF16(f8_value);
+  }
+}
+
+llvm::Value* GpuElementalIrEmitter::EmitF8e4m3fnToF16(llvm::Value* f8_value) {
+  if (ir_emitter_context_->cuda_compute_capability().IsAtLeast(9)) {
+    return EmitF8ToF16InlineAsm(f8_value, F8E4M3FN, b());
+  } else {
+    // More complex fallback solution.
+    return ElementalIrEmitter::EmitF8e4m3fnToF16(f8_value);
   }
 }
 
