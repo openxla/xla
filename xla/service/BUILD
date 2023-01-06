@@ -2559,15 +2559,9 @@ cc_library(
     srcs = ["collectives_schedule_linearizer.cc"],
     hdrs = ["collectives_schedule_linearizer.h"],
     deps = [
-        ":hlo_domain_map",
         ":hlo_pass",
-        ":hlo_query",
         ":hlo_reachability",
-        ":shape_inference",
         "//xla:array2d",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:status_macros",
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -2584,13 +2578,7 @@ xla_cc_test(
     srcs = ["collectives_schedule_linearizer_test.cc"],
     deps = [
         ":collectives_schedule_linearizer",
-        ":hlo_graph_dumper",
-        ":hlo_matchers",
-        ":hlo_runner",
         ":pattern_matcher",
-        "//xla:debug_options_flags",
-        "//xla:literal",
-        "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
         "//xla:xla_data_proto_cc",
@@ -2598,7 +2586,6 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
