@@ -1948,6 +1948,8 @@ cc_library(
         "//xla/service:dump",
         "//xla/service/gpu/llvm_gpu_backend",
         "//xla/hlo/ir:hlo",
+        "//xla/service:bfloat16_normalization",
+        "//xla/service:bfloat16_support",
         "//xla/service:hlo_constant_folding",
         "//xla/service:hlo_cse",
         "//xla/service:hlo_pass",
