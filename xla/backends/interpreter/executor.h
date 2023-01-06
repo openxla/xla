@@ -19,9 +19,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_BACKENDS_INTERPRETER_EXECUTOR_H_
 #define TENSORFLOW_COMPILER_XLA_BACKENDS_INTERPRETER_EXECUTOR_H_
 
-#include <functional>
 #include <memory>
 
+#include "absl/functional/any_invocable.h"
 #include "absl/types/span.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/blas.h"
@@ -125,7 +125,7 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
   }
 
   bool HostCallback(Stream *stream,
-                    std::function<port::Status()> callback) override;
+                    absl::AnyInvocable<port::Status() &&> callback) override;
 
   port::Status AllocateEvent(Event *event) override {
     return ::tsl::OkStatus();

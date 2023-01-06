@@ -21,7 +21,10 @@ limitations under the License.
 #include <string.h>
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 
+#include "absl/functional/any_invocable.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/notification.h"
@@ -182,9 +185,9 @@ port::Status HostExecutor::SynchronousMemcpyDeviceToDevice(
   return ::tsl::OkStatus();
 }
 
-bool HostExecutor::HostCallback(Stream* stream,
-                                std::function<port::Status()> callback) {
-  AsHostStream(stream)->EnqueueTaskWithStatus(callback);
+bool HostExecutor::HostCallback(
+    Stream* stream, absl::AnyInvocable<port::Status() &&> callback) {
+  AsHostStream(stream)->EnqueueTaskWithStatus(std::move(callback));
   return true;
 }
 

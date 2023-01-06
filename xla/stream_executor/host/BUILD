@@ -64,6 +64,7 @@ cc_library(
     deps = [
         "//xla/stream_executor:kernel",
         "//xla/stream_executor/lib",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:setround",
@@ -105,6 +106,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_pimpl",
         "//xla/stream_executor:timer",
         "//xla/stream_executor/lib",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:platform_port",

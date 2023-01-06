@@ -89,6 +89,7 @@ cc_library(
         ":rocm_event",
         ":rocm_kernel",
         ":rocm_platform_id",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings",
         "//xla/stream_executor:event",
         "//xla/stream_executor:plugin_registry",

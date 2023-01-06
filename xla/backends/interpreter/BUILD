@@ -155,6 +155,7 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_stream",
         "//xla/stream_executor/host:host_timer",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
     ],

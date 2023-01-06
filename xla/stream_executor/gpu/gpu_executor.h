@@ -32,6 +32,7 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_kernel.h"
@@ -210,7 +211,7 @@ class GpuExecutor : public internal::StreamExecutorInterface {
                             uint64_t size) override;
 
   bool HostCallback(Stream* stream,
-                    std::function<port::Status()> callback) override;
+                    absl::AnyInvocable<port::Status() &&> callback) override;
 
   bool AllocateStream(Stream* stream) override;
 

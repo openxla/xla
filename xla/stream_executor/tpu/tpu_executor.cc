@@ -16,8 +16,10 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_executor.h"
 
 #include <cstdint>
+#include <utility>
 
 #include "absl/cleanup/cleanup.h"
+#include "absl/functional/any_invocable.h"
 #include "xla/status.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
@@ -342,12 +344,12 @@ Status TpuExecutor::EnqueueCompactionOnStreamForHbm(Stream* compaction_stream) {
 }
 
 struct HostCallbackContext {
-  std::function<Status()> callback;
+  absl::AnyInvocable<Status() &&> callback;
 };
 
 TSL_Status* HostCallbackTrampoline(void* ctx) {
   HostCallbackContext* host_ctx = reinterpret_cast<HostCallbackContext*>(ctx);
-  Status status = host_ctx->callback();
+  Status status = std::move(host_ctx->callback)();
   TSL_Status* c_status = ExecutorApiFn()->TpuStatus_CreateFn(
       status.code(), status.error_message().c_str());
   delete host_ctx;
@@ -355,8 +357,8 @@ TSL_Status* HostCallbackTrampoline(void* ctx) {
 }
 
 bool TpuExecutor::HostCallback(Stream* stream,
-                               std::function<Status()> callback) {
-  HostCallbackContext* ctx = new HostCallbackContext{callback};
+                               absl::AnyInvocable<Status() &&> callback) {
+  HostCallbackContext* ctx = new HostCallbackContext{std::move(callback)};
   return ExecutorApiFn()->TpuExecutor_HostCallbackFn(
       executor_, get_stream(stream->implementation()), &HostCallbackTrampoline,
       ctx);

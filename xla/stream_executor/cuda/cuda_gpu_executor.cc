@@ -28,6 +28,7 @@ limitations under the License.
 #else
 #include <unistd.h>
 #endif
+#include "absl/functional/any_invocable.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -752,13 +753,14 @@ bool GpuExecutor::MemcpyDeviceToDevice(Stream* stream,
 }
 
 bool GpuExecutor::HostCallback(Stream* stream,
-                               std::function<port::Status()> callback) {
-  auto callback_ptr = new std::function<void()>([callback]() {
-    port::Status s = callback();
-    if (!s.ok()) {
-      LOG(WARNING) << "Host callback failed: " << s;
-    }
-  });
+                               absl::AnyInvocable<port::Status() &&> callback) {
+  auto callback_ptr =
+      new absl::AnyInvocable<void() &&>([cb = std::move(callback)]() mutable {
+        port::Status s = std::move(cb)();
+        if (!s.ok()) {
+          LOG(WARNING) << "Host callback failed: " << s;
+        }
+      });
   return GpuDriver::AddStreamCallback(context_, AsGpuStreamValue(stream),
                                       InternalHostCallback, callback_ptr);
 }
@@ -766,9 +768,8 @@ bool GpuExecutor::HostCallback(Stream* stream,
 /* static */ void GpuExecutor::InternalHostCallback(CUstream stream,
                                                     CUresult status,
                                                     void* data) {
-  std::function<void()>* callback =
-      reinterpret_cast<std::function<void()>*>(data);
-  (*callback)();
+  auto* callback = reinterpret_cast<absl::AnyInvocable<void() &&>*>(data);
+  std::move (*callback)();
   delete callback;
 }
 
