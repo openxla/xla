@@ -140,50 +140,8 @@ extern "C" void PyArray_tp_dealloc(PyObject* self) {
 
   GetPyArrayStorageFromObject(obj)->~PyArray_Storage();
 
-  PyObject*& dict = *_PyObject_GetDictPtr(self);
-  Py_CLEAR(dict);
-
   tp->tp_free(self);
   Py_DECREF(tp);
-}
-
-// dynamic_attr: Allow the garbage collector to traverse the internal instance
-// `__dict__`.
-extern "C" int PyArray_tp_traverse(PyObject* self, visitproc visit, void* arg) {
-  PyObject*& dict = *_PyObject_GetDictPtr(self);
-  Py_VISIT(dict);
-// https://docs.python.org/3/c-api/typeobj.html#c.PyTypeObject.tp_traverse
-#if PY_VERSION_HEX >= 0x03090000
-  Py_VISIT(Py_TYPE(self));
-#endif
-  return 0;
-}
-
-// dynamic_attr: Allow the GC to clear the dictionary.
-extern "C" int PyArray_tp_clear(PyObject* self) {
-  PyObject*& dict = *_PyObject_GetDictPtr(self);
-  Py_CLEAR(dict);
-  return 0;
-}
-
-// Give instances of this type a `__dict__` and opt into garbage collection.
-void EnableDynamicAttribute(PyHeapTypeObject* heap_type) {
-  auto* type = &heap_type->ht_type;
-  type->tp_flags |= Py_TPFLAGS_HAVE_GC;
-#if PY_VERSION_HEX < 0x030B0000
-  type->tp_dictoffset = type->tp_basicsize;  // place dict at the end
-  type->tp_basicsize +=
-      (ssize_t)sizeof(PyObject*);  // and allocate enough space for it
-#else
-  type->tp_flags |= Py_TPFLAGS_MANAGED_DICT;
-#endif
-  type->tp_traverse = PyArray_tp_traverse;
-  type->tp_clear = PyArray_tp_clear;
-
-  static PyGetSetDef getset[] = {{"__dict__", PyObject_GenericGetDict,
-                                  PyObject_GenericSetDict, nullptr, nullptr},
-                                 {nullptr, nullptr, nullptr, nullptr, nullptr}};
-  type->tp_getset = getset;
 }
 
 template <typename... Args>
@@ -444,9 +402,6 @@ Status PyArray::SetUpType() {
   type->tp_as_sequence = &heap_type->as_sequence;
   type->tp_as_mapping = &heap_type->as_mapping;
 
-  // Allow dynamic attributes.
-  EnableDynamicAttribute(heap_type);
-
   // Allow weak references to DeviceArray objects.
   type->tp_weaklistoffset = offsetof(PyArrayObject, weakrefs);
 
@@ -492,6 +447,9 @@ Status PyArray::RegisterTypes(py::module& m) {
   type.attr("_arrays") = jax::property(&PyArray::arrays, &PyArray::set_arrays);
   type.attr("_npy_value") =
       jax::property(&PyArray::npy_value, &PyArray::set_npy_value);
+  type.attr("_cached_addressable_shards") =
+      jax::property(&PyArray::cached_addressable_shards,
+                    &PyArray::set_cached_addressable_shards);
   type.attr("_committed") = jax::property_readonly(&PyArray::committed);
   type.attr("block_until_ready") = py::cpp_function(
       [](PyArray self) -> StatusOr<py::object> {

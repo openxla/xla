@@ -73,6 +73,7 @@ struct PyArray_Storage {
 
   pybind11::object sharding;
   pybind11::object npy_value = pybind11::none();
+  pybind11::object cached_addressable_shards = pybind11::none();
   bool committed = false;
 
   std::shared_ptr<PyClient> py_client;
@@ -141,6 +142,13 @@ class PyArray : public pybind11::object {
   const pybind11::object& npy_value() const { return GetStorage().npy_value; }
   void set_npy_value(pybind11::object v) {
     GetStorage().npy_value = std::move(v);
+  }
+
+  const pybind11::object& cached_addressable_shards() const {
+    return GetStorage().cached_addressable_shards;
+  }
+  void set_cached_addressable_shards(pybind11::object v) {
+    GetStorage().cached_addressable_shards = std::move(v);
   }
 
   const std::shared_ptr<PyClient>& py_client() const {
