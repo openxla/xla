@@ -510,6 +510,21 @@ struct SetYieldOpInterface
         }
       }
     }
+
+    // Remove accumulator blocks.
+    auto *regionIt = yieldOp.getAccumulators().begin();
+    for (auto flag : yieldOp.getAccumulatorFlags()) {
+      BoolAttr accumulatorFlag = flag.cast<BoolAttr>();
+      if (!accumulatorFlag.getValue()) continue;
+
+      SmallVector<Operation *> opsToErase;
+      Block &block = regionIt->front();
+      for (auto it = block.rbegin(); it != block.rend(); it++)
+        opsToErase.push_back(&*it);
+      for (auto accOp : opsToErase) rewriter.eraseOp(accOp);
+      ++regionIt;
+    }
+
     rewriter.replaceOpWithNewOp<SetYieldOp>(op);
     return success();
   }

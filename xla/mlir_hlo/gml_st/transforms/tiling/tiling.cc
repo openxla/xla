@@ -268,6 +268,9 @@ struct TilingPass : public impl::TilingPassBase<TilingPass> {
 
 }  // namespace
 
+using AccumulatorRegionBuilderFn =
+    function_ref<void(OpBuilder &, Location, Value, Value)>;
+
 FailureOr<TilingResult> tile(const TilingOptions &options,
                              PatternRewriter &rewriter, TilingInterface op) {
   rewriter.setInsertionPoint(op);
@@ -339,9 +342,23 @@ FailureOr<TilingResult> tile(const TilingOptions &options,
   // 6. Add a `set_yield` terminator, update the uses of `outputs` with the
   // output bbArgs.
   if (options.distribute) {
+    SmallVector<bool, 2> accumulatorFlags(dstOperands.size(), true);
+    AccumulatorRegionBuilderFn accBuilderFn = [&](OpBuilder &b, Location loc,
+                                                  Value newVal, Value oldVal) {
+      auto type = newVal.getType().cast<mlir::ShapedType>();
+      Value accumulated;
+      if (type.getElementType().isa<mlir::FloatType>())
+        accumulated = b.create<arith::AddFOp>(loc, newVal, oldVal);
+      else if (type.getElementType().isa<mlir::IntegerType>())
+        accumulated = b.create<arith::AddIOp>(loc, newVal, oldVal);
+      b.create<gml_st::YieldOp>(loc, SmallVector<Value>({accumulated}));
+    };
+    SmallVector<gml_st::AccumulatorRegionBuilderFn, 2> accumulatorBuilderFns(
+        dstOperands.size(), accBuilderFn);
     rewriter.replaceOpWithNewOp<SetYieldOp>(
         terminator, tilingResult.tiledOps.front()->getResults(), dstOperands,
-        outputTiles);
+        outputTiles, rewriter.getBoolArrayAttr(accumulatorFlags),
+        accumulatorBuilderFns);
   } else {
     auto forLoop = cast<gml_st::ForOp>(tilingResult.loop);
     rewriter.replaceOpWithNewOp<SetYieldOp>(
