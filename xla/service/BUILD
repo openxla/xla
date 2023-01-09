@@ -42,6 +42,14 @@ package_group(
 )
 
 tf_proto_library(
+    name = "compilation_environments_proto",
+    srcs = ["compilation_environments.proto"],
+    cc_api_version = 2,
+    visibility = ["//visibility:public"],
+    deps = ["//google/protobuf:any"],
+)
+
+tf_proto_library(
     name = "hlo_proto",
     srcs = ["hlo.proto"],
     cc_api_version = 2,
@@ -6745,12 +6753,17 @@ cc_library(
     srcs = ["compilation_environments.cc"],
     hdrs = ["compilation_environments.h"],
     deps = [
+        ":compilation_environments_proto_cc",
+        "//google/protobuf:any_cc_proto",
+        "//xla:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",  # fixdeps: keep
         "@tsl//tsl/platform:protobuf",
     ],
@@ -6776,6 +6789,7 @@ xla_cc_test(
     deps = [
         ":compilation_environments",
         ":test_compilation_environment_proto_cc",
+        "//xla:statusor",
         "//xla:test",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/platform:casts",

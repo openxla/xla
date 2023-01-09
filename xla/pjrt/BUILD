@@ -660,6 +660,7 @@ tf_proto_library(
     protodeps = [
         "//xla:xla_data_proto",
         "//xla:xla_proto",
+        "//xla/service:compilation_environments_proto",
     ],
     visibility = ["//visibility:public"],
 )

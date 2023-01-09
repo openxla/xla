@@ -23,6 +23,8 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
+#include "xla/service/compilation_environments.pb.h"
+#include "xla/statusor.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/protobuf.h"
 
@@ -92,6 +94,13 @@ class CompilationEnvironments {
 
   // Removes all added environments.
   void Clear() { environments_.clear(); }
+
+  // Serializes this CompilationEnvironments into a protobuf message.
+  CompilationEnvironmentsProto ToProto() const;
+
+  // Deserializes the given CompilationEnvironments proto.
+  static StatusOr<std::unique_ptr<CompilationEnvironments>> CreateFromProto(
+      const CompilationEnvironmentsProto& proto);
 
  private:
   // Called by GetEnv() when it calls lazily creates a new environment, to

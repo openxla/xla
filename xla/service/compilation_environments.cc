@@ -22,6 +22,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "google/protobuf/any.pb.h"
+#include "absl/algorithm/container.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
@@ -29,6 +31,9 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/service/compilation_environments.pb.h"
+#include "xla/statusor.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/protobuf.h"
 
@@ -148,6 +153,71 @@ void CompilationEnvironments::AddProcessedEnv(
   // Actually add the env
   environments_.insert({descriptor, std::move(env)});
   EnvAdded(descriptor->full_name());
+}
+
+CompilationEnvironmentsProto CompilationEnvironments::ToProto() const {
+  // Sort the environments by their message types' full names so that the
+  // proto fields are deterministically ordered.
+  std::vector<const tsl::protobuf::Descriptor*> descriptors;
+  descriptors.reserve(environments_.size());
+  for (const auto& [descriptor, message] : environments_) {
+    descriptors.push_back(descriptor);
+  }
+  absl::c_sort(descriptors, [](const tsl::protobuf::Descriptor* lhs,
+                               const tsl::protobuf::Descriptor* rhs) {
+    return lhs->full_name() < rhs->full_name();
+  });
+
+  CompilationEnvironmentsProto proto;
+  for (const auto* const descriptor : descriptors) {
+    proto.add_environments()->PackFrom(*environments_.at(descriptor));
+  }
+  return proto;
+}
+
+StatusOr<std::unique_ptr<CompilationEnvironments>>
+CompilationEnvironments::CreateFromProto(
+    const CompilationEnvironmentsProto& proto) {
+  auto envs = std::make_unique<CompilationEnvironments>();
+
+  const tsl::protobuf::DescriptorPool* const pool =
+      tsl::protobuf::DescriptorPool::generated_pool();
+
+  for (const auto& env_proto : proto.environments()) {
+    std::string fullname;
+    if (!google::protobuf::Any::ParseAnyTypeUrl(env_proto.type_url(),
+                                                &fullname)) {
+      return tsl::errors::DataLoss(
+          "Invalid CompilationEnvironment message type url: %s",
+          env_proto.type_url());
+    }
+
+    const tsl::protobuf::Descriptor* const descriptor =
+        pool->FindMessageTypeByName(fullname);
+    if (descriptor == nullptr) {
+      return tsl::errors::DataLoss(
+          "Unknown CompilationEnvironment message type: %s", fullname);
+    }
+
+    const tsl::protobuf::Message* const prototype =
+        tsl::protobuf::MessageFactory::generated_factory()->GetPrototype(
+            descriptor);
+    if (prototype == nullptr) {
+      return tsl::errors::Internal(
+          "Unsupported CompilationEnvironment message type: %s", fullname);
+    }
+
+    std::unique_ptr<tsl::protobuf::Message> env(prototype->New());
+    if (!env_proto.UnpackTo(env.get())) {
+      return tsl::errors::DataLoss(
+          "Unable to unpack CompilationEnvironment message of type '%s'",
+          fullname);
+    }
+
+    envs->environments_.insert({descriptor, std::move(env)});
+  }
+
+  return envs;
 }
 
 }  // namespace xla
