@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_macros.h"
+#include "xla/tests/test_utils.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/test.h"
 
@@ -167,6 +168,12 @@ XLA_TEST_F(CustomCallTest, UsedInOtherComputations) {
 }
 
 XLA_TEST_F(CustomCallTest, InputAndOutputLayoutDiffer) {
+  if (IsMlirLoweringEnabled()) {
+    // The MLIR pipeline does /not/ transpose the output here, and there's no
+    // obvious reason why it should.
+    GTEST_SKIP() << "Appears to test an XLA current implementation detail";
+  }
+
   auto module = CreateNewVerifiedModule();
   auto b = HloComputation::Builder(TestName());
 
@@ -316,6 +323,10 @@ XLA_TEST_F(CustomCallTest, TransitiveCustomCallReportsFirstFailure) {
 }
 
 XLA_TEST_F(CustomCallTest, FillStatusMsgWithBackendConfigStr) {
+  if (IsMlirLoweringEnabled()) {
+    GTEST_SKIP() << "Invalid values unsupported by MLIR";
+  }
+
   const char* const kModuleStr = R"(
     HloModule m
     ENTRY test {

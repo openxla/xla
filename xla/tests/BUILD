@@ -1690,6 +1690,7 @@ xla_test(
         ":hlo_test_base",
         ":literal_test_util",
         ":test_macros_header",
+        ":test_utils",
         ":xla_internal_test_main",  # fixdeps: keep
         "//xla:literal_util",
         "//xla:shape_util",
@@ -1701,7 +1702,6 @@ xla_test(
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
     ],
