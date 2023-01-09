@@ -300,6 +300,7 @@ cc_library(
     hdrs = ["hlo_module_loader.h"],
     visibility = ["//xla:friends"],
     deps = [
+        ":run_hlo_module_proto_cc",
         "//xla:debug_options_flags",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
