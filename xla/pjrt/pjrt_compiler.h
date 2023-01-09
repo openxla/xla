@@ -24,6 +24,8 @@ limitations under the License.
 
 namespace xla {
 
+class PjRtCompiler;
+
 // TODO(b/240299401): Move CompileOptions to this file.
 
 // Abstract interface to represent device topology that is used by the compiler.
@@ -40,6 +42,9 @@ class PjRtDeviceTopology {
   // Returns a string containing human-readable, platform-specific version info
   // (e.g. the CUDA version on GPU or libtpu version on Cloud TPU).
   virtual absl::string_view platform_version() const = 0;
+
+  // Returns a compiler for this topology (nullptr if not supported).
+  virtual PjRtCompiler* compiler() const;
 };
 
 // Abstract interface that all registered compilers must implement.
