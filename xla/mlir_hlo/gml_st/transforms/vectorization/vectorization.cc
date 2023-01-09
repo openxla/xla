@@ -172,6 +172,7 @@ struct MaterializeUpdateTransferWriteTensorOperand
 
   LogicalResult matchAndRewrite(vector::TransferWriteOp op,
                                 PatternRewriter &rewriter) const override {
+    return failure();
     // Sanity checks of TransferWriteOp.
     if (op.hasOutOfBoundsDim()) return failure();
     if (op.getVectorType().getRank() != op.getShapedType().getRank())
@@ -211,6 +212,7 @@ struct SetYieldUpdateTransferWriteTensorOperand
 
   LogicalResult matchAndRewrite(SetYieldOp op,
                                 PatternRewriter &rewriter) const override {
+    return failure();
     bool changed = false;
     for (const auto &[src, dst, set] :
          llvm::zip(op.getSrcs(), op.getDsts(), op.getSets())) {
