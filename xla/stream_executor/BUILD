@@ -151,8 +151,8 @@ cc_library(
     name = "module_spec",
     hdrs = ["module_spec.h"],
     deps = [
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -326,6 +326,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
@@ -399,6 +400,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
@@ -497,6 +499,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
@@ -529,6 +532,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
@@ -540,11 +544,11 @@ cc_library(
     hdrs = ["blas.h"],
     deps = [
         ":data_type",
-        ":host_or_device_scalar",
         ":stream_executor_headers",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -609,6 +613,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
