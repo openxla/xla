@@ -824,11 +824,7 @@ xla_cc_binary(
         "//xla/stream_executor:stream_executor_impl",
         "//xla/stream_executor:dnn",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:tensor_float_32_utils",
-        "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
-        "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
         "@tsl//tsl/util:command_line_flags",
-        "@tsl//tsl/util:determinism",
     ] + if_cuda_is_configured([
         "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/stream_executor/cuda:cublas_plugin",

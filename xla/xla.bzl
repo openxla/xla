@@ -48,10 +48,14 @@ def xla_cc_binary(deps = None, copts = tsl_copts(), **kwargs):
         "//xla/service/gpu:backend_configs_cc_impl",
         "//xla/stream_executor:dnn_proto_cc_impl",
         "@tsl//tsl/platform:env_impl",
+        "@tsl//tsl/platform:tensor_float_32_utils",
         "@tsl//tsl/profiler/utils:time_utils_impl",
+        "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
         "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
+        "@tsl//tsl/protobuf:autotuning_proto_cc_impl",
         "@tsl//tsl/protobuf:protos_all_cc_impl",
         "@tsl//tsl/protobuf:dnn_proto_cc_impl",
+        "@tsl//tsl/util:determinism",
     ]
     native.cc_binary(deps = deps, copts = copts, **kwargs)
 
