@@ -84,6 +84,19 @@ void PyBuffer_tp_dealloc(PyObject* self) {
   Py_DECREF(tp);
 }
 
+// Returns if shape has a major-to-minor layout.
+bool HasMajorToMinorLayout(const xla::Shape& shape) {
+  if (shape.has_layout()) {
+    for (int i = 0; i < shape.layout().minor_to_major_size(); ++i) {
+      if (shape.layout().minor_to_major(i) !=
+          shape.layout().minor_to_major_size() - 1 - i) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 /*static*/ PyBuffer::object PyBuffer::Make(
@@ -278,15 +291,32 @@ Status PyBuffer::CopyToHostAsync() {
     TF_ASSIGN_OR_RETURN(const auto* dynamic_shape, xla_dynamic_shape());
 
     py::gil_scoped_release gil;
-    // TODO(hyeontaek): Add a version using ifrt::Array::ToHostBuffer().
-    host_value->value = std::make_shared<Literal>(
-        ShapeUtil::DeviceShapeToHostShape(*dynamic_shape));
-    Literal* literal = host_value->value.get();
-    pjrt_buffer()->ToLiteral(
-        literal, [host_value{std::move(host_value)}](Status status) {
-          host_value->status = std::move(status);
-          host_value->ready.Notify();
-        });
+    xla::Shape host_shape = ShapeUtil::DeviceShapeToHostShape(*dynamic_shape);
+    ifrt::Future<Status> copy_future;
+    // TODO(hyeontaek): Several PjRt runtimes assume that the host buffer uses
+    // the same transposition as the device buffer. This is different from
+    // PjRtBuffer::ToLiteral()'s semantics that the runtime respects the layout
+    // of the host buffer literal. On the other hand, the runtime often knows
+    // better about an efficient layout for the host buffer. It will be useful
+    // to revisit the semantics of PjRtBuffer::ToLiteral() to see if it is
+    // desirable for the runtime to choose the layout.
+    if (!dynamic_shape->has_layout() || HasMajorToMinorLayout(*dynamic_shape)) {
+      LayoutUtil::SetToDefaultLayout(&host_shape);
+      host_value->value = std::make_shared<Literal>(host_shape);
+      copy_future = ifrt_array_->CopyToHostBuffer(
+          host_value->value->untyped_data(), /*byte_strides=*/std::nullopt,
+          ifrt::ArrayCopySemantics::kReuseInput);
+    } else {
+      host_value->value = std::make_shared<Literal>(host_shape);
+      copy_future =
+          ifrt_array_->CopyToHostBuffer(host_value->value->untyped_data(),
+                                        ByteStridesForShapeInt64(host_shape),
+                                        ifrt::ArrayCopySemantics::kReuseInput);
+    }
+    copy_future.OnReady([host_value{std::move(host_value)}](Status status) {
+      host_value->status = std::move(status);
+      host_value->ready.Notify();
+    });
   }
   return OkStatus();
 }
