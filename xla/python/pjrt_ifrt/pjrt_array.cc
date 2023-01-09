@@ -22,7 +22,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "llvm/Support/Casting.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/ifrt/array.h"
@@ -33,6 +32,7 @@ limitations under the License.
 namespace xla {
 namespace ifrt {
 
+char PjRtCompatibleArray::ID = 0;
 char PjRtArray::ID = 0;
 
 StatusOr<xla::PrimitiveType> ToPrimitiveType(DType dtype) {
