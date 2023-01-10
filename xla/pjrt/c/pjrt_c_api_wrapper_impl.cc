@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -866,8 +867,13 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
       "PJRT_Buffer_ToHostBuffer_Args",
       PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE, args->struct_size));
 
-  const xla::Shape& host_shape = xla::ShapeUtil::DeviceShapeToHostShape(
+  xla::Shape host_shape = xla::ShapeUtil::DeviceShapeToHostShape(
       args->src->buffer->on_device_shape());
+  if (args->has_layout) {
+    *host_shape.mutable_layout() = ApiConverter::FromC(&args->layout);
+  } else {
+    xla::LayoutUtil::SetToDefaultLayout(&host_shape);
+  }
 
   size_t host_buffer_size = xla::ShapeUtil::ByteSizeOfElements(host_shape);
 

@@ -1003,6 +1003,12 @@ PjRtFuture<Status> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
 
   args.dst_size = ShapeUtil::ByteSizeOfElements(shape);
   args.dst = literal->untyped_data();
+  if (shape.has_layout()) {
+    args.has_layout = true;
+    ApiConverter::ToC(shape.layout(), &args.layout);
+  } else {
+    args.has_layout = false;
+  }
   const PJRT_Api* api = pjrt_c_api();
 
   std::unique_ptr<PJRT_Error, ::pjrt::PJRT_ErrorDeleter> error{
