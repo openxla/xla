@@ -17,6 +17,8 @@ syntax = "proto3";
 
 package stream_executor;
 
+import "xla/autotune_results.proto";
+
 message CudaComputeCapabilityProto {
   int32 major = 1;
   int32 minor = 2;
@@ -56,4 +58,6 @@ message GpuTargetConfigProto {
   }
   string platform_name = 4;
   DnnVersionInfoProto dnn_version_info = 5;
+  xla.AutotuneResults autotune_results = 6;
+  string device_description_str = 7;
 }

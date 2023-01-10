@@ -119,8 +119,6 @@ xla::Status XlaCompileMain(const std::string& module_path,
 
   TF_ASSIGN_OR_RETURN(ProgramShape shape, xla_computation.GetProgramShape());
   DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
-  // Disable autotuning because there is no attached device.
-  debug_options.set_xla_gpu_autotune_level(0);
   HloModuleConfig config(shape);
   config.set_debug_options(debug_options);
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
@@ -142,7 +140,6 @@ xla::Status XlaCompileMain(const std::string& module_path,
         gpu_target_config_string, &gpu_target_config_proto);
     if (!ok) return FailedPrecondition("Failed to parse GpuTargetConfigProto");
     gpu::GpuTargetConfig gpu_target_config(gpu_target_config_proto);
-
     TF_ASSIGN_OR_RETURN(result, AotCompileGpuExecutable(std::move(hlo_module),
                                                         gpu_target_config));
 #endif
