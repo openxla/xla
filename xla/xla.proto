@@ -439,7 +439,15 @@ message DebugOptions {
 
   bool xla_dump_latency_hiding_schedule = 182;
 
-  // Next id: 184
+  // Memory budget in GB per device for AutoSharding.
+  int32 xla_gpu_auto_spmd_partitioning_memory_budget_gb = 184;
+
+  // See the definition of the
+  // xla_tpu_auto_spmd_partitioning_memory_budget_ratio flag for the meaning of
+  // this field.
+  float xla_gpu_auto_spmd_partitioning_memory_budget_ratio = 185;
+
+  // Next id: 186
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

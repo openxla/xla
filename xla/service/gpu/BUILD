@@ -1734,6 +1734,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
+        "//xla/hlo/experimental/auto_sharding",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms:hlo_constant_splitter",
         "//xla/mlir/backends/gpu/transforms:passes",
