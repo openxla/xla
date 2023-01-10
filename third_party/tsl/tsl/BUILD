@@ -91,20 +91,6 @@ config_setting(
     visibility = ["//visibility:public"],
 )
 
-# Config setting for determining if we are building for Android.
-config_setting(
-    name = "android",
-    flag_values = if_google(
-        {"//tools/cpp:cc_target_os": "android"},
-        {},
-    ),
-    values = if_oss(
-        {"crosstool_top": "//external:android/crosstool"},
-        {},
-    ),
-    visibility = ["//visibility:public"],
-)
-
 config_setting(
     name = "emscripten",
     flag_values = if_google(
@@ -168,41 +154,22 @@ config_setting(
     visibility = ["//visibility:public"],
 )
 
-selects.config_setting_group(
+# TODO(csigg): Fix usages, then remove this alias.
+[
+    alias(
+        name = name,
+        actual = "@platforms//os:%s" % name,
+        deprecation = "use //third_party/bazel_platforms/os:%s instead" % name,
+        visibility = ["//visibility:public"],
+    )
+    for name in ("android", "freebsd", "fuchsia", "ios", "windows")
+]
+
+# TODO(csigg): Fix usages, then remove this alias.
+alias(
     name = "macos",
-    match_any = [
-        ":macos_x86_64",
-        ":macos_arm64",
-    ],
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "windows",
-    # Internal builds query the target OS.
-    flag_values = if_google(
-        {"//tools/cpp:cc_target_os": "windows"},
-        {},
-    ),
-    # OSS builds query the CPU type.
-    values = if_oss(
-        {"cpu": "x64_windows"},
-        {},
-    ),
-    visibility = ["//visibility:public"],
-)
-
-# TODO(jakeharmon): Remove equivalent from tensorflow/BUILD
-config_setting(
-    name = "ios",
-    flag_values = if_google(
-        {"//tools/cpp:cc_target_os": "apple"},
-        {},
-    ),
-    values = if_oss(
-        {"apple_platform_type": "ios"},
-        {},
-    ),
+    actual = "@platforms//os:osx",
+    deprecation = "use //third_party/bazel_platforms/os:osx instead",
     visibility = ["//visibility:public"],
 )
 
@@ -292,20 +259,6 @@ config_setting(
 config_setting(
     name = "with_numa_support",
     define_values = {"with_numa_support": "true"},
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "fuchsia",
-    flag_values = if_google(
-        {"//tools/cpp:cc_target_os": "fuchsia"},
-        {},
-    ),
-    values = if_oss(
-        # TODO(b/149248802) When we have a Fuchsia Bazel SDK update to use the values it sets.
-        {"cpu": "fuchsia"},
-        {},
-    ),
     visibility = ["//visibility:public"],
 )
 
@@ -399,12 +352,6 @@ selects.config_setting_group(
         ":with_tpu_support_define",
         ":with_tpu_support_flag",
     ],
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "freebsd",
-    values = {"cpu": "freebsd"},
     visibility = ["//visibility:public"],
 )
 
