@@ -2200,6 +2200,27 @@ xla_test(
 )
 
 xla_test(
+    name = "gpu_dump_mlir_passes_test",
+    srcs = ["gpu_dump_mlir_passes_test.cc"],
+    backends = [
+        "gpu",
+    ],
+    deps = [
+        ":hlo_test_base",
+        ":xla_internal_test_main",
+        "//xla:status",
+        "//xla:test",
+        "//xla/service:hlo_proto_cc",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_test(
     name = "value_inference_test",
     srcs = ["value_inference_test.cc"],
     deps = [
