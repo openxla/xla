@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "xla/pjrt/compile_options.pb.h"
+#include "xla/service/compilation_environments.h"
 #include "xla/service/computation_placer.h"
 #include "xla/shape.h"
 #include "xla/xla.pb.h"
@@ -58,6 +59,11 @@ class ExecutableBuildOptions {
   // indicates the option has not been set.
   ExecutableBuildOptions& set_result_layout(const Shape& shape_with_layout);
   const Shape* result_layout() const;
+
+  // Expose access to the XLA compilation environments, which will be passed to
+  // the compilation process.
+  const CompilationEnvironments& comp_envs() const { return comp_envs_; }
+  CompilationEnvironments* mutable_comp_envs() { return &comp_envs_; }
 
   // Expose access to the XLA debug options which will be passed to the
   // compilation process.
@@ -190,6 +196,7 @@ class ExecutableBuildOptions {
   int device_ordinal_ = -1;
   Shape result_layout_;
   bool result_layout_set_ = false;
+  CompilationEnvironments comp_envs_;
   std::optional<DebugOptions> debug_options_;
   se::DeviceMemoryAllocator* device_allocator_ = nullptr;
   int num_replicas_ = 1;

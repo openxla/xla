@@ -105,6 +105,8 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/pjrt:compile_options_proto_cc",
+        "//xla/service:compilation_environments",
+        "//xla/service:compilation_environments_proto_cc",
         "//xla/service:computation_placer",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",

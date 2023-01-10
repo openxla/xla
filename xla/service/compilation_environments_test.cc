@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 
 #include "xla/service/test_compilation_environment.pb.h"
+#include "xla/statusor.h"
 #include "xla/test.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/protobuf.h"
@@ -172,6 +173,29 @@ TEST_F(CompilationEnvironmentsTest, CopyAssignment) {
   // assignment, envs2 will not have one either. So, we should get the default
   // environment value.
   EXPECT_EQ(envs2->GetEnv<TestCompilationEnvironment3>().a_third_flag(), 300);
+}
+
+TEST_F(CompilationEnvironmentsTest, ProtoRoundTrip) {
+  // Setup envs with 2 environments.
+  auto envs = std::make_unique<CompilationEnvironments>();
+  auto env1 = std::make_unique<TestCompilationEnvironment1>();
+  env1->set_some_flag(10);
+  envs->AddEnv(std::move(env1));
+  auto env2 = std::make_unique<TestCompilationEnvironment2>();
+  envs->AddEnv(std::move(env2));
+  envs->GetMutableEnv<TestCompilationEnvironment2>().set_some_other_flag(20);
+
+  auto proto = envs->ToProto();
+  TF_ASSERT_OK_AND_ASSIGN(auto envs_deserialized,
+                          CompilationEnvironments::CreateFromProto(proto));
+
+  // Verify that envs_deserialized has the same values with which envs was
+  // initialized.
+  EXPECT_EQ(
+      envs_deserialized->GetEnv<TestCompilationEnvironment1>().some_flag(), 10);
+  EXPECT_EQ(envs_deserialized->GetEnv<TestCompilationEnvironment2>()
+                .some_other_flag(),
+            20);
 }
 
 }  // namespace

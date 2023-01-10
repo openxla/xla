@@ -18,6 +18,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "xla/debug_options_flags.h"
 #include "xla/execution_options_util.h"
+#include "xla/service/compilation_environments.pb.h"
 #include "xla/shape_util.h"
 
 namespace xla {
@@ -109,6 +110,7 @@ StatusOr<ExecutableBuildOptionsProto> ExecutableBuildOptions::ToProto() const {
   if (result_layout()) {
     *output.mutable_result_layout() = result_layout()->ToProto();
   }
+  *output.mutable_comp_envs() = comp_envs().ToProto();
   if (has_debug_options()) {
     *output.mutable_debug_options() = debug_options();
   }
