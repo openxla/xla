@@ -20,6 +20,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_H_
 
 #include <map>
+#include <memory>
 
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_options.h"
