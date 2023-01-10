@@ -467,7 +467,7 @@ typedef struct {
   size_t num_dims;
   // Number of bytes to traverse per dimension. Must be the same size as `dims`,
   // or empty. If empty, the array is assumed to have a dense layout with
-  // dimensions in major-to-minor order
+  // dimensions in major-to-minor order.
   // Caution: `byte_strides` are allowed to be negative, in which case `data`
   // may need to point to the interior of the buffer, not necessarily its start.
   const int64_t* byte_strides;
@@ -929,6 +929,13 @@ typedef struct {
   // size needed. Otherwise, `dst_size` must be greater than or equal to the
   // needed size.
   size_t dst_size;  // in/out
+  // Number of bytes to traverse per dimension. Must be the same size as `dims`,
+  // or empty. If empty, the array is assumed to have a dense layout with
+  // dimensions in major-to-minor order.
+  // Caution: `byte_strides` must represent a dense layout, possibly with a
+  // transposition. The elements of `byte_strides` must be positive.
+  const int64_t* byte_strides;
+  size_t num_byte_strides;
 
   // Event that signals when the copy has completed.
   PJRT_Event* event;  // out

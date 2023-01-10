@@ -1001,6 +1001,19 @@ PjRtFuture<Status> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
 
   args.dst_size = ShapeUtil::ByteSizeOfElements(shape);
   args.dst = literal->untyped_data();
+  std::vector<int64_t> byte_strides;
+  if (shape.has_layout()) {
+    byte_strides.resize(shape.dimensions_size());
+    xla::Status s = ShapeUtil::ByteStrides(shape, absl::MakeSpan(byte_strides));
+    if (!s.ok()) {
+      return PjRtFuture<Status>(s);
+    }
+    args.byte_strides = byte_strides.data();
+    args.num_byte_strides = byte_strides.size();
+  } else {
+    args.byte_strides = nullptr;
+    args.num_byte_strides = 0;
+  }
   const PJRT_Api* api = pjrt_c_api();
 
   std::unique_ptr<PJRT_Error, ::pjrt::PJRT_ErrorDeleter> error{

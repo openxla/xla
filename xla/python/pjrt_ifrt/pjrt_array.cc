@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/utils.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/shape_util.h"
@@ -36,48 +37,6 @@ namespace ifrt {
 
 char PjRtCompatibleArray::ID = 0;
 char PjRtArray::ID = 0;
-
-namespace {
-
-// Converts byte strides into a shape with a matching layout. Only trivial
-// (compact) striding (a transposition of the underlying dense buffer) are
-// supported.
-StatusOr<xla::Shape> XlaShapeForTrivialByteStrides(
-    PrimitiveType element_type, absl::Span<int64_t const> dims,
-    absl::Span<int64_t const> byte_strides) {
-  CHECK_EQ(dims.size(), byte_strides.size());
-  std::vector<int64_t> minor_to_major(dims.size());
-  std::iota(minor_to_major.rbegin(), minor_to_major.rend(), 0);
-  // Find minor-to-major only if there is no zero dimension size because
-  // minor-to-major is irrelevant with any zero dimension size.
-  if (absl::c_find(dims, 0) == dims.end()) {
-    absl::c_sort(minor_to_major, [&](int a, int b) {
-      if (byte_strides[a] < byte_strides[b]) {
-        return true;
-      }
-      if (byte_strides[a] > byte_strides[b]) {
-        return false;
-      }
-      return dims[a] == 1 && dims[b] != 1;
-    });
-    int64_t byte_stride = ShapeUtil::ByteSizeOfPrimitiveType(element_type);
-    for (int64_t d : minor_to_major) {
-      if (dims[d] != 1 && byte_strides[d] != byte_stride) {
-        return Unimplemented(
-            "Only trivial (compact) byte strides are supported; i.e., byte "
-            "striding represents a transposition of the underlying dense "
-            "buffer but not broadcasting. Dimensions were: [%s], byte strides "
-            "were [%s].",
-            absl::StrJoin(dims, ","), absl::StrJoin(byte_strides, ","));
-      }
-      byte_stride *= dims[d];
-    }
-  }
-  return ShapeUtil::MakeShapeWithDenseLayout(element_type, dims,
-                                             minor_to_major);
-}
-
-}  // namespace
 
 StatusOr<xla::PrimitiveType> ToPrimitiveType(DType dtype) {
   switch (dtype.kind()) {
@@ -262,7 +221,8 @@ Future<Status> PjRtArray::CopyToHostBuffer(
 
   std::unique_ptr<xla::MutableBorrowingLiteral> literal;
   if (byte_strides.has_value()) {
-    auto xla_shape = XlaShapeForTrivialByteStrides(*dtype, dims, *byte_strides);
+    auto xla_shape =
+        MakeShapeWithTrivialByteStrides(*dtype, dims, *byte_strides);
     if (!xla_shape.ok()) {
       return Future<Status>(std::move(xla_shape).status());
     }

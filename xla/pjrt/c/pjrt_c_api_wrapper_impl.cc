@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/utils.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -866,8 +868,18 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
       "PJRT_Buffer_ToHostBuffer_Args",
       PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE, args->struct_size));
 
-  const xla::Shape& host_shape = xla::ShapeUtil::DeviceShapeToHostShape(
+  xla::Shape host_shape = xla::ShapeUtil::DeviceShapeToHostShape(
       args->src->buffer->on_device_shape());
+  if (args->byte_strides != nullptr) {
+    auto byte_strides =
+        absl::Span<const int64_t>(args->byte_strides, args->num_byte_strides);
+    PJRT_ASSIGN_OR_RETURN(
+        host_shape,
+        xla::MakeShapeWithTrivialByteStrides(
+            host_shape.element_type(), host_shape.dimensions(), byte_strides));
+  } else {
+    xla::LayoutUtil::SetToDefaultLayout(&host_shape);
+  }
 
   size_t host_buffer_size = xla::ShapeUtil::ByteSizeOfElements(host_shape);
 
