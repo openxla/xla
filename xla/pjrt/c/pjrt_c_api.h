@@ -929,6 +929,8 @@ typedef struct {
   // size needed. Otherwise, `dst_size` must be greater than or equal to the
   // needed size.
   size_t dst_size;  // in/out
+  bool has_layout;
+  XLA_Layout layout;
 
   // Event that signals when the copy has completed.
   PJRT_Event* event;  // out
