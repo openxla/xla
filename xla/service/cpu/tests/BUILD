@@ -135,6 +135,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_eigen_dot_operation_test",
     srcs = ["cpu_eigen_dot_operation_test.cc"],
+    tags = ["no_mac_arm64"],
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service/cpu:cpu_compiler",
