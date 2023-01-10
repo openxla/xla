@@ -28,7 +28,7 @@ namespace tpu {
 class TpuCore;
 }  // namespace tpu
 
-namespace tensorflow {
+namespace stream_executor {
 namespace tpu {
 
 class TpuExecutorInterface
@@ -49,13 +49,16 @@ class TpuExecutorInterface
     LOG(FATAL) << "Unimplemented.";
   }
 
-  virtual const TpuPlatformInterface& platform() const {
+  virtual const tensorflow::tpu::TpuPlatformInterface& platform() const {
     LOG(FATAL) << "Unimplemented.";
   }
 
-  virtual TpuPlatformInterface& platform() { LOG(FATAL) << "Unimplemented."; }
+  virtual tensorflow::tpu::TpuPlatformInterface& platform() {
+    LOG(FATAL) << "Unimplemented.";
+  }
 
-  virtual TpuCoreLocationExternal GetCoreLocationExternal() const {
+  virtual tensorflow::tpu::TpuCoreLocationExternal GetCoreLocationExternal()
+      const {
     LOG(FATAL) << "Unimplemented.";
   }
 
@@ -68,6 +71,6 @@ class TpuExecutorInterface
 };
 
 }  // namespace tpu
-}  // namespace tensorflow
+}  // namespace stream_executor
 
 #endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTOR_INTERFACE_H_
