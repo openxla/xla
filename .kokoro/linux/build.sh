@@ -19,6 +19,9 @@
 # -o history: record shell history
 set -euox pipefail -o history
 
+# Generate a templated results file to make output accessible to everyone
+"$KOKORO_ARTIFACTS_DIR"/github/xla/.kokoro/generate_index_html.sh "$KOKORO_ARTIFACTS_DIR"/index.html
+
 function is_linux_gpu_job() {
   [[ "$KOKORO_JOB_NAME" =~ tensorflow/xla/linux/.*gpu.* ]]
 }

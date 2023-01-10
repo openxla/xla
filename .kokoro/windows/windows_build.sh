@@ -19,6 +19,9 @@
 # Note: set -x <code> +x around anything you want to have logged.
 set -euox pipefail
 
+# Generate a templated results file to make output accessible to everyone
+"$KOKORO_ARTIFACTS_DIR"/github/xla/.kokoro/generate_index_html.sh "$KOKORO_ARTIFACTS_DIR"/index.html
+
 cd "${KOKORO_ARTIFACTS_DIR}/github/xla"
 
 export PATH="$PATH:/c/Python38"
