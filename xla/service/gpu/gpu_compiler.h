@@ -17,10 +17,10 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_COMPILER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
@@ -114,7 +114,6 @@ class GpuCompiler : public LLVMCompiler {
  public:
   GpuCompiler(se::Platform::Id platform_id, const char* target_triple,
               const char* data_layout);
-  ~GpuCompiler() override {}
 
   using LLVMCompiler::Compile;
 
@@ -186,7 +185,8 @@ class GpuCompiler : public LLVMCompiler {
                            const GpuTargetConfig& gpu_target_config);
 
   virtual Status OptimizeHloConvolutionCanonicalization(
-      HloModule* hlo_module, se::CudaComputeCapability cuda_compute_capability,
+      HloModule* hlo_module, se::dnn::VersionInfo cudnn_version,
+      se::CudaComputeCapability cuda_compute_capability,
       se::DeviceMemoryAllocator* device_allocator) = 0;
 
   virtual HloDataflowAnalysis::CanShareBuffer GetCanShareBuffer() {
@@ -235,7 +235,7 @@ class GpuCompiler : public LLVMCompiler {
 StatusOr<std::unique_ptr<llvm::Module>> CompileModuleToLlvmIr(
     HloModule* hlo_module, llvm::LLVMContext* llvm_context,
     const std::string& target_triple, const std::string& data_layout,
-    const std::string& platform_name, const se::Platform::Id platform_id,
+    const std::string& platform_name, se::Platform::Id platform_id,
     GpuDeviceInfo gpu_device_info,
     se::CudaComputeCapability cuda_compute_capability,
     se::RocmComputeCapability rocm_compute_capability, int pointer_size);
