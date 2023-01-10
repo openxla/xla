@@ -219,6 +219,7 @@ cc_library(
         "//xla/service/cpu/runtime:collectives",
         "//xla/service/cpu/runtime:custom_call",
         "//xla/service/cpu/runtime:fft_call",
+        "//xla/service/cpu/runtime:rng",
         "//xla/service/cpu/runtime:xfeed",
         "//xla/service:stochastic_convert_decomposer",
         "//xla/translate/hlo_to_mhlo:hlo_utils",

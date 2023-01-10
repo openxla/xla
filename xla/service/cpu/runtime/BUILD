@@ -78,3 +78,18 @@ cc_library(
         "@llvm-project//mlir:Support",
     ],
 )
+
+cc_library(
+    name = "rng",
+    srcs = ["rng.cc"],
+    hdrs = ["rng.h"],
+    deps = [
+        "//xla:executable_run_options",
+        "//xla:xla_data_proto_cc",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "@com_google_absl//absl/status",
+        "@llvm-project//mlir:Support",
+    ],
+)

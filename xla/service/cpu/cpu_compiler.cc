@@ -123,6 +123,7 @@ limitations under the License.
 #include "xla/service/cpu/runtime/collectives.h"
 #include "xla/service/cpu/runtime/custom_call.h"
 #include "xla/service/cpu/runtime/fft_call.h"
+#include "xla/service/cpu/runtime/rng.h"
 #include "xla/service/cpu/runtime/xfeed.h"
 #include "xla/service/cpu/simple_orc_jit.h"
 #include "xla/service/cpu/xla_framework.h"
@@ -323,6 +324,7 @@ runtime::JitExecutable::Options GetXlaRuntimeJitExecutableOptions() {
         PopulateXlaCpuCustomCall(registry);
         PopulateXlaXfeedCall(registry);
         PopulateXlaCpuFftCall(registry);
+        PopulateXlaCpuRngCall(registry);
       });
   opts.compiler.create_compilation_pipeline =
       [copts](xla::runtime::PassManager& passes) {
@@ -556,7 +558,9 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 
   // Expand random number generation.
   pipeline.AddPass<RngExpander>();
-  pipeline.AddPass<RngBitGeneratorExpander>(RandomAlgorithm::RNG_PHILOX);
+  if (!is_mlir_compile) {
+    pipeline.AddPass<RngBitGeneratorExpander>(RandomAlgorithm::RNG_PHILOX);
+  }
 
   // Remove zero-sized HLO from the input so that other passes don't have to
   // handle it.
