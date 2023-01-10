@@ -17,6 +17,7 @@ xla_cc_binary(
     srcs = ["hlo_bisect.cc"],
     deps = [
         ":hlo_bisect_utils",
+        "//third_party/py/jax/jaxlib:gpu_kernels",
         "//xla:debug_options_flags",
         "//xla/service:backend",
         "//xla/service:cpu_plugin",
