@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/name_uniquer.h"
-#include "xla/types.h"
 #include "xla/xla.pb.h"
 #include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/platform/logging.h"
@@ -70,7 +69,7 @@ class HloModule {
  public:
   // Constructor.
   HloModule(const std::string& name, HloModuleConfig config);
-  virtual ~HloModule() {}
+  virtual ~HloModule() = default;
 
   // Adds an entry computation to the module. A module can only have one entry
   // computation. Returns a pointer to the newly added computation.
@@ -474,8 +473,8 @@ class HloModule {
   }
 
   // Get the list of program arguments to be prefetch across programs.
-  const absl::Span<const std::pair<int64_t, ShapeIndex>>
-  CrossProgramPrefetches() const {
+  absl::Span<const std::pair<int64_t, ShapeIndex>> CrossProgramPrefetches()
+      const {
     return cross_program_prefetches_;
   }
 

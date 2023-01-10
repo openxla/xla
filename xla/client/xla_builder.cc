@@ -38,8 +38,6 @@ limitations under the License.
 #include "xla/client/xla_computation.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/layout_util.h"
