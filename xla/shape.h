@@ -34,6 +34,12 @@ namespace xla {
 // structure (number of elements and nesting).
 class Shape {
  public:
+  enum class Storage {
+    kUnspecified,
+    kPrivate,
+    kShared,
+  };
+
   Shape();
   ~Shape();
   Shape(const Shape&);
@@ -45,12 +51,14 @@ class Shape {
 
   Shape(PrimitiveType element_type, absl::Span<const int64_t> dimensions,
         absl::Span<const bool> dynamic_dimensions,
-        std::vector<Shape> tuple_shapes)
+        std::vector<Shape> tuple_shapes,
+        Storage storage = Storage::kUnspecified)
       : element_type_(element_type),
         dimensions_(dimensions.begin(), dimensions.end()),
         dynamic_dimensions_(dynamic_dimensions.begin(),
                             dynamic_dimensions.end()),
-        tuple_shapes_(std::move(tuple_shapes)) {}
+        tuple_shapes_(std::move(tuple_shapes)),
+        storage_(storage) {}
 
   // Returns a ShapeProto representation of the Shape.
   ShapeProto ToProto() const;
@@ -168,6 +176,10 @@ class Shape {
   }
   void clear_layout() { layout_ = std::nullopt; }
 
+  // Methods for accessing the storage field.
+  Storage storage() const { return storage_; }
+  void set_storage(Storage value) { storage_ = value; }
+
   // Recursively clear dynamic dimension of a shape.
   void clear_dynamic_dimensions() {
     if (!IsTuple()) {
@@ -194,6 +206,7 @@ class Shape {
     clear_dimensions();
     tuple_shapes_.clear();
     clear_layout();
+    storage_ = Storage::kUnspecified;
   }
 
   std::string SerializeAsString() const {
@@ -255,6 +268,10 @@ class Shape {
       ignore_dimensions_ = true;
       return *this;
     }
+    Equal& IgnoreStorage() {
+      ignore_storage_ = true;
+      return *this;
+    }
 
    private:
     bool ignore_layout_ = false;
@@ -265,13 +282,15 @@ class Shape {
     bool ignore_fp_precision_ = false;
     bool ignore_dynamic_dimension_ = false;
     bool ignore_dimensions_ = false;
+    bool ignore_storage_ = false;
   };
 
   // Test that all fields of the shape are the same, equivalent to Equal().
   bool operator==(const Shape& other) const { return Equal()(*this, other); }
   bool operator!=(const Shape& other) const { return !(*this == other); }
 
-  template <typename H, bool kIsLayoutSensitive = true>
+  template <typename H, bool kIsLayoutSensitive = true,
+            bool kIsStorageSensitive = true>
   static H Hash(H h, const Shape& s) {
     if (s.IsTuple()) {
       for (const Shape& subshape : s.tuple_shapes_) {
@@ -283,6 +302,9 @@ class Shape {
                    s.dynamic_dimensions_);
     if (kIsLayoutSensitive) {
       h = H::combine(std::move(h), s.layout_);
+    }
+    if (kIsStorageSensitive) {
+      h = H::combine(std::move(h), s.storage_);
     }
     return std::move(h);
   }
@@ -310,6 +332,8 @@ class Shape {
 
   // The layout of the shape. Only relevant for arrays.
   std::optional<Layout> layout_;
+
+  Storage storage_;
 };
 
 // Shape of the parameters and output of an XLA computation. This is analogous

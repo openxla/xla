@@ -3945,6 +3945,36 @@ TEST_F(HloParserTest, ParseTokenType) {
       << "actual:   " << ShapeUtil::HumanString(actual);
 }
 
+TEST_F(HloParserTest, ParseShapeStringWithStorage) {
+  std::string shape_string = "f32[123:private]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape(shape_string));
+  Shape expected =
+      ShapeUtil::MakeShapeWithStorage(F32, {123}, Shape::Storage::kPrivate);
+  ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
+      << "expected: " << ShapeUtil::HumanString(expected)
+      << "actual:   " << ShapeUtil::HumanString(actual);
+
+  shape_string = "f32[123:shared]";
+  TF_ASSERT_OK_AND_ASSIGN(actual, ParseShape(shape_string));
+  expected =
+      ShapeUtil::MakeShapeWithStorage(F32, {123}, Shape::Storage::kShared);
+  ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
+      << "expected: " << ShapeUtil::HumanString(expected)
+      << "actual:   " << ShapeUtil::HumanString(actual);
+
+  shape_string = "f32[123,456:private]";
+  TF_ASSERT_OK_AND_ASSIGN(actual, ParseShape(shape_string));
+  expected = ShapeUtil::MakeShapeWithStorage(F32, {123, 456},
+                                             Shape::Storage::kPrivate);
+  ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
+      << "expected: " << ShapeUtil::HumanString(expected)
+      << "actual:   " << ShapeUtil::HumanString(actual);
+
+  shape_string = "f32[123,456:global]";
+  StatusOr<Shape> result = ParseShape(shape_string);
+  ASSERT_FALSE(result.ok());
+}
+
 TEST_F(HloParserTest, ParseInvalidShapeString) {
   std::string shape_strings[] = {"f32[123,456]foobar{0,1}", "f32[123,456]{foo}",
                                  "f32[123,456]dense{foo}"};

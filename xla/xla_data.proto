@@ -228,6 +228,12 @@ message LayoutProto {
 //     https://www.tensorflow.org/code/tensorflow/compiler/xla/shape_util.cc,      \
 //     https://www.tensorflow.org/code/tensorflow/compiler/xla/layout_util.cc)
 
+enum StorageProto {
+  UNSPECIFIED = 0;
+  PRIVATE = 1;
+  SHARED = 2;
+}
+
 // A shape describes the number of dimensions in the array, the size of each
 // dimension, and the primitive component type.
 //
@@ -265,6 +271,8 @@ message ShapeProto {
   // zero (indicating that no dimensions are dynamic) or equal to the number of
   // elements in the 'dimensions' field.
   repeated bool is_dynamic_dimension = 6;
+
+  StorageProto storage = 7;
 
   // Important: if any field is added, be sure to modify ShapeUtil::Equal(),
   // ShapeUtil::Compatible() and ShapeUtil::Hash() appropriately to account for

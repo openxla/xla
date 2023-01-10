@@ -328,6 +328,21 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
   return ret.value();
 }
 
+/* static */ Shape ShapeUtil::MakeShapeWithStorage(
+    PrimitiveType element_type, absl::Span<const int64_t> dimensions,
+    Shape::Storage storage) {
+  Shape shape = MakeShape(element_type, dimensions);
+  shape.set_storage(storage);
+  return shape;
+}
+/* static */ Shape ShapeUtil::MakeShapeWithStorage(
+    PrimitiveType element_type, absl::Span<const int64_t> dimensions,
+    const std::vector<bool>& dynamic_dimensions, Shape::Storage storage) {
+  Shape shape = MakeShape(element_type, dimensions, dynamic_dimensions);
+  shape.set_storage(storage);
+  return shape;
+}
+
 /* static */ Shape ShapeUtil::MoveDimToMajor(const Shape& shape, int64_t dim) {
   if (shape.IsTuple()) {
     std::vector<Shape> result_shapes;
@@ -672,9 +687,20 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
       dim_elements.push_back(StrCat(shape.dimensions(i)));
     }
   }
+  std::string storage;
+  switch (shape.storage()) {
+    case Shape::Storage::kUnspecified:
+      break;
+    case Shape::Storage::kPrivate:
+      storage = ":private";
+      break;
+    case Shape::Storage::kShared:
+      storage = ":shared";
+      break;
+  }
   return StrCat(
       primitive_util::LowercasePrimitiveTypeName(shape.element_type()), "[",
-      absl::StrJoin(dim_elements, ","), "]");
+      absl::StrJoin(dim_elements, ","), storage, "]");
 }
 
 /* static */ std::string ShapeUtil::HumanStringWithLayout(const Shape& shape) {
@@ -739,7 +765,8 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ bool ShapeUtil::Compatible(const Shape& lhs, const Shape& rhs) {
-  return Shape::Equal().IgnoreDynamicDimension().IgnoreLayout()(lhs, rhs);
+  return Shape::Equal().IgnoreDynamicDimension().IgnoreLayout().IgnoreStorage()(
+      lhs, rhs);
 }
 
 /* static */ bool ShapeUtil::CompatibleIgnoringElementType(const Shape& lhs,
@@ -747,7 +774,8 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   return Shape::Equal()
       .IgnoreDynamicDimension()
       .IgnoreElementType()
-      .IgnoreLayout()(lhs, rhs);
+      .IgnoreLayout()
+      .IgnoreStorage()(lhs, rhs);
 }
 
 /* static */ bool ShapeUtil::CompatibleKind(const Shape& lhs,
@@ -755,6 +783,7 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   return Shape::Equal()
       .IgnoreElementType()
       .IgnoreLayout()
+      .IgnoreStorage()
       .IgnoreDimensions()
       .IgnoreDynamicDimension()(lhs, rhs);
 }
@@ -764,7 +793,8 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   return Shape::Equal()
       .IgnoreDynamicDimension()
       .IgnoreFpPrecision()
-      .IgnoreLayout()(lhs, rhs);
+      .IgnoreLayout()
+      .IgnoreStorage()(lhs, rhs);
 }
 
 /* static */ int64_t ShapeUtil::GetDimension(const Shape& shape,

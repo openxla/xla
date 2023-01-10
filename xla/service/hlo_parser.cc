@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo_lexer.h"
 #include "xla/service/shape_inference.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -478,6 +479,8 @@ class HloParserImpl : public HloParser {
                           std::vector<std::vector<int64_t>>* result);
   // 'parse_and_add_item' is an lambda to parse an element in the list and add
   // the parsed element to the result. It's supposed to capture the result.
+  bool ParseUnenclosedList(const TokKind delim,
+                           absl::FunctionRef<bool()> parse_and_add_item);
   bool ParseList(const TokKind start, const TokKind end, const TokKind delim,
                  absl::FunctionRef<bool()> parse_and_add_item);
 
@@ -486,8 +489,9 @@ class HloParserImpl : public HloParser {
   bool ParseName(std::string* result);
   bool ParseAttributeName(std::string* result);
   bool ParseString(std::string* result);
-  bool ParseDimensionSizes(std::vector<int64_t>* dimension_sizes,
-                           std::vector<bool>* dynamic_dimensions);
+  bool ParseDimensions(std::vector<int64_t>* dimension_sizes,
+                       std::vector<bool>* dynamic_dimensions,
+                       Shape::Storage* storage);
   bool ParseShape(Shape* result);
   bool ParseLayout(Layout* layout);
   bool ParseLayoutIntAttribute(int64_t* attr_value,
@@ -3469,44 +3473,47 @@ bool HloParserImpl::SetValueInLiteralHelper(LocTy loc, ParsedElemT value,
   }
   using ParsedElemComponentT = typename ComponentType<ParsedElemT>::Type;
   using LiteralNativeComponentT = typename ComponentType<LiteralNativeT>::Type;
-  const auto handle_nan = [this, literal, index, loc](
-                              ParsedElemComponentT parsed_value_component,
-                              LiteralNativeComponentT*
-                                  literal_value_component) {
-    if (!std::isnan(static_cast<double>(parsed_value_component))) {
-      return true;
-    }
-    auto nan_payload = GetNanPayload(parsed_value_component);
-    if constexpr (std::is_same<LiteralNativeComponentT,
-                               tsl::float8_e4m3fn>::value) {
-      if (nan_payload != QuietNanWithoutPayload<double>()) {
-        return Error(
-            loc, StrCat("tries to set NaN payload 0x", absl::Hex(nan_payload),
-                        " to a literal in shape ",
-                        ShapeUtil::HumanString(literal->shape()),
-                        " at linear index ", index,
-                        ", but f8e4m3fn does not support payloads"));
-      }
-    } else {
-      if (nan_payload == QuietNanWithoutPayload<double>()) {
-        nan_payload = QuietNanWithoutPayload<LiteralNativeComponentT>();
-      }
-      const auto kLargestPayload = NanPayloadBitMask<LiteralNativeComponentT>();
-      if (nan_payload > kLargestPayload) {
-        return Error(
-            loc, StrCat("tries to set NaN payload 0x", absl::Hex(nan_payload),
-                        " to a literal in shape ",
-                        ShapeUtil::HumanString(literal->shape()),
-                        " at linear index ", index,
-                        ", but the NaN payload is out of range (0x",
-                        absl::Hex(kLargestPayload), ")"));
-      }
-      *literal_value_component = NanWithSignAndPayload<LiteralNativeComponentT>(
-          /*sign=*/std::signbit(static_cast<double>(parsed_value_component)),
-          /*nan_payload=*/nan_payload);
-    }
-    return true;
-  };
+  const auto handle_nan =
+      [this, literal, index, loc](
+          ParsedElemComponentT parsed_value_component,
+          LiteralNativeComponentT* literal_value_component) {
+        if (!std::isnan(static_cast<double>(parsed_value_component))) {
+          return true;
+        }
+        auto nan_payload = GetNanPayload(parsed_value_component);
+        if constexpr (std::is_same<LiteralNativeComponentT,
+                                   tsl::float8_e4m3fn>::value) {
+          if (nan_payload != QuietNanWithoutPayload<double>()) {
+            return Error(
+                loc, StrCat("tries to set NaN payload 0x",
+                            absl::Hex(nan_payload), " to a literal in shape ",
+                            ShapeUtil::HumanString(literal->shape()),
+                            " at linear index ", index,
+                            ", but f8e4m3fn does not support payloads"));
+          }
+        } else {
+          if (nan_payload == QuietNanWithoutPayload<double>()) {
+            nan_payload = QuietNanWithoutPayload<LiteralNativeComponentT>();
+          }
+          const auto kLargestPayload =
+              NanPayloadBitMask<LiteralNativeComponentT>();
+          if (nan_payload > kLargestPayload) {
+            return Error(
+                loc, StrCat("tries to set NaN payload 0x",
+                            absl::Hex(nan_payload), " to a literal in shape ",
+                            ShapeUtil::HumanString(literal->shape()),
+                            " at linear index ", index,
+                            ", but the NaN payload is out of range (0x",
+                            absl::Hex(kLargestPayload), ")"));
+          }
+          *literal_value_component =
+              NanWithSignAndPayload<LiteralNativeComponentT>(
+                  /*sign=*/std::signbit(
+                      static_cast<double>(parsed_value_component)),
+                  /*nan_payload=*/nan_payload);
+        }
+        return true;
+      };
   const ParsedElemComponentT parsed_real_value = GetReal(value);
   auto literal_real_value =
       static_cast<LiteralNativeComponentT>(parsed_real_value);
@@ -4969,6 +4976,21 @@ bool HloParserImpl::ParseInt64ListList(
   return ParseList(start, end, delim, parse_and_add_item);
 }
 
+bool HloParserImpl::ParseUnenclosedList(
+    const TokKind delim, absl::FunctionRef<bool()> parse_and_add_item) {
+  // empty
+  if (!parse_and_add_item()) {
+    return true;
+  }
+
+  while (EatIfPresent(delim)) {
+    if (!parse_and_add_item()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool HloParserImpl::ParseList(const TokKind start, const TokKind end,
                               const TokKind delim,
                               absl::FunctionRef<bool()> parse_and_add_item) {
@@ -5027,13 +5049,17 @@ bool HloParserImpl::ParseParamList() {
   return ParseToken(TokKind::kRparen, "expects ')' at the end of param list");
 }
 
-// dimension_sizes ::= '[' dimension_list ']'
+// dimensions ::= '[' dimension_list (':' storage)? ']'
 // dimension_list
 //   ::= /*empty*/
 //   ::= <=? int64_t (',' param)*
 // param ::= name shape
-bool HloParserImpl::ParseDimensionSizes(std::vector<int64_t>* dimension_sizes,
-                                        std::vector<bool>* dynamic_dimensions) {
+// storage
+//   ::= 'private'
+//   ::= 'shared'
+bool HloParserImpl::ParseDimensions(std::vector<int64_t>* dimension_sizes,
+                                    std::vector<bool>* dynamic_dimensions,
+                                    Shape::Storage* storage) {
   auto parse_and_add_item = [&]() {
     int64_t i;
     bool is_dynamic = false;
@@ -5048,8 +5074,34 @@ bool HloParserImpl::ParseDimensionSizes(std::vector<int64_t>* dimension_sizes,
     dynamic_dimensions->push_back(is_dynamic);
     return true;
   };
-  return ParseList(TokKind::kLsquare, TokKind::kRsquare, TokKind::kComma,
-                   parse_and_add_item);
+
+  if (!ParseToken(TokKind::kLsquare,
+                  StrCat("expects dimensions to start with ",
+                         TokKindToString(TokKind::kLsquare)))) {
+    return false;
+  }
+  if (!ParseUnenclosedList(TokKind::kComma, parse_and_add_item)) {
+    return false;
+  }
+  if (EatIfPresent(TokKind::kColon)) {
+    if (lexer_.GetKind() == TokKind::kIdent &&
+        lexer_.GetStrVal() == "private") {
+      lexer_.Lex();
+      *storage = Shape::Storage::kPrivate;
+    } else if (lexer_.GetKind() == TokKind::kIdent &&
+               lexer_.GetStrVal() == "shared") {
+      lexer_.Lex();
+      *storage = Shape::Storage::kShared;
+    } else {
+      return Error(lexer_.GetLoc(),
+                   "expected a storage annotation (private or shared)");
+    }
+  } else {
+    *storage = Shape::Storage::kUnspecified;
+  }
+  return ParseToken(TokKind::kRsquare,
+                    StrCat("expects dimensions to end with ",
+                           TokKindToString(TokKind::kRsquare)));
 }
 
 // dim_level_types
@@ -5358,7 +5410,8 @@ bool HloParserImpl::ParseShape(Shape* result) {
   // is a dynamic dimension.
   std::vector<int64_t> dimension_sizes;
   std::vector<bool> dynamic_dimensions;
-  if (!ParseDimensionSizes(&dimension_sizes, &dynamic_dimensions)) {
+  Shape::Storage storage;
+  if (!ParseDimensions(&dimension_sizes, &dynamic_dimensions, &storage)) {
     return false;
   }
   result->set_element_type(primitive_type);
@@ -5366,6 +5419,7 @@ bool HloParserImpl::ParseShape(Shape* result) {
     result->add_dimensions(dimension_sizes[i]);
     result->set_dynamic_dimension(i, dynamic_dimensions[i]);
   }
+  result->set_storage(storage);
   LayoutUtil::SetToDefaultLayout(result);
   // We need to lookahead to see if a following open brace is the start of a
   // layout. The specific problematic case is:

@@ -367,6 +367,15 @@ class ShapeUtil {
       int64_t memory_space = 0,
       std::optional<Shape> physical_shape = std::nullopt);
 
+  // Constructs a new shape with the given storage.
+  static Shape MakeShapeWithStorage(PrimitiveType element_type,
+                                    absl::Span<const int64_t> dimensions,
+                                    Shape::Storage storage);
+  static Shape MakeShapeWithStorage(PrimitiveType element_type,
+                                    absl::Span<const int64_t> dimensions,
+                                    const std::vector<bool>& dynamic_dimensions,
+                                    Shape::Storage storage);
+
   // Constructs a new shape with the given dimension `dim` as the most major
   // dimension in the layout. If the shape does not have a layout, assumes a
   // default layout. If the shape is a tuple, apply this to all the leaf shapes

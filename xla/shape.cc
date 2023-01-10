@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -71,6 +72,20 @@ Shape::Shape(const ShapeProto& shape_proto) {
       *mutable_layout() = Layout::CreateFromProto(shape_proto.layout());
     }
   }
+  switch (shape_proto.storage()) {
+    case StorageProto::UNSPECIFIED:
+      set_storage(Storage::kUnspecified);
+      break;
+    case StorageProto::PRIVATE:
+      set_storage(Storage::kPrivate);
+      break;
+    case StorageProto::SHARED:
+      set_storage(Storage::kShared);
+      break;
+    default:
+      LOG(FATAL) << "Unhandled storage type " << shape_proto.storage();
+      break;
+  }
 }
 
 ShapeProto Shape::ToProto() const {
@@ -89,6 +104,17 @@ ShapeProto Shape::ToProto() const {
   }
   if (has_layout()) {
     *proto.mutable_layout() = layout().ToProto();
+  }
+  switch (storage()) {
+    case Storage::kUnspecified:
+      proto.set_storage(StorageProto::UNSPECIFIED);
+      break;
+    case Storage::kPrivate:
+      proto.set_storage(StorageProto::PRIVATE);
+      break;
+    case Storage::kShared:
+      proto.set_storage(StorageProto::SHARED);
+      break;
   }
   return proto;
 }
@@ -229,6 +255,13 @@ bool Shape::Equal::operator()(const Shape& lhs, const Shape& rhs) {
             << "CompareShapes: lhs and rhs have different dynamic dimensions.";
         return false;
       }
+    }
+  }
+
+  if (!ignore_storage_) {
+    if (lhs.storage() != rhs.storage()) {
+      VLOG(3) << "CompareShapes: lhs storage != rhs storage";
+      return false;
     }
   }
   return true;
