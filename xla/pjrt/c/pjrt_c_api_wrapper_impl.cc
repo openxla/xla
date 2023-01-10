@@ -64,14 +64,14 @@ static PJRT_Device* GetCDevice(const PJRT_Client* client,
 // populates its cost analysis properties. After this returns successfully,
 // cost analysis properties of the executable can be accessed without mutex.
 static xla::Status PopulateExecutableCostAnalysisIfNeeded(
-    PJRT_Executable* executable) {
+    PJRT_LoadedExecutable* executable) {
   absl::MutexLock lock(&executable->mutex);
   if (!executable->cost_analysis_ran) {
     // Call GetCostAnalysis in the underlying PjRtExecutable
     using PropertiesMapType =
         absl::flat_hash_map<std::string, xla::PjRtValueType>;
     TF_ASSIGN_OR_RETURN(const PropertiesMapType properties,
-                        executable->executable->GetCostAnalysis());
+                        executable->get()->GetCostAnalysis());
     // If no output, return empty result
     if (properties.empty()) {
       executable->cost_analysis_ran = true;
@@ -229,10 +229,10 @@ static PJRT_Device* FindDeviceWrapper(
 }
 
 static void PopulatePjrtExecutableAddressableDevices(
-    PJRT_Executable* executable) {
+    PJRT_LoadedExecutable* executable) {
   CHECK(executable->client != nullptr) << ": client was null";
   absl::Span<xla::PjRtDevice* const> cpp_devices =
-      executable->executable->addressable_devices();
+      executable->get()->addressable_devices();
   const size_t num_addressable_devices = cpp_devices.size();
   std::vector<PJRT_Device*>& exec_devices = executable->addressable_devices;
   exec_devices.reserve(num_addressable_devices);
@@ -297,7 +297,8 @@ PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args) {
     PJRT_RETURN_IF_ERROR(
         tsl::errors::InvalidArgument(ProgramFormatErrorMsg(format_str)));
   }
-  args->executable = new PJRT_Executable(std::move(executable), args->client);
+  args->executable =
+      new PJRT_LoadedExecutable(std::move(executable), args->client);
   return nullptr;
 }
 
@@ -467,7 +468,7 @@ PJRT_Error* PJRT_Executable_Name(PJRT_Executable_Name_Args* args) {
   PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
       "PJRT_Executable_Name_Args", PJRT_Executable_Name_Args_STRUCT_SIZE,
       args->struct_size));
-  absl::string_view executable_name = args->executable->executable->name();
+  absl::string_view executable_name = args->executable->get()->name();
   args->executable_name = executable_name.data();
   args->executable_name_size = executable_name.size();
   return nullptr;
@@ -490,12 +491,12 @@ PJRT_Error* PJRT_Executable_NumOutputs(PJRT_Executable_NumOutputs_Args* args) {
       PJRT_Executable_NumOutputs_Args_STRUCT_SIZE, args->struct_size));
   PJRT_ASSIGN_OR_RETURN(
       std::vector<std::shared_ptr<xla::HloModule>> hlo_modules,
-      args->executable->executable->GetHloModules());
+      args->executable->get()->GetHloModules());
   if (hlo_modules.empty()) {
     return new PJRT_Error{
         xla::InvalidArgument("Can't get number of executable outputs, Hlo "
                              "modules is empty for executable %s.",
-                             args->executable->executable->name())};
+                             args->executable->get()->name())};
   }
   if (hlo_modules.size() != 1) {
     return new PJRT_Error{
@@ -519,8 +520,7 @@ PJRT_Error* PJRT_Executable_SizeOfGeneratedCodeInBytes(
       PJRT_Executable_SizeOfGeneratedCodeInBytes_Args_STRUCT_SIZE,
       args->struct_size));
 
-  args->size_in_bytes =
-      args->executable->executable->SizeOfGeneratedCodeInBytes();
+  args->size_in_bytes = args->executable->get()->SizeOfGeneratedCodeInBytes();
   return nullptr;
 }
 
@@ -537,18 +537,18 @@ static xla::Status VerifyOptimizedProgramArgs(
 static xla::StatusOr<std::shared_ptr<xla::HloModule>> GetOptimizedProgramModule(
     const PJRT_Executable_OptimizedProgram_Args* args) {
   TF_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<xla::HloModule>> hlo_modules,
-                      args->executable->executable->GetHloModules());
+                      args->executable->get()->GetHloModules());
   if (hlo_modules.empty()) {
     return xla::InvalidArgument(
         "Can't get the optimized program for executable "
         "`%s`: HLO modules is empty.",
-        args->executable->executable->name());
+        args->executable->get()->name());
   }
   if (hlo_modules.size() > 1) {
     return xla::Unimplemented(
         "Can't get the optimized program for executable "
         "`%s`: MPMD execution is not supported by PJRT C API",
-        args->executable->executable->name());
+        args->executable->get()->name());
   }
   return std::move(hlo_modules[0]);
 }
@@ -613,7 +613,7 @@ PJRT_Error* PJRT_Executable_Delete(PJRT_Executable_Delete_Args* args) {
   PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
       "PJRT_Executable_Delete_Args", PJRT_Executable_Delete_Args_STRUCT_SIZE,
       args->struct_size));
-  args->executable->executable->Delete();
+  args->executable->get()->Delete();
   return nullptr;
 }
 
@@ -621,7 +621,7 @@ PJRT_Error* PJRT_Executable_IsDeleted(PJRT_Executable_IsDeleted_Args* args) {
   PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
       "PJRT_Executable_IsDeleted_Args",
       PJRT_Executable_IsDeleted_Args_STRUCT_SIZE, args->struct_size));
-  args->is_deleted = args->executable->executable->IsDeleted();
+  args->is_deleted = args->executable->get()->IsDeleted();
   return nullptr;
 }
 
@@ -663,16 +663,15 @@ PJRT_Error* PJRT_Executable_Execute(PJRT_Executable_Execute_Args* args) {
       std::optional<std::vector<xla::PjRtFuture<xla::Status>>> returned_futures;
       returned_futures.emplace();
       PJRT_ASSIGN_OR_RETURN(cpp_buffer_lists,
-                            args->executable->executable->Execute(
+                            args->executable->get()->Execute(
                                 cpp_argument_lists, options, returned_futures));
       for (int i = 0; i < returned_futures->size(); ++i) {
         args->device_complete_events[i] =
             new PJRT_Event{std::move((*returned_futures)[i])};
       }
     } else {
-      PJRT_ASSIGN_OR_RETURN(
-          cpp_buffer_lists,
-          args->executable->executable->Execute(cpp_argument_lists, options));
+      PJRT_ASSIGN_OR_RETURN(cpp_buffer_lists, args->executable->get()->Execute(
+                                                  cpp_argument_lists, options));
     }
     for (int i = 0; i < cpp_buffer_lists.size(); ++i) {
       for (int j = 0; j < cpp_buffer_lists[i].size(); ++j) {
@@ -691,17 +690,17 @@ PJRT_Error* PJRT_Executable_Execute(PJRT_Executable_Execute_Args* args) {
     std::vector<std::unique_ptr<xla::PjRtBuffer>> cpp_buffer_list;
     std::optional<xla::PjRtFuture<xla::Status>> returned_future;
     bool fill_future = args->device_complete_events != nullptr;
-    if (args->executable->executable->num_partitions() == 1 &&
-        args->executable->executable->num_replicas() == 1) {
+    if (args->executable->get()->num_partitions() == 1 &&
+        args->executable->get()->num_replicas() == 1) {
       PJRT_ASSIGN_OR_RETURN(
           cpp_buffer_list,
-          args->executable->executable->ExecutePortable(
+          args->executable->get()->ExecutePortable(
               cpp_argument_lists[0], args->execute_device->device, options,
               returned_future, fill_future));
     } else {
       PJRT_ASSIGN_OR_RETURN(
           cpp_buffer_list,
-          args->executable->executable->ExecuteSharded(
+          args->executable->get()->ExecuteSharded(
               cpp_argument_lists[0], args->execute_device->device, options,
               returned_future, fill_future));
     }
@@ -722,11 +721,9 @@ PJRT_Error* PJRT_Executable_Serialize(PJRT_Executable_Serialize_Args* args) {
   PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
       "PJRT_Executable_Serialize_Args",
       PJRT_Executable_Serialize_Args_STRUCT_SIZE, args->struct_size));
-  const xla::PjRtLoadedExecutable& executable = *args->executable->executable;
+  const xla::PjRtExecutable& executable = *args->executable->get();
   std::string serialization;
-  const PJRT_Client* client = args->executable->client;
-  PJRT_ASSIGN_OR_RETURN(serialization,
-                        client->client->SerializeExecutable(executable));
+  PJRT_ASSIGN_OR_RETURN(serialization, executable.SerializeExecutable());
 
   PJRT_SerializedExecutable* serialized_exec = new PJRT_SerializedExecutable;
   if (serialized_exec == nullptr) {
@@ -751,7 +748,7 @@ PJRT_Error* PJRT_Executable_Deserialize(
                             serialized, /*options=*/std::nullopt));
 
   args->deserialized_executable =
-      new PJRT_Executable(std::move(executable), args->client);
+      new PJRT_LoadedExecutable(std::move(executable), args->client);
   return nullptr;
 }
 
@@ -1063,7 +1060,11 @@ PJRT_Client* CreateWrapperClient(std::unique_ptr<xla::PjRtClient> cpp_client) {
 }  // namespace pjrt
 
 PJRT_Executable::PJRT_Executable(
+    std::unique_ptr<xla::PjRtExecutable> executable)
+    : executable(std::move(executable)) {}
+
+PJRT_LoadedExecutable::PJRT_LoadedExecutable(
     std::unique_ptr<xla::PjRtLoadedExecutable> executable, PJRT_Client* client)
-    : executable(std::move(executable)), client(client) {
+    : PJRT_Executable(std::move(executable)), client(client) {
   pjrt::PopulatePjrtExecutableAddressableDevices(this);
 }

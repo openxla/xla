@@ -216,6 +216,7 @@ const size_t PJRT_NamedValue_STRUCT_SIZE =
 typedef struct PJRT_Client PJRT_Client;
 typedef struct PJRT_Device PJRT_Device;
 typedef struct PJRT_Executable PJRT_Executable;
+typedef struct PJRT_LoadedExecutable PJRT_LoadedExecutable;
 typedef struct PJRT_Buffer PJRT_Buffer;
 
 typedef struct {
@@ -364,7 +365,7 @@ typedef struct {
   // (https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/pjrt/compile_options.proto)
   const char* compile_options;
   size_t compile_options_size;
-  PJRT_Executable* executable;  // out
+  PJRT_LoadedExecutable* executable;  // out
 } PJRT_Client_Compile_Args;
 
 const size_t PJRT_Client_Compile_Args_STRUCT_SIZE =
@@ -645,7 +646,7 @@ typedef PJRT_Error* PJRT_Executable_Name(PJRT_Executable_Name_Args* args);
 typedef struct {
   size_t struct_size;
   void* priv;
-  PJRT_Executable* executable;
+  PJRT_LoadedExecutable* executable;
   PJRT_Device** addressable_devices;  // out
   size_t num_addressable_devices;     // out
 } PJRT_Executable_AddressableDevices_Args;
@@ -696,7 +697,7 @@ typedef PJRT_Error* PJRT_Executable_OptimizedProgram(
 typedef struct {
   size_t struct_size;
   void* priv;
-  PJRT_Executable* executable;
+  PJRT_LoadedExecutable* executable;
 } PJRT_Executable_Delete_Args;
 const size_t PJRT_Executable_Delete_Args_STRUCT_SIZE =
     PJRT_STRUCT_SIZE(PJRT_Executable_Delete_Args, executable);
@@ -711,7 +712,7 @@ typedef PJRT_Error* PJRT_Executable_Delete(PJRT_Executable_Delete_Args* args);
 typedef struct {
   size_t struct_size;
   void* priv;
-  PJRT_Executable* executable;
+  PJRT_LoadedExecutable* executable;
   bool is_deleted;  // out
 } PJRT_Executable_IsDeleted_Args;
 const size_t PJRT_Executable_IsDeleted_Args_STRUCT_SIZE =
@@ -736,7 +737,7 @@ const size_t PJRT_ExecuteOptions_STRUCT_SIZE =
 typedef struct {
   size_t struct_size;
   void* priv;
-  PJRT_Executable* executable;
+  PJRT_LoadedExecutable* executable;
   // Only needs to stay alive for the duration of the Execute call.
   PJRT_ExecuteOptions* options;
   // Execution input of size [`num_devices`, `num_args`].
@@ -801,7 +802,7 @@ typedef PJRT_Error* PJRT_Executable_SizeOfGeneratedCodeInBytes(
 typedef struct {
   size_t struct_size;
   void* priv;
-  PJRT_Executable* executable;
+  PJRT_LoadedExecutable* executable;
   size_t num_properties;  // out
   // `properties` and any embedded data are owned by and have the same lifetime
   // as `executable`.
@@ -840,7 +841,7 @@ typedef struct {
   PJRT_Client* client;
   const char* serialized_executable;
   size_t serialized_executable_size;
-  PJRT_Executable* deserialized_executable;  // out
+  PJRT_LoadedExecutable* deserialized_executable;  // out
 } PJRT_Executable_Deserialize_Args;
 const size_t PJRT_Executable_Deserialize_Args_STRUCT_SIZE =
     PJRT_STRUCT_SIZE(PJRT_Executable_Deserialize_Args, deserialized_executable);

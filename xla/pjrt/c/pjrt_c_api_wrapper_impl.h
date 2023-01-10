@@ -52,7 +52,16 @@ struct PJRT_Device {
 };
 
 struct PJRT_Executable {
-  std::unique_ptr<xla::PjRtLoadedExecutable> executable;
+  std::unique_ptr<xla::PjRtExecutable> executable;
+
+  explicit PJRT_Executable(std::unique_ptr<xla::PjRtExecutable> executable);
+
+  const xla::PjRtExecutable* get() const { return executable.get(); }
+  xla::PjRtExecutable* get() { return executable.get(); }
+  virtual ~PJRT_Executable() = default;
+};
+
+struct PJRT_LoadedExecutable : PJRT_Executable {
   PJRT_Client* client;
   // These pointers are a subset of `client`'s `addressable_devices`, i.e. those
   // addressed by the compiled executable program. `client` owns the objects
@@ -67,8 +76,15 @@ struct PJRT_Executable {
   std::vector<std::string> cost_analysis_names;
   std::vector<PJRT_NamedValue> cost_analysis_properties;
 
-  PJRT_Executable(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-                  PJRT_Client* client);
+  PJRT_LoadedExecutable(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+                        PJRT_Client* client);
+
+  const xla::PjRtLoadedExecutable* get() const {
+    return reinterpret_cast<xla::PjRtLoadedExecutable*>(executable.get());
+  }
+  xla::PjRtLoadedExecutable* get() {
+    return reinterpret_cast<xla::PjRtLoadedExecutable*>(executable.get());
+  }
 };
 
 struct PJRT_Buffer {

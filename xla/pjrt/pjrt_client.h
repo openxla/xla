@@ -1191,7 +1191,7 @@ class PjRtLoadedExecutable : public PjRtExecutable {
   //
   // The following Execute*() methods will donate the input buffer to the
   // execution if it is specified in the executable. Donation is usually
-  // implemented as a transaction: it is acquired in the begining and committed
+  // implemented as a transaction: it is acquired in the beginning and committed
   // when the device execution is successully launched. Concurrent donations
   // might either block or return failures.
   //
@@ -1303,6 +1303,11 @@ class PjRtLoadedExecutable : public PjRtExecutable {
   // implement this. So we have to check whether returned_futures is empty.
   // Remove this method once the implementation is fixed.
   virtual bool IsReturnedFutureSupported() const { return false; }
+
+  // Serialize this executable into a string and return the value.
+  StatusOr<std::string> SerializeExecutable() const override {
+    return client()->SerializeExecutable(*this);
+  }
 
  protected:
   // Value returned internally from routines that enqueue an execution,

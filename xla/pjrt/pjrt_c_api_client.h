@@ -173,7 +173,9 @@ class PjRtCApiClient : public PjRtClient {
       const PjRtLoadedExecutable& executable) const override;
 
   StatusOr<std::string> SerializeExecutable(
-      const PjRtLoadedExecutable& executable) const override;
+      const PjRtLoadedExecutable& executable) const override {
+    return executable.SerializeExecutable();
+  }
 
   // `PjRtCApiClient::DeserializeExecutable()` ignores `CompileOptions` arg
   StatusOr<std::unique_ptr<PjRtLoadedExecutable>> DeserializeExecutable(
@@ -423,12 +425,39 @@ class PjRtCApiBuffer : public PjRtBuffer {
   PjRtBuffer* wrapped_;
 };
 
-class PjRtCApiExecutable : public PjRtLoadedExecutable {
+class PjRtCApiExecutable : public PjRtExecutable {
  public:
-  PjRtCApiExecutable(PjRtCApiClient* client,
-                     std::unique_ptr<PjRtLoadedExecutable> wrapped);
+  PjRtCApiExecutable(const PJRT_Api* c_api, PJRT_Executable* executable);
 
-  PjRtCApiExecutable(PjRtCApiClient* client, PJRT_Executable* executable);
+  absl::string_view name() const override;
+  int num_replicas() const override { return wrapped()->num_replicas(); }
+  int num_partitions() const override { return wrapped()->num_partitions(); }
+
+  int64_t SizeOfGeneratedCodeInBytes() const override;
+
+  StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
+      const override;
+
+  PjRtExecutable* wrapped() const;
+
+  const PJRT_Api* pjrt_c_api() const { return c_api_; }
+  const PJRT_Executable* c_executable() const { return executable_.get(); }
+  PJRT_Executable* c_executable() { return executable_.get(); }
+
+  StatusOr<std::string> SerializeExecutable() const override;
+
+ private:
+  const PJRT_Api* c_api_;
+  std::unique_ptr<PJRT_Executable, pjrt::PJRT_ExecutableDeleter> executable_;
+};
+
+class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
+ public:
+  PjRtCApiLoadedExecutable(PjRtCApiClient* client,
+                           std::unique_ptr<PjRtLoadedExecutable> wrapped);
+
+  PjRtCApiLoadedExecutable(PjRtCApiClient* client,
+                           PJRT_LoadedExecutable* executable);
 
   PjRtClient* client() const override { return client_; }
   absl::string_view name() const override;
@@ -490,12 +519,18 @@ class PjRtCApiExecutable : public PjRtLoadedExecutable {
 
   static PjRtLoadedExecutable* GetWrapped(
       const PjRtLoadedExecutable* c_api_executable) {
-    return tensorflow::down_cast<const PjRtCApiExecutable*>(c_api_executable)
+    return tensorflow::down_cast<const PjRtCApiLoadedExecutable*>(
+               c_api_executable)
         ->wrapped();
   }
 
   const PJRT_Api* pjrt_c_api() const { return client_->pjrt_c_api(); }
-  const PJRT_Executable* c_executable() const { return executable_.get(); }
+  const PJRT_LoadedExecutable* c_executable() const {
+    return executable_.get();
+  }
+  PJRT_LoadedExecutable* c_executable() { return executable_.get(); }
+
+  StatusOr<std::string> SerializeExecutable() const override;
 
  private:
   // Gets common Execute_Args between Execute, ExecuteSharded and
@@ -516,7 +551,8 @@ class PjRtCApiExecutable : public PjRtLoadedExecutable {
       std::optional<PjRtFuture<Status>>& returned_future, bool fill_future);
 
   PjRtCApiClient* client_;
-  std::unique_ptr<PJRT_Executable, pjrt::PJRT_ExecutableDeleter> executable_;
+  std::unique_ptr<PJRT_LoadedExecutable, pjrt::PJRT_ExecutableDeleter>
+      executable_;
   std::vector<PjRtDevice*> addressable_devices_;
 
   void InitDevices();
