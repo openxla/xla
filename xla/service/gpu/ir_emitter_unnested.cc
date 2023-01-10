@@ -3550,23 +3550,37 @@ static IrArray::Index GetUnnormalizedIndex(
   // generate simpler indexing. LLVM doesn't always simplify the more
   // complicated indexing and this prevents it from vectorizing some
   // cases. We do this only for major_to_minor memory layout.
-  if (unnormalized_shape.rank() == 2 && unnormalized_shape.has_layout() &&
-      unnormalized_shape.dimensions()[0] == normalized_shape_index.dims()[1] &&
-      unnormalized_shape.dimensions()[1] == normalized_shape_index.dims()[2] &&
-      unnormalized_shape.layout().minor_to_major(1) == 0) {
-    CHECK_EQ(normalized_shape_index.dims()[0], 1);
-    auto multidim = normalized_shape_index.multidim();
-    return IrArray::Index({multidim[1], multidim[2]}, unnormalized_shape,
-                          normalized_shape_index.GetType());
-  }
-  if (unnormalized_shape.rank() == 2 && unnormalized_shape.has_layout() &&
-      unnormalized_shape.dimensions()[0] == normalized_shape_index.dims()[2] &&
-      unnormalized_shape.dimensions()[1] == normalized_shape_index.dims()[1] &&
-      unnormalized_shape.layout().minor_to_major(1) == 1) {
-    CHECK_EQ(normalized_shape_index.dims()[0], 1);
-    auto multidim = normalized_shape_index.multidim();
-    return IrArray::Index({multidim[2], multidim[1]}, unnormalized_shape,
-                          normalized_shape_index.GetType());
+  if (unnormalized_shape.has_layout()) {
+    const int64_t* unnormalized_dims = unnormalized_shape.dimensions().data();
+    const int64_t* normalized_dims = normalized_shape_index.dims().data();
+    if (unnormalized_shape.rank() == 2 &&
+        unnormalized_dims[0] == normalized_dims[1] &&
+        unnormalized_dims[1] == normalized_dims[2] &&
+        unnormalized_shape.layout().minor_to_major(1) == 0) {
+      CHECK_EQ(normalized_dims[0], 1);
+      auto multidim = normalized_shape_index.multidim();
+      return IrArray::Index({multidim[1], multidim[2]}, unnormalized_shape,
+                            normalized_shape_index.GetType());
+    }
+    if (unnormalized_shape.rank() == 2 &&
+        unnormalized_dims[0] == normalized_dims[2] &&
+        unnormalized_dims[1] == normalized_dims[1] &&
+        unnormalized_shape.layout().minor_to_major(1) == 1) {
+      CHECK_EQ(normalized_dims[0], 1);
+      auto multidim = normalized_shape_index.multidim();
+      return IrArray::Index({multidim[2], multidim[1]}, unnormalized_shape,
+                            normalized_shape_index.GetType());
+    }
+    if (unnormalized_shape.rank() == 3 &&
+        unnormalized_dims[0] == normalized_dims[0] &&
+        unnormalized_dims[1] == normalized_dims[1] &&
+        unnormalized_dims[2] == normalized_dims[2] &&
+        LayoutUtil::IsMonotonicWithDim0Major(unnormalized_shape.layout())) {
+      auto multidim = normalized_shape_index.multidim();
+      return IrArray::Index({multidim[0], multidim[1], multidim[2]},
+                            unnormalized_shape,
+                            normalized_shape_index.GetType());
+    }
   }
   llvm::Value* linear = normalized_shape_index.Linearize(dims_in_elems, b_);
   return IrArray::Index(linear, unnormalized_shape, b_);
@@ -4288,10 +4302,10 @@ Status IrEmitterUnnested::EmitTranspose021Tile(
           // overwriting aliased input/output values before all reads occurred.
           std::vector<std::tuple<IrArray, IrArray::Index, llvm::Value*>>
               scheduled_writes;
+          IrArray::Index input_index = GetUnnormalizedIndex(
+              index, transpose_in_shape, &b_, tiling_scheme.GetDimsInElems());
 
           for (const auto& [output_idx, root] : llvm::enumerate(hlo_roots)) {
-            IrArray::Index input_index = GetUnnormalizedIndex(
-                index, transpose_in_shape, &b_, tiling_scheme.GetDimsInElems());
             if (FindAnyTiledTranspose(*root)) {
               const HloInstruction& hero = FindNonTrivialHero(*root);
               llvm_ir::ElementGenerator input_gen =
