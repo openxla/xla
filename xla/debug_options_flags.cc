@@ -70,7 +70,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_cudnn_frontend(true);
 
-  opts.set_xla_gpu_enable_cublaslt(false);
+  // TODO(b/241801928): Remove this flag and legacy cublas support once cublasLt
+  // is fully supported
+  opts.set_xla_gpu_enable_cublaslt(true);
 
   // TODO(b/258036887): Remove this flag once CUDA Graphs are fully supported.
   opts.set_xla_gpu_enable_cuda_graphs(false);
