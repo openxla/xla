@@ -309,7 +309,7 @@ std::unique_ptr<llvm::TargetMachine> NVPTXGetTargetMachine(
   // Figure out the exact name of the processor as known to the NVPTX backend
   // from the gpu_architecture flag.
   return GetTargetMachine(target_triple, GetSmName(compute_capability),
-                          hlo_module_config, "+ptx60");
+                          hlo_module_config, "+ptx75");
 }
 
 using TargetModuleLinker = std::function<Status(
