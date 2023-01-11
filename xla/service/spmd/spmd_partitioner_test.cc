@@ -2912,7 +2912,9 @@ ENTRY entry {
   VLOG(1) << module->ToString();
   auto sort = FindInstruction(module.get(), "sort.0");
   EXPECT_EQ(sort->operand(0)->shape().dimensions(1), 209664);
+  // Other dimension changed from 2 to 1 (we moved the sharding to dim 0)
   EXPECT_EQ(sort->operand(1)->shape().dimensions(1), 209664);
+  // Other dimension changed from 2 to 1 (we moved the sharding to dim 0)
 }
 
 TEST_F(SpmdPartitioningTest, NoPartitionSortInTopKWhenNoPartitionInSortDim) {
@@ -3064,6 +3066,269 @@ ENTRY entry {
   auto sort = FindInstruction(module.get(), "sort.0");
   EXPECT_EQ(sort->operand(0)->shape().dimensions(1), 209664);
   EXPECT_EQ(sort->operand(1)->shape().dimensions(1), 209664);
+}
+
+TEST_F(SpmdPartitioningTest, SortPartitionedOnSortDim) {
+  absl::string_view hlo_string = R"(
+HloModule module, entry_computation_layout={(f32[32768,65536]{1,0})->(f32[32768,65536]{1,0}, s32[32768,65536]{1,0})}
+
+region_174.7326 {
+  Arg_0.7327 = f32[] parameter(0), sharding={replicated}
+  compare.7339 = pred[] compare(Arg_0.7327, Arg_0.7327), direction=NE, sharding={replicated}
+  constant.7332 = s32[] constant(2143289344), sharding={replicated}
+  constant.7334 = f32[] constant(0), sharding={replicated}
+  compare.7337 = pred[] compare(Arg_0.7327, constant.7334), direction=EQ, sharding={replicated}
+  constant.7333 = s32[] constant(0), sharding={replicated}
+  bitcast-convert.7335 = s32[] bitcast-convert(Arg_0.7327), sharding={replicated}
+  select.7338 = s32[] select(compare.7337, constant.7333, bitcast-convert.7335), sharding={replicated}
+  select.7340 = s32[] select(compare.7339, constant.7332, select.7338), sharding={replicated}
+  constant.1127 = s32[] constant(0), sharding={replicated}
+  compare.7343 = pred[] compare(select.7340, constant.1127), direction=LT, sharding={replicated}
+  constant.7331 = u32[] constant(2147483647), sharding={replicated}
+  bitcast-convert.7336 = u32[] bitcast-convert(Arg_0.7327), sharding={replicated}
+  subtract.7341 = u32[] subtract(constant.7331, bitcast-convert.7336), sharding={replicated}
+  bitcast-convert.7342 = s32[] bitcast-convert(subtract.7341), sharding={replicated}
+  select.7344 = s32[] select(compare.7343, bitcast-convert.7342, select.7340), sharding={replicated}
+  Arg_1.7328 = f32[] parameter(1), sharding={replicated}
+  compare.7349 = pred[] compare(Arg_1.7328, Arg_1.7328), direction=NE, sharding={replicated}
+  constant.1125 = s32[] constant(2143289344), sharding={replicated}
+  constant.1126 = f32[] constant(0), sharding={replicated}
+  compare.7347 = pred[] compare(Arg_1.7328, constant.1126), direction=EQ, sharding={replicated}
+  constant.1128 = s32[] constant(0), sharding={replicated}
+  bitcast-convert.7345 = s32[] bitcast-convert(Arg_1.7328), sharding={replicated}
+  select.7348 = s32[] select(compare.7347, constant.1128, bitcast-convert.7345), sharding={replicated}
+  select.7350 = s32[] select(compare.7349, constant.1125, select.7348), sharding={replicated}
+  constant.1129 = s32[] constant(0), sharding={replicated}
+  compare.7353 = pred[] compare(select.7350, constant.1129), direction=LT, sharding={replicated}
+  constant.1130 = u32[] constant(2147483647), sharding={replicated}
+  bitcast-convert.7346 = u32[] bitcast-convert(Arg_1.7328), sharding={replicated}
+  subtract.7351 = u32[] subtract(constant.1130, bitcast-convert.7346), sharding={replicated}
+  bitcast-convert.7352 = s32[] bitcast-convert(subtract.7351), sharding={replicated}
+  select.7354 = s32[] select(compare.7353, bitcast-convert.7352, select.7350), sharding={replicated}
+  compare.7355 = pred[] compare(select.7344, select.7354), direction=LT, sharding={replicated}
+  compare.24 = pred[] compare(select.7354, select.7344), direction=LT, sharding={replicated}
+  compare.25 = pred[] compare(compare.7355, compare.24), direction=EQ, sharding={replicated}
+  Arg_2.7329 = s32[] parameter(2), sharding={replicated}
+  Arg_3.7330 = s32[] parameter(3), sharding={replicated}
+  compare.26 = pred[] compare(Arg_2.7329, Arg_3.7330), direction=LT, sharding={replicated}
+  ROOT select.21 = pred[] select(compare.25, compare.26, compare.7355), sharding={replicated}
+}
+
+ENTRY entry {
+  param.0 = f32[32768,65536]{1,0} parameter(0)
+  negate.7325 = f32[32768,65536]{1,0} negate(param.0), sharding={devices=[1,64]0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63}
+  iota.30 = s32[32768,65536]{1,0} iota(), iota_dimension=1
+  ROOT sort.0 = (f32[32768,65536]{1,0}, s32[32768,65536]{1,0}) sort(negate.7325, iota.30), dimensions={1}, is_stable=true, to_apply=region_174.7326
+}
+
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/64));
+  VLOG(1) << module->ToString();
+  auto sort = FindInstruction(module.get(), "sort.1");
+  for (auto operand : sort->operands()) {
+    EXPECT_EQ(operand->shape().dimensions(0), 512);
+    EXPECT_EQ(operand->shape().dimensions(1), 65536);
+  }
+}
+
+TEST_F(SpmdPartitioningTest, SortPartitionedOnSortDim2) {
+  absl::string_view hlo_string = R"(
+HloModule module, entry_computation_layout={(f32[64,512,65536]{2,1,0})->(f32[64,512,65536]{2,1,0}, s32[64,512,65536]{2,1,0})}
+
+region_174.7326 {
+  Arg_0.7327 = f32[] parameter(0), sharding={replicated}
+  compare.7339 = pred[] compare(Arg_0.7327, Arg_0.7327), direction=NE, sharding={replicated}
+  constant.7332 = s32[] constant(2143289344), sharding={replicated}
+  constant.7334 = f32[] constant(0), sharding={replicated}
+  compare.7337 = pred[] compare(Arg_0.7327, constant.7334), direction=EQ, sharding={replicated}
+  constant.7333 = s32[] constant(0), sharding={replicated}
+  bitcast-convert.7335 = s32[] bitcast-convert(Arg_0.7327), sharding={replicated}
+  select.7338 = s32[] select(compare.7337, constant.7333, bitcast-convert.7335), sharding={replicated}
+  select.7340 = s32[] select(compare.7339, constant.7332, select.7338), sharding={replicated}
+  constant.1127 = s32[] constant(0), sharding={replicated}
+  compare.7343 = pred[] compare(select.7340, constant.1127), direction=LT, sharding={replicated}
+  constant.7331 = u32[] constant(2147483647), sharding={replicated}
+  bitcast-convert.7336 = u32[] bitcast-convert(Arg_0.7327), sharding={replicated}
+  subtract.7341 = u32[] subtract(constant.7331, bitcast-convert.7336), sharding={replicated}
+  bitcast-convert.7342 = s32[] bitcast-convert(subtract.7341), sharding={replicated}
+  select.7344 = s32[] select(compare.7343, bitcast-convert.7342, select.7340), sharding={replicated}
+  Arg_1.7328 = f32[] parameter(1), sharding={replicated}
+  compare.7349 = pred[] compare(Arg_1.7328, Arg_1.7328), direction=NE, sharding={replicated}
+  constant.1125 = s32[] constant(2143289344), sharding={replicated}
+  constant.1126 = f32[] constant(0), sharding={replicated}
+  compare.7347 = pred[] compare(Arg_1.7328, constant.1126), direction=EQ, sharding={replicated}
+  constant.1128 = s32[] constant(0), sharding={replicated}
+  bitcast-convert.7345 = s32[] bitcast-convert(Arg_1.7328), sharding={replicated}
+  select.7348 = s32[] select(compare.7347, constant.1128, bitcast-convert.7345), sharding={replicated}
+  select.7350 = s32[] select(compare.7349, constant.1125, select.7348), sharding={replicated}
+  constant.1129 = s32[] constant(0), sharding={replicated}
+  compare.7353 = pred[] compare(select.7350, constant.1129), direction=LT, sharding={replicated}
+  constant.1130 = u32[] constant(2147483647), sharding={replicated}
+  bitcast-convert.7346 = u32[] bitcast-convert(Arg_1.7328), sharding={replicated}
+  subtract.7351 = u32[] subtract(constant.1130, bitcast-convert.7346), sharding={replicated}
+  bitcast-convert.7352 = s32[] bitcast-convert(subtract.7351), sharding={replicated}
+  select.7354 = s32[] select(compare.7353, bitcast-convert.7352, select.7350), sharding={replicated}
+  compare.7355 = pred[] compare(select.7344, select.7354), direction=LT, sharding={replicated}
+  compare.24 = pred[] compare(select.7354, select.7344), direction=LT, sharding={replicated}
+  compare.25 = pred[] compare(compare.7355, compare.24), direction=EQ, sharding={replicated}
+  Arg_2.7329 = s32[] parameter(2), sharding={replicated}
+  Arg_3.7330 = s32[] parameter(3), sharding={replicated}
+  compare.26 = pred[] compare(Arg_2.7329, Arg_3.7330), direction=LT, sharding={replicated}
+  ROOT select.21 = pred[] select(compare.25, compare.26, compare.7355), sharding={replicated}
+}
+
+ENTRY entry {
+  param.0 = f32[64,512,65536]{2,1,0} parameter(0)
+  negate.7325 = f32[64,512,65536]{2,1,0} negate(param.0), sharding={devices=[1,1,64]0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63}
+  iota.30 = s32[64,512,65536]{2,1,0} iota(), iota_dimension=2
+  ROOT sort.0 = (f32[64,512,65536]{2,1,0}, s32[64,512,65536]{2,1,0}) sort(negate.7325, iota.30), dimensions={2}, is_stable=true, to_apply=region_174.7326
+}
+
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/64));
+  VLOG(1) << module->ToString();
+  auto sort = FindInstruction(module.get(), "sort.1");
+  for (auto operand : sort->operands()) {
+    EXPECT_EQ(operand->shape().dimensions(0), 1);
+    EXPECT_EQ(operand->shape().dimensions(1), 512);
+    EXPECT_EQ(operand->shape().dimensions(2), 65536);
+  }
+}
+
+TEST_F(SpmdPartitioningTest, SortPartitionedOnSortDim3) {
+  absl::string_view hlo_string = R"(
+HloModule module, entry_computation_layout={(f32[16,512,65536]{2,1,0})->(f32[16,512,65536]{2,1,0}, s32[16,512,65536]{2,1,0})}
+
+region_174.7326 {
+  Arg_0.7327 = f32[] parameter(0), sharding={replicated}
+  compare.7339 = pred[] compare(Arg_0.7327, Arg_0.7327), direction=NE, sharding={replicated}
+  constant.7332 = s32[] constant(2143289344), sharding={replicated}
+  constant.7334 = f32[] constant(0), sharding={replicated}
+  compare.7337 = pred[] compare(Arg_0.7327, constant.7334), direction=EQ, sharding={replicated}
+  constant.7333 = s32[] constant(0), sharding={replicated}
+  bitcast-convert.7335 = s32[] bitcast-convert(Arg_0.7327), sharding={replicated}
+  select.7338 = s32[] select(compare.7337, constant.7333, bitcast-convert.7335), sharding={replicated}
+  select.7340 = s32[] select(compare.7339, constant.7332, select.7338), sharding={replicated}
+  constant.1127 = s32[] constant(0), sharding={replicated}
+  compare.7343 = pred[] compare(select.7340, constant.1127), direction=LT, sharding={replicated}
+  constant.7331 = u32[] constant(2147483647), sharding={replicated}
+  bitcast-convert.7336 = u32[] bitcast-convert(Arg_0.7327), sharding={replicated}
+  subtract.7341 = u32[] subtract(constant.7331, bitcast-convert.7336), sharding={replicated}
+  bitcast-convert.7342 = s32[] bitcast-convert(subtract.7341), sharding={replicated}
+  select.7344 = s32[] select(compare.7343, bitcast-convert.7342, select.7340), sharding={replicated}
+  Arg_1.7328 = f32[] parameter(1), sharding={replicated}
+  compare.7349 = pred[] compare(Arg_1.7328, Arg_1.7328), direction=NE, sharding={replicated}
+  constant.1125 = s32[] constant(2143289344), sharding={replicated}
+  constant.1126 = f32[] constant(0), sharding={replicated}
+  compare.7347 = pred[] compare(Arg_1.7328, constant.1126), direction=EQ, sharding={replicated}
+  constant.1128 = s32[] constant(0), sharding={replicated}
+  bitcast-convert.7345 = s32[] bitcast-convert(Arg_1.7328), sharding={replicated}
+  select.7348 = s32[] select(compare.7347, constant.1128, bitcast-convert.7345), sharding={replicated}
+  select.7350 = s32[] select(compare.7349, constant.1125, select.7348), sharding={replicated}
+  constant.1129 = s32[] constant(0), sharding={replicated}
+  compare.7353 = pred[] compare(select.7350, constant.1129), direction=LT, sharding={replicated}
+  constant.1130 = u32[] constant(2147483647), sharding={replicated}
+  bitcast-convert.7346 = u32[] bitcast-convert(Arg_1.7328), sharding={replicated}
+  subtract.7351 = u32[] subtract(constant.1130, bitcast-convert.7346), sharding={replicated}
+  bitcast-convert.7352 = s32[] bitcast-convert(subtract.7351), sharding={replicated}
+  select.7354 = s32[] select(compare.7353, bitcast-convert.7352, select.7350), sharding={replicated}
+  compare.7355 = pred[] compare(select.7344, select.7354), direction=LT, sharding={replicated}
+  compare.24 = pred[] compare(select.7354, select.7344), direction=LT, sharding={replicated}
+  compare.25 = pred[] compare(compare.7355, compare.24), direction=EQ, sharding={replicated}
+  Arg_2.7329 = s32[] parameter(2), sharding={replicated}
+  Arg_3.7330 = s32[] parameter(3), sharding={replicated}
+  compare.26 = pred[] compare(Arg_2.7329, Arg_3.7330), direction=LT, sharding={replicated}
+  ROOT select.21 = pred[] select(compare.25, compare.26, compare.7355), sharding={replicated}
+}
+
+ENTRY entry {
+  param.0 = f32[16,512,65536]{2,1,0} parameter(0)
+  negate.7325 = f32[16,512,65536]{2,1,0} negate(param.0), sharding={devices=[1,1,64]0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63}
+  iota.30 = s32[16,512,65536]{2,1,0} iota(), iota_dimension=2
+  ROOT sort.0 = (f32[16,512,65536]{2,1,0}, s32[16,512,65536]{2,1,0}) sort(negate.7325, iota.30), dimensions={2}, is_stable=true, to_apply=region_174.7326
+}
+
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/64));
+  VLOG(1) << module->ToString();
+  auto sort = FindInstruction(module.get(), "sort.1");
+  for (auto operand : sort->operands()) {
+    EXPECT_EQ(operand->shape().dimensions(0), 16);
+    EXPECT_EQ(operand->shape().dimensions(1), 8);
+    EXPECT_EQ(operand->shape().dimensions(2), 65536);
+  }
+}
+
+TEST_F(SpmdPartitioningTest, SortPartitionedOnSortDim4) {
+  absl::string_view hlo_string = R"(
+HloModule module, entry_computation_layout={(f32[63,512,65536]{2,1,0})->(f32[63,512,65536]{2,1,0}, s32[63,512,65536]{2,1,0})}
+
+region_174.7326 {
+  Arg_0.7327 = f32[] parameter(0), sharding={replicated}
+  compare.7339 = pred[] compare(Arg_0.7327, Arg_0.7327), direction=NE, sharding={replicated}
+  constant.7332 = s32[] constant(2143289344), sharding={replicated}
+  constant.7334 = f32[] constant(0), sharding={replicated}
+  compare.7337 = pred[] compare(Arg_0.7327, constant.7334), direction=EQ, sharding={replicated}
+  constant.7333 = s32[] constant(0), sharding={replicated}
+  bitcast-convert.7335 = s32[] bitcast-convert(Arg_0.7327), sharding={replicated}
+  select.7338 = s32[] select(compare.7337, constant.7333, bitcast-convert.7335), sharding={replicated}
+  select.7340 = s32[] select(compare.7339, constant.7332, select.7338), sharding={replicated}
+  constant.1127 = s32[] constant(0), sharding={replicated}
+  compare.7343 = pred[] compare(select.7340, constant.1127), direction=LT, sharding={replicated}
+  constant.7331 = u32[] constant(2147483647), sharding={replicated}
+  bitcast-convert.7336 = u32[] bitcast-convert(Arg_0.7327), sharding={replicated}
+  subtract.7341 = u32[] subtract(constant.7331, bitcast-convert.7336), sharding={replicated}
+  bitcast-convert.7342 = s32[] bitcast-convert(subtract.7341), sharding={replicated}
+  select.7344 = s32[] select(compare.7343, bitcast-convert.7342, select.7340), sharding={replicated}
+  Arg_1.7328 = f32[] parameter(1), sharding={replicated}
+  compare.7349 = pred[] compare(Arg_1.7328, Arg_1.7328), direction=NE, sharding={replicated}
+  constant.1125 = s32[] constant(2143289344), sharding={replicated}
+  constant.1126 = f32[] constant(0), sharding={replicated}
+  compare.7347 = pred[] compare(Arg_1.7328, constant.1126), direction=EQ, sharding={replicated}
+  constant.1128 = s32[] constant(0), sharding={replicated}
+  bitcast-convert.7345 = s32[] bitcast-convert(Arg_1.7328), sharding={replicated}
+  select.7348 = s32[] select(compare.7347, constant.1128, bitcast-convert.7345), sharding={replicated}
+  select.7350 = s32[] select(compare.7349, constant.1125, select.7348), sharding={replicated}
+  constant.1129 = s32[] constant(0), sharding={replicated}
+  compare.7353 = pred[] compare(select.7350, constant.1129), direction=LT, sharding={replicated}
+  constant.1130 = u32[] constant(2147483647), sharding={replicated}
+  bitcast-convert.7346 = u32[] bitcast-convert(Arg_1.7328), sharding={replicated}
+  subtract.7351 = u32[] subtract(constant.1130, bitcast-convert.7346), sharding={replicated}
+  bitcast-convert.7352 = s32[] bitcast-convert(subtract.7351), sharding={replicated}
+  select.7354 = s32[] select(compare.7353, bitcast-convert.7352, select.7350), sharding={replicated}
+  compare.7355 = pred[] compare(select.7344, select.7354), direction=LT, sharding={replicated}
+  compare.24 = pred[] compare(select.7354, select.7344), direction=LT, sharding={replicated}
+  compare.25 = pred[] compare(compare.7355, compare.24), direction=EQ, sharding={replicated}
+  Arg_2.7329 = s32[] parameter(2), sharding={replicated}
+  Arg_3.7330 = s32[] parameter(3), sharding={replicated}
+  compare.26 = pred[] compare(Arg_2.7329, Arg_3.7330), direction=LT, sharding={replicated}
+  ROOT select.21 = pred[] select(compare.25, compare.26, compare.7355), sharding={replicated}
+}
+
+ENTRY entry {
+  param.0 = f32[63,512,65536]{2,1,0} parameter(0)
+  negate.7325 = f32[63,512,65536]{2,1,0} negate(param.0), sharding={devices=[1,1,64]0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63}
+  iota.30 = s32[63,512,65536]{2,1,0} iota(), iota_dimension=2
+  ROOT sort.0 = (f32[63,512,65536]{2,1,0}, s32[63,512,65536]{2,1,0}) sort(negate.7325, iota.30), dimensions={2}, is_stable=true, to_apply=region_174.7326
+}
+
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/64));
+  VLOG(1) << module->ToString();
+  auto sort = FindInstruction(module.get(), "sort.1");
+  for (auto operand : sort->operands()) {
+    EXPECT_EQ(operand->shape().dimensions(0), 63);
+    EXPECT_EQ(operand->shape().dimensions(1), 8);
+    EXPECT_EQ(operand->shape().dimensions(2), 65536);
+  }
 }
 
 TEST_F(SpmdPartitioningTest, ShardableTranspose) {
@@ -11178,7 +11443,7 @@ ENTRY %module {
   const HloInstruction* sort = FindInstruction(module.get(), "sort.0");
   EXPECT_NE(sort, nullptr);
   auto sort_match =
-      AllOf(op::Shape("(f32[2,64,32128], s32[2,64,32128])"), op::Sort(_, _));
+      AllOf(op::Shape("(f32[1,16,32128], s32[1,16,32128])"), op::Sort(_, _));
   EXPECT_THAT(sort, sort_match);
 }
 

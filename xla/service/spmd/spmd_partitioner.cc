@@ -2626,7 +2626,76 @@ Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
 
     return OkStatus();
   }
-
+  // Check if the sharding of an operand is along the sorting dimension
+  auto sort = DynCast<HloSortInstruction>(hlo);
+  auto sort_dim = sort->sort_dimension();
+  VLOG(2) << "sort dim: " << sort_dim;
+  int sharded_operand_id = -1;
+  for (int i = 0; i < hlo->operands().size(); ++i) {
+    auto cur_sharding = hlo->operand(0)->sharding();
+    if (!cur_sharding.IsTileMaximal() &&
+        cur_sharding.tile_assignment().dim(sort_dim) != 1) {
+      sharded_operand_id = i;
+      break;
+    }
+  }
+  // If we have an operand with a sharding along the sorting dimension, we try
+  // to move the sharding into another dimension and apply it to all operands
+  if (sharded_operand_id != -1) {
+    auto operand_shape = hlo->operand(sharded_operand_id)->shape();
+    auto operand_sharding = hlo->operand(sharded_operand_id)->sharding();
+    Array<int64_t> tile_assignment = operand_sharding.tile_assignment();
+    std::vector<int64_t> tile_assignment_dims = tile_assignment.dimensions();
+    // Pick the new dimension to move the sharding into
+    int picked_dim = -1;
+    auto num_shards = tile_assignment_dims[sort_dim];
+    // First, try to pick the first non-sort dimension which is divisible by the
+    // new shard count
+    for (int i = 0; i < operand_shape.rank(); ++i) {
+      auto dim = LayoutUtil::Major(operand_shape.layout(), i);
+      if (dim == sort_dim || operand_shape.dimensions(dim) %
+                                     (num_shards * tile_assignment_dims[dim]) !=
+                                 0)
+        continue;
+      picked_dim = dim;
+      break;
+    }
+    // If no other dimension is divisible by the new shard count, pick the first
+    // non-sort dimension
+    if (picked_dim == -1) {
+      for (int i = 0; i < operand_shape.rank(); ++i) {
+        auto dim = LayoutUtil::Major(operand_shape.layout(), i);
+        if (dim == sort_dim) continue;
+        picked_dim = dim;
+        break;
+      }
+    }
+    // Move the sharding if we could pick a dimension to move it into
+    if (picked_dim != -1) {
+      tile_assignment_dims[picked_dim] *= num_shards;
+      tile_assignment_dims[sort_dim] = 1;
+      tile_assignment.Reshape(tile_assignment_dims);
+      auto new_sharding =
+          HloSharding::Tile(tile_assignment, operand_sharding.metadata());
+      VLOG(2) << "new operand sharding: " << new_sharding.ToString();
+      std::vector<HloInstruction*> new_operands;
+      std::vector<HloSharding> new_shardings;
+      for (auto& operand : hlo->operands()) {
+        new_operands.push_back(
+            GetPartitionedHlo(operand).Reshard(new_sharding).hlo());
+        new_shardings.push_back(new_sharding);
+      }
+      auto new_output_sharding =
+          HloSharding::Tuple(sort->shape(), new_shardings);
+      auto final_sort = b_.AddInstruction(hlo->CloneWithNewOperands(
+          MakePartitionedShape(sort->shape(), new_output_sharding),
+          new_operands));
+      final_sort->set_sharding(new_output_sharding);
+      PartitionedHlo psort(final_sort, sort->shape(), MakePartitioningState());
+      SetPartitionedHlo(sort, psort.Reshard(sort->sharding()));
+      return OkStatus();
+    }
+  }
   if (hlo->shape().IsTuple()) {
     // Check that all elements are sharded in the same way.
     if (hlo->shape().tuple_shapes_size() == 0) {
