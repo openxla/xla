@@ -2,9 +2,11 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load("@tsl//tsl:tsl.bzl", "if_with_tpu_support")
 
+visibility = ["//xla:internal"]
+
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = visibility,
     licenses = ["notice"],
 )
 
@@ -12,6 +14,9 @@ cc_library(
     name = "tpu_tracer",
     srcs = if_with_tpu_support(["tpu_tracer.cc"]),
     copts = tf_profiler_copts(),
+    visibility = visibility + [
+        "//third_party/xprof/plugin/tensorboard_plugin_profile/integration_tests/tpu/tensorflow:__pkg__",
+    ],
     deps = [
         "//xla/stream_executor/tpu:status_helper",
         "//xla/stream_executor/tpu:tpu_api",
