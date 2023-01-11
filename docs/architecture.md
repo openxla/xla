@@ -1,4 +1,4 @@
-# XLA Architecture
+# XLA architecture
 
 XLA is a machine learning (ML) compiler that optimizes
 linear algebra (XLA = accelerated linear algebra), providing improvements in
@@ -14,23 +14,23 @@ hardware and software organizations. Before the OpenXLA project was created, XLA
 was developed inside the TensorFlow project, but the fundamental
 objectives have remained the same:
 
-*   **Improve execution speed.** Compile subgraphs to reduce the execution time
-    of short-lived ops to eliminate overhead from the execution runtime, fuse
-    pipelined operations to reduce memory overhead, and specialize known
-    tensor shapes to allow for more aggressive constant propagation.
+* **Improve execution speed.** Compile subgraphs to reduce the execution time
+  of short-lived ops to eliminate overhead from the execution runtime, fuse
+  pipelined operations to reduce memory overhead, and specialize known
+  tensor shapes to allow for more aggressive constant propagation.
 
-*   **Improve memory usage.** Analyze and schedule memory usage,
-    eliminating many intermediate storage buffers.
+* **Improve memory usage.** Analyze and schedule memory usage,
+  eliminating many intermediate storage buffers.
 
-*   **Reduce reliance on custom ops.** Remove the need for many custom ops by
-    improving the performance of automatically fused low-level ops to match the
-    performance of custom ops that were originally fused by hand.
+* **Reduce reliance on custom ops.** Remove the need for many custom ops by
+  improving the performance of automatically fused low-level ops to match the
+  performance of custom ops that were originally fused by hand.
 
-*   **Improve portability.** Make it relatively easy to write a new backend for
-    novel hardware, at which point a large fraction of ML models can
-    run unmodified on that hardware. This is in contrast with the approach of
-    specializing individual monolithic ops for new hardware, which requires
-    models be rewritten to make use of those ops.
+* **Improve portability.** Make it relatively easy to write a new backend for
+  novel hardware, at which point a large fraction of ML models can
+  run unmodified on that hardware. This is in contrast with the approach of
+  specializing individual monolithic ops for new hardware, which requires
+  models be rewritten to make use of those ops.
 
 ## How it works
 
