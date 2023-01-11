@@ -236,7 +236,7 @@ add {
 }
 
 ENTRY main {
-  input = f32[10000,100] parameter(0)
+  input = f32[16384,100] parameter(0)
   zero = f32[] constant(0)
   ROOT out = f32[100] reduce(input, zero), dimensions={0}, to_apply=add
 }
@@ -245,14 +245,14 @@ ENTRY main {
   CheckTreeRewriter(hlo,
                     R"(
 
-// CHECK:  [[input_0:%[^ ]+]] = f32[10000,100]{1,0} parameter(0)
-// CHECK:  [[bitcast_1:%[^ ]+]] = f32[100,100,100]{2,1,0} bitcast([[input_0]])
-// CHECK:  [[reduce_2:%[^ ]+]] = f32[100,100]{1,0} reduce([[bitcast_1]], [[zero_3:%[^ ]+]]), dimensions={0}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  [[input_0:%[^ ]+]] = f32[16384,100]{1,0} parameter(0)
+// CHECK:  [[bitcast_1:%[^ ]+]] = f32[4,4096,100]{2,1,0} bitcast([[input_0]])
+// CHECK:  [[reduce_2:%[^ ]+]] = f32[4,100]{1,0} reduce([[bitcast_1]], [[zero_3:%[^ ]+]]), dimensions={1}, to_apply=[[add_4:%[^ ]+]]
 // CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[100]{0} reduce([[reduce_2]], [[zero_3]]), dimensions={0}, to_apply=[[add_4]]
       )");
 }
 
-TEST_F(TreeReductionRewriterTest, ColumnReductionSimpleNoSquareDivisible) {
+TEST_F(TreeReductionRewriterTest, ColumnReductionSimpleNotPowerOfTwo) {
   const char* hlo = R"(
 HloModule ReduceWithPadding
 
@@ -263,7 +263,7 @@ add {
 }
 
 ENTRY main {
-  input = f32[10302,100] parameter(0)
+  input = f32[10101,100] parameter(0)
   zero = f32[] constant(0)
   ROOT out = f32[100] reduce(input, zero), dimensions={0}, to_apply=add
 }
@@ -271,10 +271,10 @@ ENTRY main {
 
   CheckTreeRewriter(hlo,
                     R"(
-// CHECK:  [[input_0:%[^ ]+]] = f32[10302,100]{1,0} parameter(0)
-// CHECK:  [[bitcast_1:%[^ ]+]] = f32[101,102,100]{2,1,0} bitcast([[input_0]])
+// CHECK:  [[input_0:%[^ ]+]] = f32[10101,100]{1,0} parameter(0)
+// CHECK:  [[bitcast_1:%[^ ]+]] = f32[3,3367,100]{2,1,0} bitcast([[input_0]])
 // CHECK:  [[zero_2:%[^ ]+]] = f32[] constant(0)
-// CHECK:  [[reduce_3:%[^ ]+]] = f32[102,100]{1,0} reduce([[bitcast_1]], [[zero_2]]), dimensions={0}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  [[reduce_3:%[^ ]+]] = f32[3,100]{1,0} reduce([[bitcast_1]], [[zero_2]]), dimensions={1}, to_apply=[[add_4:%[^ ]+]]
 // CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[100]{0} reduce([[reduce_3]], [[zero_2]]), dimensions={0}, to_apply=[[add_4]]
       )");
 }
@@ -290,7 +290,7 @@ add {
 }
 
 ENTRY main {
-  input = f32[10000,2,2,2] parameter(0)
+  input = f32[10002,2,2,2] parameter(0)
   zero = f32[] constant(0)
   ROOT out = f32[2,2,2] reduce(input, zero), dimensions={0}, to_apply=add
 }
@@ -298,10 +298,10 @@ ENTRY main {
 
   CheckTreeRewriter(hlo,
                     R"(
-// CHECK:  [[input_0:%[^ ]+]] = f32[10000,2,2,2]{3,2,1,0} parameter(0)
-// CHECK:  [[bitcast_1:%[^ ]+]] = f32[100,100,2,2,2]{4,3,2,1,0} bitcast([[input_0]])
+// CHECK:  [[input_0:%[^ ]+]] = f32[10002,2,2,2]{3,2,1,0} parameter(0)
+// CHECK:  [[bitcast_1:%[^ ]+]] = f32[3,3334,2,2,2]{4,3,2,1,0} bitcast([[input_0]])
 // CHECK:  [[zero_2:%[^ ]+]] = f32[] constant(0)
-// CHECK:  [[reduce_3:%[^ ]+]] = f32[100,2,2,2]{3,2,1,0} reduce([[bitcast_1]], [[zero_2]]), dimensions={0}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  [[reduce_3:%[^ ]+]] = f32[3,2,2,2]{3,2,1,0} reduce([[bitcast_1]], [[zero_2]]), dimensions={1}, to_apply=[[add_4:%[^ ]+]]
 // CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[2,2,2]{2,1,0} reduce([[reduce_3]], [[zero_2]]), dimensions={0}, to_apply=[[add_4]]
       )");
 }
@@ -317,7 +317,7 @@ add {
 }
 
 ENTRY main {
-  input = f32[1000000,5] parameter(0)
+  input = f32[1000090,5] parameter(0)
   zero = f32[] constant(0)
   ROOT out = f32[5] reduce(input, zero), dimensions={0}, to_apply=add
 }
@@ -326,9 +326,9 @@ ENTRY main {
   CheckTreeRewriter(hlo,
                     R"(
 
-// CHECK:  [[bitcast_0:%[^ ]+]] = f32[1000,1000,5]{2,1,0} bitcast([[input_1:%[^ ]+]])
+// CHECK:  [[bitcast_0:%[^ ]+]] = f32[245,4082,5]{2,1,0} bitcast([[input_1:%[^ ]+]])
 // CHECK:  [[zero_2:%[^ ]+]] = f32[] constant(0)
-// CHECK:  [[reduce_3:%[^ ]+]] = f32[1000,5]{1,0} reduce([[bitcast_0]], [[zero_2]]), dimensions={0}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  [[reduce_3:%[^ ]+]] = f32[245,5]{1,0} reduce([[bitcast_0]], [[zero_2]]), dimensions={1}, to_apply=[[add_4:%[^ ]+]]
 // CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[5]{0} reduce([[reduce_3]], [[zero_2]]), dimensions={0}, to_apply=[[add_4]]
       )");
 }
@@ -369,14 +369,14 @@ ENTRY main {
 
   CheckTreeRewriter(hlo,
                     R"(
-// CHECK:  [[pad_0:%[^ ]+]] = f32[2,100489]{1,0} pad([[input_1:%[^ ]+]], [[zero_2:%[^ ]+]]), padding=0_0x0_489
-// CHECK:  [[bitcast_3:%[^ ]+]] = f32[2,317,317]{2,1,0} bitcast([[pad_0]])
+// CHECK:  [[pad_0:%[^ ]+]] = f32[2,100172]{1,0} pad([[input_1:%[^ ]+]], [[zero_2:%[^ ]+]]), padding=0_0x0_172
+// CHECK:  [[bitcast_3:%[^ ]+]] = f32[2,316,317]{2,1,0} bitcast([[pad_0]])
 // CHECK:  [[zero_idx_4:%[^ ]+]] = u32[] constant(0)
-// CHECK:  [[pad_1_5:%[^ ]+]] = u32[2,100489]{1,0} pad([[idxs_6:%[^ ]+]], [[zero_idx_4]]), padding=0_0x0_489
-// CHECK:  [[bitcast_1_7:%[^ ]+]] = u32[2,317,317]{2,1,0} bitcast([[pad_1_5]])
-// CHECK:  [[reduce_8:%[^ ]+]] = (f32[2,317]{1,0}, u32[2,317]{1,0}) reduce([[bitcast_3]], [[bitcast_1_7]], [[zero_2]], [[zero_idx_4]]), dimensions={2}, to_apply=[[argmax_9:%[^ ]+]]
-// CHECK:  [[get_tuple_element_10:%[^ ]+]] = f32[2,317]{1,0} get-tuple-element([[reduce_8]]), index=0
-// CHECK:  [[get_tuple_element_1_11:%[^ ]+]] = u32[2,317]{1,0} get-tuple-element([[reduce_8]]), index=1
+// CHECK:  [[pad_1_5:%[^ ]+]] = u32[2,100172]{1,0} pad([[idxs_6:%[^ ]+]], [[zero_idx_4]]), padding=0_0x0_172
+// CHECK:  [[bitcast_1_7:%[^ ]+]] = u32[2,316,317]{2,1,0} bitcast([[pad_1_5]])
+// CHECK:  [[reduce_8:%[^ ]+]] = (f32[2,316]{1,0}, u32[2,316]{1,0}) reduce([[bitcast_3]], [[bitcast_1_7]], [[zero_2]], [[zero_idx_4]]), dimensions={2}, to_apply=[[argmax_9:%[^ ]+]]
+// CHECK:  [[get_tuple_element_10:%[^ ]+]] = f32[2,316]{1,0} get-tuple-element([[reduce_8]]), index=0
+// CHECK:  [[get_tuple_element_1_11:%[^ ]+]] = u32[2,316]{1,0} get-tuple-element([[reduce_8]]), index=1
 // CHECK:  ROOT [[out_1_12:%[^ ]+]] = (f32[2]{0}, u32[2]{0}) reduce([[get_tuple_element_10]], [[get_tuple_element_1_11]], [[zero_2]], [[zero_idx_4]]), dimensions={1}, to_apply=[[argmax_9]]
       )");
 }

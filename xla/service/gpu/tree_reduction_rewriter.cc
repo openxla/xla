@@ -38,11 +38,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Returns the square root of the input rounded up to the nearest square.
-static int64_t SqrtOfRoundUpToSquare(int64_t input) {
-  return static_cast<int64_t>(std::ceil(std::sqrt(input)));
-}
-
 class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   explicit ReductionRewriterVisitor(
@@ -113,13 +108,24 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     int64_t reduced_dim_size = input_shape_dims[reduced_input_dimension];
     VLOG(3) << "reduced_dim_size = " << reduced_dim_size;
 
-    // We pad to a nearest square (ceil(sqrt(x)))^2.  Given that:
-    //
-    // (n + 1)^2 = n^2 + (2n+1)
-    //
+    // For row reductions, we pad to a nearest square (ceil(sqrt(x)))^2.
+    // Given that: (n + 1)^2 = n^2 + (2n+1),
     // it can be seen that the distance to the nearest square is at most twice
     // the square root of the input number.
-    int64_t num_fit = SqrtOfRoundUpToSquare(reduced_dim_size);
+    //
+    // For column reductions, we try to maximize the number of rows in the
+    // inner reduction (in order to minimize memory usage for storing the
+    // intermediate results).
+    int64_t num_fit;
+    if (is_row_reduction) {
+      num_fit = static_cast<int64_t>(std::ceil(std::sqrt(reduced_dim_size)));
+    } else {
+      Vector3 reduction_tiling = GetReductionTiling(reduction_dimensions);
+      int64_t max_fit = WarpSize() * reduction_tiling[1];
+      int64_t outer = (reduced_dim_size - 1) / max_fit + 1;
+      num_fit = (reduced_dim_size - 1) / outer + 1;
+    }
+    VLOG(3) << "num_fit = " << num_fit;
 
     // Pad reduced dimension to the required number of elements.
     bool no_padding_necessary = reduced_dim_size % num_fit == 0;
@@ -130,7 +136,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
                                  reduce->inputs().end());
       }
 
-      int64_t padded_num_elements = num_fit * num_fit;
+      int64_t padded_num_elements = (reduced_dim_size / num_fit + 1) * num_fit;
       PaddingConfig padding_config =
           MakeNoPaddingConfig(input_shape_dims.size());
       padding_config.mutable_dimensions(reduced_input_dimension)
@@ -159,12 +165,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     for (int64_t dim_idx = 0; dim_idx < padded[0]->shape().dimensions_size();
          dim_idx++) {
       if (dim_idx == reduced_input_dimension) {
-        if (no_padding_necessary) {
-          reshaped_dimensions.push_back(reduced_dim_size / num_fit);
-        } else {
-          reshaped_dimensions.push_back(num_fit);
-        }
-
+        reshaped_dimensions.push_back((reduced_dim_size - 1) / num_fit + 1);
         reshaped_dimensions.push_back(num_fit);
       } else {
         reshaped_dimensions.push_back(padded[0]->shape().dimensions(dim_idx));
@@ -175,17 +176,14 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
         reshaped_dimensions;
     int64_t inner_reduced_dimension = is_row_reduction
                                           ? inner_reduce_dimensions.size() - 1
-                                          : reduced_input_dimension;
+                                          : reduced_input_dimension + 1;
     VLOG(2) << "inner_reduced_dimension = " << inner_reduced_dimension;
     inner_reduce_dimensions.erase(inner_reduce_dimensions.begin() +
                                   inner_reduced_dimension);
-    if (reduce_batch_dimension) {
-      inner_reduce_dimensions.erase(inner_reduce_dimensions.begin());
-    }
     std::vector<int64_t> dims_to_reduce = {inner_reduced_dimension};
     if (reduce_batch_dimension) {
+      inner_reduce_dimensions.erase(inner_reduce_dimensions.begin());
       dims_to_reduce.push_back(0);
-      inner_reduced_dimension -= 1;
     }
 
     InstructionVector reshaped_padded_inputs;
