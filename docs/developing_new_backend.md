@@ -12,10 +12,10 @@ op from a frontend framework such as PyTorch or TensorFlow for new hardware.
 
 Most implementations will fall into one of the following scenarios:
 
-1.  Existing CPU architecture not yet officially supported by XLA, with or
-    without an existing [LLVM](http://llvm.org) backend.
-2.  Non-CPU-like hardware with an existing LLVM backend.
-3.  Non-CPU-like hardware without an existing LLVM backend.
+1. Existing CPU architecture not yet officially supported by XLA, with or
+   without an existing [LLVM](http://llvm.org) backend.
+2. Non-CPU-like hardware with an existing LLVM backend.
+3. Non-CPU-like hardware without an existing LLVM backend.
 
 !!! Note
     An LLVM backend can mean either one of the officially released LLVM
@@ -61,16 +61,16 @@ If it is not possible to utilize LLVM, then the best option is to implement a
 new backend for XLA for the desired hardware. This option requires the most
 effort. The classes that need to be implemented are as follows:
 
-*   [`StreamExecutor`](https://github.com/openxla/xla/tree/main/xla/stream_executor/stream_executor.h):
-    For many devices not all methods of `StreamExecutor` are needed. See
-    existing `StreamExecutor` implementations for details.
-*   [`xla::Compiler`](https://github.com/openxla/xla/tree/main/xla/service/compiler.h):
-    This class encapsulates the compilation of an HLO computation into an
-    `xla::Executable`.
-*   [`xla::Executable`](https://github.com/openxla/xla/tree/main/xla/service/executable.h):
-    This class is used to launch a compiled computation on the platform.
-*   [`xla::TransferManager`](https://github.com/openxla/xla/tree/main/xla/service/transfer_manager.h):
-    This class enables backends to provide platform-specific mechanisms for
-    constructing XLA literal data from given device memory handles. In other
-    words, it helps encapsulate the transfer of data from the host to the device
-    and back.
+* [`StreamExecutor`](https://github.com/openxla/xla/tree/main/xla/stream_executor/stream_executor.h):
+  For many devices not all methods of `StreamExecutor` are needed. See
+  existing `StreamExecutor` implementations for details.
+* [`xla::Compiler`](https://github.com/openxla/xla/tree/main/xla/service/compiler.h):
+  This class encapsulates the compilation of an HLO computation into an
+  `xla::Executable`.
+* [`xla::Executable`](https://github.com/openxla/xla/tree/main/xla/service/executable.h):
+  This class is used to launch a compiled computation on the platform.
+* [`xla::TransferManager`](https://github.com/openxla/xla/tree/main/xla/service/transfer_manager.h):
+  This class enables backends to provide platform-specific mechanisms for
+  constructing XLA literal data from given device memory handles. In other
+  words, it helps encapsulate the transfer of data from the host to the device
+  and back.

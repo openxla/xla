@@ -154,10 +154,10 @@ among the two inputs at every dimension index.
 
 Examples:
 
-1.  (2,1) and (2,3) broadcast to (2,3).
-2.  (1,2,5) and (7,2,5) broadcast to (7,2,5)
-3.  (7,2,5) and (7,1,5) broadcast to (7,2,5)
-4.  (7,2,5) and (7,2,6) are incompatible and cannot be broadcast.
+1. (2,1) and (2,3) broadcast to (2,3).
+2. (1,2,5) and (7,2,5) broadcast to (7,2,5)
+3. (7,2,5) and (7,1,5) broadcast to (7,2,5)
+4. (7,2,5) and (7,2,6) are incompatible and cannot be broadcast.
 
 A special case arises, and is also supported, where each of the input arrays has
 a degenerate dimension at a different index. In this case, the result is an

@@ -1,13 +1,11 @@
 # Tiled layout
 
-!!! Caution
+!!! Warning
     Tiled layout is *pre-release* and this describes how it's intended to
     work. Errors may be silently ignored.
 
-<p align="center">
-  <img src="images/xla_array_layout_figure1.png">
-  Figure 1
-</p>
+![](images/xla_array_layout_figure1.png)
+<br>Figure 1
 
 Figure 1 shows how an array F32[3,5] is laid out in memory with 2x2 tiling. A
 shape with this layout is written as F32[3,5]{1,0:T(2,2)}, where 1,0 relates to
@@ -30,9 +28,9 @@ e<sub>1</sub>) in an array with array bounds d=(d<sub>n</sub>, d<sub>n-1</sub>,
 ... , d<sub>1</sub>) (d1 is the most minor dimension) is laid out by major to
 minor order at position:
 
-&nbsp;&nbsp; linear_index(e, d) \
+&nbsp;&nbsp; linear_index(e, d) <br>
 = linear_index((e<sub>n</sub>, e<sub>n-1</sub>, ... , e<sub>1</sub>),
-(d<sub>n</sub>, d<sub>n-1</sub>, ... , d<sub>1</sub>)) \
+(d<sub>n</sub>, d<sub>n-1</sub>, ... , d<sub>1</sub>)) <br>
 = e<sub>n</sub>d<sub>n-1</sub>...d<sub>1</sub> +
 e<sub>n-1</sub>d<sub>n-2</sub>...d<sub>1</sub> + ... + e<sub>1</sub>
 
@@ -47,14 +45,14 @@ When tiling of size (t<sub>n</sub>, t<sub>n-1</sub>, ... , t<sub>1</sub>) is
 used, an element in the array with indices (e<sub>n</sub>, e<sub>n-1</sub>, ...
 , e<sub>1</sub>) is mapped to this position in the final layout:
 
-&nbsp;&nbsp; linear_index_with_tile(e, d, t) \
+&nbsp;&nbsp; linear_index_with_tile(e, d, t) <br>
 = linear_index((⌊e/t⌋, e mod t), (⌈d/t⌉, t)) &nbsp; &nbsp; (arithmetic is
-elementwise, (a,b) is concatenation) \
+elementwise, (a,b) is concatenation) <br>
 = linear_index((⌊e<sub>n</sub>/t<sub>n</sub>⌋, ... ,
 ⌊e<sub>1</sub>/t<sub>1</sub>⌋, e<sub>n</sub> mod t<sub>n</sub>, ... ,
 e<sub>1</sub> mod t<sub>1</sub>), (⌈d<sub>n</sub>/t<sub>n</sub>⌉, ... ,
 ⌈d<sub>1</sub>/t<sub>1</sub>⌉, t<sub>n</sub>, t<sub>n-1</sub>, ... ,
-t<sub>1</sub>)) \
+t<sub>1</sub>)) <br>
 = linear_index((⌊e<sub>n</sub>/t<sub>n</sub>⌋, ... ,
 ⌊e<sub>1</sub>/t<sub>1</sub>⌋), (⌈d<sub>n</sub>/t<sub>n</sub>⌉, ... ,
 ⌈d<sub>1</sub>/t<sub>1</sub>⌉))∙t<sub>n</sub>t<sub>n-1</sub>...t<sub>1</sub> +
@@ -77,55 +75,53 @@ have bounds (2, 3) and the tile itself is (2, 2) for a combined vector of (2, 3,
 2, 2). The linear index with tile for the element with index (2, 3) in the
 logical shape is then
 
-&nbsp;&nbsp; linear_index_with_tile((2,3), (3,5), (2,2)) \
-= linear_index((1,1,0,1), (2,3,2,2)) \
-= linear_index((1,1), (2,3)) ∙ 2 ∙ 2 + linear_index((0,1), (2,2)) \
-= (1 ∙ 3 + 1) ∙ 2 ∙ 2 + (0 ∙ 2 + 1) \
+&nbsp;&nbsp; linear_index_with_tile((2,3), (3,5), (2,2)) <br>
+= linear_index((1,1,0,1), (2,3,2,2)) <br>
+= linear_index((1,1), (2,3)) ∙ 2 ∙ 2 + linear_index((0,1), (2,2)) <br>
+= (1 ∙ 3 + 1) ∙ 2 ∙ 2 + (0 ∙ 2 + 1) <br>
 = 17.
 
-# Tiling as pad-reshape-transpose
+## Tiling as pad-reshape-transpose
 
-Tiling-based layout operates as follows: \
+Tiling-based layout operates as follows: <br>
 Consider an array of dimensions (d<sub>n</sub>, d<sub>n-1</sub>, ... , d1) (d1
 is the most minor dimension). When it’s laid out with tiling of size
 (t<sub>n</sub>, t<sub>n-1</sub>, ... , t<sub>1</sub>) (t<sub>1</sub> is the most
 minor dimension), that tiling can be described in terms of pad-reshape-transpose
 in the following way.
 
-1.  The array is padded to (⌈d<sub>n</sub>/t<sub>n</sub>⌉∙t<sub>n</sub>, ... ,
-    ⌈d<sub>1</sub>/t<sub>1</sub>⌉∙t<sub>1</sub>).
-2.  Each dimension i is broken into (⌈d<sub>i</sub>/t</sub>i</sub>⌉,
-    t<sub>i</sub>), i.e. the array is reshaped to \
-    &nbsp; &nbsp; (⌈d<sub>n</sub>/t<sub>n</sub>⌉, t<sub>n</sub>, ... ,
-    ⌈d<sub>1</sub>/t<sub>1</sub>⌉, t<sub>1</sub>). \
-    There is no physical layout change in this reshape by itself, so this
-    reshape is a bitcast. If one is not explicitly thinking of a tiling, this
-    reshape could express any shape with the same number of elements as the
-    padded shape - the example here is of how to express a tile in this way.
-3.  A transpose happens by moving t<sub>n</sub>, ... , t<sub>1</sub> to the most
-    minor dimensions while keeping their relative order, so that the order of
-    dimensions from most major to most minor becomes \
-    &nbsp; &nbsp; (⌈d<sub>n</sub>/t<sub>n</sub>⌉, ... ,
-    ⌈d<sub>1</sub>/t<sub>1</sub>⌉, t<sub>n</sub>, ... , t<sub>1</sub>).
+1. The array is padded to (⌈d<sub>n</sub>/t<sub>n</sub>⌉∙t<sub>n</sub>, ... ,
+   ⌈d<sub>1</sub>/t<sub>1</sub>⌉∙t<sub>1</sub>).
+2. Each dimension i is broken into (⌈d<sub>i</sub>/t</sub>i</sub>⌉,
+   t<sub>i</sub>), i.e. the array is reshaped to <br>
+   &nbsp; &nbsp; (⌈d<sub>n</sub>/t<sub>n</sub>⌉, t<sub>n</sub>, ... ,
+   ⌈d<sub>1</sub>/t<sub>1</sub>⌉, t<sub>1</sub>). <br>
+   There is no physical layout change in this reshape by itself, so this
+   reshape is a bitcast. If one is not explicitly thinking of a tiling, this
+   reshape could express any shape with the same number of elements as the
+   padded shape - the example here is of how to express a tile in this way.
+3. A transpose happens by moving t<sub>n</sub>, ... , t<sub>1</sub> to the most
+   minor dimensions while keeping their relative order, so that the order of
+   dimensions from most major to most minor becomes <br>
+   &nbsp; &nbsp; (⌈d<sub>n</sub>/t<sub>n</sub>⌉, ... ,
+   ⌈d<sub>1</sub>/t<sub>1</sub>⌉, t<sub>n</sub>, ... , t<sub>1</sub>).
 
-The final shape has the prefix \
+The final shape has the prefix <br>
 &nbsp; &nbsp; (⌈d<sub>n</sub>/t<sub>n</sub>⌉, ... ,
 ⌈d<sub>1</sub>/t<sub>1</sub>⌉), which describes the number of tiles in each
 dimension. An element in the array (e<sub>n</sub>, ... , e<sub>1</sub>) is
-mapped to this element in the final shape: \
+mapped to this element in the final shape: <br>
 &nbsp; &nbsp; (⌊e<sub>n</sub>/t<sub>n</sub>⌋, ... ,
 ⌊e<sub>0</sub>/t<sub>0</sub>⌋, e<sub>n</sub> mod t<sub>n</sub>, ... ,
 e<sub>1</sub> mod t<sub>1</sub>). It is easy to see that the linear index of the
 element follows the formula above as expected.
 
-# Repeated tiling
+## Repeated tiling
 
 XLA's tiling becomes even more flexible by applying it repeatedly.
 
-<p align="center">
-  <img src="images/xla_array_layout_figure2.png">
-  Figure 2
-</p>
+![](images/xla_array_layout_figure2.png)
+<br>Figure 2
 
 Figure 2 shows how an array of size 4x8 is tiled by two levels of tiling (first
 2x4 then 2x1). We represent this repeated tiling as (2,4)(2,1). Each color
@@ -141,7 +137,7 @@ dimensions, which just rearranges data within the tile, as in this example with
 (8,128)(2,1), but can also refer to the major cross-tile dimensions from the
 prior tiling.
 
-# Combining dimensions using tiles
+## Combining dimensions using tiles
 
 XLA's tiling also supports combining dimensions. For example, it can combine
 dimensions in F32[2,7,8,11,10]{4,3,2,1,0} into F32[112,110]{1,0} first before

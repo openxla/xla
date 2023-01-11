@@ -1,4 +1,4 @@
-# Code Reviews Guide
+# Code reviews guide
 
 The purpose of this document is to explain the reasoning behind XLA team's
 position on code reviews -- a position that has grown from years of collective
@@ -20,11 +20,11 @@ Learning to be a "fully-fledged XLA contributor" isn't just about writing code
 that doesn't have bugs. There's much more to learn about "how to modify XLA."
 This includes:
 
-*   coding style,
-*   which edge cases to look out for,
-*   expectations around writing tests,
-*   expectations around comments and PR descriptions,
-*   and expectations around building infrastructure to support your change.
+* coding style,
+* which edge cases to look out for,
+* expectations around writing tests,
+* expectations around comments and PR descriptions,
+* and expectations around building infrastructure to support your change.
 
 As you build knowledge of the project and trust from reviewers, you can expect
 that you'll get fewer comments, because you're naturally writing code more
@@ -35,20 +35,20 @@ relatively new people. Those of us who are highly experienced have many demands
 on our time. To keep PRs moving forward in a timely manner you can help reduce
 the time reviewers need and the number of iterations required by:
 
-*   *Carefully reviewing and/or having your PR reviewed by a colleague before
-    sending it:* Try to remove as many trivial mistakes (code style, spelling
-    and grammar mistakes, etc.) before sending the PR for review. Make sure all
-    tests pass.
-*   *Carefully reading your reviewer's comments:* Try to understand what the
-    reviewer is asking for and attempt to address all comments before you push a
-    new version.
-*   *Avoiding tangential discussions (bikeshedding):* Technical discussions and
-    disagreements are highly valuable and nobody is perfect. However, avoid
-    discussions that don't make a difference or are merely stylistic. If you
-    disagree with a reviewer's comment, try to detail your reasons as precisely
-    and comprehensively as possible to avoid long back-and-forth discussions.
-*   *Avoiding asking the "commonly asked review questions" listed below:* We
-    have listed some answers to common questions and our rationale below.
+* *Carefully reviewing and/or having your PR reviewed by a colleague before
+  sending it:* Try to remove as many trivial mistakes (code style, spelling
+  and grammar mistakes, etc.) before sending the PR for review. Make sure all
+  tests pass.
+* *Carefully reading your reviewer's comments:* Try to understand what the
+  reviewer is asking for and attempt to address all comments before you push a
+  new version.
+* *Avoiding tangential discussions (bikeshedding):* Technical discussions and
+  disagreements are highly valuable and nobody is perfect. However, avoid
+  discussions that don't make a difference or are merely stylistic. If you
+  disagree with a reviewer's comment, try to detail your reasons as precisely
+  and comprehensively as possible to avoid long back-and-forth discussions.
+* *Avoiding asking the "commonly asked review questions" listed below:* We
+  have listed some answers to common questions and our rationale below.
 
 In general, we invite you to try to make reviewing your PRs take as little time
 for us as possible. Then we will want to review your changes quickly!
@@ -91,21 +91,21 @@ internally within Google.
 
 There are a few reasons that XLA takes this approach.
 
-*   *Trust:* Having earned the reviewer's trust is a key component. In an
-    open-source project, contributors can appear or disappear at will. After we
-    approve a PR, reviewers have no way to ensure that any promised follow-ups
-    actually get done.
+* *Trust:* Having earned the reviewer's trust is a key component. In an
+  open-source project, contributors can appear or disappear at will. After we
+  approve a PR, reviewers have no way to ensure that any promised follow-ups
+  actually get done.
 
-*   *Impact on other developers:* If you have sent a PR touching a particular
-    part of XLA, there's a good chance other people are looking at the same
-    part. If we accept technical debt in your PR, then everyone who's looking at
-    this file will be impacted by this debt until the follow-up is submitted.
+* *Impact on other developers:* If you have sent a PR touching a particular
+  part of XLA, there's a good chance other people are looking at the same
+  part. If we accept technical debt in your PR, then everyone who's looking at
+  this file will be impacted by this debt until the follow-up is submitted.
 
-*   *Reviewer bandwidth:* Deferring a change to a follow-up imposes multiple
-    costs on our already-overloaded reviewers. Reviewers will probably forget
-    what this PR was about while waiting for the follow-up, making the next
-    review more difficult. Also, reviewers will have to keep track of the
-    follow-ups they're waiting on, making sure that they actually happen. If the
-    change can be made such that it is truly orthogonal to the original PR so
-    that some other reviewer could review it, bandwidth would be less of a
-    problem. In our experience, this is rarely the case.
+* *Reviewer bandwidth:* Deferring a change to a follow-up imposes multiple
+  costs on our already-overloaded reviewers. Reviewers will probably forget
+  what this PR was about while waiting for the follow-up, making the next
+  review more difficult. Also, reviewers will have to keep track of the
+  follow-ups they're waiting on, making sure that they actually happen. If the
+  change can be made such that it is truly orthogonal to the original PR so
+  that some other reviewer could review it, bandwidth would be less of a
+  problem. In our experience, this is rarely the case.
