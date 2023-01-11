@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <memory>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -38,9 +39,8 @@ class GpuHloScheduleTest : public HloTestBase {
   Shape f32_2x2_ = ShapeUtil::MakeShape(F32, {2, 2});
 
   static SequentialHloOrdering BuildHloOrdering(HloModule* module) {
-    HloSchedule schedule =
-        ScheduleGpuModule(module, /*pointer_size=*/8).value();
-    return SequentialHloOrdering{schedule};
+    TF_CHECK_OK(ScheduleGpuModule(module, /*pointer_size=*/8));
+    return SequentialHloOrdering{module->schedule()};
   }
 
   std::unique_ptr<HloModule> CreateNewVerifiedModule() {

@@ -293,14 +293,6 @@ class GpuBfloat16Support : public BFloat16Support {
       gpu_info_;
 };
 
-int64_t GetSizeOfShape(const Shape& shape, int pointer_size) {
-  if (shape.is_static() || shape.IsTuple()) {
-    return ShapeUtil::ByteSizeOf(shape, pointer_size);
-  }
-  // Each dynamic dimension size is represented as a S32.
-  int64_t metadata_size = sizeof(int32_t) * shape.dimensions_size();
-  return ShapeUtil::ByteSizeOf(shape, pointer_size) + metadata_size;
-}
 
 bool ConvIsLowerable(HloInstruction* conv) {
   return GpuConvRewriter::ConvIsLowerable(conv);
@@ -1024,9 +1016,8 @@ static std::optional<bool> DummyCanShareBufferFunction(const HloInstruction*,
 }
 
 StatusOr<std::unique_ptr<BufferAssignment>> GpuCompiler::AssignBuffers(
-    const HloModule* hlo_module) {
-  TF_ASSIGN_OR_RETURN(HloSchedule hlo_schedule,
-                      ScheduleGpuModule(hlo_module, pointer_size_));
+    HloModule* hlo_module) {
+  TF_RETURN_IF_ERROR(ScheduleGpuModule(hlo_module, pointer_size_));
 
   auto buffer_size_bytes_function =
       [this](const BufferValue& buffer_value) -> int64_t {
@@ -1036,7 +1027,8 @@ StatusOr<std::unique_ptr<BufferAssignment>> GpuCompiler::AssignBuffers(
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> assignment,
       BufferAssigner::Run(
-          hlo_module, std::make_unique<SequentialHloOrdering>(hlo_schedule),
+          hlo_module,
+          std::make_unique<SequentialHloOrdering>(hlo_module->schedule()),
           buffer_size_bytes_function,
           /*color_alignment=*/
           [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; },
@@ -1197,8 +1189,7 @@ static Status CompileModuleToLlvmIrImpl(
   results->llvm_module->setTargetTriple(target_triple);
   results->llvm_module->setDataLayout(data_layout);
 
-  TF_ASSIGN_OR_RETURN(HloSchedule hlo_schedule,
-                      ScheduleGpuModule(hlo_module, pointer_size));
+  TF_RETURN_IF_ERROR(ScheduleGpuModule(hlo_module, pointer_size));
 
   auto buffer_size_bytes_function =
       [pointer_size](const BufferValue& buffer_value) -> int64_t {
@@ -1208,7 +1199,8 @@ static Status CompileModuleToLlvmIrImpl(
   TF_ASSIGN_OR_RETURN(
       results->buffer_assignment,
       BufferAssigner::Run(
-          hlo_module, std::make_unique<SequentialHloOrdering>(hlo_schedule),
+          hlo_module,
+          std::make_unique<SequentialHloOrdering>(hlo_module->schedule()),
           buffer_size_bytes_function,
           /*color_alignment=*/
           [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; },

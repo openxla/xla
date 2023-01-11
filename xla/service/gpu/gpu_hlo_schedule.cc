@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 
 #include <deque>
+#include <iostream>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -24,12 +26,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/hlo_memory_scheduler.h"
+#include "xla/service/hlo_pass_pipeline.h"
+#include "xla/service/latency_hiding_scheduler.h"
 
 namespace xla {
 namespace gpu {
 
 namespace {
-
 
 bool ShouldScheduleAsEarlyAsPossible(const HloInstruction& instr) {
   switch (instr.opcode()) {
@@ -152,10 +155,8 @@ HloInstructionSequence PostprocessorToScheduleAsEarlyOrLateAsPossible(
   return result;
 }
 
-}  // end namespace
-
-StatusOr<HloSchedule> ScheduleGpuModule(const HloModule* module,
-                                        int64_t pointer_size) {
+StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
+    const HloModule* module, int64_t pointer_size) {
   return ScheduleModule(
       module,
       [pointer_size](const BufferValue& buffer) {
@@ -164,6 +165,76 @@ StatusOr<HloSchedule> ScheduleGpuModule(const HloModule* module,
       ComputationSchedulerToModuleScheduler(
           DefaultMemoryScheduler,
           PostprocessorToScheduleAsEarlyOrLateAsPossible));
+}
+
+// Latency hiding scheduler support.
+
+SchedulerConfig GetSchedulerConfig() {
+  // TODO(cheshire): Better values.
+  // TODO(cheshire): won't work in OSS.
+  SchedulerConfig config;
+  config.all_reduce_overlap_limit = 1;
+  config.use_real_cost_model = false;
+  config.aggressive_scheduling_policies = true;
+
+  // TODO(cheshire): Get real GPU memory limit. What is the semantics of that?
+  // can we dynamically query the memory limit of the GPU we are compiling for?
+  config.memory_limit = 10e9;
+  return config;
+}
+
+// Latency estimator that assigns uniform latency and cost for all instructions.
+// The expectation is that this should keep the schedule "mostly" unchanged.
+class GpuLatencyEstimatorNop : public LatencyEstimator {
+ public:
+  TimeCost GetLatencyBetween(const HloGraphNode& from,
+                             const HloGraphNode& target) const override {
+    return 1.0;
+  }
+  TimeCost NodeCost(const HloInstruction* instr) const override { return 1.0; }
+};
+
+}  // end namespace
+
+int64_t GetSizeOfShape(const Shape& shape, int pointer_size) {
+  int64_t size = ShapeUtil::ByteSizeOf(shape, pointer_size);
+  if (shape.is_static() || shape.IsTuple()) {
+    return size;
+  }
+  // Each dynamic dimension size is represented as a S32.
+  int64_t metadata_size = sizeof(int32_t) * shape.dimensions_size();
+  return size + metadata_size;
+}
+
+Status ScheduleGpuModule(HloModule* module, int64_t pointer_size) {
+  TF_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleGpuModuleWithMemoryScheduler(module, pointer_size));
+  TF_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
+
+  if (!module->config()
+           .debug_options()
+           .xla_gpu_enable_latency_hiding_scheduler()) {
+    return OkStatus();
+  }
+  SchedulerConfig config = GetSchedulerConfig();
+  auto latency_estimator = std::make_unique<GpuLatencyEstimatorNop>();
+  auto async_tracker = std::make_unique<AsyncTracker>(config);
+
+  auto shape_size_in_bytes = [pointer_size](const Shape& shape) {
+    return GetSizeOfShape(shape, pointer_size);
+  };
+  HloPassPipeline pipeline("latency-hiding-scheduler");
+  auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
+      shape_size_in_bytes, async_tracker.get(), latency_estimator.get(),
+      config);
+
+  pipeline.AddPass<LatencyHidingScheduler>(
+      std::move(latency_estimator), std::move(async_tracker),
+      std::move(scheduler_core), shape_size_in_bytes);
+
+  TF_RETURN_IF_ERROR(pipeline.Run(module).status());
+  return OkStatus();
 }
 
 }  // namespace gpu
