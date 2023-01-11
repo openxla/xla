@@ -18,6 +18,8 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/test.h"
@@ -1231,12 +1233,18 @@ TEST_F(PatternMatcherTest, CustomCallMatchers) {
   EXPECT_TRUE(Match(
       root, m::CustomCall("test_target", m::Parameter(0), m::Parameter(1))));
 
-  EXPECT_TRUE(Match(root, m::CustomCall({"test_target", "other_target"})));
-  EXPECT_TRUE(Match(root, m::CustomCall({"other_target", "test_target"})));
-  EXPECT_TRUE(Match(root, m::CustomCall({"test_target", "other_target"},
-                                        m::Parameter(0), m::Parameter(1))));
-  EXPECT_TRUE(Match(root, m::CustomCall({"other_target", "test_target"},
-                                        m::Parameter(0), m::Parameter(1))));
+  EXPECT_TRUE(Match(root, m::CustomCall(absl::Span<const absl::string_view>{
+                              "test_target", "other_target"})));
+  EXPECT_TRUE(Match(root, m::CustomCall(absl::Span<const absl::string_view>{
+                              "other_target", "test_target"})));
+  EXPECT_TRUE(Match(
+      root, m::CustomCall(absl::Span<const absl::string_view>{"test_target",
+                                                              "other_target"},
+                          m::Parameter(0), m::Parameter(1))));
+  EXPECT_TRUE(Match(
+      root, m::CustomCall(absl::Span<const absl::string_view>{"other_target",
+                                                              "test_target"},
+                          m::Parameter(0), m::Parameter(1))));
 
   HloInstruction* instr;
   EXPECT_TRUE(Match(root, m::CustomCall(&instr)));
@@ -1251,7 +1259,8 @@ TEST_F(PatternMatcherTest, CustomCallMatchers) {
                                         m::Parameter(0), m::Parameter(1))));
 
   EXPECT_FALSE(Match(root, m::CustomCall("other_target")));
-  EXPECT_FALSE(Match(root, m::CustomCall({"other_target", "other_target2"})));
+  EXPECT_FALSE(Match(root, m::CustomCall(absl::Span<const absl::string_view>{
+                               "other_target", "other_target2"})));
   EXPECT_FALSE(Match(
       root, m::CustomCall("test_target", m::Parameter(1), m::Parameter(0))));
 }
