@@ -1836,6 +1836,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
