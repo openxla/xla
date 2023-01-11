@@ -532,6 +532,27 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::GetTemporalBufferIntervalCompare()
   });
 }
 
+// Specialization for MSA::AllocationBlock with a slightly different sorting
+// order. Sorting by initial offset gives better buffer order stability leading
+// to higher cross program prefetch success between different programs.
+template <>
+GlobalDecreasingSizeBestFitHeap<
+    MemorySpaceAssignmentRepacker::AllocationBlock>::BufferIntervalCompare
+GlobalDecreasingSizeBestFitHeap<
+    MemorySpaceAssignmentRepacker::AllocationBlock>::
+    GetTemporalBufferIntervalCompare() const {
+  return LessThanByKey([this](const BufferInterval& x) {
+    int64_t x_end = x.end;
+    for (auto colocation : GetTransitiveColocations(x)) {
+      x_end = std::max(x_end, buffer_intervals_.at(colocation).end);
+    }
+    // Sort by duration (descending), size (descending), initial offset
+    // (ascending), buffer (ascending).
+    return std::make_tuple(x.start - x_end, -x.size, x.buffer->initial_offset,
+                           std::cref(*x.buffer));
+  });
+}
+
 template <typename BufferType>
 /*static*/ typename GlobalDecreasingSizeBestFitHeap<
     BufferType>::BufferIntervalCompare

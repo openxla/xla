@@ -527,6 +527,13 @@ class ChooseBestHeapAlgorithm : public HeapAlgorithm<BufferType> {
   std::vector<std::unique_ptr<HeapAlgorithm<BufferType>>> algorithms_;
 };
 
+template <>
+GlobalDecreasingSizeBestFitHeap<
+    MemorySpaceAssignmentRepacker::AllocationBlock>::BufferIntervalCompare
+GlobalDecreasingSizeBestFitHeap<
+    MemorySpaceAssignmentRepacker::AllocationBlock>::
+    GetTemporalBufferIntervalCompare() const;
+
 extern template class GlobalDecreasingSizeBestFitHeap<HloValue>;
 extern template class GlobalDecreasingSizeBestFitHeap<
     MemorySpaceAssignmentRepacker::AllocationBlock>;
