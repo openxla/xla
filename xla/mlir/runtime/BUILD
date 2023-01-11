@@ -6,6 +6,7 @@ package_group(
     packages = [
         # copybara:uncomment_begin(google-only)
         # "//platforms/xla/service/cpu/...",
+        # "//platforms/xla/tools/mlir_interpreter/...",
         # "//learning/brain/experimental/tfrt/autofusion/...",
         # # TODO(ezhulenev): Clean up dependencies that are leforvers from Autofusion project.
         # "@tf_runtime//...",

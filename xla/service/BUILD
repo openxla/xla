@@ -6385,6 +6385,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = [
         ":__subpackages__",
+        # copybara:uncomment(google-only) "//platforms/xla/tools/mlir_interpreter/dialects:__pkg__",
         "//third_party/tensorflow/compiler/tf2xla:__pkg__",
     ],
     deps = [
