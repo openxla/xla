@@ -145,6 +145,7 @@ cc_library(
     deps = [
         ":ifrt",
         ":test_util",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
     ],
