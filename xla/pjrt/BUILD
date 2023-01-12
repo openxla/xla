@@ -135,6 +135,33 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_api",
+    srcs = ["pjrt_api.cc"],
+    hdrs = ["pjrt_api.h"],
+    deps = [
+        "//xla:status",
+        "//xla:statusor",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_helpers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_api_test",
+    srcs = ["pjrt_api_test.cc"],
+    deps = [
+        ":pjrt_api",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
+    ],
+)
+
+cc_library(
     name = "pjrt_client",
     srcs = ["pjrt_client.cc"],
     hdrs = ["pjrt_client.h"],
@@ -613,6 +640,7 @@ cc_library(
     srcs = ["pjrt_c_api_client.cc"],
     hdrs = ["pjrt_c_api_client.h"],
     deps = [
+        ":pjrt_api",
         ":pjrt_client",
         ":pjrt_executable",
         ":pjrt_future",
@@ -625,7 +653,6 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_wrapper_impl",  # TODO(skyewm): remove
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor/tpu:c_api_conversions",  # TODO(b/238999986): Remove this.
-        "//xla/stream_executor/tpu:pjrt_api",
         "//xla/stream_executor/tpu:tpu_initializer_helper",
         "@com_google_absl//absl/strings",
         "@llvm-project//mlir:BytecodeWriter",

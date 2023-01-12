@@ -1,7 +1,6 @@
 # Description: StreamExecutor Interface for TPUs
 
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -21,21 +20,6 @@ package(
         "//xla/backends/profiler/tpu:__subpackages__",
     ],
     licenses = ["notice"],
-)
-
-cc_library(
-    name = "pjrt_api",
-    srcs = ["pjrt_api.cc"],
-    hdrs = ["pjrt_api.h"],
-    deps = [
-        "//xla:status",
-        "//xla:statusor",
-        "//xla/pjrt/c:pjrt_c_api_hdrs",
-        "//xla/pjrt/c:pjrt_c_api_helpers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-    ],
 )
 
 cc_library(
@@ -536,17 +520,5 @@ cc_library(
         ":c_api_decl",
         ":tpu_api",
         "@tsl//tsl/platform:types",
-    ],
-)
-
-xla_cc_test(
-    name = "pjrt_api_test",
-    srcs = ["pjrt_api_test.cc"],
-    deps = [
-        ":pjrt_api",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )

@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_c_api_client.h"
 #include "xla/pjrt/tpu_client.h"
 #endif  // XLA_PYTHON_ENABLE_TPU
+#include "xla/pjrt/pjrt_api.h"
 #include "xla/python/custom_call_sharding.h"
 #include "xla/python/dlpack.h"
 #include "xla/python/jax_jit.h"
@@ -80,7 +81,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/statusor.h"
-#include "xla/stream_executor/tpu/pjrt_api.h"
 #include "xla/util.h"
 #include "tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 #include "tsl/python/lib/core/bfloat16.h"
@@ -327,8 +327,7 @@ PYBIND11_MODULE(xla_extension, m) {
   });
   m.def("load_pjrt_plugin",
         [](std::string platform_name, std::string library_path) -> Status {
-          return stream_executor::tpu::LoadPjrtPlugin(platform_name,
-                                                      library_path);
+          return pjrt::LoadPjrtPlugin(platform_name, library_path);
         });
 
 #ifdef XLA_PYTHON_ENABLE_GPU

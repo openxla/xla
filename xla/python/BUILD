@@ -916,7 +916,7 @@ tsl_pybind_extension(
         "//xla/pjrt/distributed:service",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
-        "//xla/stream_executor/tpu:pjrt_api",
+        "//xla/pjrt:pjrt_api",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/python/lib/core:bfloat16_lib",
