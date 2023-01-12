@@ -6752,7 +6752,6 @@ cc_library(
     srcs = ["compilation_environments.cc"],
     hdrs = ["compilation_environments.h"],
     deps = [
-        "//google/protobuf:any_cc_proto",
         "//xla:statusor",
         "//xla:xla_proto_cc",
         "@com_google_absl//absl/algorithm:container",

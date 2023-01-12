@@ -99,7 +99,6 @@ tf_proto_library(
         "//xla/service:hlo_proto",
     ],
     visibility = ["//visibility:public"],
-    deps = ["//google/protobuf:any"],
 )
 
 cc_library(
