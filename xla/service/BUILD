@@ -5629,6 +5629,7 @@ cc_library(
     hdrs = ["hlo_runner_pjrt.h"],
     deps = [
         ":executable",
+        ":hlo_module_util",
         ":hlo_runner_interface",
         "//xla:statusor",
         "//xla/client:xla_computation",
@@ -5636,8 +5637,6 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
-        "//xla/service:hlo_module_util",
-        "//xla/tests:pjrt_client_registry",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
