@@ -101,15 +101,15 @@ cc_library(
         "//xla:debug_options_flags",
         "//xla:execution_options_util",
         "//xla:shape_util",
-        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/pjrt:compile_options_proto_cc",
+        "//xla/service:compilation_environments",
         "//xla/service:computation_placer",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
