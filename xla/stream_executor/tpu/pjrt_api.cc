@@ -78,12 +78,16 @@ xla::Status LoadPjrtPlugin(absl::string_view device_type,
   const PJRT_Api* (*fptr)();
   *reinterpret_cast<void**>(&fptr) = dlsym(library, "GetPjrtApi");
   if (fptr == nullptr) {
-    return tsl::errors::NotFound("GetPjrtApi not found in ", library_path);
+    return tsl::errors::NotFound("GetPjrtApi not found in", library_path);
   }
   LOG(INFO) << "GetPjrtApi was found for " << device_type << " at "
             << library_path;
 
   const PJRT_Api* pjrt_api = fptr();
+  if (pjrt_api == nullptr) {
+    return tsl::errors::Internal("GetPjrtApi returns nullptr for", device_type,
+                                 "at", library_path);
+  }
   TF_RETURN_IF_ERROR(pjrt::CheckMatchingStructSizes(
       "PJRT_Api", PJRT_Api_STRUCT_SIZE, pjrt_api->struct_size));
   TF_RETURN_IF_ERROR(stream_executor::tpu::SetPjrtApi(device_type, pjrt_api));

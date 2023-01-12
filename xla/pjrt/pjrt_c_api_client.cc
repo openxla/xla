@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/tpu/pjrt_api.h"
-#include "xla/stream_executor/tpu/tpu_initializer_helper.h"  // NOLINT(unused-includes): required for tensorflow::tpu::FindAndLoadTpuLibrary
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/status.h"
@@ -1151,12 +1150,6 @@ PjRtFuture<Status> PjRtCApiBuffer::GetReadyFuture() {
 
 StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(
     absl::string_view device_type) {
-#if !defined(PLATFORM_GOOGLE) || defined(LIBTPU_STATIC)
-  if (absl::AsciiStrToLower(device_type) == "tpu") {
-    // TODO(b/261484192): handle device specific initialization.
-    TF_RETURN_IF_ERROR(tensorflow::tpu::FindAndLoadTpuLibrary());
-  }
-#endif
   TF_ASSIGN_OR_RETURN(const PJRT_Api* c_api,
                       stream_executor::tpu::PjrtApi(device_type));
   if (c_api == nullptr) {
