@@ -1,8 +1,9 @@
 // RUN: mlir-hlo-opt %s --gml-st-cpu-transform-sort | FileCheck %s
 
-func.func @sort_variadic(%input1: tensor<64x8x4xf32>, %input2: tensor<64x8x4xf32>,
-                %init1: tensor<64x8x4xf32>, %init2: tensor<64x8x4xf32>) {
-  thlo.sort
+func.func @sort_variadic(%input1: tensor<64x8x4xf32>,
+    %input2: tensor<64x8x4xf32>, %init1: tensor<64x8x4xf32>,
+    %init2: tensor<64x8x4xf32>) -> (tensor<64x8x4xf32>, tensor<64x8x4xf32>) {
+  %sorted:2 = thlo.sort
       ins(%input1: tensor<64x8x4xf32>, %input2: tensor<64x8x4xf32>)
       outs(%init1: tensor<64x8x4xf32>, %init2: tensor<64x8x4xf32>)
       dimension = 1
@@ -11,14 +12,14 @@ func.func @sort_variadic(%input1: tensor<64x8x4xf32>, %input2: tensor<64x8x4xf32
         %gt = arith.cmpf ogt, %e11, %e12: f32
         thlo.yield %gt : i1
       }
-  func.return
+  func.return %sorted#0, %sorted#1 : tensor<64x8x4xf32>, tensor<64x8x4xf32>
 }
 
 // CHECK-LABEL: func.func @sort_variadic(
 // CHECK-SAME:        %[[INPUT1:[A-Za-z0-9]*]]: tensor<64x8x4xf32>,
 // CHECK-SAME:        %[[INPUT2:[A-Za-z0-9]*]]: tensor<64x8x4xf32>,
 // CHECK-SAME:        %[[INIT1:[A-Za-z0-9]*]]: tensor<64x8x4xf32>,
-// CHECK-SAME:        %[[INIT2:[A-Za-z0-9]*]]: tensor<64x8x4xf32>) {
+// CHECK-SAME:        %[[INIT2:[A-Za-z0-9]*]]: tensor<64x8x4xf32>)
 
 // CHECK:             gml_st.parallel
 // CHECK:               %[[INPUT1_SUB:.*]] = gml_st.materialize %[[INPUT1]]
