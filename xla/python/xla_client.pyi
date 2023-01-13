@@ -99,11 +99,14 @@ def make_tfrt_tpu_c_api_client() -> Client:
 def make_tpu_client() -> Client:
   ...
 
+def make_c_api_client(platform_name: str) -> Client:
+  ...
+
 
 def make_plugin_device_client() -> Client:
   ...
 
-def maybe_load_pjrt_plugins() -> None:
+def maybe_load_pjrt_plugins() -> Sequence[str]:
   ...
 
 class OpMetadata:

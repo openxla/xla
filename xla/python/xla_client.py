@@ -43,7 +43,7 @@ profiler = _xla.profiler
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes.
-_version = 117
+_version = 118
 
 # Version number for MLIR:Python components.
 mlir_api_version = 43
@@ -99,6 +99,10 @@ def make_gpu_client(distributed_client=None, node_id=0, platform_name=None,
 
 def make_tfrt_tpu_c_api_client():
   return _xla.get_c_api_client('tpu')
+
+
+def make_c_api_client(platform_name: str):
+  return _xla.get_c_api_client(platform_name)
 
 
 def _use_pjrt_c_api() -> bool:
@@ -165,18 +169,19 @@ def _get_pjrt_plugin_names_and_library_paths() -> Dict[str, str]:
 
 
 # TODO(b/237099479): Move to xla_bridge.py when ready.
-def maybe_load_pjrt_plugins() -> None:
-  """Tries to load PJRT plugin for platform."""
-  if not _use_pjrt_c_api():
-    return
+def maybe_load_pjrt_plugins() -> Sequence[str]:
+  """Tries to load PJRT plugins. Returns a list of loaded plugin names."""
   # TODO(b/261345120): implement plugin discovery.
+  loaded_pjrt_plugins = []
   pjrt_plugins = _get_pjrt_plugin_names_and_library_paths()
   for plugin_name, library_path in pjrt_plugins.items():
     try:
       _xla.load_pjrt_plugin(plugin_name, library_path)
+      loaded_pjrt_plugins.append(plugin_name)
     except Exception as e:  # pylint: disable=broad-except
       logger.error("Error loading '%s' plugin from '%s': %s", plugin_name,
                    library_path, e)
+  return loaded_pjrt_plugins
 
 
 class OpMetadata:
