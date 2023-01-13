@@ -91,6 +91,8 @@ class TraceMeProducer {
 
   uint64 GetContextId() const { return context_id_; }
 
+  TraceMe& GetTraceMe() { return trace_me_; }
+
  private:
   uint64 context_id_;
   TraceMe trace_me_;
@@ -111,6 +113,8 @@ class TraceMeConsumer {
   TraceMeConsumer(NameT&& name, uint64 context_id, int level = 2)
       : TraceMeConsumer(std::forward<NameT>(name), ContextType::kGeneric,
                         context_id, level) {}
+
+  TraceMe& GetTraceMe() { return trace_me_; }
 
  private:
   TraceMe trace_me_;
