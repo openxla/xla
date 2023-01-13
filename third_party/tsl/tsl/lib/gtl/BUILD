@@ -57,8 +57,8 @@ cc_library(
     name = "flatrep",
     hdrs = ["flatrep.h"],
     deps = [
-        "//tsl/platform:prefetch",
         "//tsl/platform:types",
+        "@com_google_absl//absl/base:prefetch",
     ],
 )
 
