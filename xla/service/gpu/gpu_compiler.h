@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "xla/autotune_results.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/executable.pb.h"
@@ -107,6 +108,8 @@ struct GpuTargetConfig {
   GpuVersion gpu_version;
   std::string platform_name;
   se::dnn::VersionInfo dnn_version_info;
+  AutotuneResults autotune_results;
+  std::string device_description_str;
 };
 
 // The GPU compiler generates efficient GPU executables.
