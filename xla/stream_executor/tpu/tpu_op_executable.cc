@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_op_executable.h"
 
+#include <memory>
 #include <vector>
 
 #include "xla/status.h"
@@ -29,12 +30,13 @@ limitations under the License.
 
 namespace tensorflow {
 
-TpuOpExecutable::TpuOpExecutable(const XLA_TpuProgram* core_program,
-                                 std::unique_ptr<xla::HloModule> hlo_module,
-                                 HostCommandHandler host_command_handler)
+TpuOpExecutable::TpuOpExecutable(
+    const XLA_TpuProgram* core_program,
+    std::unique_ptr<xla::HloModule> hlo_module,
+    TpuHostTransferCommand tpu_host_transfer_command)
     : TpuExecutableInterface(std::move(hlo_module)),
       core_program_(core_program),
-      host_command_handler_(std::move(host_command_handler)) {}
+      tpu_host_transfer_command_(tpu_host_transfer_command) {}
 
 xla::Status TpuOpExecutable::LoadProgramAndEnqueueToStream(
     const xla::ServiceExecutableRunOptions& run_options,
@@ -96,6 +98,7 @@ xla::Status TpuOpExecutable::LoadProgramAndEnqueueToStream(
   params.rng_seed = rng_seed;
   params.device_assignment = &c_dev_assign;
   params.stream = stream;
+  params.tpu_host_transfer_command = tpu_host_transfer_command_;
   params.status = status.c_status;
 
   stream_executor::tpu::OpsApiFn()

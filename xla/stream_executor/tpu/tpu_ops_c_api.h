@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/libtftpu.h"
 #include "xla/stream_executor/tpu/proto_helper.h"
+#include "xla/stream_executor/tpu/tpu_host_transfer_command.h"
 
 typedef struct TpuSerializedProto TpuSerializedProto;
 
@@ -234,6 +235,7 @@ typedef struct TpuExecutable_LoadProgramAndEnqueueToStream_Params {
   int32_t rng_seed;
   XLA_DeviceAssignment* device_assignment;
   SE_Stream* stream;
+  tensorflow::TpuHostTransferCommand tpu_host_transfer_command;
 
   TF_Status* status;  // out
 } TpuExecutable_LoadProgramAndEnqueueToStream_Params;

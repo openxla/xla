@@ -127,6 +127,7 @@ cc_library(
         ":c_api_decl",
         ":libtftpu_header",
         ":proto_helper",
+        ":tpu_host_transfer_command",
     ],
     alwayslink = True,
 )
@@ -350,6 +351,13 @@ cc_library(
 )
 
 cc_library(
+    name = "tpu_host_transfer_command",
+    hdrs = ["tpu_host_transfer_command.h"],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+cc_library(
     name = "tpu_op_executable",
     srcs = ["tpu_op_executable.cc"],
     hdrs = ["tpu_op_executable.h"],
@@ -361,11 +369,11 @@ cc_library(
         ":tpu_executable_interface",
         ":tpu_executor_base",
         ":tpu_executor_c_api_hdrs",
+        ":tpu_host_transfer_command",
         ":tpu_ops_c_api_hdrs",
         ":tpu_platform_interface",
         "//xla:shape_util",
         "//xla:status",
-        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
