@@ -2,7 +2,6 @@
 # Implementation of custom numpy floats.
 load("//tsl:tsl.bzl", "if_windows")
 load("//tsl:tsl.default.bzl", "tsl_pybind_extension")
-load("//tsl/platform:rules_cc.bzl", "cc_shared_library")
 
 package(
     default_visibility = [

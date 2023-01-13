@@ -8,7 +8,6 @@ load(
     "//tsl/platform:rules_cc.bzl",
     "cc_binary",
     "cc_library",
-    "cc_shared_library",
 )
 load(
     "@local_config_tensorrt//:build_defs.bzl",
@@ -618,7 +617,7 @@ def tsl_pybind_extension_opensource(
             visibility = visibility,
         )
 
-        cc_shared_library(
+        native.cc_shared_library(
             name = so_file,
             roots = [cc_library_name],
             dynamic_deps = dynamic_deps,
