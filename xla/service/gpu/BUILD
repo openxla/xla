@@ -8,6 +8,7 @@ load(
 )
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
+    "if_static",
     "tf_cuda_tests_tags",
 )
 load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
@@ -976,8 +977,11 @@ cc_library(
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cublas_lt_header",
         "@tsl//tsl/platform/default/build_config:cublas_plugin",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "//xla/stream_executor:host_or_device_scalar",
         "//xla/stream_executor:scratch_allocator",
+    ]) + if_static([
+        "@tsl//tsl/platform:tensor_float_32_utils",
     ]),
 )
 
