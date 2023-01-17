@@ -650,6 +650,8 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/mlir/runtime/transforms:compilation_pipeline_gpu",
+        "//xla/mlir/runtime/transforms:type_converter",
+        "//xla/mlir/runtime/ir:rt",
         "//xla/mlir_hlo:lhlo_gpu",
         "//xla/runtime:diagnostics",
         "//xla/runtime:executable",
