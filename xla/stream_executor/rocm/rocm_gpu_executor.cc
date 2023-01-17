@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -30,7 +31,6 @@ limitations under the License.
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
 #include "xla/stream_executor/lib/mathutil.h"
-#include "xla/stream_executor/lib/numbers.h"
 #include "xla/stream_executor/lib/path.h"
 #include "xla/stream_executor/lib/process_state.h"
 #include "xla/stream_executor/lib/statusor.h"
@@ -838,7 +838,7 @@ static int TryToReadNumaNode(const string& pci_bus_id, int device_ordinal) {
   content = buf;
 
   int32_t value;
-  if (port::safe_strto32(content, &value)) {
+  if (absl::SimpleAtoi(content, &value)) {
     if (value < 0) {  // See http://b/18228951 for details on this path.
       LOG(INFO) << "successful NUMA node read from SysFS had negative value ("
                 << value
