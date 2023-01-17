@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/dnn.pb.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/logger.h"
 #include "tsl/platform/numbers.h"
-#include "tsl/protobuf/dnn.pb.h"
 #include "tsl/util/env_var.h"
 #include "tsl/util/proto/proto_utils.h"
 
