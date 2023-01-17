@@ -66,6 +66,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:denormal",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:setround",
     ],
 )

@@ -131,6 +131,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:numbers",
     ],
 )
 
@@ -405,6 +406,7 @@ cc_library(
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -446,6 +448,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/protobuf:dnn_proto_cc",
         "@tsl//tsl/util:env_var",
     ],

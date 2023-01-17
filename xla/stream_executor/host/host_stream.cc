@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "absl/synchronization/notification.h"
 #include "tsl/platform/denormal.h"
+#include "tsl/platform/env.h"
 #include "tsl/platform/setround.h"
 
 namespace stream_executor {
@@ -26,8 +27,8 @@ namespace host {
 
 namespace {
 
-port::ThreadOptions GetThreadOptions(size_t stack_size_in_bytes) {
-  port::ThreadOptions options;
+tsl::ThreadOptions GetThreadOptions(size_t stack_size_in_bytes) {
+  tsl::ThreadOptions options;
   options.stack_size = stack_size_in_bytes;
   return options;
 }

@@ -33,13 +33,13 @@ limitations under the License.
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/lib/env.h"
 #include "xla/stream_executor/lib/error.h"
-#include "xla/stream_executor/lib/stacktrace.h"
 #include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/lib/threadpool.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/rng.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_internal.h"
+#include "tsl/platform/stacktrace.h"
 #include "tsl/util/env_var.h"
 
 namespace {
@@ -51,7 +51,7 @@ namespace {
 
 std::string StackTraceIfVLOG10() {
   if (VLOG_IS_ON(10)) {
-    return absl::StrCat(" ", port::CurrentStackTrace(), "\n");
+    return absl::StrCat(" ", tsl::CurrentStackTrace(), "\n");
   } else {
     return "";
   }
