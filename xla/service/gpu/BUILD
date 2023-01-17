@@ -999,6 +999,37 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "dot_dimension_sorter",
+    srcs = ["dot_dimension_sorter.cc"],
+    hdrs = ["dot_dimension_sorter.h"],
+    deps = [
+        "//xla:permutation_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "dot_dimension_sorter_test",
+    srcs = ["dot_dimension_sorter_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        ":dot_dimension_sorter",
+        "//xla/service:gpu_plugin",
+        "//xla/service:hlo_matchers",
+        "//xla/service:hlo_parser",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/tests:test_utils",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+    ],
+)
+
+cc_library(
     name = "gpu_conv_algorithm_picker",
     srcs = ["gpu_conv_algorithm_picker.cc"],
     hdrs = ["gpu_conv_algorithm_picker.h"],
@@ -1698,6 +1729,7 @@ cc_library(
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
         ":conv_layout_normalization",
+        ":dot_dimension_sorter",
         ":executable_proto_cc",
         ":fusion_merger",
         ":gemm_broadcast_folding_rewriter",
