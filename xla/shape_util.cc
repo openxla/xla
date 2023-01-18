@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/synchronization/blocking_counter.h"
 #include "xla/index_util.h"
 #include "xla/layout_util.h"
 #include "xla/overflow_util.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 
@@ -1670,7 +1672,7 @@ ShapeUtil::DeduceTransposeDimensionsForBitcast(const Shape& input_shape,
     const ForEachVisitorFunction& visitor_function) {
   Status status;
   ForEachState s(shape, base, count, incr);
-  if (s.IsZeroElementArray()) {
+  if (s.IsZeroElementIteration()) {
     return status;
   }
   // Allows handling R0 arrays, such that the visitor function will be called
@@ -1691,19 +1693,19 @@ ShapeUtil::DeduceTransposeDimensionsForBitcast(const Shape& input_shape,
 namespace {
 
 struct ParallelState {
-  ParallelState() {
-    const int kNumThreads = tsl::port::MaxParallelism();
-    pool.emplace(tsl::Env::Default(), "foreach", kNumThreads);
+  explicit ParallelState(int64_t task_count) : counter(task_count) {
+    static auto* global_pool = new tsl::thread::ThreadPool(
+        tsl::Env::Default(), "foreach", tsl::port::MaxParallelism());
+    pool = global_pool;
   }
-  ~ParallelState() {}
-  void Wait() {
-    // Waits for the scheduled work to complete.
-    pool.reset();
-  }
+  ~ParallelState() = default;
+  void Wait() { counter.Wait(); }
+  void TaskComplete() { counter.DecrementCount(); }
 
   absl::Mutex mu;
-  std::optional<tsl::thread::ThreadPool> pool;
+  tsl::thread::ThreadPool* pool;
   Status status;  // Guarded by mu
+  absl::BlockingCounter counter;
 };
 
 }  // anonymous namespace
@@ -1712,9 +1714,10 @@ struct ParallelState {
     const Shape& shape, absl::Span<const int64_t> base,
     absl::Span<const int64_t> count, absl::Span<const int64_t> incr,
     const ForEachParallelVisitorFunction& visitor_function) {
-  ParallelState pstate;
   ForEachState s(shape, base, count, incr);
-  if (s.IsZeroElementArray()) {
+  int64_t task_count = s.CalculateNumSteps();
+  ParallelState pstate(task_count);
+  if (task_count == 0) {
     return pstate.status;
   }
   // Allows handling R0 arrays, such that the visitor function will be called
@@ -1731,6 +1734,7 @@ struct ParallelState {
           pstate.status = result.status();
         }
       }
+      pstate.TaskComplete();
     });
     // Increments dimensions in minor to major order.
     n = s.IncrementDim();
@@ -1943,8 +1947,23 @@ int64_t ShapeUtil::ForEachState::IncrementDim() {
   return n;
 }
 
-bool ShapeUtil::ForEachState::IsZeroElementArray() const {
-  return ShapeUtil::IsZeroElementArray(shape);
+bool ShapeUtil::ForEachState::IsZeroElementIteration() const {
+  return std::any_of(count.begin(), count.end(),
+                     [](int64_t c) { return c == 0; });
+}
+
+int64_t ShapeUtil::ForEachState::CalculateNumSteps() const {
+  int64_t size = 1;
+  // This works for rank = 0 as well.
+  for (int64_t i = 0; i < rank; ++i) {
+    // Empty "slice" of non-scalar array.
+    if (count[i] == 0) {
+      return 0;
+    }
+    int64_t dim = 1 + (count[i] - 1) / incr[i];
+    size *= dim;
+  }
+  return size;
 }
 
 }  // namespace xla

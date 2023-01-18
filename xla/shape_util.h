@@ -828,7 +828,8 @@ class ShapeUtil {
     std::vector<int64_t> indexes;  // The mutable set of indices we go through
 
     int64_t IncrementDim();
-    bool IsZeroElementArray() const;
+    bool IsZeroElementIteration() const;
+    int64_t CalculateNumSteps() const;
   };
 
   static Status ForEachIndexInternal(
