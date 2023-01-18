@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef MLIR_HLO_MHLO_TRANSFORMS_MAP_STABLEHLO_TO_HLO_OP_H
 #define MLIR_HLO_MHLO_TRANSFORMS_MAP_STABLEHLO_TO_HLO_OP_H
 
+#include <optional>
 #include <type_traits>
 
 #include "mhlo/IR/hlo_ops.h"
@@ -162,6 +163,26 @@ MAP_STABLEHLO_TO_HLO(XorOp)
 
 #undef MAP_STABLEHLO_TO_HLO
 
+#define MAP_HLO_ENCODED_OP(OpName)            \
+  template <>                                 \
+  struct HloToStablehloOpImpl<mhlo::OpName> { \
+    using Type = std::nullopt_t;              \
+  };
+
+// These ops exist in MHLO but not StableHLO
+// They can be encoded as CustomCallOp during legalization
+MAP_HLO_ENCODED_OP(AddDependencyOp)
+MAP_HLO_ENCODED_OP(AsyncDoneOp)
+MAP_HLO_ENCODED_OP(AsyncStartOp)
+MAP_HLO_ENCODED_OP(AsyncUpdateOp)
+MAP_HLO_ENCODED_OP(BitcastOp)
+MAP_HLO_ENCODED_OP(CopyOp)
+MAP_HLO_ENCODED_OP(DomainOp)
+MAP_HLO_ENCODED_OP(FusionOp)
+MAP_HLO_ENCODED_OP(StochasticConvertOp)
+MAP_HLO_ENCODED_OP(XlaRngGetAndUpdateStateOp)
+
+#undef MAP_HLO_ENCODED_OP
 }  // namespace stablehlo
 }  // namespace mlir
 

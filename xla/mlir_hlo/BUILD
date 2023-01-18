@@ -999,6 +999,7 @@ cc_library(
     hdrs = ["mhlo/transforms/rewriters.h"],
     strip_include_prefix = ".",
     deps = [
+        ":hlo_ops_inc_gen",
         ":map_stablehlo_to_hlo_op",
         ":mlir_hlo",
         "@llvm-project//llvm:Support",
@@ -1006,7 +1007,6 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
         "@stablehlo//:stablehlo_ops",
-        "@stablehlo//:stablehlo_ops_inc_gen",
     ],
 )
 

@@ -225,10 +225,12 @@ xla_cc_test(
     deps = [
         ":arguments",
         ":async_runtime",
+        ":custom_call_registry",
         ":jit_executable",
         ":logical_result",
         ":results",
         ":types",
+        "//xla/mlir/runtime/transforms:compilation_pipeline_options",
         "//xla/mlir/runtime/transforms/tests:testlib_pipeline",
         "//xla/mlir/runtime/utils:async_runtime_api",
         "@com_google_absl//absl/base:dynamic_annotations",
