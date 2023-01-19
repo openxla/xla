@@ -27,6 +27,8 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/event.h"
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_internal.h"

@@ -260,7 +260,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":status",
-        "@tsl//tsl/platform:statusor",
+        "//xla/stream_executor/lib",
     ],
 )
 

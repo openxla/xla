@@ -94,6 +94,7 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "//xla/stream_executor:event",
+        "//xla/stream_executor/lib",
     ],
 )
 

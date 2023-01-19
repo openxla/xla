@@ -339,6 +339,7 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:event",
         "//xla/stream_executor/host:host_platform_id",
+        "//xla/stream_executor/lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",

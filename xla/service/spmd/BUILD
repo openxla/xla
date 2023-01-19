@@ -61,6 +61,7 @@ cc_library(
         "//xla/service:shape_inference",
         "//xla/service:sharding_propagation",
         "//xla/service:tuple_simplifier",
+        "//xla/stream_executor/lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -70,6 +71,7 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:statusor",
     ],
@@ -152,6 +154,7 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
+        "//xla/stream_executor/lib",
         "@com_google_absl//absl/container:flat_hash_map",
     ],
 )
