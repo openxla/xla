@@ -38,6 +38,8 @@ cc_library(
         "dtype.cc",
         "executable.cc",
         "future.cc",
+        "index.cc",
+        "index_domain.cc",
         "shape.cc",
         "sharding.cc",
         "tuple.cc",
@@ -51,6 +53,8 @@ cc_library(
         "dtype.h",
         "executable.h",
         "future.h",
+        "index.h",
+        "index_domain.h",
         "shape.h",
         "sharding.h",
         "tuple.h",
@@ -69,6 +73,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@tf_runtime//:ref_count",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -93,6 +98,26 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status_matchers",
+    ],
+)
+
+xla_cc_test(
+    name = "index_domain_test",
+    size = "small",
+    srcs = ["index_domain_test.cc"],
+    deps = [
+        ":ifrt",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "index_test",
+    size = "small",
+    srcs = ["index_test.cc"],
+    deps = [
+        ":ifrt",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
