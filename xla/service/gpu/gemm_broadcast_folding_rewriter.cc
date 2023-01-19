@@ -27,7 +27,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
