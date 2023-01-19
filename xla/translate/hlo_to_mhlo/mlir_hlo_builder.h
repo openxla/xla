@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/client/xla_builder.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/types.h"
 
 namespace xla {

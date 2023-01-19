@@ -22,7 +22,6 @@ limitations under the License.
 #include "xla/backends/interpreter/executor.h"
 #include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/multi_platform_manager.h"
 #include "xla/stream_executor/platform.h"
 

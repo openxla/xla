@@ -339,7 +339,6 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor/lib",
         "@tsl//tsl/platform:errors",
     ],
 )

@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_ops_c_api.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 
 #if !defined(PLATFORM_GOOGLE)
 #include "xla/stream_executor/tpu/tpu_api.h"
