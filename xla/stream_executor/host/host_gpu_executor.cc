@@ -31,7 +31,6 @@ limitations under the License.
 #include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/stream_executor/host/host_stream.h"
 #include "xla/stream_executor/host/host_timer.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "tsl/platform/mem.h"

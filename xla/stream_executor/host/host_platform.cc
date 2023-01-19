@@ -23,7 +23,6 @@ limitations under the License.
 #include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "xla/stream_executor/lib/status.h"
 
 namespace stream_executor {
 namespace host {

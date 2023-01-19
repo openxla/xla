@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_module_metadata.h"
 
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/test.h"
 #include "xla/test_helpers.h"
 

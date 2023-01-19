@@ -24,7 +24,6 @@ limitations under the License.
 
 #include "absl/functional/any_invocable.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/lib/threadpool.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 

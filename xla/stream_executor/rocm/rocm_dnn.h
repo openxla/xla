@@ -23,7 +23,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "rocm/include/miopen/miopen.h"
 #include "xla/stream_executor/dnn.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/temporary_device_memory.h"
 

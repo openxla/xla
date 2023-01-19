@@ -24,7 +24,6 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/hlo_matchers.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/types.h"

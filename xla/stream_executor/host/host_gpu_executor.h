@@ -26,7 +26,6 @@ limitations under the License.
 #include "xla/stream_executor/host/host_stream.h"
 #include "xla/stream_executor/host/host_timer.h"
 #include "xla/stream_executor/lib/error.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/rng.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_internal.h"

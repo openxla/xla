@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_event.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
-#include "xla/stream_executor/lib/statusor.h"
 
 namespace stream_executor {
 namespace gpu {

@@ -23,7 +23,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 
 namespace stream_executor {

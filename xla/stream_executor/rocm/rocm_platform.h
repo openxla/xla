@@ -21,7 +21,6 @@ limitations under the License.
 
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/executor_cache.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/multi_platform_manager.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/port.h"

@@ -37,7 +37,6 @@ limitations under the License.
 #include "absl/strings/strip.h"
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/process_state.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/platform/logging.h"
 
 namespace stream_executor {
