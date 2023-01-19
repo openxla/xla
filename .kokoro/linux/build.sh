@@ -18,6 +18,7 @@
 # -o pipefail: entire command fails if pipe fails. watch out for yes | ...
 # -o history: record shell history
 set -euox pipefail -o history
+exit 1 # Validate block on failure 
 
 # Generate a templated results file to make output accessible to everyone
 "$KOKORO_ARTIFACTS_DIR"/github/xla/.kokoro/generate_index_html.sh "$KOKORO_ARTIFACTS_DIR"/index.html
