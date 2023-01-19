@@ -21,6 +21,7 @@ limitations under the License.
 void mlir::mhlo::registerAllMhloDialects(mlir::DialectRegistry &registry) {
   registry.insert<mlir::mhlo::MhloDialect>();
   registry.insert<mlir::sparse_tensor::SparseTensorDialect>();
+
   // Backward compatibility with the old way of registering CHLO dialect
   registry.insert<mlir::chlo::ChloDialect>();
 }
