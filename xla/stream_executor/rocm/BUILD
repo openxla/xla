@@ -167,6 +167,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/util:determinism_for_kernels",
     ]),
     alwayslink = True,
 )
