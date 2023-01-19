@@ -2745,6 +2745,7 @@ StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
 StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtStreamExecutorClient::DeserializeExecutable(
     absl::string_view serialized, std::optional<CompileOptions> options) {
+  std::cerr << "DeserializeExecutable\n";
   if (!options.has_value()) {
     return InvalidArgument(
         "PjRtStreamExecutorClient requires `CompileOptions` for "
@@ -2755,12 +2756,6 @@ PjRtStreamExecutorClient::DeserializeExecutable(
       "PjRtStreamExecutorClient::DeserializeExecutable");
   VLOG(1) << "PjRtStreamExecutorClient::DeserializeExecutable";
 
-  std::string xla_flags(std::getenv("XLA_FLAGS"));
-  if (!absl::StrContains(xla_flags,
-                         "--xla_gpu_enable_xla_runtime_executable=true")) {
-    return InternalError("Desirialization requires enabling JitRt");
-  }
-
   TF_ASSIGN_OR_RETURN(ExecutableExtras extras, GetExecutableExtras(&*options));
   std::shared_ptr<DeviceAssignment>& device_assignment =
       extras.device_assignment;
@@ -2768,6 +2763,7 @@ PjRtStreamExecutorClient::DeserializeExecutable(
       addressable_device_logical_ids = extras.addressable_device_logical_ids;
   std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
 
+  std::cerr << "serialized\n";
   std::string str(serialized);
   TF_ASSIGN_OR_RETURN(std::unique_ptr<LocalExecutable> loaded,
                       client()->Load(str, options->executable_build_options));

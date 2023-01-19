@@ -424,6 +424,7 @@ LocalClient::CompileAheadOfTime(
 StatusOr<std::unique_ptr<LocalExecutable>> LocalClient::Load(
     const std::string& serialized_aot_result,
     const ExecutableBuildOptions& options) {
+  std::cerr << "LocalClient::Load\n";
   TF_ASSIGN_OR_RETURN(ExecutableBuildOptions updated_options,
                       UpdateBuildOptions(options, default_device_ordinal()));
   TF_ASSIGN_OR_RETURN(
