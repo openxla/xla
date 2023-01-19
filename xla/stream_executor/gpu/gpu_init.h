@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <string>
 
-#include "tsl/platform/status.h"
+#include "xla/stream_executor/lib/status.h"
 
 namespace stream_executor {
 class Platform;

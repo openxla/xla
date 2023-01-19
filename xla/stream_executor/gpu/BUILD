@@ -65,8 +65,8 @@ cc_library(
     name = "gpu_diagnostics_header",
     hdrs = if_gpu_is_configured(["gpu_diagnostics.h"]),
     deps = [
+        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -84,8 +84,6 @@ cc_library(
         "//xla/stream_executor:device_options",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ] + if_libtpu(
         if_false = ["@local_config_cuda//cuda:cuda_headers"],
         if_true = [],
@@ -112,6 +110,7 @@ cc_library(
         ":gpu_executor_header",
         ":gpu_stream",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/lib",
     ],
 )
 
@@ -123,12 +122,14 @@ cc_library(
         "//xla/stream_executor:event",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_pimpl_header",
+        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -151,7 +152,6 @@ tsl_gpu_library(
     ],
     deps = [
         "//xla/stream_executor/lib",
-        "@tsl//tsl/platform:status",
     ] + if_static(
         [":gpu_init_impl"],
     ),
@@ -178,7 +178,6 @@ tsl_gpu_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor/lib",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
     alwayslink = True,
 )
@@ -225,6 +224,7 @@ cc_library(
         ":gpu_driver_header",
         ":gpu_executor_header",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/lib",
         "@com_google_absl//absl/base:core_headers",
     ],
 )
@@ -248,6 +248,7 @@ cc_library(
         ":gpu_executor_header",
         ":gpu_stream",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/lib",
     ],
 )
 

@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <string>
 
+#include "xla/stream_executor/lib/status.h"
+#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/multi_platform_manager.h"
 #include "xla/stream_executor/platform.h"
 #include "tsl/platform/logging.h"

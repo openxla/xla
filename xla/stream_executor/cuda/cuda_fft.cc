@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/lib/env.h"
 #include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/plugin_registry.h"

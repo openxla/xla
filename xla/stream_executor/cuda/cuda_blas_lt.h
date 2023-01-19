@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_blas_utils.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/host_or_device_scalar.h"
+#include "xla/stream_executor/lib/status.h"
 
 namespace stream_executor {
 namespace gpu {
