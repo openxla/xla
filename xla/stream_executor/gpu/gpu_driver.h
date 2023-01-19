@@ -24,9 +24,9 @@ limitations under the License.
 
 #include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
-#include "xla/stream_executor/lib/status.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform/port.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace gpu {

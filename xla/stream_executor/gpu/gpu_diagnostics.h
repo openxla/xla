@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <tuple>
 
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform/port.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace gpu {

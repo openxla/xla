@@ -342,10 +342,11 @@ cc_library(
     deps = if_cuda_is_configured([
         ":cuda_activation_header",
         ":cuda_gpu_executor_header",
+        ":cuda_helpers",
         ":cuda_platform_id",
         ":cuda_stream",
-        ":cuda_helpers",
         ":cufft_lib",
+        "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
         "//xla/stream_executor:event",
         "//xla/stream_executor:fft",
@@ -353,9 +354,10 @@ cc_library(
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor/gpu:gpu_helpers_header",
         "//xla/stream_executor/lib",
-        "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
-    ]) + ["@tsl//tsl/platform:errors"],
+        "//xla/stream_executor/platform",
+        "@tsl//tsl/platform:errors",
+    ]),
     alwayslink = True,
 )
 
@@ -376,6 +378,8 @@ cc_library(
     textual_hdrs = ["cuda_dnn.h"],
     deps = if_cuda_is_configured([
         ":cuda_activation_header",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/types:span",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:plugin_registry",
         "//xla/stream_executor/lib",
@@ -419,7 +423,10 @@ cc_library(
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "@tsl//tsl/util:env_var",
     ]) + tf_additional_cudnn_plugin_deps() + [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
     ],
     alwayslink = True,
 )
@@ -599,6 +606,7 @@ cc_library(
         "//xla/stream_executor/platform:dso_loader",
     ]) + [
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:numbers",
     ],
     alwayslink = True,
 )

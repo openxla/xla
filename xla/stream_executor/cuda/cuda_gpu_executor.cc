@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/stream_executor/lib/initialize.h"
 #include "xla/stream_executor/lib/mathutil.h"
 #include "xla/stream_executor/lib/process_state.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
