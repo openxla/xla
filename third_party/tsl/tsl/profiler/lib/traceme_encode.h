@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <initializer_list>
 #include <string>
+#include <string_view>
 
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
@@ -33,12 +34,14 @@ namespace profiler {
 struct TraceMeArg {
   // This constructor is required because absl::AlphaNum is non-copyable.
   template <typename Value>
-  TraceMeArg(absl::string_view k, Value v) : key(k), value(v) {}
+  TraceMeArg(absl::string_view k, Value v) : key(k) {
+    value = absl::StrCat(v);
+  }
 
   TF_DISALLOW_COPY_AND_ASSIGN(TraceMeArg);
 
   absl::string_view key;
-  absl::AlphaNum value;
+  std::string value;
 };
 
 namespace traceme_internal {
@@ -46,8 +49,7 @@ namespace traceme_internal {
 // Copies the contents of str to the address pointed by out.
 // Returns the address after the copy.
 // REQUIRED: The address range [out, out + str.size()] must have been allocated.
-TF_ATTRIBUTE_ALWAYS_INLINE inline char* Append(char* out,
-                                               absl::string_view str) {
+TF_ATTRIBUTE_ALWAYS_INLINE inline char* Append(char* out, std::string str) {
   DCHECK(!absl::StrContains(str, '#'))
       << "'#' is not a valid character in TraceMeEncode";
   const size_t str_size = str.size();
@@ -72,9 +74,9 @@ TF_ATTRIBUTE_ALWAYS_INLINE inline std::string AppendArgs(
     char* out = begin + old_size;
     *out++ = '#';
     for (const auto& arg : args) {
-      out = Append(out, arg.key);
+      out = Append(out, std::string(arg.key));
       *out++ = '=';
-      out = Append(out, arg.value.Piece());
+      out = Append(out, arg.value);
       *out++ = ',';
     }
     *(out - 1) = '#';
