@@ -510,6 +510,7 @@ cc_library(
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
