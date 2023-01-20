@@ -108,8 +108,10 @@ struct TilingCwisePattern : OpRewritePattern<linalg::MapOp> {
     Value dimSizePlusWarpSizeMinusOne =
         rewriter.createOrFold<arith::AddIOp>(loc, dimSize, cGroupSizeMinusOne);
     auto ploop = rewriter.create<gml_st::ParallelOp>(
-        loc, ploopTy, c0, cGroupSize, c1, threadDistrLabel,
-        [&](OpBuilder& b, Location loc, ValueRange ivs) {
+        loc, ploopTy, c0, cGroupSize, c1, /*outputs=*/ValueRange{},
+        threadDistrLabel,
+        [&](OpBuilder& b, Location loc, ValueRange ivs,
+            ValueRange /*outputs*/) {
           // Compute the lane tile with a stride of `warpSize`. This tile
           // defines the subset of the result that is produced by the lane.
           // The `laneId` defines the initial offset into the tensor. The
@@ -235,7 +237,7 @@ struct TilingReductionPattern : OpRewritePattern<linalg::ReduceOp> {
 
     // Create gml_st.parallel finalizing the partial result.
     auto parallelOpBodyBuilderFn = [&](OpBuilder& b, Location loc,
-                                       ValueRange ivs) {
+                                       ValueRange ivs, ValueRange /*outputs*/) {
       Value laneId = ivs.front();
       Value laneResult = materializeSlice(
           b, loc, warpResult, OpFoldResults{zeroAttr, laneId},
@@ -284,7 +286,8 @@ struct TilingReductionPattern : OpRewritePattern<linalg::ReduceOp> {
     warpResult = rewriter
                      .create<gml_st::ParallelOp>(
                          loc, warpResult.getType(), c0, cGroupSize, c1,
-                         threadDistrLabel, parallelOpBodyBuilderFn)
+                         /*outputs=*/ValueRange{}, threadDistrLabel,
+                         parallelOpBodyBuilderFn)
                      .getResult(0);
 
     // Change existing linalg.generic to warp-reduce the partial results.

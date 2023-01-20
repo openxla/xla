@@ -175,7 +175,8 @@ struct ParallelOpInterface
       distTypeAttr = rewriter.getStringAttr(*distType);
     auto newLoopOp = rewriter.create<ParallelOp>(
         loopOp.getLoc(), TypeRange{std::nullopt}, loopOp.getLowerBound(),
-        loopOp.getUpperBound(), loopOp.getStep(), distTypeAttr);
+        loopOp.getUpperBound(), loopOp.getStep(), /*outputs=*/ValueRange{},
+        distTypeAttr);
 
     // Move the old body into the new loop.
     rewriter.mergeBlocks(loopOp.getBody(), newLoopOp.getBody(),

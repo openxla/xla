@@ -139,9 +139,9 @@ Operation *generateTileLoopNest(OpBuilder &builder, Location loc,
                            getValueOrCreateConstantIndexOp(builder, loc, lbs),
                            getValueOrCreateConstantIndexOp(builder, loc, ubs),
                            getValueOrCreateConstantIndexOp(builder, loc, steps),
-                           distributionLabelAttr,
+                           /*outputs=*/ValueRange{}, distributionLabelAttr,
                            [&](OpBuilder &nestedBuilder, Location bodyLoc,
-                               ValueRange ivs) {
+                               ValueRange ivs, ValueRange /*outputs*/) {
                              buildBody(nestedBuilder, bodyLoc, ivs);
                            })
                        .getOperation()
