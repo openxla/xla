@@ -17,6 +17,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/test.h"
 
@@ -52,6 +53,15 @@ TEST(TraceMeEncodeTest, TemporaryStringTest) {
             "Hello#context=World:2020#");
 }
 #endif
+
+TEST(TraceMeEncodeTest, ConstexprStringViewTest) {
+  constexpr absl::string_view kWorld1 = "Earth (home sweet home)";
+  constexpr absl::string_view kWorld2 = "Mars (a long way from home)";
+  EXPECT_EQ(TraceMeEncode("Hello", {{"world", kWorld1}}),
+            "Hello#world=Earth (home sweet home)#");
+  EXPECT_EQ(TraceMeEncode("Hello", {{"world", kWorld2}}),
+            "Hello#world=Mars (a long way from home)#");
+}
 
 TEST(TraceMeEncodeTest, NoNameTest) {
   EXPECT_EQ(TraceMeEncode({{"context", "World"}, {"request_id", 42}}),

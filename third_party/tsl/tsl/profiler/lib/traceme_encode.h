@@ -19,6 +19,8 @@ limitations under the License.
 
 #include <initializer_list>
 #include <string>
+#include <utility>
+#include <variant>
 
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
@@ -28,20 +30,73 @@ limitations under the License.
 
 namespace tsl {
 namespace profiler {
+namespace traceme_internal {
+
+// Wrapper for string types that avoids unnecessary copies.
+class TraceMeString {
+ public:
+  // For strings that outlive this object.
+  explicit TraceMeString(absl::string_view str) : str_(str) {}
+
+  // For temporary strings.
+  explicit TraceMeString(std::string&& str) : str_(str) {}
+
+  // For string literals (resolve ambiguity of previous 2 overloads).
+  explicit TraceMeString(const char* str)
+      : TraceMeString(absl::NullSafeStringView(str)) {}
+
+  // Use string literals ":" instead of character literals ':'.
+  TraceMeString(char c) = delete;
+
+  TF_DISALLOW_COPY_AND_ASSIGN(TraceMeString);
+
+  absl::string_view Get() const {
+    return std::holds_alternative<std::string>(str_)
+               ? absl::string_view(std::get<std::string>(str_))
+               : std::get<absl::string_view>(str_);
+  }
+
+ private:
+  std::variant<absl::string_view, std::string> str_;
+};
+
+// Wrapper for stringifiable values that avoids unnecessary string copies.
+class TraceMeValue {
+ public:
+  // For stringifiable values.
+  template <typename T>
+  explicit TraceMeValue(T value)
+      : value_(absl::StrCat(std::forward<T>(value))) {}
+
+  // For strings, same overloads as TraceMeString.
+  explicit TraceMeValue(absl::string_view value) : value_(value) {}
+  explicit TraceMeValue(std::string&& value) : value_(value) {}
+  explicit TraceMeValue(const char* value) : value_(value) {}
+
+  TF_DISALLOW_COPY_AND_ASSIGN(TraceMeValue);
+
+  absl::string_view Get() const { return value_.Get(); }
+
+ private:
+  TraceMeString value_;
+};
 
 // An argument passed to TraceMeEncode.
-struct TraceMeArg {
-  // This constructor is required because absl::AlphaNum is non-copyable.
-  template <typename Value>
-  TraceMeArg(absl::string_view k, Value v) : key(k), value(v) {}
+class TraceMeArg {
+ public:
+  template <typename K, typename V>
+  TraceMeArg(K key, V value)
+      : key_(std::forward<K>(key)), value_(std::forward<V>(value)) {}
 
   TF_DISALLOW_COPY_AND_ASSIGN(TraceMeArg);
 
-  absl::string_view key;
-  absl::AlphaNum value;
-};
+  absl::string_view Key() const { return key_.Get(); }
+  absl::string_view Value() const { return value_.Get(); }
 
-namespace traceme_internal {
+ private:
+  TraceMeString key_;
+  TraceMeValue value_;
+};
 
 // Copies the contents of str to the address pointed by out.
 // Returns the address after the copy.
@@ -65,16 +120,16 @@ TF_ATTRIBUTE_ALWAYS_INLINE inline std::string AppendArgs(
     const auto old_size = name.size();
     auto new_size = old_size + args.size() * 2 + 1;
     for (const auto& arg : args) {
-      new_size += arg.key.size() + arg.value.size();
+      new_size += arg.Key().size() + arg.Value().size();
     }
     name.resize(new_size);
     char* const begin = &name[0];
     char* out = begin + old_size;
     *out++ = '#';
     for (const auto& arg : args) {
-      out = Append(out, arg.key);
+      out = Append(out, arg.Key());
       *out++ = '=';
-      out = Append(out, arg.value.Piece());
+      out = Append(out, arg.Value());
       *out++ = ',';
     }
     *(out - 1) = '#';
@@ -106,15 +161,18 @@ TF_ATTRIBUTE_ALWAYS_INLINE inline void AppendMetadata(
 //     return TraceMeEncode("my_trace", {{"key1", value1}, {"key2", 42}});
 //   });
 TF_ATTRIBUTE_ALWAYS_INLINE inline std::string TraceMeEncode(
-    std::string name, std::initializer_list<TraceMeArg> args) {
+    std::string name,
+    std::initializer_list<traceme_internal::TraceMeArg> args) {
   return traceme_internal::AppendArgs(std::move(name), args);
 }
 TF_ATTRIBUTE_ALWAYS_INLINE inline std::string TraceMeEncode(
-    absl::string_view name, std::initializer_list<TraceMeArg> args) {
+    absl::string_view name,
+    std::initializer_list<traceme_internal::TraceMeArg> args) {
   return traceme_internal::AppendArgs(std::string(name), args);
 }
 TF_ATTRIBUTE_ALWAYS_INLINE inline std::string TraceMeEncode(
-    const char* name, std::initializer_list<TraceMeArg> args) {
+    const char* name,
+    std::initializer_list<traceme_internal::TraceMeArg> args) {
   return traceme_internal::AppendArgs(std::string(name), args);
 }
 
@@ -127,8 +185,8 @@ TF_ATTRIBUTE_ALWAYS_INLINE inline std::string TraceMeEncode(
 //     return TraceMeEncode({{"key1", value1}, {"key2", 42}});
 //   });
 TF_ATTRIBUTE_ALWAYS_INLINE inline std::string TraceMeEncode(
-    std::initializer_list<TraceMeArg> args) {
-  return traceme_internal::AppendArgs(std::string(), args);
+    std::initializer_list<traceme_internal::TraceMeArg> args) {
+  return traceme_internal::AppendArgs(std::string(), std::move(args));
 }
 
 // Concatenates op_name and op_type.
