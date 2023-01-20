@@ -27,6 +27,20 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "noncopyable_buffer",
+    hdrs = ["noncopyable_buffer.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tsl/platform:logging",
+        "//tsl/platform:platform_port",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 filegroup(
     name = "pywrap_required_hdrs",
     srcs = [

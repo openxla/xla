@@ -19,7 +19,7 @@ limitations under the License.
 #include <deque>
 
 #include "xla/service/transfer_manager.h"
-#include "xla/stream_executor/tpu/noncopyable_buffer.h"
+#include "tsl/distributed_runtime/noncopyable_buffer.h"
 
 namespace xla {
 

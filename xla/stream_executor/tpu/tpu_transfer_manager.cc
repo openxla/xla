@@ -25,7 +25,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/tpu/c_api_conversions.h"
-#include "xla/stream_executor/tpu/noncopyable_buffer.h"
 #include "xla/stream_executor/tpu/proto_helper.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
@@ -34,6 +33,7 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_id.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/distributed_runtime/noncopyable_buffer.h"
 #include "tsl/platform/status.h"
 
 namespace tensorflow {
