@@ -45,3 +45,74 @@ cc_library(
         "//tsl/profiler/utils:xplane_utils",
     ],
 )
+
+cc_library(
+    name = "trace_events_to_json",
+    srcs = ["trace_events_to_json.cc"],
+    hdrs = ["trace_events_to_json.h"],
+    copts = tf_profiler_copts(),
+    visibility = [
+        "//tsl/profiler:internal",
+    ],
+    deps = [
+        "//tsl/platform:protobuf",
+        "//tsl/platform:types",
+        "//tsl/profiler/protobuf:trace_events_proto_cc",
+        "//tsl/profiler/utils:format_utils",
+        "//tsl/profiler/utils:math_utils",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+        "@jsoncpp_git//:jsoncpp",
+    ],
+)
+
+tsl_cc_test(
+    name = "trace_events_to_json_test",
+    srcs = ["trace_events_to_json_test.cc"],
+    deps = [
+        ":trace_events_to_json",
+        "//tsl/platform:protobuf",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+        "//tsl/profiler/protobuf:trace_events_proto_cc",
+        "@jsoncpp_git//:jsoncpp",
+    ],
+)
+
+cc_library(
+    name = "xplane_to_trace_events",
+    srcs = ["xplane_to_trace_events.cc"],
+    hdrs = ["xplane_to_trace_events.h"],
+    copts = tf_profiler_copts(),
+    visibility = [
+        "//tsl/profiler:internal",
+    ],
+    deps = [
+        "//tsl/platform:types",
+        "//tsl/profiler/protobuf:trace_events_proto_cc",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
+        "//tsl/profiler/utils:tf_xplane_visitor",
+        "//tsl/profiler/utils:trace_utils",
+        "//tsl/profiler/utils:xplane_schema",
+        "//tsl/profiler/utils:xplane_utils",
+        "//tsl/profiler/utils:xplane_visitor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:optional",
+    ],
+)
+
+tsl_cc_test(
+    name = "xplane_to_trace_events_test",
+    size = "small",
+    srcs = ["xplane_to_trace_events_test.cc"],
+    deps = [
+        ":xplane_to_trace_events",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+        "//tsl/profiler/protobuf:trace_events_proto_cc",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
+        "//tsl/profiler/utils:trace_utils",
+        "//tsl/profiler/utils:xplane_builder",
+        "//tsl/profiler/utils:xplane_schema",
+    ],
+)
