@@ -447,10 +447,10 @@ class XlaBuilder {
   // TODO(b/119520625): Remove this API once we have more dynamic shape infra
   // ready.
   ABSL_DEPRECATED("Use SetDimensionSize to set a dynamic dimension.")
-  Status SetDynamicBinding(int64_t dynamic_size_param_num,
-                           ShapeIndex dynamic_size_param_index,
-                           int64_t target_param_num,
-                           ShapeIndex target_param_index,
+  Status SetDynamicBinding(int64_t dynamic_param_num,
+                           ShapeIndex dynamic_param_indices,
+                           DynamicParameterBinding::Target target,
+                           int64_t target_num, ShapeIndex target_indices,
                            int64_t target_dim_num);
 
   // Adds a new input/output alias. Since the input/output shape information are

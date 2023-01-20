@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/layout_util.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -128,6 +129,19 @@ mlir::ArrayAttr ConvertOutputOperandAliasing(
   return builder->getArrayAttr(attrs);
 }
 
+StatusOr<mlir::mhlo::DynamicParameterTarget> ConvertDynamicParameterTarget(
+    DynamicParameterBinding::Target target) {
+  switch (target) {
+    case xla::DynamicParameterBinding::kParam:
+      return mlir::mhlo::DynamicParameterTarget::PARAM;
+    case xla::DynamicParameterBinding::kOutput:
+      return mlir::mhlo::DynamicParameterTarget::OUTPUT;
+    default:
+      return InvalidArgument(
+          "Unknown DynamicParameterBinding target enum value #%d", target);
+  }
+}
+
 mlir::ArrayAttr ConvertDynamicParameterBindings(
     const DynamicParameterBinding dpb, mlir::Builder* builder) {
   llvm::SmallVector<mlir::Attribute, 4> bindings;
@@ -135,12 +149,15 @@ mlir::ArrayAttr ConvertDynamicParameterBindings(
       [&](const DynamicParameterBinding::DynamicParameter& source,
           const DynamicParameterBinding::DynamicDimension& target) {
         llvm::SmallVector<int64_t, 4> dpis;
-        for (auto dpi : source.parameter_index) dpis.push_back(dpi);
+        for (auto dpi : source.parameter_indices) dpis.push_back(dpi);
         llvm::SmallVector<int64_t, 4> tpis;
-        for (auto tpi : target.parameter_index) tpis.push_back(tpi);
+        for (auto tpi : target.target_indices) tpis.push_back(tpi);
+        TF_ASSIGN_OR_RETURN(auto dynamic_parameter_target,
+                            ConvertDynamicParameterTarget(target.target));
         bindings.push_back(mlir::mhlo::DynamicParameterBindingAttr::get(
             builder->getContext(), source.parameter_num, dpis,
-            target.parameter_num, tpis, target.dimension));
+            dynamic_parameter_target, target.target_num, tpis,
+            target.dimension));
         return OkStatus();
       });
   return mlir::ArrayAttr::get(builder->getContext(), bindings);

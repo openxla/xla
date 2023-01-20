@@ -4377,7 +4377,7 @@ ENTRY main {
   // Set up dynamic parameter binding.
   TF_CHECK_OK(m_->dynamic_parameter_binding().Bind(
       DynamicParameterBinding::DynamicParameter{0, {}},
-      DynamicParameterBinding::DynamicDimension{1, {}, 0}));
+      DynamicParameterBinding::DynamicDimension::Param(1, {}, 0)));
 
   TF_ASSERT_OK_AND_ASSIGN(DynamicDimensionInference dynamic_dimension_inference,
                           DynamicDimensionInference::Run(m_.get()));
@@ -5560,7 +5560,7 @@ TEST_F(PatternMatchParseWhileLoopTest, CopiedLoopCond) {
       %copy.0 = s32[] copy(s32[] %gte.0)
       %loop_bound = s32[] constant(5)
       %result = pred[] compare(%gte.0, %loop_bound), direction=LT
-      ROOT %copy.1 = pred[] copy(pred[] %result) 
+      ROOT %copy.1 = pred[] copy(pred[] %result)
     }
 
     %while_body {

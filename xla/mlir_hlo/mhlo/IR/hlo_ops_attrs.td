@@ -213,14 +213,14 @@ def MHLO_DynamicParameterBinding : AttrDef<MHLO_Dialect, "DynamicParameterBindin
   let description = [{
     This attribute indicates which parameters to the `main` function of a
     given module have the runtime values for dynamic dimension sizes for
-    other parameters.
+    other parameters/outputs.
 
     Each binding here specifies that parameter containing the runtime value of
     the dynamic dimension size `dynamic_param_num` (which contains the
     runtime size at a subshape given by the shape index
-    `dynamic_param_index`) and the dimension for which that is the size,
-    which is the `target_param_dim_num` dimension of the `target_param_num`
-    parameter to `main` at subshape `target_param_index`.
+    `dynamic_param_indices`) and the dimension for which that is the size,
+    which is the `target_dim_num` dimension of the `target_num`
+    for `target` parameter/output to `main` at subshape `target_indices`.
 
     See cross_program_prefetch for a discussion of subshapes.
 
@@ -231,9 +231,10 @@ def MHLO_DynamicParameterBinding : AttrDef<MHLO_Dialect, "DynamicParameterBindin
        #mhlo.dynamic_parameter_binding<
          dynamic_param_num = 0,
          dynamic_param_indices = [],
-         target_param_num = 1,
-         target_param_indices = [],
-         target_param_dim_num = 0>] } {
+         target = PARAM,
+         target_num = 1,
+         target_indices = [],
+         target_dim_num = 0>] } {
      func.func @main(%a : tensor<f32>, %b : tensor<?xf32, #mhlo.type_extensions<bounds = [2]>>) -> () {
        func.return
      }
@@ -247,9 +248,10 @@ def MHLO_DynamicParameterBinding : AttrDef<MHLO_Dialect, "DynamicParameterBindin
   let parameters = (ins
       "int64_t":$dynamic_param_num,
       MHLO_Dims:$dynamic_param_indices,
-      "int64_t":$target_param_num,
-      MHLO_Dims:$target_param_indices,
-      "int64_t":$target_param_dim_num
+      MHLO_DynamicParameterTargetParameter:$target,
+      "int64_t":$target_num,
+      MHLO_Dims:$target_indices,
+      "int64_t":$target_dim_num
   );
   let assemblyFormat = "`<` struct(params) `>`";
 }

@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal_util.h"
 #include "xla/mlir/utils/error_util.h"
+#include "xla/mlir_hlo/_virtual_includes/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -243,16 +244,46 @@ static std::vector<xla::CrossProgramPrefetch> Convert_cross_program_prefetches(
   return cross_program_prefetches;
 }
 
-static xla::DynamicParameterBinding Convert_dynamic_parameter_bindings(
-    mlir::ArrayAttr dpbs) {
+// Converts mhlo DynamicParameterTarget to DynamicParameterBinding::Target enum
+static StatusOr<xla::DynamicParameterBinding::Target>
+Convert_dynamic_parameter_target(mlir::mhlo::DynamicParameterTarget target) {
+  switch (target) {
+    case mlir::mhlo::DynamicParameterTarget::PARAM:
+      return xla::DynamicParameterBinding::Target::kParam;
+      break;
+    case mlir::mhlo::DynamicParameterTarget::OUTPUT:
+      return xla::DynamicParameterBinding::Target::kOutput;
+      break;
+    default:
+      return tsl::errors::Internal(absl::StrFormat(
+          "Unknown mhlo DynamicParameterTarget enum value %d", target));
+  }
+}
+
+static StatusOr<xla::DynamicParameterBinding>
+Convert_dynamic_parameter_bindings(mlir::ArrayAttr dpbs,
+                                   mlir::func::FuncOp main) {
   xla::DynamicParameterBinding xla_dpb;
   for (auto dpb : dpbs) {
     auto binding = dpb.cast<mlir::mhlo::DynamicParameterBindingAttr>();
-    auto _ = xla_dpb.Bind({binding.getDynamicParamNum(),
-                           xla::ShapeIndex(binding.getDynamicParamIndices())},
-                          {binding.getTargetParamNum(),
-                           xla::ShapeIndex(binding.getTargetParamIndices()),
-                           binding.getTargetParamDimNum()});
+
+    auto targetNum = binding.getTargetNum();
+    auto targetIndices = xla::ShapeIndex(binding.getTargetIndices());
+    // For hlo, multiple results are represented as a tuple, adjust targetNum
+    // and targetIndices
+    if (binding.getTarget() == mlir::mhlo::DynamicParameterTarget::OUTPUT &&
+        main.getFunctionType().getNumResults() > 1) {
+      targetIndices.push_front(targetNum);
+      targetNum = 0;
+    }
+
+    TF_ASSIGN_OR_RETURN(auto target,
+                        Convert_dynamic_parameter_target(binding.getTarget()));
+
+    auto _ = xla_dpb.Bind(
+        {binding.getDynamicParamNum(),
+         xla::ShapeIndex(binding.getDynamicParamIndices())},
+        {target, targetNum, targetIndices, binding.getTargetDimNum()});
   }
   return xla_dpb;
 }
@@ -3118,23 +3149,6 @@ LogicalResult ConvertToHloModule::LowerRegionAsComputation(
                                    /*fe_attrs=*/{}, func, implicit_operands);
 }
 
-void AddDynamicParameterBindingEntry(xla::DynamicParameterBindingProto* binding,
-                                     int arg_index, int32_t shape_index,
-                                     int32_t padding_arg_index,
-                                     bool use_tuple_args) {
-  auto* entry = binding->add_entries();
-  entry->set_target_param_dim_num(shape_index);
-  if (use_tuple_args) {
-    entry->set_target_param_num(0);
-    entry->add_target_param_index(arg_index);
-    entry->set_dynamic_param_num(0);
-    entry->add_dynamic_param_index(padding_arg_index);
-  } else {
-    entry->set_target_param_num(arg_index);
-    entry->set_dynamic_param_num(padding_arg_index);
-  }
-}
-
 // Runs the PrepareForExport pass on the ModuleOp.
 xla::Status PrepareForExport(mlir::ModuleOp module) {
   bool hasShapeOps = false;
@@ -3215,10 +3229,13 @@ xla::Status ConvertMlirHloToHlo(mlir::ModuleOp module, xla::HloProto* hlo_proto,
   }
   if (auto dynamic_parameter_bindings = module->getAttrOfType<mlir::ArrayAttr>(
           "mhlo.dynamic_parameter_bindings")) {
-    auto bindings =
-        Convert_dynamic_parameter_bindings(dynamic_parameter_bindings)
-            .ToProto();
-    *hlo_module.mutable_dynamic_parameter_binding() = bindings;
+    mlir::func::FuncOp main = module.lookupSymbol<mlir::func::FuncOp>("main");
+    if (!main) {
+      return tsl::errors::Internal("MLIR module has no main function");
+    }
+    TF_ASSIGN_OR_RETURN(auto bindings, Convert_dynamic_parameter_bindings(
+                                           dynamic_parameter_bindings, main));
+    *hlo_module.mutable_dynamic_parameter_binding() = bindings.ToProto();
   }
   if (auto is_dynamic =
           module->getAttrOfType<mlir::BoolAttr>("mhlo.is_dynamic")) {

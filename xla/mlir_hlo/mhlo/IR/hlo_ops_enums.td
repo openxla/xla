@@ -261,4 +261,20 @@ def MHLO_RngAlgorithmAttr : EnumAttr<MHLO_Dialect, MHLO_RngAlgorithm, "rng_algor
   let assemblyFormat = "`<` $value `>`";
 }
 
+// These mirror the Target enums in DynamicParameterBindingProto
+def MHLO_DYNAMIC_PARAMETER_TARGET_PARAM : I32EnumAttrCase<"PARAM", 0>;
+def MHLO_DYNAMIC_PARAMETER_TARGET_OUTPUT : I32EnumAttrCase<"OUTPUT", 1>;
+
+def MHLO_DynamicParameterTarget : I32EnumAttr<"DynamicParameterTarget",
+    "dynamic parameter binding target",
+    [
+      MHLO_DYNAMIC_PARAMETER_TARGET_PARAM,
+      MHLO_DYNAMIC_PARAMETER_TARGET_OUTPUT
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::mhlo";
+}
+
+def MHLO_DynamicParameterTargetParameter: EnumParameter<MHLO_DynamicParameterTarget>;
+
 #endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ENUMS

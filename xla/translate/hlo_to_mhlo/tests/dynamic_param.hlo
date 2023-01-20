@@ -1,9 +1,9 @@
 # RUN: xla-translate -hlo-to-mlir-hlo %s | FileCheck %s
 hlo_module       {
   name: "main"
-  entry_computation_name: "main.4"
+  entry_computation_name: "main.3"
   computations {
-    name: "main.4"
+    name: "main.3"
     instructions {
       name: "Arg_0.1"
       opcode: "parameter"
@@ -36,18 +36,6 @@ hlo_module       {
       frontend_attributes {
       }
     }
-    instructions {
-      name: "tuple.3"
-      opcode: "tuple"
-      shape {
-        element_type: TUPLE
-      }
-      metadata {
-      }
-      id: 3
-      frontend_attributes {
-      }
-    }
     program_shape {
       parameters {
         element_type: S32
@@ -63,13 +51,18 @@ hlo_module       {
         is_dynamic_dimension: true
       }
       result {
-        element_type: TUPLE
+        element_type: F32
+        dimensions: 2
+        layout {
+          minor_to_major: 0
+        }
+        is_dynamic_dimension: true
       }
       parameter_names: "Arg_0"
       parameter_names: "Arg_1"
     }
-    id: 4
-    root_id: 3
+    id: 3
+    root_id: 2
   }
   host_program_shape {
     parameters {
@@ -86,19 +79,30 @@ hlo_module       {
       is_dynamic_dimension: true
     }
     result {
-      element_type: TUPLE
+      element_type: F32
+      dimensions: 2
+      layout {
+        minor_to_major: 0
+      }
+      is_dynamic_dimension: true
     }
     parameter_names: "Arg_0"
     parameter_names: "Arg_1"
   }
-  id: 4
-  entry_computation_id: 4
-  # CHECK: mhlo.dynamic_parameter_bindings = [#mhlo.dynamic_parameter_binding<dynamic_param_num = 0, dynamic_param_indices = [], target_param_num = 1, target_param_indices = [], target_param_dim_num = 0
+  id: 3
+  entry_computation_id: 3
+  # CHECK: mhlo.dynamic_parameter_bindings = [#mhlo.dynamic_parameter_binding<dynamic_param_num = 0, dynamic_param_indices = [], target = PARAM, target_num = 1, target_indices = [], target_dim_num = 0>, #mhlo.dynamic_parameter_binding<dynamic_param_num = 0, dynamic_param_indices = [], target = OUTPUT, target_num = 0, target_indices = [], target_dim_num = 0
   dynamic_parameter_binding {
     entries {
-      target_param_num: 1
+      target: OUTPUT
+    }
+    entries {
+      target_num: 1
+      target: PARAM
     }
   }
+  is_dynamic: true
+  use_auto_spmd_partitioning: true
 }
 
-# CHECK: func.func @main(%arg0: tensor<i32>, %arg1: tensor<?xf32, #mhlo.type_extensions<bounds = [2]>>) -> tuple<> {
+# CHECK: func.func @main(%arg0: tensor<i32>, %arg1: tensor<?xf32, #mhlo.type_extensions<bounds = [2]>>) -> tensor<?xf32, #mhlo.type_extensions<bounds = [2]>> {

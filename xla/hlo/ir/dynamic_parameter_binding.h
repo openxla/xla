@@ -32,7 +32,7 @@ class HloModule;
 // We currently use an explicit API that takes an extra parameter to indicate
 // the runtime size of a dynamic dimension. DynamicParameterBinding indicates
 // the relationship between parameter: We can have a dynamic parameter that
-// points to another target parameter to indicate that the target parameter is
+// points to another target (parameter or output) to indicate that the target is
 // dynamic.
 //
 //
@@ -40,38 +40,51 @@ class HloModule;
 // ready.
 class DynamicParameterBinding {
  public:
+  enum class Target { kParam = 0, kOutput = 1 };
+
+  static constexpr Target kParam = Target::kParam;
+  static constexpr Target kOutput = Target::kOutput;
   // DynamicParameter represents a special parameter that is used to represent
   // the runtime size of a dimension of another parameter. A dynamic parameter
   // has to be a scalar value.
   struct DynamicParameter {
-    // The parameter number of dynamic parameter.
-    int64_t parameter_num;
-    // The index of the parameter.
-    ShapeIndex parameter_index;
+    int64_t parameter_num;         // the parameter number of dynamic parameter
+    ShapeIndex parameter_indices;  // the indices of the parameter
   };
 
   // DynamicDimension represents a dimension whose size is determined at
   // runtime. A DynamicDimension's runtime size is determined by the binded
   // DynamicParameter using `DynamicParameterBinding::Bind` method.
   struct DynamicDimension {
-    // The parameter number of dynamic dimension.
-    int64_t parameter_num;
-    // The subshape index of the parameter.
-    ShapeIndex parameter_index;
-    // The dimension number in the subshape.
-    int64_t dimension;
+    Target target;              // the dynamic dimension target
+    int64_t target_num;         // the target number of dynamic dimension
+    ShapeIndex target_indices;  // the subshape indices of the target
+    int64_t dimension;          // the dimension number in the subshape
+
+    // Returns dynamic dimensions descriptor for the parameter.
+    static DynamicDimension Param(int64_t param_num, ShapeIndex param_indices,
+                                  int64_t param_dimension) {
+      return {Target::kParam, param_num, param_indices, param_dimension};
+    }
+
+    // Returns dynamic dimensions descriptor for the output.
+    static DynamicDimension Output(int64_t output_num,
+                                   ShapeIndex output_indices,
+                                   int64_t output_dimension) {
+      return {Target::kOutput, output_num, output_indices, output_dimension};
+    }
 
     // "friend" keyword are added so these functions can be found by ADL.
     template <typename H>
     friend H AbslHashValue(H h, const DynamicDimension& m) {
-      return H::combine(std::move(h), m.parameter_num, m.parameter_index,
+      return H::combine(std::move(h), m.target, m.target_num, m.target_indices,
                         m.dimension);
     }
 
     friend bool operator==(const DynamicDimension& lhs,
                            const DynamicDimension& rhs) {
-      return lhs.parameter_num == rhs.parameter_num &&
-             lhs.parameter_index == rhs.parameter_index &&
+      return lhs.target == rhs.target && lhs.target_num == rhs.target_num &&
+             lhs.target_indices == rhs.target_indices &&
              lhs.dimension == rhs.dimension;
     }
   };

@@ -63,6 +63,8 @@ mlir::ArrayAttr ConvertCrossProgramPrefetches(
     absl::Span<const xla::HloModule::CrossProgramPrefetchInfo> prefetches,
     mlir::Builder* builder);
 
+StatusOr<mlir::mhlo::DynamicParameterTarget> ConvertDynamicParameterTarget(
+    DynamicParameterBinding::Target target);
 mlir::ArrayAttr ConvertDynamicParameterBindings(DynamicParameterBinding dpb,
                                                 mlir::Builder* builder);
 

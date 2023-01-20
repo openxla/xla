@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 
+#include <optional>
+#include <ostream>
+#include <string>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -46,17 +50,26 @@ DynamicParameterBindingProto DynamicParameterBinding::ToProto() const {
     const DynamicParameter& dynamic_param = binding.second;
     DynamicParameterBindingProto::Binding binding_proto;
     binding_proto.set_dynamic_param_num(dynamic_param.parameter_num);
-    for (int64_t i : dynamic_param.parameter_index) {
-      binding_proto.add_dynamic_param_index(i);
+    for (int64_t i : dynamic_param.parameter_indices) {
+      binding_proto.add_dynamic_param_indices(i);
     }
 
-    binding_proto.set_target_param_num(dynamic_dimension.parameter_num);
-
-    for (int64_t i : dynamic_dimension.parameter_index) {
-      binding_proto.add_target_param_index(i);
+    switch (dynamic_dimension.target) {
+      case Target::kParam:
+        binding_proto.set_target(DynamicParameterBindingProto::PARAM);
+        break;
+      case Target::kOutput:
+        binding_proto.set_target(DynamicParameterBindingProto::OUTPUT);
+        break;
     }
 
-    binding_proto.set_target_param_dim_num(dynamic_dimension.dimension);
+    binding_proto.set_target_num(dynamic_dimension.target_num);
+
+    for (int64_t i : dynamic_dimension.target_indices) {
+      binding_proto.add_target_indices(i);
+    }
+
+    binding_proto.set_target_dim_num(dynamic_dimension.dimension);
     result.add_entries()->Swap(&binding_proto);
   }
   return result;
@@ -67,17 +80,24 @@ StatusOr<DynamicParameterBinding> DynamicParameterBinding::CreateFromProto(
   DynamicParameterBinding result;
   for (const DynamicParameterBindingProto::Binding& binding : proto.entries()) {
     int64_t dynamic_param_num = binding.dynamic_param_num();
-    ShapeIndex dynamic_param_index(binding.dynamic_param_index().begin(),
-                                   binding.dynamic_param_index().end());
-    int64_t target_param_num = binding.target_param_num();
-    ShapeIndex target_param_index(binding.target_param_index().begin(),
-                                  binding.target_param_index().end());
-    int64_t target_dim_num = binding.target_param_dim_num();
+    ShapeIndex dynamic_param_indices(binding.dynamic_param_indices().begin(),
+                                     binding.dynamic_param_indices().end());
 
-    TF_RETURN_IF_ERROR(
-        result.Bind(DynamicParameter{dynamic_param_num, dynamic_param_index},
-                    DynamicDimension{target_param_num, target_param_index,
-                                     target_dim_num}));
+    TF_RET_CHECK(binding.target() == DynamicParameterBindingProto::PARAM ||
+                 binding.target() == DynamicParameterBindingProto::OUTPUT);
+
+    Target target = Target::kParam;
+    if (binding.target() == DynamicParameterBindingProto::OUTPUT)
+      target = Target::kOutput;
+
+    int64_t target_num = binding.target_num();
+    ShapeIndex target_indices(binding.target_indices().begin(),
+                              binding.target_indices().end());
+    int64_t target_dim_num = binding.target_dim_num();
+
+    TF_RETURN_IF_ERROR(result.Bind(
+        DynamicParameter{dynamic_param_num, dynamic_param_indices},
+        DynamicDimension{target, target_num, target_indices, target_dim_num}));
   }
 
   return result;
@@ -90,13 +110,14 @@ std::string DynamicParameterBinding::ToString() const {
     const DynamicDimension& dynamic_dimension = binding.first;
     const DynamicParameter& dynamic_param = binding.second;
     pieces.push_back(absl::StrFormat(
-        " -- Input param number %lld at %s has dim %lld as dynamic"
+        " -- %s number %lld at %s has dim %lld as dynamic"
         " dimension, which is represented by param number %lld at "
         "%s",
-        dynamic_dimension.parameter_num,
-        dynamic_dimension.parameter_index.ToString(),
+        dynamic_dimension.target == Target::kParam ? "Input param" : "Output",
+        dynamic_dimension.target_num,
+        dynamic_dimension.target_indices.ToString(),
         dynamic_dimension.dimension, dynamic_param.parameter_num,
-        dynamic_param.parameter_index.ToString()));
+        dynamic_param.parameter_indices.ToString()));
   }
   return absl::StrJoin(pieces, "\n");
 }
@@ -113,22 +134,34 @@ Status DynamicParameterBinding::Verify(const HloModule& module) const {
   return ForEachBinding([&](const DynamicParameter& dynamic_parameter,
                             const DynamicDimension& dynamic_dimension)
                             -> Status {
+    auto num = dynamic_dimension.target == Target::kParam
+                   ? entry->num_parameters()
+                   : 1;
+
     TF_RET_CHECK(dynamic_parameter.parameter_num >= 0 &&
                  dynamic_parameter.parameter_num < entry->num_parameters());
-    TF_RET_CHECK(dynamic_dimension.parameter_num < entry->num_parameters());
+    TF_RET_CHECK(dynamic_dimension.target_num < num);
     TF_RET_CHECK(ShapeUtil::IndexIsValid(
         entry->parameter_instruction(dynamic_parameter.parameter_num)->shape(),
-        dynamic_parameter.parameter_index));
-    TF_RET_CHECK(ShapeUtil::IndexIsValid(
-        entry->parameter_instruction(dynamic_dimension.parameter_num)->shape(),
-        dynamic_dimension.parameter_index));
+        dynamic_parameter.parameter_indices));
+
+    auto runtime_size = ShapeUtil::GetSubshape(
+        entry->parameter_instruction(dynamic_parameter.parameter_num)->shape(),
+        dynamic_parameter.parameter_indices);
+    TF_RET_CHECK(runtime_size.element_type() == PrimitiveType::S32 ||
+                 runtime_size.element_type() == PrimitiveType::S64);
+
+    auto shape =
+        dynamic_dimension.target == Target::kParam
+            ? entry->parameter_instruction(dynamic_dimension.target_num)
+                  ->shape()
+            : entry->root_instruction()->shape();
+
+    TF_RET_CHECK(
+        ShapeUtil::IndexIsValid(shape, dynamic_dimension.target_indices));
     TF_RET_CHECK(
         dynamic_dimension.dimension <
-        ShapeUtil::GetSubshape(
-            entry->parameter_instruction(dynamic_dimension.parameter_num)
-                ->shape(),
-            dynamic_dimension.parameter_index)
-            .rank());
+        ShapeUtil::GetSubshape(shape, dynamic_dimension.target_indices).rank());
     return OkStatus();
   });
 }
