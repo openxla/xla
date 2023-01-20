@@ -156,6 +156,8 @@ cc_library(
         "//xla/runtime:state",
         "//xla/service:executable",
         "//xla/service/gpu:matmul_utils",
+        "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/container:node_hash_map",
     ],
 )
