@@ -367,8 +367,8 @@ def cuda_rdc_library(name, hdrs = None, copts = None, linkstatic = True, **kwarg
         out = dlink_cc,
         gpu_archs = cuda_gpu_architectures(),
         nvlink_args = select({
-            "@tsl//tsl:linux_x86_64": ["--cpu-arch=X86_64"],
-            "@tsl//tsl:linux_ppc64le": ["--cpu-arch=PPC64LE"],
+            "@org_tensorflow//tensorflow/tsl:linux_x86_64": ["--cpu-arch=X86_64"],
+            "@org_tensorflow//tensorflow/tsl:linux_ppc64le": ["--cpu-arch=PPC64LE"],
             "//conditions:default": [],
         }),
     )

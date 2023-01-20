@@ -31,7 +31,7 @@ std::string GetDataDependencyFilepath(const std::string& relative_path) {
     LOG(FATAL) << "Unable to access the data dependencies of this test.\n"
                   "Make sure you are running this test using bazel.";
   }
-  return runfiles->Rlocation(io::JoinPath("org_tensorflow", relative_path));
+  return runfiles->Rlocation(io::JoinPath("xla", relative_path));
 }
 
 }  // namespace tsl

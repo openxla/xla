@@ -48,7 +48,7 @@ cc_library(
         "//tsl/platform:macros",
         "//tsl/platform:types",
         "@com_google_absl//absl/types:span",
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
     alwayslink = 1,
 )

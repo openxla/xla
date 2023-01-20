@@ -1,7 +1,7 @@
 exports_files(["LICENSE"])
 
 load(
-    "@org_tensorflow//third_party:common.bzl",
+    "@xla//third_party:common.bzl",
     "template_rule",
 )
 

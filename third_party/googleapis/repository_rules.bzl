@@ -36,11 +36,11 @@ def config_googleapis():
         grpc = True,
         rules_override = {
             "cc_proto_library": [
-                "@org_tensorflow//third_party/googleapis:build_rules.bzl",
+                "@xla//third_party/googleapis:build_rules.bzl",
                 "",
             ],
             "cc_grpc_library": [
-                "@org_tensorflow//third_party/googleapis:build_rules.bzl",
+                "@xla//third_party/googleapis:build_rules.bzl",
                 "",
             ],
         },

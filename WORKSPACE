@@ -1,4 +1,4 @@
-workspace(name = "org_tensorflow")
+workspace(name = "xla")
 
 # Initialize the TensorFlow repository and all dependencies.
 #

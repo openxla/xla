@@ -38,10 +38,10 @@ def _git_conf_impl(repository_ctx):
     )
 
     tensorflow_root_path = str(repository_ctx.path(
-        Label("@org_tensorflow//:BUILD"),
+        Label("@xla//:BUILD"),
     ))[:-len("BUILD")]
     python_script_path = repository_ctx.path(
-        Label("@org_tensorflow//tensorflow/tools/git:gen_git_source.py"),
+        Label("@xla//tensorflow/tools/git:gen_git_source.py"),
     )
     generated_files_path = repository_ctx.path("gen")
 

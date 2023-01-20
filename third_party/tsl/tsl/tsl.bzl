@@ -25,13 +25,13 @@ load(
     "if_mkl",
 )
 load(
-    "@org_tensorflow//third_party/mkl_dnn:build_defs.bzl",
+    "@xla//third_party/mkl_dnn:build_defs.bzl",
     "if_mkldnn_aarch64_acl",
     "if_mkldnn_aarch64_acl_openmp",
     "if_mkldnn_openmp",
 )
 load(
-    "@org_tensorflow//third_party/compute_library:build_defs.bzl",
+    "@xla//third_party/compute_library:build_defs.bzl",
     "if_enable_acl",
 )
 load("@bazel_skylib//lib:new_sets.bzl", "sets")
@@ -39,14 +39,14 @@ load("@bazel_skylib//lib:new_sets.bzl", "sets")
 two_gpu_tags = ["requires-gpu-nvidia:2", "notap", "manual", "no_pip"]
 
 def clean_dep(target):
-    """Returns string to 'target' in @org_tensorflow repository.
+    """Returns string to 'target' in @xla repository.
 
-    Use this function when referring to targets in the @org_tensorflow
+    Use this function when referring to targets in the @xla
     repository from macros that may be called from external repositories.
     """
 
     # A repo-relative label is resolved relative to the file in which the
-    # Label() call appears, i.e. @org_tensorflow.
+    # Label() call appears, i.e. @xla.
     return str(Label(target))
 
 def if_cuda_or_rocm(if_true, if_false = []):
@@ -284,8 +284,8 @@ def tf_openmp_copts():
         # "//tsl/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
         # "//tsl/mkl:build_with_mkl_windows_openmp": ["/openmp"],
         # copybara:uncomment_end_and_comment_begin
-        "@org_tensorflow//third_party/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
-        "@org_tensorflow//third_party/mkl:build_with_mkl_windows_openmp": ["/openmp:llvm"],
+        "@xla//third_party/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
+        "@xla//third_party/mkl:build_with_mkl_windows_openmp": ["/openmp:llvm"],
         # copybara:comment_end
         "//conditions:default": [],
     })

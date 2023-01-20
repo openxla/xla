@@ -73,7 +73,7 @@ cc_library(
         "//tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:optional",
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 

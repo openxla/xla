@@ -971,7 +971,7 @@ cc_library(
     deps = [
         ":mutex",
         ":types",
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 
@@ -1015,7 +1015,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":byte_order",
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 
@@ -1024,7 +1024,7 @@ cc_library(
     hdrs = ["float8.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 
@@ -1037,7 +1037,7 @@ cuda_library(
         ":float8",
         ":test",
         ":test_main",
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 

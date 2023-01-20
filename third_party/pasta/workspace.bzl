@@ -16,7 +16,7 @@ def repo():
         # If we have this file live in this repo, referencing it from `@pasta`
         # becomes tricky. If we do `@//` the build breaks when this repo
         # (TensorFlow) is *not* the main repo (i.e. when TensorFlow is used as
-        # a dependency in another workspace). If we hardcode `@org_tensorflow`,
+        # a dependency in another workspace). If we hardcode `@xla`,
         # the build breaks when this repo is used in another workspace under a
         # different name.
         #

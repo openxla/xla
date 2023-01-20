@@ -53,7 +53,7 @@ cc_library(
         "//tsl/framework/contraction:eigen_contraction_kernel",
         "//tsl/framework/convolution:eigen_convolution_helpers",
         "//tsl/framework/convolution:eigen_spatial_convolutions-inl",
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 

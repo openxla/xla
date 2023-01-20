@@ -47,7 +47,7 @@ cc_library(
         "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 
@@ -61,7 +61,7 @@ cc_library(
         "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 
@@ -90,7 +90,7 @@ cc_library(
         "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 

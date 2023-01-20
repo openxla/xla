@@ -81,7 +81,7 @@ cc_library(
     }),
     deps = [
         "@com_google_absl//absl/base",
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
         "//tsl/platform:dynamic_annotations",
         "//tsl/framework/fixedpoint",
     ] + select({
@@ -119,7 +119,7 @@ cc_library(
         "//tsl/framework/fixedpoint",
         "//tsl/platform:dynamic_annotations",
         "@com_google_absl//absl/base",
-        "@org_tensorflow//third_party/eigen3",
+        "@xla//third_party/eigen3",
     ],
 )
 

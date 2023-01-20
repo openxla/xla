@@ -1,8 +1,8 @@
 load("@tsl//tsl:tsl.bzl", "tf_openmp_copts")
-load("@org_tensorflow//third_party/mkl:build_defs.bzl", "if_mkl")
-load("@org_tensorflow//third_party/mkl_dnn:build_defs.bzl", "if_mkldnn_openmp")
-load("@org_tensorflow//third_party/mkl:build_defs.bzl", "if_mkl_ml")
-load("@org_tensorflow//third_party:common.bzl", "template_rule")
+load("@xla//third_party/mkl:build_defs.bzl", "if_mkl")
+load("@xla//third_party/mkl_dnn:build_defs.bzl", "if_mkldnn_openmp")
+load("@xla//third_party/mkl:build_defs.bzl", "if_mkl_ml")
+load("@xla//third_party:common.bzl", "template_rule")
 
 exports_files(["LICENSE"])
 
@@ -70,7 +70,7 @@ template_rule(
     src = "include/oneapi/dnnl/dnnl_config.h.in",
     out = "include/oneapi/dnnl/dnnl_config.h",
     substitutions = select({
-        "@org_tensorflow//third_party/mkl_dnn:build_with_mkldnn_openmp": _DNNL_RUNTIME_OMP,
+        "@xla//third_party/mkl_dnn:build_with_mkldnn_openmp": _DNNL_RUNTIME_OMP,
         "//conditions:default": _DNNL_RUNTIME_THREADPOOL,
     }),
 )
@@ -170,7 +170,7 @@ cc_library(
     textual_hdrs = _TEXTUAL_HDRS_LIST,
     visibility = ["//visibility:public"],
     deps = [":onednn_autogen"] + if_mkl_ml(
-        ["@org_tensorflow//third_party/mkl:intel_binary_blob"],
+        ["@xla//third_party/mkl:intel_binary_blob"],
         [],
     ),
 )

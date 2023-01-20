@@ -20,6 +20,6 @@ cc_library(
     includes = ["include"],
     strip_include_prefix = "include",
     deps = [
-        "@org_tensorflow//third_party/python_runtime:headers",
+        "@xla//third_party/python_runtime:headers",
     ],
 )
