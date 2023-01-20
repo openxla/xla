@@ -292,9 +292,12 @@ cc_library(
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
         "//xla/service:executable",
+        "//xla/stream_executor:event",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
