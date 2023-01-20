@@ -118,7 +118,7 @@ xla_cc_binary(
     deps = [
         ":replay_computation_library",
         "//xla/service:gpu_plugin",
-        "//xla/stream_executor/cuda:cublas_plugin",
+        "//xla/stream_executor:cuda_platform",
     ],
 )
 
@@ -284,7 +284,7 @@ xla_cc_binary(
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
     ]) + if_cuda([
-        "//xla/stream_executor/cuda:cublas_plugin",
+        "//xla/stream_executor:cuda_platform",
     ]),
 )
 
@@ -412,7 +412,7 @@ xla_cc_binary(
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
     ]) + if_cuda([
-        "//xla/stream_executor/cuda:cublas_plugin",
+        "//xla/stream_executor:cuda_platform",
     ]),
 )
 
