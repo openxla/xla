@@ -98,9 +98,9 @@ cc_library(
     srcs = ["async_collective_creator.cc"],
     hdrs = ["async_collective_creator.h"],
     deps = [
-        ":computation_placer_hdr",
         ":hlo_pass",
         ":shape_inference",
+        "//xla:frontend_attributes",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
         "@tsl//tsl/platform:errors",
@@ -4540,6 +4540,7 @@ cc_library(
         ":hlo_pass",
         ":logical_buffer",
         ":tuple_simplifier",
+        "//xla:frontend_attributes",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:types",
