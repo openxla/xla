@@ -2002,12 +2002,10 @@ namespace {
 class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
  public:
   StreamExecutorCopyToDeviceStream(int64_t channel_id,
-                                   absl::Notification* notify,
                                    std::shared_ptr<se::Event> done,
                                    se::Stream* stream, se::DeviceMemoryBase dst)
       : CopyToDeviceStream(dst.size(), /*granule_bytes=*/1),
         channel_id_(channel_id),
-        notify_(notify),
         done_(std::move(done)),
         stream_(stream),
         dst_(dst) {}
@@ -2040,17 +2038,13 @@ class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
     // Record done event once processed the last chunk. It is the caller
     // responsibility to synchronize with this event before submitting any new
     // computations to the stream.
-    if (complete) {
-      notify_->Notify();
-      stream_->ThenRecordEvent(done_.get());
-    }
+    if (complete) stream_->ThenRecordEvent(done_.get());
 
     return PjRtFuture<Status>(OkStatus());
   }
 
  private:
   int64_t channel_id_;
-  absl::Notification* notify_;
   std::shared_ptr<se::Event> done_;
   se::Stream* stream_;
   se::DeviceMemoryBase dst_;
@@ -2100,16 +2094,8 @@ static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
       return InternalError("Failed to initialize done event (channel_id=%d)",
                            channel_id);
 
-    // TODO(ezhulenev): This is a temporary work around the internal error that
-    // does not allow to run multiple recv operations concurrently. This
-    // notification forces the caller to block until the recv callback copies
-    // all the data into `dst` device buffer.
-    absl::Notification notify;
-
     recv->callback({shape}, std::make_unique<StreamExecutorCopyToDeviceStream>(
-                                channel_id, &notify, done_event, stream, *dst));
-
-    notify.WaitForNotification();
+                                channel_id, done_event, stream, *dst));
 
     return std::move(done_event);
   };
