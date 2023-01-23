@@ -170,6 +170,9 @@ cc_library(
         ":conv",
         ":kernel_launch",
         ":support",
+        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
         "//xla:types",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
@@ -179,10 +182,9 @@ cc_library(
         "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_stream",
-        "@com_google_absl//absl/container:node_hash_map",
-        "@com_google_absl//absl/synchronization",
-        "@local_config_cuda//cuda:cuda_headers",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_graph",
+    ]),
 )
 
 cc_library(
