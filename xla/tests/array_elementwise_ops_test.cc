@@ -1750,8 +1750,7 @@ XLA_TEST_F(ArrayElementwiseOpTest, LogOfPowerF32) {
     expected[i] = std::log(std::pow(values0[i], values1[i]));
   }
 
-  // Log2 is very inaccurate onon some platforms.
-  ErrorSpec error_spec(1000 * kEpsF32, 1000 * kEpsF32);
+  ErrorSpec error_spec(2 * kEpsF32, 2 * kEpsF32);
   ComputeAndCompareR1<float>(&b, expected, {data0.get(), data1.get()},
                              error_spec);
 }
@@ -2788,7 +2787,8 @@ XLA_TEST_F(ArrayElementwiseOpTest, ExpF32sVector) {
 
   // Just to help make sense of the scales here -- exp(89) saturates float32 and
   // exp(-10) is smaller than our error spec.
-  Literal input_literal = LiteralUtil::CreateR1<float>(
+  auto a = ConstantR1<float>(
+      &builder,
       {1.02,   -0.32,  0.85,   0.9,    1.23,   -0.91,  -0.49, 0.8,    -1.31,
        -1.44,  -0.13,  -1.31,  -0.79,  1.41,   1.21,   1.05,  -195.6, -194.5,
        -193.4, -192.3, -191.2, -190.1, -189.0, -187.9, -19.6, -18.5,  -17.4,
@@ -2800,61 +2800,44 @@ XLA_TEST_F(ArrayElementwiseOpTest, ExpF32sVector) {
        68.4,   69.5,   70.6,   71.7,   72.8,   73.9,   75.0,  76.1,   77.2,
        78.3,   79.4,   80.5,   81.6,   82.7,   83.8,   84.9,  85.2,   86.3,
        86.4,   86.5,   87.6,   87.7,   87.8,   87.9});
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<GlobalData> input_data,
-                          client_->TransferToServer(input_literal));
 
-  auto input = Parameter(&builder, 0, input_literal.shape(), "input");
-  Exp(input);
+  Exp(a);
 
-  std::vector<float> expected_result;
-  int64_t input_size = input_literal.shape().dimensions(0);
-  expected_result.reserve(input_size);
-  for (int64_t i = 0; i < input_size; i++) {
-    expected_result.push_back(std::exp(input_literal.Get<float>({i})));
-  }
-
-  ComputeAndCompareR1<float>(&builder, expected_result, {input_data.get()},
-                             error_spec_);
+  ComputeAndCompare(&builder, {}, error_spec_);
 }
 
 XLA_TEST_F(ArrayElementwiseOpTest, LogF32sVector) {
   // The input tensor is large enough to exercise the vectorized exp
   // implementation on XLA CPU.
   XlaBuilder builder(TestName());
+  const float kInf = std::numeric_limits<float>::infinity();
+  const float kQNaN = std::numeric_limits<float>::quiet_NaN();
 
-  Literal input_literal = LiteralUtil::CreateR1<float>(
-      {-1.29,    -1.41,    -1.25,    -13.5,    -11.7,    -17.9,    -198,
-       -167,     1.29,     1.41,     1.25,     13.5,     11.7,     17.9,
-       198,      167,      1.27e+03, 1.33e+03, 1.74e+03, 1.6e+04,  1.84e+04,
-       1.74e+04, 1.89e+05, 1.9e+05,  1.93e+06, 1.98e+06, 1.65e+06, 1.97e+07,
-       1.66e+07, 1e+07,    1.98e+08, 1.96e+08, 1.64e+09, 1.58e+09, 1.64e+09,
-       1.44e+10, 1.5e+10,  1.99e+10, 1.17e+11, 1.08e+11, 1.08e+12, 1.38e+12,
-       1.4e+12,  1.03e+13, 1.6e+13,  1.99e+13, 1.26e+14, 1.51e+14, 1.33e+15,
-       1.41e+15, 1.63e+15, 1.39e+16, 1.21e+16, 1.27e+16, 1.28e+17, 1.62e+17,
-       2e+18,    1.96e+18, 1.81e+18, 1.99e+19, 1.86e+19, 1.61e+19, 1.71e+20,
-       1.47e+20, 1.83e+21, 1.33e+21, 1.3e+21,  1.35e+22, 1.84e+22, 1.02e+22,
-       1.81e+23, 1.02e+23, 1.89e+24, 1.49e+24, 1.08e+24, 1.95e+25, 1.1e+25,
-       1.62e+25, 1.2e+26,  1.41e+26, 1.93e+27, 1.66e+27, 1.62e+27, 1.05e+28,
-       1.5e+28,  1.79e+28, 1.36e+29, 1.95e+29, 1.5e+30,  1.81e+30, 1.34e+30,
-       1.7e+31,  1.44e+31, 1.1e+31,  1.4e+32,  1.67e+32, 1.96e+33, 1.11e+33,
-       1.19e+33, 1.61e+34, 1.05e+34, 1.88e+34, 1.67e+35, 1.7e+35});
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<GlobalData> input_data,
-                          client_->TransferToServer(input_literal));
+  auto a = ConstantR1<float>(
+      &builder,
+      {
+          -1.29,    -1.41,    -1.25,    -13.5,    -11.7,    -17.9,    -198,
+          -167,     1.29,     1.41,     1.25,     13.5,     11.7,     17.9,
+          198,      167,      1.27e+03, 1.33e+03, 1.74e+03, 1.6e+04,  1.84e+04,
+          1.74e+04, 1.89e+05, 1.9e+05,  1.93e+06, 1.98e+06, 1.65e+06, 1.97e+07,
+          1.66e+07, 1e+07,    1.98e+08, 1.96e+08, 1.64e+09, 1.58e+09, 1.64e+09,
+          1.44e+10, 1.5e+10,  1.99e+10, 1.17e+11, 1.08e+11, 1.08e+12, 1.38e+12,
+          1.4e+12,  1.03e+13, 1.6e+13,  1.99e+13, 1.26e+14, 1.51e+14, 1.33e+15,
+          1.41e+15, 1.63e+15, 1.39e+16, 1.21e+16, 1.27e+16, 1.28e+17, 1.62e+17,
+          2e+18,    1.96e+18, 1.81e+18, 1.99e+19, 1.86e+19, 1.61e+19, 1.71e+20,
+          1.47e+20, 1.83e+21, 1.33e+21, 1.3e+21,  1.35e+22, 1.84e+22, 1.02e+22,
+          1.81e+23, 1.02e+23, 1.89e+24, 1.49e+24, 1.08e+24, 1.95e+25, 1.1e+25,
+          1.62e+25, 1.2e+26,  1.41e+26, 1.93e+27, 1.66e+27, 1.62e+27, 1.05e+28,
+          1.5e+28,  1.79e+28, 1.36e+29, 1.95e+29, 1.5e+30,  1.81e+30, 1.34e+30,
+          1.7e+31,  1.44e+31, 1.1e+31,  1.4e+32,  1.67e+32, 1.96e+33, 1.11e+33,
+          1.19e+33, 1.61e+34, 1.05e+34, 1.88e+34, 1.67e+35, 1.7e+35,  0.0f,
+          -0.0f,    -kInf,    kInf,     kQNaN,
+      });
 
-  auto input = Parameter(&builder, 0, input_literal.shape(), "input");
-  Log(input);
+  Log(a);
 
-  std::vector<float> expected_result;
-  int64_t input_size = input_literal.shape().dimensions(0);
-  expected_result.reserve(input_size);
-  for (int64_t i = 0; i < input_size; i++) {
-    expected_result.push_back(std::log(input_literal.Get<float>({i})));
-  }
-
-  // Log2 is very inaccurate onon some platforms.
-  ErrorSpec error_spec(1000 * kEpsF32, 1000 * kEpsF32);
-  ComputeAndCompareR1<float>(&builder, expected_result, {input_data.get()},
-                             error_spec);
+  ErrorSpec error_spec(2 * kEpsF32, 2 * kEpsF32);
+  ComputeAndCompare(&builder, {}, error_spec);
 }
 
 XLA_TEST_F(ArrayElementwiseOpTest, ClzU32s) {
