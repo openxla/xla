@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/stream_executor/lib/env.h"
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "xla/stream_executor/lib/threadpool.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/scratch_allocator.h"

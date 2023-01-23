@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/functional/any_invocable.h"
 #include "absl/synchronization/notification.h"
+#include "xla/stream_executor/lib/env.h"
 #include "tsl/platform/denormal.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/setround.h"
