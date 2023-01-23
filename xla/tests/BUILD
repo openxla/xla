@@ -1259,6 +1259,8 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
+        "@tsl//tsl/platform:tensor_float_32_utils",
         "@tsl//tsl/platform:test",
     ],
 )
