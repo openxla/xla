@@ -128,10 +128,10 @@ cc_library(
     deps = [
         ":device_description_proto_cc",
         ":launch_dim",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:numbers",
     ],
 )
