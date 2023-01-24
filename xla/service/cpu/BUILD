@@ -215,6 +215,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
         "@llvm-project//mlir:ToLLVMIRTranslation",
+        "//xla/mlir/tools/mlir_replay/public:compiler_trace_instrumentation",
         "//xla/mlir_hlo:lhlo",
         "//xla/service/cpu/runtime:collectives",
         "//xla/service/cpu/runtime:custom_call",
