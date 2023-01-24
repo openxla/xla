@@ -29,13 +29,13 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_diagnostics.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/lib/error.h"
-#include "xla/stream_executor/lib/static_threadlocal.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/stacktrace.h"
+#include "tsl/platform/static_threadlocal.h"
 #include "tsl/platform/threadpool.h"
 
 bool FLAGS_gpuexec_rocm_driver_inject_init_error = false;
@@ -168,7 +168,7 @@ struct ThreadLocalData {
   int depth;
 };
 
-SE_STATIC_THREAD_LOCAL_POD(ThreadLocalData, tls_data);
+TSL_STATIC_THREAD_LOCAL_POD(ThreadLocalData, tls_data);
 
 }  // namespace
 

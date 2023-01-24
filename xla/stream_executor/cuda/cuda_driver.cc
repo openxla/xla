@@ -36,11 +36,11 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/lib/error.h"
-#include "xla/stream_executor/lib/static_threadlocal.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/stacktrace.h"
+#include "tsl/platform/static_threadlocal.h"
 #include "tsl/platform/threadpool.h"
 
 bool FLAGS_gpuexec_cuda_driver_inject_init_error = false;
@@ -130,7 +130,7 @@ struct ThreadLocalData {
   int depth;
 };
 
-SE_STATIC_THREAD_LOCAL_POD(ThreadLocalData, tls_data);
+TSL_STATIC_THREAD_LOCAL_POD(ThreadLocalData, tls_data);
 
 }  // namespace
 
