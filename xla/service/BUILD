@@ -562,6 +562,7 @@ xla_cc_test(
         ":hlo_sharding_util",
         "//xla:test",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
         "//xla/tests:xla_internal_test_main",
     ],
 )
