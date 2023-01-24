@@ -84,6 +84,8 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferCallsOnDoneCallback) {
   EXPECT_EQ(array->shared_ptr_sharding().get(), sharding.get());
 
   done_with_host_buffer.WaitForNotification();
+
+  TF_EXPECT_OK(array->GetReadyFuture().Await());
 }
 
 TEST(ArrayImplTest, MakeArrayFromHostBufferAndCopyToHostBuffer) {
