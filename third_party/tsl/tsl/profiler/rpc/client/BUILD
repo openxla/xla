@@ -1,16 +1,14 @@
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
-load("//tsl/platform:build_config.bzl", "tsl_cc_test")
+load(
+    "//tsl/platform:build_config.bzl",
+    "tf_protos_profiler_service",
+    "tsl_cc_test",
+)
 load(
     "//tsl/profiler/builds:build_config.bzl",
     "tf_profiler_copts",
     "tf_profiler_pybind_cc_library_wrapper",
-)
-
-# For platform specific build config
-load(
-    "//tsl/platform:build_config.bzl",
-    "tf_protos_profiler_service",
 )
 
 package(
@@ -39,6 +37,8 @@ cc_library(
         "//tsl/platform:platform_port",
         "//tsl/platform:status",
         "//tsl/platform:types",
+        "//tsl/profiler/convert:trace_events_to_json",
+        "//tsl/profiler/convert:xplane_to_trace_events",
         "//tsl/profiler/protobuf:profiler_analysis_proto_cc",
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "//tsl/profiler/protobuf:profiler_service_proto_cc",
