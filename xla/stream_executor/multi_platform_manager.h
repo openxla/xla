@@ -71,10 +71,10 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "xla/stream_executor/lib/status.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/port.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 

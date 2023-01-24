@@ -609,7 +609,10 @@ cc_library(
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
     ]) + [
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:numbers",
+        "@tsl//tsl/platform:statusor",
     ],
     alwayslink = True,
 )

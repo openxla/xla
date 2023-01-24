@@ -46,8 +46,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/stream_executor/data_type.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform/port.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/protobuf/dnn.pb.h"
 
 namespace Eigen {

@@ -77,6 +77,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:types",
     ],
 )
@@ -234,12 +235,13 @@ cc_library(
     srcs = ["platform.cc"],
     hdrs = ["platform.h"],
     deps = [
-        ":dnn_proto_cc",
         ":plugin",
         ":stream_executor_headers",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -336,6 +338,8 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -355,6 +359,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -368,18 +374,17 @@ cc_library(
         ":device_description",
         ":device_memory",
         ":device_options",
-        ":dnn_proto_cc",
         ":kernel",
         ":kernel_cache_config",
         ":kernel_spec",
         ":launch_dim",
         ":plugin_registry",
         ":stream_executor_headers",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/types:optional",
-        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -410,7 +415,8 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:stacktrace",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -455,6 +461,8 @@ tsl_gpu_library(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:stacktrace",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
         "@tsl//tsl/util:env_var",
     ],
@@ -516,6 +524,8 @@ cc_library(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -542,7 +552,6 @@ cc_library(
         ":platform",
         ":stream_executor_headers",
         ":stream_executor_pimpl_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
@@ -550,6 +559,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -561,10 +571,10 @@ cc_library(
     deps = [
         ":data_type",
         ":stream_executor_headers",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -633,6 +643,8 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -654,6 +666,8 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -678,6 +692,8 @@ cc_library(
         "@tsl//tsl/lib/strings:proto_serialization",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ] + if_static(["@com_google_protobuf//:protobuf"]),
 )
@@ -691,12 +707,13 @@ cc_library(
         ":stream_executor_headers",
         ":stream_executor_pimpl_header",
         ":temporary_device_memory",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -710,12 +727,12 @@ cc_library(
     hdrs = ["temporary_device_memory.h"],
     deps = [
         ":device_memory",
-        ":dnn_proto_cc",
         ":stream_executor_headers",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -786,12 +803,12 @@ cc_library(
         ":device_memory",
         ":platform",
         ":stream_executor",
-        "//xla/stream_executor/lib",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:types",
     ],
 )
@@ -803,9 +820,9 @@ cc_library(
     deps = [
         ":device_memory",
         ":stream_executor_headers",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/container:inlined_vector",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -845,6 +862,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

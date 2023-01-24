@@ -33,12 +33,12 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/lib/error.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/rng.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "tsl/platform/stacktrace.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
 #include "tsl/util/env_var.h"
 

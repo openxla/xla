@@ -32,7 +32,6 @@ limitations under the License.
 #include "xla/service/spmd/spmd_partitioner.h"
 #include "xla/service/spmd/spmd_partitioner_util.h"
 #include "xla/status.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 

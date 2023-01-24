@@ -21,7 +21,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "xla/stream_executor/lib/status.h"
+#include "tsl/platform/status.h"
 
 namespace stream_executor {
 

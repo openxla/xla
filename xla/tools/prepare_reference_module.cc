@@ -23,10 +23,10 @@ limitations under the License.
 #include "xla/service/despecializer.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/statusor.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

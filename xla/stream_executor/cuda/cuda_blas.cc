@@ -64,12 +64,12 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_timer.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "tsl/platform/status.h"
 #include "tsl/platform/tensor_float_32_utils.h"
 
 namespace stream_executor {
@@ -1265,7 +1265,7 @@ tsl::Status CUDABlas::DoBlasGemmBatchedInternal(
   if (!stream->ThenMemcpy(&a, a_raw_ptrs.data(), size).ok() ||
       !stream->ThenMemcpy(&b, b_raw_ptrs.data(), size).ok() ||
       !stream->ThenMemcpy(&c, c_raw_ptrs.data(), size).ok()) {
-    return tsl::Status(port::error::INTERNAL,
+    return tsl::Status(tsl::error::INTERNAL,
                        "failed to copy memory from host to device in "
                        "CUDABlas::DoBlasGemmBatched");
   }
@@ -1330,7 +1330,7 @@ tsl::Status CUDABlas::DoBlasGemmBatchedInternal(
     if (ok) {
       return ::tsl::OkStatus();
     }
-    return tsl::Status(port::error::INTERNAL,
+    return tsl::Status(tsl::error::INTERNAL,
                        "failed BLAS call, see log for details");
   } else {
     // Fall back to a loop for fp16

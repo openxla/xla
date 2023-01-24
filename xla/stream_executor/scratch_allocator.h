@@ -23,9 +23,9 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/temporary_device_memory.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 

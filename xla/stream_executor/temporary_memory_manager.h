@@ -28,9 +28,9 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/lib/status.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/temporary_device_memory.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace internal {

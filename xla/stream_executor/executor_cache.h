@@ -20,9 +20,9 @@ limitations under the License.
 #include <map>
 
 #include "absl/synchronization/mutex.h"
-#include "xla/stream_executor/lib/status.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 

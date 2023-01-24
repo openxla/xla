@@ -22,9 +22,9 @@ limitations under the License.
 #include "xla/backends/interpreter/executor.h"
 #include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/multi_platform_manager.h"
 #include "xla/stream_executor/platform.h"
+#include "tsl/platform/status.h"
 
 namespace stream_executor {
 namespace interpreter {
@@ -80,7 +80,7 @@ XlaInterpreterPlatform::GetUncachedExecutor(
   auto init_status = executor->Init(config.device_options);
   if (!init_status.ok()) {
     return tsl::Status{
-        port::error::INTERNAL,
+        tsl::error::INTERNAL,
         absl::StrFormat(
             "failed initializing StreamExecutor for device ordinal %d: %s",
             config.ordinal, init_status.ToString())};

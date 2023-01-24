@@ -154,8 +154,8 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
-        "//xla/stream_executor/lib",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

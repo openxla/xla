@@ -22,11 +22,11 @@ limitations under the License.
 
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/framework/allocator.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 

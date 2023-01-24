@@ -32,12 +32,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "tsl/platform/cuda_libdevice_path.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/regexp.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/subprocess.h"
 
 namespace stream_executor {

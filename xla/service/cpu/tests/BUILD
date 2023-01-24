@@ -186,6 +186,8 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],

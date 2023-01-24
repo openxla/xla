@@ -23,11 +23,11 @@ limitations under the License.
 #include "xla/service/stream_pool.h"
 #include "xla/service/transfer_manager.h"
 #include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/lib/status.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
 #include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace tpu {

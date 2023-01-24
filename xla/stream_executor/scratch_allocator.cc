@@ -18,8 +18,8 @@ limitations under the License.
 #include <cstdint>
 
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/stream.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 

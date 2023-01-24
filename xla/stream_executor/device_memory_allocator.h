@@ -24,10 +24,10 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/types.h"
 
 namespace stream_executor {

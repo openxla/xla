@@ -23,8 +23,8 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/statusor.h"
-#include "xla/stream_executor/lib/status.h"
 #include "xla/stream_executor/platform.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

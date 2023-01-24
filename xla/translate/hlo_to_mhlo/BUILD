@@ -124,13 +124,13 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
         "//xla/service:shape_inference",
-        "//xla/stream_executor/lib",
         "//xla/translate/mhlo_to_hlo:type_to_shape",
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

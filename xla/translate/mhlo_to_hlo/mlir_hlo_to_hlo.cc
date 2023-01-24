@@ -70,12 +70,12 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/translate/mhlo_to_hlo/location_exporter.h"
 #include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/float8.h"
+#include "tsl/platform/statusor.h"
 
 using ::int64_t;
 using ::tsl::int16;

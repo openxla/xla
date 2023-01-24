@@ -25,10 +25,10 @@ limitations under the License.
 #include "xla/service/transfer_manager.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace interpreter {

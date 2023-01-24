@@ -94,7 +94,7 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "//xla/stream_executor:event",
-        "//xla/stream_executor/lib",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -140,6 +140,7 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor/lib",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:status",
     ],
     alwayslink = True,  # Registers itself with the MultiPlatformManager.
 )

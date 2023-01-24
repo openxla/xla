@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/stream_executor/kernel_cache_config.h"
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
-#include "xla/stream_executor/lib/statusor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
@@ -55,6 +54,7 @@ limitations under the License.
 #include "xla/stream_executor/timer.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/numbers.h"
+#include "tsl/platform/statusor.h"
 
 // LOG(ERROR) uses a const named ERROR, so a macro with the same name is
 // always unwanted. This happens on Windows that defines such a macro.

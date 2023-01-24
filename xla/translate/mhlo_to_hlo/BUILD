@@ -94,6 +94,7 @@ cc_library(
         "@llvm-project//mlir:Transforms",
         "@stablehlo//:stablehlo_ops",
         "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
