@@ -21,7 +21,6 @@ limitations under the License.
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/InitAllDialects.h"  // from @llvm-project
-#include "third_party/tensorflow/compiler/mlir/tensorflow/dialect_registration.h"
 #include "xla/debug_options_flags.h"
 #include "xla/mlir/runtime/ir/rt_dialect.h"
 #include "xla/mlir/tools/mlir_replay/mlir_replay_lib.h"
@@ -76,7 +75,6 @@ int main(int argc, char* argv[]) {
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
-  mlir::RegisterAllTensorFlowDialects(registry);
   mlir::mhlo::registerAllMhloDialects(registry);
   registry.insert<mlir::lmhlo::LmhloDialect, mlir::lmhlo_gpu::LmhloGpuDialect,
                   mlir::gml_st::GmlStDialect, mlir::thlo::THLODialect,
