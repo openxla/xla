@@ -416,6 +416,21 @@ xla_cc_binary(
     ]),
 )
 
+xla_cc_test(
+    name = "run_hlo_module_bin_test",
+    srcs = ["run_hlo_module_bin_test.cc"],
+    data = [
+        "add.hlo",
+        ":run_hlo_module",
+    ],
+    deps = [
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:subprocess",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
 cc_library(
     name = "hlo_control_flow_flattening",
     srcs = ["hlo_control_flow_flattening.cc"],
