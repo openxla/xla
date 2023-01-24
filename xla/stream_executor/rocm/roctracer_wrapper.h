@@ -28,9 +28,9 @@ limitations under the License.
 #else
 #include "rocm/include/roctracer/roctracer_hcc.h"
 #endif
-#include "xla/stream_executor/lib/env.h"
 #include "xla/stream_executor/platform/dso_loader.h"
 #include "xla/stream_executor/platform/port.h"
+#include "tsl/platform/env.h"
 
 namespace stream_executor {
 namespace wrap {

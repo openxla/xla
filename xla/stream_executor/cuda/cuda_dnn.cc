@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_stream.h"
 #include "xla/stream_executor/cuda/cuda_timer.h"
 #include "xla/stream_executor/dnn.h"
-#include "xla/stream_executor/lib/env.h"
 #include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
 #include "xla/stream_executor/platform/logging.h"

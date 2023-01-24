@@ -22,9 +22,9 @@ limitations under the License.
 
 #include "rocm/include/rocblas.h"
 #include "xla/stream_executor/gpu/gpu_activation.h"
-#include "xla/stream_executor/lib/env.h"
 #include "xla/stream_executor/platform/dso_loader.h"
 #include "xla/stream_executor/platform/port.h"
+#include "tsl/platform/env.h"
 
 namespace stream_executor {
 namespace wrap {

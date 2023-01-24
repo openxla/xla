@@ -107,6 +107,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/platform:env",
     ]),
     alwayslink = True,
 )
@@ -168,6 +169,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/util:determinism_for_kernels",
     ]),
     alwayslink = True,
@@ -233,6 +235,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
         "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:env",
     ]),
     alwayslink = True,
 )
@@ -277,6 +280,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/util:env_var",
         "@tsl//tsl/util:determinism_for_kernels",
     ]),
@@ -310,6 +314,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/platform:env",
     ]),
     alwayslink = True,
 )
@@ -333,6 +338,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/platform:env",
     ]),
     alwayslink = True,
 )
@@ -356,6 +362,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/platform:env",
     ]),
     alwayslink = True,
 )
@@ -379,6 +386,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/platform:env",
     ]),
     alwayslink = True,
 )
@@ -402,6 +410,7 @@ cc_library(
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/platform:env",
     ]),
     alwayslink = True,
 )
