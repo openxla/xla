@@ -30,17 +30,24 @@ limitations under the License.
 #include "transforms/gpu_passes.h"
 #include "transforms/passes.h"
 
-using namespace mlir;
+using namespace mlir;  // NOLINT
+
+namespace mlir {
+namespace test {
+void registerTestTransformDialectInterpreterPass();
+}
+}  // namespace mlir
 
 int main(int argc, char** argv) {
   mlir::registerAllPasses();
-  mlir::hlo::registerLMHLOTransformsPasses();
   mlir::registerLMHLOGPUTransformsPasses();
-  mlir::mhlo::registerAllMhloPasses();
-  mlir::lmhlo::registerAllLmhloPasses();
-  mlir::thlo::registerAllThloPasses();
   mlir::gml_st::registerGmlStPasses();
   mlir::gml_st::registerGmlStTestPasses();
+  mlir::hlo::registerLMHLOTransformsPasses();
+  mlir::lmhlo::registerAllLmhloPasses();
+  mlir::mhlo::registerAllMhloPasses();
+  mlir::test::registerTestTransformDialectInterpreterPass();
+  mlir::thlo::registerAllThloPasses();
 
   struct HloToGpuPipelineOptions
       : public PassPipelineOptions<HloToGpuPipelineOptions> {

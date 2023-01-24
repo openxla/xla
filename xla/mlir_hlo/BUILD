@@ -1488,6 +1488,7 @@ cc_binary(
         "@llvm-project//mlir:MlirOptLib",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir/test:TestTransformDialect",
         "@stablehlo//:register",
     ],
 )
