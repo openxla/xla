@@ -14,8 +14,7 @@ under the
 
 ### Contacts
 
-*   For technical questions, contact Mehdi Amini - aminim at google
-*   For administrative questions, contact Thea Lamkin - thealamkin at google
+*   For questions, contact Thea Lamkin - thealamkin at google
 
 ### Resources
 *   GitHub
