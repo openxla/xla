@@ -1,10 +1,16 @@
 # Description:
 # Implementation of custom numpy floats.
+load("//tsl:tsl.bzl", "if_tsl_link_protobuf")
+load("//tsl:tsl.default.bzl", "tsl_pybind_extension")
 
 package(
     default_visibility = [
         "//visibility:public",
     ],
+    # features = [
+    #     # For bfloat16.so (see b/259896740)
+    #     "windows_export_all_symbols",
+    # ],
     licenses = ["notice"],
 )
 
@@ -17,16 +23,6 @@ filegroup(
     name = "basic_hdrs",
     srcs = [
         "numpy.h",
-    ],
-)
-
-cc_library(
-    name = "bfloat16_hdr",
-    hdrs = [
-        "bfloat16.h",
-    ],
-    deps = [
-        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -49,6 +45,21 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
+)
+
+tsl_pybind_extension(
+    name = "_pywrap_bfloat16",
+    srcs = [
+        "bfloat16.h",
+        "bfloat16_wrapper.cc",
+    ],
+    deps = [
+        "//third_party/pybind11",
+        "@local_config_python//:python_headers",
+    ] + if_tsl_link_protobuf(
+        [":bfloat16_lib"],
+        [],
+    ),
 )
 
 cc_library(
