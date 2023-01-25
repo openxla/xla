@@ -1,0 +1,8 @@
+HloModule hlo_runner_test_0.1
+
+ENTRY %hlo_runner_test_0.1 (lhs: f32[32,24,64,128], rhs: f32[32,1024,64,128]) -> f32[32,24,1024,1] {
+  %lhs = f32[32,24,64,128]{3,2,1,0} parameter(0)
+  %rhs = f32[32,1024,64,128]{3,2,1,0} parameter(1)
+  ROOT %conv = f32[32,24,1024,1]{3,2,1,0} convolution(f32[32,24,64,128]{3,2,1,0} %lhs, f32[32,1024,64,128]{3,2,1,0} %rhs), window={size=32x128 stride=31x1 lhs_dilate=32x1}, dim_labels=0bf1_0oi1->0bf1
+}
+
