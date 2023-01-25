@@ -49,8 +49,9 @@ TEST(TraceMeEncodeTest, ThreeArgsTest) {
 #if !defined(PLATFORM_WINDOWS)
 TEST(TraceMeEncodeTest, TemporaryStringTest) {
   EXPECT_EQ(TraceMeEncode("Hello", {{std::string("context"),
-                                     absl::StrCat("World:", 2020)}}),
-            "Hello#context=World:2020#");
+                                     absl::StrCat("World:", 2020)},
+                                    {std::string("c2"), 3.1415926}}),
+            "Hello#context=World:2020,c2=3.14159#");
 }
 #endif
 
