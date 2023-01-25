@@ -9,6 +9,7 @@ xla_cc_binary(
         "//xla:debug_options_flags",
         "//xla/mlir/runtime/ir:rt",
         "//xla/mlir/tools/mlir_replay/public:compiler_trace_proto_cc",
+        "//xla/mlir/tools/mlir_replay/public:compiler_trace_proto_cc_impl",
         "//xla/mlir/tools/mlir_replay/public:execution_trace_proto_cc",
         "//xla/mlir_hlo:gml_st",
         "//xla/mlir_hlo:hlo_dialect_registration",
