@@ -31,7 +31,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "//xla/stream_executor/platform",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/platform:status",

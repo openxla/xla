@@ -138,7 +138,7 @@ cc_library(
         ":executor",
         ":platform_id",
         "//xla/stream_executor",
-        "//xla/stream_executor/lib",
+        "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:status",
     ],

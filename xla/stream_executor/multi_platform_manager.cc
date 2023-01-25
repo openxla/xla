@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/platform/initialize.h"
 #include "tsl/platform/errors.h"
 
 namespace stream_executor {

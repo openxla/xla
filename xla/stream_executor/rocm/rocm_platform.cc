@@ -21,7 +21,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
-#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "tsl/platform/errors.h"
 

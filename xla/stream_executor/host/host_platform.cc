@@ -21,7 +21,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "xla/stream_executor/host/host_gpu_executor.h"
 #include "xla/stream_executor/host/host_platform_id.h"
-#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/platform/initialize.h"
 #include "tsl/platform/errors.h"
 
 namespace stream_executor {

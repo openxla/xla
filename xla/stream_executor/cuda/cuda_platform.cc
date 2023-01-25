@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_driver.h"
 #include "xla/stream_executor/cuda/cuda_gpu_executor.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
-#include "xla/stream_executor/lib/initialize.h"
+#include "xla/stream_executor/platform/initialize.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
 
