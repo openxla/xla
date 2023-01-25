@@ -28,7 +28,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/gpu_timer.h"
 #include "xla/stream_executor/kernel_cache_config.h"
-#include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/dso_loader.h"
@@ -42,6 +41,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_pimpl.h"
 #include "xla/stream_executor/timer.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
 
 #ifdef PLATFORMS_GPUS_ROCM_DYNAMIC_LIBROCM_DYNAMIC_LIBROCM_H_
 #error \

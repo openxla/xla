@@ -42,7 +42,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_stream.h"
 #include "xla/stream_executor/cuda/cuda_timer.h"
 #include "xla/stream_executor/kernel_cache_config.h"
-#include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/lib/initialize.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/logging.h"
@@ -53,6 +52,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_pimpl.h"
 #include "xla/stream_executor/timer.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/statusor.h"
 
@@ -745,7 +745,7 @@ tsl::Status GpuExecutor::WaitForEvent(Stream* stream, Event* event) {
     return ::tsl::OkStatus();
   } else {
     return tsl::Status(
-        port::error::INTERNAL,
+        tsl::error::INTERNAL,
         absl::StrFormat("error recording waiting for CUDA event on stream %p",
                         stream));
   }

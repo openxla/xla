@@ -25,10 +25,10 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/host/host_stream.h"
 #include "xla/stream_executor/host/host_timer.h"
-#include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/rng.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_internal.h"
+#include "tsl/platform/errors.h"
 
 namespace stream_executor {
 namespace host {

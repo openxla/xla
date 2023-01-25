@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/stream_executor/tf_allocator_adapter.h"
 
 #include "absl/synchronization/mutex.h"
-#include "xla/stream_executor/lib/error.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/errors.h"
