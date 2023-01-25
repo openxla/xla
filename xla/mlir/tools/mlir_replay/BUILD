@@ -1,4 +1,7 @@
-cc_binary(
+load("//xla:xla.bzl", "xla_cc_binary")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+
+xla_cc_binary(
     name = "mlir_replay",
     srcs = ["mlir_replay.cc"],
     deps = [
