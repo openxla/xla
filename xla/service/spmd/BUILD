@@ -61,7 +61,6 @@ cc_library(
         "//xla/service:shape_inference",
         "//xla/service:sharding_propagation",
         "//xla/service:tuple_simplifier",
-        "//xla/stream_executor/lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
