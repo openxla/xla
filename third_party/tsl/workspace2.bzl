@@ -113,7 +113,7 @@ def _tf_repositories():
         strip_prefix = "XNNPACK-a50369c0fdd15f0f35b1a91c964644327a88d480",
         urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/a50369c0fdd15f0f35b1a91c964644327a88d480.zip"),
     )
-    # LINT.ThenChange(Google-internal pathtensorflow/lite/tools/cmake/modules/xnnpack.cmake)
+    # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
 
     tf_http_archive(
         name = "FXdiv",
@@ -667,7 +667,7 @@ def _tf_repositories():
         strip_prefix = "ARM_NEON_2_x86_SSE-a15b489e1222b2087007546b4912e21293ea86ff",
         urls = tf_mirror_urls("https://github.com/intel/ARM_NEON_2_x86_SSE/archive/a15b489e1222b2087007546b4912e21293ea86ff.tar.gz"),
     )
-    # LINT.ThenChange(Google-internal pathtensorflow/lite/tools/cmake/modules/neon2sse.cmake)
+    # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/neon2sse.cmake)
 
     tf_http_archive(
         name = "double_conversion",
