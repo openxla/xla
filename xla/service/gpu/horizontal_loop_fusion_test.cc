@@ -16,9 +16,8 @@ limitations under the License.
 #include "xla/service/gpu/horizontal_loop_fusion.h"
 
 #include "xla/literal.h"
-#include "xla/service/gpu/fusion_merger.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/instruction_fusion.h"
-#include "xla/service/gpu/multi_output_fusion.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_matchers.h"
 #include "xla/service/hlo_parser.h"
@@ -28,7 +27,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/test.h"
 #include "xla/test_helpers.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/lib/core/status_test_util.h"
 
@@ -192,8 +190,11 @@ TEST_F(HorizontalLoopFusionTest, HorizontalLoopFusionAfterVerticalFusion) {
                     .value();
 
   HloPassPipeline fusion("fusion");
-  fusion.AddPass<xla::gpu::GpuInstructionFusion>(/*may_duplicate=*/false);
-  fusion.AddPass<xla::gpu::GpuInstructionFusion>(/*may_duplicate=*/true);
+  const GpuDeviceInfo device_info = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  fusion.AddPass<xla::gpu::GpuInstructionFusion>(/*may_duplicate=*/false,
+                                                 device_info);
+  fusion.AddPass<xla::gpu::GpuInstructionFusion>(/*may_duplicate=*/true,
+                                                 device_info);
   EXPECT_TRUE(fusion.Run(module.get()).value());
   EXPECT_TRUE(GpuHorizontalLoopFusion().Run(module.get()).value());
   TF_ASSERT_OK(verifier().Run(module.get()).status());

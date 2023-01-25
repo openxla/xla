@@ -15,14 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/horizontal_input_fusion.h"
 
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_matchers.h"
-#include "xla/service/hlo_parser.h"
-#include "xla/service/hlo_pass_pipeline.h"
 #include "xla/shape_util.h"
 #include "xla/test.h"
-#include "xla/test_helpers.h"
-#include "xla/tests/filecheck.h"
 
 namespace xla {
 namespace gpu {
@@ -30,7 +27,11 @@ namespace {
 
 namespace op = xla::testing::opcode_matchers;
 
-class HorizontalInputFusionTest : public GpuCodegenTest {};
+class HorizontalInputFusionTest : public GpuCodegenTest {
+ public:
+  GpuHorizontalInputFusion horizontal_input_fusion_{
+      TestGpuDeviceInfo::RTXA6000DeviceInfo()};
+};
 
 TEST_F(HorizontalInputFusionTest, BasicTest) {
   auto module = ParseAndReturnVerifiedModule(R"(
@@ -64,7 +65,7 @@ TEST_F(HorizontalInputFusionTest, BasicTest) {
 )")
                     .value();
 
-  EXPECT_TRUE(GpuHorizontalInputFusion().Run(module.get()).value());
+  EXPECT_TRUE(horizontal_input_fusion_.Run(module.get()).value());
 
   const HloInstruction* entry_root =
       module->entry_computation()->root_instruction();
@@ -208,7 +209,7 @@ TEST_F(HorizontalInputFusionTest, MultiOutputFusionTest) {
 )")
                     .value();
 
-  EXPECT_TRUE(GpuHorizontalInputFusion().Run(module.get()).value());
+  EXPECT_TRUE(horizontal_input_fusion_.Run(module.get()).value());
 }
 
 TEST_F(HorizontalInputFusionTest, NonfusionInstrs) {
@@ -232,7 +233,7 @@ TEST_F(HorizontalInputFusionTest, NonfusionInstrs) {
 )")
                     .value();
 
-  EXPECT_TRUE(GpuHorizontalInputFusion().Run(module.get()).value());
+  EXPECT_TRUE(horizontal_input_fusion_.Run(module.get()).value());
 
   const HloInstruction* entry_root =
       module->entry_computation()->root_instruction();
