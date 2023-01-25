@@ -213,6 +213,7 @@ cc_library(
     deps = [
         "//tsl/platform:logging",
         "//tsl/platform:macros",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -226,6 +227,7 @@ tsl_cc_test(
         "//tsl/platform:test",
         "//tsl/platform:test_main",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
