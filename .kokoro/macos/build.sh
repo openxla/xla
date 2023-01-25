@@ -97,4 +97,5 @@ bazel test \
     --keep_going \
     --config=nonccl \
     --build_tag_filters=$TAGS_FILTER  --test_tag_filters=$TAGS_FILTER \
+    --test_size_filters=small,medium \
     -- //xla/... $TARGET_FILTER
