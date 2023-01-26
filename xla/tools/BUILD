@@ -304,10 +304,20 @@ xla_cc_binary(
     ]),
 )
 
-sh_test(
-    name = "interactive_graphviz_build_only_test",
-    srcs = ["interactive_graphviz_test.sh"],
-    data = [":interactive_graphviz"],
+xla_cc_test(
+    name = "interactive_graphviz_bin_test",
+    srcs = ["interactive_graphviz_bin_test.cc"],
+    data = [
+        "add.hlo",
+        ":interactive_graphviz",
+    ],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:subprocess",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
 )
 
 cc_library(
