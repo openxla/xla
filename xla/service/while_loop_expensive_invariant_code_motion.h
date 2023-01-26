@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_EXPENSIVE_INVARIANT_CODE_MOTION_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_EXPENSIVE_INVARIANT_CODE_MOTION_H_
 
+#include <functional>
+#include <utility>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/statusor.h"
@@ -27,14 +30,31 @@ namespace xla {
 // that contains the while instruction.
 // Users can specify worth_hoisting_individually, and only the groups
 // instructions with a root that returns true with it will be hoisted out.
+//
+// If transform_broadcasts_to_undef is true, identifies tuple elements passed to
+// while instructions that are broadcasts. If the broadcasted content is never
+// read within the loop and the content is entirely overwritten within the loop,
+// changes the broadcast to a cheaper AllocateBuffer.
+//
+// For example:
+//   %0 = broadcast(...)
+//   %1 = while( (%0) -> {
+//     %2 = ... compute some value ...
+//     %3 = dynamic-update-slice %0, %2
+//   })
+//
+// This transformation requires that the AllocateBuffer custom call be
+// available.
 class WhileLoopExpensiveInvariantCodeMotion : public HloModulePass {
  public:
   using ShapeSizeFunction = std::function<int64_t(const Shape&)>;
   explicit WhileLoopExpensiveInvariantCodeMotion(
       std::function<bool(const HloInstruction&)> worth_hoisting_individually,
-      ShapeSizeFunction shape_size_function = ShapeUtil::ByteSizeOfElements)
+      ShapeSizeFunction shape_size_function = ShapeUtil::ByteSizeOfElements,
+      bool transform_broadcasts_to_undef = false)
       : shape_size_function_(std::move(shape_size_function)),
-        worth_hoisting_individually_(std::move(worth_hoisting_individually)) {}
+        worth_hoisting_individually_(std::move(worth_hoisting_individually)),
+        transform_broadcasts_to_undef_(transform_broadcasts_to_undef) {}
   ~WhileLoopExpensiveInvariantCodeMotion() override = default;
 
   absl::string_view name() const override {
@@ -51,6 +71,7 @@ class WhileLoopExpensiveInvariantCodeMotion : public HloModulePass {
 
   ShapeSizeFunction shape_size_function_;
   std::function<bool(const HloInstruction&)> worth_hoisting_individually_;
+  bool transform_broadcasts_to_undef_;
 };
 }  // namespace xla
 

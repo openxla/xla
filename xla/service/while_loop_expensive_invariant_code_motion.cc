@@ -15,10 +15,17 @@ limitations under the License.
 
 #include "xla/service/while_loop_expensive_invariant_code_motion.h"
 
+#include <optional>
+
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/pattern_matcher.h"
 #include "xla/service/tuple_util.h"
 #include "xla/service/while_loop_analysis.h"
 #include "xla/service/while_util.h"
@@ -334,6 +341,133 @@ StatusOr<bool> WhileLoopExpensiveInvariantCodeMotion::
   return true;
 }
 
+// Holds information about a loop being analyzed for broadcast removal.
+struct LoopInfo {
+  // Tuple index into the loop's parameter tuple of the induction variable.
+  int64_t indvar_index;
+
+  // Loop trip count.
+  int64_t trip_count;
+};
+
+// `dus` is a DynamicUpdateSlice. If all start indices are zero except for one,
+// and that index is exactly the loop induction variable, returns the shape
+// dimension being written to.
+//
+// Returns nullopt otherwise.
+std::optional<int64_t> MatchDynamicUpdateSliceInDim(HloInstruction* dus,
+                                                    const LoopInfo& loop_info) {
+  std::optional<int64_t> dus_dim;
+  for (int64_t operand_index = 2; operand_index < dus->operand_count();
+       ++operand_index) {
+    HloInstruction* operand = dus->mutable_operand(operand_index);
+    if (Match(operand, match::ConstantEffectiveScalar(0))) {
+      continue;
+    }
+    if (Match(operand, match::GetTupleElement(match::Parameter(),
+                                              loop_info.indvar_index))) {
+      dus_dim = operand_index - 2;
+    }
+  }
+  return dus_dim;
+}
+
+// Returns true if the `tuple_index` output of `computation` is write-only.
+//
+// Write-only means that it the equivalent parameter is either unused or feeds
+// a dynamic-update-slice, and that DUS iterates over a shape dimension that
+// ends up entirely covering the shape.
+//
+// For example, for the DUS:
+//   %0 = f32[6,128] DUS(..., %indvar, %zero)
+//
+// This DUS only writes to the entire shape if the loop trip count is exactly
+// six. A smaller trip count would expose some of the prior content of the
+// DUS's loop init value.
+bool TupleElementIsWriteOnly(HloComputation* computation, int64_t tuple_index,
+                             const LoopInfo& loop_info) {
+  HloInstruction* body_param = computation->parameter_instruction(0);
+  for (HloInstruction* user : body_param->users()) {
+    if (user->opcode() != xla::HloOpcode::kGetTupleElement ||
+        user->tuple_index() != tuple_index) {
+      continue;
+    }
+    for (HloInstruction* gte_user : user->users()) {
+      if (gte_user->opcode() != HloOpcode::kDynamicUpdateSlice ||
+          gte_user->operand_index(user) != 0) {
+        return false;
+      }
+
+      // To guarantee that the entire shape is written to, all indices must be
+      // zero except for one, which must be the loop induction variable.
+      std::optional<int64_t> broadcast_dim =
+          MatchDynamicUpdateSliceInDim(gte_user, loop_info);
+      if (!broadcast_dim.has_value()) {
+        return false;
+      }
+
+      // The shape's broadcast_dim must be exactly equal to the loop trip count.
+      if (user->shape().dimensions(*broadcast_dim) != loop_info.trip_count) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Identifies tuple elements passed to `while_instr` that are broadcasts. If
+// the broadcasted content is never read within the loop and the content is
+// entirely overwritten within the loop, change the broadcast to a
+// cheaper AllocateBuffer.
+//
+// For example:
+//   %0 = broadcast(...)
+//   %1 = while( (%0) -> {
+//     %2 = ... compute some value ...
+//     %3 = dynamic-update-slice %0, %2
+//   })
+StatusOr<bool> TryMakingBroadcastUndef(HloInstruction* while_instr,
+                                       const LoopInfo& loop_info) {
+  HloInstruction* tuple;
+  if (!Match(while_instr->mutable_operand(0),
+             match::Op(&tuple).WithOpcode(HloOpcode::kTuple).WithOneUse())) {
+    return false;
+  }
+
+  bool changed = false;
+  for (int64_t tuple_index = 0; tuple_index < tuple->operand_count();
+       ++tuple_index) {
+    HloInstruction* arg_operand = tuple->mutable_operand(tuple_index);
+
+    // We're looking for an argument that is a broadcast that only feeds a while
+    // loop.
+    if (!Match(arg_operand, match::Broadcast().WithOneUse())) {
+      continue;
+    }
+
+    // If the broadcasted content may be read, do nothing.
+    if (!TupleElementIsWriteOnly(while_instr->while_condition(), tuple_index,
+                                 loop_info) ||
+        !TupleElementIsWriteOnly(while_instr->while_body(), tuple_index,
+                                 loop_info)) {
+      continue;
+    }
+
+    // This broadcast is partially written to on every loop iteration and never
+    // read within the loop. By the end of the loop, none of the original
+    // broadcasted content remains so we can rewrite it as undef.
+    HloInstruction* new_arg_operand =
+        while_instr->parent()->AddInstruction(HloInstruction::CreateCustomCall(
+            arg_operand->shape(), {}, "AllocateBuffer"));
+    TF_RETURN_IF_ERROR(tuple->ReplaceOperandWith(tuple_index, new_arg_operand));
+    TF_RETURN_IF_ERROR(
+        while_instr->parent()->RemoveInstructionAndUnusedOperands(arg_operand));
+    changed = true;
+  }
+
+  return changed;
+}
+
 StatusOr<bool> WhileLoopExpensiveInvariantCodeMotion::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -350,6 +484,19 @@ StatusOr<bool> WhileLoopExpensiveInvariantCodeMotion::Run(
   }
 
   for (HloInstruction* while_instr : while_instrs) {
+    if (transform_broadcasts_to_undef_) {
+      std::optional<int64_t> indvar_index =
+          GetLoopInductionVarTupleIdx(while_instr);
+      std::optional<int64_t> trip_count =
+          ComputeWhileLoopTripCount(while_instr, /*max_brute_force_iters=*/0);
+      if (indvar_index.has_value() && trip_count.has_value()) {
+        LoopInfo loop_info{*indvar_index, *trip_count};
+        TF_ASSIGN_OR_RETURN(bool result,
+                            TryMakingBroadcastUndef(while_instr, loop_info));
+        changed |= result;
+      }
+    }
+
     // Right now we only hoist computations from the while body, but
     // TryHoistingInvariantInstructionsFromWhileBody can be generalized to
     // optimize the condition computation too, if needed.

@@ -5933,6 +5933,7 @@ cc_library(
     hdrs = ["while_loop_expensive_invariant_code_motion.h"],
     deps = [
         ":hlo_pass",
+        ":pattern_matcher",
         ":tuple_util",
         ":while_loop_analysis",
         ":while_util",

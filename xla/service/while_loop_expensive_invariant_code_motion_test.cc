@@ -25,6 +25,7 @@ namespace xla {
 namespace {
 
 using WhileLoopExpensiveInvariantCodeMotionTest = HloTestBase;
+using UndefBroadcastTest = HloTestBase;
 namespace op = xla::testing::opcode_matchers;
 
 constexpr char kModuleWithNonInflatingInvariantDot[] = R"(
@@ -274,6 +275,182 @@ ENTRY entry {
             return instr.opcode() == HloOpcode::kDot;
           })
           .Run(m.get()));
+  EXPECT_FALSE(simplified_loop);
+}
+
+TEST_F(UndefBroadcastTest, MakesBroadcastUndefined) {
+  constexpr char kModule[] = R"(
+HloModule Module
+
+body {
+  p_body = (f32[4, 4], f32[1, 4], u32[]) parameter(0)
+  indvar = get-tuple-element(p_body), index=2
+  a = get-tuple-element(p_body), index=0
+  b = get-tuple-element(p_body), index=1
+  zero = u32[] constant(0)
+  a2 = f32[4,4] dynamic-update-slice(a, b, indvar, zero)
+  one = u32[] constant(1)
+  inc = add(indvar, one)
+  ROOT root = tuple(a2, b, inc)
+}
+
+condition {
+  p_cond = (f32[4, 4], f32[1, 4], u32[]) parameter(0)
+  itercount = u32[] get-tuple-element(p_cond), index=2
+  limit = u32[] constant(4)
+  ROOT result = pred[] compare(itercount, limit), direction=LT
+}
+
+ENTRY entry {
+  param0 = f32[4] parameter(0)
+  param1 = f32[1, 4] parameter(1)
+  bc = f32[4, 4] broadcast(param0), dimensions={1}
+  zero = u32[] constant(0)
+  while_init = tuple(bc, param1, zero)
+  ROOT while = while(while_init), condition=condition, body=body
+}
+)";
+  auto m = ParseAndReturnVerifiedModule(kModule).value();
+
+  TF_ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                          WhileLoopExpensiveInvariantCodeMotion(
+                              /*worth_hoisting_individually=*/{},
+                              ShapeUtil::ByteSizeOfElements, true)
+                              .Run(m.get()));
+  EXPECT_TRUE(simplified_loop);
+
+  HloComputation* entry = m->GetComputationWithName("entry");
+  ASSERT_NE(entry, nullptr);
+  EXPECT_THAT(entry->instructions(), Not(Contains(op::Broadcast())));
+}
+
+TEST_F(UndefBroadcastTest, UnknownTripCount) {
+  constexpr char kModule[] = R"(
+HloModule Module
+
+body {
+  p_body = (f32[4, 4], f32[1, 4], u32[]) parameter(0)
+  indvar = get-tuple-element(p_body), index=2
+  a = get-tuple-element(p_body), index=0
+  b = get-tuple-element(p_body), index=1
+  zero = u32[] constant(0)
+  a2 = f32[4,4] dynamic-update-slice(a, b, indvar, zero)
+  one = u32[] constant(1)
+  inc = multiply(indvar, one)
+  ROOT root = tuple(a2, b, inc)
+}
+
+condition {
+  p_cond = (f32[4, 4], f32[1, 4], u32[]) parameter(0)
+  itercount = u32[] get-tuple-element(p_cond), index=2
+  limit = u32[] constant(12)
+  ROOT result = pred[] compare(itercount, limit), direction=LT
+}
+
+ENTRY entry {
+  param0 = f32[4] parameter(0)
+  param1 = f32[1, 4] parameter(1)
+  bc = f32[4, 4] broadcast(param0), dimensions={1}
+  zero = u32[] constant(0)
+  while_init = tuple(bc, param1, zero)
+  ROOT while = while(while_init), condition=condition, body=body
+}
+)";
+  auto m = ParseAndReturnVerifiedModule(kModule).value();
+
+  TF_ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                          WhileLoopExpensiveInvariantCodeMotion(
+                              /*worth_hoisting_individually=*/{},
+                              ShapeUtil::ByteSizeOfElements, true)
+                              .Run(m.get()));
+  EXPECT_FALSE(simplified_loop);
+
+  HloComputation* entry = m->GetComputationWithName("entry");
+  ASSERT_NE(entry, nullptr);
+  EXPECT_THAT(entry->instructions(), Contains(op::Broadcast()));
+}
+
+TEST_F(UndefBroadcastTest, WrongSize) {
+  constexpr char kModule[] = R"(
+HloModule Module
+
+body {
+  p_body = (f32[4, 4], f32[1, 4], u32[]) parameter(0)
+  indvar = get-tuple-element(p_body), index=2
+  a = get-tuple-element(p_body), index=0
+  b = get-tuple-element(p_body), index=1
+  zero = u32[] constant(0)
+  a2 = f32[4,4] dynamic-update-slice(a, b, indvar, zero)
+  one = u32[] constant(1)
+  inc = add(indvar, one)
+  ROOT root = tuple(a2, b, inc)
+}
+
+condition {
+  p_cond = (f32[4, 4], f32[1, 4], u32[]) parameter(0)
+  itercount = u32[] get-tuple-element(p_cond), index=2
+  limit = u32[] constant(3)
+  ROOT result = pred[] compare(itercount, limit), direction=LT
+}
+
+ENTRY entry {
+  param0 = f32[4] parameter(0)
+  param1 = f32[1, 4] parameter(1)
+  bc = f32[4, 4] broadcast(param0), dimensions={1}
+  zero = u32[] constant(0)
+  while_init = tuple(bc, param1, zero)
+  ROOT while = while(while_init), condition=condition, body=body
+}
+)";
+  auto m = ParseAndReturnVerifiedModule(kModule).value();
+
+  TF_ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                          WhileLoopExpensiveInvariantCodeMotion(
+                              /*worth_hoisting_individually=*/{},
+                              ShapeUtil::ByteSizeOfElements, true)
+                              .Run(m.get()));
+  EXPECT_FALSE(simplified_loop);
+}
+
+TEST_F(UndefBroadcastTest, NotWriteOnly) {
+  constexpr char kModule[] = R"(
+HloModule Module
+
+body {
+  p_body = (f32[4, 4], f32[1, 4], u32[]) parameter(0)
+  indvar = get-tuple-element(p_body), index=2
+  a = get-tuple-element(p_body), index=0
+  b = get-tuple-element(p_body), index=1
+  zero = u32[] constant(0)
+  a2 = f32[4,4] dynamic-update-slice(a, b, indvar, zero)
+  one = u32[] constant(1)
+  inc = add(indvar, one)
+  ROOT root = tuple(a, b, inc)
+}
+
+condition {
+  p_cond = (f32[4, 4], f32[1, 4], u32[]) parameter(0)
+  itercount = u32[] get-tuple-element(p_cond), index=2
+  limit = u32[] constant(4)
+  ROOT result = pred[] compare(itercount, limit), direction=LT
+}
+
+ENTRY entry {
+  param0 = f32[4] parameter(0)
+  param1 = f32[1, 4] parameter(1)
+  bc = f32[4, 4] broadcast(param0), dimensions={1}
+  zero = u32[] constant(0)
+  while_init = tuple(bc, param1, zero)
+  ROOT while = while(while_init), condition=condition, body=body
+}
+)";
+  auto m = ParseAndReturnVerifiedModule(kModule).value();
+
+  TF_ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                          WhileLoopExpensiveInvariantCodeMotion(
+                              /*worth_hoisting_individually=*/{},
+                              ShapeUtil::ByteSizeOfElements, true)
+                              .Run(m.get()));
   EXPECT_FALSE(simplified_loop);
 }
 
