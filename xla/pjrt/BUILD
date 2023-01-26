@@ -525,6 +525,7 @@ cc_library(
         ":worker_thread",
         "//third_party/eigen3",  # TODO(zhangqiaorjc): Remove if use TFRT threadpool.
         "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:util",
@@ -561,10 +562,14 @@ xla_cc_test(
     srcs = ["tfrt_cpu_pjrt_client_test.cc"],
     deps = [
         ":tfrt_cpu_pjrt_client",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla/service:custom_call_status_public_headers",
         "//xla/service:custom_call_target_registry",
         "//xla/service:hlo_parser",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:test",
     ],
 )
 
