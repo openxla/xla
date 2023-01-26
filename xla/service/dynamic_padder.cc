@@ -1850,14 +1850,22 @@ StatusOr<HloInstruction*> InsertPadToStaticOnInstruction(HloInstruction* inst) {
 
 // Inserts PadToStatic for parameters and custom-calls which "materialize"
 // dynamic outputs given only static inputs.
-Status InsertPadToStaticAfterModuleInputs(HloModule* module) {
+Status InsertPadToStaticAfterModuleInputs(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
   std::vector<HloInstruction*> params;
   HloComputation* entry = module->entry_computation();
   for (HloComputation* comp : module->MakeNonfusionComputationsSorted()) {
     for (HloInstruction* instr : comp->instructions()) {
+      auto is_supported_custom_call = [&execution_threads](
+                                          HloInstruction* instr) {
+        return instr->opcode() == HloOpcode::kCustomCall &&
+               execution_threads.contains(instr->parent()->execution_thread());
+      };
+
       if (!instr->shape().is_static() &&
           ((instr->opcode() == HloOpcode::kParameter && comp == entry) ||
-           instr->opcode() == HloOpcode::kCustomCall) &&
+           is_supported_custom_call(instr)) &&
           absl::c_all_of(instr->operands(), [&](HloInstruction* operand) {
             return operand->shape().is_static();
           })) {
@@ -2152,7 +2160,8 @@ StatusOr<bool> DynamicPadder::Run(
         return OkStatus();
       }));
 
-  TF_RETURN_IF_ERROR(InsertPadToStaticAfterModuleInputs(module));
+  TF_RETURN_IF_ERROR(
+      InsertPadToStaticAfterModuleInputs(module, execution_threads));
   TF_ASSIGN_OR_RETURN(
       DynamicDimensionInference dynamic_dimension_inference,
       DynamicDimensionInference::Run(module, options_.custom_call_handler,
