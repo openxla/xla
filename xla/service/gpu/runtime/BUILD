@@ -148,22 +148,18 @@ cc_library(
     hdrs = ["gemm.h"],
     deps = [
         ":support",
-        "@com_google_absl//absl/container:node_hash_map",
-        "//xla:status",
         "//xla:xla_proto_cc",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
+        "//xla/runtime:logical_result",
         "//xla/runtime:state",
         "//xla/service:executable",
-        "//xla/service:hlo_module_config",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory",
-    ] + if_cuda_is_configured([
-        "//xla/service/gpu:gemm_algorithm_picker",
-        "//xla/stream_executor/gpu:redzone_allocator",
-    ]),
+        "@com_google_absl//absl/container:node_hash_map",
+    ],
 )
 
 cc_library(
