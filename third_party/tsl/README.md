@@ -13,9 +13,10 @@ under the
 [OpenXLA SIG governance](https://github.com/tensorflow/community/pull/419/).
 
 If you want to use XLA with your ML project, refer to the corresponding
-documentation for your ML framework: * [PyTorch](https://pytorch.org/xla) *
-[TensorFlow](https://www.tensorflow.org/xla) *
-[JAX](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html)
+documentation for your ML framework:
+* [PyTorch](https://pytorch.org/xla)
+* [TensorFlow](https://www.tensorflow.org/xla)
+* [JAX](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html)
 
 Everything else in this repo is intended for XLA developers and integrators (to
 debug or add support for ML frontends and hardware backends).
@@ -42,7 +43,7 @@ git clone https://github.com/openxla/xla && cd xla
 Run an end to end test using an example StableHLO module:
 
 ```
-bazelisk test xla/examples/axpy:stablehlo_compile_test --nocheck_visibility
+bazelisk test xla/examples/axpy:stablehlo_compile_test --nocheck_visibility --test_output=all
 ```
 
 This will take quite a while your first time because it must build the entire
