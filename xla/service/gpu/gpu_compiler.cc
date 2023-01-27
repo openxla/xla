@@ -1077,8 +1077,7 @@ static Status LowerToXlaGpuRuntime(mlir::ModuleOp module,
     return InternalError("No MLIR module to lower.");
   }
 
-  mlir::PassManager pm(module.getContext(),
-                       mlir::PassManager::Nesting::Implicit);
+  mlir::PassManager pm(module->getName(), mlir::PassManager::Nesting::Implicit);
 
   GpuPipelineOpts opts;
   opts.enable_cuda_graphs = debug_options.xla_gpu_enable_cuda_graphs();
