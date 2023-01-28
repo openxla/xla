@@ -1,6 +1,6 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
-# Import third party config rules.
+# Import third party config rules. Testing.
 load("@bazel_skylib//lib:versions.bzl", "versions")
 load("//third_party/gpus:cuda_configure.bzl", "cuda_configure")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
