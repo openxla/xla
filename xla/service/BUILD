@@ -5386,6 +5386,7 @@ cc_library(
     srcs = ["computation_layout.cc"],
     hdrs = ["computation_layout.h"],
     deps = [
+        "//xla:printer",
         "//xla:shape_layout",
         "//xla:types",
         "//xla:xla_data_proto_cc",

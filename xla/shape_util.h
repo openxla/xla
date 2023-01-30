@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
+#include "xla/printer.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/cpu_info.h"
@@ -139,6 +140,18 @@ class ShapeUtil {
   // `ByteSizeOf(shape) == ByteSizeOfElements(shape)`. This
   // size also includes padding if present in the layout.
   static int64_t ByteSizeOfElements(const Shape& shape);
+
+  // Prints a human-readable string that represents the given shape, with or
+  // without layout. e.g. "f32[42x12] {0, 1}" or "f32[64]".
+  static void PrintHumanString(xla::Printer* printer, const Shape& shape);
+  static void PrintHumanStringWithLayout(xla::Printer* printer,
+                                         const Shape& shape);
+
+  // As above, but for program shapes, prints a string for the form:
+  //
+  // (param_name: f32[42x12], ...) -> f32[24x42]
+  static void PrintHumanString(xla::Printer* printer,
+                               const ProgramShape& program_shape);
 
   // Returns a human-readable string that represents the given shape, with or
   // without layout. e.g. "f32[42x12] {0, 1}" or "f32[64]".

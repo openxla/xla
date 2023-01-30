@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/printer.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 
@@ -1138,8 +1139,8 @@ class HloConstantInstruction : public HloInstruction {
       const HloInstruction& other,
       absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
           eq_computations) const override;
-  std::string OperandsToStringWithCanonicalNameMap(
-      const HloPrintOptions& options,
+  void PrintOperandsWithCanonicalNameMap(
+      Printer* printer, const HloPrintOptions& options,
       CanonicalNameMap* canonical_name_map) const override;
   // Implementation for non-common logic of CloneWithNewOperands.
   std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
@@ -1459,8 +1460,8 @@ class HloParameterInstruction : public HloInstruction {
       const HloInstruction& other,
       absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
           eq_computations) const override;
-  std::string OperandsToStringWithCanonicalNameMap(
-      const HloPrintOptions& options,
+  void PrintOperandsWithCanonicalNameMap(
+      Printer* printer, const HloPrintOptions& options,
       CanonicalNameMap* canonical_name_map) const override;
   // Implementation for non-common logic of CloneWithNewOperands.
   std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(

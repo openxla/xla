@@ -398,6 +398,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":permutation_util",
+        ":printer",
         ":status",
         ":status_macros",
         ":statusor",
@@ -531,6 +532,7 @@ cc_library(
         ":array3d",
         ":array4d",
         ":permutation_util",
+        ":printer",
         ":shape_util",
         ":status_macros",
         ":types",
@@ -900,6 +902,7 @@ cc_library(
     hdrs = ["shape_layout.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":printer",
         ":shape_util",
         ":types",
         ":util",
@@ -1137,6 +1140,17 @@ cc_library(
         "//xla/service/gpu:gemm_algorithm_picker",
         "//xla/service/gpu:gpu_conv_algorithm_picker",
     ]),
+)
+
+cc_library(
+    name = "printer",
+    srcs = ["printer.cc"],
+    hdrs = ["printer.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
+    ],
 )
 
 filegroup(

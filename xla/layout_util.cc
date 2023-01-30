@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "xla/primitive_util.h"
+#include "xla/printer.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/logging.h"
@@ -530,6 +531,11 @@ Layout CreateDefaultLayoutForRank(int64_t rank) {
     logical_to_physical[logical] = physical;
   }
   return logical_to_physical;
+}
+
+/* static */ void LayoutUtil::PrintHumanString(Printer* printer,
+                                               const Layout& layout) {
+  layout.Print(printer);
 }
 
 /* static */ std::string LayoutUtil::HumanString(const Layout& layout) {

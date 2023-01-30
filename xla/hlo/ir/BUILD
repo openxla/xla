@@ -57,6 +57,7 @@ cc_library(
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:printer",
         "//xla:protobuf_util",
         "//xla:shape_tree",
         "//xla:shape_util",

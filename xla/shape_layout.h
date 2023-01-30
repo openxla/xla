@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <string>
 
+#include "xla/printer.h"
 #include "xla/shape_util.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -83,6 +84,9 @@ class ShapeLayout {
   // Resets the layout on the shape at the provided ShapeIndex to the provided
   // layout. Shape must be a tuple.
   void ResetLayout(const Layout& layout, ShapeIndexView shape_index);
+
+  // Returns a string representation of this object.
+  void Print(Printer* printer) const { shape_.Print(printer, true); }
 
   // Returns a string representation of this object.
   std::string ToString() const { return shape_.ToString(true); }

@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/types/span.h"
 #include "xla/layout.h"
+#include "xla/printer.h"
 #include "xla/shape.h"
 #include "xla/status.h"
 #include "xla/xla_data.pb.h"
@@ -201,6 +202,9 @@ class LayoutUtil {
   // physical dimension, and the element with contents (rank - 1) represents
   // the most minor physical dimension.
   static std::vector<int64_t> MakeLogicalToPhysical(const Layout& layout);
+
+  // Prints a human-readable string that represents the given layout.
+  static void PrintHumanString(Printer* printer, const Layout& layout);
 
   // Returns a human-readable string that represents the given layout.
   static std::string HumanString(const Layout& layout);

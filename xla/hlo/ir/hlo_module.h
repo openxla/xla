@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/iterator_util.h"
+#include "xla/printer.h"
 #include "xla/service/compilation_environments.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
@@ -318,6 +319,15 @@ class HloModule {
 
   bool is_dynamic() const { return is_dynamic_; }
   void set_is_dynamic(bool is_dynamic) { is_dynamic_ = is_dynamic; }
+
+  // Prints a string representation of the module.
+  //
+  // (We express the default options using an overload rather than a default
+  // param because gdb ignores default params, but does resolve overloads.)
+  void Print(Printer* printer) const {
+    return Print(printer, HloPrintOptions());
+  }
+  void Print(Printer* printer, const HloPrintOptions& options) const;
 
   // Return a string representation of the module.
   //
