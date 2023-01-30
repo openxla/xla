@@ -32,6 +32,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_diagnostics_header",
         "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
+        "@tsl//tsl/platform:platform_port",
     ]),
 )
 
