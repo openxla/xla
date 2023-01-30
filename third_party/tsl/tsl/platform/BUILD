@@ -2,7 +2,7 @@
 #   Tensor Standard Libraries.
 #
 #   The libraries in this package are not allowed to have ANY dependencies
-#   to other TF components outside of TSL.
+#   to other TF components outside of TSL. Test comment
 
 load(
     "@local_config_cuda//cuda:build_defs.bzl",
