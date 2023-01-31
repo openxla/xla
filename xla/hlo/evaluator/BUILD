@@ -59,7 +59,6 @@ cc_library(
         "//xla/service:shape_inference",
         "//xla/service:tuple_points_to_analysis",
         "//xla/service/cpu:runtime_single_threaded_matmul",
-        "//xla/stream_executor/lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:endian",

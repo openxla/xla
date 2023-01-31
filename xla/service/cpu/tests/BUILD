@@ -177,7 +177,6 @@ xla_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_parser",
         "//xla/service/cpu:cpu_compiler",
-        "//xla/stream_executor/lib",
         "//xla/tests:codegen_test_base",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",

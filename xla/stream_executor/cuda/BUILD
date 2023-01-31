@@ -60,7 +60,6 @@ cc_library(
             "//xla/stream_executor:executor_cache",
             "//xla/stream_executor:multi_platform_manager",
             "//xla/stream_executor:stream_executor_pimpl_header",
-            "//xla/stream_executor/lib",
             "//xla/stream_executor/platform",
         ],
     ) + tf_additional_cuda_platform_deps() + [
@@ -82,7 +81,6 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "//xla/stream_executor/gpu:gpu_diagnostics_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:platform_port",
     ]) + ["@com_google_absl//absl/strings:str_format"],
@@ -112,7 +110,6 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
         "//xla/stream_executor:device_options",
         "//xla/stream_executor/gpu:gpu_driver_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
         "@tsl//tsl/platform:env",
@@ -152,7 +149,6 @@ tsl_gpu_cc_test(
     ],
     deps = [
         ":cuda_driver",
-        "//xla/stream_executor/lib",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:test",
@@ -171,7 +167,6 @@ tsl_gpu_cc_test(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:stream_executor_impl",
-        "//xla/stream_executor/lib",
         "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
@@ -218,7 +213,6 @@ cc_library(
         ":cuda_kernel",
         "//xla/stream_executor:event",
         "//xla/stream_executor/gpu:gpu_executor_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
     ]),
 )
@@ -245,7 +239,6 @@ cc_library(
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:status",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor:host_or_device_scalar",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/platform",
@@ -302,7 +295,6 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_timer_header",
         "//xla/stream_executor/gpu:gpu_types_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
     ]) + if_static([
@@ -320,7 +312,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
         "//xla/stream_executor:stream_executor_headers",
-        "//xla/stream_executor/lib",
     ]) + ["@tsl//tsl/platform:errors"],
 )
 
@@ -354,7 +345,6 @@ cc_library(
         "//xla/stream_executor:plugin_registry",
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor/gpu:gpu_helpers_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
     ]) + ["@tsl//tsl/platform:errors"],
@@ -380,7 +370,6 @@ cc_library(
         ":cuda_activation_header",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:plugin_registry",
-        "//xla/stream_executor/lib",
     ]),
 )
 
@@ -415,7 +404,6 @@ cc_library(
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor:stream_executor_pimpl_header",
         "//xla/stream_executor:temporary_device_memory",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
@@ -455,7 +443,6 @@ cc_library(
         "//xla/stream_executor:rng",
         "//xla/stream_executor/gpu:gpu_helpers_header",
         "//xla/stream_executor/gpu:gpu_rng_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
     ]),
@@ -502,7 +489,6 @@ cc_library(
         "//xla/stream_executor:event",
         "//xla/stream_executor:stream_executor_pimpl_header",
         "//xla/stream_executor/gpu:gpu_kernel_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
     ]),
 )
@@ -527,7 +513,6 @@ cc_library(
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_event",
         "//xla/stream_executor/gpu:gpu_stream_header",
-        "//xla/stream_executor/lib",
     ]),
 )
 
@@ -551,7 +536,6 @@ cc_library(
         ":cuda_gpu_executor_header",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_stream",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
     ]),
 )
@@ -566,7 +550,6 @@ cc_library(
         ":cuda_stream",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_timer",
-        "//xla/stream_executor/lib",
     ]),
 )
 
@@ -607,7 +590,6 @@ cc_library(
         "//xla/stream_executor:timer",
         "//xla/stream_executor/gpu:asm_compiler",
         "//xla/stream_executor/gpu:gpu_executor_header",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
     ]) + [

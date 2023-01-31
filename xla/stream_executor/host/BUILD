@@ -44,7 +44,6 @@ cc_library(
         "//xla/stream_executor:executor_cache",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:stream_executor_headers",
-        "//xla/stream_executor/lib",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
@@ -63,7 +62,6 @@ cc_library(
     ],
     deps = [
         "//xla/stream_executor:kernel",
-        "//xla/stream_executor/lib",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:denormal",

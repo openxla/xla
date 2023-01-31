@@ -25,7 +25,6 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "//xla/stream_executor/lib",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:dso_loader",
     ],
