@@ -2013,11 +2013,13 @@ class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
  public:
   StreamExecutorCopyToDeviceStream(int64_t channel_id, se::Stream* stream,
                                    se::DeviceMemoryBase dst,
+                                   tsl::thread::ThreadPool* thread_pool,
                                    AsyncValueRef<se::Event> done)
       : CopyToDeviceStream(dst.size(), /*granule_bytes=*/1),
         channel_id_(channel_id),
         stream_(stream),
         dst_(dst),
+        thread_pool_(thread_pool),
         done_(std::move(done)) {}
 
   PjRtFuture<Status> AddChunk(PjRtChunk chunk) final {
@@ -2057,27 +2059,45 @@ class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
     bool complete = IsCompleteLocked();
     lock.Release();
 
-    stream_->ThenMemcpy(&dst, chunk.data(), chunk.size());
+    auto promise = PjRtFuture<Status>::CreatePromise();
 
-    // Delete chunk once the memcpy operation completes.
+    // Thread pool uses std::function and can't capture move-only chunk, we'll
+    // be responsible for deleting it explicitly
     auto* chunk_ptr = std::make_unique<PjRtChunk>(std::move(chunk)).release();
-    stream_->ThenDoHostCallback([chunk_ptr]() { delete chunk_ptr; });
 
-    // Record done event once processed the last chunk. It is the caller
-    // responsibility to synchronize with this event before submitting any new
-    // computations to the stream.
-    if (complete) {
-      stream_->ThenRecordEvent(&done_.get());
-      done_.SetStateConcrete();
-    }
+    // Run the actual memory copy asyncrhonously in the PjRt thread pool,
+    // because in practice with CUDA streams memcpy operations from pageable
+    // memory can be a rather slow operation.
+    thread_pool_->Schedule([stream = stream_, done = done_, dst, complete,
+                            chunk_ptr, promise]() mutable {
+      stream->ThenMemcpy(&dst, chunk_ptr->data(), chunk_ptr->size());
 
-    return PjRtFuture<Status>(OkStatus());
+      // Delete chunk once the memcpy operation completes.
+      stream->ThenDoHostCallback([chunk_ptr]() { delete chunk_ptr; });
+
+      // Record done event once processed the last chunk. It is the caller
+      // responsibility to synchronize with this event before submitting any
+      // new computations to the stream.
+      if (complete) {
+        stream->ThenRecordEvent(&done.get());
+        done.SetStateConcrete();
+      }
+
+      promise.Set(OkStatus());
+    });
+
+    // We return available future here, because from `CopyToDeviceStream`
+    // perspective operation is completed.
+    return PjRtFuture<Status>(std::move(promise));
   }
 
  private:
   int64_t channel_id_;
   se::Stream* stream_;
   se::DeviceMemoryBase dst_;
+
+  // All H2D memory copies scheduled into the thread pool.
+  tsl::thread::ThreadPool* thread_pool_;
 
   // Async value will become available after we'll submit the last memcpy
   // operation, and the event will be recorded on the stream.
@@ -2086,7 +2106,8 @@ class StreamExecutorCopyToDeviceStream : public CopyToDeviceStream {
 }  // namespace
 
 static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
-    int device_ordinal, const ExecuteOptions& options) {
+    int device_ordinal, const ExecuteOptions& options,
+    tsl::thread::ThreadPool* thread_pool) {
   // Check if we have callbacks registered for the given device ordinal.
   if (device_ordinal >= options.send_callbacks.size()) {
     return [device_ordinal](int64_t channel_id, se::Stream*, const Shape&,
@@ -2102,7 +2123,7 @@ static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
   absl::Span<const RecvCallback> callbacks =
       options.recv_callbacks[device_ordinal];
 
-  return [callbacks](
+  return [callbacks, thread_pool](
              int64_t channel_id, se::Stream* stream, const Shape& shape,
              se::DeviceMemoryBase* dst) -> StatusOr<AsyncValueRef<se::Event>> {
     VLOG(3) << "Recv from channel #" << channel_id
@@ -2128,8 +2149,9 @@ static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
       return InternalError("Failed to initialize done event (channel_id=%d)",
                            channel_id);
 
-    recv->callback({shape}, std::make_unique<StreamExecutorCopyToDeviceStream>(
-                                channel_id, stream, *dst, done_event));
+    recv->callback({shape},
+                   std::make_unique<StreamExecutorCopyToDeviceStream>(
+                       channel_id, stream, *dst, thread_pool, done_event));
 
     return std::move(done_event);
   };
@@ -2247,7 +2269,7 @@ StatusOr<ScopedShapedBuffer> PjRtStreamExecutorExecutable::EnqueueExecution(
   SendDeviceMemoryFunction send_device_memory =
       ConvertSendCallbacksToSendFunction(device_ordinal, options, thread_pool);
   RecvDeviceMemoryFunction recv_device_memory =
-      ConvertRecvCallbacksToRecvFunction(device_ordinal, options);
+      ConvertRecvCallbacksToRecvFunction(device_ordinal, options, thread_pool);
 
   ExecutableRunOptions run_options;
   run_options.set_stream(device_state->compute_stream());
