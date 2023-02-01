@@ -218,3 +218,30 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
     ],
 )
+
+cc_library(
+    name = "partition_assignment",
+    srcs = [
+        "partition_assignment.cc",
+    ],
+    hdrs = [
+        "partition_assignment.h",
+    ],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+    ],
+)
+
+xla_cc_test(
+    name = "partition_assignment_test",
+    srcs = ["partition_assignment_test.cc"],
+    deps = [
+        ":partition_assignment",
+        "//xla:xla_proto_cc",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+    ],
+)
