@@ -68,7 +68,9 @@ cc_library(
     hdrs = ["eigen_contraction_kernel.h"],
     defines = select({
         "//tsl:android_x86": [],
-        "//tsl:arm_any": [],
+        "//tsl:arm_any": [
+            "TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL",
+        ],
         "//tsl:fuchsia_x86_64": [],
         "//tsl:ios": [],
         "//tsl:linux_ppc64le": [],
