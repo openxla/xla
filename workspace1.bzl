@@ -1,6 +1,5 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
-load("//third_party/android:android_configure.bzl", "android_configure")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@com_github_grpc_grpc//bazel:grpc_deps.bzl", "grpc_deps")
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_repositories")
@@ -29,8 +28,6 @@ def workspace(with_rules_cc = True):
             "https://github.com/bazelbuild/bazel-toolchains/archive/8c717f8258cd5f6c7a45b97d974292755852b658.tar.gz",
         ],
     )
-
-    android_configure(name = "local_config_android")
 
     grpc_deps()
 
