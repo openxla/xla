@@ -16,16 +16,21 @@ limitations under the License.
 #include "xla/service/gpu/cudnn_vectorize_convolutions.h"
 
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "xla/client/xla_builder.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cudnn_support_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 namespace gpu {
+namespace {
 
 // Finds convolutions that this pass may be able to transform, namely int8_t
 // cudnn forward or forward-bias-activation convolutions
@@ -249,6 +254,37 @@ static ConvolutionDimensionNumbers VectorizeDnums(
   return dnums;
 }
 
+// Updates the builder operands to reorder the inputs of int8x32 vectorized
+// convolutions (replaces with custom calls) and sets the input layout on
+// the HLO custom call instruction.
+Status ReorderInt8NchwVect(HloCustomCallInstruction* conv, XlaOp* operands) {
+  // Update convolution backend config.
+  TF_ASSIGN_OR_RETURN(auto config,
+                      conv->backend_config<CudnnConvBackendConfig>());
+  config.set_layout(CudnnConvBackendConfig::REORDERED_INT8_NCHW_VECT);
+  TF_RETURN_IF_ERROR(conv->set_backend_config(config));
+
+  XlaBuilder& builder = *operands->builder();
+  Shape filter_shape = builder.GetShape(operands[1]).value();
+
+  if (conv->operand_count() > 2) {
+    // Reorder filter and bias.
+    Shape bias_shape = builder.GetShape(operands[2]).value();
+    XlaOp reorder = CustomCall(
+        &builder, std::string(kCudnnConvReorderFilterAndBiasCallTarget),
+        {operands[1], operands[2]},
+        ShapeUtil::MakeTupleShape({filter_shape, bias_shape}));
+    operands[1] = GetTupleElement(reorder, 0);
+    operands[2] = GetTupleElement(reorder, 1);
+  } else {
+    // Reorder just the filter.
+    operands[1] =
+        CustomCall(&builder, std::string(kCudnnConvReorderFilterCallTarget),
+                   {operands[1]}, filter_shape);
+  }
+  return OkStatus();
+}
+
 // Tries to vectorize an already-vectorized convolution.
 //
 // That is, given a convolution of shape [N, C/k, H, W, k], changes it to have
@@ -333,6 +369,11 @@ static StatusOr<bool> TryRevectorizeConv(
     return InvalidArgument(
         "Don't understand a conv with more than 4 arguments: %s",
         conv->ToString());
+  }
+
+  // Reorder filter and bias for the int8x32 convolutions.
+  if (input_shape.element_type() == xla::S8 && vect_size == 32) {
+    TF_RETURN_IF_ERROR(ReorderInt8NchwVect(conv, new_operands.data()));
   }
 
   // The custom-call returns a tuple (new_output_shape, u8[0]), where the second
@@ -459,6 +500,11 @@ static StatusOr<bool> TryVectorizeConv(
         conv->ToString());
   }
 
+  // Reorder filter and bias for the int8x32 convolutions.
+  if (input_shape.element_type() == xla::S8 && vect_size == 32) {
+    TF_RETURN_IF_ERROR(ReorderInt8NchwVect(conv, new_operands.data()));
+  }
+
   // The custom-call returns a tuple (new_output_shape, u8[0]), where the second
   // value in the tuple represents the convolution's scratch memory.
   Shape new_output_shape = SplitShapeAtDim(
@@ -494,6 +540,8 @@ static StatusOr<bool> TryVectorizeConv(
                                        new_conv_comp)));
   return true;
 }
+
+}  // namespace
 
 StatusOr<bool> CudnnVectorizeConvolutions::Run(
     HloModule* module,

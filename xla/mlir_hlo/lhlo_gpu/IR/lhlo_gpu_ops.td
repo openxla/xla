@@ -45,7 +45,8 @@ class GpuConvolutionAttributes<dag extraAttribs> {
     MHLO_ConvolutionAttributes.attributes,
     (ins F64Attr:$result_scale),
     extraAttribs,
-    (ins ConvolutionBackendConfigAttr:$backend_config));
+    (ins ConvolutionBackendConfigAttr:$backend_config,
+         InputLayoutAttr:$input_layout));
 }
 
 // Provide a custom assembly format for all LHLO_GPU convolution operations.
@@ -119,6 +120,24 @@ def LHLOGPU_ConvForwardFusedSideInputOp :
      GpuConvolutionAttributes<(ins
          ActivationAttr:$activation_mode,
          F64Attr:$side_input_scale)>.attributes);
+}
+
+// Reordering helpers for int8x32 cuDNN convolutions.
+def LHLOGPU_CudnnConvReorderFilterOp : LHLOGPU_Op<"cudnn_conv_reorder_filter"> {
+  let arguments = (ins
+    Arg<LHLO_Buffer, "", [MemRead]>:$filter_input,
+    Arg<LHLO_Buffer, "", [MemWrite]>:$filter_output,
+    I64ElementsAttr:$filter_dims);
+}
+
+def LHLOGPU_CudnnConvReorderFilterAndBiasOp :
+      LHLOGPU_Op<"cudnn_conv_reorder_filter_and_bias"> {
+  let arguments = (ins
+    Arg<LHLO_Buffer, "", [MemRead]>:$filter_input,
+    Arg<LHLO_Buffer, "", [MemRead]>:$bias_input,
+    Arg<LHLO_Buffer, "", [MemWrite]>:$filter_output,
+    Arg<LHLO_Buffer, "", [MemWrite]>:$bias_output,
+    I64ElementsAttr:$filter_dims);
 }
 
 //===----------------------------------------------------------------------===//

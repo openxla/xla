@@ -80,6 +80,18 @@ StatusOr<stream_executor::dnn::ActivationMode> ConvertConvActivationMode(
   }
 }
 
+StatusOr<xla::gpu::CudnnConvBackendConfig::InputLayout> ConvertConvLayout(
+    mlir::lmhlo_gpu::InputLayout input) {
+  switch (input) {
+    case mlir::lmhlo_gpu::InputLayout::Default:
+      return xla::gpu::CudnnConvBackendConfig::DEFAULT;
+    case mlir::lmhlo_gpu::InputLayout::CudnnReorderedInt8NchwVect:
+      return xla::gpu::CudnnConvBackendConfig::REORDERED_INT8_NCHW_VECT;
+    default:
+      return InternalError("Unexpected input layout");
+  }
+}
+
 // Convert replica group from MLIR encoding to HLO.
 // See HloFunctionImporter::ConvertReplicaGroups for the MLIR encoding.
 StatusOr<std::vector<ReplicaGroup>> ConvertReplicaGroups(

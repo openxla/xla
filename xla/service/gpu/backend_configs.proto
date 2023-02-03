@@ -38,6 +38,14 @@ message CudnnConvBackendConfig {
   // The scaling factor multiplied with the side input. If no side input buffer
   // is provided, this field must be 0.
   double side_input_scale = 5;
+
+  // Input layout configuration.
+  enum InputLayout {
+    DEFAULT = 0;
+    REORDERED_INT8_NCHW_VECT = 1;
+  }
+
+  InputLayout layout = 7;
 }
 
 // Backend config for the GEMM operation running through cuBLAS.

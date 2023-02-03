@@ -85,6 +85,8 @@ struct ConvBackendConfig {
 namespace runtime {
 
 XLA_RUNTIME_REGISTER_ENUM_ATTR_DECODING(se::dnn::ActivationMode);
+XLA_RUNTIME_REGISTER_ENUM_ATTR_DECODING(
+    xla::gpu::CudnnConvBackendConfig::InputLayout);
 
 XLA_RUNTIME_REGISTER_AGGREGATE_ATTR_DECODING(
     xla::gpu::ConvDimensionNumbers,
@@ -124,6 +126,8 @@ namespace gpu {
 void RegisterConvTypeIdNames(runtime::TypeIDNameRegistry& registry) {
   registry.Register<Tagged<ConvDimensionNumbers>>("__type_id_conv_dim_numbers");
   registry.Register<Tagged<ConvBackendConfig>>("__type_id_conv_backend_config");
+  registry.Register<Tagged<CudnnConvBackendConfig::InputLayout>>(
+      "__type_id_conv_input_layout");
 }
 
 //===----------------------------------------------------------------------===//
@@ -136,11 +140,19 @@ static auto EncodeConvActivation(lmhlo_gpu::Activation activation) {
   return ConvertConvActivationMode(activation).value();
 }
 
+static auto EncodeConvInputLayout(lmhlo_gpu::InputLayout layout) {
+  return ConvertConvLayout(layout).value();
+}
+
 void PopulateConvAttrEncoding(runtime::CustomCallAttrEncodingSet& encoding) {
-  {  // --- Encode `lmhlo_gpu::ActivationAttr`.
+  {  // --- Encode enum attrs.
     encoding
         .Add<EnumAttrEncoding<lmhlo_gpu::ActivationAttr, lmhlo_gpu::Activation,
-                              se::dnn::ActivationMode>>(EncodeConvActivation);
+                              se::dnn::ActivationMode>>(EncodeConvActivation)
+        .Add<
+            EnumAttrEncoding<lmhlo_gpu::InputLayoutAttr, lmhlo_gpu::InputLayout,
+                             CudnnConvBackendConfig::InputLayout>>(
+            EncodeConvInputLayout);
   }
 
   {  // --- Encode `mhlo::ConvDimensionNumbersAttr`.
@@ -203,6 +215,7 @@ struct Window {
 struct ConvAttrs {
   int64_t feature_group_count;
   double result_scale;
+  CudnnConvBackendConfig::InputLayout input_layout;
 };
 
 struct FusedConvAttrs {
@@ -276,6 +289,7 @@ static GpuConvDescriptor GetConvDescriptor(
   descriptor.scratch_size = scratch.size_in_bytes;
   descriptor.feature_group_count = attrs.feature_group_count;
   descriptor.backend_config.set_conv_result_scale(attrs.result_scale);
+  descriptor.backend_config.set_layout(attrs.input_layout);
 
   // Set up convolution algorigthm.
   auto* algo = descriptor.backend_config.mutable_algorithm();
@@ -324,6 +338,7 @@ static absl::Status ConvImpl(
     ConvBackendConfig backend_config,
     // Remaining attributes
     int64_t feature_group_count, double result_scale,
+    CudnnConvBackendConfig::InputLayout input_layout,
     // Optional attributes for fused convolutions.
     std::optional<se::dnn::ActivationMode> activation_mode = std::nullopt,
     std::optional<double> side_input_scale = std::nullopt) {
@@ -341,8 +356,8 @@ static absl::Status ConvImpl(
             kind, operand0, operand1, output, scratch, conv_dims,
             {window_strides, padding, lhs_dilation, rhs_dilation,
              window_reversal},
-            backend_config, {feature_group_count, result_scale}, fused_attrs,
-            side_input_attrs);
+            backend_config, {feature_group_count, result_scale, input_layout},
+            fused_attrs, side_input_attrs);
 
         StatusOr<GpuConvConfig> conv_config = GetGpuConvConfig(descriptor, "");
         if (!conv_config.ok()) return ToAbslStatus(conv_config.status());
@@ -396,7 +411,8 @@ static auto BindConvAttributes(runtime::CustomCallBinding<Ts...> binding) {
       .template Attr<ConvBackendConfig>("backend_config")
       // Remaining attributes.
       .template Attr<int64_t>("feature_group_count")
-      .template Attr<double>("result_scale");
+      .template Attr<double>("result_scale")
+      .template Attr<CudnnConvBackendConfig::InputLayout>("input_layout");
 }
 
 XLA_RUNTIME_DEFINE_CUSTOM_CALL_TEMPLATE(

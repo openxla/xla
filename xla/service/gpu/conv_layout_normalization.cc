@@ -16,18 +16,68 @@ limitations under the License.
 #include "xla/service/gpu/conv_layout_normalization.h"
 
 #include <optional>
+#include <tuple>
 #include <vector>
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout_util.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo_creation_utils.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 namespace gpu {
+namespace {
+
+// Normalize the layout for cuDNN int8x32 convolutions with reordered inputs.
+// Both the input and the output shape for the filter operand must have the
+// NCHW_VECT_C layout.
+HloInstruction* UpdateLayoutForCudnnConvolutionReordering(
+    HloCustomCallInstruction* hlo) {
+  // The custom call may have either one (filter) or two (filter and bias)
+  // operands. The number of outputs matches the number of inputs.
+  Shape const* filter_shape;
+  Shape const* bias_shape;
+  std::tie(filter_shape, bias_shape) =
+      hlo->shape().IsTuple() ? std::make_tuple(&hlo->shape().tuple_shapes(0),
+                                               &hlo->shape().tuple_shapes(1))
+                             : std::make_tuple(&hlo->shape(), nullptr);
+
+  // Transpose the filter to match the expected layout (NCHW_VECT_C).
+  auto new_shape =
+      ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+          *filter_shape);
+  auto dimensions = LayoutUtil::MakeLayoutFromMajorToMinor(
+      filter_shape->layout().minor_to_major());
+  HloInstruction* transpose =
+      hlo->AddInstruction(HloInstruction::CreateTranspose(
+          new_shape, hlo->mutable_operand(0), dimensions.minor_to_major()));
+
+  // Create a replacement custom call with updated layout.
+  HloInstruction* custom_call;
+  if (bias_shape != nullptr) {
+    // Reorder filter and bias.
+    custom_call =
+        hlo->parent()->AddInstruction(HloInstruction::CreateCustomCall(
+            ShapeUtil::MakeTupleShape({new_shape, *bias_shape}),
+            {transpose, hlo->mutable_operand(1)}, hlo->custom_call_target()));
+  } else {
+    // Reorder just the filter.
+    custom_call =
+        hlo->parent()->AddInstruction(HloInstruction::CreateCustomCall(
+            new_shape, {transpose}, hlo->custom_call_target()));
+  }
+  return MakeBitcastHlo(custom_call, hlo->shape());
+}
+
+}  // namespace
 
 StatusOr<std::optional<HloInstruction*>>
 NormalizeLayoutForCustomCallConvolution(HloCustomCallInstruction* hlo) {
+  if (IsCudnnConvolutionReorder(*hlo)) {
+    return std::make_optional(UpdateLayoutForCudnnConvolutionReordering(hlo));
+  }
   if (!IsCustomCallToDnnConvolution(*hlo)) {
     return {std::nullopt};
   }

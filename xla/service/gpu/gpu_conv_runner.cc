@@ -249,6 +249,7 @@ int64_t GetVectCSize(FilterLayout layout) {
     case FilterLayout::kOutputInputYX4:
       return 4;
     case FilterLayout::kOutputInputYX32:
+    case FilterLayout::kOutputInputYX32_CudnnReordered:
       return 32;
     default:
       return 1;
@@ -307,6 +308,9 @@ StatusOr<GpuConvConfig> GetGpuConvConfig(
 
   const Window& window = desc.window;
   const ConvolutionDimensionNumbers& dnums = desc.dnums;
+  bool reordered_int8_nchw_vect =
+      backend_config.layout() ==
+      CudnnConvBackendConfig::REORDERED_INT8_NCHW_VECT;
 
   VLOG(3) << "Convolution Algorithm: " << config.algorithm.ToString();
   VLOG(3) << "Convolution kind: " << CudnnConvKindToString(config.kind);
@@ -318,6 +322,9 @@ StatusOr<GpuConvConfig> GetGpuConvConfig(
           << ShapeUtil::HumanStringWithLayout(config.output_shape);
   VLOG(3) << "Window: { " << window.ShortDebugString() << " }";
   VLOG(3) << "Dim nums: { " << dnums.ShortDebugString() << " }";
+  if (reordered_int8_nchw_vect) {
+    VLOG(3) << "Inputs must be reordered with cudnnReorderFilterAndBias";
+  }
 
   const int num_dimensions = window.dimensions_size();
   CHECK_LE(num_dimensions, 3) << inst_as_string;
@@ -361,6 +368,10 @@ StatusOr<GpuConvConfig> GetGpuConvConfig(
   TF_ASSIGN_OR_RETURN(std::tie(input_dl, filter_dl, output_dl),
                       XlaConvShapesToStreamExecutorLayouts(
                           dnums, input_shape, filter_shape, output_shape));
+  if (reordered_int8_nchw_vect) {
+    CHECK_EQ(filter_dl, FilterLayout::kOutputInputYX32);
+    filter_dl = FilterLayout::kOutputInputYX32_CudnnReordered;
+  }
 
   BatchDescriptor& input_descriptor = config.input_descriptor;
   input_descriptor = BatchDescriptor(effective_num_dimensions);

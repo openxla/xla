@@ -39,7 +39,8 @@ func.func @conv_forward_generic(%input : memref<1x1x8x8xf16>, %filter: memref<1x
         operand_0_layout = [3,2,1,0],
         operand_1_layout = [3,2,1,0],
         result_layout = [3,2,1,0]
-    >
+    >,
+    input_layout = #lmhlo_gpu<input_layout Default>
   } : (memref<1x1x8x8xf16>, memref<1x1x2x2xf16>, memref<1x1x7x7xf16>, memref<32xi8>) -> ()
   func.return
 }
@@ -66,7 +67,8 @@ func.func @conv_forward(%input : memref<1x1x8x8xf16>, %filter: memref<1x1x2x2xf1
         operand_0_layout = [3,2,1,0],
         operand_1_layout = [3,2,1,0],
         result_layout = [3,2,1,0]
-      >
+      >,
+      input_layout = #lmhlo_gpu<input_layout Default>
   } : (memref<1x1x8x8xf16>, memref<1x1x2x2xf16>, memref<1x1x7x7xf16>, memref<32xi8>) -> ()
   func.return
 }
@@ -94,7 +96,8 @@ func.func @conv_backfilter(%input : memref<3x56x56x16xf64>, %filter: memref<3x3x
       batch_group_count = 1 : i64,
       feature_group_count = 1 : i64,
       precision_config = [],
-      result_scale = 1.000000e+00 : f64
+      result_scale = 1.000000e+00 : f64,
+      input_layout = #lmhlo_gpu<input_layout Default>
   } : (memref<3x56x56x16xf64>, memref<3x3x3x64xf64>, memref<54x54x16x64xf64>, memref<23328xui8>) -> ()
   func.return
 }
@@ -122,7 +125,8 @@ func.func @conv_backinput(%input : memref<4x5x16x16xf64>, %filter : memref<5x3x7
       batch_group_count = 1 : i64,
       feature_group_count = 1 : i64,
       precision_config = [],
-      result_scale = 1.000000e+00 : f64
+      result_scale = 1.000000e+00 : f64,
+      input_layout = #lmhlo_gpu<input_layout Default>
   } : (memref<4x5x16x16xf64>, memref<5x3x7x7xf64>, memref<4x3x16x16xf64>, memref<32xui8>) -> ()
   func.return
 }
@@ -151,7 +155,8 @@ func.func @conv_fused(%input : memref<1x17x9x9xf16>, %filter : memref<3x3x17x32x
       batch_group_count = 1 : i64,
       feature_group_count = 1 : i64,
       precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>],
-      result_scale = 1.000000e+00 : f64
+      result_scale = 1.000000e+00 : f64,
+      input_layout = #lmhlo_gpu<input_layout Default>
   } : (memref<1x17x9x9xf16>, memref<3x3x17x32xf16>, memref<32xf16>, memref<1x32x9x9xf16>, memref<32xui8>) -> ()
   func.return
 }
@@ -181,7 +186,8 @@ func.func @conv_fused_side_input(%input : memref<1x17x9x9xf16>, %filter : memref
       feature_group_count = 1 : i64,
       precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>],
       result_scale = 1.000000e+00 : f64,
-      side_input_scale = 1.000000e+00 : f64
+      side_input_scale = 1.000000e+00 : f64,
+      input_layout = #lmhlo_gpu<input_layout Default>
   } : (memref<1x17x9x9xf16>, memref<3x3x17x32xf16>, memref<32xf16>, memref<32xf16>, memref<1x32x9x9xf16>, memref<0xui8>) -> ()
   func.return
 }

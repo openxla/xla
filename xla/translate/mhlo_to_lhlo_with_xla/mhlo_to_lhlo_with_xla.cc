@@ -740,6 +740,10 @@ tsl::StatusOr<mlir::Operation*> LhloDialectEmitter::EmitCustomCallOp(
     return EmitDnnConvolution(custom_call_instr);
   }
 
+  if (xla::gpu::IsCudnnConvolutionReorder(*instr)) {
+    return EmitDnnConvolutionReorderVectorized(custom_call_instr);
+  }
+
   // For custom call, if there are any token operands or results, they will not
   // be represented in LHLO so we need to remember the mapping. First create
   // operands where each token is replaced with a null Value.
@@ -1076,11 +1080,25 @@ static tsl::StatusOr<mlir::lmhlo_gpu::Activation> GetLHLOActivation(
   }
 }
 
+static tsl::StatusOr<mlir::lmhlo_gpu::InputLayout> GetLHLOInputLayout(
+    xla::gpu::CudnnConvBackendConfig::InputLayout layout) {
+  switch (layout) {
+    case xla::gpu::CudnnConvBackendConfig::DEFAULT:
+      return mlir::lmhlo_gpu::InputLayout::Default;
+    case xla::gpu::CudnnConvBackendConfig::REORDERED_INT8_NCHW_VECT:
+      return mlir::lmhlo_gpu::InputLayout::CudnnReorderedInt8NchwVect;
+    default:
+      return xla::InternalError("Unknown input layout");
+  }
+}
+
 tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnConvolution(
     const HloCustomCallInstruction* custom_call) {
   TF_ASSIGN_OR_RETURN(
       auto const backend_config,
       custom_call->backend_config<xla::gpu::CudnnConvBackendConfig>());
+  TF_ASSIGN_OR_RETURN(auto const input_layout,
+                      GetLHLOInputLayout(backend_config.layout()));
 
   TF_ASSIGN_OR_RETURN(const xla::gpu::CudnnConvKind kind,
                       xla::gpu::GetCudnnConvKind(custom_call));
@@ -1159,6 +1177,9 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnConvolution(
         get_layout_attribute(custom_call->operand(1)->shape().layout()),
         get_layout_attribute(custom_call->shape().tuple_shapes(0).layout()));
     attrs.set(op.getBackendConfigAttrName(), config);
+    attrs.set(op.getInputLayoutAttrName(),
+              mlir::lmhlo_gpu::InputLayoutAttr::get(builder_.getContext(),
+                                                    input_layout));
     op->setAttrs(attrs.getDictionary(op->getContext()));
 
     return op.getOperation();
@@ -1214,6 +1235,40 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnConvolution(
       TF_RETURN_IF_ERROR(set_activation(cnn_fused_side_input));
       return set_common_conv_attributes(cnn_fused_side_input);
     }
+  }
+}
+
+tsl::StatusOr<Operation*>
+LhloDialectEmitter::EmitDnnConvolutionReorderVectorized(
+    const HloCustomCallInstruction* custom_call) {
+  auto set_common_attributes = [&, this](auto op) -> Operation* {
+    // Output shape defines the filter, it must have NCHW_VECT_C layout.
+    Shape shape = custom_call->shape();
+    if (shape.IsTuple()) {
+      shape = shape.tuple_shapes(0);
+    }
+
+    CHECK_EQ(shape.rank(), 5);
+    CHECK_EQ(shape.dimensions_minor(0), 32);
+    llvm::SmallVector<int64_t, 4> nchw = {
+        shape.dimensions_minor(4), shape.dimensions_minor(3) * 32,
+        shape.dimensions_minor(2), shape.dimensions_minor(1)};
+    op->setAttr("filter_dims", GetI64DenseElementsAttr(nchw));
+
+    return op.getOperation();
+  };
+
+  if (custom_call->operand_count() > 1) {
+    TF_ASSIGN_OR_RETURN(
+        auto reorder_filter_and_bias,
+        CreateOpWithoutAttrs<lmhlo_gpu::CudnnConvReorderFilterAndBiasOp>(
+            custom_call));
+    return set_common_attributes(reorder_filter_and_bias);
+  } else {
+    TF_ASSIGN_OR_RETURN(
+        auto reorder_filter,
+        CreateOpWithoutAttrs<lmhlo_gpu::CudnnConvReorderFilterOp>(custom_call));
+    return set_common_attributes(reorder_filter);
   }
 }
 

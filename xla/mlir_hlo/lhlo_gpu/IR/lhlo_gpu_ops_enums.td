@@ -42,6 +42,29 @@ def Activation: I32EnumAttr<"Activation",
 
 def ActivationAttr : EnumAttr<LmhloGpuDialect, Activation, "activation">;
 
+// Default layout - no special meaning.
+def InputLayoutDefault : I32EnumAttrCase<"Default", 0>;
+// The convolution inputs (filter and bias, if present) are reordered using
+// cudnnReorderFilterAndBias API call.
+def InputLayoutCudnnReorderedInt8NchwVect :
+    I32EnumAttrCase<"CudnnReorderedInt8NchwVect", 1>;
+
+// cuDNN int8x32 vectorized convolutions (NCHW_VECT_C data layout) can be
+// optimized by reordering the filter and bias (if present). The logical layout
+// stays the same, but the data is shuffled in a way that is compatible with
+// NVidia's IMMA instruction (sm75+).
+def InputLayout: I32EnumAttr<"InputLayout",
+    "Data layout of the convolution's inputs",
+    [InputLayoutDefault, InputLayoutCudnnReorderedInt8NchwVect]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::lmhlo_gpu";
+}
+
+// Denotes a special input layout for GPU convolutions, which cannot be
+// expressed by the ConvolutionBackendConfigAttr state. This will be `Default`
+// in most cases.
+def InputLayoutAttr : EnumAttr<LmhloGpuDialect, InputLayout, "input_layout">;
+
 def BoolParameter : AttrOrTypeParameter<"bool", ""> {
   let parser = "::mlir::lmhlo_gpu::parseBool($_parser)";
 }

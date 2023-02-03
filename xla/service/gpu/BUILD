@@ -1549,8 +1549,11 @@ cc_library(
     srcs = ["cudnn_vectorize_convolutions.cc"],
     hdrs = ["cudnn_vectorize_convolutions.h"],
     deps = [
+        ":backend_configs_cc",
+        ":cublas_cudnn",
         ":cudnn_support_utils",
         ":stream_executor_util",
+        "//xla:shape_util",
         "//xla:statusor",
         "//xla/client:xla_builder",
         "//xla/hlo/ir:hlo",
