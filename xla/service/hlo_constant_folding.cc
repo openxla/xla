@@ -176,8 +176,8 @@ StatusOr<bool> HloConstantFolding::Run(
             ShapeUtil::ElementsIn(instruction->shape());
 
         static const int64_t kMaximumConstantSizeElements = 45 * 1000 * 1000;
-        if (std::max(elements_in_constant, elements_in_removed_operands) >
-            kMaximumConstantSizeElements) {
+        if (elements_in_constant > kMaximumConstantSizeElements ||
+            elements_in_constant > elements_in_removed_operands) {
           continue;
         }
       }
