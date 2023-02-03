@@ -106,6 +106,8 @@ cc_library(
         "//xla/pjrt:compile_options_proto_cc",
         "//xla/service:compilation_environments",
         "//xla/service:computation_placer",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:env",
