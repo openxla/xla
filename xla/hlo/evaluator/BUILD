@@ -53,6 +53,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:call_graph",
+        "//xla/service:compilation_environments",
         "//xla/service:dynamic_dimension_inference",
         "//xla/service:hlo_query",
         "//xla/service:pattern_matcher",

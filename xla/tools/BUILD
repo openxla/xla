@@ -267,10 +267,10 @@ cc_library(
     deps = [
         "//xla:status",
         "//xla/hlo/ir:hlo",
+        "//xla/service:compilation_environments",
         "//xla/service:hlo_verifier",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/memory",
     ],
 )
 
