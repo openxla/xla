@@ -2255,7 +2255,9 @@ cc_library(
     srcs = ["gpu_hlo_schedule.cc"],
     hdrs = ["gpu_hlo_schedule.h"],
     deps = [
+        ":cublas_cudnn",
         ":gpu_device_info",
+        ":ir_emission_utils",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_value",
