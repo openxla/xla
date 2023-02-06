@@ -28,6 +28,7 @@ load("//third_party/nasm:workspace.bzl", nasm = "repo")
 load("//third_party/pybind11_abseil:workspace.bzl", pybind11_abseil = "repo")
 load("//third_party/stablehlo:workspace.bzl", stablehlo = "repo")
 load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
+load("//third_party/triton:workspace.bzl", triton = "repo")
 
 # Import external repository rules.
 load("@bazel_tools//tools/build_defs/repo:java.bzl", "java_import_external")
@@ -50,6 +51,7 @@ def _initialize_third_party():
     pybind11_abseil()
     stablehlo()
     tensorrt()
+    triton()
 
     native.local_repository(name = "tsl", path = "third_party/tsl")
 
