@@ -38,7 +38,7 @@ load("//tools/toolchains/remote_config:configs.bzl", "initialize_rbe_configs")
 load("//tools/toolchains/remote:configure.bzl", "remote_execution_configure")
 load("//tools/toolchains/clang6:repo.bzl", "clang6_configure")
 
-def _initialize_third_party():
+def _initialize_third_party(xla_path):
     """ Load third party repositories.  See above load() statements. """
     absl()
     benchmark()
@@ -53,7 +53,7 @@ def _initialize_third_party():
     tensorrt()
     triton()
 
-    native.local_repository(name = "tsl", path = "third_party/tsl")
+    native.local_repository(name = "tsl", path = xla_path + "/third_party/tsl")
 
 # Toolchains & platforms required by Tensorflow to build.
 def _tf_toolchains():
@@ -602,7 +602,9 @@ def _tf_repositories():
         urls = tf_mirror_urls("https://github.com/google/glog/archive/refs/tags/v0.4.0.tar.gz"),
     )
 
-def workspace():
+# buildifier: disable=function-docstring
+# buildifier: disable=unnamed-macro
+def workspace(xla_path = "."):
     # Check the bazel version before executing any repository rules, in case
     # those rules rely on the version we require here.
     versions.check("1.0.0")
@@ -611,7 +613,7 @@ def workspace():
     _tf_toolchains()
 
     # Import third party repositories according to go/tfbr-thirdparty.
-    _initialize_third_party()
+    _initialize_third_party(xla_path)
 
     # Import all other repositories. This should happen before initializing
     # any external repositories, because those come with their own
