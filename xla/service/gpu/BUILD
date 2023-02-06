@@ -17,7 +17,6 @@ load(
     "if_rocm_is_configured",
 )
 load("//xla:xla.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
@@ -424,55 +423,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform/default/build_config:cublas_plugin",
-    ],
-)
-
-cc_library(
-    name = "triton_autotuner",
-    srcs = if_cuda_is_configured(["triton_autotuner.cc"]),
-    hdrs = if_cuda_is_configured(["triton_autotuner.h"]),
-    deps = if_cuda_is_configured([
-        ":buffer_comparator",
-        ":gpu_asm_opts_util",
-        ":gpu_device_info",
-        ":ir_emission_utils",
-        ":ir_emitter_triton",
-        ":launch_dimensions",
-        ":stream_executor_util",
-        ":target_util",
-        "@com_google_absl//absl/container:node_hash_map",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_pass",
-        "//xla/service/gpu/llvm_gpu_backend",
-        "//xla/stream_executor/gpu:asm_compiler_header",
-        "//xla/stream_executor/gpu:redzone_allocator",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/util/proto:proto_utils",
-    ]),
-)
-
-xla_test(
-    name = "triton_autotuner_test",
-    srcs = ["triton_autotuner_test.cc"],
-    backend_tags = {"gpu": [
-        "requires-gpu-sm70",
-    ]},
-    backends = [
-        "gpu",
-    ],
-    deps = [
-        ":gemm_rewriter_triton",
-        ":gpu_executable",
-        ":triton_autotuner",
-        "//xla:xla_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_pass_pipeline",
-        "//xla/service/gpu/tests:gpu_codegen_test",
-        "//xla/stream_executor/lib",
-        "//xla/tests:hlo_test_base",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -1877,16 +1827,6 @@ cc_library(
         ":softmax_fusion",
         ":tree_reduction_rewriter",
         ":variadic_op_splitter",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:variant",
-        "@llvm-project//llvm:AsmParser",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:TransformUtils",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:Support",
         "//xla:autotune_results_proto_cc",
         "//xla:status_macros",
         "//xla:statusor",
@@ -1984,6 +1924,16 @@ cc_library(
         "//xla/translate/hlo_to_mhlo:hlo_utils",
         "//xla/translate/mhlo_to_hlo:location_exporter",
         "//xla/translate/mhlo_to_lhlo_with_xla",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:variant",
+        "@llvm-project//llvm:AsmParser",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
@@ -1992,9 +1942,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-    ] + if_cuda_is_configured([
-        ":triton_autotuner",
-    ]),
+    ],
 )
 
 xla_cc_test(
