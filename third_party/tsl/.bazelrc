@@ -155,6 +155,11 @@ build --incompatible_enforce_config_setting_visibility
 # TODO: also enable this flag after fixing the visbility violations
 # build --incompatible_config_setting_private_default_visibility
 
+# Flags to ensure we use d8 over dx which was deprecated in build tools v31.
+# Can be removed once we upgrade to a bazel v6
+build --define=android_dexmerger_tool=d8_dexmerger
+build --define=android_incremental_dexing_tool=d8_dexbuilder
+
 # Default options should come above this line.
 
 # Allow builds using libc++ as a linker library
