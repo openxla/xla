@@ -52,26 +52,20 @@ stack, including MLIR, StableHLO, XLA, and more.
 When it's done, you should see output like this:
 
 ```sh
-$ bazel test --nocheck_visibility --test_output=all examples/axpy:stablehlo_compile_test
-==================== Test output for //third_party/tensorflow/compiler/xla/examples/axpy:stablehlo_compile_test:
+==================== Test output for //xla/examples/axpy:stablehlo_compile_test:
 [==========] Running 1 test from 1 test suite.
 [----------] Global test environment set-up.
 [----------] 1 test from StableHloAxpyTest
 [ RUN      ] StableHloAxpyTest.LoadAndRunCpuExecutable
-Loaded StableHLO module from /path/to/runfiles/xla/examples/axpy/stablehlo_axpy.mlir:
-module @axpy {
-  func.func public @main(
-    %alpha: tensor<f32>,
-    %x: tensor<4 x f32>,
-    %y: tensor<4 x f32>
-  ) -> tensor<4 x f32> {
-    %a = "stablehlo.broadcast_in_dim" (%alpha) {
-      broadcast_dimensions = dense<[]> : tensor<0 x i64>
-    } : (tensor<f32>) -> tensor<4 x f32>
-    %ax = stablehlo.multiply %a, %x : tensor<4 x f32>
-    %result = stablehlo.add %ax, %y : tensor<4 x f32>
-    return %result: tensor<4 x f32>
-  }
+Loaded StableHLO program from xla/examples/axpy/stablehlo_axpy.mlir:
+func.func @main(
+  %alpha: tensor<f32>, %x: tensor<4xf32>, %y: tensor<4xf32>
+) -> tensor<4xf32> {
+  %0 = stablehlo.broadcast_in_dim %alpha, dims = []
+    : (tensor<f32>) -> tensor<4xf32>
+  %1 = stablehlo.multiply %0, %x : tensor<4xf32>
+  %2 = stablehlo.add %1, %y : tensor<4xf32>
+  func.return %2: tensor<4xf32>
 }
 
 Computation inputs:
@@ -79,11 +73,11 @@ Computation inputs:
         x:f32[4] {1, 2, 3, 4}
         y:f32[4] {10.5, 20.5, 30.5, 40.5}
 Computation output: f32[4] {13.64, 26.78, 39.920002, 53.06}
-[       OK ] StableHloAxpyTest.LoadAndRunCpuExecutable (105 ms)
-[----------] 1 test from StableHloAxpyTest (105 ms total)
+[       OK ] StableHloAxpyTest.LoadAndRunCpuExecutable (264 ms)
+[----------] 1 test from StableHloAxpyTest (264 ms total)
 
 [----------] Global test environment tear-down
-[==========] 1 test from 1 test suite ran. (105 ms total)
+[==========] 1 test from 1 test suite ran. (264 ms total)
 [  PASSED  ] 1 test.
 ```
 
