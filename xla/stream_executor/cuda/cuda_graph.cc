@@ -135,7 +135,7 @@ tsl::StatusOr<OwnedCudaGraph> CaptureCudaGraph(
         int flags = cudaGraphDebugDotFlagsVerbose;
         if (auto err = cudaGraphDebugDotPrint(graph, file.c_str(), flags);
             err != cudaSuccess) {
-          LOG(WARNING) << "failed to print CUDA graph debug file: "
+          LOG(WARNING) << "failed to print CUDA graph debug file : "
                        << cudaGetErrorString(err);
 
         } else if (VLOG_IS_ON(200)) {
