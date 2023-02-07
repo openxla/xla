@@ -229,6 +229,7 @@ xla_cc_binary(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/llvm_ir:llvm_util",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
     ],

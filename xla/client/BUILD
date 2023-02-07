@@ -141,9 +141,8 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor/host:host_platform",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
     ],
 )
 
@@ -160,8 +159,8 @@ cc_library(
         "//xla/service:compile_only_service",
         "//xla/service:compiler",
         "//xla/stream_executor",
-        "@com_google_absl//absl/memory",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
     ],
 )
 

@@ -19,7 +19,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "llvm/ADT/Triple.h"
+#include "llvm/TargetParser/Triple.h"
 #include "xla/client/xla_computation.h"
 #include "xla/service/backend.h"
 #include "xla/service/dump.h"
