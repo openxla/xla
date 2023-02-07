@@ -51,4 +51,4 @@ def workspace():
 
 # Alias so it can be loaded without assigning to a different symbol to prevent
 # shadowing previous loads and trigger a buildifier warning.
-tf_workspace3 = workspace
+tsl_workspace3 = workspace
