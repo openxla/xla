@@ -28,6 +28,7 @@ limitations under the License.
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Types.h"
+#include "mlir/IR/ValueRange.h"
 #include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -87,6 +88,12 @@ bool hasPackedNibble(Optional<ArrayAttr> precisionConfigAttr) {
 // for StableHLO, and they are usually accompanied by a StableHLO GitHub ticket.
 template <typename HloOpTy>
 bool hasExperimentalFeaturesNotInStablehlo(HloOpTy hloOp) {
+  if constexpr (std::is_same<HloOpTy, mhlo::TanOp>::value) {
+    // StableHLO doesn't support the TanOp yet.
+    // Proposal: https://github.com/openxla/stablehlo/issues/954.
+    return true;
+  }
+
   if constexpr (std::is_same<HloOpTy, mhlo::AllToAllOp>::value) {
     // StableHLO AllToAll doesn't support the tuple form yet.
     // Proposal: https://github.com/openxla/stablehlo/issues/574.
@@ -223,6 +230,49 @@ Attribute convertAttr(Attribute hloAttr) {
 
 #undef RETURN_CONVERTED_ENUM_ATTR
 
+// Experimental and public ops in MHLO that do not exist yet in StableHLO can be
+// encoded as a StableHLO CustomCallOp to allow round-tripping between dialects.
+//
+// Example:
+//   %0 = mhlo.dot %arg0, %arg1 {
+//     precision_config = [#mhlo<precision PACKED_NIBBLE>] } ...
+//  ==>
+//  %0 = stablehlo.custom_call @mhlo.dot {
+//    backend_config = "{precision_config = [#mhlo<precision PACKED_NIBBLE>]}"}
+LogicalResult encodeOpAsCustomCall(Operation* hloOp,
+                                   ConversionPatternRewriter& rewriter,
+                                   TypeConverter* typeConverter,
+                                   ValueRange stablehloOperands) {
+  // Convert types, operands have already been converted.
+  SmallVector<Type> stablehloTypes;
+  if (failed(
+          typeConverter->convertTypes(hloOp->getResultTypes(), stablehloTypes)))
+    return failure();
+
+  if (hloOp->getNumRegions() != 0) {
+    // Extensibility protocol for regions hasn't been implemented yet.
+    // In principle, it should be straightforward to implement by
+    // converting regions into functions and calling them out in
+    // "called_computations".
+    // https://github.com/openxla/stablehlo/issues/593.
+    return failure();
+  }
+
+  auto stablehloCallTargetName = hloOp->getName().getStringRef();
+  std::string stablehloBackendConfig;
+  llvm::raw_string_ostream os(stablehloBackendConfig);
+  os << hloOp->getAttrDictionary();
+
+  SmallVector<NamedAttribute> stablehloAttrs;
+  stablehloAttrs.push_back(rewriter.getNamedAttr(
+      "call_target_name", rewriter.getStringAttr(stablehloCallTargetName)));
+  stablehloAttrs.push_back(rewriter.getNamedAttr(
+      "backend_config", rewriter.getStringAttr(stablehloBackendConfig)));
+  rewriter.replaceOpWithNewOp<stablehlo::CustomCallOp>(
+      hloOp, stablehloTypes, stablehloOperands, stablehloAttrs);
+  return success();
+}
+
 template <typename HloOpTy>
 class HloToStablehloOpConverter : public OpConversionPattern<HloOpTy> {
  public:
@@ -234,6 +284,10 @@ class HloToStablehloOpConverter : public OpConversionPattern<HloOpTy> {
   LogicalResult matchAndRewrite(
       HloOpTy hloOp, typename HloOpTy::Adaptor adaptor,
       ConversionPatternRewriter& rewriter) const final {
+    // These operands have already been converted to StableHLO by
+    // the dialect conversion infrastructure.
+    ValueRange stablehloOperands = adaptor.getOperands();
+
     // Most MHLO ops which end up here are fully supported by StableHLO.
     // However, some of these ops are supported only partially because they
     // have features that are not supported in StableHLO.
@@ -246,21 +300,6 @@ class HloToStablehloOpConverter : public OpConversionPattern<HloOpTy> {
     if (hasPrivateFeaturesNotInStablehlo(hloOp)) {
       return failure();
     }
-
-    // Convert MHLO types to StableHLO equivalents.
-    // If a type is not defined in MHLO, then it is unchanged,
-    // with the exception of RankedTensorType and TupleType which are
-    // converted recursively.
-    // See `HloToStablehloTypeConverter` for more information on when this
-    // conversion will succeed or fail.
-    SmallVector<Type> stablehloTypes;
-    if (failed(this->getTypeConverter()->convertTypes(hloOp->getResultTypes(),
-                                                      stablehloTypes)))
-      return failure();
-
-    // These operands have already been converted to StableHLO by
-    // the dialect conversion infrastructure.
-    ValueRange stablehloOperands = adaptor.getOperands();
 
     // Extensibility protocol for MHLO ops with public MHLO features that
     // are not yet supported in StableHLO.
@@ -280,29 +319,20 @@ class HloToStablehloOpConverter : public OpConversionPattern<HloOpTy> {
     bool hasExperimentalFeatures = hasExperimentalFeaturesNotInStablehlo(hloOp);
     if (!allowExperimentalFeatures && hasExperimentalFeatures) return failure();
     if (hasPublicFeaturesNotInStablehlo(hloOp) || hasExperimentalFeatures) {
-      if (hloOp->getNumRegions() != 0) {
-        // Extensibility protocol for regions hasn't been implemented yet.
-        // In principle, it should be straightforward to implement by
-        // converting regions into functions and calling them out in
-        // "called_computations".
-        // https://github.com/openxla/stablehlo/issues/593.
-        return failure();
-      }
-
-      auto stablehloCallTargetName = hloOp->getName().getStringRef();
-      std::string stablehloBackendConfig;
-      llvm::raw_string_ostream os(stablehloBackendConfig);
-      os << hloOp->getAttrDictionary();
-
-      SmallVector<NamedAttribute> stablehloAttrs;
-      stablehloAttrs.push_back(rewriter.getNamedAttr(
-          "call_target_name", rewriter.getStringAttr(stablehloCallTargetName)));
-      stablehloAttrs.push_back(rewriter.getNamedAttr(
-          "backend_config", rewriter.getStringAttr(stablehloBackendConfig)));
-      rewriter.replaceOpWithNewOp<stablehlo::CustomCallOp>(
-          hloOp, stablehloTypes, stablehloOperands, stablehloAttrs);
-      return success();
+      return encodeOpAsCustomCall(hloOp, rewriter, this->getTypeConverter(),
+                                  stablehloOperands);
     }
+
+    // Convert MHLO types to StableHLO equivalents.
+    // If a type is not defined in MHLO, then it is unchanged,
+    // with the exception of RankedTensorType and TupleType which are
+    // converted recursively.
+    // See `HloToStablehloTypeConverter` for more information on when this
+    // conversion will succeed or fail.
+    SmallVector<Type> stablehloTypes;
+    if (failed(this->getTypeConverter()->convertTypes(hloOp->getResultTypes(),
+                                                      stablehloTypes)))
+      return failure();
 
     // Convert MHLO attributes to StableHLO equivalents.
     // If an attribute is not defined in MHLO, then it is unchanged,
@@ -352,6 +382,44 @@ class HloToStablehloOpConverter : public OpConversionPattern<HloOpTy> {
   bool allowExperimentalFeatures;
 };
 
+// This class is used for MHLO ops that do not exist in StableHLO and should
+// be encoded in StableHLO Custom Calls.
+template <typename HloOpTy>
+class HloToEncodedStablehloCustomCallConverter
+    : public OpConversionPattern<HloOpTy> {
+ public:
+  HloToEncodedStablehloCustomCallConverter(TypeConverter& converter,
+                                           MLIRContext* context,
+                                           bool allowExperimentalFeatures)
+      : OpConversionPattern<HloOpTy>::OpConversionPattern(converter, context),
+        allowExperimentalFeatures(allowExperimentalFeatures) {}
+
+  LogicalResult matchAndRewrite(
+      HloOpTy hloOp, typename HloOpTy::Adaptor adaptor,
+      ConversionPatternRewriter& rewriter) const final {
+    // These operands have already been converted to StableHLO by
+    // the dialect conversion infrastructure.
+    ValueRange stablehloOperands = adaptor.getOperands();
+
+    // See comment in HloToStablehloOpConverter for private feature details
+    if (hasPrivateFeaturesNotInStablehlo(hloOp)) {
+      return failure();
+    }
+    // See comment in HloToStablehloOpConverter for experimental feature details
+    bool hasExperimentalFeatures = hasExperimentalFeaturesNotInStablehlo(hloOp);
+    if (!allowExperimentalFeatures && hasExperimentalFeatures) return failure();
+    if (hasPublicFeaturesNotInStablehlo(hloOp) || hasExperimentalFeatures) {
+      return encodeOpAsCustomCall(hloOp, rewriter, this->getTypeConverter(),
+                                  stablehloOperands);
+    }
+    // Only experimental and public features are supported by this pattern.
+    return failure();
+  }
+
+ private:
+  bool allowExperimentalFeatures;
+};
+
 template <typename... StablehloOpTypes>
 void populateHloToStablehloPatterns(RewritePatternSet* patterns,
                                     TypeConverter* converter,
@@ -360,6 +428,14 @@ void populateHloToStablehloPatterns(RewritePatternSet* patterns,
   patterns
       ->add<HloToStablehloOpConverter<StablehloToHloOp<StablehloOpTypes>>...>(
           *converter, context, allowExperimentalFeatures);
+}
+
+template <typename... MhloOpTypes>
+void populateHloToEncodedStablehloCustomCallPatterns(
+    RewritePatternSet* patterns, TypeConverter* converter, MLIRContext* context,
+    bool allowExperimentalFeatures) {
+  patterns->add<HloToEncodedStablehloCustomCallConverter<MhloOpTypes>...>(
+      *converter, context, allowExperimentalFeatures);
 }
 
 }  // namespace
@@ -378,6 +454,10 @@ void populateHloToStablehloPatterns(RewritePatternSet* patterns,
 #define GET_OP_LIST
 #include "stablehlo/dialect/StablehloOps.cpp.inc"
       >(patterns, converter, context, allowExperimentalFeatures);
+
+  // Populate patterns for MHLO ops not in StableHLO
+  populateHloToEncodedStablehloCustomCallPatterns<mhlo::TanOp>(
+      patterns, converter, context, allowExperimentalFeatures);
 }
 
 }  // namespace stablehlo

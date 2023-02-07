@@ -36,6 +36,19 @@ func.func @op_custom_call_api_version_typed_ffi(%arg0: tensor<f32>) -> tensor<f3
 
 // -----
 
+func.func @op_tan(%arg0: tensor<2xf32>) -> tensor<2xf32> {
+  //      CHECK: "stablehlo.custom_call"(%arg0) {
+  // CHECK-SAME:   backend_config = "{}"
+  // CHECK-SAME:   call_target_name = "mhlo.tan"
+  // CHECK-SAME: } : (tensor<2xf32>) -> tensor<2xf32>
+  // expected-error@+1 {{failed to legalize operation 'mhlo.tan' that was explicitly marked illegal}}
+  %0 = "mhlo.tan"(%arg0) : (tensor<2xf32>) -> tensor<2xf32>
+  return %0 : tensor<2xf32>
+}
+// CHECK-LABEL: "op_tan"
+
+// -----
+
 func.func @attr_precision_packed_nibble(%arg0: tensor<8x16xf32>, %arg1: tensor<16x8xf32>) -> tensor<8x8xf32> {
   //      CHECK: "stablehlo.custom_call"(%arg0, %arg1) {
   // CHECK-SAME:    backend_config = "{precision_config = [#mhlo<precision PACKED_NIBBLE>]}",
