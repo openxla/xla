@@ -25,7 +25,7 @@ load("@bazel_tools//tools/cpp:lib_cc_configure.bzl", "auto_configure_fail")
 
 def _def_file_filter_configure_impl(repository_ctx):
     if repository_ctx.os.name.lower().find("windows") == -1:
-        repository_ctx.symlink(Label("@//tools/def_file_filter:BUILD.tpl"), "BUILD")
+        repository_ctx.symlink(Label("//tools/def_file_filter:BUILD.tpl"), "BUILD")
         repository_ctx.file("def_file_filter.py", "")
         return
     vc_path = find_vc_path(repository_ctx)
@@ -44,13 +44,13 @@ def _def_file_filter_configure_impl(repository_ctx):
 
     repository_ctx.template(
         "def_file_filter.py",
-        Label("@//tools/def_file_filter:def_file_filter.py.tpl"),
+        Label("//tools/def_file_filter:def_file_filter.py.tpl"),
         {
             "%{undname_bin_path}": undname_bin_path,
             "%{dumpbin_bin_path}": dumpbin_bin_path,
         },
     )
-    repository_ctx.symlink(Label("@//tools/def_file_filter:BUILD.tpl"), "BUILD")
+    repository_ctx.symlink(Label("//tools/def_file_filter:BUILD.tpl"), "BUILD")
 
 def_file_filter_configure = repository_rule(
     implementation = _def_file_filter_configure_impl,

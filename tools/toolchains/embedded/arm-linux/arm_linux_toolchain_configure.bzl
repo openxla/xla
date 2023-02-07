@@ -5,7 +5,7 @@ def _tpl(repository_ctx, tpl, substitutions = {}, out = None):
         out = tpl
     repository_ctx.template(
         out,
-        Label("@//tools/toolchains/embedded/arm-linux:%s.tpl" % tpl),
+        Label("//tools/toolchains/embedded/arm-linux:%s.tpl" % tpl),
         substitutions,
     )
 

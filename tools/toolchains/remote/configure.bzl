@@ -27,14 +27,14 @@ def _remote_execution_configure(repository_ctx):
         gpu_test_tags = "\"remote-gpu\""
     repository_ctx.template(
         "remote_execution.bzl",
-        Label("@//tools/toolchains/remote:execution.bzl.tpl"),
+        Label("//tools/toolchains/remote:execution.bzl.tpl"),
         {
             "%{gpu_test_tags}": gpu_test_tags,
         },
     )
     repository_ctx.template(
         "BUILD",
-        Label("@//tools/toolchains/remote:BUILD.tpl"),
+        Label("//tools/toolchains/remote:BUILD.tpl"),
     )
 
 remote_execution_configure = repository_rule(
