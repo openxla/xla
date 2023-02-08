@@ -2,6 +2,7 @@
 
 # Import third party config rules.
 load("@bazel_skylib//lib:versions.bzl", "versions")
+load("@bazel_skylib//lib:paths.bzl", "paths")
 load("//third_party/gpus:cuda_configure.bzl", "cuda_configure")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
 load("//third_party/tensorrt:tensorrt_configure.bzl", "tensorrt_configure")
@@ -53,7 +54,7 @@ def _initialize_third_party(xla_path):
     tensorrt()
     triton()
 
-    native.local_repository(name = "tsl", path = xla_path + "/third_party/tsl")
+    native.local_repository(name = "tsl", path = paths.join(xla_path + "third_party/tsl"))
 
 # Toolchains & platforms required by Tensorflow to build.
 def _tf_toolchains():
@@ -604,7 +605,7 @@ def _tf_repositories():
 
 # buildifier: disable=function-docstring
 # buildifier: disable=unnamed-macro
-def workspace(xla_path = "."):
+def workspace(xla_path = "./"):
     # Check the bazel version before executing any repository rules, in case
     # those rules rely on the version we require here.
     versions.check("1.0.0")
