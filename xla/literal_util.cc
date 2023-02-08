@@ -302,6 +302,11 @@ void SetScalarAtIndexImpl(MutableLiteralBase& literal,
   return ConvertType<float, double>(f32_literal);
 }
 
+/* static */ Literal LiteralUtil::ConvertF32ToS8(
+    const LiteralSlice& f32_literal) {
+  return ConvertType<float, int8_t>(f32_literal);
+}
+
 /* static */ Literal LiteralUtil::ConvertF64ToBF16(
     const LiteralSlice& f64_literal) {
   return ConvertType<double, bfloat16>(f64_literal);
