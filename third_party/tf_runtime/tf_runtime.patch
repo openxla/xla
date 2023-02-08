@@ -1,84 +1,776 @@
-Intermittent patch to TFRT to submit a TF/TFRT cross-cutting change.
-This patch will be applied only until TF's TFRT commit is automatically bumped.
-
----
-
-diff --git a/backends/gpu/include/tfrt/gpu/gpu_types.h b/backends/gpu/include/tfrt/gpu/gpu_types.h
-index 3d311c3..a216716 100644
---- a/backends/gpu/include/tfrt/gpu/gpu_types.h
-+++ b/backends/gpu/include/tfrt/gpu/gpu_types.h
-@@ -295,11 +295,7 @@
-       wrapper::CurrentContext current, wrapper::Stream stream,
-       wrapper::CclComm comm)>;
+diff --git a/BUILD b/BUILD
+index 89c6844b..61562774 100644
+--- a/BUILD
++++ b/BUILD
+@@ -199,7 +199,7 @@ tfrt_cc_library(
+     name = "profiled_allocator",
+     srcs = ["lib/host_context/profiled_allocator.cc"],
+     hdrs = ["include/tfrt/host_context/profiled_allocator.h"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [":hostcontext"],
+ )
  
--  explicit GpuCclHandle(AsyncValueRef<GpuContext> context,
--                        wrapper::OwningCclComm comm, int num_ranks);
--  // TODO(hanbinyoon): Remove after transitioning to the above constructor.
--  explicit GpuCclHandle(AsyncValueRef<GpuContext> context,
--                        wrapper::OwningCclComm comm);
-+  GpuCclHandle(AsyncValueRef<GpuContext> context, wrapper::OwningCclComm comm);
-   ~GpuCclHandle();
+@@ -331,7 +331,7 @@ tfrt_cc_library(
+         "include/tfrt/support/fp16.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":support",
+         "@llvm-project//llvm:Support",
+@@ -349,7 +349,7 @@ tfrt_cc_library(
+         "include/tfrt/bef/span.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":dtype",
+         ":support",
+@@ -428,7 +428,7 @@ tfrt_cc_library(
+         "include/tfrt/support/variant.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":concurrent_vector",
+         ":ref_count",
+@@ -455,7 +455,7 @@ tfrt_cc_library(
+     hdrs = [
+         "include/tfrt/utils/kernel_runner.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_attr_encoder",
+@@ -490,7 +490,7 @@ tfrt_cc_library(
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+     defines = ["TFRT_MAX_TRACING_LEVEL=$(TFRT_MAX_TRACING_LEVEL)"],
+     toolchains = [":TFRT_MAX_TRACING_LEVEL"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":support",
+         "@llvm-project//llvm:Support",
+@@ -500,7 +500,7 @@ tfrt_cc_library(
+ tfrt_cc_library(
+     name = "simple_tracing_sink",
+     srcs = ["lib/tracing/simple_tracing_sink.cc"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":support",
+         ":tracing",
+@@ -512,7 +512,7 @@ tfrt_cc_library(
+ tfrt_cc_library(
+     name = "debug_tracing_sink",
+     srcs = ["lib/tracing/debug_tracing_sink.cc"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":support",
+         ":tracing",
+@@ -524,7 +524,7 @@ tfrt_cc_library(
+ tfrt_cc_library(
+     name = "chrome_tracing_sink",
+     srcs = ["lib/tracing/chrome_tracing_sink.cc"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":support",
+         ":tracing",
+@@ -537,7 +537,7 @@ tfrt_cc_library(
+     name = "nvtx_tracing_sink",
+     srcs = ["lib/tracing/nvtx_tracing_sink.cc"],
+     hdrs = ["include/tfrt/tracing/nvtx_tracing_sink.h"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":support",
+         ":tracing",
+@@ -564,7 +564,7 @@ tfrt_cc_library(
+         "include/tfrt/bef_executor/function_util.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_location",
+@@ -589,7 +589,7 @@ tfrt_cc_library(
+         "include/tfrt/metrics/metrics.h",
+         "include/tfrt/metrics/metrics_registry.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":support",
+         "@llvm-project//llvm:Support",
+@@ -639,7 +639,7 @@ tfrt_cc_library(
+     ],
+     alwayslink_static_registration_src = "lib/tensor/static_registration.cc",
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_attr_encoder",
+@@ -668,7 +668,7 @@ tfrt_cc_library(
+     ],
+     alwayslink_static_registration_src = "lib/basic_kernels/static_registration.cc",
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":hostcontext",
+         ":support",
+@@ -686,7 +686,7 @@ tfrt_cc_library(
+         "include/tfrt/bef_converter/bef_emitter.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":dtype",
+@@ -708,7 +708,7 @@ tfrt_cc_library(
+         "include/tfrt/bef_converter/mlir_to_bef.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_attr_emitter",
+@@ -735,7 +735,7 @@ tfrt_cc_library(
+     ],
+     alwayslink_static_registration_src = "lib/bef_converter/mlir_to_bef/static_registration.cc",
+     # copybara:uncomment compatible_with = ["//buildenv/target:gce"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":init_tfrt_dialects",
+@@ -758,7 +758,7 @@ tfrt_cc_library(
+         "include/tfrt/bef_converter/bef_to_mlir.h",
+         "include/tfrt/host_context/attribute_utils.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_attr_reader",
+@@ -780,7 +780,7 @@ tfrt_cc_library(
+     srcs = ["lib/bef_converter/bef_to_mlir/bef_to_mlir_translate.cc"],
+     hdrs = ["include/tfrt/bef_converter/bef_to_mlir_translate.h"],
+     alwayslink_static_registration_src = "lib/bef_converter/bef_to_mlir/static_registration.cc",
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":beftomlir",
+@@ -803,7 +803,7 @@ tfrt_cc_library(
+         "include/tfrt/bef_converter/bef_attr_encoder.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_emitter",
+@@ -825,7 +825,7 @@ td_library(
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+     includes = ["include"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@llvm-project//mlir:OpBaseTdFiles",
+         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
+@@ -840,7 +840,7 @@ td_library(
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+     includes = ["include"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+ )
  
-   GpuCclHandle(GpuCclHandle&&) = default;
-@@ -311,8 +307,6 @@
-   llvm::Error ExecuteCallbacks(wrapper::CurrentContext current,
-                                wrapper::Stream stream);
+ gentbl_cc_library(
+@@ -879,7 +879,7 @@ tfrt_cc_library(
+         "include/tfrt/basic_kernels/opdefs/types.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":basic_kernels_opdefs_inc_gen",
+         "@llvm-project//llvm:Support",
+@@ -1081,7 +1081,7 @@ tfrt_cc_library(
+         "include/tfrt/tensor/opdefs/tensor_shape_sync.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":basic_kernels_opdefs",
+         ":coo_host_tensor_opdefs_inc_gen",
+@@ -1133,7 +1133,7 @@ tfrt_cc_library(
+         "include/tfrt/core_runtime/opdefs/types.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":basic_kernels_opdefs",
+         ":core_runtime_opdefs_inc_gen",
+@@ -1178,7 +1178,7 @@ tfrt_cc_library(
+         "include/tfrt/core_runtime/opdefs/sync/core_runtime.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":basic_kernels_opdefs",
+         ":core_runtime_opdefs",
+@@ -1198,7 +1198,7 @@ tfrt_cc_library(
+     hdrs = [
+         "include/tfrt/bef_executor_driver/bef_executor_driver.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":befexecutor",
+@@ -1247,7 +1247,7 @@ tfrt_cc_library(
+     ],
+     alwayslink_static_registration_src = "lib/core_runtime/static_registration.cc",
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":dtype",
+@@ -1265,7 +1265,7 @@ tfrt_cc_library(
+ #     name = "btf_writer",
+ #     srcs = ["utils/btf_writer.py"],
+ #     srcs_version = "PY3",
+-#     visibility = [":friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = ["//third_party/py/numpy"],
+ # )
+ # copybara:uncomment_end
+@@ -1286,7 +1286,7 @@ tfrt_cc_library(
+         "include/tfrt/test_kernels.h",
+     ],
+     alwayslink_static_registration_src = "lib/test_kernels/static_registration.cc",
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":befexecutor",
+         ":hostcontext",
+@@ -1330,7 +1330,7 @@ tfrt_cc_library(
+         "include/tfrt/test_kernels/opdefs/test_kernels.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":basic_kernels_opdefs",
+         ":compiler_tfrt_op_interfaces",
+@@ -1375,7 +1375,7 @@ tfrt_cc_library(
+     hdrs = [
+         "include/tfrt/test_kernels/opdefs/test_kernels_sync.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":basic_kernels_opdefs",
+         ":tensor_opdefs",
+@@ -1409,7 +1409,7 @@ tfrt_cc_library(
+         "include/tfrt/io/input_stream.h",
+     ],
+     alwayslink_static_registration_src = "lib/io/static_registration.cc",
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":hostcontext",
+         ":support",
+@@ -1425,7 +1425,7 @@ td_library(
+         "include/tfrt/compiler/opdefs/tfrt_traits.td",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@llvm-project//mlir:OpBaseTdFiles",
+     ],
+@@ -1458,7 +1458,7 @@ tfrt_cc_library(
+     ],
+     hdrs = ["include/tfrt/compiler/opdefs/tfrt_op_interfaces.h"],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":compiler_tfrt_op_interfaces_inc_gen",
+         "@llvm-project//mlir:IR",
+@@ -1484,7 +1484,7 @@ tfrt_cc_library(
+     srcs = ["lib/compiler/opdefs/tfrt_traits.cc"],
+     hdrs = ["include/tfrt/compiler/opdefs/tfrt_traits.h"],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":compiler_tfrt_traits_inc_gen",
+         "@llvm-project//mlir:IR",
+@@ -1499,7 +1499,7 @@ tfrt_cc_library(
+     hdrs = [
+         "include/tfrt/compiler/compiler_pass.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":support",
+         "@llvm-project//llvm:Support",
+@@ -1512,7 +1512,7 @@ tfrt_cc_library(
+     srcs = ["lib/compiler/stream_analysis.cc"],
+     hdrs = ["include/tfrt/compiler/stream_analysis.h"],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":basic_kernels_opdefs",
+         ":compiler_tfrt_op_interfaces",
+@@ -1525,7 +1525,7 @@ tfrt_cc_library(
+ tfrt_cc_library(
+     name = "print_stream_pass",
+     srcs = ["lib/compiler/print_stream_pass.cc"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":stream_analysis",
+         "@llvm-project//llvm:Support",
+@@ -1550,7 +1550,7 @@ tfrt_cc_library(
+         "include/tfrt/init_tfrt_dialects.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:gce"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":basic_kernels_opdefs",
+         ":core_runtime_opdefs",
+@@ -1581,7 +1581,7 @@ tfrt_cc_library(
+     hdrs = [
+         "include/tfrt/bef_converter/mlir_src_to_bef.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":init_tfrt_dialects",
+@@ -1606,7 +1606,7 @@ tfrt_cc_library(
+         "lib/bef_converter/mlir_to_bef/bef_compilation_units.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_attr_encoder",
+@@ -1624,7 +1624,7 @@ tfrt_cc_library(
+         "lib/bef_converter/bef_to_mlir/bef_attr_reader.cc",
+         "lib/bef_converter/bef_to_mlir/bef_attr_reader.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":core_runtime_opdefs",
+@@ -1645,7 +1645,7 @@ tfrt_cc_library(
+         "lib/bef_converter/mlir_to_bef/bef_string_emitter.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_emitter",
+@@ -1663,7 +1663,7 @@ tfrt_cc_library(
+         "lib/bef_converter/mlir_to_bef/bef_string_emitter.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_emitter",
+@@ -1682,7 +1682,7 @@ tfrt_cc_library(
+         "include/tfrt/bef/bef_location.h",
+     ],
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":hostcontext",
+@@ -1697,7 +1697,7 @@ tfrt_cc_library(
+         "lib/bef_converter/bef_to_mlir/bef_location_reader.cc",
+         "lib/bef_converter/bef_to_mlir/bef_location_reader.h",
+     ],
+-    visibility = [":friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":bef",
+         ":bef_location",
+diff --git a/backends/common/BUILD b/backends/common/BUILD
+index 3d377d32..312d823a 100644
+--- a/backends/common/BUILD
++++ b/backends/common/BUILD
+@@ -37,7 +37,7 @@ tfrt_cc_library(
+     hdrs = [
+         "include/tfrt/common/ops/tf/metadata_functions.h",
+     ],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":eigencompat",
+         ":tf_bcast",
+@@ -59,7 +59,7 @@ tfrt_cc_library(
+     hdrs = [
+         "include/tfrt/common/ops/test/metadata_functions.h",
+     ],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":eigencompat",
+         "@llvm-project//llvm:Support",
+@@ -75,7 +75,7 @@ tfrt_cc_library(
+     name = "tf_dnn_ops_util",
+     srcs = ["lib/ops/tf/dnn_ops_util.cc"],
+     hdrs = ["include/tfrt/common/ops/tf/dnn_ops_util.h"],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@llvm-project//llvm:Support",
+         "@tf_runtime//:core_runtime",
+@@ -90,7 +90,7 @@ tfrt_cc_library(
+     name = "tf_bcast",
+     srcs = ["lib/ops/tf/bcast.cc"],
+     hdrs = ["include/tfrt/common/ops/tf/bcast.h"],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@llvm-project//llvm:Support",
+         "@tf_runtime//:support",
+@@ -101,7 +101,7 @@ tfrt_cc_library(
+ tfrt_cc_library(
+     name = "eigentype",
+     hdrs = ["include/tfrt/common/compat/eigen/eigen_dtype.h"],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@eigen_archive//:eigen3",
+         "@tf_runtime//:dtype",
+@@ -158,7 +158,7 @@ tfrt_cc_library(
+         ],
+         "//conditions:default": [],
+     }),
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@tf_runtime//:dtype",
+         "@tf_runtime//:hostcontext",
+@@ -182,7 +182,7 @@ tfrt_cc_library(
+     name = "shape_functions",
+     srcs = ["lib/compat/eigen/kernels/shape_functions.cc"],
+     hdrs = ["include/tfrt/common/compat/eigen/kernels/shape_functions.h"],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@llvm-project//llvm:Support",
+         "@tf_runtime//:support",
+@@ -211,7 +211,7 @@ tfrt_cc_library(
+         "lib/compat/eigen/kernels/zero_padding.h",
+     ],
+     alwayslink_static_registration_src = "lib/compat/eigen/kernels/static_registration.cc",
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":eigencompat",
+         ":shape_functions",
+@@ -228,7 +228,7 @@ tfrt_cc_library(
+         "lib/compat/eigen/ops/cpu_ops.cc",
+     ],
+     alwayslink_static_registration_src = "lib/compat/eigen/ops/static_registration.cc",
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":eigen_kernels",
+         ":eigencompat",
+diff --git a/backends/cpu/BUILD b/backends/cpu/BUILD
+index df13b6ff..29aa4a64 100644
+--- a/backends/cpu/BUILD
++++ b/backends/cpu/BUILD
+@@ -24,7 +24,7 @@ tfrt_cc_library(
+     ],
+     alwayslink_static_registration_src = "lib/core_runtime/static_registration.cc",
+     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@llvm-project//llvm:Support",
+         "@tf_runtime//:core_runtime",
+@@ -48,7 +48,7 @@ tfrt_cc_library(
+         "include/tfrt/cpu/ops/test/cpu_ops_and_kernels.h",
+     ],
+     alwayslink_static_registration_src = "lib/ops/test/static_registration.cc",
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":core_runtime",
+         ":cpu_kernels",
+@@ -69,7 +69,7 @@ tfrt_cc_library(
+     name = "buffer_forwarding",
+     srcs = ["lib/ops/tf/buffer_forwarding.cc"],
+     hdrs = ["lib/ops/tf/buffer_forwarding.h"],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@tf_runtime//:hostcontext",
+         "@tf_runtime//:support",
+@@ -80,7 +80,7 @@ tfrt_cc_library(
+ tfrt_cc_library(
+     name = "type_dispatch",
+     hdrs = ["lib/ops/tf/type_dispatch.h"],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@tf_runtime//:dtype",
+         "@tf_runtime//:hostcontext",
+@@ -116,7 +116,7 @@ tfrt_cc_library(
+         "include/tfrt/cpu/ops/tf/cpu_ops.h",
+     ],
+     alwayslink_static_registration_src = "lib/ops/tf/static_registration.cc",
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":buffer_forwarding",
+         ":core_runtime",
+@@ -156,7 +156,7 @@ tfrt_cc_library(
+         "lib/kernels/tile_kernel.h",
+     ],
+     alwayslink_static_registration_src = "lib/kernels/tf/static_registration.cc",
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@tf_runtime//:dtype",
+         "@tf_runtime//:hostcontext",
+@@ -179,7 +179,7 @@ tfrt_cc_library(
+ #     ],
+ #     alwayslink_static_registration_src = "lib/kernels/proto/static_registration.cc",
+ #     defines = ["GOOGLE_PROTOBUF_NO_RTTI=1"],
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         ":lib_cc_proto",
+ #         "@llvm-project//llvm:Support",
+@@ -212,7 +212,7 @@ tfrt_cc_library(
+ #         "lib/kernels/image/resize_bilinear_op.h",
+ #     ],
+ #     alwayslink_static_registration_src = "lib/kernels/image/static_registration.cc",
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         "//third_party/libjpeg_turbo:jpeg",
+ #         "@llvm-project//llvm:Support",
+diff --git a/backends/gpu/BUILD b/backends/gpu/BUILD
+index a713f3d2..5de9d0e0 100644
+--- a/backends/gpu/BUILD
++++ b/backends/gpu/BUILD
+@@ -273,7 +273,7 @@ tfrt_cc_library(
+         "include/tfrt/gpu/device/gpu_config.h",
+     ],
+     visibility = [
+-        "@tf_runtime//:friends",
++        "//visibility:public",
+     ],
+     deps = [
+         ":gpu_memory",
+@@ -292,7 +292,7 @@ tfrt_cc_library(
+     hdrs = [
+         "include/tfrt/gpu/tensor/dense_gpu_tensor.h",
+     ],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":gpu_memory",
+         ":gpu_types",
+@@ -322,7 +322,7 @@ tfrt_cc_library(
+     alwayslink_static_registration_src = "lib/core_runtime/static_registration.cc",
+     visibility = [
+         ":tests_and_tools",
+-        "@tf_runtime//:friends",
++        "//visibility:public",
+     ],
+     deps = [
+         ":gpu_config",
+@@ -355,7 +355,7 @@ tfrt_cc_library(
+     alwayslink_static_registration_src = "lib/device/static_registration.cc",
+     visibility = [
+         ":tests_and_tools",
+-        "@tf_runtime//:friends",
++        "//visibility:public",
+     ],
+     deps = [
+         ":gpu_config",
+@@ -418,7 +418,7 @@ tfrt_cc_library(
+         "//conditions:default": [],
+     }),
+     visibility = [
+-        "@tf_runtime//:friends",
++        "//visibility:public",
+     ],
+     deps = [
+         ":gpu_device",
+@@ -457,7 +457,7 @@ tfrt_cc_library(
+ #         ":cuda_enabled": ["TFRT_GPU_CUDA_ENABLED"],
+ #         "//conditions:default": [],
+ #     }),
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         ":gpu_memory",
+ #         ":gpu_op_handler",
+@@ -801,7 +801,7 @@ tfrt_cc_library(
+     srcs = ["lib/kernels/gpu_ops.cc"],
+     hdrs = ["include/tfrt/gpu/kernels/gpu_ops.h"],
+     visibility = if_google(
+-        ["@tf_runtime//:friends"],
++        ["//visibility:public"],
+         ["//visibility:public"],
+     ),
+     deps = [
+@@ -826,7 +826,7 @@ tfrt_cc_library(
+         "lib/passes/set_entry_point.cc",
+     ],
+     hdrs = ["include/tfrt/gpu/passes/passes.h"],
+-    visibility = ["@tf_runtime//:friends"],
++    visibility = ["//visibility:public"],
+     deps = [
+         ":gpu_entry_point",
+         ":gpu_opdefs",
+diff --git a/backends/jitrt/BUILD b/backends/jitrt/BUILD
+index c64d8e32..3495529b 100644
+--- a/backends/jitrt/BUILD
++++ b/backends/jitrt/BUILD
+@@ -20,7 +20,7 @@ licenses(["notice"])
+ #     ],
+ #     compatible_with = ["//buildenv/target:gce"],
+ #     includes = ["include"],
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         "@tf_runtime//:CoreRTTdFiles",
+ #         "@tf_runtime//:OpBaseTdFiles",
+@@ -64,7 +64,7 @@ licenses(["notice"])
+ #     srcs = ["lib/opdefs/jitrt_ops.cc"],
+ #     hdrs = ["include/tfrt/jitrt/opdefs/jitrt_ops.h"],
+ #     compatible_with = ["//buildenv/target:gce"],
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         ":jitrt_opdefs_inc_gen",
+ #         "@llvm-project//mlir:IR",
+@@ -81,7 +81,7 @@ licenses(["notice"])
+ #     srcs = ["lib/arguments.cc"],
+ #     hdrs = ["include/tfrt/jitrt/arguments.h"],
+ #     compatible_with = ["//buildenv/target:gce"],
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         "@llvm-project//llvm:Support",
+ #         "//third_party/tensorflow/compiler/xla/runtime:arguments",
+@@ -96,7 +96,7 @@ licenses(["notice"])
+ #     srcs = ["lib/jitrt_compiler.cc"],
+ #     hdrs = ["include/tfrt/jitrt/jitrt_compiler.h"],
+ #     compatible_with = ["//buildenv/target:non_prod"],
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         ":codegen_transforms",
+ #         "@llvm-project//mlir:AMXToLLVMIRTranslation",
+@@ -146,7 +146,7 @@ licenses(["notice"])
+ #     name = "async_task_runner",
+ #     hdrs = ["include/tfrt/jitrt/async_task_runner.h"],
+ #     # copybara:uncomment compatible_with = ["//buildenv/target:gce"],
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         "//third_party/tensorflow/compiler/xla/runtime:async_runtime",
+ #         "@tf_runtime//:hostcontext",
+@@ -158,7 +158,7 @@ licenses(["notice"])
+ #     srcs = ["lib/results.cc"],
+ #     hdrs = ["include/tfrt/jitrt/results.h"],
+ #     # copybara:uncomment compatible_with = ["//buildenv/target:gce"],
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         "@llvm-project//llvm:Support",
+ #         "@llvm-project//mlir:Support",
+@@ -178,7 +178,7 @@ licenses(["notice"])
+ #     srcs = ["lib/custom_calls/custom_call_testlib.cc"],
+ #     hdrs = ["include/tfrt/jitrt/custom_calls/custom_call_testlib.h"],
+ #     compatible_with = ["//buildenv/target:gce"],
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         ":arguments",
+ #         "@llvm-project//llvm:OrcJIT",
+@@ -200,7 +200,7 @@ licenses(["notice"])
+ #     name = "jitrt_kernels",
+ #     srcs = ["lib/kernels/jitrt_kernels.cc"],
+ #     alwayslink_static_registration_src = "lib/kernels/jitrt_kernels_registration.cc",
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         ":arguments",
+ #         ":async_task_runner",
+@@ -228,7 +228,7 @@ licenses(["notice"])
+ #     name = "jitrt_corert_kernels",
+ #     srcs = ["lib/kernels/jitrt_corert_kernels.cc"],
+ #     alwayslink_static_registration_src = "lib/kernels/jitrt_corert_kernels_registration.cc",
+-#     visibility = ["@tf_runtime//:friends"],
++#     visibility = ["//visibility:public"],
+ #     deps = [
+ #         ":arguments",
+ #         ":async_task_runner",
+diff --git a/third_party/concurrent_work_queue/BUILD b/third_party/concurrent_work_queue/BUILD
+index 768052a8..2f0a3804 100644
+--- a/third_party/concurrent_work_queue/BUILD
++++ b/third_party/concurrent_work_queue/BUILD
+@@ -3,7 +3,7 @@ load("@tf_runtime//:build_defs.bzl", "tfrt_cc_test")
+ licenses(["reciprocal"])
  
--  int num_ranks() const { return num_ranks_; }
--
-   const wrapper::OwningCclComm& operator->() const { return comm_; }
-   wrapper::CclComm get() const { return comm_.get(); }
-   wrapper::CclComm release();
-@@ -322,7 +316,6 @@
-  private:
-   AsyncValueRef<GpuContext> context_;
-   wrapper::OwningCclComm comm_;
--  int num_ranks_;
-   std::vector<Callback> callbacks_;
- };
+ package(
+-    default_visibility = ["@tf_runtime//:friends"],
++    default_visibility = ["//visibility:public"],
+ )
  
-diff --git a/backends/gpu/lib/gpu_types.cc b/backends/gpu/lib/gpu_types.cc
-index 38529bc..01e3dba 100644
---- a/backends/gpu/lib/gpu_types.cc
-+++ b/backends/gpu/lib/gpu_types.cc
-@@ -214,15 +214,8 @@
- GpuBlasHandle::~GpuBlasHandle() = default;
+ exports_files(["LICENSE"])
+diff --git a/third_party/llvm_derived/BUILD b/third_party/llvm_derived/BUILD
+index cd85c507..5ac6ae9f 100644
+--- a/third_party/llvm_derived/BUILD
++++ b/third_party/llvm_derived/BUILD
+@@ -4,8 +4,7 @@ licenses(["notice"])
  
- GpuCclHandle::GpuCclHandle(AsyncValueRef<GpuContext> context,
--                           wrapper::OwningCclComm comm, int num_ranks)
--    : context_(std::move(context)),
--      comm_(std::move(comm)),
--      num_ranks_(num_ranks) {}
--
--// TODO(hanbinyoon): Remove after transitioning to the above constructor.
--GpuCclHandle::GpuCclHandle(AsyncValueRef<GpuContext> context,
-                            wrapper::OwningCclComm comm)
--    : context_(std::move(context)), comm_(std::move(comm)), num_ranks_(0) {}
-+    : context_(std::move(context)), comm_(std::move(comm)) {}
+ package(
+     default_visibility = [
+-        "@tf_runtime//:friends",
+-        "@tf_runtime//third_party/llvm_derived/cpp_tests:__subpackages__",
++        "//visibility:public",
+     ],
+ )
  
- GpuCclHandle::~GpuCclHandle() = default;
- 
-diff --git a/backends/gpu/lib/kernels/ccl_kernels.cc b/backends/gpu/lib/kernels/ccl_kernels.cc
-index 52ce820..9cfc1de 100644
---- a/backends/gpu/lib/kernels/ccl_kernels.cc
-+++ b/backends/gpu/lib/kernels/ccl_kernels.cc
-@@ -107,8 +107,6 @@
-   auto width = ToWidthInBytes(type);
-   if (!width) return width.takeError();
-   assert(*width != 0);
--  if (input->size() != output->size() * handle->num_ranks())
--    return MakeStringError("Input size must be output size times ranks.");
- 
-   handle->AddCallback([input = input.ValueRef(), output = output.ValueRef(),
-                        recvcount = output->size() / *width, type,
-@@ -116,6 +114,10 @@
-                           wrapper::CurrentContext current,
-                           wrapper::Stream stream,
-                           wrapper::CclComm comm) -> llvm::Error {
-+    auto count = wrapper::CclCommCount(comm);
-+    if (!count) return count.takeError();
-+    if (input->size() != output->size() * *count)
-+      return MakeStringError("Input size must be output size times ranks.");
-     return wrapper::CclReduceScatter(current, input->pointer(),
-                                      output->pointer(), recvcount, type, op,
-                                      comm, stream);
