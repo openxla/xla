@@ -386,20 +386,20 @@ cc_library(
     ]),
 )
 
-xla_cc_test(
+xla_test(
     name = "ir_emitter_triton_test",
     srcs = ["ir_emitter_triton_test.cc"],
-    tags = [
-        "gpu",
-        "no_oss",
+    backend_tags = {"gpu": [
         "requires-gpu-sm70",
+    ]},
+    backends = [
+        "gpu",
     ],
     deps = [
         ":ir_emitter_triton",
         "//xla:comparison_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:gpu_plugin",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
