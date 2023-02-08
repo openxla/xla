@@ -470,7 +470,6 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service/gpu/tests:gpu_codegen_test",
-        "//xla/stream_executor/lib",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
