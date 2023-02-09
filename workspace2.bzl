@@ -2,7 +2,6 @@
 
 # Import third party config rules.
 load("@bazel_skylib//lib:versions.bzl", "versions")
-load("@bazel_skylib//lib:paths.bzl", "paths")
 load("//third_party/gpus:cuda_configure.bzl", "cuda_configure")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
 load("//third_party/tensorrt:tensorrt_configure.bzl", "tensorrt_configure")
@@ -13,7 +12,7 @@ load("//third_party/systemlibs:syslibs_configure.bzl", "syslibs_configure")
 load("//tools/toolchains:cpus/aarch64/aarch64_compiler_configure.bzl", "aarch64_compiler_configure")
 load("//tools/toolchains:cpus/arm/arm_compiler_configure.bzl", "arm_compiler_configure")
 load("//tools/toolchains/embedded/arm-linux:arm_linux_toolchain_configure.bzl", "arm_linux_toolchain_configure")
-load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls", "tf_vendored")
 load("//third_party/clang_toolchain:cc_configure_clang.bzl", "cc_download_clang_toolchain")
 load("//third_party/llvm:setup.bzl", "llvm_setup")
 
@@ -39,7 +38,7 @@ load("//tools/toolchains/remote_config:configs.bzl", "initialize_rbe_configs")
 load("//tools/toolchains/remote:configure.bzl", "remote_execution_configure")
 load("//tools/toolchains/clang6:repo.bzl", "clang6_configure")
 
-def _initialize_third_party(xla_path):
+def _initialize_third_party():
     """ Load third party repositories.  See above load() statements. """
     absl()
     benchmark()
@@ -54,7 +53,7 @@ def _initialize_third_party(xla_path):
     tensorrt()
     triton()
 
-    native.local_repository(name = "tsl", path = paths.join(xla_path + "third_party/tsl"))
+    tf_vendored(name = "tsl", relpath = "third_party/tsl")
 
 # Toolchains & platforms required by Tensorflow to build.
 def _tf_toolchains():
@@ -605,7 +604,7 @@ def _tf_repositories():
 
 # buildifier: disable=function-docstring
 # buildifier: disable=unnamed-macro
-def workspace(xla_path = "./"):
+def workspace():
     # Check the bazel version before executing any repository rules, in case
     # those rules rely on the version we require here.
     versions.check("1.0.0")
@@ -614,7 +613,7 @@ def workspace(xla_path = "./"):
     _tf_toolchains()
 
     # Import third party repositories according to go/tfbr-thirdparty.
-    _initialize_third_party(xla_path)
+    _initialize_third_party()
 
     # Import all other repositories. This should happen before initializing
     # any external repositories, because those come with their own
