@@ -1,0 +1,102 @@
+syntax = "proto2";
+
+package tensorflow;
+
+// package logs.proto.core.ml.error_log;
+
+option cc_enable_arenas = true;
+option java_multiple_files = true;
+
+// Top-level Logs message for the ML Stack Error
+message ErrorLog {
+  reserved 1;
+
+  // timestamp when the error was logged in ms since epoch
+  optional int64 created_at_ms = 2;
+
+  // information to help identify where the error is coming from
+  optional Context context = 3;
+
+  // flatten (non-nested) stacktrace information
+  repeated StackTrace stack_traces = 4;
+
+  optional Severity severity = 5 [default = ERROR_LEVEL];
+
+  // error message
+  optional string log_message = 6;
+}
+
+// severity of an error
+enum Severity {
+  // default severity should be ERROR_LEVEL.
+  ERROR_LEVEL = 1;
+
+  // the warning level is to accommodate TF warning that should have been error,
+  // but was logged as warning for backward compatibility reasons. Only use this
+  // severity level only if the warning is actual an error, but was logged as
+  // warning. If so, pleasea add document at the log call-site.
+  WARNING_LEVEL = 2;
+}
+
+// context of the error log source
+message Context {
+  // ML Stack component information
+  optional Component component = 1;
+
+  // Accelerator type information
+  optional Accelerator device = 2;
+
+  // borg job information to help identify the linkage between error logs
+  optional BorgJobInfo job = 3;
+}
+
+// commong borg job information
+message BorgJobInfo {
+  optional string name = 1;
+
+  optional string cell = 2;
+
+  optional string user = 3;
+
+  // uniquie id when combined with user and cell field
+  optional int64 uid = 4;
+}
+
+message Component {
+  // XLA, TF, ..., or more granular names
+  optional string component_name = 1;
+
+  // additional field to allow granular component information
+  optional string subcomponent_name = 2;
+
+  // additional label to further breakdown the component
+  repeated string label = 3;
+}
+
+message Accelerator {
+  optional string accelerator_type = 1;
+
+  optional string accelerator_name = 2;
+
+  optional string topology = 3;
+}
+
+message StackTrace {
+  optional SourceLocation source_location = 1;
+
+  // stacktrace log message
+  optional string message = 2;
+}
+
+// source code location captures from the stacktrace
+message SourceLocation {
+  optional int32 line_number = 1;
+
+  optional int32 column_number = 5;
+
+  optional string filename = 2;
+
+  optional string class_name = 3;
+
+  optional string method_name = 4;
+}

@@ -117,3 +117,14 @@ tf_proto_library(
     ],
     visibility = ["//visibility:public"],
 )
+
+tf_proto_library(
+    name = "error_log_proto",
+    srcs = ["error_log.proto"],
+)
+
+py_proto_library(
+    name = "error_log_py_pb2",
+    api_version = 2,
+    deps = [":error_log_proto"],
+)
