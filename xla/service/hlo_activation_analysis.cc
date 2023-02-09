@@ -44,6 +44,8 @@ void ActivationAnalysisOnComputation(const HloComputation* computation,
     if (hlo->opcode() == HloOpcode::kGetTupleElement &&
         hlo->operand(0)->opcode() == HloOpcode::kTuple) {
       if (activation_set->count(hlo->operand(0)->operand(hlo->tuple_index()))) {
+        // hlo is a GetTupleElement instruction pointing to a Tuple item that is
+        // an activation.
         activation_set->insert(hlo);
       }
       continue;
@@ -54,6 +56,8 @@ void ActivationAnalysisOnComputation(const HloComputation* computation,
       if (activation_set->count(
               hlo->operand(0)->while_body()->root_instruction()->operand(
                   hlo->tuple_index()))) {
+        // hlo is a GetTupleElement instruction pointing to a Tuple item (from a
+        // While loop's root instruction) that is an activation.
         activation_set->insert(hlo);
       }
       continue;
@@ -64,6 +68,8 @@ void ActivationAnalysisOnComputation(const HloComputation* computation,
       if (activation_set->count(DynCast<HloCallableInstruction>(hlo->operand(0))
                                     ->called_computation_root()
                                     ->operand(hlo->tuple_index()))) {
+        // hlo is a GetTupleElement instruction pointing to a Tuple item (from a
+        // Call instruction) that is an activation.
         activation_set->insert(hlo);
       }
       continue;
@@ -74,6 +80,8 @@ void ActivationAnalysisOnComputation(const HloComputation* computation,
       for (auto branch : hlo->operand(0)->branch_computations()) {
         if (activation_set->count(
                 branch->root_instruction()->operand(hlo->tuple_index()))) {
+          // hlo is a GetTupleElement instruction pointing to a Tuple item (from
+          // at least one branch of a Conditional) that is an activation.
           activation_set->insert(hlo);
         }
       }
@@ -85,6 +93,8 @@ void ActivationAnalysisOnComputation(const HloComputation* computation,
           hlo->while_body()->parameter_instruction(0);
       if (!body_param->shape().IsTuple()) {
         if (activation_set->count(hlo->operand(0))) {
+          // hlo is a While loop, its body parameter is not a tuple, and its
+          // conditional is in the activation set.
           activation_set->insert(body_param);
         }
       }
@@ -92,6 +102,9 @@ void ActivationAnalysisOnComputation(const HloComputation* computation,
         if (use->opcode() == HloOpcode::kGetTupleElement &&
             activation_set->count(
                 hlo->operand(0)->operand(use->tuple_index()))) {
+          // A user of the body parameters of the while loop is a
+          // GetTupleElement that points to a Tuple item that is
+          // an activation.
           activation_set->insert(use);
         }
       }
@@ -108,9 +121,15 @@ void ActivationAnalysisOnComputation(const HloComputation* computation,
     }
 
     for (const HloInstruction* operand : hlo->operands()) {
-      if (activation_set->count(operand) ||
-          (operand->opcode() == HloOpcode::kWhile &&
-           activation_set->count(operand->while_body()->root_instruction()))) {
+      if (activation_set->count(operand)) {
+        // An operand of hlo is an activation.
+        activation_set->insert(hlo);
+        break;
+      }
+      if (operand->opcode() == HloOpcode::kWhile &&
+          activation_set->count(operand->while_body()->root_instruction())) {
+        // An operand of hlo is While with a root instruction that is an
+        // activation.
         activation_set->insert(hlo);
         break;
       }
