@@ -3494,9 +3494,11 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnTensor(
                     .setDataType(ToCudnnDataType(dtype))
                     .setVectorCountAndDimension(vec_count, vec_dim)
                     .setVirtual(is_virtual)
-                    .setReorderType(is_reordered_nchw_vect
+#if 0
+                .setReorderType(is_reordered_nchw_vect
                                         ? CUDNN_TENSOR_REORDERING_INT8x32
                                         : CUDNN_TENSOR_REORDERING_NONE)
+#endif
                     .build();
   RETURN_MSG_IF_CUDNN_ERROR(tensor);
   return tensor;
