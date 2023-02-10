@@ -38,6 +38,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
         "//xla/service:hlo_proto_cc",
