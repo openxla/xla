@@ -19,7 +19,7 @@ limitations under the License.
 #include <iostream>
 #include <vector>
 
-#include "llvm/Support/Host.h"
+#include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
 #include "xla/client/client_library.h"
 #include "xla/client/xla_builder.h"
