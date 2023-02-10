@@ -184,6 +184,8 @@ cc_library(
     deps = [
         ":compiler_functor",
         ":buffer_info_util",
+        "@llvm-project//mlir:SCFToControlFlow",
+        "@llvm-project//mlir:VectorToLLVM",
         ":conv_canonicalization",
         ":cpu_executable",
         ":cpu_instruction_fusion",

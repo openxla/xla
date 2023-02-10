@@ -49,9 +49,10 @@ limitations under the License.
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
-#include "llvm/TargetParser/Triple.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"  // from @llvm-project
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"  // from @llvm-project
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"  // from @llvm-project
+#include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"  // from @llvm-project
 #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Arith/Transforms/Passes.h"  // from @llvm-project
@@ -1045,7 +1046,10 @@ Status LowerMLIRModule(mlir::ModuleOp mlir_module,
   pm.addNestedPass<mlir::func::FuncOp>(mlir::arith::createArithExpandOpsPass());
   pm.addNestedPass<mlir::func::FuncOp>(mlir::memref::createExpandOpsPass());
   pm.addNestedPass<mlir::func::FuncOp>(mlir::createLowerAffinePass());
+  pm.addPass(mlir::createConvertSCFToCFPass());
   pm.addPass(mlir::mhlo::CreateLegalizeXLAFrameworkToLLVMPass());
+  mlir::LowerVectorToLLVMOptions vector_to_llvm_opts;
+  pm.addPass(mlir::createConvertVectorToLLVMPass(vector_to_llvm_opts));
   pm.addPass(mlir::hlo::createGenericHostToLLVMPass());
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
   if (pm.run(mlir_module).failed()) {

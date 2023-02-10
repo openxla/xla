@@ -31,9 +31,9 @@ limitations under the License.
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "transforms/passes.h"
 
 namespace mlir {
@@ -82,7 +82,8 @@ class GenericHostToLLVMPass
     ConversionTarget target(*ctx);
     target.addLegalDialect<LLVM::LLVMDialect>();
     target.addIllegalDialect<arith::ArithDialect, func::FuncDialect,
-                             complex::ComplexDialect, math::MathDialect>();
+                             complex::ComplexDialect, math::MathDialect,
+                             vector::VectorDialect>();
     // Mark modules as legal.
     target.addLegalOp<ModuleOp>();
     // Unrealized conversion casts are cleaned up by a separate pass.
