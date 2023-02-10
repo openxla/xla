@@ -388,15 +388,16 @@ cc_library(
 
 xla_test(
     name = "ir_emitter_triton_test",
-    srcs = ["ir_emitter_triton_test.cc"],
+    srcs = if_cuda_is_configured(["ir_emitter_triton_test.cc"]),
     backend_tags = {"gpu": [
         "requires-gpu-sm70",
     ]},
     backends = [
         "gpu",
     ],
-    deps = [
+    deps = if_cuda_is_configured([
         ":ir_emitter_triton",
+        "@com_google_absl//absl/strings",
         "//xla:comparison_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -404,10 +405,9 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
-        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform/default/build_config:cublas_plugin",
-    ],
+    ]),
 )
 
 cc_library(
@@ -440,26 +440,26 @@ cc_library(
 
 xla_test(
     name = "triton_autotuner_test",
-    srcs = ["triton_autotuner_test.cc"],
+    srcs = if_cuda_is_configured(["triton_autotuner_test.cc"]),
     backend_tags = {"gpu": [
         "requires-gpu-sm70",
     ]},
     backends = [
         "gpu",
     ],
-    deps = [
+    deps = if_cuda_is_configured([
         ":gemm_rewriter_triton",
         ":gpu_executable",
         ":triton_autotuner",
+        "@com_google_absl//absl/strings",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/tests:hlo_test_base",
-        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-    ],
+    ]),
 )
 
 cc_library(
