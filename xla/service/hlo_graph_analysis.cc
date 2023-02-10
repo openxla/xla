@@ -13,10 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/hlo_activation_analysis.h"
+#include "xla/service/hlo_graph_analysis.h"
 
 #include <memory>
+#include <string>
+#include <utility>
 
+#include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -122,6 +125,31 @@ ConstHloInstructionSet ComputeHloActivationAnalysis(const HloModule* module) {
   ConstHloInstructionSet activation_set;
   ActivationAnalysisOnComputation(module->entry_computation(), &activation_set);
   return activation_set;
+}
+
+void MatmulClassificationOnComputation(
+    const HloComputation* computation,
+    ConstHloInstructionSet* activation_set,
+    absl::flat_hash_map<std::string, MatmulClass>* matmul_class_map) {
+  for (const HloInstruction* hlo : computation->MakeInstructionPostOrder()) {
+    // Find matmul instructions.
+    if (hlo->opcode() == HloOpcode::kDot) {
+      matmul_class_map->insert(
+          std::make_pair(hlo->name(), MatmulClass::kUnimplemented));
+    }
+  }
+}
+
+absl::flat_hash_map<std::string, MatmulClass> ComputeHloMatmulClassifier(
+    const HloModule* module) {
+  // Run the activation analysis pass to find all activations in the module.
+  ConstHloInstructionSet activation_set = ComputeHloActivationAnalysis(module);
+
+  absl::flat_hash_map<std::string, MatmulClass> matmul_class_map;
+  MatmulClassificationOnComputation(module->entry_computation(),
+                                    &activation_set,
+                                    &matmul_class_map);
+  return matmul_class_map;
 }
 
 }  // namespace xla

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/hlo_activation_analysis.h"
+#include "xla/service/hlo_graph_analysis.h"
 
 #include <string>
 
@@ -293,6 +293,57 @@ ENTRY entry {
   EXPECT_TRUE(act_set.count(FindInstruction(module.get(), "reshape.26")));
   EXPECT_TRUE(act_set.count(FindInstruction(module.get(), "dot.23")));
 }
+
+class HloMatmulClassifierTest : public HloTestBase {};
+
+TEST_F(HloMatmulClassifierTest, FindMatmuls) {
+  const std::string module_str = R"(
+HloModule OneMatmul
+
+region_0.39 {
+  Arg_0.40 = f32[] parameter(0)
+  Arg_1.41 = f32[] parameter(1)
+  ROOT add.42 = f32[] add(Arg_0.40, Arg_1.41)
+}
+
+ENTRY entry {
+  Arg_1.2 = f32[32,128]{1,0} parameter(0), sharding={devices=[2,1]0,1}
+  Arg_7.8 = f32[4,32]{1,0} parameter(1), sharding={devices=[2,1]0,1}
+  copy = f32[4,32]{1,0} copy(Arg_7.8), sharding={devices=[2,1]0,1}
+  dot.0 = f32[4,128]{1,0} dot(copy, Arg_1.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={devices=[2,1]0,1}
+  constant.5 = f32[] constant(0), sharding={replicated}
+  broadcast.2 = f32[4,128]{1,0} broadcast(constant.5), dimensions={}, sharding={devices=[2,1]0,1}
+  maximum.33 = f32[4,128]{1,0} maximum(dot.0, broadcast.2), sharding={devices=[2,1]0,1}
+  compare.34 = pred[4,128]{1,0} compare(dot.0, maximum.33), direction=EQ, sharding={devices=[2,1]0,1}
+  constant.4 = f32[] constant(1), sharding={replicated}
+  broadcast.1 = f32[4,128]{1,0} broadcast(constant.4), dimensions={}, sharding={devices=[2,1]0,1}
+  select.35 = f32[4,128]{1,0} select(compare.34, broadcast.1, broadcast.2), sharding={devices=[2,1]0,1}
+  dot.2 = f32[32,128]{0,1} dot(copy, select.35), lhs_contracting_dims={0}, rhs_contracting_dims={0}, sharding={devices=[2,1]0,1}
+  constant.11 = f32[] constant(-0.01), sharding={replicated}
+  broadcast.12 = f32[32,128]{1,0} broadcast(constant.11), dimensions={}, sharding={devices=[2,1]0,1}
+  multiply.52 = f32[32,128]{0,1} multiply(dot.2, broadcast.12), sharding={devices=[2,1]0,1}
+  add.93 = f32[32,128]{1,0} add(Arg_1.2, multiply.52), sharding={devices=[2,1]0,1}
+  reduce.43 = f32[] reduce(maximum.33, constant.5), dimensions={0,1}, to_apply=region_0.39, sharding={replicated}
+  ROOT tuple.109 = (f32[32,128]{1,0}, f32[]) tuple(add.93, reduce.43), sharding={{devices=[2,1]0,1}, {replicated}}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(module_str, /*replica_count=*/1,
+                                                /*num_partitions=*/2));
+  auto matmul_class_map = ComputeHloMatmulClassifier(module.get());
+
+  EXPECT_FALSE(matmul_class_map.count("select.35"));
+  EXPECT_FALSE(matmul_class_map.count("multiply.52"));
+  EXPECT_FALSE(matmul_class_map.count("copy"));
+  EXPECT_FALSE(matmul_class_map.count("Arg_1.2"));
+  EXPECT_EQ(matmul_class_map.size(), 2);  // Only two matmul (dot) instructions.
+  EXPECT_TRUE(matmul_class_map.count("dot.0"));
+  EXPECT_EQ(matmul_class_map["dot.0"], MatmulClass::kUnimplemented);
+  EXPECT_TRUE(matmul_class_map.count("dot.2"));
+  EXPECT_EQ(matmul_class_map["dot.2"], MatmulClass::kUnimplemented);
+}
+
 
 }  // namespace
 }  // namespace xla

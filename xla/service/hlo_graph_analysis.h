@@ -13,11 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_ACTIVATION_ANALYSIS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_ACTIVATION_ANALYSIS_H_
+#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_GRAPH_ANALYSIS_H_
+#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_GRAPH_ANALYSIS_H_
 
 #include <memory>
+#include <string>
 
+#include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 
@@ -27,6 +29,20 @@ namespace xla {
 // be considered as activations with the current implementation.
 ConstHloInstructionSet ComputeHloActivationAnalysis(const HloModule* module);
 
+// Defines a type for MatMul classes.
+enum class MatmulClass {
+  kWeightActivation,
+  kActivationActivation,
+  kActivationGradient,
+  kWeightGradient,
+  kUnimplemented
+};
+
+// Given a HLO module, returns a hash table including all matmauls and their
+// respective classes.
+absl::flat_hash_map<std::string, MatmulClass> ComputeHloMatmulClassifier(
+    const HloModule* module);
+
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_ACTIVATION_ANALYSIS_H_
+#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_GRAPH_ANALYSIS_H_
