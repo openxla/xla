@@ -61,9 +61,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":allocator_stats",
+        ":data_type",
         ":device_description_proto_cc",
         ":dnn_proto_cc",
-        ":host_or_device_scalar",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
@@ -72,12 +72,14 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:types",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -761,11 +763,27 @@ cc_library(
         "trace_listener.h",
     ],
     deps = [
+        ":allocator_stats",
+        ":data_type",
+        ":device_description_proto_cc",
+        ":dnn_proto_cc",
         ":stream_executor_headers",
+        "@com_google_protobuf//:protobuf",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:span",
+        "//xla/stream_executor/platform",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:types",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ] + if_static([":stream_executor_impl"]),
 )
 
@@ -802,6 +820,25 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:types",
+    ],
+)
+
+xla_cc_test(
+    name = "device_memory_allocator_test",
+    size = "small",
+    srcs = ["device_memory_allocator_test.cc"],
+    deps = [
+        ":device_memory_allocator",
+        ":multi_platform_manager",
+        ":platform",
+        ":stream_executor",
+        "//xla/stream_executor/host:host_platform",
+        "@com_google_absl//absl/strings",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 

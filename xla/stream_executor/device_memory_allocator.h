@@ -204,7 +204,13 @@ class DeviceMemoryAllocator {
   tsl::StatusOr<ScopedDeviceMemory<ElemT>> Allocate(
       int device_ordinal, uint64_t size, bool retry_on_failure = true,
       int64_t memory_space = 0) {
-    return Allocate(device_ordinal, size, retry_on_failure, memory_space);
+    TF_ASSIGN_OR_RETURN(OwningDeviceMemory as_bytes,
+                        Allocate(device_ordinal, size * sizeof(ElemT),
+                                 retry_on_failure, memory_space));
+
+    return ScopedDeviceMemory<ElemT>(DeviceMemory<ElemT>(as_bytes.Release()),
+                                     as_bytes.device_ordinal(),
+                                     as_bytes.allocator());
   }
 
   // Must be a nop for null pointers. Should not be used.
