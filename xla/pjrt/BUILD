@@ -186,6 +186,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
     ],

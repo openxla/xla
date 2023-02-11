@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/framework/allocator.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
 
@@ -153,6 +154,13 @@ class PjRtDevice {
   // reference will remain valid for the lifetime of the PjRtDevice.
   virtual const absl::flat_hash_map<std::string, PjRtDeviceAttribute>&
   Attributes() const = 0;
+
+  // Returns allocator stats for the device. Only some PjRtDevice
+  // implementations support allocator_stats, and those that do not will return
+  // an Unimplemented error.
+  virtual StatusOr<tsl::AllocatorStats> GetAllocatorStats() const {
+    return Unimplemented("GetAllocatorStats is not supported");
+  }
 };
 
 // Forward declaration.
