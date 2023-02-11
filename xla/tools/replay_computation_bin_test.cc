@@ -29,14 +29,15 @@ std::string PathToAddHlo() {
                            "add.hlo");
 }
 
-TEST(ReplayComputation, AddHloHost) {
-  // Get relevant paths to run_hlo_module and add.hlo
+std::string ReplayComputationBin() {
   std::string replay_computation_bin = tsl::io::JoinPath(
       tsl::testing::XlaSrcRoot(), "tools", "replay_computation_cpu");
+}
 
+TEST(ReplayComputation, AddHloHost) {
   tsl::SubProcess proc;
-  proc.SetProgram(replay_computation_bin,
-                  {replay_computation_bin, PathToAddHlo(), "--use_fake_data"});
+  proc.SetProgram(ReplayComputationBin(),
+                  {ReplayComputationBin(), PathToAddHlo(), "--use_fake_data"});
   EXPECT_TRUE(proc.Start());
 
   // Just make sure that the process's exit code is 0
@@ -46,13 +47,9 @@ TEST(ReplayComputation, AddHloHost) {
 }
 
 TEST(ReplayComputation, AddHloInterpreter) {
-  // Get relevant paths to run_hlo_module and add.hlo
-  std::string replay_computation_bin = tsl::io::JoinPath(
-      tsl::testing::XlaSrcRoot(), "tools", "replay_computation_interpreter");
-
   tsl::SubProcess proc;
-  proc.SetProgram(replay_computation_bin,
-                  {replay_computation_bin, PathToAddHlo(), "--use_fake_data"});
+  proc.SetProgram(ReplayComputationBin(),
+                  {ReplayComputationBin(), PathToAddHlo(), "--use_fake_data"});
   EXPECT_TRUE(proc.Start());
 
   // Just make sure that the process's exit code is 0
