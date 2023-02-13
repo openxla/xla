@@ -27,7 +27,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_XLA_BIT_CAST_H_
 
 #include "absl/base/casts.h"
-#include "third_party/eigen3/Eigen/Core"
+#include "Eigen/Core"  // from @eigen_archive
 #include "xla/types.h"
 #include "tsl/platform/bfloat16.h"
 

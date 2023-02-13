@@ -23,7 +23,7 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/numeric/int128.h"
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/array.h"
 #include "xla/permutation_util.h"
 #include "xla/shape_util.h"

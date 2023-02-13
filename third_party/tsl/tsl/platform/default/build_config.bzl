@@ -742,7 +742,7 @@ def tf_additional_core_deps():
 def tf_lib_proto_parsing_deps():
     return [
         ":protos_all_cc",
-        clean_dep("@xla//third_party/eigen3"),
+        clean_dep("@eigen_archive//:eigen3"),
         clean_dep("//tsl/platform/default/build_config:proto_parsing"),
     ]
 
@@ -845,7 +845,7 @@ def tf_resource_deps():
 
 def tf_portable_deps_no_runtime():
     return [
-        "@xla//third_party/eigen3",
+        "@eigen_archive//:eigen3",
         "@double_conversion//:double-conversion",
         "@nsync//:nsync_cpp",
         "@com_googlesource_code_re2//:re2",

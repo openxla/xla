@@ -20,7 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/client/local_client.h"
 #include "xla/client/xla_computation.h"
 #include "xla/map_util.h"

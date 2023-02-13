@@ -35,7 +35,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "third_party/eigen3/Eigen/Core"
+#include "Eigen/Core"  // from @eigen_archive
 #include "xla/primitive_util.h"
 #include "xla/runtime/async_runtime.h"
 #include "xla/runtime/diagnostics.h"

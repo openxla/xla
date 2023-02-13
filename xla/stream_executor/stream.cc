@@ -24,7 +24,7 @@ limitations under the License.
 
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/str_cat.h"
-#include "third_party/eigen3/Eigen/Core"
+#include "Eigen/Core"  // from @eigen_archive
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/logging.h"

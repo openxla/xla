@@ -20,7 +20,7 @@ limitations under the License.
 
 #include <complex>
 
-#include "third_party/eigen3/Eigen/Core"
+#include "Eigen/Core"  // from @eigen_archive
 
 extern "C" {
 

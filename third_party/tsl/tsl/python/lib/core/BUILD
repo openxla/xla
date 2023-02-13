@@ -46,8 +46,8 @@ cc_library(
         "//tsl/platform:types",
         "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
+        "@eigen_archive//:eigen3",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
-        "@xla//third_party/eigen3",
     ],
 )
 
@@ -60,8 +60,8 @@ cc_library(
         "//tsl/platform:logging",
         "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
+        "@eigen_archive//:eigen3",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
-        "@xla//third_party/eigen3",
     ],
 )
 
@@ -89,8 +89,8 @@ cc_library(
         "//tsl/platform:types",
         "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
+        "@eigen_archive//:eigen3",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
-        "@xla//third_party/eigen3",
     ],
 )
 

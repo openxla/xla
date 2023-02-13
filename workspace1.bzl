@@ -1,20 +1,21 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
+load("@tsl//:workspace1.bzl", "tsl_workspace1")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@com_github_grpc_grpc//bazel:grpc_deps.bzl", "grpc_deps")
 load("@io_bazel_rules_closure//closure:defs.bzl", "closure_repositories")
-load("@rules_cuda//cuda:dependencies.bzl", "rules_cuda_dependencies")
 load("@rules_pkg//:deps.bzl", "rules_pkg_dependencies")
 
 # buildifier: disable=unnamed-macro
 def workspace(with_rules_cc = True):
+    tsl_workspace1()
+
     """Loads a set of TensorFlow dependencies. To be used in a WORKSPACE file.
 
     Args:
       with_rules_cc: whether to load and patch rules_cc repository.
     """
     native.register_toolchains("@local_config_python//:py_toolchain")
-    rules_cuda_dependencies(with_rules_cc)
     rules_pkg_dependencies()
 
     closure_repositories()

@@ -28,7 +28,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//tsl/framework:fixedpoint_types",
-        "@xla//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 

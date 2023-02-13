@@ -33,7 +33,7 @@ limitations under the License.
 //   "third_party/tensorflow/tsl/framework/contraction/eigen_contraction_kernel.h"
 //   #endif
 
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tsl/framework/fixedpoint/FixedPoint.h"
 
 #if defined(TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL)

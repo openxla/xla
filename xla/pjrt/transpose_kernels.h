@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "third_party/eigen3/Eigen/Core"
+#include "Eigen/Core"  // from @eigen_archive
 
 namespace xla {
 

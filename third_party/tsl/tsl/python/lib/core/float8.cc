@@ -27,7 +27,7 @@ limitations under the License.
 // Place `<locale>` before <Python.h> to avoid a build failure in macOS.
 #include <Python.h>
 
-#include "third_party/eigen3/Eigen/Core"
+#include "Eigen/Core"  // from @eigen_archive
 #include "tsl/platform/types.h"
 #include "tsl/python/lib/core/custom_float.h"
 

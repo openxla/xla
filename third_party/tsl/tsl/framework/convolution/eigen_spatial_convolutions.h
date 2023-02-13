@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_FRAMEWORK_CONVOLUTION_EIGEN_SPATIAL_CONVOLUTIONS_H_
 #define TENSORFLOW_TSL_FRAMEWORK_CONVOLUTION_EIGEN_SPATIAL_CONVOLUTIONS_H_
 
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 
 // Note the following header is used in both TF and TFLite. Particularly, it's
 // used for float TFLite Conv2D.

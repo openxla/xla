@@ -107,8 +107,8 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":types",
-        "//third_party/eigen3",
         "@com_google_absl//absl/base",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:bfloat16",
     ],
 )
@@ -204,7 +204,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = [":friends"],
     deps = [
-        "//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 

@@ -24,7 +24,7 @@ limitations under the License.
 #include "tsl/platform/types.h"
 
 #define EIGEN_USE_THREADS
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tsl/platform/dynamic_annotations.h"
 
 namespace {

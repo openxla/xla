@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_THREADPOOL_INTERFACE_H_
 #define TENSORFLOW_TSL_PLATFORM_THREADPOOL_INTERFACE_H_
 
-#include "third_party/eigen3/unsupported/Eigen/CXX11/ThreadPool"
+#include "unsupported/Eigen/CXX11/ThreadPool"  // from @eigen_archive
 #include "tsl/platform/mutex.h"
 #include "tsl/platform/types.h"
 

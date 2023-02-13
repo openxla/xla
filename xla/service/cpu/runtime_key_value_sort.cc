@@ -21,7 +21,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/base/dynamic_annotations.h"
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_KeyValueSort(
     int64_t a, int64_t b, int64_t c, char** values, int32_t values_count,

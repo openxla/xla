@@ -839,10 +839,10 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
-        "//third_party/eigen3",
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
         "@tsl//tsl/framework/convolution:eigen_helpers",
         "@tsl//tsl/platform:mutex",
@@ -860,10 +860,10 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
-        "//third_party/eigen3",
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
         "@tsl//tsl/framework/convolution:eigen_helpers",
         "@tsl//tsl/platform:mutex",
@@ -898,7 +898,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@tsl//tsl/framework/convolution:eigen_helpers",
-        "//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ] + mkl_deps(),
 )
 
@@ -913,11 +913,11 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
-        "//third_party/eigen3",
         "//xla:executable_run_options",
         "//xla:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:mutex",
     ],
 )
@@ -930,10 +930,10 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
-        "//third_party/eigen3",
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
         "@tsl//tsl/platform:mutex",
     ],
@@ -947,7 +947,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "//xla:executable_run_options",
-        "//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ] + mkl_deps(),
 )
 
@@ -962,7 +962,7 @@ cc_library(
         ":runtime_matmul",
         "//xla:executable_run_options",
         "@tsl//tsl/platform:types",
-        "//third_party/eigen3",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:dynamic_annotations",
         "@tsl//tsl/platform:logging",
     ] + acl_deps(),
@@ -983,7 +983,7 @@ cc_library(
         "@tsl//tsl/platform:dynamic_annotations",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/framework/convolution:eigen_helpers",
-        "//third_party/eigen3",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:logging",
     ] + acl_deps(),
 )
@@ -999,9 +999,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
-        "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
         "@tsl//tsl/framework/convolution:eigen_helpers",
     ],
@@ -1018,9 +1018,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
-        "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
         "@tsl//tsl/framework/convolution:eigen_helpers",
     ],
@@ -1036,11 +1036,11 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "//third_party/eigen3",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1053,8 +1053,8 @@ cc_library(
     linkstatic = 1,
     visibility = ["//visibility:private"],
     deps = [
-        "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1066,8 +1066,8 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_single_threaded_matmul_impl",
-        "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
     ],
 )
@@ -1079,8 +1079,8 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_single_threaded_matmul_impl",
-        "//third_party/eigen3",
         "@com_google_absl//absl/base:core_headers",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/framework/contraction:eigen_contraction_kernel_no_mkl",
     ],
 )
@@ -1092,8 +1092,8 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "//third_party/eigen3",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1115,13 +1115,13 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "//third_party/eigen3",
         "//xla:executable_run_options",
         "//xla/service:custom_call_status_internal",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:mutex",
@@ -1140,7 +1140,6 @@ xla_cc_test(
         ":runtime_matmul_acl",
         ":runtime_matmul_mkl",
         ":runtime_single_threaded_matmul",
-        "//third_party/eigen3",
         "//xla:array2d",
         "//xla:types",
         "//xla:util",
@@ -1149,6 +1148,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
@@ -1163,10 +1163,10 @@ xla_cc_test(
     ],
     deps = [
         ":runtime_single_threaded_fft",
-        "//third_party/eigen3",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/tests:xla_internal_test_main",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
     ],

@@ -79,7 +79,6 @@ cc_library(
     name = "replay_computation_library",
     srcs = ["replay_computation.cc"],
     deps = [
-        "//third_party/eigen3",
         "//xla:debug_options_flags",
         "//xla:execution_options_util",
         "//xla:literal",
@@ -98,6 +97,7 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/lib/io:record_reader",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",

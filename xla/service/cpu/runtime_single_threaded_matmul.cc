@@ -16,7 +16,7 @@ limitations under the License.
 #include "xla/service/cpu/runtime_single_threaded_matmul.h"
 
 #include "absl/base/attributes.h"
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 
 #if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
 #include "tsl/framework/contraction/eigen_contraction_kernel.h"

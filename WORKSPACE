@@ -6,6 +6,10 @@ workspace(name = "xla")
 # restriction that load() statements need to be at the top of .bzl files.
 # E.g. we can not retrieve a new repository with http_archive and then load()
 # a macro from that repository in the same file.
+load(":workspace4.bzl", "xla_workspace4")
+
+xla_workspace4()
+
 load(":workspace3.bzl", "xla_workspace3")
 
 xla_workspace3()

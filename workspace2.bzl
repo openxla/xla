@@ -1,5 +1,8 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
+# Import TSL Workspaces
+load("@tsl//:workspace2.bzl", "tsl_workspace2")
+
 # Import third party config rules.
 load("@bazel_skylib//lib:versions.bzl", "versions")
 load("//third_party/gpus:cuda_configure.bzl", "cuda_configure")
@@ -12,7 +15,7 @@ load("//third_party/systemlibs:syslibs_configure.bzl", "syslibs_configure")
 load("//tools/toolchains:cpus/aarch64/aarch64_compiler_configure.bzl", "aarch64_compiler_configure")
 load("//tools/toolchains:cpus/arm/arm_compiler_configure.bzl", "arm_compiler_configure")
 load("//tools/toolchains/embedded/arm-linux:arm_linux_toolchain_configure.bzl", "arm_linux_toolchain_configure")
-load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls", "tf_vendored")
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 load("//third_party/clang_toolchain:cc_configure_clang.bzl", "cc_download_clang_toolchain")
 load("//third_party/llvm:setup.bzl", "llvm_setup")
 
@@ -52,8 +55,6 @@ def _initialize_third_party():
     stablehlo()
     tensorrt()
     triton()
-
-    tf_vendored(name = "tsl", relpath = "third_party/tsl")
 
 # Toolchains & platforms required by Tensorflow to build.
 def _tf_toolchains():
@@ -605,6 +606,8 @@ def _tf_repositories():
 # buildifier: disable=function-docstring
 # buildifier: disable=unnamed-macro
 def workspace():
+    tsl_workspace2()
+
     # Check the bazel version before executing any repository rules, in case
     # those rules rely on the version we require here.
     versions.check("1.0.0")

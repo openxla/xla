@@ -970,7 +970,7 @@ cc_library(
     deps = [
         ":mutex",
         ":types",
-        "@xla//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1014,7 +1014,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":byte_order",
-        "@xla//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1023,7 +1023,7 @@ cc_library(
     hdrs = ["float8.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "@xla//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1036,7 +1036,7 @@ cuda_library(
         ":float8",
         ":test",
         ":test_main",
-        "@xla//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 

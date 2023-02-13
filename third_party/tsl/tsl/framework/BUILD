@@ -300,7 +300,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
-        "@xla//third_party/eigen3",
+        "@eigen_archive//:eigen3",
     ],
 )
 

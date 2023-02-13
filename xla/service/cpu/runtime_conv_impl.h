@@ -15,7 +15,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_CONV_IMPL_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_CONV_IMPL_H_
 
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tsl/framework/convolution/eigen_spatial_convolutions.h"
 
 #if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)

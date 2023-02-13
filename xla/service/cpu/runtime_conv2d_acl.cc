@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/service/cpu/runtime_lightweight_check.h"
 #include "tsl/platform/logging.h"
 #define EIGEN_USE_THREADS
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 
 namespace {
 int32_t ACLDepthwiseConvImpl(

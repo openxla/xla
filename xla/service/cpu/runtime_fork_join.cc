@@ -20,7 +20,7 @@ limitations under the License.
 #include "absl/base/dynamic_annotations.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/executable_run_options.h"
 #include "xla/service/custom_call_status_internal.h"
 #include "tsl/platform/blocking_counter.h"

@@ -22,7 +22,7 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 #include "absl/base/dynamic_annotations.h"
-#include "third_party/eigen3/unsupported/Eigen/CXX11/ThreadPool"
+#include "unsupported/Eigen/CXX11/ThreadPool"  // from @eigen_archive
 
 namespace {
 // BLAS GEMM API for 32-bit Matrix Multiplication.

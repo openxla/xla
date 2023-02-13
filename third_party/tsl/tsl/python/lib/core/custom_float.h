@@ -34,7 +34,7 @@ limitations under the License.
 #include <Python.h>
 
 #include "absl/strings/str_cat.h"
-#include "third_party/eigen3/Eigen/Core"
+#include "Eigen/Core"  // from @eigen_archive
 #include "tsl/platform/logging.h"
 
 #undef copysign  // TODO(ddunleavy): temporary fix for Windows bazel build

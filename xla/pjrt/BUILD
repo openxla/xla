@@ -523,7 +523,6 @@ cc_library(
         ":transpose",
         ":utils",
         ":worker_thread",
-        "//third_party/eigen3",  # TODO(zhangqiaorjc): Remove if use TFRT threadpool.
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -547,6 +546,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",  # TODO(zhangqiaorjc): Remove if use TFRT threadpool.
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:support",
         "@tsl//tsl/platform:denormal",
@@ -603,7 +603,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":lru_cache",
-        "//third_party/eigen3",
         "//xla:permutation_util",
         "//xla:status",
         "//xla:statusor",
@@ -615,6 +614,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -625,7 +625,6 @@ xla_cc_test(
     srcs = ["transpose_test.cc"],
     deps = [
         ":transpose",
-        "//third_party/eigen3",
         "//xla:array",
         "//xla:permutation_util",
         "//xla:shape_util",
@@ -633,6 +632,7 @@ xla_cc_test(
         "//xla:util",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/numeric:int128",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
