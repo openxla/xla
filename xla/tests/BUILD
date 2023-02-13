@@ -1303,7 +1303,8 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
+        ":xla_internal_test_main",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
     ],
 )
