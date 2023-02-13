@@ -80,6 +80,7 @@ limitations under the License.
 #include "xla/map_util.h"
 #include "xla/mlir/framework/ir/xla_framework.h"
 #include "xla/mlir/framework/transforms/passes.h"
+#include "xla/mlir/math/transforms/passes.h"
 #include "xla/mlir/runtime/transforms/calling_convention.h"
 #include "xla/mlir/runtime/transforms/compilation_pipeline_cpu.h"
 #include "xla/mlir/runtime/transforms/compiler.h"
@@ -1042,6 +1043,8 @@ Status LowerMLIRModule(mlir::ModuleOp mlir_module,
   options.outline_with_xla_framework = true;
   TF_RETURN_IF_ERROR(CreateHloXlaRuntimePipeline(xla_pm, options));
 
+  pm.addNestedPass<mlir::func::FuncOp>(
+      xla::CreateMathApproximationPass({"all"}));
   pm.addNestedPass<mlir::func::FuncOp>(mlir::arith::createArithExpandOpsPass());
   pm.addNestedPass<mlir::func::FuncOp>(mlir::memref::createExpandOpsPass());
   pm.addNestedPass<mlir::func::FuncOp>(mlir::createLowerAffinePass());

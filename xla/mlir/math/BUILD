@@ -6,6 +6,8 @@ package_group(
         # # TODO(ezhulenev): Clean up dependencies that are leforvers from Autofusion project.
         # "@tf_runtime//...",
         # copybara:uncomment_end(google-only)
+        # TODO(ecg): Targets depending on mlir must be under xla/mlir
+        "//xla/service/cpu/...",
     ],
 )
 
