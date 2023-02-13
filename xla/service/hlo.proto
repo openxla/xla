@@ -442,35 +442,67 @@ message HloInputOutputAliasProto {
 }
 
 message DynamicParameterBindingProto {
-  // A list of bindings which indicates that the `target_param_dim_num` in
-  // the subshape `target_param_index` of parameter `target_param_num`
-  // is a dynamic dimension and its real dynamic size is represented
-  // by `dynamic_param_index` in parameter `dynamic_param_num`.
+  // Dynamic dimension parameter can be bound to the dimension size of another
+  // parameter or an output.
+  enum Target {
+    OPERATION_UNSPECIFIED = 0;
+    KPARAM = 1;
+    KOUTPUT = 2;
+  }
+
+  // A list of bindings which indicates that the `target_dim_num` in the
+  // subshape `target_index` of parameter or output (depends on `target`)
+  // `target_num` is a dynamic dimension and its real dynamic size is
+  // represented by `dynamic_param_index` in parameter `dynamic_param_num`.
   //
   // As an example, imagine we have a program:
   //
   // ENTRY main {
   //   a = f32[] parameter(0)
   //   b = f32[10] parameter(1)
-  //   ROOT root = (f32[], f32[10]) tuple(%a, %b)
+  //   c = f32[10] parameter(2)
+  //   ROOT %add = f32[10] add(f32[10] %b, f32[10] %c)
   // }
   //
-  // Let's say 'b' (param index 1) is a dynamic shape whose input has
-  // an upperbound of 10 and real size is determined at runtime.'a'
-  // represents the real size of b's first dimension.
+  // Let's say 'b' and 'c' (param index 1 and 2) are a dynamically shaped
+  // parameters whose first dimension has an upperbound of 10 and real size is
+  // determined at runtime. 'a' represents the real size of b's and c's first
+  // dimension. It also represents the real size of the output's first
+  // dimension.
   //
   // In this case, the fields are set in the following way:
-  // dynamic_param_num = 1
-  // dynamic_param_index = {}
-  // target_param_num = 0
-  // target_param_index = {}
-  // target_param_dim_num = 0
+  //
+  //   // Dynamic dimensions binding for parameter 'b'.
+  //   dynamic_param_num = 0
+  //   dynamic_param_index = {}
+  //   target = KPARAM
+  //   target_num = 1
+  //   target_index = {}
+  //   target_dim_num = 0
+  //
+  //   // Dynamic dimensions binding for parameter 'c`.
+  //   dynamic_param_num = 0
+  //   dynamic_param_index = {}
+  //   target = KPARAM
+  //   target_num = 2
+  //   target_index = {}
+  //   target_dim_num = 0
+  //
+  //   // Dynamic dimensions binding for the output.
+  //   dynamic_param_num = 0
+  //   dynamic_param_index = {}
+  //   target = KOUTPUT
+  //   target_num = 0
+  //   target_index = {}
+  //   target_dim_num = 0
+  //
   message Binding {
     int64 dynamic_param_num = 1;
     repeated int64 dynamic_param_index = 2;
-    int64 target_param_num = 3;
-    repeated int64 target_param_index = 4;
-    int64 target_param_dim_num = 5;
+    Target target = 6;
+    int64 target_num = 3;
+    repeated int64 target_index = 4;
+    int64 target_dim_num = 5;
   }
 
   repeated Binding entries = 1;

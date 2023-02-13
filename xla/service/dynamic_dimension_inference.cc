@@ -104,6 +104,31 @@ class DynamicDimensionInferenceVisitor : public DfsHloVisitorWithDefault {
       CHECK(assertion_generator);
       assertion_generator(visitor.shape_assertion_);
     }
+
+    TF_RETURN_IF_ERROR(param_bindings.ForEachBinding(
+        [&](const DynamicParameterBinding::DynamicParameter& dynamic_parameter,
+            const DynamicParameterBinding::DynamicDimension&
+                dynamic_dimension) {
+          if (dynamic_dimension.target != DynamicParameterBinding::kOutput ||
+              dynamic_dimension.target_num != 0) {
+            return OkStatus();
+          }
+          HloInstruction* output = computation->root_instruction();
+
+          HloInstruction* dynamic_size = computation->parameter_instruction(
+              dynamic_parameter.parameter_num);
+          for (int64_t i : dynamic_parameter.parameter_index) {
+            dynamic_size = computation->AddInstruction(
+                HloInstruction::CreateGetTupleElement(
+                    ShapeUtil::GetSubshape(dynamic_size->shape(), {i}),
+                    dynamic_size, i));
+          }
+
+          parent->SetDynamicSize(output, dynamic_dimension.target_index,
+                                 dynamic_dimension.dimension, dynamic_size);
+          return OkStatus();
+        }));
+
     return OkStatus();
   }
 
@@ -1586,7 +1611,7 @@ Status DynamicDimensionInferenceVisitor::HandleConditional(
           DynamicParameterBinding::DynamicParameter dynamic_parameter{
               0, {dynamic_size_to_operand_id_index_map[dynamic_size]}};
           DynamicParameterBinding::DynamicDimension dynamic_dimension{
-              0, {index}, dimension};
+              DynamicParameterBinding::kParam, 0, {index}, dimension};
           TF_RETURN_IF_ERROR(dynamic_parameter_binding.Bind(dynamic_parameter,
                                                             dynamic_dimension));
 
@@ -1845,7 +1870,7 @@ Status DynamicDimensionInferenceVisitor::HandleWhile(HloInstruction* hlo) {
           DynamicParameterBinding::DynamicParameter dynamic_parameter{
               0, {output_dynamic_size_index}};
           DynamicParameterBinding::DynamicDimension dynamic_dimension{
-              0, index, dimension};
+              DynamicParameterBinding::kParam, 0, index, dimension};
           TF_RETURN_IF_ERROR(
               binding_for_while.Bind(dynamic_parameter, dynamic_dimension));
           // This is the updated output dynamic size coming out of hlo while
@@ -1933,12 +1958,13 @@ Status DynamicDimensionInferenceVisitor::HandleParameter(HloInstruction* hlo) {
   return param_bindings_.ForEachBinding(
       [&](const DynamicParameterBinding::DynamicParameter& dynamic_parameter,
           const DynamicParameterBinding::DynamicDimension& dynamic_dimension) {
-        if (dynamic_dimension.parameter_num != hlo->parameter_number()) {
+        if (dynamic_dimension.target != DynamicParameterBinding::kParam ||
+            dynamic_dimension.target_num != hlo->parameter_number()) {
           return OkStatus();
         }
         HloComputation* computation = hlo->parent();
         HloInstruction* target_parameter =
-            computation->parameter_instruction(dynamic_dimension.parameter_num);
+            computation->parameter_instruction(dynamic_dimension.target_num);
 
         HloInstruction* dynamic_size =
             computation->parameter_instruction(dynamic_parameter.parameter_num);
@@ -1950,7 +1976,7 @@ Status DynamicDimensionInferenceVisitor::HandleParameter(HloInstruction* hlo) {
         }
 
         parent_->SetDynamicSize(target_parameter,
-                                dynamic_dimension.parameter_index,
+                                dynamic_dimension.target_index,
                                 dynamic_dimension.dimension, dynamic_size);
         return OkStatus();
       });

@@ -505,4 +505,59 @@ PYBIND11_MODULE(_mlirHlo, m) {
                                        mlirMhloTypeExtensionsGetBoundsSize,
                                        mlirMhloTypeExtensionsGetBoundsElem);
       });
+
+  mlir::python::adaptors::mlir_attribute_subclass(
+      m, "DynamicParameterBinding", mlirMhloAttributeIsDynamicParameterBinding)
+      .def_classmethod(
+          "get",
+          [](py::object cls, int64_t dynamicParamNum,
+             const std::vector<int64_t> &dynamicParamIndices,
+             const std::string &target, int64_t targetNum,
+             const std::vector<int64_t> &targetIndices, int64_t targetDimNum,
+             MlirContext ctx) {
+            return cls(mlirMhloDynamicParameterBindingGet(
+                ctx, dynamicParamNum, dynamicParamIndices.size(),
+                dynamicParamIndices.data(),
+                mlirStringRefCreate(target.c_str(), target.size()), targetNum,
+                targetIndices.size(), targetIndices.data(), targetDimNum));
+          },
+          py::arg("cls"), py::arg("dynamic_param_num"),
+          py::arg("dynamic_param_indices"), py::arg("target"),
+          py::arg("target_num"), py::arg("target_indices"),
+          py::arg("target_dim_num"), py::arg("context") = py::none(),
+          "Creates a DynamciParameterBinding attribute with the given "
+          "arguments")
+      .def_property_readonly(
+          "dynamic_param_num",
+          [](MlirAttribute self) {
+            return mlirMhloDynamicParameterBindingGetDynamicParamNum(self);
+          })
+      .def_property_readonly(
+          "dynamic_param_indices",
+          [](MlirAttribute self) {
+            return attributePropertyVector(
+                self, mlirMhloDynamicParameterBindingGetDynamicParamIndicesSize,
+                mlirMhloDynamicParameterBindingGetDynamicParamIndicesElem);
+          })
+      .def_property_readonly(
+          "target",
+          [](MlirAttribute self) {
+            auto target = mlirMhloDynamicParameterBindingGetTarget(self);
+            return py::str(target.data, target.length);
+          })
+      .def_property_readonly(
+          "target_num",
+          [](MlirAttribute self) {
+            return mlirMhloDynamicParameterBindingGetTargetNum(self);
+          })
+      .def_property_readonly(
+          "target_indices",
+          [](MlirAttribute self) {
+            return attributePropertyVector(
+                self, mlirMhloDynamicParameterBindingGetTargetIndicesSize,
+                mlirMhloDynamicParameterBindingGetTargetIndicesElem);
+          })
+      .def_property_readonly("target_dim_num", [](MlirAttribute self) {
+        return mlirMhloDynamicParameterBindingGetTargetDimNum(self);
+      });
 }

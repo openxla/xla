@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/layout_util.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -137,10 +138,11 @@ mlir::ArrayAttr ConvertDynamicParameterBindings(
         llvm::SmallVector<int64_t, 4> dpis;
         for (auto dpi : source.parameter_index) dpis.push_back(dpi);
         llvm::SmallVector<int64_t, 4> tpis;
-        for (auto tpi : target.parameter_index) tpis.push_back(tpi);
+        for (auto tpi : target.target_index) tpis.push_back(tpi);
         bindings.push_back(mlir::mhlo::DynamicParameterBindingAttr::get(
             builder->getContext(), source.parameter_num, dpis,
-            target.parameter_num, tpis, target.dimension));
+            (mlir::mhlo::Target)target.target, target.target_num, tpis,
+            target.dimension));
         return OkStatus();
       });
   return mlir::ArrayAttr::get(builder->getContext(), bindings);

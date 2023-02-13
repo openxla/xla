@@ -381,6 +381,43 @@ mlirMhloTypeExtensionsGetBoundsSize(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int64_t
 mlirMhloTypeExtensionsGetBoundsElem(MlirAttribute attr, intptr_t pos);
 
+//
+// DynamicParameterBinding
+//
+
+MLIR_CAPI_EXPORTED MlirAttribute mlirMhloDynamicParameterBindingGet(
+    MlirContext ctx, int64_t dynamicParamNum, intptr_t nDynamicParamIndicesSize,
+    const int64_t *dynamicParamIndices, MlirStringRef target, int64_t targetNum,
+    intptr_t nTargetIndicesSize, const int64_t *targetIndices,
+    int64_t targetDimNum);
+
+MLIR_CAPI_EXPORTED bool mlirMhloAttributeIsDynamicParameterBinding(
+    MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED int64_t
+mlirMhloDynamicParameterBindingGetDynamicParamNum(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED intptr_t
+mlirMhloDynamicParameterBindingGetDynamicParamIndicesSize(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED int64_t
+mlirMhloDynamicParameterBindingGetDynamicParamIndicesElem(MlirAttribute attr,
+                                                          intptr_t pos);
+
+MLIR_CAPI_EXPORTED MlirStringRef
+mlirMhloDynamicParameterBindingGetTarget(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED int64_t
+mlirMhloDynamicParameterBindingGetTargetNum(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED intptr_t
+mlirMhloDynamicParameterBindingGetTargetIndicesSize(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED int64_t mlirMhloDynamicParameterBindingGetTargetIndicesElem(
+    MlirAttribute attr, intptr_t pos);
+MLIR_CAPI_EXPORTED
+int64_t mlirMhloDynamicParameterBindingGetTargetDimNum(MlirAttribute attr);
+
 #ifdef __cplusplus
 }
 #endif

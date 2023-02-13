@@ -216,3 +216,24 @@ def test_type_extensions():
   attr = mhlo.TypeExtensions.get(bounds=[128, dyn_size])
   assert attr is not None
   assert attr.bounds == [128, dyn_size]
+
+
+@run
+def test_dynamic_param_binding():
+  """Check that DynamicParameterBinding attribute is available and usable."""
+
+  attr = mhlo.DynamicParameterBinding.get(
+      dynamic_param_num=0,
+      dynamic_param_indices=[1, 2],
+      target="kOutput",
+      target_num=1,
+      target_indices=[1, 2],
+      target_dim_num=3,
+  )
+  assert attr is not None
+  assert attr.dynamic_param_num == 0
+  assert attr.dynamic_param_indices == [1, 2]
+  assert attr.target == "kOutput"
+  assert attr.target_num == 1
+  assert attr.target_indices == [1, 2]
+  assert attr.target_dim_num == 3

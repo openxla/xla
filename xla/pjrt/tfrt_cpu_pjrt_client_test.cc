@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/tfrt_cpu_pjrt_client.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -141,6 +142,72 @@ TEST(TfrtCpuClientTest, HloSnapshot) {
   ASSERT_EQ(
       *Literal::CreateFromProto(snapshot.result()),
       LiteralUtil::CreateR2<float>({{11.0, 22.0}, {33.0, 44.0}, {55.0, 66.0}}));
+}
+
+TEST(TfrtCpuClientTest, HloBoundedDynamic) {
+  constexpr char kProgram[] = R"(
+HloModule jit_f, entry_computation_layout={(s32[],f32[<=3]{0},f32[<=3]{0})->f32[<=3]{0}}
+
+ENTRY %main.5 (Arg_0.1: s32[], Arg_1.2: f32[<=3], Arg_2.3: f32[<=3]) -> f32[<=3] {
+  %Arg_0.1 = s32[] parameter(0)
+  %Arg_1.2 = f32[<=3] parameter(1)
+  %Arg_2.3 = f32[<=3] parameter(2)
+  ROOT %add.4 = f32[<=3] add(f32[<=3] %Arg_1.2, f32[<=3] %Arg_2.3), metadata={source_file="dym.mlir" source_line=3}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(/*asynchronous=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                          ParseAndReturnUnverifiedModule(kProgram, {}));
+  TF_CHECK_OK(hlo_module->dynamic_parameter_binding().Bind(
+      DynamicParameterBinding::DynamicParameter{0, {}},
+      DynamicParameterBinding::DynamicDimension{
+          DynamicParameterBinding::kParam, 1, {}, 0}));
+  TF_CHECK_OK(hlo_module->dynamic_parameter_binding().Bind(
+      DynamicParameterBinding::DynamicParameter{0, {}},
+      DynamicParameterBinding::DynamicDimension{
+          DynamicParameterBinding::kParam, 2, {}, 0}));
+  TF_CHECK_OK(hlo_module->dynamic_parameter_binding().Bind(
+      DynamicParameterBinding::DynamicParameter{0, {}},
+      DynamicParameterBinding::DynamicDimension{
+          DynamicParameterBinding::kOutput, 0, {}, 0}));
+
+  std::string dir = tsl::testing::TmpDir();
+  xla::CompileOptions options;
+  auto* debug_opts = options.executable_build_options.mutable_debug_options();
+  debug_opts->set_xla_dump_to(dir);
+  debug_opts->set_xla_dump_hlo_snapshots(true);
+  debug_opts->set_xla_cpu_use_xla_runtime(true);
+
+  XlaComputation xla_computation(hlo_module->ToProto());
+  TF_ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
+                          client->Compile(xla_computation, options));
+
+  int data0 = 1;
+  std::vector<float> data1{10.0, 20.0, 30.0};
+  Shape shape0 = ShapeUtil::MakeShape(S32, {});
+  Shape shape1 = ShapeUtil::MakeShape(F32, {3}, {true});
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer0,
+      client->BufferFromHostBuffer(
+          &data0, shape0.element_type(), shape0.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->addressable_devices()[0]));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer1,
+      client->BufferFromHostBuffer(
+          data1.data(), shape1.element_type(), {3},
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->addressable_devices()[0]));
+
+  auto result = pjrt_executable->Execute(
+      /*argument_handles=*/{{buffer0.get(), buffer1.get(), buffer1.get()}},
+      /*options=*/{});
+
+  std::shared_ptr<Literal> result_literal =
+      result.value()[0][0]->ToLiteralSync().value();
+  ASSERT_EQ(*result_literal, LiteralUtil::CreateR1<float>({20}));
 }
 
 }  // namespace

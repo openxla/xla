@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/client/sharding_builder.h"
 #include "xla/client/xla_computation.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -684,18 +685,19 @@ void XlaBuilder::IsConstantVisitor(const int64_t op_handle, int depth,
 
 Status XlaBuilder::SetDynamicBinding(int64_t dynamic_size_param_num,
                                      ShapeIndex dynamic_size_param_index,
-                                     int64_t target_param_num,
-                                     ShapeIndex target_param_index,
+                                     DynamicParameterBinding::Target target,
+                                     int64_t target_num,
+                                     ShapeIndex target_index,
                                      int64_t target_dim_num) {
   bool param_exists = false;
   for (size_t index = 0; index < instructions_.size(); ++index) {
     HloInstructionProto& instr = instructions_[index];
     if (instr.opcode() == HloOpcodeString(HloOpcode::kParameter) &&
-        instr.parameter_number() == target_param_num) {
+        instr.parameter_number() == target_num) {
       param_exists = true;
       Shape param_shape(instr.shape());
       Shape* param_shape_ptr = &param_shape;
-      for (int64_t index : target_param_index) {
+      for (int64_t index : target_index) {
         param_shape_ptr = param_shape_ptr->mutable_tuple_shapes(index);
       }
       param_shape_ptr->set_dynamic_dimension(target_dim_num,
@@ -709,14 +711,14 @@ Status XlaBuilder::SetDynamicBinding(int64_t dynamic_size_param_num,
     return InvalidArgument(
         "Asked to mark parameter %lld as dynamic sized parameter, but the "
         "doesn't exists",
-        target_param_num);
+        target_num);
   }
 
   TF_RETURN_IF_ERROR(dynamic_parameter_binding_.Bind(
       DynamicParameterBinding::DynamicParameter{dynamic_size_param_num,
                                                 dynamic_size_param_index},
-      DynamicParameterBinding::DynamicDimension{
-          target_param_num, target_param_index, target_dim_num}));
+      DynamicParameterBinding::DynamicDimension{target, target_num,
+                                                target_index, target_dim_num}));
   return OkStatus();
 }
 

@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal_util.h"
 #include "xla/mlir/utils/error_util.h"
+#include "xla/mlir_hlo/_virtual_includes/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -244,15 +245,26 @@ static std::vector<xla::CrossProgramPrefetch> Convert_cross_program_prefetches(
 }
 
 static xla::DynamicParameterBinding Convert_dynamic_parameter_bindings(
-    mlir::ArrayAttr dpbs) {
+    mlir::ArrayAttr dpbs, mlir::func::FuncOp main) {
   xla::DynamicParameterBinding xla_dpb;
   for (auto dpb : dpbs) {
     auto binding = dpb.cast<mlir::mhlo::DynamicParameterBindingAttr>();
-    auto _ = xla_dpb.Bind({binding.getDynamicParamNum(),
-                           xla::ShapeIndex(binding.getDynamicParamIndices())},
-                          {binding.getTargetParamNum(),
-                           xla::ShapeIndex(binding.getTargetParamIndices()),
-                           binding.getTargetParamDimNum()});
+
+    auto targetNum = binding.getTargetNum();
+    auto targetIndices = xla::ShapeIndex(binding.getTargetIndices());
+    // For hlo, multiple results are represented as a tuple, adjust targetNum
+    // and targetIndices
+    if (binding.getTarget() == mlir::mhlo::Target::kOutput &&
+        main.getFunctionType().getNumResults() > 1) {
+      targetIndices.push_front(targetNum);
+      targetNum = 0;
+    }
+
+    auto _ =
+        xla_dpb.Bind({binding.getDynamicParamNum(),
+                      xla::ShapeIndex(binding.getDynamicParamIndices())},
+                     {(xla::DynamicParameterBinding::Target)binding.getTarget(),
+                      targetNum, targetIndices, binding.getTargetDimNum()});
   }
   return xla_dpb;
 }
@@ -3087,23 +3099,6 @@ LogicalResult ConvertToHloModule::LowerRegionAsComputation(
                                    func, implicit_operands);
 }
 
-void AddDynamicParameterBindingEntry(xla::DynamicParameterBindingProto* binding,
-                                     int arg_index, int32_t shape_index,
-                                     int32_t padding_arg_index,
-                                     bool use_tuple_args) {
-  auto* entry = binding->add_entries();
-  entry->set_target_param_dim_num(shape_index);
-  if (use_tuple_args) {
-    entry->set_target_param_num(0);
-    entry->add_target_param_index(arg_index);
-    entry->set_dynamic_param_num(0);
-    entry->add_dynamic_param_index(padding_arg_index);
-  } else {
-    entry->set_target_param_num(arg_index);
-    entry->set_dynamic_param_num(padding_arg_index);
-  }
-}
-
 // Runs the PrepareForExport pass on the ModuleOp.
 xla::Status PrepareForExport(mlir::ModuleOp module) {
   bool hasShapeOps = false;
@@ -3184,8 +3179,9 @@ xla::Status ConvertMlirHloToHlo(mlir::ModuleOp module, xla::HloProto* hlo_proto,
   }
   if (auto dynamic_parameter_bindings = module->getAttrOfType<mlir::ArrayAttr>(
           "mhlo.dynamic_parameter_bindings")) {
+    mlir::func::FuncOp main = module.lookupSymbol<mlir::func::FuncOp>("main");
     auto bindings =
-        Convert_dynamic_parameter_bindings(dynamic_parameter_bindings)
+        Convert_dynamic_parameter_bindings(dynamic_parameter_bindings, main)
             .ToProto();
     *hlo_module.mutable_dynamic_parameter_binding() = bindings;
   }

@@ -2191,11 +2191,20 @@ StatusOr<bool> DynamicPadder::Run(
       [&](const DynamicParameterBinding::DynamicParameter& dynamic_parameter,
           const DynamicParameterBinding::DynamicDimension& dynamic_dimension)
           -> Status {
+        if (dynamic_dimension.target == DynamicParameterBinding::kOutput) {
+          HloInstruction* output =
+              module->entry_computation()->root_instruction();
+          ShapeUtil::UpdateDynamicDimension(output->mutable_shape(),
+                                            dynamic_dimension.target_index,
+                                            dynamic_dimension.dimension, false);
+          return OkStatus();
+        }
+
         HloInstruction* parameter =
             module->entry_computation()->parameter_instruction(
-                dynamic_dimension.parameter_num);
+                dynamic_dimension.target_num);
         ShapeUtil::UpdateDynamicDimension(parameter->mutable_shape(),
-                                          dynamic_dimension.parameter_index,
+                                          dynamic_dimension.target_index,
                                           dynamic_dimension.dimension, false);
         return OkStatus();
       }));

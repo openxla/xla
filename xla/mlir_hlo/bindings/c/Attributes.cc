@@ -654,3 +654,81 @@ intptr_t mlirMhloTypeExtensionsGetBoundsSize(MlirAttribute attr) {
 int64_t mlirMhloTypeExtensionsGetBoundsElem(MlirAttribute attr, intptr_t pos) {
   return unwrap(attr).cast<mlir::mhlo::TypeExtensionsAttr>().getBounds()[pos];
 }
+
+//
+// DynamicParameterBinding
+//
+
+MlirAttribute mlirMhloDynamicParameterBindingGet(
+    MlirContext ctx, int64_t dynamicParamNum, intptr_t nDynamicParamIndicesSize,
+    const int64_t *dynamicParamIndices, MlirStringRef target, int64_t targetNum,
+    intptr_t nTargetIndicesSize, const int64_t *targetIndices,
+    int64_t targetDimNum) {
+  std::optional<mlir::mhlo::Target> dynTarget =
+      mlir::mhlo::symbolizeTarget(unwrap(target));
+  if (!dynTarget) llvm_unreachable("Invalid dynamic target specified.");
+  return wrap(mlir::mhlo::DynamicParameterBindingAttr::get(
+      unwrap(ctx), dynamicParamNum,
+      llvm::ArrayRef(dynamicParamIndices, nDynamicParamIndicesSize),
+      dynTarget.value(), targetNum,
+      llvm::ArrayRef(targetIndices, nTargetIndicesSize), targetDimNum));
+}
+
+bool mlirMhloAttributeIsDynamicParameterBinding(MlirAttribute attr) {
+  return unwrap(attr).isa<mlir::mhlo::DynamicParameterBindingAttr>();
+}
+
+int64_t mlirMhloDynamicParameterBindingGetDynamicParamNum(MlirAttribute attr) {
+  return unwrap(attr)
+      .cast<mlir::mhlo::DynamicParameterBindingAttr>()
+      .getDynamicParamNum();
+}
+
+intptr_t mlirMhloDynamicParameterBindingGetDynamicParamIndicesSize(
+    MlirAttribute attr) {
+  return unwrap(attr)
+      .cast<mlir::mhlo::DynamicParameterBindingAttr>()
+      .getDynamicParamIndices()
+      .size();
+}
+
+int64_t mlirMhloDynamicParameterBindingGetDynamicParamIndicesElem(
+    MlirAttribute attr, intptr_t pos) {
+  return unwrap(attr)
+      .cast<mlir::mhlo::DynamicParameterBindingAttr>()
+      .getDynamicParamIndices()[pos];
+}
+
+MlirStringRef mlirMhloDynamicParameterBindingGetTarget(MlirAttribute attr) {
+  return wrap(mlir::mhlo::stringifyTarget(
+      unwrap(attr)
+          .cast<mlir::mhlo::DynamicParameterBindingAttr>()
+          .getTarget()));
+}
+
+int64_t mlirMhloDynamicParameterBindingGetTargetNum(MlirAttribute attr) {
+  return unwrap(attr)
+      .cast<mlir::mhlo::DynamicParameterBindingAttr>()
+      .getTargetNum();
+}
+
+intptr_t mlirMhloDynamicParameterBindingGetTargetIndicesSize(
+    MlirAttribute attr) {
+  return unwrap(attr)
+      .cast<mlir::mhlo::DynamicParameterBindingAttr>()
+      .getTargetIndices()
+      .size();
+}
+
+int64_t mlirMhloDynamicParameterBindingGetTargetIndicesElem(MlirAttribute attr,
+                                                            intptr_t pos) {
+  return unwrap(attr)
+      .cast<mlir::mhlo::DynamicParameterBindingAttr>()
+      .getTargetIndices()[pos];
+}
+
+int64_t mlirMhloDynamicParameterBindingGetTargetDimNum(MlirAttribute attr) {
+  return unwrap(attr)
+      .cast<mlir::mhlo::DynamicParameterBindingAttr>()
+      .getTargetDimNum();
+}
