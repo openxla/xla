@@ -4,8 +4,8 @@
 # This is the BUILD file used for the @eigen_archive external repository.
 
 licenses([
-    # Note: Although Eigen also includes GPL V3 and LGPL v2.1+ code, TensorFlow
-    #       has taken special care to not reference any restricted code.
+    # Note: Eigen is an MPL2 library that includes GPL v3 and LGPL v2.1+ code.
+    #       We've taken special care to not reference any restricted code.
     "reciprocal",  # MPL2
     "notice",  # Portions BSD
 ])
@@ -41,33 +41,16 @@ EIGEN_MPL2_SOURCES = glob(
     ],
 )
 
-alias(
-    name = "eigen3",
-    actual = "@xla//third_party/eigen3",
-)
-
 cc_library(
-    name = "eigen3_internal",
+    name = "eigen3",
     srcs = EIGEN_MPL2_SOURCES,
     hdrs = EIGEN_HEADERS,
     defines = [
         # This define (mostly) guarantees we don't link any problematic
         # code. We use it, but we do not rely on it, as evidenced above.
         "EIGEN_MPL2_ONLY",
+        # Ensure compatibility with AVX512 builds.
         "EIGEN_MAX_ALIGN_BYTES=64",
     ],
-    includes = ["."],
-    visibility = ["//visibility:public"],
-)
-
-filegroup(
-    name = "eigen_header_files",
-    srcs = EIGEN_HEADERS,
-    visibility = ["//visibility:public"],
-)
-
-filegroup(
-    name = "eigen_source_files",
-    srcs = EIGEN_MPL2_SOURCES,
     visibility = ["//visibility:public"],
 )

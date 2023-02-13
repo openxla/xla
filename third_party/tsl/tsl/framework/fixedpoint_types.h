@@ -18,9 +18,10 @@ limitations under the License.
 
 #include <stdint.h>
 
-#include <Eigen/Core>
 #include <cmath>
 #include <iostream>
+
+#include "Eigen/Core"  // from @eigen_archive
 
 namespace Eigen {
 
