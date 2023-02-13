@@ -17,6 +17,10 @@ load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
+load(
+    "@tsl//tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
@@ -135,6 +139,23 @@ xla_cc_binary(
         ":replay_computation_library",
         "//xla/service:gpu_plugin",
         "//xla/stream_executor:cuda_platform",
+    ],
+)
+
+xla_cc_test(
+    name = "replay_computation_bin_gpu_test",
+    srcs = ["replay_computation_bin_gpu_test.cc"],
+    data = [
+        "data/add.hlo",
+        ":replay_computation_gpu",
+        ":replay_computation_interpreter",
+    ],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:subprocess",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
