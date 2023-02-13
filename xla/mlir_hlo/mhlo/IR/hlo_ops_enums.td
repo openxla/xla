@@ -261,4 +261,12 @@ def MHLO_RngAlgorithmAttr : EnumAttr<MHLO_Dialect, MHLO_RngAlgorithm, "rng_algor
   let assemblyFormat = "`<` $value `>`";
 }
 
+def KParam : I32EnumAttrCase<"kParam", 1>;
+def KOutput : I32EnumAttrCase<"kOutput", 2>;
+
+def DynParamTargetEnum : I32EnumAttr<"Target", "dynamic parameter binding target", [
+  KParam, KOutput]> {
+    let cppNamespace = "::mlir::mhlo";
+}
+
 #endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ENUMS

@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "xla/literal_util.h"
 #include "xla/runtime/cpu_event.h"
+#include "xla/shape_util.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 
@@ -1429,6 +1430,38 @@ static std::vector<xla::cpu::BufferDesc> MakeXLARuntimeDescriptorTable(
   return descriptor_table;
 }
 
+static StatusOr<Shape> GetActualResultShape(
+    absl::Span<std::pair<bool, TrackedTfrtCpuDeviceBuffer*> const> arguments,
+    HloModule& module, const Shape& bounded_shape) {
+  Shape actual_shape = bounded_shape;
+  bool changed = false;
+  TF_RETURN_IF_ERROR(module.dynamic_parameter_binding().ForEachBinding(
+      [&](const DynamicParameterBinding::DynamicParameter& dynamic_parameter,
+          const DynamicParameterBinding::DynamicDimension& dynamic_dimension)
+          -> Status {
+        if (dynamic_dimension.target == DynamicParameterBinding::kOutput) {
+          auto* buffer = arguments[dynamic_parameter.parameter_num].second;
+          int64_t dim = *reinterpret_cast<const int32_t*>(
+              buffer->Buffer(dynamic_dimension.target_index)->data());
+
+          auto* subShape = ShapeUtil::GetMutableSubshape(
+              &actual_shape, dynamic_dimension.target_index);
+          subShape->set_dimensions(dynamic_dimension.dimension, dim);
+          subShape->set_dynamic_dimension(dynamic_dimension.dimension, false);
+          changed = true;
+        }
+        return OkStatus();
+      }));
+
+  if (changed &&
+      !ShapeUtil::DynamicArrayShapeIsCompatible(actual_shape, bounded_shape)) {
+    return InvalidArgument(
+        "dynamic shape has dimensions that are larger than the bounded shape");
+  }
+
+  return actual_shape;
+}
+
 StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
     absl::Span<PjRtBuffer* const> argument_handles, int replica, int partition,
     const RunId& run_id, const ExecuteOptions& options,
@@ -1718,7 +1751,12 @@ StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
   }
 
   // Create output TFRT buffers.
-  const Shape& result_shape = cpu_executable_->result_shape();
+  const Shape& bounded_shape = cpu_executable_->result_shape();
+  auto status = GetActualResultShape(tracked_buffers, cpu_executable_->module(),
+                                     bounded_shape);
+  if (!status.ok()) return status.status();
+  const Shape& result_shape = *status;
+
   std::vector<std::unique_ptr<PjRtBuffer>> res;
   if (options.untuple_result && result_shape.IsTuple()) {
     res.reserve(result_buffers.size());

@@ -231,9 +231,10 @@ def MHLO_DynamicParameterBinding : AttrDef<MHLO_Dialect, "DynamicParameterBindin
        #mhlo.dynamic_parameter_binding<
          dynamic_param_num = 0,
          dynamic_param_indices = [],
-         target_param_num = 1,
-         target_param_indices = [],
-         target_param_dim_num = 0>] } {
+         target = KParam,
+         target_num = 1,
+         target_indices = [],
+         target_dim_num = 0>] } {
      func.func @main(%a : tensor<f32>, %b : tensor<?xf32, #mhlo.type_extensions<bounds = [2]>>) -> () {
        func.return
      }
@@ -247,9 +248,10 @@ def MHLO_DynamicParameterBinding : AttrDef<MHLO_Dialect, "DynamicParameterBindin
   let parameters = (ins
       "int64_t":$dynamic_param_num,
       MHLO_Dims:$dynamic_param_indices,
-      "int64_t":$target_param_num,
-      MHLO_Dims:$target_param_indices,
-      "int64_t":$target_param_dim_num
+      EnumParameter<DynParamTargetEnum>:$target,
+      "int64_t":$target_num,
+      MHLO_Dims:$target_indices,
+      "int64_t":$target_dim_num
   );
   let assemblyFormat = "`<` struct(params) `>`";
 }

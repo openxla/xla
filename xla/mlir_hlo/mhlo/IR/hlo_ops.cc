@@ -7054,13 +7054,24 @@ LogicalResult verifyDynamicParameterBinding(DynamicParameterBindingAttr bind,
   func::FuncOp main = module.lookupSymbol<func::FuncOp>("main");
 
   // (1)
-  if (bind.getDynamicParamNum() >= main.getNumArguments() ||
-      bind.getTargetParamNum() >= main.getNumArguments())
+  if (bind.getDynamicParamNum() >= main.getNumArguments())
     return module->emitOpError()
            << "dynamic_parameter_binding: parameters "
-           << bind.getDynamicParamNum() << " and " << bind.getTargetParamNum()
+           << bind.getDynamicParamNum() << " out of range. main has only "
+           << main.getNumArguments() << " arguments";
+
+  if (bind.getTarget() == Target::kParam &&
+      bind.getTargetNum() >= main.getNumArguments())
+    return module->emitOpError()
+           << "dynamic_parameter_binding: parameters " << bind.getTargetNum()
            << " out of range. main has only " << main.getNumArguments()
            << " arguments";
+  if (bind.getTarget() == Target::kOutput &&
+      bind.getTargetNum() >= main.getFunctionType().getNumResults())
+    return module->emitOpError()
+           << "dynamic_parameter_binding: outputs " << bind.getTargetNum()
+           << " out of range. main has only "
+           << main.getFunctionType().getNumResults() << " results";
 
   // (2)
   auto dynamicParamSubshape =
@@ -7072,6 +7083,7 @@ LogicalResult verifyDynamicParameterBinding(DynamicParameterBindingAttr bind,
     return module->emitOpError() << "dynamic_parameter_binding: no ranked "
                                     "tensor type at dynamic_param_indices: "
                                  << bind.getDynamicParamIndices();
+
   // (3)
   if (dynamicParamSubshape.getRank() != 0 ||
       !dynamicParamSubshape.getElementType().isInteger(32))
@@ -7079,28 +7091,37 @@ LogicalResult verifyDynamicParameterBinding(DynamicParameterBindingAttr bind,
            << "dynamic_parameter_binding: dynamic size must be tensor<i32>";
 
   // (2)
-  auto targetParamSubshape =
-      getTypeFromTupleIndices(
-          main.getArgument(bind.getTargetParamNum()).getType(),
-          bind.getTargetParamIndices())
-          .dyn_cast_or_null<RankedTensorType>();
-  if (!targetParamSubshape)
+  RankedTensorType targetSubshape;
+  if (bind.getTarget() == Target::kParam) {
+    targetSubshape =
+        getTypeFromTupleIndices(main.getArgument(bind.getTargetNum()).getType(),
+                                bind.getTargetIndices())
+            .dyn_cast_or_null<RankedTensorType>();
+  } else if (bind.getTarget() == Target::kOutput) {
+    targetSubshape = getTypeFromTupleIndices(
+                         main.getFunctionType().getResult(bind.getTargetNum()),
+                         bind.getTargetIndices())
+                         .dyn_cast_or_null<RankedTensorType>();
+  }
+
+  if (!targetSubshape)
     return module->emitOpError() << "dynamic_parameter_binding: no ranked "
-                                    "tensor type at target_param_indices: "
-                                 << bind.getTargetParamIndices();
+                                    "tensor type at target_indices: "
+                                 << bind.getTargetIndices();
+
   // (4)
-  if (targetParamSubshape.getRank() <= bind.getTargetParamDimNum())
+  if (targetSubshape.getRank() <= bind.getTargetDimNum())
     return module->emitOpError()
            << "dynamic_parameter_binding: no dimension number "
-           << bind.getTargetParamDimNum() << " in target subshape "
-           << targetParamSubshape;
+           << bind.getTargetDimNum() << " in target subshape "
+           << targetSubshape;
 
   // (5)
-  if (!targetParamSubshape.isDynamicDim(bind.getTargetParamDimNum()))
+  if (!targetSubshape.isDynamicDim(bind.getTargetDimNum()))
     return module->emitOpError()
            << "dynamic_parameter_binding: dimension number "
-           << bind.getTargetParamDimNum() << " in target subshape "
-           << targetParamSubshape << " is not dynamic";
+           << bind.getTargetDimNum() << " in target subshape " << targetSubshape
+           << " is not dynamic";
 
   return success();
 }
@@ -7260,8 +7281,14 @@ LogicalResult MhloDialect::verifyOperationAttribute(Operation* op,
       if (!bindingAttr)
         return op->emitOpError() << "dynamic_parameter_bindings must be an "
                                     "array of dynamic_parameter_binding attrs";
-      auto res = verifyDynamicParameterBinding(bindingAttr, module);
-      if (failed(res)) return res;
+      auto isDynamic = module->getAttrOfType<mlir::BoolAttr>("mhlo.is_dynamic");
+      // We lower the bounded dynamic shape through the rounded trip:
+      // mhlo->hlo->mhlo, all shapes are static once in hlo. Disable the
+      // verifier for the second step: hlo -> mhlo
+      if (isDynamic && isDynamic.getValue()) {
+        auto res = verifyDynamicParameterBinding(bindingAttr, module);
+        if (failed(res)) return res;
+      }
     }
   }
   if (attr.getName() == "mhlo.spmd_parameters_sharding") {

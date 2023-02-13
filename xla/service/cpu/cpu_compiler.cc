@@ -650,6 +650,11 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   auto dynamic_padder_options = DynamicPadderOptions();
   dynamic_padder_options.shape_check_mode =
       DynamicDimensionInference::ShapeCheckMode::kCompileTime;
+
+  if (is_mlir_compile) {
+    dynamic_padder_options.slice_dynamic_output = false;
+  }
+
   pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
   if (!is_mlir_compile) {
     pipeline.AddPass<SelectAndScatterExpander>();
