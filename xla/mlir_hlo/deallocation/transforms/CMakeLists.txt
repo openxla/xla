@@ -22,6 +22,7 @@ include_directories(BEFORE
 
 add_mlir_library(DeallocationPasses
   buffer_reuse.cc
+  convert_deallocation_ops_to_llvm
   deallocate.cc
   split_alloc_tensors.cc
 
@@ -33,10 +34,13 @@ add_mlir_library(DeallocationPasses
   Core
 
   LINK_LIBS PUBLIC
+  MLIRAnalysis
   MLIRBufferizationDialect
   MLIRControlFlowInterfaces
   MLIRFuncDialect
   MLIRIR
+  MLIRLLVMCommonConversion
+  MLIRLLVMDialect
   MLIRMemRefDialect
   MLIRPass
   MLIRSupport

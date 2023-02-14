@@ -38,6 +38,10 @@ std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>> createDeallocatePass();
 std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
 createBufferReusePass();
 
+// Convert `deallocation` ops to LLVM.
+std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
+createConvertDeallocationOpsToLLVM();
+
 #define GEN_PASS_REGISTRATION
 #include "deallocation/transforms/passes.h.inc"
 
