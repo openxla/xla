@@ -46,7 +46,6 @@ struct NullOpLowering : public ConvertOpToLLVMPattern<deallocation::NullOp> {
 
     auto baseMemRefType = nullOp.getType().cast<BaseMemRefType>();
 
-    // NOLINTNEXTLINE(google3-runtime-unchecked-optional-access)
     FailureOr<unsigned> addressSpaceOr =
         typeConverter.getMemRefAddressSpace(baseMemRefType);
     if (failed(addressSpaceOr)) return failure();
