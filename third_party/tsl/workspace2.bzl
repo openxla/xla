@@ -79,7 +79,7 @@ def _tf_toolchains():
     # Point //external/local_config_arm_compiler to //external/arm_compiler
     arm_compiler_configure(
         name = "local_config_arm_compiler",
-        build_file = "@//tools/toolchains/cpus/arm:template.BUILD",
+        build_file = "//tools/toolchains/cpus/arm:template.BUILD",
         remote_config_repo_arm = "../arm_compiler",
         remote_config_repo_aarch64 = "../aarch64_compiler",
     )
@@ -90,7 +90,7 @@ def _tf_toolchains():
     # TFLite crossbuild toolchain for embeddeds Linux
     arm_linux_toolchain_configure(
         name = "local_config_embedded_arm",
-        build_file = "@//tools/toolchains/embedded/arm-linux:template.BUILD",
+        build_file = "//tools/toolchains/embedded/arm-linux:template.BUILD",
         aarch64_repo = "../aarch64_linux_toolchain",
         armhf_repo = "../armhf_linux_toolchain",
     )
@@ -144,7 +144,7 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "mkl_dnn",
-        build_file = "@//third_party/mkl_dnn:mkldnn.BUILD",
+        build_file = "//third_party/mkl_dnn:mkldnn.BUILD",
         sha256 = "a0211aeb5e7dad50b97fa5dffc1a2fe2fe732572d4164e1ee8750a2ede43fbec",
         strip_prefix = "oneDNN-0.21.3",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/v0.21.3.tar.gz"),
@@ -152,7 +152,7 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "mkl_dnn_v1",
-        build_file = "@//third_party/mkl_dnn:mkldnn_v1.BUILD",
+        build_file = "//third_party/mkl_dnn:mkldnn_v1.BUILD",
         sha256 = "dc2b9bc851cd8d5a6c4622f7dc215bdb6b32349962875f8bf55cceed45a4c449",
         strip_prefix = "oneDNN-2.7.1",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/refs/tags/v2.7.1.tar.gz"),
@@ -160,8 +160,8 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "mkl_dnn_acl_compatible",
-        build_file = "@//third_party/mkl_dnn:mkldnn_acl.BUILD",
-        patch_file = ["@//third_party/mkl_dnn:onednn_acl_threadcap.patch", "@//third_party/mkl_dnn:onednn_acl_fixed_format_kernels.patch", "@//third_party/mkl_dnn:onednn_acl_depthwise_convolution.patch"],
+        build_file = "//third_party/mkl_dnn:mkldnn_acl.BUILD",
+        patch_file = ["//third_party/mkl_dnn:onednn_acl_threadcap.patch", "//third_party/mkl_dnn:onednn_acl_fixed_format_kernels.patch", "//third_party/mkl_dnn:onednn_acl_depthwise_convolution.patch"],
         sha256 = "a50993aa6265b799b040fe745e0010502f9f7103cc53a9525d59646aef006633",
         strip_prefix = "oneDNN-2.7.3",
         urls = tf_mirror_urls("https://github.com/oneapi-src/oneDNN/archive/v2.7.3.tar.gz"),
@@ -197,7 +197,7 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "aarch64_linux_toolchain",
-        build_file = "@//tools/toolchains/embedded/arm-linux:aarch64-linux-toolchain.BUILD",
+        build_file = "//tools/toolchains/embedded/arm-linux:aarch64-linux-toolchain.BUILD",
         sha256 = "50cdef6c5baddaa00f60502cc8b59cc11065306ae575ad2f51e412a9b2a90364",
         strip_prefix = "arm-gnu-toolchain-11.3.rel1-x86_64-aarch64-none-linux-gnu",
         urls = tf_mirror_urls("https://developer.arm.com/-/media/Files/downloads/gnu/11.3.rel1/binrel/arm-gnu-toolchain-11.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz"),
@@ -205,7 +205,7 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "armhf_linux_toolchain",
-        build_file = "@//tools/toolchains/embedded/arm-linux:armhf-linux-toolchain.BUILD",
+        build_file = "//tools/toolchains/embedded/arm-linux:armhf-linux-toolchain.BUILD",
         sha256 = "3f76650b1d048036473b16b647b8fd005ffccd1a2869c10994967e0e49f26ac2",
         strip_prefix = "arm-gnu-toolchain-11.3.rel1-x86_64-arm-none-linux-gnueabihf",
         urls = tf_mirror_urls("https://developer.arm.com/-/media/Files/downloads/gnu/11.3.rel1/binrel/arm-gnu-toolchain-11.3.rel1-x86_64-arm-none-linux-gnueabihf.tar.xz"),
