@@ -49,7 +49,7 @@ struct NullOpLowering : public ConvertOpToLLVMPattern<deallocation::NullOp> {
     FailureOr<unsigned> addressSpaceOr =
         typeConverter.getMemRefAddressSpace(baseMemRefType);
     if (failed(addressSpaceOr)) return failure();
-    unsigned addressSpace = addressSpaceOr.value();
+    unsigned addressSpace = addressSpaceOr.value();  // NOLINT
 
     Type elemType = baseMemRefType.getElementType();
     Type llvmElemType = typeConverter.convertType(elemType);

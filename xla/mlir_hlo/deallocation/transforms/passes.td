@@ -65,3 +65,14 @@ def ConvertDeallocationOpsToLLVMPass
   let constructor = "::mlir::deallocation::createConvertDeallocationOpsToLLVM()";
   let dependentDialects = ["mlir::LLVM::LLVMDialect"];
 }
+
+def DeallocationToScfPass : Pass<"hlo-deallocation-to-scf",
+                                 "mlir::func::FuncOp"> {
+  let summary = "Lowers retain to scf.";
+  let constructor = "::mlir::deallocation::createDeallocationToScfPass()";
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::memref::MemRefDialect",
+  ];
+}

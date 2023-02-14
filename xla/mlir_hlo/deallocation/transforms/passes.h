@@ -42,6 +42,10 @@ createBufferReusePass();
 std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
 createConvertDeallocationOpsToLLVM();
 
+// Lowers retain to SCF.
+std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
+createDeallocationToScfPass();
+
 #define GEN_PASS_REGISTRATION
 #include "deallocation/transforms/passes.h.inc"
 
