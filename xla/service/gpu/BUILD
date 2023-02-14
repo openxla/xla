@@ -1666,8 +1666,8 @@ cc_library(
         "//xla:statusor",
         "//xla/client:xla_builder",
         "//xla/hlo/ir:hlo",
-        "//xla/service:call_inliner",
         "//xla/service:hlo_pass",
+        "//xla/stream_executor:stream_executor_headers",
     ],
 )
 
