@@ -88,8 +88,8 @@ install_build_env_tools
 
 python -m pip install numpy==1.21.4
 
-TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/..."
-TAGS_FILTER="-no_oss,-gpu,-no_mac"
+TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/... -//xla/service/gpu/..."
+TAGS_FILTER="-no_oss,-gpu,-no_mac,-nomac"
 
 bazel test \
     --output_filter="" \
