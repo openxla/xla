@@ -23,6 +23,7 @@ limitations under the License.
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "absl/base/attributes.h"
 #include "absl/status/status.h"
@@ -179,15 +180,6 @@ class Status {
       const std::function<void(absl::string_view, absl::string_view)>& visitor)
       const;
 
-  // Sets the stack frame associated with this status object.
-  // Stack traces are only kept and returned via GetStackTrace() if
-  // !this->ok().
-  void SetStackTrace(std::vector<StackFrame>);
-
-  // Retrieve an associated stack frame for a non-OK status that was
-  // set via SetStackTrace().
-  std::vector<StackFrame> GetStackTrace() const;
-
   absl::Span<const SourceLocation> GetSourceLocations() const;
 
  private:
@@ -206,7 +198,6 @@ class Status {
     std::string msg;
     std::unordered_map<std::string, absl::Cord> payloads;
     absl::InlinedVector<SourceLocation, 4> source_locations;
-    std::vector<StackFrame> stack_trace;
   };
 
   // OK status has a `NULL` state_.  Otherwise, `state_` points to
