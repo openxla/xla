@@ -1,1 +1,105 @@
+diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.cpp b/stablehlo/stablehlo/dialect/ChloOps.cpp
+--- stablehlo/stablehlo/dialect/ChloOps.cpp
++++ stablehlo/stablehlo/dialect/ChloOps.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "stablehlo/dialect/ChloOps.h"
+ 
++#include <cstdint>
+ #include <optional>
+ 
+ #include "llvm/ADT/STLExtras.h"
+@@ -491,6 +492,27 @@
+   return success();
+ }
+ 
++//===----------------------------------------------------------------------===//
++// EighOp
++//===----------------------------------------------------------------------===//
++
++LogicalResult EighOp::inferReturnTypes(
++    MLIRContext*, std::optional<Location> loc, ValueRange operands,
++    DictionaryAttr, RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
++  auto operand_type = operands[0].getType().dyn_cast<RankedTensorType>();
++  if (!operand_type) return emitOptionalError(loc, "operand must be ranked");
++  inferredReturnTypes.push_back(operand_type);
++  auto elt_type = operand_type.getElementType();
++  auto operand_shape = operand_type.getShape();
++  llvm::SmallVector<int64_t> eigval_shape{
++      operand_shape.begin(),
++      operand_shape.begin() + (operand_shape.size() - 1)};
++  auto enc = operand_type.getEncoding();
++  inferredReturnTypes.push_back(
++      RankedTensorType::get(eigval_shape, elt_type, enc));
++  return success();
++}
++
+ }  // namespace chlo
+ }  // namespace mlir
+ 
+diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialect/ChloOps.td
+--- stablehlo/stablehlo/dialect/ChloOps.td
++++ stablehlo/stablehlo/dialect/ChloOps.td
+@@ -954,4 +954,24 @@
+   let results = (outs HLO_Tensor:$result);
+ }
+ 
++def CHLO_EighOp : CHLO_Op<"eigh",
++    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
++  let summary = "Eigenvalue solver for a Hermitian matrix";
++  let description = [{
++    Eigh takes a batch of NxN Hermitian matricies, and solves the eigenvalue
++    for them. It returns a batched matrix of eignvectors and a batched vector
++    of eigenvalues.
++  }];
++
++  let arguments = (ins
++    HLO_Tensor:$operand
++  );
++
++  let results = (outs
++    HLO_Tensor:$eigenvectors,
++    HLO_Tensor:$eigenvalues
++  );
++}
++
++
+ #endif  // STABLEHLO_DIALECT_CHLO_OPS
+diff --ruN a/stablehlo/stablehlo/tests/ops_chlo.mlir b/stablehlo/stablehlo/tests/ops_chlo.mlir
+--- stablehlo/stablehlo/tests/ops_chlo.mlir
++++ stablehlo/stablehlo/tests/ops_chlo.mlir
+@@ -133,3 +133,18 @@
+   %0:2 = chlo.top_k(%arg0, k=8) : tensor<16x16xf32> -> (tensor<16x8xf32>, tensor<16x8xi32>)
+   return
+ }
++
++// -----
++
++func.func @eigh(%arg0 : tensor<256x16x16xf32>) {
++  %0:2 = "chlo.eigh"(%arg0) : (tensor<256x16x16xf32>) -> (tensor<256x16x16xf32>, tensor<256x16xf32>)
++  return
++}
++
++// -----
++
++func.func @eigh(%arg0 : tensor<256x16x16xf32>) {
++  // @expected-error @+1{{op inferred type(s) 'tensor<256x16x16xf32>', 'tensor<256x16xf32>' are incompatible with return type(s) of operation 'tensor<256x16x16xf32>', 'tensor<256x16x16xf32>'}}
++  %0:2 = "chlo.eigh"(%arg0) : (tensor<256x16x16xf32>) -> (tensor<256x16x16xf32>, tensor<256x16x16xf32>)
++  return
++}
+diff --ruN a/stablehlo/stablehlo/tests/ops_chlo_roundtrip.mlir b/stablehlo/stablehlo/tests/ops_chlo_roundtrip.mlir
+--- stablehlo/stablehlo/tests/ops_chlo_roundtrip.mlir
++++ stablehlo/stablehlo/tests/ops_chlo_roundtrip.mlir
+@@ -432,3 +432,11 @@
+   }) : (tensor<*xf32>, tensor<*xf32>, tensor<*xf32>) -> tensor<*xf32>
+   func.return %0 : tensor<*xf32>
+ }
++
++// CHECK-LABEL: func @chlo_eigh
++// CHECK-SAME: %[[A0:.*]]: tensor<256x16x16xf32>) {
++// CHECK: = "chlo.eigh"(%arg0) : (tensor<256x16x16xf32>) -> (tensor<256x16x16xf32>, tensor<256x16xf32>)
++func.func @chlo_eigh(%arg0 : tensor<256x16x16xf32>) {
++  %0:2 = "chlo.eigh"(%arg0) : (tensor<256x16x16xf32>) -> (tensor<256x16x16xf32>, tensor<256x16xf32>)
++  return
++}
 

@@ -1422,6 +1422,33 @@ struct ConvertTopKOp : public OpConversionPattern<TopKOp> {
   }
 };
 
+struct ConvertEighOp : public OpConversionPattern<EighOp> {
+  using OpConversionPattern<EighOp>::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      EighOp op, OpAdaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto operandType = op.getOperand().getType().dyn_cast<RankedTensorType>();
+    if (!operandType) return op->emitOpError() << "operand must be ranked";
+    auto eltType = operandType.getElementType();
+    auto operandShape = operandType.getShape();
+    llvm::SmallVector<int64_t> eigvalShape{
+        operandShape.begin(), operandShape.begin() + (operandShape.size() - 1)};
+    auto enc = operandType.getEncoding();
+    llvm::SmallVector<Type> inferredReturnTypes;
+    inferredReturnTypes.push_back(operandType);
+    inferredReturnTypes.push_back(
+        RankedTensorType::get(eigvalShape, eltType, enc));
+    auto callTargetAttr = rewriter.getNamedAttr(
+        "call_target_name", StringAttr::get(op.getContext(), "Eigh"));
+    auto customCall = rewriter.create<mhlo::CustomCallOp>(
+        loc, inferredReturnTypes, op->getOperands(),
+        ArrayRef<NamedAttribute>{callTargetAttr});
+    rewriter.replaceOp(op, customCall.getResults());
+    return success();
+  }
+};
+
 struct ConvertZetaOp : public OpConversionPattern<ZetaOp> {
   using OpConversionPattern<ZetaOp>::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -1710,6 +1737,7 @@ void populateDecomposeChloPatterns(MLIRContext *context,
                    ConvertPolygammaOp,
                    ConvertSinhOp,
                    ConvertTopKOp,
+                   ConvertEighOp,
                    ConvertZetaOp>(context);
   // clang-format on
 }

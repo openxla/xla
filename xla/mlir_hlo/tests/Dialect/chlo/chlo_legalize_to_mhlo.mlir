@@ -3053,3 +3053,12 @@ func.func @bessel_i1e_f64(%arg : tensor<16x16xf64>) -> tensor<16x16xf64> {
   %0 = chlo.bessel_i1e %arg : tensor<16x16xf64> -> tensor<16x16xf64>
   func.return %0 : tensor<16x16xf64>
 }
+
+// CHECK-LABEL: func @chlo_eigh
+// CHECK-SAME: %[[A0:.*]]: tensor<256x16x16xf32>
+// CHECK: %[[T:.*]]:2 = mhlo.custom_call @Eigh(%[[A0]]) : (tensor<256x16x16xf32>) -> (tensor<256x16x16xf32>, tensor<256x16xf32>)
+// CHECK: return %[[T]]#0
+func.func @chlo_eigh(%arg0 : tensor<256x16x16xf32>)  -> tensor<256x16x16xf32> {
+  %eigenvectors, %eigenvalues = "chlo.eigh"(%arg0) : (tensor<256x16x16xf32>) -> (tensor<256x16x16xf32>, tensor<256x16xf32>)
+  func.return %eigenvectors : tensor<256x16x16xf32>
+}
