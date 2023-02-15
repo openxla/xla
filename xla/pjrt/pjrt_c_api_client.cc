@@ -396,6 +396,12 @@ StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::BufferFromHostBuffer(
   return buffer;
 }
 
+Status PjRtCApiClient::Defragment() {
+  RETURN_STATUS_IF_ERROR(pjrt::DefragmentClient(pjrt_c_client(), c_api_),
+                         c_api_);
+  return OkStatus();
+}
+
 const PJRT_Api* PjRtCApiClient::pjrt_c_api() const { return c_api_; }
 
 // --------------------------------- Devices -----------------------------------

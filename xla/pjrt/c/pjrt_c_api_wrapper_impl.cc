@@ -420,6 +420,14 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Client_Defragment(PJRT_Client_Defragment_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Client_Defragment_Args", PJRT_Client_Defragment_Args_STRUCT_SIZE,
+      args->struct_size));
+  PJRT_RETURN_IF_ERROR(args->client->client->Defragment());
+  return nullptr;
+}
+
 // --------------------------------- Devices -----------------------------------
 
 PJRT_Error* PJRT_Device_Id(PJRT_Device_Id_Args* args) {

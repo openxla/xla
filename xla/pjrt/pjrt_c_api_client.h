@@ -245,9 +245,7 @@ class PjRtCApiClient : public PjRtClient {
         "PJRT C API does not support CreateHostToDeviceChannelHandle");
   }
 
-  Status Defragment() override {
-    return Unimplemented("PJRT C API does not support Defragment");
-  }
+  Status Defragment() override;
 
   StatusOr<std::unique_ptr<PjRtBuffer>> WrapBuffer(
       StatusOr<std::unique_ptr<PjRtBuffer>> to_wrap);

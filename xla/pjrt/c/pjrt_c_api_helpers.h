@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <functional>
 #include <memory>
+#include <string>
 
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -26,6 +27,19 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace pjrt {
+
+// Return error status if not success and frees the PJRT_Error returned by
+// `expr`.
+#define PJRT_RETURN_STATUS_IF_ERROR(expr, c_api)                        \
+  do {                                                                  \
+    PJRT_Error* error = (expr);                                         \
+    std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> _error(        \
+        error, pjrt::MakeErrorDeleter(c_api));                          \
+    xla::Status _status = pjrt::PjrtErrorToStatus(_error.get(), c_api); \
+    if (!_status.ok()) {                                                \
+      return _status;                                                   \
+    }                                                                   \
+  } while (false)
 
 ABSL_CONST_INIT extern const absl::string_view kHloFormat;
 ABSL_CONST_INIT extern const absl::string_view kMlirFormat;
@@ -120,6 +134,8 @@ xla::PjRtClient::HostBufferSemantics ConvertFromPjRtHostBufferSemantics(
 xla::PjRtFuture<xla::Status> ConvertCEventToCppFuture(PJRT_Event* c_event,
                                                       const PJRT_Api* c_api);
 
+PJRT_Error* AwaitEvent(PJRT_Event* event, const PJRT_Api* api);
+
 // Helper function for checking C API argument struct sizes. Returns a non-OK
 // status if the expected and actual sizes aren't equal (i.e. no ABI
 // compatibility guarantees).
@@ -127,6 +143,11 @@ xla::Status CheckMatchingStructSizes(absl::string_view struct_name,
                                      size_t expected_size, size_t actual_size);
 
 absl::string_view GetPlatformVersion(PJRT_Client* client, const PJRT_Api* api);
+
+PJRT_Error* DefragmentClient(PJRT_Client* client, const PJRT_Api* api);
+
+xla::StatusOr<std::string> GetHostBuffer(PJRT_Buffer* buffer,
+                                         const PJRT_Api* api);
 
 }  // namespace pjrt
 

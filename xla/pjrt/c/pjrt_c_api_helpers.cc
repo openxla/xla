@@ -390,6 +390,14 @@ xla::PjRtFuture<xla::Status> ConvertCEventToCppFuture(PJRT_Event* c_event,
   return PjRtFuture<Status>(std::move(promise));
 }
 
+PJRT_Error* AwaitEvent(PJRT_Event* event, const PJRT_Api* api) {
+  PJRT_Event_Await_Args args;
+  args.struct_size = PJRT_Event_Await_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.event = event;
+  return api->PJRT_Event_Await(&args);
+}
+
 PJRT_SerializedExecutableDeleter MakeSerializedExecutableDeleter(
     const PJRT_Api* api) {
   return [api](PJRT_SerializedExecutable* serialized_executable) -> void {
@@ -430,6 +438,37 @@ absl::string_view GetPlatformVersion(PJRT_Client* client, const PJRT_Api* api) {
   absl::string_view platform_version(args.platform_version,
                                      args.platform_version_size);
   return platform_version;
+}
+
+PJRT_Error* DefragmentClient(PJRT_Client* client, const PJRT_Api* api) {
+  PJRT_Client_Defragment_Args args;
+  args.struct_size = PJRT_Client_Defragment_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.client = client;
+  return api->PJRT_Client_Defragment(&args);
+}
+
+xla::StatusOr<std::string> GetHostBuffer(PJRT_Buffer* buffer,
+                                         const PJRT_Api* api) {
+  // Get the on-host size
+  PJRT_Buffer_ToHostBuffer_Args args;
+  args.struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.src = buffer;
+  args.dst = nullptr;
+  PJRT_RETURN_STATUS_IF_ERROR(api->PJRT_Buffer_ToHostBuffer(&args), api);
+
+  // Create result buffer and begin transfer
+  std::string result(args.dst_size, '\n');
+  args.dst = result.data();
+  PJRT_RETURN_STATUS_IF_ERROR(api->PJRT_Buffer_ToHostBuffer(&args), api);
+  std::unique_ptr<PJRT_Event, PJRT_EventDeleter> transfer_done(
+      args.event, MakeEventDeleter(api));
+
+  // Wait for transfer to complete before returning
+  PJRT_RETURN_STATUS_IF_ERROR(AwaitEvent(transfer_done.get(), api), api);
+  transfer_done.reset();
+  return result;
 }
 
 }  // namespace pjrt

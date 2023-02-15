@@ -137,6 +137,7 @@ PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
     PJRT_Client_DefaultDeviceAssignment_Args* args);
 PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     PJRT_Client_BufferFromHostBuffer_Args* args);
+PJRT_Error* PJRT_Client_Defragment(PJRT_Client_Defragment_Args* args);
 
 PJRT_Error* PJRT_Device_Id(PJRT_Device_Id_Args* args);
 PJRT_Error* PJRT_Device_ProcessIndex(PJRT_Device_ProcessIndex_Args* args);
@@ -280,6 +281,7 @@ constexpr PJRT_Api CreatePjrtApi(
           pjrt::PJRT_Client_DefaultDeviceAssignment,
       .PJRT_Client_BufferFromHostBuffer =
           pjrt::PJRT_Client_BufferFromHostBuffer,
+      .PJRT_Client_Defragment = pjrt::PJRT_Client_Defragment,
 
       .PJRT_Device_Id = pjrt::PJRT_Device_Id,
       .PJRT_Device_ProcessIndex = pjrt::PJRT_Device_ProcessIndex,

@@ -490,6 +490,17 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Client_BufferFromHostBuffer_Args, buffer);
 typedef PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     PJRT_Client_BufferFromHostBuffer_Args* args);
 
+struct PJRT_Client_Defragment_Args {
+  size_t struct_size;
+  void* priv;
+  PJRT_Client* client;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Client_Defragment_Args, client);
+
+// Defragment device memory. May not be implemented on all platforms. Not safe
+// to call concurrently with other methods that access device memory.
+typedef PJRT_Error* PJRT_Client_Defragment(PJRT_Client_Defragment_Args* args);
+
 // --------------------------------- Devices -----------------------------------
 
 struct PJRT_Device_Id_Args {
@@ -953,7 +964,8 @@ struct PJRT_Buffer_ToHostBuffer_Args {
   // needed size.
   size_t dst_size;  // in/out
 
-  // Event that signals when the copy has completed.
+  // Event that signals when the copy has completed. Caller must call
+  // PJRT_Event_Destroy on returned event.
   PJRT_Event* event;  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_ToHostBuffer_Args, event);
@@ -1183,6 +1195,7 @@ typedef struct {
   _PJRT_API_STRUCT_FIELD(PJRT_Client_Compile);
   _PJRT_API_STRUCT_FIELD(PJRT_Client_DefaultDeviceAssignment);
   _PJRT_API_STRUCT_FIELD(PJRT_Client_BufferFromHostBuffer);
+  _PJRT_API_STRUCT_FIELD(PJRT_Client_Defragment);
 
   _PJRT_API_STRUCT_FIELD(PJRT_Device_Id);
   _PJRT_API_STRUCT_FIELD(PJRT_Device_ProcessIndex);
