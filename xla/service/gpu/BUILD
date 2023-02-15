@@ -1029,6 +1029,7 @@ cc_library(
     hdrs = ["gpu_serializable_autotuner.h"],
     deps = [
         "//xla:types",
+        "//xla/hlo/ir:hlo",
         "//xla/stream_executor",
     ],
 )
