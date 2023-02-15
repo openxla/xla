@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/gpu_conv_padding_legalization.h"
 #include "xla/service/gpu/gpu_conv_rewriter.h"
+#include "xla/service/gpu/gpu_serializable_autotuner.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/metrics.h"
@@ -208,12 +209,11 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
 
     std::string device_description_str =
         gpu_target_config.device_description_str;
-    GemmAlgorithmPicker::DevicelessConfig deviceless_config{
-        device_description_str, cuda_compute_capability};
+    DevicelessConfig deviceless_config{device_description_str,
+                                       cuda_compute_capability};
     post_pipeline.AddPass<GemmAlgorithmPicker>(deviceless_config);
   } else {
-    GemmAlgorithmPicker::DeviceConfig device_config{stream_exec,
-                                                    device_allocator};
+    DeviceConfig device_config{stream_exec, device_allocator};
     post_pipeline.AddPass<GemmAlgorithmPicker>(device_config);
   }
 
