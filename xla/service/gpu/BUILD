@@ -1424,48 +1424,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "softmax_fusion",
-    srcs = ["softmax_fusion.cc"],
-    hdrs = ["softmax_fusion.h"],
-    deps = [
-        ":ir_emission_utils",
-        "//xla:shape_util",
-        "//xla:statusor",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_pass",
-        "//xla/service:pattern_matcher",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
-    ],
-)
-
-xla_cc_test(
-    name = "softmax_fusion_test",
-    srcs = ["softmax_fusion_test.cc"],
-    tags = tf_cuda_tests_tags(),
-    deps = [
-        ":softmax_fusion",
-        "//xla:status_macros",
-        "//xla:test",
-        "//xla:util",
-        "//xla/service:gpu_plugin",
-        "//xla/service:pattern_matcher",
-        "//xla/service:pattern_matcher_gmock",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-    ],
-)
-
-cc_library(
     name = "gpu_sanitize_constant_names",
     srcs = ["gpu_sanitize_constant_names.cc"],
     hdrs = ["gpu_sanitize_constant_names.h"],
@@ -1868,7 +1826,6 @@ cc_library(
         ":reduction_splitter",
         ":runtime_intrinsics",
         ":scatter_slice_simplifier",
-        ":softmax_fusion",
         ":tree_reduction_rewriter",
         ":variadic_op_splitter",
         "@com_google_absl//absl/strings",
