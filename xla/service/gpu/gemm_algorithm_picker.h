@@ -25,18 +25,15 @@ limitations under the License.
 #include "xla/autotune_results.pb.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/service/gpu/gpu_serializable_autotuner.h"
 #include "xla/service/hlo_pass_interface.h"
+#include "xla/stream_executor/cuda/cuda_blas_lt.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/gpu/redzone_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/protobuf/autotuning.pb.h"
-
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
-#include "xla/service/gpu/gpu_conv_runner.h"
-#include "xla/stream_executor/cuda/cuda_blas_lt.h"
-#include "xla/stream_executor/gpu/redzone_allocator.h"
-#endif
 
 namespace xla {
 namespace gpu {
@@ -55,11 +52,9 @@ static AutotuneConfig GetConfig(const DebugOptions& debug_options) {
           debug_options.xla_gpu_crash_on_verification_failures()};
 }
 
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
 se::RedzoneAllocator CreateRedzoneAllocator(
     se::Stream* stream, se::DeviceMemoryAllocator* allocator,
     const DebugOptions& debug_options, const AutotuneConfig& config);
-#endif
 
 // Select the best algorithm using information from a Blas instruction.
 // Returns the index (into `algorithms`) of the fastest algorithm.
@@ -85,7 +80,8 @@ class GemmAlgorithmPicker : public HloModulePass {
   static Status WriteAutotuneResults(AutotuneResults* results);
   static Status LoadAutotuneResults(const AutotuneResults& results);
 
-  explicit GemmAlgorithmPicker(AutotuningConfig config) : config_(config) {}
+  explicit GemmAlgorithmPicker(DeviceConfig config) : config_(config) {}
+  explicit GemmAlgorithmPicker(DevicelessConfig config) : config_(config) {}
 
   absl::string_view name() const override { return "gemm-algorithm-picker"; }
 

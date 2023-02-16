@@ -93,7 +93,6 @@ limitations under the License.
 #include "xla/service/gpu/dot_dimension_sorter.h"
 #include "xla/service/gpu/for_thunk.h"
 #include "xla/service/gpu/fusion_merger.h"
-#include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/gemm_broadcast_folding_rewriter.h"
 #include "xla/service/gpu/gemm_rewriter.h"
 #include "xla/service/gpu/gemm_rewriter_triton.h"
@@ -894,20 +893,19 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // the gte(customcall, 0) would probably already be into a fusion node.  We
   // can't simplify across HloComputation boundaries, so in this case we
   // wouldn't be able to simplify away the new_tuple bits.
-  auto config =
-      stream_exec
-          ? AutotuningConfig{DeviceConfig{stream_exec, device_allocator}}
-          : DevicelessConfig{gpu_target_config.device_description_str};
-  if (!stream_exec) {
+  if (stream_exec) {
+    // Autotune if stream_exec is available.
+    DeviceConfig config{stream_exec, device_allocator};
+    pipeline.AddPass<GpuConvAlgorithmPicker>(config);
+  } else {
+    // Device not available. Use autotune results from gpu_target_config.
     GpuConvAlgorithmPicker::ClearAutotuneResults();
     TF_RETURN_IF_ERROR(
         GpuConvAlgorithmPicker::LoadAutotuneResults(*autotune_results));
-    GemmAlgorithmPicker::ClearAutotuneResults();
-    TF_RETURN_IF_ERROR(
-        GemmAlgorithmPicker::LoadAutotuneResults(*autotune_results));
+
+    DevicelessConfig config{gpu_target_config.device_description_str};
+    pipeline.AddPass<GpuConvAlgorithmPicker>(config);
   }
-  pipeline.AddPass<GpuConvAlgorithmPicker>(config);
-  pipeline.AddPass<GemmAlgorithmPicker>(config);
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();

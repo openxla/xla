@@ -56,7 +56,10 @@ class GpuConvAlgorithmPicker : public HloModulePass {
   static Status WriteAutotuneResults(AutotuneResults* results);
   static Status LoadAutotuneResults(const AutotuneResults& results);
 
-  explicit GpuConvAlgorithmPicker(AutotuningConfig config) : config_(config) {}
+  explicit GpuConvAlgorithmPicker(DeviceConfig device_config)
+      : config_(device_config) {}
+  explicit GpuConvAlgorithmPicker(DevicelessConfig deviceless_config)
+      : config_(deviceless_config) {}
 
   absl::string_view name() const override {
     return "gpu-conv-algorithm-picker";

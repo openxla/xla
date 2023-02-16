@@ -1787,7 +1787,6 @@ cc_library(
         "gpu_compiler.h",
     ],
     deps = [
-        ":gemm_algorithm_picker",
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
         ":conv_layout_normalization",
@@ -1990,6 +1989,7 @@ cc_library(
         ":cudnn_simplify_padding",
         ":cudnn_vectorize_convolutions",
         ":cusolver_rewriter",
+        ":gemm_algorithm_picker",
         ":gpu_asm_opts_util",
         ":gpu_compiler",
         ":gpu_conv_padding_legalization",
