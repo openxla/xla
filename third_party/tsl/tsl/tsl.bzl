@@ -25,13 +25,13 @@ load(
     "if_mkl",
 )
 load(
-    "@xla//third_party/mkl_dnn:build_defs.bzl",
+    "@tsl//third_party/mkl_dnn:build_defs.bzl",
     "if_mkldnn_aarch64_acl",
     "if_mkldnn_aarch64_acl_openmp",
     "if_mkldnn_openmp",
 )
 load(
-    "@xla//third_party/compute_library:build_defs.bzl",
+    "@tsl//third_party/compute_library:build_defs.bzl",
     "if_enable_acl",
 )
 load("@bazel_skylib//lib:new_sets.bzl", "sets")
