@@ -21,7 +21,7 @@ load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
-
+# Hello. This is a test comment.
 package(
     # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
     default_visibility = ["//xla:internal"],
