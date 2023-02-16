@@ -40,10 +40,17 @@ Clone this repository:
 git clone https://github.com/openxla/xla && cd xla
 ```
 
+We recommend using a suitable docker container to build/test XLA, such as
+[TensorFlow's docker container](https://www.tensorflow.org/install/docker):
+
+```
+docker run --name xla -w /xla -it -d --rm -v $PWD:/xla tensorflow/build:latest-python3.9 bash
+```
+
 Run an end to end test using an example StableHLO module:
 
 ```
-bazelisk test xla/examples/axpy:stablehlo_compile_test --nocheck_visibility --test_output=all
+docker exec xla bazel test xla/examples/axpy:stablehlo_compile_test --nocheck_visibility --test_output=all
 ```
 
 This will take quite a while your first time because it must build the entire
