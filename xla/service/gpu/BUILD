@@ -370,6 +370,7 @@ cc_library(
     hdrs = if_cuda_is_configured(["ir_emitter_triton.h"]),
     deps = [
         ":gpu_device_info",
+        ":gemm_rewriter_triton",
         ":ir_emission_utils",
         ":launch_dimensions",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -950,9 +951,28 @@ cc_library(
     hdrs = ["gemm_rewriter_triton.h"],
     deps = [
         ":ir_emission_utils",
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "gemm_rewriter_triton_test",
+    srcs = ["gemm_rewriter_triton_test.cc"],
+    deps = [
+        ":gemm_rewriter_triton",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:test_utils",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "@tsl//tsl/platform:test",
     ],
 )
 
