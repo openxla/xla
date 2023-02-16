@@ -50,7 +50,7 @@ struct TileMapPattern : public OpRewritePattern<linalg::MapOp> {
                                 PatternRewriter &rewriter) const override {
     if (hasLabel(op, kMapTransformedLabel)) return failure();
 
-    if (isa<gml_st::ParallelOp, scf::ForOp>(op->getParentOp())) {
+    if (!isa<func::FuncOp>(op->getParentOp())) {
       return rewriter.notifyMatchFailure(
           op, "has already been tiled by another pass.");
     }
