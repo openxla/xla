@@ -118,8 +118,12 @@ py::object Traceback::AsPythonTraceback() const {
   py::dict globals;
   py::handle traceback_type(reinterpret_cast<PyObject*>(&PyTraceBack_Type));
   for (const std::pair<PyCodeObject*, int>& frame : frames_) {
-    PyFrameObject* py_frame = PyFrame_New(PyThreadState_Get(), frame.first,
-                                          globals.ptr(), /*locals=*/nullptr);
+    PyThreadState* ts = PyThreadState_Get();
+    // Don't keep a reference to a real PyFrameObject (through `f_back`) on the
+    // traceback-only PyFrameObject.
+    ts->frame = nullptr;
+    PyFrameObject* py_frame = PyFrame_New(ts, frame.first, globals.ptr(),
+                                          /*locals=*/nullptr);
 
     traceback = traceback_type(
         /*tb_next=*/std::move(traceback),
