@@ -93,7 +93,6 @@ limitations under the License.
 #include "xla/service/gpu/dot_dimension_sorter.h"
 #include "xla/service/gpu/for_thunk.h"
 #include "xla/service/gpu/fusion_merger.h"
-#include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/gemm_broadcast_folding_rewriter.h"
 #include "xla/service/gpu/gemm_rewriter.h"
 #include "xla/service/gpu/gemm_rewriter_triton.h"
@@ -195,6 +194,7 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 
 #if GOOGLE_CUDA
+#include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/triton_autotuner.h"
 #endif  // GOOGLE_CUDA
 
@@ -902,12 +902,18 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     GpuConvAlgorithmPicker::ClearAutotuneResults();
     TF_RETURN_IF_ERROR(
         GpuConvAlgorithmPicker::LoadAutotuneResults(*autotune_results));
+
+#if GOOGLE_CUDA
     GemmAlgorithmPicker::ClearAutotuneResults();
     TF_RETURN_IF_ERROR(
         GemmAlgorithmPicker::LoadAutotuneResults(*autotune_results));
+#endif  // GOOGLE_CUDA
   }
   pipeline.AddPass<GpuConvAlgorithmPicker>(config);
+
+#if GOOGLE_CUDA
   pipeline.AddPass<GemmAlgorithmPicker>(config);
+#endif  // GOOGLE_CUDA
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
