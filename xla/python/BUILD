@@ -355,6 +355,7 @@ cc_library(
         ":py_client",
         ":python_ref_manager",
         ":traceback",
+        ":util",
         "//xla:types",
         "//xla:util",
         "//xla/pjrt:pjrt_client",
