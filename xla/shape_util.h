@@ -298,6 +298,9 @@ class ShapeUtil {
   // only one shape is passed, returns that.
   static Shape MakeMaybeTupleShape(absl::Span<const Shape> shapes);
 
+  // Returns the direct subshapes of the tuple shape in a vector.
+  static std::vector<Shape> DecomposeTupleShape(const Shape& tuple_shape);
+
   // Creates an opaque shape. These are generally used for threading a context
   // into a custom operation.
   static Shape MakeOpaqueShape();

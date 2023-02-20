@@ -423,6 +423,21 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   return MakeTupleShape(shapes);
 }
 
+/* static */ std::vector<Shape> ShapeUtil::DecomposeTupleShape(
+    const Shape& tuple_shape) {
+  CHECK(tuple_shape.IsTuple());
+
+  std::vector<Shape> subshapes;
+  int64_t tuple_element_count = TupleElementCount(tuple_shape);
+  subshapes.reserve(tuple_element_count);
+
+  for (int64_t i = 0; i < tuple_element_count; ++i) {
+    subshapes.push_back(GetSubshape(tuple_shape, {i}));
+  }
+
+  return subshapes;
+}
+
 /* static */ Shape ShapeUtil::MakeOpaqueShape() {
   Shape result;
   result.set_element_type(OPAQUE_TYPE);

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <numeric>
 #include <optional>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -228,6 +229,22 @@ TEST(ShapeUtilTest, MakeMaybeTupleShape) {
   Shape s1 =
       ShapeUtil::MakeMaybeTupleShape({ShapeUtil::MakeShape(F32, {3, 2})});
   EXPECT_TRUE(ShapeUtil::Compatible(s1, ShapeUtil::MakeShape(F32, {3, 2})));
+}
+
+TEST(ShapeUtilTest, DecomposeTupleShape) {
+  const std::vector<Shape> kExpectedSubshapes = {
+      ShapeUtil::MakeShape(F16, {3, 2}),
+      ShapeUtil::MakeShape(F32, {4, 5}),
+      ShapeUtil::MakeTupleShape({
+          ShapeUtil::MakeShape(S32, {6, 7}),
+          ShapeUtil::MakeShape(S32, {8, 9}),
+      }),
+  };
+  Shape tuple = ShapeUtil::MakeTupleShape(kExpectedSubshapes);
+
+  std::vector<Shape> subshapes = ShapeUtil::DecomposeTupleShape(tuple);
+
+  EXPECT_EQ(subshapes, kExpectedSubshapes);
 }
 
 TEST(ShapeUtilTest, CompatibleTuplesIgnoringFpPrecision) {
