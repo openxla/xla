@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/bfloat16_normalization.h"
 
+#include <optional>
+#include <vector>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -32,8 +35,8 @@ namespace xla {
 
 class TestBFloat16Support : public BFloat16Support {
  public:
-  TestBFloat16Support() {}
-  ~TestBFloat16Support() override {}
+  TestBFloat16Support() = default;
+  ~TestBFloat16Support() override = default;
 
   bool SupportsBF16Operand(const HloInstruction& hlo,
                            int64_t operand_index) const override {
