@@ -16,7 +16,10 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/str_replace.h"
 #include "xla/hlo/ir/hlo_computation.h"
