@@ -134,6 +134,7 @@ cc_library(
         "//xla/runtime:module_registry",
         "//xla/service:executable",
         "//xla/service/gpu:buffer_allocations",
+        "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor/gpu:gpu_stream",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/protobuf:dnn_proto_cc",
@@ -175,6 +176,7 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory",
+        "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
     ] + if_cuda_is_configured([
         "//xla/service/gpu:gemm_algorithm_picker",
         "//xla/stream_executor/gpu:redzone_allocator",
