@@ -74,7 +74,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cublaslt(false);
 
   // TODO(b/258036887): Remove this flag once CUDA Graphs are fully supported.
-  opts.set_xla_gpu_enable_cuda_graphs(false);
+  opts.set_xla_gpu_enable_cuda_graphs(true);
 
   // Despite the name, fast min/max on GPUs does not seem to be any faster, and
   // adds very counter-intuitive "NaN-swallowing" behavior.
