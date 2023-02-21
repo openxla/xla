@@ -3413,7 +3413,7 @@ Status IrEmitter::ElementTypesSameAndSupported(
   if (!absl::c_linear_search(supported_types, primitive_type)) {
     return Unimplemented("unsupported operand type %s in op %s",
                          PrimitiveType_Name(primitive_type),
-                         HloOpcodeString(instruction.opcode()));
+                         instruction.opcode_string());
   }
   return OkStatus();
 }

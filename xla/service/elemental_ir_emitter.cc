@@ -635,8 +635,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerUnaryOp(
                                           {operand_value->getType()}, b_);
     }
     default:
-      return Unimplemented("unary integer op '%s'",
-                           HloOpcodeString(op->opcode()));
+      return Unimplemented("unary integer op '%s'", op->opcode_string());
   }
 }
 
@@ -859,8 +858,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
     case HloOpcode::kImag:
       return llvm::ConstantFP::get(operand_value->getType(), 0.0);
     default:
-      return Unimplemented("unary floating-point op '%s'",
-                           HloOpcodeString(op->opcode()));
+      return Unimplemented("unary floating-point op '%s'", op->opcode_string());
   }
 }
 
@@ -1145,8 +1143,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
     case HloOpcode::kImag:
       return EmitExtractImag(operand_value);
     default:
-      return Unimplemented("unary complex op '%s'",
-                           HloOpcodeString(op->opcode()));
+      return Unimplemented("unary complex op '%s'", op->opcode_string());
   }
 }
 
@@ -1227,7 +1224,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatBinaryOp(
                        op->name());
     default:
       return Unimplemented("binary floating point op '%s'",
-                           HloOpcodeString(op->opcode()));
+                           op->opcode_string());
   }
 }
 
@@ -1707,8 +1704,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexBinaryOp(
       return EmitComplexMultiply(op, negative_i, log_result);
     }
     default:
-      return Unimplemented("binary complex op '%s'",
-                           HloOpcodeString(op->opcode()));
+      return Unimplemented("binary complex op '%s'", op->opcode_string());
   }
 }
 
@@ -2065,8 +2061,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitPredBinaryOp(
                            HloOpcodeString(op->opcode()));
 
     default:
-      return Unimplemented("binary pred op '%s'",
-                           HloOpcodeString(op->opcode()));
+      return Unimplemented("binary pred op '%s'", op->opcode_string());
   }
 }
 
@@ -2142,8 +2137,7 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerBinaryOp(
                                       LShr(lhs_value, rhs_value),
                                       /*saturate_to_sign_bit=*/false);
     default:
-      return Unimplemented("binary integer op '%s'",
-                           HloOpcodeString(op->opcode()));
+      return Unimplemented("binary integer op '%s'", op->opcode_string());
   }
 }
 
@@ -3058,7 +3052,7 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
     default:
       return [hlo](const IrArray::Index& index) {
         return Unimplemented("Unhandled opcode for elemental IR emission: %s",
-                             HloOpcodeString(hlo->opcode()));
+                             hlo->opcode_string());
       };
   }
 }

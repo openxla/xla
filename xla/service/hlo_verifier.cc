@@ -79,8 +79,7 @@ bool IsCallerInstruction(HloInstruction* hlo) {
 Status CheckOperandCount(const HloInstruction* hlo, int expected) {
   if (hlo->operand_count() != expected) {
     return InternalError("Expected %d operands for %s instruction: %s",
-                         expected, HloOpcodeString(hlo->opcode()),
-                         hlo->ToString());
+                         expected, hlo->opcode_string(), hlo->ToString());
   }
   return OkStatus();
 }
@@ -965,7 +964,7 @@ Status ShapeVerifier::HandleSort(HloInstruction* hlo) {
   HloSortInstruction* sort = Cast<HloSortInstruction>(hlo);
   if (sort->operand_count() < 1) {
     return InternalError("Expected at least 1 operand for %s instruction: %s",
-                         HloOpcodeString(sort->opcode()), sort->ToString());
+                         sort->opcode_string(), sort->ToString());
   }
   HloComputation* compare = sort->to_apply();
 
@@ -1092,7 +1091,7 @@ Status ShapeVerifier::HandleReduce(HloInstruction* reduce) {
   if (reduce->operand_count() % 2 != 0) {
     return InternalError(
         "Expected an even number of operands for %s instruction: %s",
-        HloOpcodeString(reduce->opcode()), reduce->ToString());
+        reduce->opcode_string(), reduce->ToString());
   }
 
   std::vector<const Shape*> operand_shapes;
@@ -1451,8 +1450,7 @@ Status CheckAsyncOpOperand(const HloInstruction* async_op) {
     return InternalError(
         "%s expects operand to be async-update or async-done, found "
         "%s.",
-        HloOpcodeString(async_op->opcode()),
-        HloOpcodeString(operand->opcode()));
+        async_op->opcode_string(), operand->opcode_string());
   }
   if (*async_op->async_wrapped_computation() !=
       *operand->async_wrapped_computation()) {
@@ -1460,7 +1458,7 @@ Status CheckAsyncOpOperand(const HloInstruction* async_op) {
         "The %s expects its wrapped async computation to be identical to its "
         "operand's wrapped async computation (%s vs %s), thread name (%s vs "
         "%s).",
-        HloOpcodeString(async_op->opcode()),
+        async_op->opcode_string(),
         async_op->async_wrapped_instruction()->ToString(),
         operand->async_wrapped_instruction()->ToString(),
         async_op->async_wrapped_computation()->execution_thread(),
@@ -1469,7 +1467,7 @@ Status CheckAsyncOpOperand(const HloInstruction* async_op) {
   if (async_op->async_group_id() != operand->async_group_id()) {
     return InternalError(
         "%s expects its operand to have the same group id (%s vs %s).",
-        HloOpcodeString(async_op->opcode()),
+        async_op->opcode_string(),
         async_op->async_group_id() ? absl::StrCat(*async_op->async_group_id())
                                    : "none",
         operand->async_group_id() ? absl::StrCat(*operand->async_group_id())
@@ -1484,7 +1482,7 @@ Status CheckAsyncOpComputationShapes(const HloInstruction* async_op,
     return InternalError(
         "The %s expects the async shape to be a tuple of at least two "
         "elements, found %s.",
-        HloOpcodeString(async_op->opcode()), async_shape.ToString());
+        async_op->opcode_string(), async_shape.ToString());
   }
   ProgramShape computation_shape =
       async_op->async_wrapped_computation()->ComputeProgramShape();
@@ -1493,7 +1491,7 @@ Status CheckAsyncOpComputationShapes(const HloInstruction* async_op,
     return InternalError(
         "The %s expects the async shape at index {0} to match async "
         "computation parameter shape (%s vs %s).",
-        HloOpcodeString(async_op->opcode()),
+        async_op->opcode_string(),
         async_shape.tuple_shapes(0).ToString(/*print_layout=*/true),
         param_shape.ToString(/*print_layout=*/true));
   }
@@ -1501,7 +1499,7 @@ Status CheckAsyncOpComputationShapes(const HloInstruction* async_op,
     return InternalError(
         "The %s expects the async shape at index {1} to match the async "
         "computation root shape (%s vs %s).",
-        HloOpcodeString(async_op->opcode()),
+        async_op->opcode_string(),
         async_shape.tuple_shapes(1).ToString(/*print_layout=*/true),
         computation_shape.result().ToString(/*print_layout=*/true));
   }
@@ -1555,7 +1553,7 @@ Status ShapeVerifier::HandleAsyncStart(HloInstruction* async_start) {
       return InternalError(
           "The %s expects the shape of operand %d to match the async shape at "
           "index {0} (%s vs %s).",
-          HloOpcodeString(async_start->opcode()), i,
+          async_start->opcode_string(), i,
           async_start->operand(i)->shape().ToString(/*print_layout=*/true),
           param_shape.tuple_shapes(i).ToString(/*print_layout=*/true));
     }
@@ -1568,7 +1566,7 @@ Status ShapeVerifier::HandleAsyncUpdate(HloInstruction* async_update) {
   if (!ShapesSame(async_update->operand(0)->shape(), async_update->shape())) {
     return InternalError(
         "The %s expects the shape of operand and output to match (%s vs %s).",
-        HloOpcodeString(async_update->opcode()),
+        async_update->opcode_string(),
         async_update->operand(0)->shape().ToString(),
         async_update->shape().ToString());
   }
@@ -1586,7 +1584,7 @@ Status ShapeVerifier::HandleAsyncDone(HloInstruction* async_done) {
     return InternalError(
         "The %s expects the shape of output to match the async shape at index "
         "{1} (%s vs %s).",
-        HloOpcodeString(async_done->opcode()), async_done->shape().ToString(),
+        async_done->opcode_string(), async_done->shape().ToString(),
         root_shape.ToString());
   }
   return CheckAsyncOpOperand(async_done);
@@ -2075,39 +2073,39 @@ Status CheckSameIsHostTransfer(const HloInstruction* instr1,
 Status VerifySingleUser(const HloInstruction* instruction,
                         const absl::flat_hash_set<HloOpcode>& expected_users) {
   TF_RET_CHECK(instruction->users().size() == 1)
-      << "The " << HloOpcodeString(instruction->opcode())
+      << "The " << instruction->opcode_string()
       << " instruction requires one consumer, found "
       << instruction->users().size();
 
   const HloInstruction* user = instruction->users().front();
   TF_RET_CHECK(expected_users.contains(user->opcode()))
-      << "The consumer of a " << HloOpcodeString(instruction->opcode())
+      << "The consumer of a " << instruction->opcode_string()
       << " instruction needs to be one of ("
       << absl::StrJoin(expected_users, ", ",
                        [](std::string* out, HloOpcode opcode) {
                          out->append(HloOpcodeString(opcode));
                        })
-      << "), found " << HloOpcodeString(user->opcode());
+      << "), found " << user->opcode_string();
   return OkStatus();
 }
 
 Status VerifySingleOperand(const HloInstruction* instruction,
                            const std::vector<HloOpcode>& expected_operands) {
   TF_RET_CHECK(instruction->operands().size() == 1)
-      << "The " << HloOpcodeString(instruction->opcode())
+      << "The " << instruction->opcode_string()
       << " instruction requires one consumer, found "
       << instruction->users().size();
 
   const HloInstruction* operand = instruction->operand(0);
   TF_RET_CHECK(absl::c_find(expected_operands, operand->opcode()) !=
                expected_operands.end())
-      << "The operand of a " << HloOpcodeString(instruction->opcode())
+      << "The operand of a " << instruction->opcode_string()
       << " instruction needs to be "
       << absl::StrJoin(expected_operands, " or ",
                        [](std::string* out, HloOpcode opcode) {
                          out->append(HloOpcodeString(opcode));
                        })
-      << ", found " << HloOpcodeString(operand->opcode());
+      << ", found " << operand->opcode_string();
   return OkStatus();
 }
 
@@ -2416,8 +2414,7 @@ Status CheckElementwiseInstruction(HloInstruction* instruction) {
           "Implicit broadcast is not allowed in HLO."
           "Found different shapes for instruction %s.\n"
           "output: %s\noperand: %s\n",
-          HloOpcodeString(instruction->opcode()),
-          ShapeUtil::HumanString(out_shape),
+          instruction->opcode_string(), ShapeUtil::HumanString(out_shape),
           ShapeUtil::HumanString(operand_shape));
     }
   }
@@ -2681,7 +2678,7 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
         continue;
       }
       TF_RET_CHECK(check_inst->sharding() == common_sharding_inst->sharding())
-          << "Inconsistent " << HloOpcodeString(parent->opcode())
+          << "Inconsistent " << parent->opcode_string()
           << " sharding among instructions: \n"
           << common_sharding_inst->ToString() << "\n"
           << check_inst->ToString();

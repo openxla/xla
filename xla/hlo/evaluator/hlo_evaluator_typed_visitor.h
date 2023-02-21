@@ -128,7 +128,7 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
  private:
   Status UnsupportedTypeError(HloInstruction* instruction) {
     return InvalidArgument(
-        "Unsupported type for %s: %s", HloOpcodeString(instruction->opcode()),
+        "Unsupported type for %s: %s", instruction->opcode_string(),
         PrimitiveType_Name(instruction->shape().element_type()));
   }
 
@@ -178,7 +178,7 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
 
   Status DefaultAction(HloInstruction* hlo_instruction) override {
     return Unimplemented("unhandled HLO ops for HloEvaluator: %s.",
-                         HloOpcodeString(hlo_instruction->opcode()));
+                         hlo_instruction->opcode_string());
   }
 
   template <typename NativeT,

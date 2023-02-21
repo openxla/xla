@@ -1234,7 +1234,7 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
   // Otherwise, register the given name with the name uniquer.
   if (name.empty()) {
     name = name_uniquer_.GetUniqueName(
-        absl::StrCat(HloOpcodeString(instruction->opcode()), ".anon"));
+        absl::StrCat(instruction->opcode_string(), ".anon"));
   } else {
     name_uniquer_.GetUniqueName(name);
   }

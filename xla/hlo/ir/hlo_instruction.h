@@ -1190,6 +1190,7 @@ class HloInstruction {
   // Returns the opcode for this instruction.
   HloOpcode opcode() const { return opcode_; }
   HloOpcode* mutable_opcode() { return &opcode_; }
+  std::string opcode_string() const { return HloOpcodeString(opcode_); }
 
   // Returns whether this instruction is the root of its parent computation.
   bool IsRoot() const;

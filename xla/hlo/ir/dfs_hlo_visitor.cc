@@ -28,14 +28,14 @@ template <typename HloInstructionPtr>
 Status DfsHloVisitorBase<HloInstructionPtr>::HandleElementwiseUnary(
     HloInstructionPtr hlo) {
   return Unimplemented("DfsHloVisitor::HandleElementwiseUnary: %s",
-                       HloOpcodeString(hlo->opcode()));
+                       hlo->opcode_string());
 }
 
 template <typename HloInstructionPtr>
 Status DfsHloVisitorBase<HloInstructionPtr>::HandleElementwiseBinary(
     HloInstructionPtr hlo) {
   return Unimplemented("DfsHloVisitor::HandleElementwiseBinary: %s",
-                       HloOpcodeString(hlo->opcode()));
+                       hlo->opcode_string());
 }
 
 template <typename HloInstructionPtr>

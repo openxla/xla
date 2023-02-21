@@ -190,7 +190,7 @@ class HloSchedule {
   // satisfied in the schedule.
   Status Verify() const;
 
-  std::string ToString() const;
+  std::string ToString(bool print_full_instructions = false) const;
 
   bool empty() const { return sequences_.empty(); }
 

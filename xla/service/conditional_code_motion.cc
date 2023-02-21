@@ -1357,8 +1357,7 @@ class GroupConnectedBoundaries {
         (search_config_ < 0)
             ? FlipMutation(&curconfig[static_cast<uint32_t>(user->opcode())],
                            -10,
-                           HloOpcodeString(op->opcode()) + "->" +
-                               HloOpcodeString(user->opcode()))
+                           op->opcode_string() + "->" + user->opcode_string())
             : curconfig[static_cast<uint32_t>(user->opcode())];
     VLOG(2) << "ConditionalCodeMotion: Add reuses carried by instr: "
             << op->ToString() << "=>" << user->ToString() << " : " << config

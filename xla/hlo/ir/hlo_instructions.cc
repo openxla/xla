@@ -1596,7 +1596,7 @@ HloCallableInstruction::HloCallableInstruction(
   for (auto operand : operands) {
     AppendOperand(operand);
   }
-  SetAndSanitizeName(HloOpcodeString(opcode));
+  SetAndSanitizeName(opcode_string());
 }
 
 HloCallableInstruction::HloCallableInstruction(
@@ -1607,7 +1607,7 @@ HloCallableInstruction::HloCallableInstruction(
   for (auto operand : operands) {
     AppendOperand(operand);
   }
-  SetAndSanitizeName(std::string(prefix) + HloOpcodeString(opcode));
+  SetAndSanitizeName(std::string(prefix) + opcode_string());
   AppendComputation(called_computation);
 }
 
@@ -1619,7 +1619,7 @@ HloCallableInstruction::HloCallableInstruction(
   for (auto operand : operands) {
     AppendOperand(operand);
   }
-  SetAndSanitizeName(HloOpcodeString(opcode));
+  SetAndSanitizeName(opcode_string());
   for (auto called_computation : called_computations) {
     AppendComputation(called_computation);
   }
@@ -1868,7 +1868,7 @@ HloFusionInstruction::HloFusionInstruction(const Shape& shape,
     : HloCallableInstruction(HloOpcode::kFusion, shape),
       fusion_kind_(fusion_kind) {
   CHECK(fused_root != nullptr);
-  SetAndSanitizeName(HloOpcodeString(opcode()));
+  SetAndSanitizeName(opcode_string());
   set_parent(fused_root->parent());
   set_metadata(fused_root->metadata());
   CHECK(fused_root->IsFusible()) << fused_root->ToString();
@@ -2227,7 +2227,7 @@ HloCallInstruction::HloCallInstruction(const Shape& shape,
                                        HloInstruction* called_computation_root)
     : HloCallableInstruction(HloOpcode::kCall, shape) {
   CHECK(called_computation_root != nullptr);
-  SetAndSanitizeName(HloOpcodeString(opcode()));
+  SetAndSanitizeName(opcode_string());
   set_parent(called_computation_root->parent());
   set_metadata(called_computation_root->metadata());
   CloneAndAppendInstructionIntoCalledComputation(called_computation_root);

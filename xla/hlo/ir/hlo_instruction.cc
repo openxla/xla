@@ -2857,10 +2857,10 @@ bool HloInstruction::IsEffectiveBitcast() const {
 HloComputation* HloInstruction::to_apply() const {
   if (has_to_apply()) {
     CHECK_EQ(called_computations_.size(), 1)
-        << "Expected a to_apply computation for " << HloOpcodeString(opcode());
+        << "Expected a to_apply computation for " << opcode_string();
     return called_computations_[0];
   }
-  LOG(FATAL) << "Invalid opcode for to_apply(): " << HloOpcodeString(opcode());
+  LOG(FATAL) << "Invalid opcode for to_apply(): " << opcode_string();
 }
 
 void HloInstruction::set_to_apply(HloComputation* computation) {
@@ -2869,11 +2869,11 @@ void HloInstruction::set_to_apply(HloComputation* computation) {
   CHECK(!IsFused());
   if (has_to_apply()) {
     CHECK_EQ(called_computations_.size(), 1)
-        << "Expected a to_apply computation for " << HloOpcodeString(opcode());
+        << "Expected a to_apply computation for " << opcode_string();
     called_computations_[0] = computation;
     return;
   }
-  LOG(FATAL) << "Invalid opcode for to_apply(): " << HloOpcodeString(opcode());
+  LOG(FATAL) << "Invalid opcode for to_apply(): " << opcode_string();
 }
 
 bool HloInstruction::has_to_apply() const {
@@ -3179,14 +3179,14 @@ void HloInstruction::PrintWithCanonicalNameMap(
           return "-update";
         default:
           CHECK(opcode() == HloOpcode::kAsyncDone)
-              << "Unexpected async opcode: " << HloOpcodeString(opcode());
+              << "Unexpected async opcode: " << opcode_string();
           return "-done";
       }
     }();
     printer->Append(HloOpcodeString(async_wrapped_opcode()));
     printer->Append(suffix);
   } else {
-    printer->Append(HloOpcodeString(opcode()));
+    printer->Append(opcode_string());
   }
   printer->Append("(");
   PrintOperandsWithCanonicalNameMap(printer, options, canonical_name_map);
@@ -3520,7 +3520,7 @@ std::vector<std::string> HloInstruction::ExtraAttributesToString(
 }
 
 std::string HloInstruction::ToShortString() const {
-  return StrCat("%", name(), " = ", HloOpcodeString(opcode()), "(",
+  return StrCat("%", name(), " = ", opcode_string(), "(",
                 StrJoin(operands_, ", ",
                         [](std::string* out, HloInstruction* operand) {
                           StrAppend(out, "%", operand->name());
@@ -3535,7 +3535,7 @@ HloInstructionProto HloInstruction::ToProto() const {
          "instruction is inside a module before dumping it.";
   proto.set_id(unique_id_);
   proto.set_name(name_);
-  proto.set_opcode(HloOpcodeString(opcode_));
+  proto.set_opcode(opcode_string());
   *proto.mutable_shape() = shape_.ToProto();
   for (const HloInstruction* operand : operands_) {
     proto.add_operand_ids(operand->unique_id());
@@ -3572,7 +3572,7 @@ std::string HloInstruction::ToCategory() const {
     return "non-fusion elementwise";
   }
 
-  return HloOpcodeString(opcode());
+  return opcode_string();
 }
 
 bool HloInstruction::IsFused() const {
@@ -3881,7 +3881,7 @@ Status HloInstruction::Visit(DfsHloVisitorBase<HloInstructionPtr>* visitor) {
   return InternalError(
       "Unhandled HloOpcode for DfsHloVisitor: %s. This should not happen - "
       "please file a bug for XLA.",
-      HloOpcodeString(opcode_));
+      opcode_string());
 }
 
 // Explicit instantiations.

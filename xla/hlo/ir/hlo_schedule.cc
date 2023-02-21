@@ -362,7 +362,7 @@ const HloComputation* IdToComputation(const HloModule* module, int64_t id) {
 
 }  // namespace
 
-std::string HloSchedule::ToString() const {
+std::string HloSchedule::ToString(bool print_full_instructions) const {
   std::vector<std::string> pieces;
 
   pieces.push_back("HloSchedule");
@@ -387,7 +387,11 @@ std::string HloSchedule::ToString() const {
     } else {
       pieces.push_back(absl::StrFormat("computation %s:", computation->name()));
       for (const HloInstruction* instruction : sequence.instructions()) {
-        pieces.push_back(absl::StrCat("  ", instruction->name()));
+        if (print_full_instructions) {
+          pieces.push_back(absl::StrCat("  ", instruction->ToString()));
+        } else {
+          pieces.push_back(absl::StrCat("  ", instruction->name()));
+        }
       }
     }
   }

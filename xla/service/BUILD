@@ -925,8 +925,6 @@ cc_library(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1561,14 +1559,12 @@ cc_library(
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:numbers",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -3077,8 +3073,6 @@ cc_library(
     srcs = ["conditional_code_motion.cc"],
     hdrs = ["conditional_code_motion.h"],
     deps = [
-        ":call_graph",
-        ":call_inliner",
         ":hlo_cse",
         ":hlo_dce",
         ":hlo_pass",
@@ -3096,7 +3090,6 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -4795,7 +4788,6 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
     ],
 )
 

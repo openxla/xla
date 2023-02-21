@@ -148,7 +148,7 @@ Status GatherComputationsByAllocationType(
             break;
           default:
             return InternalError("Unexpected calling opcode: %s",
-                                 HloOpcodeString(instruction->opcode()));
+                                 instruction->opcode_string());
         }
       }
     }
@@ -808,7 +808,7 @@ std::string BufferAssignment::ToVerboseString() const {
     } else {
       // TODO(loreno): change this to a truncated string of the instruction.
       buf_strs.push_back(
-          absl::StrCat("\n\t\tXLA Label: ", HloOpcodeString(instr->opcode()),
+          absl::StrCat("\n\t\tXLA Label: ", instr->opcode_string(),
                        "\n\t\tShape: ", value->shape().ToString()));
     }
     buf_strs.push_back("\n\t\t==========================\n");

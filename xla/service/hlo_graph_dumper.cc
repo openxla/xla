@@ -1173,11 +1173,11 @@ std::string HloDotDumper::GetInstructionNodeLabel(const HloInstruction* instr) {
 
   // The HLO instruction name contains usually the opcode, e.g. "%add.42" is
   // an add instruction.  In this case we render just the name.
-  if (absl::StartsWith(instr->name(), HloOpcodeString(instr->opcode()))) {
+  if (absl::StartsWith(instr->name(), instr->opcode_string())) {
     return StrFormat("<b>%s</b>", HtmlLikeStringSanitize(instr->name()));
   }
   std::string extended_opcode =
-      StrCat(HloOpcodeString(instr->opcode()),
+      StrCat(instr->opcode_string(),
              instr->opcode() != HloOpcode::kFusion
                  ? ""
                  : StrCat(":", xla::ToString(instr->fusion_kind())));
