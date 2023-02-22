@@ -307,7 +307,7 @@ cc_library(
         "@llvm-project//mlir:ROCDLToLLVMIRTranslation",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:NVVMToLLVMIRTranslation",
-        "//xla/translate/mhlo_to_lhlo_with_xla:mhlo_to_lhlo_with_xla",
+        "//xla/translate/mhlo_to_lhlo_with_xla",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:lhlo",
         "//xla/mlir_hlo:lhlo_gpu",
@@ -355,6 +355,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:human_readable_json",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ] + if_gpu_is_configured([
         ":triangular_solve_thunk",
@@ -463,6 +464,7 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 
