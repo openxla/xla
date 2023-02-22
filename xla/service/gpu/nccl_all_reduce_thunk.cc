@@ -38,9 +38,27 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+#if XLA_ENABLE_XCCL
+// Performs float sum reduction using a custom kernel that is expected to run
+// faster than default NCCL for a small number of elements. Needs to be called
+// for each send/recv buffer pair for one stream before switching to the next
+// stream. Needs to be called `num_gpus` times for each buffer before the kernel
+// is launched.
+Status RunSmallAllReduce(se::Stream& stream, int num_gpus,
+                         const void* send_buffer, void* recv_buffer,
+                         PrimitiveType dtype, int64_t num_elements);
+
+bool IsCompatibleWithSmallReduce(ncclRedOp_t reduce_op, ncclDataType_t dtype,
+                                 int64_t element_count) {
+  if (reduce_op != ncclSum) return false;
+  if (element_count > 192 * 1024) return false;
+  return dtype == ncclFloat || dtype == ncclBfloat16 || dtype == ncclInt32;
+}
+#endif
+
 Status RunAllReduce(ReductionKind reduction_kind,
                     std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
-                    ncclComm_t comm) {
+                    ncclComm_t comm, bool allow_small_all_reduce_kernel) {
 #if XLA_ENABLE_XCCL
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing all-reduce from device ordinal: " << device_ordinal;
@@ -49,19 +67,30 @@ Status RunAllReduce(ReductionKind reduction_kind,
 
   se::gpu::GpuStreamHandle gpu_stream = se::gpu::AsGpuStreamValue(&stream);
 
-  XLA_CUDA_RETURN_IF_ERROR(ncclGroupStart());
-  for (size_t i = 0; i < buffers.size(); ++i) {
-    DeviceBufferPair& buffer = buffers[i];
-    const void* send_buffer = buffer.source_buffer.opaque();
-    void* recv_buffer = buffer.destination_buffer.opaque();
-
+  std::vector<DeviceBufferPair> small_buffers;
+  bool group_start_called = false;
+  for (DeviceBufferPair& buffer : buffers) {
     TF_ASSIGN_OR_RETURN(auto dtype_and_multiplier,
                         ToNcclDataTypeAndCountMultiplier(
                             buffer.element_type, Thunk::kNcclAllReduce));
     ncclDataType_t dtype = dtype_and_multiplier.first;
     int64_t element_count = buffer.element_count * dtype_and_multiplier.second;
 
-    VLOG(3) << absl::StreamFormat(
+    if (allow_small_all_reduce_kernel &&
+        IsCompatibleWithSmallReduce(reduce_op, dtype, element_count)) {
+      small_buffers.push_back(buffer);
+      continue;
+    }
+
+    if (!group_start_called) {
+      XLA_CUDA_RETURN_IF_ERROR(ncclGroupStart());
+      group_start_called = true;
+    }
+
+    const void* send_buffer = buffer.source_buffer.opaque();
+    void* recv_buffer = buffer.destination_buffer.opaque();
+
+    VLOG(0) << absl::StreamFormat(
         "Calling ncclAllReduce(send_buffer=%p, recv_buffer=%p, count=%d, "
         "comm=%p, stream=%p)",
         send_buffer, recv_buffer, element_count, static_cast<const void*>(comm),
@@ -71,7 +100,25 @@ Status RunAllReduce(ReductionKind reduction_kind,
                                            element_count, dtype, reduce_op,
                                            comm, gpu_stream));
   }
-  return XLA_CUDA_STATUS(ncclGroupEnd());
+  if (group_start_called) {
+    XLA_CUDA_RETURN_IF_ERROR(ncclGroupEnd());
+  }
+
+  if (!small_buffers.empty()) {
+    int num_gpus = 0;
+    XLA_CUDA_RETURN_IF_ERROR(ncclCommCount(comm, &num_gpus));
+    static absl::Mutex mutex(absl::kConstInit);
+    absl::MutexLock lock(&mutex);
+    for (DeviceBufferPair& buffer : small_buffers) {
+      TF_RETURN_IF_ERROR(
+          RunSmallAllReduce(stream, num_gpus, buffer.source_buffer.opaque(),
+                            buffer.destination_buffer.opaque(),
+                            buffer.element_type, buffer.element_count));
+    }
+  }
+
+  return OkStatus();
+
 #else   // XLA_ENABLE_XCCL
   return Unimplemented(
       "NCCL support is not available: this binary was not built with a CUDA "
@@ -236,7 +283,8 @@ Status NcclAllReduceThunkBase::RunAllReduce(const ExecuteParams& params,
       ConvertToDeviceBuffers(params, buffers_,
                              config_.config.operand_element_type));
   return ::xla::gpu::RunAllReduce(config_.reduction_kind, device_buffers,
-                                  stream, comm);
+                                  stream, comm,
+                                  /*allow_small_all_reduce_kernel=*/false);
 }
 
 NcclAllReduceThunk::NcclAllReduceThunk(ThunkInfo thunk_info,

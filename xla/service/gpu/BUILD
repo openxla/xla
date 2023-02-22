@@ -2,6 +2,7 @@
 #   GPU-specific components in XLA service implementation.
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -597,6 +598,7 @@ tsl_gpu_library(
     # Override tsl_gpu_library()'s internal default value of ["//buildenv/target:gce"].
     compatible_with = [],
     deps = [
+        ":all_reduce_kernel",
         ":buffer_allocations",
         ":ir_emission_utils",
         ":nccl_utils",
@@ -626,6 +628,22 @@ tsl_gpu_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:logging",
     ],
+)
+
+cuda_library(
+    name = "all_reduce_kernel",
+    srcs = if_nccl(["small_all_reduce_kernel.cu.cc"]),
+    compatible_with = [],
+    deps = [
+        ":nccl_utils",
+        "//xla:status",
+        "//xla:util",
+        "//xla/stream_executor",
+        "//xla/stream_executor/gpu:gpu_stream",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "@com_google_absl//absl/synchronization",
+    ],
+    alwayslink = 1,
 )
 
 # Empty library to implement nested dependency conditions.

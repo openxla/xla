@@ -29,14 +29,15 @@ limitations under the License.
 #include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
 #include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/IRMapping.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/IRMapping.h"  // from @llvm-project
 #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project
 #include "mlir/IR/Visitors.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "xla/mlir/backends/gpu/transforms/uid_generator.h"
 #include "xla/mlir/runtime/utils/custom_calls.h"
@@ -669,6 +670,22 @@ class CollectiveOpLowering : public OpRewritePattern<CollectiveOp> {
         b.getI64IntegerAttr(static_cast<int64_t>(reduction_kind.value())));
 
     return success();
+  }
+
+  static LogicalResult SetSpecificAttrs(ImplicitLocOpBuilder& b, AllReduceOp op,
+                                        func::CallOp call) {
+    auto attr = op->getAttrOfType<BoolAttr>("allow_small_all_reduce_kernel");
+    call->setAttr(b.getStringAttr("allow_small_all_reduce_kernel"),
+                  attr ? attr : b.getBoolAttr(false));
+    return SetSpecificAttrs<AllReduceOp>(b, op, call);
+  }
+  static LogicalResult SetSpecificAttrs(ImplicitLocOpBuilder& b,
+                                        AllReduceStartOp op,
+                                        func::CallOp call) {
+    auto attr = op->getAttrOfType<BoolAttr>("allow_small_all_reduce_kernel");
+    call->setAttr(b.getStringAttr("allow_small_all_reduce_kernel"),
+                  attr ? attr : b.getBoolAttr(false));
+    return SetSpecificAttrs<AllReduceStartOp>(b, op, call);
   }
 
   static LogicalResult SetSpecificAttrs(ImplicitLocOpBuilder& b, AllGatherOp op,
