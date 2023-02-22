@@ -89,6 +89,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
+        "@llvm-project//mlir:SparseTensorEnums",
         "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:float8",
     ],
