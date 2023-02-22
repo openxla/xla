@@ -20,7 +20,11 @@ on:
 jobs:
   run-test-script:
     if: ${{ github.event.label.name == 'A/B diff benchmarking' }}
-    runs-on: ubuntu-22.04
+    runs-on:
+      - self-hosted  # must come first
+      - environment=testing
+      - cpu
+      - os-family=Linux
     defaults:
       run:
         shell: bash
