@@ -825,7 +825,7 @@ def tf_windows_aware_platform_deps(name):
         ],
     })
 
-def tf_platform_deps(name, platform_dir = "//tsl/platform/"):
+def tf_platform_deps(name, platform_dir = "@xla" + "//tsl/platform/"):
     return [platform_dir + "default:" + name]
 
 def tf_testing_deps(name, platform_dir = "//tsl/platform/"):
@@ -834,7 +834,7 @@ def tf_testing_deps(name, platform_dir = "//tsl/platform/"):
 def tf_stream_executor_deps(name, platform_dir = "//tsl/platform/"):
     return tf_platform_deps(name, platform_dir)
 
-def tf_platform_alias(name, platform_dir = "//tsl/platform/"):
+def tf_platform_alias(name, platform_dir = "@xla" + "//tsl/platform/"):
     return [platform_dir + "default:" + name]
 
 def tf_logging_deps():
