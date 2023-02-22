@@ -15,8 +15,12 @@ limitations under the License.
 
 #include "xla/service/hlo_verifier.h"
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
+#include <numeric>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -36,6 +40,7 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/shape_inference.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
@@ -2699,6 +2704,7 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
         instruction->opcode() != HloOpcode::kTuple &&
         instruction->opcode() != HloOpcode::kGetTupleElement &&
         instruction->opcode() != HloOpcode::kTranspose &&
+        instruction->opcode() != HloOpcode::kConvolution &&
         instruction->opcode() != HloOpcode::kDot &&
         instruction->opcode() != HloOpcode::kFusion &&
         instruction->opcode() != HloOpcode::kReshape &&
@@ -2706,9 +2712,9 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
         instruction->opcode() != HloOpcode::kCustomCall) {
       return InvalidArgument(
           "FP8 is currently only supported in convert, bitcast, tuple, "
-          "get-tuple-element, transpose, dot, fusion, reshape and copy "
-          "instructions as well as Custom Calls, but got instruction with FP8 "
-          "input: %s",
+          "get-tuple-element, transpose, convolution, dot, fusion, reshape and "
+          "copy instructions as well as Custom Calls, but got instruction with "
+          "FP8 input: %s",
           instruction->ToString());
     }
     return OkStatus();

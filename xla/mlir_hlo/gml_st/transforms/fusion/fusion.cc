@@ -23,6 +23,7 @@ limitations under the License.
 #include "gml_st/transforms/passes.h"
 #include "gml_st/transforms/peeling/peeling.h"
 #include "gml_st/transforms/transforms.h"
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -562,12 +563,19 @@ FailureOr<gml_st::FusionOp> wrapFusionCluster(
   // 1. Find operands and results of the cluster op.
   SetVector<Value> clusterOperands;
   SmallVector<Value> clusterResults;
-  for (Operation* op : fusionCluster.operations) {
-    for (Value operand : op->getOperands()) {
-      if (fusionCluster.operations.contains(operand.getDefiningOp())) continue;
+  auto visitOpOperand = [&](OpOperand* operand) {
+    auto* definingOp = operand->get().getDefiningOp();
 
-      clusterOperands.insert(operand);
-    }
+    if (fusionCluster.operations.contains(definingOp)) return;
+
+    if (!isa_and_nonnull<arith::ConstantOp>(definingOp))
+      clusterOperands.insert(operand->get());
+  };
+
+  for (Operation* op : fusionCluster.operations) {
+    for (OpOperand& operand : op->getOpOperands()) visitOpOperand(&operand);
+
+    visitUsedValuesDefinedAbove(op->getRegions(), visitOpOperand);
 
     for (Value result : op->getResults()) {
       if (llvm::any_of(result.getUsers(), [&](Operation* user) {
@@ -576,10 +584,6 @@ FailureOr<gml_st::FusionOp> wrapFusionCluster(
         clusterResults.push_back(result);
     }
   }
-
-  // We assume that a cluster has only one result for simplity for now. This
-  // restriction should be relaxed.
-  if (clusterResults.size() != 1) return failure();
 
   // 2. Create an empty op.
   OpBuilder::InsertionGuard guard(rewriter);
@@ -600,23 +604,19 @@ FailureOr<gml_st::FusionOp> wrapFusionCluster(
   IRMapping mapper;
   mapper.map(clusterOperands, block->getArguments());
 
-  auto yieldOp = rewriter.create<gml_st::YieldOp>(loc, clusterResults[0]);
-
-  // 4. Move ops into the cluster region.
+  // 4. Copy ops into the cluster region in topoligical order to avoid swapping
+  // depending ops.
   SmallVector<Operation*> clusterOps(fusionCluster.operations.begin(),
                                      fusionCluster.operations.end());
 
-  // Move ops in reverse topoligical order to avoid swapping depending ops.
   mlir::computeTopologicalSorting(clusterOps);
-  for (Operation* op : llvm::reverse(clusterOps)) {
-    op->moveBefore(block, block->begin());
-
-    for (OpOperand& opOperand : op->getOpOperands()) {
-      if (mapper.contains(opOperand.get())) {
-        opOperand.set(mapper.lookup(opOperand.get()));
-      }
-    }
+  for (Operation* op : clusterOps) {
+    rewriter.clone(*op, mapper);
   }
+
+  SmallVector<Value> yieldOpOperands = llvm::to_vector(llvm::map_range(
+      clusterResults, [&](Value v) { return mapper.lookupOrDefault(v); }));
+  auto yieldOp = rewriter.create<gml_st::YieldOp>(loc, yieldOpOperands);
 
   // 5. Replace all uses of ops in the cluster with results of the new fusion
   // cluster op.
@@ -630,13 +630,22 @@ FailureOr<gml_st::FusionOp> wrapFusionCluster(
 
 LogicalResult inlineFusionCluster(FusionOp fusionOp,
                                   PatternRewriter& rewriter) {
-  InlinerInterface interface(rewriter.getContext());
-  if (failed(inlineRegion(interface, &fusionOp.getRegion(), fusionOp,
-                          fusionOp.getOperands(), fusionOp.getResults(),
-                          fusionOp.getLoc(),
-                          /*shouldCloneInlinedRegion=*/false)))
-    return failure();
-  rewriter.eraseOp(fusionOp);
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfter(fusionOp);
+
+  IRMapping mapper;
+  mapper.map(fusionOp.getRegion().getArguments(), fusionOp.getOperands());
+
+  for (auto& op : fusionOp.getBody()->without_terminator()) {
+    rewriter.clone(op, mapper);
+  }
+
+  SmallVector<Value> yieldOpOperands = llvm::to_vector(
+      llvm::map_range(fusionOp.getTerminator().getOperands(),
+                      [&](Value v) { return mapper.lookupOrDefault(v); }));
+
+  rewriter.replaceOp(fusionOp, yieldOpOperands);
+
   return success();
 }
 

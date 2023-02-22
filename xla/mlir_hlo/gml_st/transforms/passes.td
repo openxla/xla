@@ -157,13 +157,6 @@ def ScalarizationPass : Pass<"scalarize", "mlir::func::FuncOp"> {
     "tensor::TensorDialect"
   ];
   let constructor = "createScalarizationPass()";
-
-  let options = [
-    // TODO(b/268020816): Remove this flag.
-    Option<"skipFillOpScalarization", "block-fill-scalarization", "bool",
-      /*default=*/"false", "Do not scalarize `linalg.fill`. This is needed for "
-      "XLA:GPU pipeline for softmax.">,
-  ];
 }
 
 def TransformScatterForCpuPass :
@@ -178,6 +171,11 @@ def TransformDotForCpuPass :
   let summary = "Transform dot ops for running on CPU";
 
   let constructor = "createTransformDotForCpuPass()";
+
+  let options = [
+    ListOption<"tileSizes", "tile-sizes", "int64_t",
+               "Tile sizes for a `linalg.matmul`">,
+  ];
 }
 
 def TransformMatmulForCpuPass :
@@ -269,6 +267,11 @@ def FusionPlanningForCpuPass :
     "::mlir::linalg::LinalgDialect",
     "::mlir::tensor::TensorDialect"
   ];
+}
+
+def FusionOutliningPass : Pass<"gml-fusion-outlining", "mlir::ModuleOp"> {
+  let summary = "Pass to outline fusion regions into functions.";
+  let constructor = "createFusionOutliningPass()";
 }
 
 def InlineFusionClustersPass :

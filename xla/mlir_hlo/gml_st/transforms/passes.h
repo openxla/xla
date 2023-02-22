@@ -98,7 +98,8 @@ std::unique_ptr<OperationPass<func::FuncOp>> createOptimizeVectorTransferPass();
 std::unique_ptr<OperationPass<func::FuncOp>> createTransformScatterForCpuPass();
 
 /// Pass to transform a dot operation for CPU backend.
-std::unique_ptr<OperationPass<func::FuncOp>> createTransformDotForCpuPass();
+std::unique_ptr<OperationPass<func::FuncOp>> createTransformDotForCpuPass(
+    ArrayRef<int64_t> dotTileSizes = std::nullopt);
 
 /// Pass to transform a linalg.matmul op for CPU backend.
 std::unique_ptr<OperationPass<func::FuncOp>> createTransformMatmulForCpuPass(
@@ -109,8 +110,7 @@ std::unique_ptr<OperationPass<func::FuncOp>> createTransformMatmulForCpuPass(
 std::unique_ptr<OperationPass<func::FuncOp>> createFusionOfTensorOpsPass();
 
 /// Pass to convert ops on tensors with 1 element to scalar ops.
-std::unique_ptr<OperationPass<func::FuncOp>> createScalarizationPass(
-    bool skipFillOpScalarization = false);
+std::unique_ptr<OperationPass<func::FuncOp>> createScalarizationPass();
 
 /// Pass to transform a linalg.map op for CPU backend.
 std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
@@ -136,6 +136,9 @@ createTransformSortForCpuPass();
 /// Pass to create fusion clusters.
 std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
 createFusionPlanningForCpuPass();
+
+/// Pass to outline fusion regions into functions.
+std::unique_ptr<OperationPass<ModuleOp>> createFusionOutliningPass();
 
 /// Pass to inline fusion clusters.
 std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
