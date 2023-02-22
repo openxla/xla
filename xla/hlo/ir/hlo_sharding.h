@@ -451,10 +451,6 @@ class HloSharding {
   // present for the root. This is a flattened list of all the leaf shardings in
   // a tuple shape, by pre-order walk (ShapeTree iterator order).
   std::vector<HloSharding> tuple_elements_;
-  // This flag is to support partial replication and partial sharding. If it is
-  // true, tile_assignment_ will have an extra dimension in addition to the data
-  // shape rank, and the added last dimension represents the subgroups of
-  // replications, i.e., elements in slice [..., :] will be replicated.
   // This field is used to track the source of this sharding, usually derived
   // from instructions. Multiple metadata may be populated if sharding is
   // combined with other shardings. Metadata are to not be populated when
@@ -472,6 +468,10 @@ class HloSharding {
   bool maximal_;
   bool tuple_;
   bool manual_;
+  // This flag is to support partial replication and partial sharding. If it is
+  // true, tile_assignment_ will have an extra dimension in addition to the data
+  // shape rank, and the added last dimension represents the subgroups of
+  // replications, i.e., elements in slice [..., :] will be replicated.
   bool replicate_on_last_tile_dim_;
 };
 
