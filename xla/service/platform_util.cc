@@ -106,7 +106,16 @@ PlatformUtil::GetSupportedPlatforms() {
         break;
       }
     }
+  } else {
+    // Select the fist platform that is not kInterpreter.
+    for (int i = 0; i < platforms.size(); i++) {
+      if (absl::AsciiStrToLower(platforms[i]->Name()) != kInterpreter) {
+        platform = platforms[i];
+        break;
+      }
+    }
   }
+
   if (platform != nullptr) {
     return platform;
   }

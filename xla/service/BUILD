@@ -1044,7 +1044,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 
