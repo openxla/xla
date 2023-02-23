@@ -1,33 +1,32 @@
-# OpenXLA, a community-driven and modular open-source compiler (actively migrating from [tensorflow/xla](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla)).
+# OpenXLA
 
-The OpenXLA compiler is a community-driven and modular ML compiler. It will
-enable efficient optimization and deployment of ML models from most major
-frameworks to any hardware backend notably CPUs, GPUs, and ML ASICs.
+OpenXLA is a community-driven, modular open-source compiler. The project is
+actively migrating from
+[tensorflow/xla](https://github.com/tensorflow/tensorflow/tree/e2009cbe954b5c7644eecd77243cd4dfee14ff8d/tensorflow/compiler/xla)
+under the governance of the
+[OpenXLA SIG](https://github.com/tensorflow/community/pull/419/).
 
-> **Warning** This repo is currently being migrated from TensorFlow. Until the
-> migration is complete, this repo will not be accepting PRs.
+> **Note** During the migration, the project cannot accept pull requests.
 
-It is currently in the process of being created from the code currently inside
-[tensorflow](https://github.com/tensorflow/tensorflow/tree/e2009cbe954b5c7644eecd77243cd4dfee14ff8d/tensorflow/compiler/xla),
-under the
-[OpenXLA SIG governance](https://github.com/tensorflow/community/pull/419/).
+The OpenXLA compiler will enable efficient optimization and deployment of ML
+models from most major frameworks to any hardware backend, including CPUs, GPUs,
+and ML ASICs. To learn more, see [the documentation](docs/index.md).
 
-If you want to use XLA with your ML project, refer to the corresponding
+## Get started
+
+If you want to use XLA to compile your ML project, refer to the corresponding
 documentation for your ML framework:
+
 * [PyTorch](https://pytorch.org/xla)
 * [TensorFlow](https://www.tensorflow.org/xla)
 * [JAX](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html)
 
-Everything else in this repo is intended for XLA developers and integrators (to
-debug or add support for ML frontends and hardware backends).
-
-### Get started
+If you're not contributing code to the XLA compiler, you don't need to clone and
+build this repo. Everything here is intended for XLA contributors who want to
+develop the compler and XLA integrators who want to debug or add support for ML
+frontends and hardware backends.
 
 Here's how you can start developing in the XLA compiler:
-
-**Note**: If you're not contributing code to the XLA compiler, you shouldn't
-clone and build this repo. To simply compile a model with XLA, see the links
-above to use one of the supported ML frameworks.
 
 To build XLA, you will need to install [Bazel](https://bazel.build/install).
 [Bazelisk](https://github.com/bazelbuild/bazelisk#readme) is an easy way to
@@ -88,17 +87,17 @@ Computation output: f32[4] {13.64, 26.78, 39.920002, 53.06}
 [  PASSED  ] 1 test.
 ```
 
-### Contacts
+## Contacts
 
-*   For questions, contact Thea Lamkin - thealamkin at google
+*   For questions, contact Thea Lamkin - thealamkin at google.com.
 
-### Resources
+## Resources
 
 *   GitHub
     ([current](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla))
 *   [Community Resources](https://github.com/openxla/community)
 
-### Code of Conduct
+## Code of Conduct
 
 While under TensorFlow governance, all community spaces for SIG OpenXLA are
 subject to the
