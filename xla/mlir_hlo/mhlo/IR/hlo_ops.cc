@@ -1533,6 +1533,60 @@ LogicalResult CollectivePermuteOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// CollectivePermuteOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CollectiveUpdateSliceOp::inferReturnTypes(
+    MLIRContext*, Optional<Location> location, ValueRange operands,
+    DictionaryAttr attributes, RegionRange regions,
+    SmallVectorImpl<Type>& inferredReturnTypes) {
+  CollectiveUpdateSliceOp::Adaptor adaptor(operands, attributes, regions);
+  if (failed(hlo::verifyCollectivePermuteOp(location,
+                                            adaptor.getSourceTargetPairs())))
+    return failure();
+
+  auto verifyTensorIndices = [&](Value tensor, Value indices) -> LogicalResult {
+    auto tensorType = tensor.getType().cast<TensorType>();
+    auto indicesType = indices.getType().cast<TupleType>();
+
+    SmallVector<TupleType> tupleTypes;
+    bool hasIndexTensors = false;
+    bool hasIndexTuples = false;
+    for (auto type : indicesType) {
+      if (type.isa<TensorType>()) {
+        hasIndexTensors = true;
+        if (!hasIndexTuples) continue;
+      }
+      if (auto tupleType = type.dyn_cast<TupleType>()) {
+        hasIndexTuples = true;
+        tupleTypes.push_back(tupleType);
+        if (!hasIndexTensors) continue;
+      }
+      return emitOptionalError(location, "start_indices should either be ",
+                               "a tuple of tensors or a tuple of tuples");
+    }
+    if (tupleTypes.empty()) tupleTypes.push_back(indicesType);
+
+    for (auto tupleType : tupleTypes) {
+      if (tensorType.hasRank() && tensorType.getRank() != tupleType.size())
+        return emitOptionalError(
+            location, "tuples within start_indices should have the same ",
+            "number of elements as the corresponding tensor's rank");
+    }
+
+    return success();
+  };
+  if (failed(verifyTensorIndices(adaptor.getInput(),
+                                 adaptor.getInputStartIndices())) ||
+      failed(verifyTensorIndices(adaptor.getOutput(),
+                                 adaptor.getOutputStartIndices())))
+    return failure();
+
+  inferredReturnTypes.push_back(adaptor.getOutput().getType());
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // ConvolutionOp
 //===----------------------------------------------------------------------===//
 

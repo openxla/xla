@@ -1924,6 +1924,19 @@ func.func @op_bitcast(%arg0: tensor<i32>) -> tensor<f32> {
 
 // -----
 
+func.func @op_collective_update_slice(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{failed to legalize operation 'mhlo.collective_update_slice' that was explicitly marked illegal}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1]]> : tensor<1x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
 func.func @op_copy(%arg0: tensor<f32>) -> tensor<f32> {
   // mhlo.copy is immediately folded away at the first opportunity,
   // so it doesn't seem to be possible to capture it in FileCheck tests.

@@ -2069,6 +2069,32 @@ def MHLO_CollectivePermuteOp: MHLO_Op<"collective_permute",
       "::mlir::DenseIntElementsAttr":$source_target_pairs)>];
 }
 
+def MHLO_CollectiveUpdateSliceOp: MHLO_Op<"collective_update_slice",
+    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "CollectiveUpdateSliceOp operator";
+  let description = [{
+    CollectiveUpdateSlice performs a combination of DynamicSlice,
+    CollectivePermute and DynamicUpdateSlice.
+
+    Instead of sending an entire operand from source replicas to target
+    replicas, it sends a slice from the input operand on the source and receives
+    it into a slice of the output operand on the target.
+
+    This is a private feature of XLA and is currently underdocumented.
+  }];
+
+  let arguments = (ins
+    MHLO_Tensor:$input,
+    MHLO_Tensor:$output,
+    MHLO_Tuple:$input_start_indices,
+    MHLO_Tuple:$output_start_indices,
+    I64ElementsAttr:$source_target_pairs,
+    I64ElementsAttr:$slice_sizes,
+    OptionalAttr<MHLO_ChannelHandle>:$channel_handle
+  );
+  let results = (outs MHLO_Tensor);
+}
+
 def MHLO_ConvolutionOp : MHLO_Op<"convolution", [Pure]> {
   let summary = "Convolution operator";
   let description = [{

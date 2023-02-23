@@ -6353,3 +6353,131 @@ func.func @f8e5m2(%arg0: tensor<f16>) -> tensor<f8E5M2> {
   %0 = "mhlo.convert"(%arg0) : (tensor<f16>) -> tensor<f8E5M2>
   func.return %0 : tensor<f8E5M2>
 }
+
+// -----
+
+func.func @collective_update_slice_all_tensors(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1]]> : tensor<1x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_all_tuples(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tuple<tensor<i64>>, tuple<tensor<i64>>>, %arg3: tuple<tuple<tensor<i64>>, tuple<tensor<i64>>>
+) -> tensor<32xf32> {
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1]]> : tensor<1x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tuple<tensor<i64>>, tuple<tensor<i64>>>, tuple<tuple<tensor<i64>>, tuple<tensor<i64>>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_invalid_sources(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{duplicate sources not allowed}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1], [0, 2], [2, 3]]> : tensor<3x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_invalid_destinations(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{duplicate targets not allowed}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1], [1, 2], [2, 1]]> : tensor<3x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_invalid_source_target_pairs(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{expect source_target_pairs attribute to be of rank 2, but got rank 1}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[0, 1]> : tensor<2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_invalid_source_target_pairs(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{expect source_target_pairs attribute of shape (N, 2), but got (2, 3)}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1, 2], [3, 4, 5]]> : tensor<2x3xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_invalid_source_target_pairs(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{replica ids in source_target_pairs must be >= 0}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1], [-1, 0]]> : tensor<2x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_all_tensors_or_all_tuples(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>, tuple<tensor<i64>>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{start_indices should either be a tuple of tensors or a tuple of tuples}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1]]> : tensor<1x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>, tuple<tensor<i64>>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_all_tensors_rank(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tensor<i64>, tensor<i64>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{tuples within start_indices should have the same number of elements as the corresponding tensor's rank}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1]]> : tensor<1x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tensor<i64>, tensor<i64>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
+
+// -----
+
+func.func @collective_update_slice_all_tuples_rank(
+    %arg0: tensor<16xf32>, %arg1: tensor<32xf32>, %arg2: tuple<tuple<tensor<i64>>, tuple<tensor<i64>, tensor<i64>>>, %arg3: tuple<tensor<i64>>
+) -> tensor<32xf32> {
+  // expected-error@+1 {{tuples within start_indices should have the same number of elements as the corresponding tensor's rank}}
+  %0 = "mhlo.collective_update_slice"(%arg0, %arg1, %arg2, %arg3) {
+    source_target_pairs = dense<[[0, 1]]> : tensor<1x2xi64>,
+    slice_sizes = dense<16> : tensor<1xi64>
+  } : (tensor<16xf32>, tensor<32xf32>, tuple<tuple<tensor<i64>>, tuple<tensor<i64>, tensor<i64>>>, tuple<tensor<i64>>) -> tensor<32xf32>
+  func.return %0 : tensor<32xf32>
+}
