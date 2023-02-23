@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "xla/literal_util.h"
+#include "xla/runtime/cpu_event.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 
@@ -64,6 +65,8 @@ limitations under the License.
 
 namespace xla {
 namespace {
+
+using ::xla::runtime::CpuEvent;
 
 // A RAII helper class used to set an AsyncValueRef<CpuEvent> to a ready state
 // upon destruction. In many cases in PjRt implementation, there will be
