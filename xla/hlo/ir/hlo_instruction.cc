@@ -3144,7 +3144,7 @@ void HloInstruction::PrintWithCanonicalNameMap(
       // If we are canonicalizing instruction names and this is a top-level
       // HloInstruction::ToString() call, don't print an instruction name.
       DCHECK(!options.print_percent());  // no need to call PrintNameInternal
-      printer->Append(canonical_name_map->LookupOrInsert(name()));
+      printer->Append(canonical_name_map->LookupOrInsert(unique_id()));
       printer->Append(" = ");
     }
   } else {
@@ -3251,7 +3251,8 @@ void HloInstruction::PrintOperandsWithCanonicalNameMap(
         // not part of the canonical string.
         DCHECK(!options.print_percent());  // no need to call PrintNameInternal
         if (add_space) printer->Append(" ");
-        printer->Append(canonical_name_map->LookupOrInsert(operand->name()));
+        printer->Append(
+            canonical_name_map->LookupOrInsert(operand->unique_id()));
       }
     } else if (options.print_operand_names()) {
       if (add_space) printer->Append(" ");
