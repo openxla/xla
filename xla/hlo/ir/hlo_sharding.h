@@ -116,8 +116,11 @@ class HloSharding {
 
   OpSharding ToProto() const;
 
-  // Note that this string canonically has outer curly braces, e.g.
-  // "{replicated}".
+  // Prints the string representation of this sharding.Note that this string
+  // canonically has outer curly braces, e.g. "{replicated}".
+  void Print(Printer* printer, bool include_metadata = false) const;
+
+  // Returns the content printed by Print as a string.
   std::string ToString(bool include_metadata = false) const;
 
   // Validate that this sharding can be applied to a tensor with shape `shape`.

@@ -2419,9 +2419,9 @@ extern template Status HloInstruction::Accept(ConstDfsHloVisitor*, bool, bool);
 extern template Status HloInstruction::Visit(DfsHloVisitor* visitor);
 extern template Status HloInstruction::Visit(ConstDfsHloVisitor* visitor);
 
-std::string ToString(HloInstruction::FusionKind kind);
+absl::string_view ToString(HloInstruction::FusionKind kind);
 StatusOr<HloInstruction::FusionKind> StringToFusionKind(
-    const std::string& kind_name);
+    absl::string_view kind_name);
 
 // Custom (de)stringification functions for protos that live inside
 // HloInstruction.
