@@ -30,11 +30,6 @@ limitations under the License.
 namespace mlir {
 namespace gml_st {
 
-/// The key to the attribute corresponding to the distribution type of
-/// operations that have been SIMTfied.
-inline constexpr const char kDistributionLabelKey[] =
-    "gml-st-distribution-label";
-
 /// Pass to tile ops using TilingInterface.
 std::unique_ptr<OperationPass<func::FuncOp>> createTilingPass(
     StringRef opName = "", StringRef opLabel = "", bool distribute = true,
@@ -46,13 +41,12 @@ std::unique_ptr<OperationPass<func::FuncOp>> createFusionPass(
 
 /// Pass to match, tile, and fuse softmax implementations.
 std::unique_ptr<OperationPass<func::FuncOp>> createTilingSoftmaxPass(
-    bool distribute, ArrayRef<int64_t> tileSizes,
-    StringRef distributionLabel = "");
+    ArrayRef<int64_t> tileSizes);
 std::unique_ptr<OperationPass<func::FuncOp>> createTilingSoftmaxPass();
 
 /// Pass to tile the root operation and to greedily fuse producers into it.
 std::unique_ptr<OperationPass<func::FuncOp>> createGreedyFusionPass(
-    bool distribute, ArrayRef<int64_t> tileSizes, StringRef distributionLabel);
+    ArrayRef<int64_t> tileSizes);
 std::unique_ptr<OperationPass<func::FuncOp>> createGreedyFusionPass();
 
 // Pass to collapse dimensions of bcasts, reductions, and cwise ops.

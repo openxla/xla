@@ -468,10 +468,9 @@ struct CollapseSingleIterationLoops : public OpRewritePattern<ParallelOp> {
 
     // Replace the loop by a lower-dimensional loop.
     ParallelOp newOp;
-    auto parallelLoop = cast<ParallelOp>(op);
     newOp = rewriter.create<ParallelOp>(op.getLoc(), op.getResultTypes(),
                                         newLowerBounds, newUpperBounds,
-                                        newSteps, parallelLoop.getOutputs());
+                                        newSteps, op.getOutputs());
     // The new loop needs to keep all attributes from the old one, except for
     // "operand_segment_sizes" which captures the outdated information of the
     // old iteration domain.

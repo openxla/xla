@@ -103,8 +103,7 @@ struct GenericTransformPattern : public OpRewritePattern<linalg::GenericOp> {
       return cluster.operations.contains(op);
     });
 
-    (void)fuseFillOpsIntoParallelOp(
-        rewriter, cast<ParallelOp>(tilingParallelDimsResult->loop));
+    (void)fuseFillOpsIntoParallelOp(rewriter, tilingParallelDimsResult->loop);
 
     // Second level of tiling: reduction dimensions.
     for (auto tiledGenericOp :
@@ -160,7 +159,6 @@ struct GenericTransformPattern : public OpRewritePattern<linalg::GenericOp> {
                                            Operation *tilingRoot) const {
     auto tileableOp = cast<TilingInterface>(tilingRoot);
     TilingOptions opts;
-    opts.distribute = true;
     opts.setTileSizeComputationFn(
         getSizeOneTileSizesForIterType(tileableOp, IteratorType::parallel));
 
