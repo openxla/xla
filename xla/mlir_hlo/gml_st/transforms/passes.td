@@ -250,6 +250,12 @@ def TransformSortForCpuPass :
   let constructor = "createTransformSortForCpuPass()";
 }
 
+def TransformGenericForCpuPass :
+    Pass<"gml-st-cpu-transform-generic", "mlir::func::FuncOp"> {
+  let summary = "Transform generic ops for running on CPU";
+  let constructor = "createTransformGenericForCpuPass()";
+}
+
 def AddDebugInfoPass :
     Pass<"add-debug-info", "mlir::ModuleOp"> {
   let summary = "Add debug info for the whole module";
