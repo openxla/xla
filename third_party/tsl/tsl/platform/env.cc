@@ -27,6 +27,7 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/protobuf.h"
+#include "tsl/platform/status.h"
 #include "tsl/platform/stringprintf.h"
 
 #if defined(__APPLE__)
@@ -58,6 +59,7 @@ class FileSystemRegistryImpl : public FileSystemRegistry {
   Status Register(const std::string& scheme, Factory factory) override;
   Status Register(const std::string& scheme,
                   std::unique_ptr<FileSystem> filesystem) override;
+  Status Unregister(const std::string& scheme) override;
   FileSystem* Lookup(const std::string& scheme) override;
   Status GetRegisteredFileSystemSchemes(
       std::vector<std::string>* schemes) override;
@@ -85,6 +87,14 @@ Status FileSystemRegistryImpl::Register(
   if (!registry_.emplace(scheme, std::move(filesystem)).second) {
     return errors::AlreadyExists("File system for ", scheme,
                                  " already registered");
+  }
+  return OkStatus();
+}
+
+Status FileSystemRegistryImpl::Unregister(const std::string& scheme) {
+  mutex_lock lock(mu_);
+  if (registry_.find(scheme) != registry_.end()) {
+    registry_.erase(scheme);
   }
   return OkStatus();
 }
@@ -138,6 +148,10 @@ Status Env::RegisterFileSystem(const std::string& scheme,
 Status Env::RegisterFileSystem(const std::string& scheme,
                                std::unique_ptr<FileSystem> filesystem) {
   return file_system_registry_->Register(scheme, std::move(filesystem));
+}
+
+Status Env::UnregisterFileSystem(const std::string& scheme) {
+  return file_system_registry_->Unregister(scheme);
 }
 
 Status Env::SetOption(const std::string& scheme, const std::string& key,

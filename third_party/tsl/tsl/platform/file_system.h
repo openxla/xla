@@ -898,6 +898,7 @@ class FileSystemRegistry {
   virtual tsl::Status Register(const std::string& scheme, Factory factory) = 0;
   virtual tsl::Status Register(const std::string& scheme,
                                std::unique_ptr<FileSystem> filesystem) = 0;
+  virtual Status Unregister(const std::string& scheme) = 0;
   virtual FileSystem* Lookup(const std::string& scheme) = 0;
   virtual tsl::Status GetRegisteredFileSystemSchemes(
       std::vector<std::string>* schemes) = 0;

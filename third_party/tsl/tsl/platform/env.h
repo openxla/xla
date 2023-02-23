@@ -93,6 +93,8 @@ class Env {
   virtual Status RegisterFileSystem(const std::string& scheme,
                                     std::unique_ptr<FileSystem> filesystem);
 
+  virtual Status UnregisterFileSystem(const std::string& scheme);
+
   Status SetOption(const std::string& scheme, const std::string& key,
                    const std::string& value);
 
