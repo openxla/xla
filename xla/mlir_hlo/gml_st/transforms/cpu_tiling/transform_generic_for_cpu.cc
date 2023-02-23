@@ -67,6 +67,11 @@ struct GenericTransformPattern : public OpRewritePattern<linalg::GenericOp> {
                                          "has already been transformed.");
     }
 
+    if (isa<gml_st::ParallelOp, scf::ForOp>(genericOp->getParentOp())) {
+      return rewriter.notifyMatchFailure(
+          genericOp, "has already been tiled by another pass.");
+    }
+
     // Find fusion cluster.
     auto producerFilterFn = [](Operation *op) {
       return isa<linalg::BroadcastOp, linalg::FillOp, linalg::MapOp,
