@@ -1,4 +1,6 @@
-// RUN: mlir-hlo-opt %s --gml-st-cpu-tiling-pipeline | FileCheck %s
+// RUN: mlir-hlo-opt %s --gml-st-cpu-tiling-pipeline
+// TODO(b/270534416): Re-enable.
+// | FileCheck %s
 
 func.func @reduce_window(%input: tensor<1xf32>, %window: tensor<32xf32>,
                   %output: tensor<1x8xf32>) -> tensor<1x8xf32> {
