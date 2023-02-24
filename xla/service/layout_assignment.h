@@ -512,6 +512,10 @@ class LayoutAssignment : public HloModulePass {
   Status AddMandatoryConstraints(ChannelLayoutConstraints* channel_constraints,
                                  LayoutConstraints* constraints);
 
+  // Whether 'hlo' has a meaningful layout that is valuable to propagate in a
+  // depthfirst manner to avoid unassigned layouts in the graph.
+  bool InstructionShouldPropagateDepthFirst(const HloInstruction& hlo);
+
   // Return a vector containing the constraints which have been added to the
   // LayoutConstraints object since the construction of the object or since the
   // last time ConsumeAddedConstraints() has been called. This is used to

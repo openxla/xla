@@ -398,6 +398,15 @@ Status GpuLayoutAssignment::AddBackendConstraints(
   return OkStatus();
 }
 
+bool GpuLayoutAssignment::InstructionCanChangeLayoutInstance(
+    const HloInstruction* instruction) {
+  if (!transpose_to_bitcast_ &&
+      instruction->opcode() == HloOpcode::kTranspose) {
+    return false;
+  }
+  return LayoutAssignment::InstructionCanChangeLayout(instruction);
+}
+
 Status GpuLayoutAssignment::SetDotOperandLayout(
     const HloInstruction* instruction, int64_t operand,
     absl::Span<const int64_t> batch_dims, absl::Span<const int64_t> row_dims,

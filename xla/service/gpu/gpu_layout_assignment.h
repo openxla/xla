@@ -29,16 +29,26 @@ namespace gpu {
 // layout constraints for operands and results of library calls.
 class GpuLayoutAssignment : public LayoutAssignment {
  public:
+  // 'transpose_to_bitcast' allows to specify whether layout assignment should
+  // try to assign a layout to transposes that make them a bitcast. Doing this
+  // can potentially move the transpose to other parts of the HloComputation. If
+  // a user knows exactly what they are doing, they may want to have full
+  // control where the transpose is happening, and can set
+  // 'transpose_to_bitcast' to false.
   explicit GpuLayoutAssignment(
       ComputationLayout* entry_computation_layout,
       se::StreamExecutor* stream_executor,
-      ChannelLayoutConstraints* channel_constraints = nullptr)
+      ChannelLayoutConstraints* channel_constraints = nullptr,
+      bool transpose_to_bitcast = true)
       : LayoutAssignment(entry_computation_layout, channel_constraints),
-        stream_executor_(stream_executor) {}
+        stream_executor_(stream_executor),
+        transpose_to_bitcast_(transpose_to_bitcast) {}
   ~GpuLayoutAssignment() override {}
 
  protected:
   Status AddBackendConstraints(LayoutConstraints* constraints) override;
+  bool InstructionCanChangeLayoutInstance(
+      const HloInstruction* instruction) override;
 
  private:
   Status AddBackendConstraintsToDnnConvCustomCall(
@@ -59,6 +69,8 @@ class GpuLayoutAssignment : public LayoutAssignment {
                       LayoutConstraints* constraints);
 
   se::StreamExecutor* stream_executor_;
+
+  bool transpose_to_bitcast_;
 };
 
 }  // namespace gpu

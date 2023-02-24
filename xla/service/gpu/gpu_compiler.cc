@@ -649,7 +649,7 @@ Status GpuCompiler::OptimizeHloModule(
     ChannelLayoutConstraints layout_constraints;
     pipeline.AddPass<GpuLayoutAssignment>(
         hlo_module->mutable_entry_computation_layout(), stream_exec,
-        &layout_constraints);
+        &layout_constraints, debug_options.xla_gpu_transpose_to_bitcast());
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
 

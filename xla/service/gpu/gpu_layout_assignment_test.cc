@@ -99,6 +99,60 @@ TEST_F(LayoutAssignmentTest, Elementwise) {
   }
 }
 
+TEST_F(LayoutAssignmentTest, TransposeToBitcast) {
+  const char* hlo_text = R"(
+  HloModule TransposeLayout
+  ENTRY dot {
+    p0 = f32[5,2,3]{2,1,0} parameter(0)
+    transpose = f32[2,5,3]{2,1,0} transpose(p0), dimensions={1,0,2}
+    ROOT log = f32[2,5,3]{2,1,0} log(transpose)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout,
+                                        backend().default_stream_executor());
+  EXPECT_THAT(layout_assignment.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              AllOf(op::Log(AllOf(
+                        op::Transpose(AllOf(
+                            op::Copy(op::ShapeWithLayout("f32[5,2,3]{2,1,0}")),
+                            op::ShapeWithLayout("f32[5,2,3]{2,0,1}"))),
+                        op::ShapeWithLayout("f32[2,5,3]{2,1,0}"))),
+                    op::ShapeWithLayout("f32[2,5,3]{2,1,0}")));
+}
+
+TEST_F(LayoutAssignmentTest, NoTransposeToBitcast) {
+  const char* hlo_text = R"(
+  HloModule TransposeLayout
+  ENTRY dot {
+    p0 = f32[5,2,3]{2,1,0} parameter(0)
+    transpose = f32[2,5,3]{2,1,0} transpose(p0), dimensions={1,0,2}
+    ROOT log = f32[2,5,3]{2,1,0} log(transpose)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout,
+                                        backend().default_stream_executor(),
+                                        /*channel_constraints=*/nullptr,
+                                        /*transpose_to_bitcast=*/false);
+  EXPECT_THAT(layout_assignment.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              AllOf(op::Log(AllOf(
+                        op::Transpose(op::ShapeWithLayout("f32[5,2,3]{2,1,0}")),
+                        op::ShapeWithLayout("f32[2,5,3]{2,1,0}"))),
+                    op::ShapeWithLayout("f32[2,5,3]{2,1,0}")));
+}
+
 TEST_F(LayoutAssignmentTest, DotLayoutUnchangedIfValid) {
   const char* hlo_text = R"(
   HloModule DotLayout
