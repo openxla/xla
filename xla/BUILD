@@ -1150,6 +1150,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
