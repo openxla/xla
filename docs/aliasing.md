@@ -1,7 +1,7 @@
 # Aliasing in XLA
 
-This document describes the aliasing API for XLA: when building an XLA program,
-you can specify the desired aliasing between the input and output buffers.
+This document describes the XLA aliasing API, which lets you specify the
+aliasing between the input and output buffers when building an XLA program.
 
 ## Defining aliasing at compile-time
 
@@ -39,27 +39,26 @@ ENTRY entry {
 The format specifies that the entire output (marked by `{}`) is aliased to the
 input parameter `0`.
 
-See the
+To specify the aliasing programmatically, see the
 [`XlaBuilder::SetUpAlias`](https://github.com/openxla/xla/blob/main/xla/client/xla_builder.h)
-API to specify the aliasing programmatically.
-
-## Defining aliasing at run-time
-
-The aliasing defined in the previous step is specified during the _compilation_.
-During the execution, you can choose whether to donate the buffer using the
-[`LocalClient::RunAsync`](https://github.com/openxla/xla/blob/main/xla/client/local_client.h)
 API.
 
+## Defining aliasing at runtime
+
+The aliasing defined in the previous step is specified during *compilation*.
+During execution, you can use the
+[`LocalClient::RunAsync`](https://github.com/openxla/xla/blob/main/xla/client/local_client.h)
+API to choose whether to donate the buffer.
+
 Input buffers to the program are wrapped in
-[`ExecutionInput`](https://github.com/openxla/xla/blob/main/xla/service/executable.h),
+[`ExecutionInput`](https://github.com/openxla/xla/blob/main/xla/service/executable.h)s,
 which in turn contain a tree of `MaybeOwningDeviceMemory`. If memory is
-specified as _owning_ (ownership of the buffer is passed to the XLA runtime),
-the buffer is actually donated, and the update is executed in-place, as
+specified as *owning* (ownership of the buffer is passed to the XLA runtime),
+the buffer is actually donated, and the update is executed in place, as
 requested by the compile-time aliasing API.
 
-If, however, the buffer which is aliased at compile time is _not_ donated at
-runtime, _copy-protection_ kicks in: an extra output buffer `O` is allocated,
-and the contents of the input buffer `P` which was meant to be aliased are
-copied into `O` (so effectively the program can execute as if the buffer `O` was
+If, however, the buffer that is aliased at compile time is *not* donated at
+runtime, *copy-protection* kicks in: an extra output buffer `O` is allocated,
+and the contents of the input buffer `P` that was meant to be aliased are copied
+into `O` (so effectively the program can execute as if the buffer `O` was
 donated at runtime).
-
