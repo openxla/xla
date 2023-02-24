@@ -187,7 +187,6 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/logging.h"
-#include "tsl/platform/path.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
@@ -1605,7 +1604,7 @@ StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           compile_module_results.executable)) {
     const ThunkSequence& thunk_sequence =
         *std::get<OwnedThunkSequence>(compile_module_results.executable);
-    DumpToFileInDirOrStdout(*module, "", "thunk_sequence",
+    DumpToFileInDirOrStdout(*module, "", "thunk_sequence.txt",
                             thunk_sequence.ToString());
   }
 

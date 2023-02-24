@@ -16,10 +16,10 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_NCCL_ALL_TO_ALL_THUNK_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_NCCL_ALL_TO_ALL_THUNK_H_
 
-#include "xla/hlo/ir/hlo_instruction.h"
+#include <vector>
+
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
 #include "xla/xla_data.pb.h"
 
@@ -51,6 +51,7 @@ class NcclAllToAllThunk : public NcclCollectiveThunk {
   static CollectiveOpGroupMode GetGroupMode(mlir::lmhlo::AllToAllOp op) {
     return GetNcclAllToAllConfig(op).config.group_mode;
   }
+  static constexpr bool IsAsync() { return false; }
 
  protected:
   Status RunNcclCollective(const ExecuteParams& params,
