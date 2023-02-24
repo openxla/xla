@@ -27,6 +27,7 @@
 
 const get_email_domain = async ({github, username}) => {
   const user = await github.rest.users.getByUsername({username});
+  console.log(user)
   if (user.status >= 400) {
     console.log(user);
     throw `Error Getting user data for ${username}`;
