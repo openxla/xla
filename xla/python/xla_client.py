@@ -351,8 +351,9 @@ HostBufferSemantics = _xla.HostBufferSemantics
 #   def size_of_generated_code_in_bytes(self) -> int:
 #     """Return generated binary size, or -1 if not known."""
 #
-#   def execute_sharded_on_local_devices(self, arguments: [[Buffer]])
-#       -> [Buffer]:
+#   def execute_sharded_on_local_devices_with_tokens(
+#       self, arguments: [[Buffer]]
+#   ) -> Tuple[[Buffer], ShardedToken]:
 #     """Execute on many replicas with Buffer arguments and return value.
 #
 #     Args:
@@ -398,7 +399,7 @@ def execute_with_python_values_replicated(executable, arguments, backend):
     return [backend.buffer_from_pyval(v, d) for v, d in zip(pyvals, devices)]
 
   inputs = [copy_to_devices(pyvals) for pyvals in zip(*arguments)]
-  outputs = executable.execute_sharded_on_local_devices(inputs)
+  outputs, _ = executable.execute_sharded_on_local_devices_with_tokens(inputs)
   return [[np.asarray(x) for x in xs] for xs in zip(*outputs)]
 
 

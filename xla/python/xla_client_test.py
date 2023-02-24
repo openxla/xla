@@ -2874,7 +2874,7 @@ def TestFactory(xla_backend,
           compile_options=options, host_callbacks=[host_callback])
       c.clear_frontend_attributes()
 
-      results = compiled_c.execute_sharded_on_local_devices([])
+      results, _ = compiled_c.execute_sharded_on_local_devices_with_tokens([])
       self.assertLen(results, 1)
       self.assertLen(results[0], num_replicas)
 
