@@ -201,6 +201,7 @@ cc_library(
         "//xla/runtime:executable",
         "//xla/service:executable",
         "//xla/stream_executor",
+        "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_graph",
     ]),
