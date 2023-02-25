@@ -114,7 +114,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     # Somehow the following code works with fixedpoint, but not here.
     # visibility = [
-    #     "//third_party/tensorflow:__subpackages__",
+    #     "//tensorflow:__subpackages__",
     #     "//tsl:internal",
     # ],
     deps = [

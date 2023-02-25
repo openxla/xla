@@ -1,4 +1,4 @@
-# copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 package_group(
     name = "friends",
@@ -8,23 +8,23 @@ package_group(
 package_group(
     name = "internal",
     packages = [
-        "//third_party/tensorflow/compiler/xla/backends/profiler/gpu/...",
-        "//third_party/tensorflow/core/profiler/...",
-        "//third_party/tensorflow/python/eager/...",
-        "//third_party/tensorflow/python/profiler/...",
-        "//third_party/tensorflow/python/tpu/profiler/...",
+        "//tensorflow/compiler/xla/backends/profiler/gpu/...",
+        "//tensorflow/core/profiler/...",
+        "//tensorflow/python/eager/...",
+        "//tensorflow/python/profiler/...",
+        "//tensorflow/python/tpu/profiler/...",
         "//tsl/profiler/...",
     ],
 )
 
 package_group(
     name = "xla_profiler_backends",
-    packages = ["//third_party/tensorflow/compiler/xla/backends/profiler/..."],
+    packages = ["//tensorflow/compiler/xla/backends/profiler/..."],
 )
 
 package_group(
     name = "xla_internal",
     packages = [
-        "//third_party/tensorflow/compiler/xla/...",
+        "//tensorflow/compiler/xla/...",
     ],
 )

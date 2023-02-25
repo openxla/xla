@@ -24,7 +24,7 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -63,8 +63,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow:__subpackages__",
-        "//third_party/tensorflow/core/util:__pkg__",
+        "//tensorflow:__subpackages__",
+        "//tensorflow/core/util:__pkg__",
     ],
 )
 
@@ -97,8 +97,8 @@ filegroup(
         "use_cudnn.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/util:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/util:__pkg__",
     ],
 )
 
@@ -109,8 +109,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow:__subpackages__",
-        "//third_party/tensorflow/core/util:__pkg__",
+        "//tensorflow:__subpackages__",
+        "//tensorflow/core/util:__pkg__",
     ],
 )
 
@@ -149,7 +149,7 @@ cc_library(
     srcs = ["determinism.cc"],
     hdrs = ["determinism.h"],
     copts = tsl_copts(),
-    visibility = ["//third_party/tensorflow:__subpackages__"],
+    visibility = ["//tensorflow:__subpackages__"],
     deps = [
         ":env_var",
         "//tsl/platform:mutex",
@@ -172,7 +172,7 @@ cc_library(
 alias(
     name = "determinism_for_kernels",
     actual = if_static(":determinism", ":determinism_hdr_lib"),
-    visibility = ["//third_party/tensorflow:__subpackages__"],
+    visibility = ["//tensorflow:__subpackages__"],
 )
 
 check_deps(
@@ -222,7 +222,7 @@ cc_library(
     srcs = ["reporter.cc"],
     hdrs = ["reporter.h"],
     visibility = [
-        "//third_party/tensorflow/core:__subpackages__",
+        "//tensorflow/core:__subpackages__",
         "//tsl:__subpackages__",
     ],
     deps = [
@@ -307,7 +307,7 @@ filegroup(
     srcs = [
         "reporter.h",
     ],
-    visibility = ["//third_party/tensorflow/core/util:__pkg__"],
+    visibility = ["//tensorflow/core/util:__pkg__"],
 )
 
 filegroup(
@@ -317,8 +317,8 @@ filegroup(
         "reporter.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/util:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/util:__pkg__",
     ],
 )
 
@@ -330,7 +330,7 @@ filegroup(
         ":android_test_hdrs",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/util:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/util:__pkg__",
     ],
 )

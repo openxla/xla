@@ -5,22 +5,22 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//learning/brain/google/monitoring:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
-        "//third_party/tensorflow/core:__pkg__",
+        "//tensorflow/core:__pkg__",
         # tensorflow/core/platform:monitoring depends on this package
-        "//third_party/tensorflow/core/platform:__subpackages__",
+        "//tensorflow/core/platform:__subpackages__",
         # tensorflow/compiler/xla/pjrt:metrics depends on this package
-        "//third_party/tensorflow/compiler/xla/pjrt:__subpackages__",
-        "//third_party/tensorflow/compiler/xla/service/gpu:__subpackages__",
+        "//tensorflow/compiler/xla/pjrt:__subpackages__",
+        "//tensorflow/compiler/xla/service/gpu:__subpackages__",
         # tensorflow/compiler/mlir/tfrt:tf_jitrt depends on this package
-        "//third_party/tensorflow/compiler/mlir/tfrt:__subpackages__",
-        "//third_party/tensorflow/compiler/xla/stream_executor:__subpackages__",
-        "//third_party/tensorflow/compiler/xla/hlo/experimental:__subpackages__",
-        "//third_party/tensorflow/core/lib/monitoring:__subpackages__",
-        "//third_party/tensorflow/compiler/xla/service:__subpackages__",
+        "//tensorflow/compiler/mlir/tfrt:__subpackages__",
+        "//tensorflow/compiler/xla/stream_executor:__subpackages__",
+        "//tensorflow/compiler/xla/hlo/experimental:__subpackages__",
+        "//tensorflow/core/lib/monitoring:__subpackages__",
+        "//tensorflow/compiler/xla/service:__subpackages__",
         "//tsl/framework:__subpackages__",
         "//tsl/distributed_runtime:__subpackages__",
     ],
@@ -93,7 +93,7 @@ cc_library(
     hdrs = ["metric_def.h"],
     visibility = [
         "//learning/brain/google/monitoring:__subpackages__",
-        "//third_party/tensorflow/core:__subpackages__",
+        "//tensorflow/core:__subpackages__",
     ],
     deps = [
         ":types",
@@ -108,7 +108,7 @@ cc_library(
     srcs = ["collection_registry.cc"],
     hdrs = ["collection_registry.h"],
     visibility = [
-        "//third_party/tensorflow/core:__subpackages__",
+        "//tensorflow/core:__subpackages__",
     ],
     deps = [
         ":collected_metrics",
@@ -228,8 +228,8 @@ filegroup(
         "types.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/monitoring:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/monitoring:__pkg__",
     ],
 )
 
@@ -249,8 +249,8 @@ filegroup(
         "types.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/monitoring:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/monitoring:__pkg__",
     ],
 )
 
@@ -269,7 +269,7 @@ filegroup(
         "types.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/monitoring:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/monitoring:__pkg__",
     ],
 )

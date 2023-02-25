@@ -3,7 +3,7 @@ load("//tsl/platform:rules_cc.bzl", "cc_library")
 load("//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 
-# copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 cc_library(
     name = "traceme_recorder",
@@ -32,7 +32,7 @@ cc_library(
     hdrs = ["traceme_recorder.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/python:__pkg__",
+        "//tensorflow/python:__pkg__",
         "//tsl/platform/cloud:__pkg__",
         "//tsl/profiler:__pkg__",
         "//tsl/profiler:internal",
@@ -95,7 +95,7 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/compiler/xla:__subpackages__",
+        "//tensorflow/compiler/xla:__subpackages__",
         "//tsl/profiler:internal",
     ],
     deps = [

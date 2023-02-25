@@ -29,10 +29,10 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/compiler/tf2xla:__subpackages__",
-        "//third_party/tensorflow/core/common_runtime/gpu:__subpackages__",
+        "//tensorflow/compiler/tf2xla:__subpackages__",
+        "//tensorflow/core/common_runtime/gpu:__subpackages__",
         "//xla:__subpackages__",
         "//xla/pjrt:__subpackages__",
         "//xla/service/gpu:__subpackages__",
@@ -74,8 +74,8 @@ cc_library(
     name = "gpu_driver_header",
     hdrs = if_gpu_is_configured(["gpu_driver.h"]),
     visibility = [
-        "//third_party/tensorflow/core/common_runtime/gpu:__subpackages__",
-        "//third_party/tensorflow/core/util/autotune_maps:__subpackages__",
+        "//tensorflow/core/common_runtime/gpu:__subpackages__",
+        "//tensorflow/core/util/autotune_maps:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
@@ -169,9 +169,9 @@ tsl_gpu_library(
     copts = tsl_copts(),
     linkstatic = True,
     visibility = [
-        "//third_party/tensorflow/compiler/tf2xla:__subpackages__",
-        "//third_party/tensorflow/core/common_runtime/gpu:__subpackages__",
-        "//third_party/tensorflow/stream_executor:__subpackages__",
+        "//tensorflow/compiler/tf2xla:__subpackages__",
+        "//tensorflow/core/common_runtime/gpu:__subpackages__",
+        "//tensorflow/stream_executor:__subpackages__",
         "//xla:__subpackages__",
     ],
     deps = [
@@ -270,7 +270,7 @@ cc_library(
     name = "gpu_asm_opts",
     hdrs = ["gpu_asm_opts.h"],
     visibility = [
-        "//third_party/tensorflow/core/kernels:__subpackages__",
+        "//tensorflow/core/kernels:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
@@ -285,8 +285,8 @@ cc_library(
     hdrs = if_gpu_is_configured(["asm_compiler.h"]),
     copts = tsl_copts(),
     visibility = [
-        "//third_party/tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
-        "//third_party/tensorflow/core/kernels:__subpackages__",
+        "//tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
+        "//tensorflow/core/kernels:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
@@ -323,8 +323,8 @@ cc_library(
     hdrs = if_gpu_is_configured(["asm_compiler.h"]),
     copts = tsl_copts(),
     visibility = [
-        "//third_party/tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
-        "//third_party/tensorflow/core/kernels:__subpackages__",
+        "//tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
+        "//tensorflow/core/kernels:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],
@@ -366,7 +366,7 @@ cc_library(
     hdrs = if_gpu_is_configured(["redzone_allocator.h"]),
     copts = tsl_copts(),
     visibility = [
-        "//third_party/tensorflow/core/kernels:__subpackages__",
+        "//tensorflow/core/kernels:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ],

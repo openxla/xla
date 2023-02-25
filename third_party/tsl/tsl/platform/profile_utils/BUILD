@@ -12,10 +12,10 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/compiler/xla/stream_executor:__subpackages__",
-        "//third_party/tensorflow/core/platform:__subpackages__",
+        "//tensorflow/compiler/xla/stream_executor:__subpackages__",
+        "//tensorflow/core/platform:__subpackages__",
         "//tsl:__pkg__",
         "//tsl/platform/default:__pkg__",
     ],
@@ -39,7 +39,7 @@ filegroup(
         "clock_cycle_profiler.cc",
     ],
     visibility = [
-        "//third_party/tensorflow/core/platform:__subpackages__",
+        "//tensorflow/core/platform:__subpackages__",
         "//tsl/platform:__pkg__",
     ],
 )

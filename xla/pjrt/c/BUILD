@@ -1,7 +1,7 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 
-# copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 cc_library(
     name = "pjrt_c_api_hdrs",

@@ -3,7 +3,7 @@
 load("//xla:xla.bzl", "xla_cc_binary")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
 )
 

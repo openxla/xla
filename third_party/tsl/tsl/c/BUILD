@@ -9,7 +9,7 @@ load("//tsl:tsl.bzl", "tsl_copts", "tsl_gpu_library")
 load("//tsl:tsl.default.bzl", "filegroup")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     licenses = ["notice"],
 )
 
@@ -21,7 +21,7 @@ filegroup(
     srcs = [
         "tsl_status.h",
     ],
-    visibility = ["//third_party/tensorflow:__subpackages__"],
+    visibility = ["//tensorflow:__subpackages__"],
 )
 
 filegroup(
@@ -36,7 +36,7 @@ filegroup(
         ],
     ),
     visibility = [
-        "//third_party/tensorflow/c:__subpackages__",
+        "//tensorflow/c:__subpackages__",
     ],
 )
 
@@ -59,7 +59,7 @@ tsl_gpu_library(
         "tsl_status_internal.h",
     ],
     visibility = [
-        "//third_party/tensorflow/c:__subpackages__",
+        "//tensorflow/c:__subpackages__",
     ],
     deps = [
         "//tsl/platform:status",
@@ -126,6 +126,6 @@ filegroup(
     name = "tsl_status_internal_headers",
     srcs = ["tsl_status_internal.h"],
     visibility = [
-        "//third_party/tensorflow/c:__subpackages__",
+        "//tensorflow/c:__subpackages__",
     ],
 )

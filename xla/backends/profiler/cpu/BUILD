@@ -1,7 +1,7 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
-# copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 cc_library(
     name = "host_tracer",
@@ -9,7 +9,7 @@ cc_library(
     visibility = [
         "//third_party/car/onboard/gpu:__subpackages__",
         "//xla/backends/profiler:__pkg__",
-        #"//third_party/tensorflow/core/profiler:internal",
+        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         ":host_tracer_impl",
@@ -25,7 +25,7 @@ cc_library(
     hdrs = ["host_tracer.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        #"//third_party/tensorflow/core/profiler:internal",
+        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         "@tsl//tsl/platform:errors",
@@ -46,7 +46,7 @@ cc_library(
     srcs = ["python_tracer_factory.cc"],
     visibility = [
         "//xla/python:__pkg__",
-        #"//third_party/tensorflow/core/profiler:internal",
+        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         ":python_tracer_impl",
@@ -63,7 +63,7 @@ cc_library(
     copts = tf_profiler_copts() + ["-fexceptions"],
     features = ["-use_header_modules"],
     visibility = [
-        #"//third_party/tensorflow/core/profiler:internal",
+        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         "//xla/python/profiler/internal:python_hooks",
@@ -82,7 +82,7 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = [
         "//xla/backends/profiler:__pkg__",
-        #"//third_party/tensorflow/core/profiler:internal",
+        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         ":metadata_utils",
@@ -104,7 +104,7 @@ cc_library(
     name = "metadata_utils",
     hdrs = ["metadata_utils.h"],
     visibility = [
-        #"//third_party/tensorflow/core/profiler:internal",
+        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         "//xla/service:hlo_proto_cc",

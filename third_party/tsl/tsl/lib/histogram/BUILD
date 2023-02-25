@@ -9,9 +9,9 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/core/lib/histogram:__pkg__",
+        "//tensorflow/core/lib/histogram:__pkg__",
         "//tsl/lib/monitoring:__pkg__",
     ],
     licenses = ["notice"],
@@ -40,8 +40,8 @@ filegroup(
         "histogram.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/histogram:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/histogram:__pkg__",
     ],
 )
 
@@ -51,8 +51,8 @@ filegroup(
         "histogram.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/histogram:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/histogram:__pkg__",
     ],
 )
 

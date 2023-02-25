@@ -12,7 +12,7 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//xla:internal"],
     licenses = ["notice"],
 )
@@ -29,8 +29,8 @@ package_group(
         "//third_party/mlir_edge/model_curriculum/...",
         "//third_party/py/jax/...",
         "//third_party/py/t5x/...",
-        "//third_party/tensorflow/compiler/...",
-        "//third_party/tensorflow/python/tpu/...",
+        "//tensorflow/compiler/...",
+        "//tensorflow/python/tpu/...",
     ],
 )
 

@@ -6,15 +6,15 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/c/experimental/filesystem:__pkg__",
-        "//third_party/tensorflow/c/experimental/filesystem/plugins/posix:__pkg__",
+        "//tensorflow/c/experimental/filesystem:__pkg__",
+        "//tensorflow/c/experimental/filesystem/plugins/posix:__pkg__",
         "//tsl/lib/io/snappy:__pkg__",
-        "//third_party/tensorflow/compiler/xla:__subpackages__",
+        "//tensorflow/compiler/xla:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/io:__subpackages__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/io:__subpackages__",
         "//tsl/profiler:__subpackages__",
     ],
     licenses = ["notice"],
@@ -357,7 +357,7 @@ filegroup(
         "//tsl/lib/io/snappy:snappy_inputstream.h",
         "//tsl/lib/io/snappy:snappy_outputbuffer.h",
     ],
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 filegroup(
@@ -375,7 +375,7 @@ filegroup(
         "table_builder.h",
         "table_options.h",
     ],
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 filegroup(
@@ -391,7 +391,7 @@ filegroup(
         "//tsl/lib/io/snappy:snappy_inputstream.h",
         "//tsl/lib/io/snappy:snappy_outputbuffer.h",
     ],
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 filegroup(
@@ -401,7 +401,7 @@ filegroup(
         "block_builder.h",
         "format.h",
     ],
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 tsl_cc_test(

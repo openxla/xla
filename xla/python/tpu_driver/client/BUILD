@@ -2,7 +2,7 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//xla:internal"],
     licenses = ["notice"],
 )

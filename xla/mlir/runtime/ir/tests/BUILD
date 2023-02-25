@@ -2,7 +2,7 @@ load("//xla:glob_lit_test.bzl", "glob_lit_tests")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
-# copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 glob_lit_tests(
     data = [":test_utilities"],

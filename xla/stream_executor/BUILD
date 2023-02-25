@@ -13,7 +13,7 @@ load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         ":friends",
     ],

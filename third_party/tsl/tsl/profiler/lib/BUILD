@@ -9,7 +9,7 @@ load(
     "tf_profiler_pybind_cc_library_wrapper",
 )
 
-# copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 cc_library(
     name = "context_types_hdrs",
@@ -180,7 +180,7 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/python:__pkg__",
+        "//tensorflow/python:__pkg__",
         "//tsl/profiler:internal",
     ],
     deps = [

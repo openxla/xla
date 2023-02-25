@@ -6,19 +6,19 @@ load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
-        "//third_party/tensorflow/core:__pkg__",
+        "//tensorflow/core:__pkg__",
         # tensorflow/core/platform/cloud depends on random.h
-        "//third_party/tensorflow/core/platform:__subpackages__",
+        "//tensorflow/core/platform:__subpackages__",
         # All of the following packages depend on random/simple_philox.h for tests
         "//tsl/lib/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gtl:__pkg__",
+        "//tensorflow/core/lib/gtl:__pkg__",
         "//tsl/lib/io:__pkg__",
-        "//third_party/tensorflow/core/lib/strings:__pkg__",
+        "//tensorflow/core/lib/strings:__pkg__",
         # tensorflow/core/platform/random aliases this package
-        "//third_party/tensorflow/core/lib/random:__pkg__",
+        "//tensorflow/core/lib/random:__pkg__",
     ],
     licenses = ["notice"],
 )
@@ -58,8 +58,8 @@ cc_library(
     hdrs = ["random_distributions_utils.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core/lib/random:__pkg__",
-        "//third_party/tensorflow/lite:__subpackages__",
+        "//tensorflow/core/lib/random:__pkg__",
+        "//tensorflow/lite:__subpackages__",
     ],
     deps = [":philox_random"],
 )
@@ -69,9 +69,9 @@ cc_library(
     hdrs = ["philox_random.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/random:__pkg__",
-        "//third_party/tensorflow/lite:__subpackages__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/random:__pkg__",
+        "//tensorflow/lite:__subpackages__",
     ],
 )
 
@@ -126,8 +126,8 @@ filegroup(
         "simple_philox.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/random:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/random:__pkg__",
     ],
 )
 
@@ -139,8 +139,8 @@ filegroup(
         "weighted_picker.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/random:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/random:__pkg__",
     ],
 )
 
@@ -150,8 +150,8 @@ filegroup(
         "philox_random_test_utils.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/random:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/random:__pkg__",
     ],
 )
 
@@ -168,8 +168,8 @@ filegroup(
         "weighted_picker.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/random:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/random:__pkg__",
     ],
 )
 

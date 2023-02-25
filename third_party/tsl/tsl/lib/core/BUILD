@@ -12,7 +12,7 @@ load(
 
 # TODO(rdzhabarov): Tighten visibility after migration is complete.
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -26,7 +26,7 @@ filegroup(
         "bits.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 filegroup(
@@ -38,8 +38,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/core:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/core:__pkg__",
     ],
 )
 
@@ -49,7 +49,7 @@ filegroup(
         "bitmap_test.cc",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 filegroup(
@@ -59,7 +59,7 @@ filegroup(
         "bits.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 filegroup(
@@ -69,8 +69,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/core:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/core:__pkg__",
     ],
 )
 

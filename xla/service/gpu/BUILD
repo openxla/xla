@@ -29,7 +29,7 @@ load(
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_cloud")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )
@@ -2917,7 +2917,7 @@ test_suite(
         # copybara:uncomment "//platforms/xla/tests/internal:xfeed_test_gpu",
         # copybara:uncomment "//third_party/py/jax/experimental/jax2tf/tests:primitives_test_gpu",
         # copybara:uncomment "//third_party/py/jax/tests:pmap_test_gpu",
-        # copybara:uncomment "//third_party/tensorflow/compiler/tests:fft_test_gpu",
+        # copybara:uncomment "//tensorflow/compiler/tests:fft_test_gpu",
         "//xla/python:xla_client_test_gpu",
         "//xla/service/gpu:cudnn_fused_conv_rewriter_test",
         "//xla/service/gpu:custom_call_test",
@@ -3077,7 +3077,7 @@ test_suite(
         "//xla/tests:xla_hlo_profile_test_gpu",
     ] + if_google([
         # Currently fails in OSS.
-        "//third_party/tensorflow/python/kernel_tests/signal:fft_ops_test_xla_gpu",
+        "//tensorflow/python/kernel_tests/signal:fft_ops_test_xla_gpu",
     ]),
 )
 

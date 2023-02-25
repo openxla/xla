@@ -3,7 +3,7 @@ load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "bool_setting")
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
-# copybara:uncomment package(default_applicable_licenses = ["//third_party/tensorflow:license"])
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 # Config setting to use in select()s to distinguish open source build from
 # google internal build on configurable attributes.
@@ -432,14 +432,14 @@ package_group(
         "//learning/lib/ami/simple_ml/...",
         "//learning/pathways/...",
         "//smartass/brain/configure/...",
+        "//tensorflow/...",
+        "//tensorflow_decision_forests/...",
+        "//tensorflow_federated/...",
         "//third_party/cloud_tpu/convergence_tools/sdc_monitoring/...",
         "//third_party/cloud_tpu/inference_converter/...",
         "//third_party/py/cloud_ml_autoflow/...",
         "//third_party/py/envlogger/...",
         "//third_party/py/keras/...",
-        "//third_party/tensorflow/...",
-        "//third_party/tensorflow_decision_forests/...",
-        "//third_party/tensorflow_federated/...",
         "//third_party/yggdrasil_decision_forests/...",
         "//tsl/...",
     ],

@@ -8,10 +8,10 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/core:__subpackages__",
-        "//third_party/tensorflow_models:__subpackages__",
+        "//tensorflow/core:__subpackages__",
+        "//tensorflow_models:__subpackages__",
         "//tsl:internal",
     ],
     features = if_google(["-parse_headers"]),
@@ -93,7 +93,7 @@ tf_proto_library(
     srcs = ["test_log.proto"],
     make_default_target_header_only = True,
     visibility = [
-        "//third_party/tensorflow/core:__subpackages__",
+        "//tensorflow/core:__subpackages__",
         "//tsl/util:__pkg__",
     ],
 )

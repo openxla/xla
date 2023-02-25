@@ -2,7 +2,7 @@ load("//tsl/platform:rules_cc.bzl", "cc_library")
 load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//tsl:internal",
     ],

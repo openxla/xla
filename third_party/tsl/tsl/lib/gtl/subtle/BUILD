@@ -4,7 +4,7 @@
 load("//tsl:tsl.default.bzl", "filegroup")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     licenses = ["notice"],
 )
 
@@ -14,7 +14,7 @@ filegroup(
         "map_traits.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core/lib/gtl/subtle:__pkg__",
+        "//tensorflow/core/lib/gtl/subtle:__pkg__",
         "//tsl/lib/gtl:__pkg__",
     ],
 )

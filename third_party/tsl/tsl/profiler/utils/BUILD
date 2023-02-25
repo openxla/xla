@@ -4,7 +4,7 @@ load("//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//tsl/profiler:internal",
     ],
@@ -51,7 +51,7 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/compiler/xla:__subpackages__",
+        "//tensorflow/compiler/xla:__subpackages__",
         "//tsl/platform/cloud:__pkg__",
         "//tsl/profiler:internal",
     ],
@@ -184,7 +184,7 @@ cc_library(
     hdrs = ["trace_utils.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/compiler/xla/backends/profiler/gpu:__pkg__",
+        "//tensorflow/compiler/xla/backends/profiler/gpu:__pkg__",
         "//tsl/profiler:internal",
     ],
     deps = [
@@ -378,7 +378,7 @@ cc_library(
     hdrs = ["buffer_pool.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/compiler/xla/backends/profiler/gpu:__pkg__",
+        "//tensorflow/compiler/xla/backends/profiler/gpu:__pkg__",
         "//tsl/profiler:internal",
     ],
     deps = [

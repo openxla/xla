@@ -5,9 +5,9 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow:__subpackages__",
+        "//tensorflow:__subpackages__",
     ],
     licenses = ["notice"],
 )
@@ -19,7 +19,7 @@ cc_library(
     visibility = [
         "//platforms/performance/tf_sim/utils:__subpackages__",
         "//platforms/xla/service:__subpackages__",
-        "//third_party/tensorflow:__subpackages__",
+        "//tensorflow:__subpackages__",
     ],
     deps = [
         "//tsl/platform:logging",
@@ -50,7 +50,7 @@ filegroup(
         "math_util.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 exports_files([

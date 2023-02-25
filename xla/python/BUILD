@@ -19,7 +19,7 @@ load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("//xla:pytype.default.bzl", "pytype_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )

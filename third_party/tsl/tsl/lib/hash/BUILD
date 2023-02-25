@@ -14,12 +14,12 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         # tensorflow/tsl/lib/io/table_builder.cc uses crc functionality
         "//tsl/lib/io:__pkg__",
         # tensorflow/core/lib/hash aliases hash for now
-        "//third_party/tensorflow/core/lib/hash:__pkg__",
+        "//tensorflow/core/lib/hash:__pkg__",
     ],
     licenses = ["notice"],
 )
@@ -49,7 +49,7 @@ filegroup(
         "crc32c.h",
         "crc32c_accelerate.cc",
     ],
-    visibility = ["//third_party/tensorflow/core/lib/hash:__pkg__"],
+    visibility = ["//tensorflow/core/lib/hash:__pkg__"],
 )
 
 filegroup(
@@ -57,7 +57,7 @@ filegroup(
     srcs = [
         "crc32c.h",
     ],
-    visibility = ["//third_party/tensorflow/core/lib/hash:__pkg__"],
+    visibility = ["//tensorflow/core/lib/hash:__pkg__"],
 )
 
 tsl_cc_test(

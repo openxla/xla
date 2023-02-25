@@ -3,7 +3,7 @@ load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_cloud")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],
 )

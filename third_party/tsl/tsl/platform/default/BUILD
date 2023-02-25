@@ -5,9 +5,9 @@ load("//tsl:tsl.bzl", "if_not_fuchsia", "if_not_windows", "tsl_copts")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
         "//tsl/platform:__pkg__",
     ],
     licenses = ["notice"],
@@ -539,7 +539,7 @@ cc_library(
         "nobuilder",
     ],
     textual_hdrs = ["crash_analysis.h"],
-    visibility = ["//third_party/tensorflow:__subpackages__"],
+    visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tsl/platform",
         "//tsl/platform:protobuf",
@@ -554,7 +554,7 @@ cc_library(
         "nobuilder",
     ],
     textual_hdrs = ["status.h"],
-    visibility = ["//third_party/tensorflow:__subpackages__"],
+    visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tsl/platform:types",
         "//tsl/protobuf:error_codes_proto_impl_cc",
@@ -567,7 +567,7 @@ cc_library(
 bzl_library(
     name = "cuda_build_defs_bzl",
     srcs = ["cuda_build_defs.bzl"],
-    visibility = ["//third_party/tensorflow:__subpackages__"],
+    visibility = ["//tensorflow:__subpackages__"],
 )
 
 bzl_library(
@@ -578,7 +578,7 @@ bzl_library(
 # Export source files needed for mobile builds, which do not use granular targets.
 filegroup(
     name = "additional_mobile_srcs_no_runtime",
-    visibility = ["//third_party/tensorflow/core/platform:__pkg__"],
+    visibility = ["//tensorflow/core/platform:__pkg__"],
 )
 
 filegroup(
@@ -600,7 +600,7 @@ filegroup(
         "//tsl/platform/profile_utils:i_cpu_utils_helper.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
         "//tsl/platform:__pkg__",
     ],
 )
@@ -619,7 +619,7 @@ filegroup(
         "subprocess.cc",
         "subprocess.h",
     ]),
-    visibility = ["//third_party/tensorflow/core/platform:__pkg__"],
+    visibility = ["//tensorflow/core/platform:__pkg__"],
 )
 
 exports_files(
@@ -631,7 +631,7 @@ exports_files(
             "test.cc",
         ],
     ),
-    visibility = ["//third_party/tensorflow/core/platform:__pkg__"],
+    visibility = ["//tensorflow/core/platform:__pkg__"],
 )
 
 exports_files(
@@ -641,9 +641,9 @@ exports_files(
         "test.cc",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gif:__pkg__",
-        "//third_party/tensorflow/core/lib/jpeg:__pkg__",
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gif:__pkg__",
+        "//tensorflow/core/lib/jpeg:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
 )

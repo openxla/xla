@@ -11,9 +11,9 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/core/lib/io:__pkg__",
+        "//tensorflow/core/lib/io:__pkg__",
         "//tsl/lib/io:__pkg__",
     ],
     licenses = ["notice"],

@@ -9,25 +9,25 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
-        "//third_party/tensorflow/core:__pkg__",
+        "//tensorflow/core:__pkg__",
         # tensorflow/core/lib/strings:proto_serialization uses on gtl:inlined_vector
-        "//third_party/tensorflow/core/lib/strings:__pkg__",
+        "//tensorflow/core/lib/strings:__pkg__",
         "//tsl/lib/strings:__pkg__",
         # tensorflow/core/framework uses map_util, and flatmap
-        "//third_party/tensorflow/core/framework:__pkg__",
+        "//tensorflow/core/framework:__pkg__",
         "//tsl/framework:__pkg__",
         "//tsl/platform/cloud:__pkg__",
         # tensorflow/core/util uses inlined_vector
-        "//third_party/tensorflow/core/util:__pkg__",
+        "//tensorflow/core/util:__pkg__",
         # tensorflow/core/tfrt/utils uses inlined_vector
-        "//third_party/tensorflow/core/tfrt/utils:__pkg__",
+        "//tensorflow/core/tfrt/utils:__pkg__",
         # tensorflow/examples/custom_ops_doc/simple_hash_table uses map_util
-        "//third_party/tensorflow/examples/custom_ops_doc/simple_hash_table:__pkg__",
-        "//third_party/tensorflow/compiler/xla:__subpackages__",
-        "//third_party/tensorflow/core/lib/gtl:__subpackages__",
+        "//tensorflow/examples/custom_ops_doc/simple_hash_table:__pkg__",
+        "//tensorflow/compiler/xla:__subpackages__",
+        "//tensorflow/core/lib/gtl:__subpackages__",
         "//tsl/distributed_runtime/rpc:__pkg__",
         "//tsl/profiler/utils:__pkg__",
     ],
@@ -116,8 +116,8 @@ filegroup(
         "iterator_range.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gtl:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gtl:__pkg__",
     ],
 )
 
@@ -128,8 +128,8 @@ filegroup(
         "map_util.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gtl:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gtl:__pkg__",
     ],
 )
 
@@ -138,8 +138,8 @@ filegroup(
     srcs = [
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gtl:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gtl:__pkg__",
     ],
 )
 
@@ -148,8 +148,8 @@ filegroup(
     srcs = [
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gtl:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gtl:__pkg__",
     ],
 )
 
@@ -162,8 +162,8 @@ filegroup(
         "inlined_vector.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gtl:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gtl:__pkg__",
         "//tsl:__subpackages__",
     ],
 )
@@ -178,8 +178,8 @@ filegroup(
         "//tsl/lib/gtl/subtle:map_traits",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gtl:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gtl:__pkg__",
     ],
 )
 
@@ -197,8 +197,8 @@ filegroup(
         "//tsl/lib/gtl/subtle:map_traits",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gtl:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gtl:__pkg__",
     ],
 )
 

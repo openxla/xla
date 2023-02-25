@@ -5,7 +5,7 @@ load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("@tsl//tsl/platform:build_config.bzl", "if_llvm_system_z_available")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//xla/mlir/runtime:friends"],
     licenses = ["notice"],
 )

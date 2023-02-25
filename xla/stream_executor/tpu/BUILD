@@ -3,19 +3,19 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//learning/brain/experimental/dtensor:__subpackages__",
         "//learning/brain/google/xla/kernels:__subpackages__",
         "//learning/brain/tfrc/executor:__subpackages__",
         "//learning/brain/tfrc/runtime/tpu_driver:__subpackages__",
         "//learning/brain/tfrt/tpu_plugin:__subpackages__",
-        "//third_party/tensorflow/compiler/jit:__subpackages__",
-        "//third_party/tensorflow/compiler/mlir:__subpackages__",
-        "//third_party/tensorflow/compiler/xrt:__subpackages__",
-        "//third_party/tensorflow/core/common_runtime/next_pluggable_device:__subpackages__",
-        "//third_party/tensorflow/core/tpu:__subpackages__",
-        "//third_party/tensorflow/dtensor:__subpackages__",
+        "//tensorflow/compiler/jit:__subpackages__",
+        "//tensorflow/compiler/mlir:__subpackages__",
+        "//tensorflow/compiler/xrt:__subpackages__",
+        "//tensorflow/core/common_runtime/next_pluggable_device:__subpackages__",
+        "//tensorflow/core/tpu:__subpackages__",
+        "//tensorflow/dtensor:__subpackages__",
         "//xla:__subpackages__",
         "//xla/backends/profiler/tpu:__subpackages__",
     ],

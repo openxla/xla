@@ -23,7 +23,7 @@ load("@tsl//tsl/platform:build_config.bzl", "if_llvm_system_z_available", "tf_pr
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )

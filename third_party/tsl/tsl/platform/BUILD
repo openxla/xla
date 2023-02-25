@@ -46,7 +46,7 @@ load(
 load("//tsl/platform:build_config_root.bzl", "if_static")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -60,7 +60,7 @@ exports_files(
         "stringpiece_test.cc",
     ],
     visibility = [
-        "//third_party/tensorflow/core/platform:__subpackages__",
+        "//tensorflow/core/platform:__subpackages__",
         "//tsl:__subpackages__",
     ],
 )
@@ -351,8 +351,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
 )
 
@@ -364,8 +364,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
 )
 
@@ -584,8 +584,8 @@ filegroup(
     ]),
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
 )
 
@@ -596,8 +596,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core/lib/gif:__pkg__",
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core/lib/gif:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
 )
 
@@ -663,7 +663,7 @@ exports_files(
     ],
     visibility = [
         ":__subpackages__",
-        "//third_party/tensorflow:__subpackages__",
+        "//tensorflow:__subpackages__",
     ],
 )
 
@@ -678,7 +678,7 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
+        "//tensorflow/core:__pkg__",
     ],
 )
 
@@ -706,8 +706,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
 )
 
@@ -718,8 +718,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/jpeg:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/jpeg:__pkg__",
     ],
 )
 
@@ -740,8 +740,8 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/jpeg:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/jpeg:__pkg__",
     ],
 )
 
@@ -757,9 +757,9 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/jpeg:__pkg__",
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/jpeg:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
 )
 
@@ -774,9 +774,9 @@ filegroup(
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/lib/gif:__pkg__",
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/lib/gif:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
 )
 
@@ -991,7 +991,7 @@ cc_library(
     name = "build_test",
     testonly = 1,
     visibility = [
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
     ],
     deps = [
         ":byte_order",
@@ -1132,7 +1132,7 @@ filegroup(
         "str_util.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//third_party/tensorflow/core:__pkg__"],
+    visibility = ["//tensorflow/core:__pkg__"],
 )
 
 cc_library(

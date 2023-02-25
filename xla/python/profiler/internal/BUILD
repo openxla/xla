@@ -3,7 +3,7 @@ load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//xla/python/profiler:__subpackages__"],
     licenses = ["notice"],
 )
@@ -16,8 +16,8 @@ cc_library(
     copts = tf_profiler_copts() + ["-fexceptions"],
     features = ["-use_header_modules"],  # Incompatible with -fexceptions.
     visibility = [
-        "//third_party/tensorflow/core/profiler:__subpackages__",
-        "//third_party/tensorflow/python/profiler/internal:__subpackages__",
+        "//tensorflow/core/profiler:__subpackages__",
+        "//tensorflow/python/profiler/internal:__subpackages__",
         "//xla/backends/profiler:__subpackages__",
     ],
     deps = [
@@ -43,7 +43,7 @@ cc_library(
     hdrs = ["traceme_wrapper.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/python/profiler/internal:__pkg__",
+        "//tensorflow/python/profiler/internal:__pkg__",
         "//xla/python:__pkg__",
     ],
     deps = [

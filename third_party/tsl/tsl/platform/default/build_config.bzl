@@ -679,17 +679,17 @@ def tf_additional_lib_hdrs():
     })
 
 def tf_additional_all_protos():
-    return [clean_dep("//third_party/tensorflow/core:protos_all")]
+    return [clean_dep("//tensorflow/core:protos_all")]
 
 def tf_protos_all():
     return if_static(
         extra_deps = [
-            clean_dep("//third_party/tensorflow/core/protobuf:conv_autotuning_proto_cc_impl"),
-            clean_dep("//third_party/tensorflow/core:protos_all_cc_impl"),
+            clean_dep("//tensorflow/core/protobuf:conv_autotuning_proto_cc_impl"),
+            clean_dep("//tensorflow/core:protos_all_cc_impl"),
             clean_dep("//tsl/protobuf:autotuning_proto_cc_impl"),
             clean_dep("//tsl/protobuf:protos_all_cc_impl"),
         ],
-        otherwise = [clean_dep("//third_party/tensorflow/core:protos_all_cc")],
+        otherwise = [clean_dep("//tensorflow/core:protos_all_cc")],
     )
 
 def tf_protos_profiler_service():
@@ -700,12 +700,12 @@ def tf_protos_profiler_service():
     ]
 
 def tf_protos_grappler_impl():
-    return [clean_dep("//third_party/tensorflow/core/grappler/costs:op_performance_data_cc_impl")]
+    return [clean_dep("//tensorflow/core/grappler/costs:op_performance_data_cc_impl")]
 
 def tf_protos_grappler():
     return if_static(
         extra_deps = tf_protos_grappler_impl(),
-        otherwise = [clean_dep("//third_party/tensorflow/core/grappler/costs:op_performance_data_cc")],
+        otherwise = [clean_dep("//tensorflow/core/grappler/costs:op_performance_data_cc")],
     )
 
 def tf_additional_device_tracer_srcs():
@@ -805,7 +805,7 @@ def tsl_cc_test(
     )
 
 def tf_portable_proto_lib():
-    return ["//third_party/tensorflow/core:protos_all_cc_impl"]
+    return ["//tensorflow/core:protos_all_cc_impl"]
 
 def tf_protobuf_compiler_deps():
     return if_static(

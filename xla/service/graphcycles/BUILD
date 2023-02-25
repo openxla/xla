@@ -2,9 +2,9 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/compiler:__subpackages__",
+        "//tensorflow/compiler:__subpackages__",
     ],
     licenses = ["notice"],
 )

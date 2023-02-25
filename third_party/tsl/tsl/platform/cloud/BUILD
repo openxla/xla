@@ -10,7 +10,7 @@ load(
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         ":dependency_allowlist",
     ],
@@ -21,9 +21,9 @@ package_group(
     name = "dependency_allowlist",
     packages = [
         "//learning/brain/tfrc/...",
+        "//tensorflow/...",
         "//third_party/gsmemcachedfs/...",
         "//third_party/py/tensorflow_io/...",
-        "//third_party/tensorflow/...",
     ],
 )
 

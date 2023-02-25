@@ -19,7 +19,7 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -81,7 +81,7 @@ filegroup(
         "tracking_allocator.h",
         "type_traits.h",
     ],
-    visibility = ["//third_party/tensorflow/core:__subpackages__"],
+    visibility = ["//tensorflow/core:__subpackages__"],
 )
 
 # Files needed for tf2xla build.
@@ -153,8 +153,8 @@ cc_library(
         "tracking_allocator.h",
     ],
     visibility = [
-        "//third_party/tensorflow/compiler/xla:__subpackages__",
-        "//third_party/tensorflow/core:__subpackages__",
+        "//tensorflow/compiler/xla:__subpackages__",
+        "//tensorflow/core:__subpackages__",
         "//tsl:__subpackages__",
     ],
     deps = [
@@ -266,8 +266,8 @@ cc_library(
     name = "numeric_types",
     hdrs = ["numeric_types.h"],
     visibility = [
-        "//third_party/tensorflow/compiler:__subpackages__",
-        "//third_party/tensorflow/core:__subpackages__",
+        "//tensorflow/compiler:__subpackages__",
+        "//tensorflow/core:__subpackages__",
     ],
     deps = [
         ":fixedpoint_types",
@@ -308,7 +308,7 @@ cc_library(
     name = "type_traits",
     hdrs = ["type_traits.h"],
     visibility = [
-        "//third_party/tensorflow/core/framework:__pkg__",
+        "//tensorflow/core/framework:__pkg__",
     ],
     deps = [
         ":numeric_types",
@@ -321,7 +321,7 @@ filegroup(
     srcs = [
         "cancellation.h",
     ],
-    visibility = ["//third_party/tensorflow/core:__subpackages__"],
+    visibility = ["//tensorflow/core:__subpackages__"],
 )
 
 cc_library(
@@ -378,10 +378,10 @@ exports_files(
         "tracking_allocator.h",
     ],
     visibility = [
-        "//third_party/tensorflow/core:__pkg__",
-        "//third_party/tensorflow/core/common_runtime:__pkg__",
-        "//third_party/tensorflow/core/common_runtime/gpu:__pkg__",
-        "//third_party/tensorflow/core/framework:__pkg__",
+        "//tensorflow/core:__pkg__",
+        "//tensorflow/core/common_runtime:__pkg__",
+        "//tensorflow/core/common_runtime/gpu:__pkg__",
+        "//tensorflow/core/framework:__pkg__",
     ],
 )
 

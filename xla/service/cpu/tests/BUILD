@@ -5,7 +5,7 @@ load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//xla:xla.bzl", "xla_cc_test")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )

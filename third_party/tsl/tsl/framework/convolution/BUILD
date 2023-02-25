@@ -68,7 +68,7 @@ filegroup(
     ],
     # Somehow the following code works with fixedpoint, but not here.
     # visibility = [
-    #     "//third_party/tensorflow:__subpackages__",
+    #     "//tensorflow:__subpackages__",
     #     "//tsl:internal",
     # ],
 )

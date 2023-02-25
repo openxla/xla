@@ -11,9 +11,9 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        "//third_party/tensorflow/core/platform:__pkg__",
+        "//tensorflow/core/platform:__pkg__",
         "//tsl/platform:__pkg__",
     ],
     licenses = ["notice"],
@@ -265,5 +265,5 @@ filegroup(
 
 exports_files(
     srcs = ["intrinsics_port.h"],
-    visibility = ["//third_party/tensorflow/core/platform:__pkg__"],
+    visibility = ["//tensorflow/core/platform:__pkg__"],
 )

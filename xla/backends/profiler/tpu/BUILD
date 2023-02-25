@@ -3,7 +3,7 @@ load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load("@tsl//tsl:tsl.bzl", "if_with_tpu_support")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     licenses = ["notice"],
 )
 

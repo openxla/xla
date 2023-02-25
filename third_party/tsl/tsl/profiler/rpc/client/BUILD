@@ -12,7 +12,7 @@ load(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//tsl/profiler:internal",
     ],
@@ -25,9 +25,9 @@ cc_library(
     hdrs = ["capture_profile.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/compiler/xla/python:__pkg__",
-        "//third_party/tensorflow/core/profiler/rpc/client:__pkg__",
-        "//third_party/tensorflow/python/profiler/internal:__pkg__",
+        "//tensorflow/compiler/xla/python:__pkg__",
+        "//tensorflow/core/profiler/rpc/client:__pkg__",
+        "//tensorflow/python/profiler/internal:__pkg__",
     ],
     deps = [
         ":profiler_client_for_pybind",
@@ -54,7 +54,7 @@ cc_library(
     hdrs = ["save_profile.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/core/profiler/rpc/client:__pkg__",
+        "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tsl/profiler:internal",
         "//tsl/profiler/rpc:__pkg__",
     ],
@@ -78,8 +78,8 @@ tf_profiler_pybind_cc_library_wrapper(
     name = "profiler_client_for_pybind",
     actual = ":profiler_client",
     visibility = [
-        "//third_party/tensorflow/core/profiler/rpc/client:__pkg__",
-        "//third_party/tensorflow/python/profiler/internal:__pkg__",
+        "//tensorflow/core/profiler/rpc/client:__pkg__",
+        "//tensorflow/python/profiler/internal:__pkg__",
     ],
 )
 
@@ -87,9 +87,9 @@ cc_library(
     name = "profiler_client",
     hdrs = ["profiler_client.h"],
     visibility = [
-        "//third_party/tensorflow/compiler/xla:__subpackages__",
-        "//third_party/tensorflow/core/profiler/rpc/client:__pkg__",
-        "//third_party/tensorflow/python/profiler/internal:__pkg__",
+        "//tensorflow/compiler/xla:__subpackages__",
+        "//tensorflow/core/profiler/rpc/client:__pkg__",
+        "//tensorflow/python/profiler/internal:__pkg__",
     ],
     deps = [
         ":profiler_client_impl",
@@ -110,9 +110,9 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/core/profiler/rpc/client:__pkg__",
-        "//third_party/tensorflow/python:__pkg__",
-        "//third_party/tensorflow/python/profiler/internal:__pkg__",
+        "//tensorflow/core/profiler/rpc/client:__pkg__",
+        "//tensorflow/python:__pkg__",
+        "//tensorflow/python/profiler/internal:__pkg__",
     ],
     deps = [
         "@com_google_absl//absl/memory",

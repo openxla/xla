@@ -29,7 +29,7 @@ load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("//xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gpu", "xla_aot_compile_gpu_runtime_autotuning")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
 )
@@ -6381,7 +6381,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = [
         ":__subpackages__",
-        "//third_party/tensorflow/compiler/tf2xla:__pkg__",
+        "//tensorflow/compiler/tf2xla:__pkg__",
     ],
     deps = [
         ":custom_call_status",

@@ -3,7 +3,7 @@ load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl:tsl.default.bzl", "get_compatible_with_cloud", "tsl_grpc_cc_dependencies")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//tsl:internal",
     ],

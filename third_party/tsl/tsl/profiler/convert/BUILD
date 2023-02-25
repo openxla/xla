@@ -6,7 +6,7 @@ load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//tsl/profiler:internal"],
     licenses = ["notice"],
 )

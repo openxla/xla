@@ -7,7 +7,7 @@ load(
 load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//third_party/tensorflow:license"],
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//tsl/profiler:internal"],
     licenses = ["notice"],
 )
@@ -19,11 +19,11 @@ cc_library(
     hdrs = ["profiler_service_impl.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/core/data/service:__pkg__",
-        "//third_party/tensorflow/core/distributed_runtime/rpc:__pkg__",
-        "//third_party/tensorflow/core/profiler/rpc:__pkg__",
-        "//third_party/tensorflow/python:__pkg__",
-        "//third_party/tensorflow_serving/model_servers:__pkg__",
+        "//tensorflow/core/data/service:__pkg__",
+        "//tensorflow/core/distributed_runtime/rpc:__pkg__",
+        "//tensorflow/core/profiler/rpc:__pkg__",
+        "//tensorflow/python:__pkg__",
+        "//tensorflow_serving/model_servers:__pkg__",
         "//tsl/profiler/rpc/client:__pkg__",
     ],
     deps = [
@@ -52,7 +52,7 @@ cc_library(
 tf_profiler_pybind_cc_library_wrapper(
     name = "profiler_server_for_pybind",
     actual = ":profiler_server_impl",
-    visibility = ["//third_party/tensorflow/python/profiler/internal:__pkg__"],
+    visibility = ["//tensorflow/python/profiler/internal:__pkg__"],
 )
 
 cc_library(
@@ -61,10 +61,10 @@ cc_library(
     hdrs = ["profiler_server.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        "//third_party/tensorflow/compiler/xla:__subpackages__",
-        "//third_party/tensorflow/core/profiler/rpc:__pkg__",
-        "//third_party/tensorflow/python:__pkg__",
-        "//third_party/tensorflow/python/profiler/internal:__pkg__",
+        "//tensorflow/compiler/xla:__subpackages__",
+        "//tensorflow/core/profiler/rpc:__pkg__",
+        "//tensorflow/python:__pkg__",
+        "//tensorflow/python/profiler/internal:__pkg__",
         "//tsl/profiler:internal",
         "//tsl/profiler/rpc/client:__pkg__",
     ],
