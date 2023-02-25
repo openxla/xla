@@ -625,14 +625,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return false;
     }
     if ((a_bitcast ? a_bitcast : a)->shape().dimensions_size() -
-                gemm_backend_config.dot_dimension_numbers()
-                    .lhs_batch_dimensions()
-                    .size() !=
+                a_batch_dims.size() !=
             2 ||
         (b_bitcast ? b_bitcast : b)->shape().dimensions_size() -
-                gemm_backend_config.dot_dimension_numbers()
-                    .rhs_batch_dimensions()
-                    .size() !=
+                b_batch_dims.size() !=
             2) {
       return false;
     }
@@ -650,23 +646,18 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // Shift any bitcasts to the unconverted and unscaled operands.
     if (a_bitcast) {
       a = instr->AddInstruction(a_bitcast->CloneWithNewOperands(
-          ShapeUtil::MakeShape(a->shape().element_type(),
-                               a_bitcast->shape().dimensions()),
+          ShapeUtil::MakeShapeWithDenseLayout(
+              a->shape().element_type(), a_bitcast->shape().dimensions(),
+              a_bitcast->shape().layout().minor_to_major()),
           {a}));
     }
     if (b_bitcast) {
       b = instr->AddInstruction(b_bitcast->CloneWithNewOperands(
-          ShapeUtil::MakeShape(b->shape().element_type(),
-                               b_bitcast->shape().dimensions()),
+          ShapeUtil::MakeShapeWithDenseLayout(
+              b->shape().element_type(), b_bitcast->shape().dimensions(),
+              b_bitcast->shape().layout().minor_to_major()),
           {b}));
     }
-
-    // cuBLASLt FP8 GEMM kernels currently require the first operand, i.e. A, to
-    // be transposed. If the result of the GEMM is not in column major order, A
-    // and B are later exchanged, and B is transposed here instead.
-    // TODO(philipphack): Remove once cuBLASLt supports the NN configuration.
-    TF_ASSIGN_OR_RETURN(bool is_col_major,
-                        OutputIsColumnMajor(instr, gemm_backend_config));
 
     // Identify the dimensional order which describes a transpose of the
     // contracting and non-contracting dimensions of the GEMM.
@@ -700,21 +691,57 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       }
       return transp_dims;
     };
+    // Transpose a matrix by swapping the contracting and non-contracting
+    // dimension. Keep the layout the same.
+    auto plain_transpose =
+        [&](HloInstruction **x,
+            const absl::Span<const int64_t> &contracting_dims,
+            const absl::Span<const int64_t> &batch_dims) {
+          std::vector<int64_t> new_dim_order =
+              transp_dim_order(*x, contracting_dims[0], batch_dims);
+          *x = instr->AddInstruction(HloInstruction::CreateTranspose(
+              ShapeUtil::MakeShapeWithDenseLayout(
+                  (*x)->shape().element_type(), transp_dims(*x, new_dim_order),
+                  (*x)->shape().layout().minor_to_major()),
+              *x, new_dim_order));
+        };
 
-    if (is_col_major) {
-      std::vector<int64_t> new_dim_order =
-          transp_dim_order(a, a_contracting_dims[0], a_batch_dims);
-      a = instr->AddInstruction(HloInstruction::CreateTranspose(
-          ShapeUtil::MakeShape(a->shape().element_type(),
-                               transp_dims(a, new_dim_order)),
-          a, new_dim_order));
-    } else {
-      std::vector<int64_t> new_dim_order =
-          transp_dim_order(b, b_contracting_dims[0], b_batch_dims);
-      b = instr->AddInstruction(HloInstruction::CreateTranspose(
-          ShapeUtil::MakeShape(b->shape().element_type(),
-                               transp_dims(b, new_dim_order)),
-          b, new_dim_order));
+    TF_ASSIGN_OR_RETURN(bool a_is_col_major,
+                        MatrixIsColumnMajor(instr, gemm_backend_config, "a"));
+    TF_ASSIGN_OR_RETURN(bool b_is_col_major,
+                        MatrixIsColumnMajor(instr, gemm_backend_config, "b"));
+
+    DotDimensionNumbers *dim_nums =
+        gemm_backend_config.mutable_dot_dimension_numbers();
+    int a_batch_dim_offset = a_batch_dims.size();
+    int b_batch_dim_offset = b_batch_dims.size();
+
+    // cuBLASLt FP8 GEMM kernels currently require the first operand, i.e. A, to
+    // be row-major. If A is column-major, swap the contracting and
+    // non-contracting dimension and transpose the matrix to effectively make it
+    // column-major.
+    // TODO(philipphack): Remove once cuBLASLt supports A being column-major
+    if (a_is_col_major) {
+      DCHECK(a_contracting_dims[0] == a_batch_dim_offset ||
+             a_contracting_dims[0] == a_batch_dim_offset + 1);
+      if (a_contracting_dims[0] == a_batch_dim_offset) {
+        dim_nums->set_lhs_contracting_dimensions(0, a_batch_dim_offset + 1);
+      } else {
+        dim_nums->set_lhs_contracting_dimensions(0, a_batch_dim_offset);
+      }
+      plain_transpose(&a, a_contracting_dims, a_batch_dims);
+    }
+    // Similarly, cuBLASLt requires the second operand to be column-major, so
+    // make it column-major if it is currently row-major.
+    if (!b_is_col_major) {
+      DCHECK(b_contracting_dims[0] == b_batch_dim_offset ||
+             b_contracting_dims[0] == b_batch_dim_offset + 1);
+      if (b_contracting_dims[0] == b_batch_dim_offset) {
+        dim_nums->set_rhs_contracting_dimensions(0, b_batch_dim_offset + 1);
+      } else {
+        dim_nums->set_rhs_contracting_dimensions(0, b_batch_dim_offset);
+      }
+      plain_transpose(&b, b_contracting_dims, b_batch_dims);
     }
 
     std::unique_ptr<HloInstruction> new_custom_call =
@@ -1217,9 +1244,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                         output_dtype));
   }
 
-  StatusOr<bool> OutputIsColumnMajor(
-      const HloInstruction *instr,
-      const GemmBackendConfig &gemm_backend_config) const {
+  StatusOr<bool> MatrixIsColumnMajor(
+      const HloInstruction *instr, const GemmBackendConfig &gemm_backend_config,
+      const std::string matrix_name = "output") const {
     const HloInstruction *lhs = instr->operand(0);
     const HloInstruction *rhs = instr->operand(1);
 
@@ -1236,7 +1263,16 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
             gemm_backend_config.alpha_imag(), gemm_backend_config.beta(),
             /*algorithm*/ std::nullopt, se::blas::kDefaultComputePrecision));
 
-    return gemm_config.output_layout.order == MatrixLayout::Order::kColumnMajor;
+    if (matrix_name == "lhs" || matrix_name == "a") {
+      return gemm_config.lhs_layout.order == MatrixLayout::Order::kColumnMajor;
+    } else if (matrix_name == "rhs" || matrix_name == "b") {
+      return gemm_config.rhs_layout.order == MatrixLayout::Order::kColumnMajor;
+    } else if (matrix_name == "output" || matrix_name == "d") {
+      return gemm_config.output_layout.order ==
+             MatrixLayout::Order::kColumnMajor;
+    } else {
+      return InternalError("Invalid matrix name.");
+    }
   }
 
   StatusOr<bool> GemmIsSupportedByCublasLt(
@@ -1292,7 +1328,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         gemm_backend_config.dot_dimension_numbers();
 
     TF_ASSIGN_OR_RETURN(bool output_is_column_major,
-                        OutputIsColumnMajor(instr, gemm_backend_config));
+                        MatrixIsColumnMajor(instr, gemm_backend_config));
     if (!output_is_column_major) {
       // cublasLt's matmul output is column major by default. This gemm requires
       // the output to be in row major. Later we will swap lhs & rhs (and
