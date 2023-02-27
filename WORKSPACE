@@ -1,4 +1,4 @@
-workspace(name = "xla")
+workspace(name = "xla") # test!!
 
 # Initialize the XLA repository and all dependencies.
 #
