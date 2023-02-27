@@ -1384,6 +1384,19 @@ xla_test(
 )
 
 xla_test(
+    name = "float8_test",
+    srcs = ["float8_test.cc"],
+    deps = [
+        "//xla:test",
+        "//xla:test_helpers",
+        "//xla/client:xla_builder",
+        "//xla/tests:client_library_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/platform:float8",
+    ],
+)
+
+xla_test(
     name = "half_test",
     srcs = ["half_test.cc"],
     backends = [

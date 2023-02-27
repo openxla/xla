@@ -28,7 +28,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    timeout-minutes: 5
+    timeout-minutes: 45
     steps:
       - name: "Getting started..."
         run: echo "Running the job on ${{ runner.os }}."
@@ -36,7 +36,12 @@ jobs:
         uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
       - name: "Run test script"
         run: ./build_tools/github_actions/test_script.sh
+      - name: "Build docker"
+        run: docker build --file build_tools/docker/dockerfiles/base-bleeding-edge.Dockerfile --tag base .
+      - name: "Docker Build XLA"
+        run: |
+          docker run --mount="type=bind,src="${PWD}",target=/work" --workdir="/work" \
+            gcr.io/iree-oss/base-bleeding-edge@sha256:31b1896efbb3d1f17aa1a5fe58d9f07ed475c8f099c4b313a590bde9a15097ef \
+            build_tools/github_actions/build_xla.sh- name: "Finishing up..."
       - name: "Finishing up..."
         run: echo "Job done."
-      - name: "Adding dummy text to check if sync works..."
-        run: echo "Sync text added."

@@ -1,0 +1,12 @@
+# Python package requirements for building as a user.
+# The CI adds additional packages, but these should be suitable for users.
+# Usage:
+#   python -m pip install -r runtime/bindings/python/iree/runtime/build_requirements.txt
+
+pip>=21.3
+setuptools>=62.4.0
+numpy>=1.19.4
+pybind11>=2.10.1
+requests>=2.28.0
+wheel>=0.36.2
+PyYAML>=5.4.1
