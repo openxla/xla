@@ -16,10 +16,10 @@
 name: A/B Diff Performance Benchmarking
 on:
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
 jobs:
   run-test-script:
-    if: ${{ github.event.label.name == 'A/B diff benchmarking' }}
+    if: contains(github.event.pull_request.labels.*.name, 'A/B diff benchmarking')
     runs-on:
       - self-hosted  # must come first
       - environment=testing
@@ -38,3 +38,5 @@ jobs:
         run: ./build_tools/github_actions/test_script.sh
       - name: "Finishing up..."
         run: echo "Job done."
+      - name: "Adding dummy text to check if sync works..."
+        run: echo "Sync text added."
