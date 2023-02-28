@@ -1,13 +1,12 @@
-# Broadcasting semantics
+# Broadcasting
 
-This document describes how the broadcasting semantics in XLA work.
+This document describes the broadcasting semantics of XLA.
 
 ## What is broadcasting?
 
 Broadcasting is the process of making arrays with different shapes have
 compatible shapes for arithmetic operations. The terminology is borrowed from
-Numpy
-[broadcasting](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html).
+[NumPy broadcasting](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html).
 
 Broadcasting may be required for operations between multi-dimensional arrays of
 different ranks, or between multi-dimensional arrays with different but
@@ -22,35 +21,35 @@ For example:
     |1 2 3| + |7 8 9|
     |4 5 6|
 
-The matrix's dimensions are (2,3), the vector's are (3). The vector is broadcast
-by replicating it over rows to get:
+The matrix's dimensions are (2,3), and the vector's dimension is (3). The vector
+is broadcast by replicating it over rows to get:
 
     |1 2 3| + |7 8 9| = |8  10 12|
     |4 5 6|   |7 8 9|   |11 13 15|
 
-In Numpy, this is called
+In NumPy, this is called
 [broadcasting](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html).
 
 ## Principles
 
-The XLA language is as strict and explicit as possible, avoiding implicit and
-"magical" features. Such features may make some computations slightly easier to
-define, at the cost of more assumptions baked into user code that will be
-difficult to change in the long term. If necessary, implicit and magical
+The XLA language is as strict and explicit as possible, avoiding implicit
+"magical" features. Such features might make some computations slightly easier
+to define, but at the cost of more assumptions baked into user code that will be
+difficult to change in the long term. If necessary, implicit magical
 features can be added in client-level wrappers.
 
-In regards to broadcasting, explicit broadcasting specifications on operations
-between arrays of different ranks is required. This is different from Numpy,
+With regard to broadcasting, XLA requires explicit broadcasting specifications
+on operations between arrays of different ranks. This is different from NumPy,
 which infers the specification when possible.
 
 ## Broadcasting a lower-rank array onto a higher-rank array
 
 *Scalars* can always be broadcast over arrays without an explicit specification
 of broadcasting dimensions. An element-wise binary operation between a scalar
-and an array means applying the operation with the scalar for each element in
-the array. For example, adding a scalar to a matrix means producing a matrix
-each element of which is a sum of the scalar with the corresponding input
-matrix's element.
+and an array means applying the operation with the scalar to each element in
+the array. For example, adding a scalar to a matrix means producing a matrix in
+which each element is a sum of the scalar and the corresponding element of the
+input matrix.
 
     |1 2 3| + 7 = |8  9  10|
     |4 5 6|       |11 12 13|
@@ -60,13 +59,14 @@ binary operation. When the inputs to the operation have different ranks, this
 broadcasting tuple specifies which dimension(s) in the **higher-rank** array to
 match with the **lower-rank** array.
 
-Consider the previous example, instead of adding a scalar to a (2,3) matrix, add
+Consider the previous example. Instead of adding a scalar to a (2,3) matrix, add
 a vector of dimension (3) to a matrix of dimensions (2,3). *Without specifying
 broadcasting, this operation is invalid.* To correctly request matrix-vector
 addition, specify the broadcasting dimension to be (1), meaning the vector's
-dimension is matched to dimension 1 of the matrix. In 2D, if dimension 0 is
-considered as rows and dimension 1 as columns, this means that each element of
-the vector becomes a column of a size matching the number of rows in the matrix:
+dimension is matched to dimension 1 of the matrix. In 2D, if dimension 0
+represents rows and dimension 1 represents columns, this means that each element
+of the vector becomes a column of a size matching the number of rows in the
+matrix:
 
     |7 8 9| ==> |7 8 9|
                 |7 8 9|
@@ -89,9 +89,8 @@ and the vector is duplicated for each column in the matrix.
      |8|     |8 8 8|
      |9|     |9 9 9|
 
-!!! Note
-    When adding a 2x3 matrix to a 3-element vector, a broadcasting dimension
-    of 0 is invalid.
+Note: When adding a 2x3 matrix to a 3-element vector, a broadcasting dimension
+of 0 is invalid.
 
 The broadcasting dimensions can be a tuple that describes how a smaller rank
 shape is broadcast into a larger rank shape. For example, given a 2x3x4 cuboid
@@ -107,7 +106,7 @@ broadcasting.
 ### Formal definition
 
 The broadcasting attribute allows matching a lower-rank array to a higher-rank
-array, by specifying which dimensions of the higher-rank array to match. For
+array by specifying which dimensions of the higher-rank array to match. For
 example, for an array with dimensions MxNxPxQ, a vector with dimension T can be
 matched as follows:
 
@@ -123,7 +122,7 @@ array. The vector's values are then broadcast from the matched dimension to all
 the other dimensions.
 
 To match a TxV matrix onto the MxNxPxQ array, a pair of broadcasting dimensions
-are used:
+is used:
 
               MxNxPxQ
     dim 2,3:      T V
@@ -131,52 +130,54 @@ are used:
     dim 0,3:  T     V
     etc...
 
-The order of dimensions in the broadcasting tuple has to be the order in which
-the lower-rank array's dimensions are expected to match the higher-rank array's
-dimensions. The first element in the tuple says which dimension in the
-higher-rank array has to match dimension 0 in the lower-rank array. The second
-element for dimension 1, and so on. The order of broadcast dimensions has to be
-strictly increasing. For example, in the previous example it is illegal to match
-V to N and T to P; it is also illegal to match V to both P and N.
+The order of dimensions in the broadcasting tuple must be the order in which
+the dimensions of the lower-rank array are expected to match the dimensions of
+the higher-rank array. The first element in the tuple specifies which dimension
+in the higher-rank array has to match dimension 0 in the lower-rank array. The
+second element in the tuple specifies which dimension in the higher-rank array
+has to match dimension 1 in the lower-rank array, and so on. The order of
+broadcast dimensions must be strictly increasing. For example, in the previous
+example it is illegal to match V to N and T to P; it is also illegal to match V
+to both P and N.
 
 ## Broadcasting similar-rank arrays with degenerate dimensions
 
-A related broadcasting problem is broadcasting two arrays that have the same
-rank but different dimension sizes. Similarly to Numpy's rules, this is only
-possible when the arrays are *compatible*. Two arrays are compatible when all
-their dimensions are compatible. Two dimensions are compatible if:
+A related problem is broadcasting two arrays that have the same rank but
+different dimension sizes. As with NumPy, this is only possible when the arrays
+are *compatible*. Two arrays are compatible when all their dimensions are
+compatible. Two dimensions are compatible if:
 
 *   They are equal, or
 *   One of them is 1 (a "degenerate" dimension)
 
 When two compatible arrays are encountered, the result shape has the maximum
-among the two inputs at every dimension index.
+of the two inputs at every dimension index.
 
 Examples:
 
 1. (2,1) and (2,3) broadcast to (2,3).
-2. (1,2,5) and (7,2,5) broadcast to (7,2,5)
-3. (7,2,5) and (7,1,5) broadcast to (7,2,5)
+2. (1,2,5) and (7,2,5) broadcast to (7,2,5).
+3. (7,2,5) and (7,1,5) broadcast to (7,2,5).
 4. (7,2,5) and (7,2,6) are incompatible and cannot be broadcast.
 
 A special case arises, and is also supported, where each of the input arrays has
 a degenerate dimension at a different index. In this case, the result is an
 "outer operation": (2,1) and (1,3) broadcast to (2,3). For more examples,
 consult the
-[Numpy documentation on broadcasting](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html).
+[NumPy documentation on broadcasting](http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html).
 
 ## Broadcast composition
 
 Broadcasting of a lower-rank array to a higher-rank array **and** broadcasting
 using degenerate dimensions can both be performed in the same binary operation.
 For example, a vector of size 4 and a matrix of size 1x2 can be added together
-using broadcast dimensions value of (0):
+using broadcast dimensions of value (0):
 
     |1 2 3 4| + [5 6]    // [5 6] is a 1x2 matrix, not a vector.
 
 First the vector is broadcast up to rank 2 (matrix) using the broadcast
 dimensions. The single value (0) in the broadcast dimensions indicates that
-dimension zero of the vector matches to dimension zero of the matrix. This
+dimension zero of the vector matches dimension zero of the matrix. This
 produces a matrix of size 4xM where the value M is chosen to match the
 corresponding dimension size in the 1x2 array. Therefore, a 4x2 matrix is
 produced:
@@ -196,10 +197,10 @@ matrix to match the corresponding dimension size of the right hand side:
 
 A more complicated example is a matrix of size 1x2 added to an array of size
 4x3x1 using broadcast dimensions of (1, 2). First the 1x2 matrix is broadcast up
-to rank 3 using the broadcast dimensions to produces an intermediate Mx1x2 array
+to rank 3 using the broadcast dimensions to produce an intermediate Mx1x2 array
 where the dimension size M is determined by the size of the larger operand (the
 4x3x1 array) producing a 4x1x2 intermediate array. The M is at dimension 0
-(left-most dimension) because the dimensions 1 and 2 are mapped to the
-dimensions of the original 1x2 matrix as the broadcast dimension are (1, 2).
+(the left-most dimension) because the dimensions 1 and 2 are mapped to the
+dimensions of the original 1x2 matrix as the broadcast dimensions are (1, 2).
 This intermediate array can be added to the 4x3x1 matrix using broadcasting of
 degenerate dimensions to produce a 4x3x2 array result.
