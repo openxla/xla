@@ -848,6 +848,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service:hlo_parser",
         "//xla/service/llvm_ir:llvm_type_conversion_util",
+        "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor",
         "//xla/translate/mhlo_to_hlo:type_to_shape",
         "@llvm-project//llvm:Core",

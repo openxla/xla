@@ -70,6 +70,7 @@ xla_cc_test(
     deps = [
         ":conv_emitter",
         "//xla/service:hlo_parser",
+        "//xla/service/llvm_ir:llvm_util",
         "//xla/tests:filecheck",
         "//xla/tests:verified_hlo_module",
         "@llvm-project//llvm:Support",
