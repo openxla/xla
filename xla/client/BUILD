@@ -261,7 +261,6 @@ cc_library(
         "//xla:sharding_op_util",
         "//xla:status_macros",
         "//xla:statusor",
-        "//xla:types",
         "//xla:util",
         "//xla:window_util",
         "//xla:xla_data_proto_cc",

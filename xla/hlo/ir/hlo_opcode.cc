@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_opcode.h"
 
+#include <string>
+
 #include "absl/container/flat_hash_map.h"
-#include "xla/types.h"
 #include "xla/util.h"
 
 namespace xla {
 
-std::string HloOpcodeString(HloOpcode opcode) {
+absl::string_view HloOpcodeString(HloOpcode opcode) {
   switch (opcode) {
 #define CASE_OPCODE_STRING(enum_name, opcode_name, ...) \
   case HloOpcode::enum_name:                            \
@@ -31,7 +32,7 @@ std::string HloOpcodeString(HloOpcode opcode) {
   }
 }
 
-StatusOr<HloOpcode> StringToHloOpcode(const std::string& opcode_name) {
+StatusOr<HloOpcode> StringToHloOpcode(absl::string_view opcode_name) {
   static auto* opcode_map = new absl::flat_hash_map<std::string, HloOpcode>({
 #define STRING_TO_OPCODE_ENTRY(enum_name, opcode_name, ...) \
   {opcode_name, HloOpcode::enum_name},
