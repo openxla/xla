@@ -1001,6 +1001,7 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
