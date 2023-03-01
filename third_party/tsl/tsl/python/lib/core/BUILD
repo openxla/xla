@@ -34,18 +34,15 @@ cc_library(
     name = "bfloat16_lib",
     srcs = [
         "bfloat16.cc",
-        "float8_e4m3b11.cc",
     ],
     hdrs = [
         "bfloat16.h",
-        "float8_e4m3b11.h",
     ],
     deps = [
         ":custom_float",
         "//tsl/platform:logging",
         "//tsl/platform:types",
         "//tsl/python/lib/core:numpy",
-        "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
@@ -85,10 +82,9 @@ cc_library(
     ],
     deps = [
         ":custom_float",
-        "//tsl/platform:logging",
+        ":numpy",
+        "//tsl/platform:float8",
         "//tsl/platform:types",
-        "//tsl/python/lib/core:numpy",
-        "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
