@@ -39,6 +39,7 @@ cc_library(
         ":location_importer",
         "//xla:comparison_util",
         "//xla:permutation_util",
+        "//xla:printer",
         "//xla:protobuf_util",
         "//xla:shape_util",
         "//xla:status",
