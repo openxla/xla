@@ -55,9 +55,14 @@ jobs:
             case "arm.com":
               console.log(await script.filter({github, context, domain}));
               break;
-            case "google.com":
-              console.log("Googler. No action necessary");
-              break;
+            # Disable googler flow, so default reviewers are added for now
+            # case "google.com":
+              # console.log("Googler. No action necessary");
+              # break;
             default:
-              console.log("Skip Trusted Partner Action");
+              # For now, add default reviewers to all PRs to ensure none are
+              # missed until further reviewer processes are setup.
+              console.log(await script.filter({github, context, domain}));
+              console.log("Default reviewers added");
+              # console.log("Skip Trusted Partner Action");
             }

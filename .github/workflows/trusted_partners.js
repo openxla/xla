@@ -51,7 +51,7 @@ const get_email_domain = async ({github, username}) => {
   @return {string} Returns the message with labels attached and assignees added
 */
 const filter_action = async ({github, context, domain}) => {
-  const labels = ['kokoro:force-run'];
+  let labels = ['kokoro:force-run'];
 
   let assignees = [];
   const title =
@@ -91,6 +91,11 @@ const filter_action = async ({github, context, domain}) => {
   if (lowercased_title.includes('tf-mot') && lowercased_title.includes('arm') &&
       domain.includes('arm.com')) {
     assignees.push('rino20', 'yyoon', 'lenscloth');
+  }
+  // Add default reviewers. Make labels constant once this is removed.
+  if (assignees.length == 0) {
+    assignees.push('xla-rotation', 'tpopp', 'ddunl');
+    labels = [];
   }
 
   const resp_label = await github.rest.issues.addLabels({
