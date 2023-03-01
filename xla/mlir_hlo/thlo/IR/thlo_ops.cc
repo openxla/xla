@@ -17,9 +17,11 @@ limitations under the License.
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -29,6 +31,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/Utils/Utils.h"
@@ -38,6 +41,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpImplementation.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/TilingInterface.h"
 #include "mlir/Transforms/InliningUtils.h"
@@ -405,8 +409,7 @@ Value getTiledImplementationForConcat(ConcatenateOp op, OpBuilder &b,
   // the tiled implementation based on a single operand.
   int64_t concatDim = op.getDimension().getSExtValue();
   OpFoldResult tileSizeInConcatDim = sizes[concatDim];
-  if (tileSizeInConcatDim.is<Attribute>() &&
-      tileSizeInConcatDim.get<Attribute>().cast<IntegerAttr>().getInt() == 1) {
+  if (getConstantIntValue(tileSizeInConcatDim) == 1) {
     return getSingleOperandTiledImplementationForConcat(op, b, loc, offsets,
                                                         sizes);
   }
@@ -772,10 +775,194 @@ SmallVector<Range> ScatterOp::getIterationDomain(OpBuilder &b) {
   return {Range{b.getIndexAttr(0), indicesCount, b.getIndexAttr(1)}};
 }
 
+namespace {
+Value isValidIndex(OpBuilder &b, Location loc, ArrayRef<Value> indices,
+                   ArrayRef<Value> tensorDims, Value zero) {
+  Type i1Type = b.getI1Type();
+  Value isValid = b.create<arith::ConstantOp>(
+      loc, i1Type, IntegerAttr::get(i1Type, APInt(1, 1)));
+
+  for (auto [dim, index] : llvm::zip(tensorDims, indices)) {
+    Value geZero =
+        b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, index, zero);
+    Value ltDim =
+        b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, index, dim);
+    Value dimInBounds = b.create<arith::AndIOp>(loc, geZero, ltDim);
+    isValid = b.create<arith::AndIOp>(loc, isValid, dimInBounds);
+  }
+  return isValid;
+}
+
+Value isIndexInBounds(OpBuilder &b, Location loc,
+                      ArrayRef<Value> updatesDimValues,
+                      ArrayRef<Value> scatterIndices,
+                      ArrayRef<Value> initDimValues, Value &zero, Value &one) {
+  SmallVector<Value> limitIndex{updatesDimValues.drop_front()};
+  for (const auto &en : llvm::enumerate(scatterIndices)) {
+    limitIndex[en.index()] =
+        b.create<arith::AddIOp>(loc, limitIndex[en.index()], en.value());
+  }
+  for (auto &value : limitIndex) {
+    value = b.create<arith::SubIOp>(loc, value, one);
+  }
+
+  Value inBounds = isValidIndex(b, loc, limitIndex, initDimValues, zero);
+  return b.create<arith::AndIOp>(
+      loc, inBounds, isValidIndex(b, loc, scatterIndices, initDimValues, zero));
+}
+}  // namespace
+
+FailureOr<Operation *> scalarizeScatter(thlo::ScatterOp scatterOp, OpBuilder &b,
+                                        Location loc, Value updates,
+                                        ArrayRef<Value> scatterIndices) {
+  auto updatesType = updates.getType().dyn_cast<RankedTensorType>();
+  if (!updatesType) return failure();
+  unsigned updatesRank = updatesType.getRank();
+
+  SmallVector<OpFoldResult> updatesDimSizes =
+      tensor::getMixedSizes(b, loc, updates);
+  SmallVector<Value> updatesDimValues =
+      getValueOrCreateConstantIndexOp(b, loc, updatesDimSizes);
+
+  Value init = scatterOp.getInit();
+  auto initType = init.getType().dyn_cast<RankedTensorType>();
+  if (!initType) return failure();
+  SmallVector<Value> initDimValues = getValueOrCreateConstantIndexOp(
+      b, loc, tensor::getMixedSizes(b, loc, init));
+
+  Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = b.create<arith::ConstantIndexOp>(loc, 1);
+
+  Value indexIsInBounds = isIndexInBounds(
+      b, loc, updatesDimValues, scatterIndices, initDimValues, zero, one);
+  Operation *ifOp = b.create<scf::IfOp>(
+      loc, indexIsInBounds,
+      [&](OpBuilder &thenBuilder, Location thenLoc) {
+        SmallVector<OpFoldResult> collapsedOffsets;
+        for (size_t i = 0; i < updatesRank - 1; ++i) {
+          collapsedOffsets.push_back(
+              i < (scatterIndices.size()) ? (scatterIndices)[i] : zero);
+        }
+        SmallVector<OpFoldResult> collapsedSizes;
+        for (size_t i = 1; i < updatesRank; ++i) {
+          collapsedSizes.push_back(updatesDimSizes[i]);
+        }
+
+        auto collapsedStrides = SmallVector<OpFoldResult>(updatesRank - 1, one);
+
+        // If body consists only from terminator, then insert the update
+        // slice into `init`, otherwise reduce the update slice with the same
+        // body.
+        if (scatterOp.getBody()->getOperations().size() == 1) {
+          SmallVector<OpFoldResult> offsets(updatesRank, zero);
+          SmallVector<OpFoldResult> strides(updatesRank, one);
+
+          // Create rank-reducing `tensor.extract_slice` to avoid insertion of
+          // `tensor.collapse_shape` to get rid of the outer size-1 dimension.
+          RankedTensorType resultType =
+              tensor::ExtractSliceOp::inferCanonicalRankReducedResultType(
+                  /*resultRank=*/updatesRank - 1,
+                  updatesType.cast<RankedTensorType>(), offsets,
+                  updatesDimSizes, strides);
+          Value extracted = thenBuilder.create<tensor::ExtractSliceOp>(
+              thenLoc, resultType, updates, offsets, updatesDimSizes, strides);
+
+          // Insert resized `updates` into `init`.
+          Value inserted = thenBuilder.create<tensor::InsertSliceOp>(
+              thenLoc, extracted, init, collapsedOffsets, collapsedSizes,
+              collapsedStrides);
+          thenBuilder.create<scf::YieldOp>(thenLoc, inserted);
+          return;
+        }
+
+        // Extract a slice form `init`.
+        Value extracted = thenBuilder.create<tensor::ExtractSliceOp>(
+            thenLoc, init, collapsedOffsets, collapsedSizes, collapsedStrides);
+
+        // Reduce `updates` into that slice.
+        auto reduced = thenBuilder.create<linalg::ReduceOp>(
+            thenLoc, updates, extracted, ArrayRef<int64_t>({0}),
+            [&](OpBuilder &nestedBuilder, Location nestedLoc,
+                ValueRange bbArgs) {
+              IRMapping mapping;
+              Block &lhsBlock = scatterOp.getBodyRegion().front();
+
+              mapping.map(lhsBlock.getArguments(), bbArgs);
+              for (auto &reduceBodyOp : lhsBlock.without_terminator())
+                nestedBuilder.clone(reduceBodyOp, mapping);
+
+              SmallVector<Value> newResults = llvm::to_vector(llvm::map_range(
+                  lhsBlock.getTerminator()->getOperands(),
+                  [&](Value val) { return mapping.lookupOrDefault(val); }));
+              nestedBuilder.create<linalg::YieldOp>(nestedLoc, newResults);
+            });
+
+        // Put that slice back.
+        auto inserted = thenBuilder.create<tensor::InsertSliceOp>(
+            thenLoc, reduced.getResults().front(), init, collapsedOffsets,
+            collapsedSizes, collapsedStrides);
+        thenBuilder.create<scf::YieldOp>(thenLoc, inserted.getResult());
+      },
+      [&](OpBuilder &elseBuilder, Location elseLoc) {
+        elseBuilder.create<scf::YieldOp>(elseLoc, init);
+      });
+  return ifOp;
+}
+
+namespace {
+
+Operation *getGenericTiledImplementationForScatter(
+    ScatterOp op, OpBuilder &b, Location loc, ArrayRef<OpFoldResult> offsets,
+    IntegerAttr &zeroAttr, OpFoldResult &tileOffset, OpFoldResult &tileSize,
+    Value &updateSlice) {
+  // Tile outer dimension of indices.
+  Value indices = op.getIndices();
+
+  SmallVector<OpFoldResult> indicesOffsets{offsets.front(), zeroAttr};
+  indicesOffsets.front() = tileOffset;
+  SmallVector<OpFoldResult> indicesSizes =
+      tensor::getMixedSizes(b, loc, indices);
+  indicesSizes.front() = tileSize;
+
+  Value indicesSlice =
+      materializeSlice(b, loc, indices, indicesOffsets, indicesSizes);
+
+  // Get full space of the `init` tensor. We use an extract_slice op because
+  // otherwise, tileUsingSCFForOp won't replace the arg with the bbarg.
+  int64_t initRank = op.getInit().getType().getRank();
+  Value init = materializeSlice(b, loc, op.getInit(),
+                                SmallVector<OpFoldResult>(initRank, zeroAttr),
+                                tensor::getMixedSizes(b, loc, op.getInit()));
+
+  return mlir::clone(b, op.getOperation(), TypeRange{init.getType()},
+                     ValueRange{indicesSlice, updateSlice, init});
+}
+
+std::optional<Operation *> expandSingleUpdateScatter(ScatterOp op, OpBuilder &b,
+                                                     Location loc,
+                                                     OpFoldResult tileOffset,
+                                                     Value updateSlice) {
+  // Extract indices
+  auto indices = op.getIndices();
+  int64_t indexVectorSize = indices.getType().getDimSize(1);
+  SmallVector<Value> scatterIndices;
+  scatterIndices.reserve(indexVectorSize);
+  Value indexesOffset = getValueOrCreateConstantIndexOp(b, loc, tileOffset);
+  for (int64_t i = 0; i < indexVectorSize; ++i) {
+    auto v = b.create<tensor::ExtractOp>(
+        loc, indices,
+        ValueRange{indexesOffset, b.create<arith::ConstantIndexOp>(loc, i)});
+    scatterIndices.push_back(v);
+  }
+  return scalarizeScatter(op, b, loc, updateSlice, scatterIndices);
+}
+
+}  // namespace
+
 SmallVector<Operation *> ScatterOp::getTiledImplementation(
     OpBuilder &b, ArrayRef<OpFoldResult> offsets,
     ArrayRef<OpFoldResult> sizes) {
-  Location loc = getLoc();
+  auto loc = getLoc();
   IntegerAttr zeroAttr = b.getIndexAttr(0);
 
   OpFoldResult tileOffset = offsets.front();
@@ -793,27 +980,15 @@ SmallVector<Operation *> ScatterOp::getTiledImplementation(
   Value updateSlice =
       materializeSlice(b, loc, update, updateOffsets, updateSizes);
 
-  // Tile outer dimension of indices.
-  Value indices = this->getIndices();
-
-  SmallVector<OpFoldResult> indicesOffsets{offsets.front(), zeroAttr};
-  indicesOffsets.front() = tileOffset;
-  SmallVector<OpFoldResult> indicesSizes =
-      tensor::getMixedSizes(b, loc, indices);
-  indicesSizes.front() = tileSize;
-
-  Value indicesSlice =
-      materializeSlice(b, loc, indices, indicesOffsets, indicesSizes);
-
-  // Get full space of the `init` tensor. We use an extract_slice op because
-  // otherwise, tileUsingSCFForOp won't replace the arg with the bbarg.
-  int64_t initRank = getInit().getType().getRank();
-  Value init = materializeSlice(b, loc, this->getInit(),
-                                SmallVector<OpFoldResult>(initRank, zeroAttr),
-                                tensor::getMixedSizes(b, loc, this->getInit()));
-
-  return {mlir::clone(b, this->getOperation(), TypeRange{init.getType()},
-                      ValueRange{indicesSlice, updateSlice, init})};
+  // If tile_size == 1, then we can scalarize it right away.
+  if (getConstantIntValue(tileSize) == 1) {
+    auto result =
+        expandSingleUpdateScatter(*this, b, getLoc(), tileOffset, updateSlice);
+    if (result.has_value()) return {result.value()};
+  }
+  return {getGenericTiledImplementationForScatter(*this, b, getLoc(), offsets,
+                                                  zeroAttr, tileOffset,
+                                                  tileSize, updateSlice)};
 }
 
 LogicalResult ScatterOp::getResultTilePosition(

@@ -34,4 +34,12 @@ limitations under the License.
 #define GET_OP_CLASSES
 #include "thlo/IR/thlo_ops.h.inc"
 
+namespace mlir {
+namespace thlo {
+FailureOr<Operation *> scalarizeScatter(thlo::ScatterOp scatterOp, OpBuilder &b,
+                                        Location loc, Value updates,
+                                        ArrayRef<Value> scatterIndices);
+}
+}  // namespace mlir
+
 #endif  // MLIR_HLO_THLO_IR_THLO_OPS_H

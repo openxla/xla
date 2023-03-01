@@ -84,16 +84,75 @@ transform.sequence failures(propagate) {
 // CHECK-LABEL: func.func @scatter_i64(
 // CHECK-SAME:    %[[INDICES:.*]]: tensor<?x2xindex>,
 // CHECK-SAME:    %[[UPDATES:.*]]: tensor<?x?x?xi64>,
-// CHECK-SAME:    %[[INIT:.*]]: tensor<?x?xi64>
+// CHECK-SAME:    %[[INIT:.*]]: tensor<?x?xi64>) -> tensor<?x?xi64> {
 
 // CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 // CHECK-DAG:   %[[C1:.*]] = arith.constant 1 : index
-// CHECK-DAG:   %[[INDICES_COUNT:.*]] = tensor.dim %[[INDICES]], %c0
+// CHECK-DAG:   %[[INDICES_COUNT:.*]] = tensor.dim %[[INDICES]], %[[C0]]
 
 // CHECK:       scf.for %[[I:.*]] = %[[C0]] to %[[INDICES_COUNT]] step %[[C1]]
 // CHECK-SAME:    iter_args(%[[INIT_:.*]] = %[[INIT]])
 
+// CHECK:       %[[UPDATES_DIM_1:.*]] = tensor.dim %[[UPDATES]], %[[C1]]
 // CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
+// CHECK:       %[[UPDATES_DIM_2:.*]] = tensor.dim %[[UPDATES]], %[[C2]]
+// CHECK:       %[[UPDATE_SUB:.*]] = tensor.extract_slice %[[UPDATES]][%[[I]], 0, 0]
+// CHECK-SAME:      [1, %[[UPDATES_DIM_1]], %[[UPDATES_DIM_2]]] [1, 1, 1]
+// CHECK:       %[[INDEX_0:.*]] = tensor.extract %[[INDICES]][%[[I]], %[[C0]]]
+// CHECK:       %[[INDEX_1:.*]] = tensor.extract %[[INDICES]][%[[I]], %[[C1]]]
+// CHECK:       %[[VAL_41:.*]] = scf.if
+// CHECK:         %[[EXTRACTED:.*]] = tensor.extract_slice %[[INIT]]
+// CHECK:         %[[REDUCED:.*]] = linalg.reduce ins(%[[UPDATES]] : tensor<?x?x?xi64>)
+// CHECK-SAME:          outs(%[[EXTRACTED]] : tensor<?x?xi64>) dimensions = [0]
+// CHECK:           (%[[ARG0:.*]]: i64, %[[ARG1:.*]]: i64) {
+// CHECK:             %[[ADD:.*]] = arith.addi %[[ARG0]], %[[ARG1]] : i64
+// CHECK:             linalg.yield %[[ADD]] : i64
+// CHECK:           }
+// CHECK:         %[[INSERTED:.*]] = tensor.insert_slice %[[REDUCED]] into %[[INIT]]
+// CHECK:         scf.yield %[[INSERTED]]
+// CHECK:       } else {
+// CHECK:         scf.yield %[[INIT]]
+// CHECK:       }
+// CHECK:       %[[INSERTED_1:.*]] = tensor.insert_slice
+// CHECK-SAME:     into %[[INIT_]][0, 0]
+// CHECK:       scf.yield %[[INSERTED_1]] : tensor<?x?xi64>
+// CHECK:     }
+
+// -----
+
+func.func @scatter_i64_tile_by_2(%indices: tensor<?x2xindex>,
+    %updates: tensor<?x?x?xi64>, %init: tensor<?x?xi64>) -> tensor<?x?xi64> {
+  %result = thlo.scatter
+    ins (%indices: tensor<?x2xindex>, %updates: tensor<?x?x?xi64>)
+    outs (%init: tensor<?x?xi64>)
+    (%in: i64, %out: i64) {
+      %0 = arith.addi %in, %out: i64
+      thlo.yield %0: i64
+    }
+  return %result : tensor<?x?xi64>
+}
+
+transform.sequence failures(propagate) {
+  ^bb0(%arg1: !pdl.operation):
+    %0 = transform.structured.match ops{["thlo.scatter"]} in %arg1
+      : (!pdl.operation) -> !pdl.operation
+    %1, %loop = transform.structured.tile %0 [2]
+      : (!pdl.operation) -> (!pdl.operation, !pdl.operation)
+}
+
+// CHECK-LABEL: func.func @scatter_i64_tile_by_2(
+// CHECK-SAME:    %[[INDICES:.*]]: tensor<?x2xindex>,
+// CHECK-SAME:    %[[UPDATES:.*]]: tensor<?x?x?xi64>,
+// CHECK-SAME:    %[[INIT:.*]]: tensor<?x?xi64>
+
+// CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
+// CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
+// CHECK-DAG:   %[[INDICES_COUNT:.*]] = tensor.dim %[[INDICES]], %c0
+
+// CHECK:       scf.for %[[I:.*]] = %[[C0]] to %[[INDICES_COUNT]] step %[[C2]]
+// CHECK-SAME:    iter_args(%[[INIT_:.*]] = %[[INIT]])
+
+// CHECK-DAG:   %[[C1:.*]] = arith.constant 1 : index
 // CHECK:       %[[UPDATE_SUB:.*]] = tensor.extract_slice %[[UPDATES]][%[[I]]
 // CHECK-SAME:    : tensor<?x?x?xi64>
 // CHECK:       %[[INDICES_SUB:.*]] = tensor.extract_slice %[[INDICES]][%[[I]]
@@ -104,14 +163,15 @@ transform.sequence failures(propagate) {
 // CHECK-SAME:     [%[[INIT_DIM_0]], %[[INIT_DIM_1]]] [1, 1]
 
 // CHECK:       %[[SCATTER:.*]] = thlo.scatter
-// CHECK-SAME:    ins(%[[INDICES_SUB]] : tensor<1x2xindex>,
-// CHECK-SAME:        %[[UPDATE_SUB]] : tensor<1x?x?xi64>)
+// CHECK-SAME:    ins(%[[INDICES_SUB]] : tensor<?x2xindex>,
+// CHECK-SAME:        %[[UPDATE_SUB]] : tensor<?x?x?xi64>)
 // CHECK-SAME:    outs(%[[INIT_SUB]] : tensor<?x?xi64>)
 // CHECK:           arith.addi
 // CHECK:           thlo.yield
 // CHECK:       %[[INSERTED:.*]] = tensor.insert_slice %[[SCATTER]]
 // CHECK-SAME:    into %[[INIT_]][0, 0]
 // CHECK:       scf.yield %[[INSERTED:.*]]
+
 
 // -----
 

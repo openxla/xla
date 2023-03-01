@@ -112,8 +112,7 @@ struct ScalarizeLinalgOp : public OpInterfaceRewritePattern<LinalgOp> {
 // startIndices has a different shape.
 Optional<SmallVector<Value>> extractStartIndices(
     ImplicitLocOpBuilder &b, TypedValue<ShapedType> startIndices) {
-  if (startIndices.getType().getRank() != 2 ||
-      startIndices.getType().getDimSize(0) != 1) {
+  if (startIndices.getType().getDimSize(0) != 1) {
     return std::nullopt;
   }
 
@@ -135,100 +134,16 @@ struct ScalarizeScatterOp : public OpRewritePattern<thlo::ScatterOp> {
                                 PatternRewriter &rewriter) const override {
     Location loc = scatterOp.getLoc();
     ImplicitLocOpBuilder b(loc, rewriter);
-
+    auto updates = scatterOp.getUpdates();
     auto scatterIndices = extractStartIndices(b, scatterOp.getIndices());
     if (!scatterIndices) return failure();
-    Value updates = scatterOp.getUpdates();
-    auto updatesType = updates.getType().dyn_cast<RankedTensorType>();
-    if (!updatesType) return failure();
-    unsigned updatesRank = updatesType.getRank();
 
-    SmallVector<OpFoldResult> updatesDimSizes =
-        tensor::getMixedSizes(b, loc, updates);
-    SmallVector<Value> updatesDimValues =
-        getValueOrCreateConstantIndexOp(b, loc, updatesDimSizes);
+    auto scalarizedScatter =
+        scalarizeScatter(scatterOp, b, loc, updates, scatterIndices.value());
 
-    Value init = scatterOp.getInit();
-    auto initType = init.getType().dyn_cast<RankedTensorType>();
-    if (!initType) return failure();
-    SmallVector<Value> initDimValues = getValueOrCreateConstantIndexOp(
-        b, loc, tensor::getMixedSizes(b, loc, init));
+    if (failed(scalarizedScatter)) return failure();
 
-    Value zero = b.create<arith::ConstantIndexOp>(0);
-    Value one = b.create<arith::ConstantIndexOp>(1);
-
-    Value indexIsInBounds =
-        isIndexInBounds(b, loc, updatesDimValues, scatterIndices.value(),
-                        initDimValues, zero, one);
-    auto ifOp = b.create<scf::IfOp>(
-        loc, indexIsInBounds,
-        [&](OpBuilder &thenBuilder, Location thenLoc) {
-          SmallVector<OpFoldResult> collapsedOffsets;
-          for (size_t i = 0; i < updatesRank - 1; ++i) {
-            collapsedOffsets.push_back(
-                i < (scatterIndices->size()) ? (*scatterIndices)[i] : zero);
-          }
-          SmallVector<OpFoldResult> collapsedSizes;
-          for (size_t i = 1; i < updatesRank; ++i) {
-            collapsedSizes.push_back(updatesDimSizes[i]);
-          }
-
-          auto collapsedStrides =
-              SmallVector<OpFoldResult>(updatesRank - 1, one);
-
-          // If body consists only from terminator, then insert the update
-          // slice into `init`, otherwise reduce the update slice with the same
-          // body.
-          if (scatterOp.getBody()->getOperations().size() == 1) {
-            SmallVector<OpFoldResult> offsets(updatesRank, zero);
-            SmallVector<OpFoldResult> strides(updatesRank, one);
-
-            // Create rank-reducing `tensor.extract_slice` to avoid insertion of
-            // `tensor.collapse_shape` to get rid of the outer size-1 dimension.
-            RankedTensorType resultType =
-                tensor::ExtractSliceOp::inferCanonicalRankReducedResultType(
-                    /*resultRank=*/updatesRank - 1,
-                    updatesType.cast<RankedTensorType>(), offsets,
-                    updatesDimSizes, strides);
-            Value extracted = thenBuilder.create<tensor::ExtractSliceOp>(
-                thenLoc, resultType, updates, offsets, updatesDimSizes,
-                strides);
-
-            // Insert resized `updates` into `init`.
-            Value inserted = thenBuilder.create<tensor::InsertSliceOp>(
-                thenLoc, extracted, init, collapsedOffsets, collapsedSizes,
-                collapsedStrides);
-            thenBuilder.create<scf::YieldOp>(thenLoc, inserted);
-            return;
-          }
-
-          // Extract a slice form `init`.
-          Value extracted = thenBuilder.create<tensor::ExtractSliceOp>(
-              thenLoc, init, collapsedOffsets, collapsedSizes,
-              collapsedStrides);
-
-          // Reduce `updates` into that slice.
-          auto reduced = thenBuilder.create<linalg::ReduceOp>(
-              thenLoc, extracted.getType().cast<RankedTensorType>(), updates,
-              extracted, ArrayRef<int64_t>({0}));
-          reduced.getRegion().takeBody(scatterOp.getBodyRegion());
-
-          Operation *yield = reduced.getBlock()->getTerminator();
-
-          OpBuilder::InsertionGuard g(rewriter);
-          rewriter.setInsertionPoint(yield);
-          rewriter.replaceOpWithNewOp<linalg::YieldOp>(yield,
-                                                       yield->getOperands());
-          // Put that slice back.
-          auto inserted = thenBuilder.create<tensor::InsertSliceOp>(
-              thenLoc, reduced.getResults().front(), init, collapsedOffsets,
-              collapsedSizes, collapsedStrides);
-          thenBuilder.create<scf::YieldOp>(thenLoc, inserted.getResult());
-        },
-        [&](OpBuilder &elseBuilder, Location elseLoc) {
-          elseBuilder.create<scf::YieldOp>(elseLoc, init);
-        });
-    rewriter.replaceOp(scatterOp, ifOp.getResults());
+    rewriter.replaceOp(scatterOp, scalarizedScatter.value()->getResults());
     return success();
   }
 

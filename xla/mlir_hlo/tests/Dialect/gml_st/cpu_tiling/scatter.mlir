@@ -13,6 +13,13 @@ func.func @scatter_small_vector_dim(%indices: tensor<?x2xindex>,
 }
 
 // CHECK-LABEL: @scatter_small_vector_dim
+// CHECK-NOT:   thlo.scatter
 // CHECK:       scf.for
-// CHECK:       thlo.scatter
-// CHECK-SAME:    ins(%{{.*}} : tensor<1x2xindex>, %{{.*}} : tensor<1x?x?xf32>)
+// CHECK:         scf.if
+// CHECK:           tensor.extract_slice
+// CHECK:           linalg.reduce
+// CHECK:           tensor.insert_slice
+// CHECK:         } else {
+// CHECK:           scf.yield
+// CHECK:         }
+// CHECK:         scf.yield
