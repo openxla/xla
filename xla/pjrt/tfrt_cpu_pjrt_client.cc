@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "xla/literal_util.h"
+#include "xla/pjrt/cpu_buffer_utils.h"
 #include "xla/runtime/cpu_event.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
@@ -736,10 +737,7 @@ StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::BufferFromHostLiteral(
     EnqueueWork(pjrt_client_thread_pool(), [literal, av = avs[0].CopyRef(),
                                             device_buffer, shape]() mutable {
       tsl::profiler::TraceMe traceme("H2D Dispatch");
-      const std::shared_ptr<MaybeOwningCpuMemory>& b =
-          device_buffer->Buffers()[0];
-      CHECK_EQ(literal.size_bytes(), b->size());
-      std::memcpy(b->data(), literal.untyped_data(), b->size());
+      CopyLiteralSliceToLeafCpuBuffer(0, device_buffer, literal);
       // Signal copy is complete.
       av->SetStateConcrete();
     });
@@ -752,10 +750,7 @@ StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::BufferFromHostLiteral(
                                               shape, device_buffer]() mutable {
         tsl::profiler::TraceMe traceme("H2D Dispatch");
         auto slice = LiteralSlice(literal, {i});
-        const std::shared_ptr<MaybeOwningCpuMemory>& b =
-            device_buffer->Buffers()[i];
-        CHECK_EQ(slice.size_bytes(), b->size());
-        std::memcpy(b->data(), slice.untyped_data(), slice.size_bytes());
+        CopyLiteralSliceToLeafCpuBuffer(i, device_buffer, slice);
         // Signal copy is complete.
         av->SetStateConcrete();
       });
@@ -1046,19 +1041,7 @@ PjRtFuture<Status> TfrtCpuBuffer::ToLiteral(MutableLiteralBase* literal) {
   bool should_sync_copy = device_buffer_wait_avs.empty() &&
                           literal->size_bytes() < kSmallDataTransferByteSize;
   if (should_sync_copy) {
-    if (!on_device_shape().IsTuple()) {
-      const std::shared_ptr<MaybeOwningCpuMemory>& b =
-          device_buffer->Buffers()[0];
-      std::memcpy(literal->untyped_data(), b->data(), b->size());
-    } else {
-      // Tuple case.
-      int num_leaves = literal->shape().tuple_shapes().size();
-      for (int i = 0; i < num_leaves; ++i) {
-        const std::shared_ptr<MaybeOwningCpuMemory>& b =
-            device_buffer->Buffers()[i];
-        std::memcpy(literal->untyped_data({i}), b->data(), b->size());
-      }
-    }
+    CopyCpuBufferToLiteral(on_device_shape(), device_buffer, literal);
     // Unblock ToLiteral caller.
     return PjRtFuture<Status>(OkStatus());
   } else {
@@ -1082,19 +1065,7 @@ PjRtFuture<Status> TfrtCpuBuffer::ToLiteral(MutableLiteralBase* literal) {
             }
           }
 
-          if (!on_device_shape().IsTuple()) {
-            const std::shared_ptr<MaybeOwningCpuMemory>& b =
-                device_buffer->Buffers()[0];
-            std::memcpy(literal->untyped_data(), b->data(), b->size());
-          } else {
-            // Tuple case.
-            int num_leaves = literal->shape().tuple_shapes().size();
-            for (int i = 0; i < num_leaves; ++i) {
-              const std::shared_ptr<MaybeOwningCpuMemory>& b =
-                  device_buffer->Buffers()[i];
-              std::memcpy(literal->untyped_data({i}), b->data(), b->size());
-            }
-          }
+          CopyCpuBufferToLiteral(on_device_shape(), device_buffer, literal);
 
           // Unblock ToLiteral event.
           ready_event.emplace(OkStatus());

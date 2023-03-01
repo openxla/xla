@@ -508,6 +508,30 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "cpu_buffer_utils",
+    srcs = ["cpu_buffer_utils.cc"],
+    hdrs = ["cpu_buffer_utils.h"],
+    deps = [
+        ":tracked_tfrt_cpu_device_buffer",
+        "//xla:literal",
+    ],
+)
+
+xla_cc_test(
+    name = "cpu_buffer_utils_test",
+    srcs = ["cpu_buffer_utils_test.cc"],
+    deps = [
+        ":cpu_buffer_utils",
+        "//xla:literal_util",
+        "//xla/runtime:cpu_event",
+        "//xla/tests:literal_test_util",
+        "@com_google_googletest//:gtest_main",
+        "@tf_runtime//:async_value",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "tfrt_cpu_pjrt_client",
     srcs = ["tfrt_cpu_pjrt_client.cc"],
     hdrs = ["tfrt_cpu_pjrt_client.h"],
@@ -515,6 +539,7 @@ cc_library(
         "//xla:friends",
     ],
     deps = [
+        ":cpu_buffer_utils",
         ":mlir_to_hlo",
         ":pjrt_client",
         ":pjrt_executable",
