@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/hlo_reachability.h"
+#include "xla/hlo/ir/hlo_reachability.h"
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"

@@ -27,11 +27,11 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_reachability.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/gpu_performance_model.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_graph_dumper.h"
-#include "xla/service/hlo_reachability.h"
 #include "xla/shape_util.h"
 
 namespace xla {
