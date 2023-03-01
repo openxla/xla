@@ -1,16 +1,14 @@
-# OpenXLA
+# XLA
 
-OpenXLA is a community-driven, modular open-source compiler. The project is
-actively migrating from
+XLA (Accelerated Linear Algebra) is an open-source machine learning (ML)
+compiler. The project is actively migrating from
 [tensorflow/xla](https://github.com/tensorflow/tensorflow/tree/e2009cbe954b5c7644eecd77243cd4dfee14ff8d/tensorflow/compiler/xla)
 under the governance of the
 [OpenXLA SIG](https://github.com/tensorflow/community/pull/419/).
 
-> **Note** During the migration, the project cannot accept pull requests.
-
-The OpenXLA compiler will enable efficient optimization and deployment of ML
-models from most major frameworks to any hardware backend, including CPUs, GPUs,
-and ML ASICs. To learn more, see [the documentation](docs/index.md).
+The XLA compiler takes models from popular ML frameworks such as PyTorch,
+TensorFlow, and JAX, and optimizes them for high-performance execution across
+different hardware platforms including GPUs, CPUs, and ML accelerators.
 
 ## Get started
 
@@ -23,7 +21,7 @@ documentation for your ML framework:
 
 If you're not contributing code to the XLA compiler, you don't need to clone and
 build this repo. Everything here is intended for XLA contributors who want to
-develop the compler and XLA integrators who want to debug or add support for ML
+develop the compiler and XLA integrators who want to debug or add support for ML
 frontends and hardware backends.
 
 Here's how you can start developing in the XLA compiler:
