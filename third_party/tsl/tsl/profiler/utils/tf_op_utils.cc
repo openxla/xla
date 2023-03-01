@@ -82,7 +82,10 @@ bool IsTfOpType(absl::string_view op_type) {
 }
 
 bool IsJaxOpType(absl::string_view op_type) {
-  static const LazyRE2 kJaxOpTypeRegEx = {"[a-z_][a-z0-9_]*"};
+  // Jax op type should start with lowercase character or underscore.
+  // If it contains '[]', it must end with ']' and whatever chars inside
+  // it are considered as a match.
+  static const LazyRE2 kJaxOpTypeRegEx = {"[a-z_][a-z0-9_]*(\\[.*\\])?"};
   return RE2::FullMatch(op_type, *kJaxOpTypeRegEx);
 }
 
