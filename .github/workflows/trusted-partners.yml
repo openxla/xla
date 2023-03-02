@@ -15,7 +15,7 @@
 
 name: Trusted Partner PR
 on:
-  pull_request_target:
+  pull_request:
 
 jobs:
   assign-partner-tags:
