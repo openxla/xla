@@ -1988,6 +1988,7 @@ cc_library(
         "//xla/service:sharding_propagation",
         "//xla/service:sharding_remover",
         "//xla/service:simplify_fp_conversions",
+        "//xla/service:slice_sinker",
         "//xla/service:slow_operation_alarm",
         "//xla/service:sort_simplifier",
         "//xla/service:stable_sort_expander",
