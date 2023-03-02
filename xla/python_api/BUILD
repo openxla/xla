@@ -12,9 +12,9 @@ py_library(
     srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
-        "//tensorflow/python:dtypes",
         "//third_party/py/numpy",
         "//xla:xla_data_proto_py",
+        "@tsl//tsl/python/lib/core:_pywrap_bfloat16",
     ],
 )
 
