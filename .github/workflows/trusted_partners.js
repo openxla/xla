@@ -51,7 +51,7 @@ const get_email_domain = async ({github, username}) => {
   @return {string} Returns the message with labels attached and assignees added
 */
 const filter_action = async ({github, context, domain}) => {
-  let labels = ['kokoro:force-run'];
+  const labels = ['kokoro:force-run'];
 
   let assignees = [];
   const title =
@@ -92,22 +92,23 @@ const filter_action = async ({github, context, domain}) => {
       domain.includes('arm.com')) {
     assignees.push('rino20', 'yyoon', 'lenscloth');
   }
-  // Add default reviewers. Make labels constant once this is removed.
+
+  // Add default reviewers if none were added or add kokoro label.
   if (assignees.length == 0) {
     assignees.push('xla-rotation', 'tpopp', 'ddunl');
-    labels = [];
+  } else {
+    const resp_label = await github.rest.issues.addLabels({
+      issue_number: context.issue.number,
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      labels: labels
+    });
+    if (resp_label.status >= 400) {
+      console.log(resp_label);
+      throw 'Error adding labels to PR';
+    }
   }
 
-  const resp_label = await github.rest.issues.addLabels({
-    issue_number: context.issue.number,
-    owner: context.repo.owner,
-    repo: context.repo.repo,
-    labels: labels
-  });
-  if (resp_label.status >= 400) {
-    console.log(resp_label);
-    throw 'Error adding labels to PR';
-  }
   if (assignees.length > 0) {
     const resp_assign = await github.rest.issues.addAssignees({
       issue_number: context.issue.number,
