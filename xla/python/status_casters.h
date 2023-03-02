@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_PYTHON_STATUS_CASTERS_H_
 #define TENSORFLOW_COMPILER_XLA_PYTHON_STATUS_CASTERS_H_
 
-#include "pybind11/pybind11.h"
+#include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/python/exceptions.h"
 #include "xla/status.h"
 #include "xla/statusor.h"

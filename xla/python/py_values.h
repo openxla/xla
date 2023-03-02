@@ -23,8 +23,8 @@ limitations under the License.
 #include <tuple>
 #include <utility>
 
-#include "pybind11/numpy.h"
-#include "pybind11/pybind11.h"
+#include "pybind11/numpy.h"  // from @pybind11
+#include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/py_client.h"
 

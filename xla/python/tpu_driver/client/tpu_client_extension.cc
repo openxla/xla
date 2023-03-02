@@ -18,7 +18,7 @@ limitations under the License.
 #include <vector>
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "pybind11/pybind11.h"
+#include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/python/python_ref_manager.h"
 #include "xla/python/tpu_driver/client/tpu_client.h"

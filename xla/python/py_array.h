@@ -21,7 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/Support/Casting.h"
-#include "pybind11/pybind11.h"
+#include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/python/ifrt/array.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/py_buffer.h"

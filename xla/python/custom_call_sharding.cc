@@ -20,8 +20,8 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include "pybind11/pybind11.h"
-#include "pybind11/stl.h"
+#include "pybind11/pybind11.h"  // from @pybind11
+#include "pybind11/stl.h"  // from @pybind11
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/python/status_casters.h"

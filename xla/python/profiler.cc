@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <memory>
 
-#include "pybind11/pybind11.h"
+#include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/python/profiler/internal/traceme_wrapper.h"
 #include "xla/python/types.h"
 #include "xla/status.h"

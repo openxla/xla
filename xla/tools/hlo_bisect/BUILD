@@ -5,6 +5,7 @@ load(
     "xla_cc_binary",
     "xla_cc_test",
 )
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 
 package(
     default_visibility = ["//xla:internal"],
@@ -24,7 +25,7 @@ xla_cc_binary(
         "//xla/service:interpreter_plugin",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/util:command_line_flags",
-    ],
+    ] + if_cuda(["//xla/stream_executor/cuda:cublas_plugin"]),
 )
 
 cc_library(

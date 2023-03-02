@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"  // from @dlpack
-#include "pybind11/pytypes.h"
+#include "pybind11/pytypes.h"  // from @pybind11
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/python_ref_manager.h"
