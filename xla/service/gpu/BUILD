@@ -1024,6 +1024,7 @@ xla_cc_test(
     deps = [
         ":gemm_rewriter_triton",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
