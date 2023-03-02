@@ -64,7 +64,6 @@ limitations under the License.
 #include "xla/service/all_to_all_decomposer.h"
 #include "xla/service/async_collective_creator.h"
 #include "xla/service/batchnorm_expander.h"
-#include "xla/service/bfloat16_normalization.h"
 #include "xla/service/bitcast_dtypes_expander.h"
 #include "xla/service/broadcast_canonicalizer.h"
 #include "xla/service/buffer_assignment.h"
@@ -85,6 +84,7 @@ limitations under the License.
 #include "xla/service/dynamic_padder.h"
 #include "xla/service/eigh_expander.h"
 #include "xla/service/flatten_call_graph.h"
+#include "xla/service/float_normalization.h"
 #include "xla/service/gather_expander.h"
 #include "xla/service/gather_simplifier.h"
 #include "xla/service/gpu/alias_passthrough_params.h"
@@ -185,6 +185,7 @@ limitations under the License.
 #include "xla/translate/mhlo_to_hlo/location_exporter.h"
 #include "xla/translate/mhlo_to_lhlo_with_xla/mhlo_to_lhlo_with_xla.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/env.h"
@@ -203,16 +204,19 @@ namespace xla {
 namespace gpu {
 namespace {
 
-class GpuBfloat16Support : public BFloat16Support {
+class GpuFloatSupport : public FloatSupport {
  public:
-  bool SupportsBF16Operand(const HloInstruction& hlo,
-                           int64_t operand_index) const override {
-    return BFloat16Support::SupportsBF16Operand(hlo, operand_index) ||
+  explicit GpuFloatSupport(PrimitiveType low_precision_type)
+      : FloatSupport(low_precision_type) {}
+
+  bool SupportsLowPrecisionOperand(const HloInstruction& hlo,
+                                   int64_t operand_index) const override {
+    return FloatSupport::SupportsLowPrecisionOperand(hlo, operand_index) ||
            IsSupported(hlo);
   }
 
-  bool SupportsBF16Output(const HloInstruction& hlo) const override {
-    return BFloat16Support::SupportsBF16Output(hlo) || IsSupported(hlo);
+  bool SupportsLowPrecisionOutput(const HloInstruction& hlo) const override {
+    return FloatSupport::SupportsLowPrecisionOutput(hlo) || IsSupported(hlo);
   }
 
  private:
@@ -854,8 +858,8 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                      .VerifyReshapeIsBitcast(),
                  /*debug_only=*/true);
 
-  GpuBfloat16Support bf16_support;
-  pipeline.AddPass<BFloat16Normalization>(&bf16_support);
+  GpuFloatSupport bf16_support(BF16);
+  pipeline.AddPass<FloatNormalization>(&bf16_support);
 
   // Remove `f32 -> bf16 -> f32` casts inserted by bf16 normalization.
   if (debug_options.xla_gpu_simplify_all_fp_conversions()) {

@@ -250,7 +250,7 @@ cc_library(
         "//xla/service:all_gather_decomposer",
         "//xla/service:all_reduce_promotion",
         "//xla/service:all_to_all_decomposer",
-        "//xla/service:bfloat16_normalization",
+        "//xla/service:float_normalization",
         "//xla/service:bitcast_dtypes_expander",
         "//xla/service:broadcast_canonicalizer",
         "//xla/service:copy_insertion",

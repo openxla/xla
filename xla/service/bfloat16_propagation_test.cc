@@ -19,7 +19,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/bfloat16_support.h"
+#include "xla/service/float_support.h"
 #include "xla/shape_util.h"
 #include "xla/test.h"
 #include "xla/test_helpers.h"
@@ -32,17 +32,17 @@ namespace xla {
 // A class specifying the BF16 support used to test the propagation pass. It
 // specifies that BF16 and mixed precision are supported in all HloInstructions,
 // and that kDot reduces its operands precision to BF16.
-class TestBFloat16Support : public BFloat16Support {
+class TestBFloat16Support : public FloatSupport {
  public:
-  TestBFloat16Support() {}
+  TestBFloat16Support() : FloatSupport(BF16) {}
   ~TestBFloat16Support() override {}
 
-  bool SupportsBF16Operand(const HloInstruction& hlo,
-                           int64_t operand_index) const override {
+  bool SupportsLowPrecisionOperand(const HloInstruction& hlo,
+                                   int64_t operand_index) const override {
     return true;
   }
 
-  bool SupportsBF16Output(const HloInstruction& hlo) const override {
+  bool SupportsLowPrecisionOutput(const HloInstruction& hlo) const override {
     return true;
   }
 
@@ -50,8 +50,8 @@ class TestBFloat16Support : public BFloat16Support {
     return true;
   }
 
-  bool EffectiveOperandPrecisionIsBF16(const HloInstruction& hlo,
-                                       int64_t operand_index) const override {
+  bool EffectiveOperandPrecisionIsLowPrecision(
+      const HloInstruction& hlo, int64_t operand_index) const override {
     return hlo.opcode() == HloOpcode::kDot;
   }
 };

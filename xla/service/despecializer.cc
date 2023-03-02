@@ -19,8 +19,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/service/bfloat16_normalization.h"
 #include "xla/service/defuser.h"
+#include "xla/service/float_normalization.h"
 #include "xla/service/hlo_memory_scheduler.h"
 
 namespace xla {
