@@ -130,7 +130,13 @@ static void BuildOperator(const Operator& op, raw_ostream& os) {
   interleaveComma(llvm::seq<int>(0, op.getNumArgs()), os,
                   [&](int i) { os << "Unwrap(xla_arg_" << i << ')'; });
   os << ");\n";
-
+  // If the result is sparse, override the inferred result.
+  os << "  auto res_type = op.getResult().getType();\n";
+  os << "  if (mlir::sparse_tensor::getSparseTensorEncoding(res_type)) {\n";
+  os << "    auto *instr = "
+        "      xla::internal::XlaBuilderFriend::GetInstruction(xla_result);\n";
+  os << "    *instr->mutable_shape() = xla::TypeToShape(res_type).ToProto();\n";
+  os << "  }\n";
   os << "  value_map[result] = xla_result;\n";
   os << "  return mlir::success();\n";
   os << "}\n";
