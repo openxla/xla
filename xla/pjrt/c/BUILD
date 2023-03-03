@@ -71,6 +71,7 @@ cc_library(
         ":pjrt_c_api_hdrs",
         "//xla:shape_util",
         "//xla:status",
+        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_future",
@@ -87,6 +88,18 @@ cc_library(
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt:tfrt_cpu_pjrt_client",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_c_api_helpers_test",
+    srcs = ["pjrt_c_api_helpers_test.cc"],
+    deps = [
+        ":pjrt_c_api_helpers",
+        "//xla/pjrt:pjrt_client",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status",
     ],
 )
 
