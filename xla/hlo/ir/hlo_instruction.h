@@ -1471,6 +1471,7 @@ class HloInstruction {
   // Precondition: The instruction has a valid to_apply_ field.
   HloComputation* to_apply() const;
   void set_to_apply(HloComputation* computation);
+  void set_to_apply_wo_fusioncheck(HloComputation* computation);
   // Whether the instruction has a valid to_apply_ field.
   bool has_to_apply() const;
 

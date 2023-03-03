@@ -2879,6 +2879,16 @@ void HloInstruction::set_to_apply(HloComputation* computation) {
   LOG(FATAL) << "Invalid opcode for to_apply(): " << opcode();
 }
 
+void HloInstruction::set_to_apply_wo_fusioncheck(HloComputation* computation) {
+  if (has_to_apply()) {
+    CHECK_EQ(called_computations_.size(), 1)
+        << "Expected a to_apply computation for " << HloOpcodeString(opcode());
+    called_computations_[0] = computation;
+    return;
+  }
+  LOG(FATAL) << "Invalid opcode for to_apply(): " << HloOpcodeString(opcode());
+}
+
 bool HloInstruction::has_to_apply() const {
   switch (opcode_) {
     case HloOpcode::kAllReduce:
