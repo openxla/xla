@@ -47,7 +47,7 @@ docker run --name xla -w /xla -it -d --rm -v $PWD:/xla tensorflow/build:latest-p
 Run an end to end test using an example StableHLO module:
 
 ```
-docker exec xla bazel test xla/examples/axpy:stablehlo_compile_test --nocheck_visibility --test_output=all
+docker exec xla ./configure && bazel test xla/examples/axpy:stablehlo_compile_test --nocheck_visibility --test_output=all
 ```
 
 This will take quite a while your first time because it must build the entire
@@ -84,6 +84,8 @@ Computation output: f32[4] {13.64, 26.78, 39.920002, 53.06}
 [==========] 1 test from 1 test suite ran. (264 ms total)
 [  PASSED  ] 1 test.
 ```
+
+[This document contains more information about how to build XLA.](docs/build_from_source.md)
 
 ## Contacts
 
