@@ -50,5 +50,3 @@ then read [Code reviews](code_reviews.md).
 - [Operation semantics](operation_semantics.md)
 - [Shapes and layout](shapes.md)
 - [Tiled layout](tiled_layout.md)
-
-
