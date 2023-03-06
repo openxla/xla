@@ -264,7 +264,7 @@ Status GpuLayoutAssignment::AddBackendConstraints(
     CHECK(!IsCublasGemm(*instruction))
         << "Gemm rewriting should run after layout assignment";
 
-    if (IsMatrixMultiplication(*instruction)) {
+    if (instruction->opcode() == HloOpcode::kDot) {
       const Shape& output_shape = instruction->shape();
       const Shape& lhs_shape = instruction->operand(0)->shape();
       const Shape& rhs_shape = instruction->operand(1)->shape();
@@ -306,12 +306,24 @@ Status GpuLayoutAssignment::AddBackendConstraints(
         TF_RETURN_IF_ERROR(SetOperandBatchRowsColsLayout(
             instruction, 1, rhs_batch_dims, rhs_col_dims, rhs_row_dims));
         TF_RETURN_IF_ERROR(SetDotLayout(instruction, constraints));
-      } else if (!lhs_batch_dims.empty()) {
-        TF_RETURN_IF_ERROR(SetDotOperandLayout(instruction, 0, lhs_batch_dims,
-                                               lhs_row_dims, lhs_col_dims));
-        TF_RETURN_IF_ERROR(SetDotOperandLayout(instruction, 1, rhs_batch_dims,
-                                               rhs_row_dims, rhs_col_dims));
-        TF_RETURN_IF_ERROR(SetDotLayout(instruction, constraints));
+      } else {
+        if (!lhs_batch_dims.empty() || lhs_col_dims.size() > 1 ||
+            lhs_row_dims.size() > 1) {
+          TF_RETURN_IF_ERROR(SetDotOperandLayout(instruction, 0, lhs_batch_dims,
+                                                 lhs_row_dims, lhs_col_dims));
+        }
+        if (!rhs_batch_dims.empty() || rhs_col_dims.size() > 1 ||
+            rhs_row_dims.size() > 1) {
+          TF_RETURN_IF_ERROR(SetDotOperandLayout(instruction, 1, rhs_batch_dims,
+                                                 rhs_row_dims, rhs_col_dims));
+        }
+        // If we have at least one batch dimension or there is more than one
+        // non-contracting dimension on lhs or rhs, we need to set a layout for
+        // the dot output.
+        if (!lhs_batch_dims.empty() || lhs_row_dims.size() > 1 ||
+            rhs_col_dims.size() > 1) {
+          TF_RETURN_IF_ERROR(SetDotLayout(instruction, constraints));
+        }
       }
     } else if (instruction->opcode() == HloOpcode::kTranspose) {
       const HloInstruction* operand = instruction->operand(0);

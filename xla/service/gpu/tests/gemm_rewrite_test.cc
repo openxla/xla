@@ -323,7 +323,7 @@ ENTRY AddDotsFunc {
 ; CHECK-LABEL: ENTRY %AddDotsFunc (x: f32[3,4,2], y: f32[3,4,5]) -> f32[2,5] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[3,4,2]{2,1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4,5]{2,1,0} parameter(1)
-; CHECK-DAG:     [[BITCAST0:%[^ ]+]] = f32[2,12]{0,1} bitcast([[P0]])
+; CHECK-DAG:     [[BITCAST0:%[^ ]+]] = f32[12,2]{1,0} bitcast([[P0]])
 ; CHECK-DAG:     [[BITCAST1:%[^ ]+]] = f32[12,5]{1,0} bitcast([[P1]])
 ; CHECK-NEXT:    ROOT [[OUT:%[^ ]+]] = f32[2,5]{1,0} custom-call([[BITCAST0]], [[BITCAST1]]),
 ; CHECK:           custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>",
@@ -332,7 +332,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:         \"alpha_imag\":0
 ; CHECK-DAG:         \"beta\":0
 ; CHECK-DAG:         \"dot_dimension_numbers\":{
-; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"1\"]
+; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"rhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"lhs_batch_dimensions\":[]
 ; CHECK-DAG:           \"rhs_batch_dimensions\":[]
@@ -2129,7 +2129,7 @@ ENTRY test {
 
 ; CHECK-LABEL: ENTRY %test (x: f32[2,3,4], y: f32[4,5,6], z: f32[3,5,6]) -> f32[2,3,5,6] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3,4]{2,1,0} parameter(0)
-; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[6,4]{1,0} bitcast([[P0]])
+; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[4,6]{0,1} bitcast([[P0]])
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[4,5,6]{2,1,0} parameter(1)
 ; CHECK-NEXT:    [[P1_BITCAST:%[^ ]+]] = f32[4,30]{1,0}
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[3,5,6]{2,1,0} parameter(2)
@@ -2142,7 +2142,7 @@ ENTRY test {
 ; CHECK-DAG:         \"alpha_imag\":0
 ; CHECK-DAG:         \"beta\":1
 ; CHECK-DAG:         \"dot_dimension_numbers\":{
-; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"1\"]
+; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"rhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"lhs_batch_dimensions\":[]
 ; CHECK-DAG:           \"rhs_batch_dimensions\":[]
@@ -2183,7 +2183,7 @@ ENTRY test {
 
 ; CHECK-LABEL: ENTRY %test (x: f32[2,3,4], y: f32[4,5,6], z: f32[6]) -> f32[2,3,5,6] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3,4]{2,1,0} parameter(0)
-; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[6,4]{1,0} bitcast([[P0]])
+; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[4,6]{0,1} bitcast([[P0]])
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[4,5,6]{2,1,0} parameter(1)
 ; CHECK-NEXT:    [[P1_BITCAST:%[^ ]+]] = f32[4,30]{1,0}
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[6]{0} parameter(2)
@@ -2196,7 +2196,7 @@ ENTRY test {
 ; CHECK-DAG:         \"alpha_imag\":0
 ; CHECK-DAG:         \"beta\":1
 ; CHECK-DAG:         \"dot_dimension_numbers\":{
-; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"1\"]
+; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"rhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"lhs_batch_dimensions\":[]
 ; CHECK-DAG:           \"rhs_batch_dimensions\":[]
@@ -2636,7 +2636,7 @@ ENTRY test {
 
 ; CHECK-LABEL: ENTRY %test (x: f32[2,3,4], y: f32[4,5,6]) -> f32[2,3,5,6] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3,4]{2,1,0} parameter(0)
-; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[6,4]{1,0} bitcast([[P0]])
+; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[4,6]{0,1} bitcast([[P0]])
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[4,5,6]{2,1,0} parameter(1)
 ; CHECK-NEXT:    [[P1_BITCAST:%[^ ]+]] = f32[4,30]{1,0}
 ; CHECK-NEXT:    [[MATMUL:%[^ ]+]] = f32[6,30]{1,0} custom-call([[P0_BITCAST]], [[P1_BITCAST]]),
@@ -2646,7 +2646,7 @@ ENTRY test {
 ; CHECK-DAG:         \"alpha_imag\":0
 ; CHECK-DAG:         \"beta\":0
 ; CHECK-DAG:         \"dot_dimension_numbers\":{
-; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"1\"]
+; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"rhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"lhs_batch_dimensions\":[]
 ; CHECK-DAG:           \"rhs_batch_dimensions\":[]
@@ -2870,7 +2870,7 @@ ENTRY test {
 
 ; CHECK-LABEL: ENTRY %test (x: f32[2,3,4], y: f32[4,5,6], z: f32[3,5,6]) -> f32[2,3,5,6] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[2,3,4]{2,1,0} parameter(0)
-; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[6,4]{1,0} bitcast([[P0]])
+; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f32[4,6]{0,1} bitcast([[P0]])
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[4,5,6]{2,1,0} parameter(1)
 ; CHECK-NEXT:    [[P1_BITCAST:%[^ ]+]] = f32[4,30]{1,0}
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[3,5,6]{2,1,0} parameter(2)
@@ -2882,7 +2882,7 @@ ENTRY test {
 ; CHECK-DAG:         \"alpha_imag\":0
 ; CHECK-DAG:         \"beta\":1
 ; CHECK-DAG:         \"dot_dimension_numbers\":{
-; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"1\"]
+; CHECK-DAG:           \"lhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"rhs_contracting_dimensions\":[\"0\"]
 ; CHECK-DAG:           \"lhs_batch_dimensions\":[]
 ; CHECK-DAG:           \"rhs_batch_dimensions\":[]

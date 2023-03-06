@@ -86,6 +86,12 @@ bool IsCanonicalDot(HloInstruction* dot) {
 //
 StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
                                               HloInstruction* b) {
+  if (a->shape().layout() != b->shape().layout()) {
+    VLOG(3) << "Can't merge dots because they have a different layout:\n"
+            << "\t" << a->ToString() << "\n"
+            << "\t" << b->ToString();
+    return nullptr;
+  }
   if (a->operand(0) != b->operand(0) && a->operand(1) != b->operand(1)) {
     VLOG(4) << "Can't merge dots because they don't share an operand.\n"
             << "\t" << a->ToString() << "\n"
@@ -153,6 +159,13 @@ StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
   HloInstruction* shared_op = a->mutable_operand(lhs_same ? 0 : 1);
   HloInstruction* diff_op_a = a->mutable_operand(lhs_same ? 1 : 0);
   HloInstruction* diff_op_b = b->mutable_operand(lhs_same ? 1 : 0);
+  if (diff_op_a->shape().layout() != diff_op_b->shape().layout()) {
+    VLOG(3) << "Can't merge dots because the different operands have a "
+               "different layout:\n"
+            << "\t" << diff_op_a->ToString() << "\n"
+            << "\t" << diff_op_b->ToString();
+    return nullptr;
+  }
 
   // Dimension along which we're going to concatenate diff_op_a and diff_op_b.
   // This is the outer (i.e. non-contracing) dim.  Because the dot is canonical,
@@ -172,6 +185,7 @@ StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
       Shape concat_shape,
       ShapeInference::InferConcatOpShape(
           {&diff_op_a->shape(), &diff_op_b->shape()}, outer_dim));
+  *concat_shape.mutable_layout() = diff_op_a->shape().layout();
   HloInstruction* concat_op =
       diff_op_a->AddInstruction(HloInstruction::CreateConcatenate(
           concat_shape, {diff_op_a, diff_op_b}, outer_dim));
@@ -183,6 +197,7 @@ StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
       ShapeInference::InferDotOpShape(
           dot_lhs->shape(), dot_rhs->shape(), dnums,
           /*preferred_element_type=*/a->shape().element_type()));
+  *new_dot_shape.mutable_layout() = a->shape().layout();
   HloInstruction* new_dot = a->AddInstruction(HloInstruction::CreateDot(
       new_dot_shape, dot_lhs, dot_rhs, dnums, a->precision_config()));
 

@@ -34,6 +34,16 @@ class DotDecomposer : public HloModulePass {
   StatusOr<bool> Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+
+ protected:
+  // Convert a dot into a canonical form;
+  // * Non-contracting dimensions are reshaped together,
+  // * Contracting dimensions are reshaped together,
+  // * Batch dimensions are the most major dimensions.
+  // This requires transposing and reshaping of the lhs and rhs, and reshaping
+  // the output batch to the original shape.
+  virtual Status CanonicalizeDot(HloInstruction* original_dot);
+  virtual bool DotIsCanonical(HloInstruction* dot);
 };
 
 }  // namespace xla

@@ -70,7 +70,6 @@ limitations under the License.
 #include "xla/service/convolution_4d_expander.h"
 #include "xla/service/convolution_pred_expander.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/service/dot_decomposer.h"
 #include "xla/service/dot_merger.h"
 #include "xla/service/dump.h"
 #include "xla/service/dynamic_dimension_simplifier.h"
@@ -94,6 +93,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_conv_algorithm_picker.h"
 #include "xla/service/gpu/gpu_conv_rewriter.h"
 #include "xla/service/gpu/gpu_device_info.h"
+#include "xla/service/gpu/gpu_dot_decomposer.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/gpu_hlo_cost_analysis.h"
@@ -451,7 +451,6 @@ Status GpuCompiler::OptimizeHloModule(
     pipeline.AddPass<CallInliner>();
 
     pipeline.AddPass<DotDimensionSorter>();
-    pipeline.AddPass<DotDecomposer>();
 
     pipeline.AddPass<StochasticConvertDecomposer>();
 
@@ -524,10 +523,6 @@ Status GpuCompiler::OptimizeHloModule(
       pipeline.AddPass<BitcastDtypesExpander>();
       // AlgebraicSimplifier may add contracting dimensions to a dot.
       pipeline.AddPass<DotDimensionSorter>();
-      pipeline.AddPass<DotDecomposer>();
-      // Only merge "smallish" dots.  This threshold was not set carefully, but
-      // so far we know that 1mb is too small.
-      pipeline.AddPass<DotMerger>(/*max_size_to_merge=*/int64_t{16} << 20);
       pipeline.AddPass<SortSimplifier>();
       pipeline.AddPass<TupleSimplifier>();
       pipeline.AddPass<WhileLoopConstantSinking>();
@@ -794,6 +789,10 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   {
     HloPassPipeline pipeline("hlo normalization");
+    pipeline.AddPass<GpuDotDecomposer>();
+    // Only merge "smallish" dots.  This threshold was not set carefully, but
+    // so far we know that 1mb is too small.
+    pipeline.AddPass<DotMerger>(/*max_size_to_merge=*/int64_t{16} << 20);
 
     // The LayoutAssignment pass may leave behind kCopy instructions which are
     // duplicate or NOPs, so remove them with algebraic simplification and CSE.

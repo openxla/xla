@@ -32,15 +32,7 @@ limitations under the License.
 
 namespace xla {
 
-namespace {
-
-// Convert a dot into a canonical form;
-// * Non-contracting dimensions are reshaped together,
-// * Contracting dimensions are reshaped together,
-// * Batch dimensions are the most major dimensions.
-// This requires transposing and reshaping of the lhs and rhs, and reshaping the
-// output batch to the original shape.
-Status CanonicalizeDot(HloInstruction* original_dot) {
+Status DotDecomposer::CanonicalizeDot(HloInstruction* original_dot) {
   auto computation = original_dot->parent();
   const auto& original_dnums = original_dot->dot_dimension_numbers();
   const int64_t num_batch_dims = original_dnums.lhs_batch_dimensions_size();
@@ -183,7 +175,36 @@ Status CanonicalizeDot(HloInstruction* original_dot) {
                                                 std::move(replacement));
 }
 
-}  // namespace
+bool DotDecomposer::DotIsCanonical(HloInstruction* dot) {
+  // Skips sparse instruction as DotDecomposer does not know how to handle
+  // sparse input yet.
+  if (SparseUtil::HasSparseInOut(dot)) {
+    return true;
+  }
+  const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
+  // A dot it not canonical if there is more than one contracting dimension.
+  if (dnums.lhs_contracting_dimensions_size() != 1) {
+    return false;
+  }
+  // A dot is not canonical if it has more than one non-contracting
+  // dimension.
+  if (dnums.lhs_batch_dimensions_size() + 2 < dot->operand(0)->shape().rank() ||
+      dnums.rhs_batch_dimensions_size() + 2 < dot->operand(1)->shape().rank()) {
+    return false;
+  }
+  if (dnums.lhs_batch_dimensions().empty() &&
+      dnums.lhs_contracting_dimensions().empty()) {
+    return false;
+  }
+  // Check that batch dims, if present, are canonical.
+  std::vector<int64_t> canonical_batch_dims(dnums.lhs_batch_dimensions_size());
+  absl::c_iota(canonical_batch_dims, 0);
+  if (!absl::c_equal(dnums.lhs_batch_dimensions(), canonical_batch_dims) ||
+      !absl::c_equal(dnums.rhs_batch_dimensions(), canonical_batch_dims)) {
+    return false;
+  }
+  return true;
+}
 
 StatusOr<bool> DotDecomposer::Run(
     HloModule* module,
@@ -196,37 +217,7 @@ StatusOr<bool> DotDecomposer::Run(
       if (instruction->opcode() != HloOpcode::kDot) {
         continue;
       }
-      // Skips sparse instruction as DotDecomposer does not know how to handle
-      // sparse input yet.
-      if (SparseUtil::HasSparseInOut(instruction)) {
-        continue;
-      }
-      const DotDimensionNumbers& dnums = instruction->dot_dimension_numbers();
-      // A dot it not canonical if there is more than one contracting dimension.
-      if (dnums.lhs_contracting_dimensions_size() != 1) {
-        non_canonical_dots.push_back(instruction);
-        continue;
-      }
-      // A dot is not canonical if it has more than one non-contracting
-      // dimension.
-      if (dnums.lhs_batch_dimensions_size() + 2 <
-              instruction->operand(0)->shape().rank() ||
-          dnums.rhs_batch_dimensions_size() + 2 <
-              instruction->operand(1)->shape().rank()) {
-        non_canonical_dots.push_back(instruction);
-        continue;
-      }
-      if (dnums.lhs_batch_dimensions().empty() &&
-          dnums.lhs_contracting_dimensions().empty()) {
-        non_canonical_dots.push_back(instruction);
-        continue;
-      }
-      // Check that batch dims, if present, are canonical.
-      std::vector<int64_t> canonical_batch_dims(
-          dnums.lhs_batch_dimensions_size());
-      absl::c_iota(canonical_batch_dims, 0);
-      if (!absl::c_equal(dnums.lhs_batch_dimensions(), canonical_batch_dims) ||
-          !absl::c_equal(dnums.rhs_batch_dimensions(), canonical_batch_dims)) {
+      if (!DotIsCanonical(instruction)) {
         non_canonical_dots.push_back(instruction);
       }
     }

@@ -986,6 +986,26 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_dot_decomposer",
+    srcs = ["gpu_dot_decomposer.cc"],
+    hdrs = ["gpu_dot_decomposer.h"],
+    deps = [
+        ":matmul_utils",
+        "//xla:permutation_util",
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:types",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:dot_decomposer",
+        "//xla/service:hlo_pass",
+        "//xla/service:sparse_util",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
     name = "gemm_rewriter",
     srcs = ["gemm_rewriter.cc"],
     hdrs = ["gemm_rewriter.h"],
@@ -1965,6 +1985,7 @@ cc_library(
         ":gpu_conv_algorithm_picker",
         ":gpu_conv_rewriter",
         ":gpu_device_info",
+        ":gpu_dot_decomposer",
         ":gpu_executable",
         ":gpu_float_support",
         ":gpu_hlo_cost_analysis",
@@ -2028,7 +2049,6 @@ cc_library(
         "//xla/service:convolution_4d_expander",
         "//xla/service:convolution_pred_expander",
         "//xla/service:copy_insertion",
-        "//xla/service:dot_decomposer",
         "//xla/service:dot_merger",
         "//xla/service:dump",
         "//xla/service:dynamic_dimension_simplifier",
