@@ -69,7 +69,6 @@ cc_library(
         "//xla/service/gpu:gpu_serializable_autotuner",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor/gpu:redzone_allocator",
         "//xla/translate/mhlo_to_hlo:attribute_exporter",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/functional:function_ref",
