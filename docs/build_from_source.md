@@ -31,10 +31,11 @@ both cases you can change the default.
 
 If you are using
 [TensorFlow's docker container](https://www.tensorflow.org/install/docker) you
-can build XLA with CPU support using the following command:
+can build XLA with CPU support using the following commands:
 
 ```
-docker exec xla ./configure && bazel build //xla/...  --spawn_strategy=sandboxed --nocheck_visibility --test_output=all
+docker exec xla ./configure
+docker exec xla bazel build //xla/...  --spawn_strategy=sandboxed --nocheck_visibility --test_output=all
 ```
 
 ### GPU support
@@ -49,7 +50,8 @@ docker run --name xla_gpu -w /xla -it -d --rm -v $PWD:/xla tensorflow/tensorflow
 Now you can build XLA with GPU support using the following command:
 
 ```
-docker exec -e TF_NEED_CUDA=1 xla_gpu ./configure && bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
+docker exec -e TF_NEED_CUDA=1 xla_gpu ./configure
+docker exec xla_gpu bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
 ```
 
 For more details regarding
