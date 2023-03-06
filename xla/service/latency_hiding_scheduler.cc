@@ -32,8 +32,6 @@ limitations under the License.
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
@@ -50,6 +48,7 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 
