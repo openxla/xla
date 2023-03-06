@@ -125,6 +125,8 @@ StatusOr<mlir::DenseElementsAttr> CreateDenseElementsAttrFromLiteral(
       return CreateDenseAttrFromLiteral<float>(type, literal);
     case PrimitiveType::F64:
       return CreateDenseAttrFromLiteral<double>(type, literal);
+    case PrimitiveType::S4:
+      return CreateDenseAttrFromLiteral<s4>(type, literal);
     case PrimitiveType::S8:
       return CreateDenseAttrFromLiteral<int8_t>(type, literal);
     case PrimitiveType::S16:
@@ -133,6 +135,8 @@ StatusOr<mlir::DenseElementsAttr> CreateDenseElementsAttrFromLiteral(
       return CreateDenseAttrFromLiteral<int32_t>(type, literal);
     case PrimitiveType::S64:
       return CreateDenseAttrFromLiteral<int64_t>(type, literal);
+    case PrimitiveType::U4:
+      return CreateDenseAttrFromLiteral<u4>(type, literal);
     case PrimitiveType::U8:
       return CreateDenseAttrFromLiteral<uint8_t>(type, literal);
     case PrimitiveType::U16:

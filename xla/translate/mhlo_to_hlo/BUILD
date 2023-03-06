@@ -68,6 +68,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "//xla/client/lib:matrix",

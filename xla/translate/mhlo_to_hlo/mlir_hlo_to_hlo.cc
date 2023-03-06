@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/translate/mhlo_to_hlo/location_exporter.h"
 #include "xla/translate/mhlo_to_hlo/type_to_shape.h"
+#include "xla/types.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/float8.h"
 #include "tsl/platform/statusor.h"
@@ -165,10 +166,12 @@ StatusOr<xla::Literal> CreateArrayLiteralFromAttr(mlir::ElementsAttr attr,
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::PRED, bool)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::F32, float)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::F64, double)
+    ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::S4, xla::s4)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::S8, int8)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::S16, int16)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::S32, int32)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::S64, int64_t)
+    ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::U4, xla::u4)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::U8, uint8)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::U16, uint16)
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::U32, uint32)
