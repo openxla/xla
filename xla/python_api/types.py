@@ -19,7 +19,7 @@ import collections
 import numpy as _np  # Avoids becoming a part of public Tensorflow API.
 
 from xla import xla_data_pb2
-from tensorflow.tsl.python.lib.core import _pywrap_bfloat16
+from tsl.tsl.python.lib.core import _pywrap_bfloat16
 
 # Records correspondence between a XLA primitive type and Python/Numpy types.
 #
