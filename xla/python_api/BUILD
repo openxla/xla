@@ -17,7 +17,7 @@ py_library(
     deps = [
         "//third_party/py/numpy",
         "//xla:xla_data_proto_py",
-        "@tsl//tsl/python/lib/core:_pywrap_bfloat16",
+        "@tsl//tsl/python/lib/core:pywrap_bfloat16",
     ],
 )
 
