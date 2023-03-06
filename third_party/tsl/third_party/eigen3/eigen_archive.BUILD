@@ -44,6 +44,7 @@ EIGEN_MPL2_SOURCES = glob(
 alias(
     name = "eigen3",
     actual = "@xla//third_party/eigen3",
+    visibility = ["//visibility:public"],
 )
 
 cc_library(
