@@ -750,26 +750,6 @@ def set_other_cuda_vars(environ_cp):
     write_to_bazelrc('build --config=cuda')
 
 
-def set_exclude_broken_targets():
-  """Exclude broken targets."""
-  # TODO(patrios): Remove after fixing these targets
-  broken_targets = [
-      '-//xla/python_api/...',
-      '-//xla/service:xla_aot_compile_test_gpu_executable_convolution',
-      '-//xla/service:gen_xla_aot_compile_test_gpu_executable_convolution',
-  ]
-  write_to_bazelrc(
-      'build:exclude_broken -- {}'.format(' '.join(broken_targets))
-  )
-  write_to_bazelrc('test:exclude_broken -- {}'.format(' '.join(broken_targets)))
-  write_to_bazelrc('build --config=exclude_broken')
-  print(
-      'The following targets are disabled by default: {}'.format(
-          ' '.join(broken_targets)
-      )
-  )
-
-
 def system_specific_test_config(environ_cp):
   """Add default build and test flags required for TF tests to bazelrc."""
   write_to_bazelrc('test --flaky_test_attempts=3')
@@ -1090,8 +1070,6 @@ def main():
     set_windows_build_flags()
 
   system_specific_test_config(environ_cp)
-
-  set_exclude_broken_targets()
 
   print('Preconfigured Bazel build configs. You can use any of the below by '
         'adding "--config=<>" to your build command. See .bazelrc for more '
