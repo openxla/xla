@@ -24,7 +24,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/test.h"
 #include "tsl/platform/test_benchmark.h"
-#include "tsl/util/ptr_util.h"
 
 namespace xla {
 namespace {

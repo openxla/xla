@@ -1057,7 +1057,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/util:ptr_util",
     ],
     alwayslink = 1,
 )
@@ -1261,7 +1260,6 @@ xla_cc_test(
         "@com_google_absl//absl/memory",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/util:ptr_util",
     ],
 )
 
@@ -5961,7 +5959,6 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/util:ptr_util",
     ],
 )
 

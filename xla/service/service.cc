@@ -62,7 +62,6 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/protobuf.h"
-#include "tsl/util/ptr_util.h"
 
 namespace xla {
 namespace {
