@@ -7,51 +7,51 @@ short).
 
 ## Terminology, notation, and conventions
 
-* The rank of an array is equal to the number of dimensions. The *true rank*
-  of an array is the number of dimensions which have a size greater than 1.
+*   The rank of an array is equal to the number of dimensions. The *true rank*
+    of an array is the number of dimensions which have a size greater than 1.
 
-* Dimensions are numbered from `0` up to `N-1` for an `N` dimensional array.
-  The dimension numbers are arbitrary labels for convenience. The order of
-  these dimension numbers does not imply a particular minor/major ordering in
-  the layout of the shape. The layout is determined by the `Layout` proto.
+*   Dimensions are numbered from `0` up to `N-1` for an `N` dimensional array.
+    The dimension numbers are arbitrary labels for convenience. The order of
+    these dimension numbers does not imply a particular minor/major ordering in
+    the layout of the shape. The layout is determined by the `Layout` proto.
 
-* By convention, dimensions are listed in increasing order of dimension
-  number. For example, for a 3-dimensional array of size `[A x B x C]`,
-  dimension 0 has size `A`, dimension 1 has size `B` and dimension 2 has size
-  `C`.
+*   By convention, dimensions are listed in increasing order of dimension
+    number. For example, for a 3-dimensional array of size `[A x B x C]`,
+    dimension 0 has size `A`, dimension 1 has size `B`, and dimension 2 has size
+    `C`.
 
-  Some utilities in XLA also support negative indexing, similarly to Python;
-  dimension -1 is the last dimension (equivalent to `N-1` for an `N`
-  dimensional array). For example, for the 3-dimensional array described
-  above, dimension -1 has size `C`, dimension -2 has size `B` and so on.
+    Some utilities in XLA also support Python-like negative indexing: Dimension
+    -1 is the last dimension (equivalent to `N-1` for an `N` dimensional array).
+    For example, for the 3-dimensional array described above, dimension -1 has
+    size `C`, dimension -2 has size `B`, and so on.
 
-* Two, three, and four dimensional arrays often have specific letters
-  associated with dimensions. For example, for a 2D array:
+*   Two, three, and four dimensional arrays often have specific letters
+    associated with dimensions. For example, for a 2D array:
 
-  * dimension 0: `y`
-  * dimension 1: `x`
+    *   dimension 0: `y`
+    *   dimension 1: `x`
 
-  For a 3D array:
+    For a 3D array:
 
-  * dimension 0: `z`
-  * dimension 1: `y`
-  * dimension 2: `x`
+    *   dimension 0: `z`
+    *   dimension 1: `y`
+    *   dimension 2: `x`
 
-  For a 4D array:
+    For a 4D array:
 
-  * dimension 0: `p`
-  * dimension 1: `z`
-  * dimension 2: `y`
-  * dimension 3: `x`
+    *   dimension 0: `p`
+    *   dimension 1: `z`
+    *   dimension 2: `y`
+    *   dimension 3: `x`
 
-* Functions in the XLA API which take dimensions do so in increasing order of
-  dimension number. This matches the ordering used when passing dimensions as
-  an `initializer_list`; e.g.
+*   Functions in the XLA API which take dimensions do so in increasing order of
+    dimension number. This matches the ordering used when passing dimensions as
+    an `initializer_list`; e.g.
 
-  `ShapeUtil::MakeShape(F32, {A, B, C, D})`
+    `ShapeUtil::MakeShape(F32, {A, B, C, D})`
 
-  Will create a shape whose dimension size array consists of the sequence
-  `[A, B, C, D]`.
+    will create a shape whose dimension size array consists of the sequence `[A,
+    B, C, D]`.
 
 ## Layout
 
@@ -93,8 +93,8 @@ a d b e c f
 ```
 
 This minor-to-major dimension order of `0` up to `N-1` is akin to *column-major*
-(at rank 2). Assuming a monotonic ordering of dimensions, another name we may
-use to refer to this layout in the code is simply "dim 0 is minor".
+(at rank 2). Assuming a monotonic ordering of dimensions, another way we may
+refer to this layout in the code is simply "dim 0 is minor".
 
 On the other hand, if the `minor_to_major` field in the layout is `[1, 0]` then
 the layout in linear memory is:
@@ -105,8 +105,8 @@ a b c d e f
 
 A minor-to-major dimension order of `N-1` down to `0` for an `N` dimensional
 array is akin to *row-major* (at rank 2). Assuming a monotonic ordering of
-dimensions, another name we may use to refer to this layout in the code is
-simply "dim 0 is major".
+dimensions, another way we may refer to this layout in the code is simply "dim 0
+is major".
 
 #### Default minor-to-major ordering
 
@@ -143,7 +143,7 @@ d e f 0 0
 The class `IndexUtil` in
 [index_util.h](https://github.com/openxla/xla/tree/main/xla/index_util.h)
 provides utilities for converting between multidimensional indices and linear
-indices given a shape and layout. Multidimensional indices include a `int64`
+indices given a shape and layout. Multidimensional indices include an `int64`
 index for each dimension. Linear indices are a single `int64` value which
 indexes into the buffer holding the array. See `shape_util.h` and
 `layout_util.h` in the same directory for utilities that simplify creation and
