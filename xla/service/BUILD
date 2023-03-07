@@ -475,63 +475,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "hlo_live_range",
-    srcs = [
-        "hlo_live_range.cc",
-    ],
-    hdrs = [
-        "hlo_live_range.h",
-    ],
-    deps = [
-        ":hlo_alias_analysis",
-        ":hlo_buffer",
-        ":hlo_dataflow_analysis",
-        ":hlo_ordering",
-        ":hlo_value",
-        "//xla:statusor",
-        "//xla:types",
-        "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:status",
-    ],
-)
-
-xla_cc_test(
-    name = "hlo_live_range_test",
-    srcs = ["hlo_live_range_test.cc"],
-    deps = [
-        ":call_graph",
-        ":hlo_alias_analysis",
-        ":hlo_live_range",
-        ":hlo_memory_scheduler",
-        ":hlo_ordering",
-        ":hlo_parser",
-        ":hlo_value",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:statusor",
-        "//xla:test",
-        "//xla:test_helpers",
-        "//xla:types",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
-    ],
-)
-
-cc_library(
     name = "hlo_sharding_util",
     srcs = [
         "hlo_sharding_util.cc",
@@ -1530,7 +1473,6 @@ cc_library(
         ":hlo_alias_analysis",
         ":hlo_buffer",
         ":hlo_dataflow_analysis",
-        ":hlo_live_range",
         ":hlo_proto_cc",
         ":hlo_value",
         ":logical_buffer",
@@ -1542,6 +1484,7 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_live_range",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -1646,7 +1589,6 @@ cc_library(
         ":hlo_alias_analysis",
         ":hlo_buffer",
         ":hlo_dataflow_analysis",
-        ":hlo_live_range",
         ":hlo_ordering",
         ":hlo_proto_cc",
         ":memory_space_assignment_repacking",
@@ -1655,6 +1597,7 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_live_range",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",

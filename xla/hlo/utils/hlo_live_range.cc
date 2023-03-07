@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/hlo_live_range.h"
+#include "xla/hlo/utils/hlo_live_range.h"
 
 #include <algorithm>
 #include <tuple>
