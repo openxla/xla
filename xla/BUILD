@@ -230,6 +230,7 @@ cc_library(
         ":status",
         ":statusor",
         ":types",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:stacktrace",
