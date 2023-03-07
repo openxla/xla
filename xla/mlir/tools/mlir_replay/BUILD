@@ -12,6 +12,8 @@ xla_cc_binary(
         "//xla/mlir/tools/mlir_replay/public:compiler_trace_proto_cc_impl",
         "//xla/mlir/tools/mlir_replay/public:execution_trace_proto_cc",
         "//xla/mlir/tools/mlir_replay/public:execution_trace_utils",
+        "//xla/mlir/xla_cpu/ir:xla_cpu",
+        "//xla/mlir_hlo:deallocation",
         "//xla/mlir_hlo:gml_st",
         "//xla/mlir_hlo:hlo_dialect_registration",
         "//xla/mlir_hlo:lhlo",
