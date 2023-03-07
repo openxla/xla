@@ -20,7 +20,7 @@ See also
 
 AfterAll takes a variadic number of tokens and produces a single token. Tokens
 are primitive types which can be threaded between side-effecting operations to
-enforce ordering. `AfterAll` can be used as a join of tokens for ordering a
+enforce ordering. `AfterAll` can be used as a join of tokens for ordering an
 operation after a set operations.
 
 <b> `AfterAll(operands)` </b>
@@ -39,12 +39,15 @@ Performs concatenation across replicas.
 <b> `AllGather(operand, all_gather_dim, shard_count, replica_group_ids,
 channel_id)` </b>
 
-| Arguments        | Type                         | Semantics                   |
-| ---------------- | ---------------------------- | --------------------------- |
-| `operand`        | `XlaOp`                      | Array to concatenate across replicas. |
-| `all_gather_dim` | `int64`                      | Concatenation dimension.    |
-| `replica_groups` | vector of vectors of `int64` | Groups between which the concatenation is performed. |
-| `channel_id`     | optional `int64`             | Optional channel ID for cross-module communication. |
+| Arguments        | Type                 | Semantics                   |
+| ---------------- | -------------------- | --------------------------- |
+| `operand`        | `XlaOp`              | Array to concatenate across |
+:                  :                      : replicas                    :
+| `all_gather_dim` | `int64`              | Concatenation dimension     |
+| `replica_groups` | vector of vectors of | Groups between which the    |
+:                  : `int64`              : concatenation is performed  :
+| `channel_id`     | optional `int64`     | Optional channel ID for     |
+:                  :                      : cross-module communication  :
 
 -   `replica_groups` is a list of replica groups between which the concatenation
     is performed (replica id for the current replica can be retrieved using
@@ -74,12 +77,15 @@ Performs a custom computation across replicas.
 
 <b> `AllReduce(operand, computation, replica_group_ids, channel_id)` </b>
 
-| Arguments        | Type                         | Semantics                         |
-| ---------------- | ---------------------------- | --------------------------------- |
-| `operand`        | `XlaOp`                      | Array or a non-empty tuple of arrays to reduce across replicas. |
-| `computation`    | `XlaComputation`             | Reduction computation             |
-| `replica_groups` | vector of vectors of `int64` | Groups between which the reductions are performed |
-| `channel_id`     | optional `int64`             | Optional channel ID for cross-module communication |
+| Arguments        | Type                 | Semantics                        |
+| ---------------- | -------------------- | -------------------------------- |
+| `operand`        | `XlaOp`              | Array or a non-empty tuple of    |
+:                  :                      : arrays to reduce across replicas :
+| `computation`    | `XlaComputation`     | Reduction computation            |
+| `replica_groups` | vector of vectors of | Groups between which the         |
+:                  : `int64`              : reductions are performed         :
+| `channel_id`     | optional `int64`     | Optional channel ID for          |
+:                  :                      : cross-module communication       :
 
 -   When `operand` is a tuple of arrays, the all-reduce is performed on each
     element of the tuple.
@@ -100,7 +106,7 @@ summation computation will be `[4.0, 7.75]` on both replicas. If the input is a
 tuple, the output is a tuple as well.
 
 Computing the result of `AllReduce` requires having one input from each replica,
-so if one replica executes a `AllReduce` node more times than another, then the
+so if one replica executes an `AllReduce` node more times than another, then the
 former replica will wait forever. Since the replicas are all running the same
 program, there are not a lot of ways for that to happen, but it is possible when
 a while loop's condition depends on data from infeed and the data that is infed
@@ -116,21 +122,21 @@ It has two phases:
 
 1.  The scatter phase. On each core, the operand is split into `split_count`
     number of blocks along the `split_dimensions`, and the blocks are scattered
-    to all cores, e.g., the ith block is send to the ith core.
+    to all cores, e.g., the ith block is sent to the ith core.
 2.  The gather phase. Each core concatenates the received blocks along the
     `concat_dimension`.
 
 The participating cores can be configured by:
 
--   `replica_groups`: each ReplicaGroup contains a list of replica id
-    participating in the computation (replica id for the current replica can be
-    retrieved using [`ReplicaId`](#replicaid)). AllToAll will be applied within
-    subgroups in the specified order. For example, `replica_groups = {{1,2,3},
-    {4,5,0}}` means that an AllToAll will be applied within replicas `{1, 2,
-    3}`, and in the gather phase, and the received blocks will be concatenated
-    in the same order of 1, 2, 3. Then, another AllToAll will be applied within
-    replicas 4, 5, 0, and the concatenation order is also 4, 5, 0. If
-    `replica_groups` is empty, all replicas belong to one group, in the
+-   `replica_groups`: each ReplicaGroup contains a list of replica ids
+    participating in the computation (the replica id for the current replica can
+    be retrieved using [`ReplicaId`](#replicaid)). AllToAll will be applied
+    within subgroups in the specified order. For example, `replica_groups =
+    {{1,2,3}, {4,5,0}}` means that an AllToAll will be applied within replicas
+    `{1, 2, 3}`, and in the gather phase, and the received blocks will be
+    concatenated in the same order of 1, 2, 3. Then, another AllToAll will be
+    applied within replicas 4, 5, 0, and the concatenation order is also 4,
+    5, 0. If `replica_groups` is empty, all replicas belong to one group, in the
     concatenation order of their appearance.
 
 Prerequisites:
@@ -142,14 +148,26 @@ Prerequisites:
 <b> `AllToAll(operand, split_dimension, concat_dimension, split_count,
 replica_groups)` </b>
 
-
 | Arguments          | Type                  | Semantics                       |
 | ------------------ | --------------------- | ------------------------------- |
 | `operand`          | `XlaOp`               | n dimensional input array       |
-| `split_dimension`  | `int64`               | A value in the interval `[0, n)` that names the dimension along which the operand is split |
-| `concat_dimension` | `int64`               | a value in the interval `[0, n)` that names the dimension along which the split blocks are concatenated |
-| `split_count`      | `int64`               | the number of cores that participate this operation. If `replica_groups` is empty, this should be the number of replicas; otherwise, this should be equal to the number of replicas in each group. |
-| `replica_groups`   | `ReplicaGroup` vector | each group contains a list of replica id. |
+| `split_dimension`  | `int64`               | A value in the interval `[0,    |
+:                    :                       : n)` that names the dimension    :
+:                    :                       : along which the operand is      :
+:                    :                       : split                           :
+| `concat_dimension` | `int64`               | A value in the interval `[0,    |
+:                    :                       : n)` that names the dimension    :
+:                    :                       : along which the split blocks    :
+:                    :                       : are concatenated                :
+| `split_count`      | `int64`               | The number of cores that        |
+:                    :                       : participate this operation. If  :
+:                    :                       : `replica_groups` is empty, this :
+:                    :                       : should be the number of         :
+:                    :                       : replicas; otherwise, this       :
+:                    :                       : should be equal to the number   :
+:                    :                       : of replicas in each group.      :
+| `replica_groups`   | `ReplicaGroup` vector | Each group contains a list of   |
+:                    :                       : replica ids.                    :
 
 Below shows an example of Alltoall.
 
@@ -161,10 +179,10 @@ AllToAll(x, /*split_dimension=*/1, /*concat_dimension=*/0, /*split_count=*/4);
 
 ![](images/ops_alltoall.png)
 
-In this example, there are 4 cores participating the Alltoall. On each core, the
-operand is split into 4 parts along dimension 0, so each part has shape
+In this example, there are 4 cores participating in the Alltoall. On each core,
+the operand is split into 4 parts along dimension 0, so each part has shape
 f32[4,4]. The 4 parts are scattered to all cores. Then each core concatenates
-the received parts along dimension 1, in the order or core 0-4. So the output on
+the received parts along dimension 1, in the order of core 0-4. So the output on
 each core has shape f32[16,4].
 
 ## BatchNormGrad
@@ -178,26 +196,27 @@ Calculates gradients of batch norm.
 
 <b> `BatchNormGrad(operand, scale, mean, variance, grad_output, epsilon, feature_index)` </b>
 
-| Arguments       | Type                    | Semantics                        |
-| --------------- | ----------------------- | -------------------------------- |
-| `operand`       | `XlaOp`                 | n dimensional array to be normalized (x) |
-| `scale`         | `XlaOp`                 | 1 dimensional array (\\(\gamma\\))       |
-| `mean`          | `XlaOp`                 | 1 dimensional array (\\(\mu\\))          |
-| `variance`      | `XlaOp`                 | 1 dimensional array (\\(\sigma^2\\))     |
-| `grad_output`   | `XlaOp`                 | Gradients passed to `BatchNormTraining` (\\( \nabla y\\)) |
-| `epsilon`       | `float`                 | Epsilon value (\\(\epsilon\\))   |
-| `feature_index` | `int64`                 | Index to feature dimension in `operand` |
+Arguments       | Type    | Semantics
+--------------- | ------- | ----------------------------------------------------
+`operand`       | `XlaOp` | n dimensional array to be normalized (x)
+`scale`         | `XlaOp` | 1 dimensional array ($\gamma$)
+`mean`          | `XlaOp` | 1 dimensional array ($\mu$)
+`variance`      | `XlaOp` | 1 dimensional array ($\sigma^2$)
+`grad_output`   | `XlaOp` | Gradients passed to `BatchNormTraining` ($\nabla y$)
+`epsilon`       | `float` | Epsilon value ($\epsilon$)
+`feature_index` | `int64` | Index to feature dimension in `operand`
 
 For each feature in the feature dimension (`feature_index` is the index for the
 feature dimension in `operand`), the operation calculates the gradients with
-respect to `operand`, `offset` and `scale` across all the other dimensions. The
+respect to `operand`, `offset`, and `scale` across all the other dimensions. The
 `feature_index` must be a valid index for the feature dimension in `operand`.
 
 The three gradients are defined by the following formulas (assuming a
 4-dimensional array as `operand` and with feature dimension index `l`, batch
 size `m` and spatial sizes `w` and `h`):
 
-\\[ \begin{split} c_l&=
+$$
+\begin{split} c_l&=
 \frac{1}{mwh}\sum_{i=1}^m\sum_{j=1}^w\sum_{k=1}^h
 \left( \nabla y_{ijkl} \frac{x_{ijkl} - \mu_l}{\sigma^2_l+\epsilon} \right)
 \\\\
@@ -212,18 +231,22 @@ d_l&=
 \frac{x_{ijkl} - \mu_l}{\sqrt{\sigma^2_{l}+\epsilon}} \right)
 \\\\\
 \nabla \beta_l &= \sum_{i=1}^m\sum_{j=1}^w\sum_{k=1}^h \nabla y_{ijkl}
-\end{split} \\]
+\end{split}
+$$
 
-The inputs `mean` and `variance` represent moments value
-across batch and spatial dimensions.
+The inputs `mean` and `variance` represent moments values across batch and
+spatial dimensions.
 
 The output type is a tuple of three handles:
 
-| Outputs        | Type                    | Semantics                         |
-| -------------  | ----------------------- | --------------------------------- |
-| `grad_operand` | `XlaOp`                 | gradient with respect to input `operand` (\\( \nabla x\\))     |
-| `grad_scale`   | `XlaOp`                 | gradient with respect to input `scale` (\\( \nabla \gamma\\))  |
-| `grad_offset`  | `XlaOp`                 | gradient with respect to input `offset`(\\( \nabla \beta\\))   |
+| Outputs        | Type    | Semantics                                         |
+| -------------- | ------- | ------------------------------------------------- |
+| `grad_operand` | `XlaOp` | gradient with respect to input `operand` ($\nabla |
+:                :         : x$)                                               :
+| `grad_scale`   | `XlaOp` | gradient with respect to input `scale` ($\nabla   |
+:                :         : \gamma$)                                          :
+| `grad_offset`  | `XlaOp` | gradient with respect to input `offset`($\nabla   |
+:                :         : \beta$)                                           :
 
 ## BatchNormInference
 
@@ -274,9 +297,9 @@ Normalizes an array across batch and spatial dimensions.
 Arguments       | Type    | Semantics
 --------------- | ------- | ----------------------------------------
 `operand`       | `XlaOp` | n dimensional array to be normalized (x)
-`scale`         | `XlaOp` | 1 dimensional array (\\(\gamma\\))
-`offset`        | `XlaOp` | 1 dimensional array (\\(\beta\\))
-`epsilon`       | `float` | Epsilon value (\\(\epsilon\\))
+`scale`         | `XlaOp` | 1 dimensional array ($\gamma$)
+`offset`        | `XlaOp` | 1 dimensional array ($\beta$)
+`epsilon`       | `float` | Epsilon value ($\epsilon$)
 `feature_index` | `int64` | Index to feature dimension in `operand`
 
 For each feature in the feature dimension (`feature_index` is the index for the
@@ -285,28 +308,30 @@ across all the other dimensions and uses the mean and variance to normalize each
 element in `operand`. The `feature_index` must be a valid index for the feature
 dimension in `operand`.
 
-The algorithm goes as follows for each batch in `operand` \\(x\\) that
-contains `m` elements with `w` and `h` as the size of spatial dimensions
-(assuming `operand` is an 4 dimensional array):
+The algorithm goes as follows for each batch in `operand` $x$ that contains `m`
+elements with `w` and `h` as the size of spatial dimensions (assuming `operand`
+is a 4 dimensional array):
 
-- Calculates batch mean \\(\mu_l\\) for each feature `l` in feature dimension:
-\\(\mu_l=\frac{1}{mwh}\sum_{i=1}^m\sum_{j=1}^w\sum_{k=1}^h x_{ijkl}\\)
+-   Calculates batch mean $\mu_l$ for each feature `l` in feature dimension:
+    $\mu_l=\frac{1}{mwh}\sum_{i=1}^m\sum_{j=1}^w\sum_{k=1}^h x_{ijkl}$
 
-- Calculates batch variance \\(\sigma^2_l\\):
-\\(\sigma^2_l=\frac{1}{mwh}\sum_{i=1}^m\sum_{j=1}^w\sum_{k=1}^h (x_{ijkl} - \mu_l)^2\\)
+-   Calculates batch variance $\sigma^2_l$:
+    $\sigma^2_l=\frac{1}{mwh}\sum_{i=1}^m\sum_{j=1}^w\sum_{k=1}^h (x_{ijkl} -
+    \mu_l)^2$
 
-- Normalizes, scales and shifts:
-\\(y_{ijkl}=\frac{\gamma_l(x_{ijkl}-\mu_l)}{\sqrt[2]{\sigma^2_l+\epsilon}}+\beta_l\\)
+-   Normalizes, scales and shifts:
+    $y_{ijkl}=\frac{\gamma_l(x_{ijkl}-\mu_l)}{\sqrt[2]{\sigma^2_l+\epsilon}}+\beta_l$
 
 The epsilon value, usually a small number, is added to avoid divide-by-zero errors.
 
 The output type is a tuple of three `XlaOp`s:
 
-| Outputs      | Type                    | Semantics                            |
-| ------------ | ----------------------- | -------------------------------------|
-| `output`     | `XlaOp`                 | n dimensional array with the same shape as input `operand` (y) |
-| `batch_mean` | `XlaOp`                 | 1 dimensional array (\\(\mu\\))      |
-| `batch_var`  | `XlaOp`                 | 1 dimensional array (\\(\sigma^2\\)) |
+| Outputs      | Type    | Semantics                                        |
+| ------------ | ------- | ------------------------------------------------ |
+| `output`     | `XlaOp` | n dimensional array with the same shape as input |
+:              :         : `operand` (y)                                    :
+| `batch_mean` | `XlaOp` | 1 dimensional array ($\mu$)                      |
+| `batch_var`  | `XlaOp` | 1 dimensional array ($\sigma^2$)                 |
 
 The `batch_mean` and `batch_var` are moments calculated across the batch and
 spatial dimensions using the formulas above.
@@ -456,9 +481,9 @@ Arguments | Type    | Semantics
 `a`       | `XlaOp` | a rank > 2 array of a complex or floating-point type.
 `lower`   | `bool`  | whether to use the upper or lower triangle of `a`.
 
-If `lower` is `true`, computes lower-triangular matrices `l` such that \(a = l
-. l^T\). If `lower` is `false`, computes upper-triangular matrices `u` such
-that \(a = u^T . u\).
+If `lower` is `true`, computes lower-triangular matrices `l` such that $a = l .
+l^T$. If `lower` is `false`, computes upper-triangular matrices `u` such that
+$a = u^T . u$.
 
 Input data is read only from the lower/upper triangle of `a`, depending on the
 value of `lower`. Values from the other triangle are ignored. Output data is
@@ -528,9 +553,9 @@ dimensions. Thus, {0, 1, 2}, {0, 1}, or {1, 2} are all valid dimension sets, but
 same position in the dimension sequence as those they replace, with the new
 dimension size equal to the product of original dimension sizes. The lowest
 dimension number in `dimensions` is the slowest varying dimension (most major)
-in the loop nest which collapses these dimension, and the highest dimension
-number is fastest varying (most minor). See the `tf.reshape` operator
-if more general collapse ordering is needed.
+in the loop nest which collapses these dimensions, and the highest dimension
+number is fastest varying (most minor). See the `tf.reshape` operator if more
+general collapse ordering is needed.
 
 For example, let v be an array of 24 elements:
 
@@ -585,9 +610,9 @@ replicas.
 Note that there are the following restrictions on the `source_target_pair`:
 
 -   Any two pairs should not have the same target replica id, and they should
-not have the same source replica id.
+    not have the same source replica id.
 -   If a replica id is not a target in any pair, then the output on that replica
-is a tensor consists of 0(s) with the same shape as the input.
+    is a tensor consisting of 0(s) with the same shape as the input.
 
 ## Concatenate
 
@@ -654,17 +679,17 @@ false_computation)` </b>
 Arguments           | Type             | Semantics
 ------------------- | ---------------- | ------------------------------------
 `pred`              | `XlaOp`          | Scalar of type `PRED`
-`true_operand`      | `XlaOp`          | Argument of type \\(T_0\\)
-`true_computation`  | `XlaComputation` | XlaComputation of type \\(T_0 \to S\\)
-`false_operand`     | `XlaOp`          | Argument of type \\(T_1\\)
-`false_computation` | `XlaComputation` | XlaComputation of type \\(T_1 \to S\\)
+`true_operand`      | `XlaOp`          | Argument of type $T_0$
+`true_computation`  | `XlaComputation` | XlaComputation of type $T_0 \to S$
+`false_operand`     | `XlaOp`          | Argument of type $T_1$
+`false_computation` | `XlaComputation` | XlaComputation of type $T_1 \to S$
 
 Executes `true_computation` if `pred` is `true`, `false_computation` if `pred`
 is `false`, and returns the result.
 
-The `true_computation` must take in a single argument of type \\(T_0\\) and will
+The `true_computation` must take in a single argument of type $T_0$ and will
 be invoked with `true_operand` which must be of the same type. The
-`false_computation` must take in a single argument of type \\(T_1\\) and will be
+`false_computation` must take in a single argument of type $T_1$ and will be
 invoked with `false_operand` which must be of the same type. The type of the
 returned value of `true_computation` and `false_computation` must be the same.
 
@@ -680,8 +705,8 @@ executed depending on the value of `pred`.
 | Arguments             | Type                           | Semantics                    |
 | --------------------- | ------------------------------ | ---------------------------- |
 | `branch_index`        | `XlaOp`                        | Scalar of type `S32`         |
-| `branch_computations` | sequence of N `XlaComputation` | XlaComputations of type \\( T_0 \to S , T_1 \to S , ..., T_{N-1} \to S \\)   |
-| `branch_operands`     | sequence of N `XlaOp`          | Arguments of type \\( T_0 , T_1 , ..., T_{N-1} \\) |
+| `branch_computations` | sequence of N `XlaComputation` | XlaComputations of type $T_0 \to S , T_1 \to S , ..., T_{N-1} \to S$   |
+| `branch_operands`     | sequence of N `XlaOp`          | Arguments of type $T_0 , T_1 , ..., T_{N-1}$ |
 
 <!-- mdformat on -->
 
@@ -689,7 +714,7 @@ Executes `branch_computations[branch_index]`, and returns the result. If
 `branch_index` is an `S32` which is < 0 or >= N, then `branch_computations[N-1]`
 is executed as the default branch.
 
-Each `branch_computations[b]` must take in a single argument of type `T_b` and
+Each `branch_computations[b]` must take in a single argument of type $T_b$ and
 will be invoked with `branch_operands[b]` which must be of the same type. The
 type of the returned value of each `branch_computations[b]` must be the same.
 
@@ -780,12 +805,12 @@ The `feature_group_count` argument (default value 1) can be used for grouped
 convolutions. `feature_group_count` needs to be a divisor of both the input and
 the output feature dimension. If `feature_group_count` is greater than 1, it
 means that conceptually the input and output feature dimension and the `rhs`
-output feature dimension are split evenly into `feature_group_count` many
+output feature dimension are split evenly into many `feature_group_count`
 groups, each group consisting of a consecutive subsequence of features. The
 input feature dimension of `rhs` needs to be equal to the `lhs` input feature
 dimension divided by `feature_group_count` (so it already has the size of a
 group of input features). The i-th groups are used together to compute
-`feature_group_count` many separate convolutions. The results of these
+`feature_group_count` for many separate convolutions. The results of these
 convolutions are concatenated together in the output feature dimension.
 
 For depthwise convolution the `feature_group_count` argument would be set to the
@@ -811,7 +836,7 @@ The output shape has these dimensions, in this order:
 
 ![](images/batch_group_counts.svg)
 
-The figure above shows how `batch_group_count` field works. Effectively, we
+The figure above shows how the `batch_group_count` field works. Effectively, we
 slice each lhs batch into `batch_group_count` groups, and do the same for the
 output features. Then, for each of these groups we do pairwise convolutions and
 concatenate the output along the output feature dimension. The operational
@@ -986,21 +1011,25 @@ Arguments           | Type                  | Semantics
 `rhs`               | `XlaOp`               | array of type T
 `dimension_numbers` | `DotDimensionNumbers` | contracting and batch dimension numbers
 
-As Dot, but allows contracting and batch dimension numbers to be specified for
-both the 'lhs' and 'rhs'.
+Similar to Dot, but allows contracting and batch dimension numbers to be
+specified for both the `lhs` and `rhs`.
 
-| DotDimensionNumbers Fields | Type                    | Semantics
-| --------- | ----------------------- | ---------------
-| 'lhs_contracting_dimensions' | repeated int64 | 'lhs' contracting dimension numbers |
-| 'rhs_contracting_dimensions' | repeated int64 | 'rhs' contracting dimension numbers |
-| 'lhs_batch_dimensions' | repeated int64 | 'lhs' batch dimension numbers |
-| 'rhs_batch_dimensions' | repeated int64 | 'rhs' batch dimension numbers |
+| DotDimensionNumbers Fields   | Type           | Semantics                   |
+| ---------------------------- | -------------- | --------------------------- |
+| `lhs_contracting_dimensions` | repeated int64 | `lhs` contracting dimension |
+:                              :                : numbers                     :
+| `rhs_contracting_dimensions` | repeated int64 | `rhs` contracting dimension |
+:                              :                : numbers                     :
+| `lhs_batch_dimensions`       | repeated int64 | `lhs` batch dimension       |
+:                              :                : numbers                     :
+| `rhs_batch_dimensions`       | repeated int64 | `rhs` batch dimension       |
+:                              :                : numbers                     :
 
-DotGeneral performs the sum of products over contracting dimensions specified
-in 'dimension_numbers'.
+DotGeneral performs the sum of products over contracting dimensions specified in
+`dimension_numbers`.
 
-Associated contracting dimension numbers from the 'lhs' and 'rhs' do not need
-to be the same but must have the same dimension sizes.
+Associated contracting dimension numbers from the `lhs` and `rhs` do not need to
+be the same but must have the same dimension sizes.
 
 Example with contracting dimension numbers:
 
@@ -1019,8 +1048,8 @@ DotGeneral(lhs, rhs, dnums) -> { {6.0, 12.0},
 {15.0, 30.0} }
 ```
 
-Associated batch dimension numbers from the 'lhs' and 'rhs' must
-have the same dimension sizes.
+Associated batch dimension numbers from the `lhs` and `rhs` must have the same
+dimension sizes.
 
 Example with batch dimension numbers (batch size 2, 2x2 matrices):
 
@@ -1053,7 +1082,7 @@ DotGeneral(lhs, rhs, dnums) -> { { {1.0, 2.0},
 | [b0, b1, m, k] `dot` [b0, b1, k, n] | [b0, b1, m, n]    |  batch matmul    |
 
 It follows that the resulting dimension number starts with the batch dimension,
-then the 'lhs' non-contracting/non-batch dimension, and finally the 'rhs'
+then the `lhs` non-contracting/non-batch dimension, and finally the `rhs`
 non-contracting/non-batch dimension.
 
 ## DynamicSlice
@@ -1423,7 +1452,7 @@ calculated as follows:
 1.  Let `G` = { `Out`[`k`] for `k` in `batch_dims` }. Use `G` to slice out a
     vector `S` such that `S`[`i`] = `start_indices`[Combine(`G`, `i`)] where
     Combine(A, b) inserts b at position `index_vector_dim` into A. Note that
-    this is well defined even if `G` is empty -- if `G` is empty then `S` =
+    this is well defined even if `G` is empty: If `G` is empty then `S` =
     `start_indices`.
 
 2.  Create a starting index, `S`<sub>`in`</sub>, into `operand` using `S` by
@@ -1457,7 +1486,7 @@ If `indices_are_sorted` is set to true then XLA can assume that `start_indices`
 are sorted (in ascending `start_index_map` order) by the user. If they are not
 then the semantics is implementation defined.
 
-If `unique_indices` is set to true then XLA can assume that all element
+If `unique_indices` is set to true then XLA can assume that all elements
 scattered to are unique. So XLA could use non-atomic operations. If
 `unique_indices` is set to true and the indices being scattered to are not
 unique then the semantics is implementation defined.
@@ -2261,9 +2290,9 @@ See also
 [`XlaBuilder::RngNormal`](https://github.com/openxla/xla/tree/main/xla/client/xla_builder.h).
 
 Constructs an output of a given shape with random numbers generated following
-the $$N(\mu, \sigma)$$ normal distribution. The parameters $$\mu$$ and
-$$\sigma$$, and output shape have to have a floating point elemental type. The
-parameters furthermore have to be scalar valued.
+the $N(\mu, \sigma)$ normal distribution. The parameters $\mu$ and $\sigma$, and
+output shape have to have a floating point elemental type. The parameters
+furthermore have to be scalar valued.
 
 <b>`RngNormal(mu, sigma, shape)`</b>
 
@@ -2279,11 +2308,11 @@ See also
 [`XlaBuilder::RngUniform`](https://github.com/openxla/xla/tree/main/xla/client/xla_builder.h).
 
 Constructs an output of a given shape with random numbers generated following
-the uniform distribution over the interval $$[a,b)$$. The parameters and output
+the uniform distribution over the interval $[a,b)$. The parameters and output
 element type have to be a boolean type, an integral type or a floating point
 types, and the types have to be consistent. The CPU and GPU backends currently
 only support F64, F32, F16, BF16, S64, U64, S32 and U32. Furthermore, the
-parameters need to be scalar valued. If $$b <= a$$ the result is
+parameters need to be scalar valued. If $b <= a$ the result is
 implementation-defined.
 
 <b>`RngUniform(a, b, shape)`</b>
