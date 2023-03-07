@@ -92,19 +92,16 @@ struct ReverseTransformPattern : public OpRewritePattern<thlo::ReverseOp> {
     // Peel parallel loop.
     auto peelingResult = peelAllLoops(tilingResult->loop, rewriter);
 
-    // If last dim is to be reversed.
-    if (llvm::is_contained(reverseOp.getReverseDimensions(), rank - 1)) {
-      // If we have a remaining loop, we tile this to sizes of 1.
-      for (scf::ForallOp remParLoop : peelingResult.tailLoops) {
-        remParLoop->walk([&](Operation *childOp) {
-          if (isa<thlo::ReverseOp>(childOp)) {
-            auto innerReverseOp = dyn_cast<thlo::ReverseOp>(*childOp);
-            auto secondTiling = tileReverseAndUpdateResultIfTiled(
-                rewriter, innerReverseOp, getTileSizes(rank, vectorSize, true));
-            setLabel(innerReverseOp, kReverseTransformedLabel);
-          }
-        });
-      }
+    // If we have a remaining loop, we tile this to sizes of 1.
+    for (scf::ForallOp remParLoop : peelingResult.tailLoops) {
+      remParLoop->walk([&](Operation *childOp) {
+        if (isa<thlo::ReverseOp>(childOp)) {
+          auto innerReverseOp = dyn_cast<thlo::ReverseOp>(*childOp);
+          auto secondTiling = tileReverseAndUpdateResultIfTiled(
+              rewriter, innerReverseOp, getTileSizes(rank, vectorSize, true));
+          setLabel(innerReverseOp, kReverseTransformedLabel);
+        }
+      });
     }
 
     setLabel(reverseOp, kReverseTransformedLabel);
