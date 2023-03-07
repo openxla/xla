@@ -10,7 +10,6 @@ config_setting(
     values = {
         "cpu": "x64_qnx",
     },
-    visibility = [":__subpackages__"],
 )
 
 config_setting(
@@ -19,7 +18,6 @@ config_setting(
     values = {
         "cpu": "x64_windows",
     },
-    visibility = [":__subpackages__"],
 )
 
 config_setting(
@@ -27,7 +25,6 @@ config_setting(
     constraint_values = [
         "@platforms//os:macos",
     ],
-    visibility = [":__subpackages__"],
 )
 
 cc_library(

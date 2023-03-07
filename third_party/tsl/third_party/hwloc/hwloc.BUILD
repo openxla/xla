@@ -224,7 +224,7 @@ expand_template(
     name = "move_static_components_h",
     out = "hwloc/static-components.h",
     substitutions = {"&hwloc_linuxio_component": "//&hwloc_linuxio_component"},
-    template = "@xla//third_party/hwloc:static-components.h",
+    template = "@tsl//third_party/hwloc:static-components.h",
 )
 
 cc_library(

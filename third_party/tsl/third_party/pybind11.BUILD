@@ -20,6 +20,6 @@ cc_library(
     includes = ["include"],
     strip_include_prefix = "include",
     deps = [
-        "@xla//third_party/python_runtime:headers",
+        "@tsl//third_party/python_runtime:headers",
     ],
 )

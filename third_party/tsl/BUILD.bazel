@@ -9,6 +9,6 @@ licenses(["notice"])
 
 license(
     name = "license",
-    package_name = "xla",
+    package_name = "tsl",
     license_kinds = ["@rules_license//licenses/spdx:Apache-2.0"],
 )

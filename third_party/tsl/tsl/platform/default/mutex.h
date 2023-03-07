@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_DEFAULT_MUTEX_H_
 #define TENSORFLOW_TSL_PLATFORM_DEFAULT_MUTEX_H_
 
-// IWYU pragma: private, include "third_party/tensorflow/tsl/platform/mutex.h"
+// IWYU pragma: private, include "tsl/platform/mutex.h"
 // IWYU pragma: friend third_party/tensorflow/tsl/platform/mutex.h
 
 namespace tsl {
