@@ -1,18 +1,17 @@
 # Tiled layout
 
-!!! Warning
-    Tiled layout is *pre-release* and this describes how it's intended to
-    work. Errors may be silently ignored.
+> **Caution:** Tiled layout is *pre-release* and this describes how it's
+> intended to work. Errors may be silently ignored.
 
 ![](images/xla_array_layout_figure1.png)
 <br>Figure 1
 
 Figure 1 shows how an array F32[3,5] is laid out in memory with 2x2 tiling. A
 shape with this layout is written as F32[3,5]{1,0:T(2,2)}, where 1,0 relates to
-the physical order of dimensions (minor_to_major field in Layout) while (2,2)
+the physical order of dimensions (`minor_to_major` field in Layout) while (2,2)
 after the colon indicates tiling of the physical dimensions by a 2x2 tile.
 
-Intuitively tiles are laid out to cover the shape and then within each tile,
+Intuitively, tiles are laid out to cover the shape and then within each tile,
 elements are then laid out without tiling, as in the example above, where the
 right part of the example shows the layout in memory, including the white
 padding elements that are added in order to have complete 2x2 tiles even though
@@ -70,9 +69,9 @@ array, padding is inserted as in Figure 1. Both the tiles and elements within
 tiles are laid out recursively without tiling.
 
 For the example in Figure 1, element (2,3) has tile index (1,1), and within-tile
-index (0,1), for a combined coordinate vector of (1, 1, 0, 1). The tile indices
-have bounds (2, 3) and the tile itself is (2, 2) for a combined vector of (2, 3,
-2, 2). The linear index with tile for the element with index (2, 3) in the
+index (0,1), for a combined coordinate vector of (1,1,0,1). The tile indices
+have bounds (2,3) and the tile itself is (2,2) for a combined vector of (2,3,2,2).
+The linear index with tile for the element with index (2,3) in the
 logical shape is then
 
 &nbsp;&nbsp; linear_index_with_tile((2,3), (3,5), (2,2)) <br>
@@ -126,10 +125,10 @@ XLA's tiling becomes even more flexible by applying it repeatedly.
 Figure 2 shows how an array of size 4x8 is tiled by two levels of tiling (first
 2x4 then 2x1). We represent this repeated tiling as (2,4)(2,1). Each color
 indicates a 2x4 tile and each red border box is a 2x1 tile. The numbers
-indicates the linear index in memory of that element in the tiled format. This
+indicate the linear index in memory of that element in the tiled format. This
 format matches the format used for BF16 on TPU, except that the initial tile is
 bigger, namely the tiling is (8,128)(2,1), where the purpose of the second
-tiling by 2x1 is to collect together two 16 bit values to form one 32 bit value
+tiling by 2x1 is to collect together two 16-bit values to form one 32-bit value
 in a way that aligns with the architecture of a TPU.
 
 Note that a second or later tile can refer to both the minor within-tile
