@@ -79,6 +79,7 @@ struct SchedulerConfig {
   bool use_real_cost_model = false;
   bool aggressive_scheduling_policies = false;
   uint64_t memory_limit = UINT64_MAX;
+  bool enable_send_recv_post_process_scheduling = false;
 };
 
 // Class used estimate latency between instructions and cost of HLOs.
@@ -649,8 +650,7 @@ class DefaultSchedulerCore : public SchedulerCore {
           latency_estimator(latency_estimator),
           async_tracker(async_tracker),
           memory_pressure_tracker(memory_pressure_tracker),
-          config(config) {
-    }
+          config(config) {}
   };
 
  protected:

@@ -1227,6 +1227,46 @@ void HloScheduleGraph::InitializeGraphAnalysis(
   }
 }
 
+namespace {
+bool IsHostSend(const HloInstruction& instr) {
+  // TODO(petebu): Also check for kForceDelay.
+  return instr.opcode() == HloOpcode::kSend &&
+         static_cast<const HloSendRecvInstruction*>(&instr)->is_host_transfer();
+}
+
+bool IsHostSendDone(const HloInstruction& instr) {
+  // TODO(petebu): Also check for kForceDelay.
+  return instr.opcode() == HloOpcode::kSendDone &&
+         static_cast<const HloSendRecvInstruction*>(&instr)->is_host_transfer();
+}
+
+// TODO(petebu): Modify schedule in-place.
+std::vector<HloInstruction*> ScheduleHostSend(
+    const std::vector<HloInstruction*>& prev_schedule) {
+  std::vector<HloInstruction*> new_schedule;
+  new_schedule.reserve(prev_schedule.size());
+  HloInstruction* send_done = nullptr;
+  for (HloInstruction* instr : prev_schedule) {
+    if (IsHostSendDone(*instr)) {
+      CHECK_EQ(send_done, nullptr);
+      send_done = instr;
+      continue;
+    }
+    if (send_done != nullptr &&
+        (IsHostSend(*instr) ||
+         absl::c_linear_search(instr->operands(), send_done))) {
+      new_schedule.push_back(send_done);
+      send_done = nullptr;
+    }
+    new_schedule.push_back(instr);
+  }
+  if (send_done != nullptr) {
+    new_schedule.push_back(send_done);
+  }
+  return new_schedule;
+}
+}  // namespace
+
 Status DefaultSchedulerCore::InitializeScheduler(const HloModule* module) {
   TF_ASSIGN_OR_RETURN(alias_analysis_, HloAliasAnalysis::Run(module));
   module_pressure_state_ = std::make_unique<ModulePressureState>(
@@ -1306,6 +1346,11 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
   }
   module_pressure_state_->UpdatePressureStateForComputation(
       computation, memory_pressure_tracker.pressure_state());
+  absl::c_reverse(sched_state.new_sequence_reversed);
+  if (config_.enable_send_recv_post_process_scheduling) {
+    sched_state.new_sequence_reversed =
+        ScheduleHostSend(sched_state.new_sequence_reversed);
+  }
   CHECK_EQ(sched_state.new_sequence_reversed.size(),
            sched_state.sched_graph.GetOriginalInstrList().size())
       << "Not all instructions have been scheduled "
@@ -1313,9 +1358,8 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
       << sched_state.sched_graph.GetOriginalInstrList().size();
   VLOG(1) << "Total time: "
           << sched_state.sched_graph
-                 .GetNode(sched_state.new_sequence_reversed.back())
+                 .GetNode(sched_state.new_sequence_reversed.front())
                  .GetReadyTime();
-  absl::c_reverse(sched_state.new_sequence_reversed);
 
   const auto& debug_options = xla::GetDebugOptionsFromFlags();
   if (debug_options.xla_dump_latency_hiding_schedule() &&
