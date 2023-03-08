@@ -1,6 +1,7 @@
 # Automatic sharding annotation
 
 load("//xla:xla.bzl", "xla_cc_binary")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -134,6 +135,13 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = ["@tsl//tsl/lib/monitoring:counter"],
+)
+
+build_test(
+    name = "auto_sharding_runner_build_test",
+    targets = [
+        ":auto_sharding_runner",
+    ],
 )
 
 xla_cc_binary(
