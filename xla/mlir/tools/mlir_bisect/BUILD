@@ -18,6 +18,7 @@ xla_cc_binary(
         "//xla/mlir/runtime/ir:rt",
         "//xla/mlir/tools/mlir_bisect/rewrites",
         "//xla/mlir/tools/mlir_replay/public:execution_trace_utils",
+        "//xla/mlir_hlo:deallocation",
         "//xla/mlir_hlo:gml_st",
         "//xla/mlir_hlo:gml_st_passes",
         "//xla/mlir_hlo:gml_st_test_passes",
