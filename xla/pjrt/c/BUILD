@@ -75,6 +75,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_future",
+        "@com_google_absl//absl/status",
     ],
 )
 
