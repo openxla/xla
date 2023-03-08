@@ -21,6 +21,7 @@ load(
 load(":build_defs.bzl", "runtime_copts")
 load("@tsl//tsl/platform:build_config.bzl", "if_llvm_system_z_available", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -719,6 +720,13 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
+    ],
+)
+
+build_test(
+    name = "sample_harness_build_test",
+    targets = [
+        ":sample_harness",
     ],
 )
 
