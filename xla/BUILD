@@ -208,6 +208,19 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "types_test",
+    size = "small",
+    srcs = ["types_test.cc"],
+    visibility = [":friends"],
+    deps = [
+        ":test",
+        ":types",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
 cc_library(
     name = "service_interface",
     srcs = [],
