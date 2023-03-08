@@ -1914,6 +1914,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "//xla/service:topk_rewriter",
         "//xla:autotune_results_proto_cc",
         "//xla:status_macros",
         "//xla:statusor",

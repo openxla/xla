@@ -6465,6 +6465,8 @@ cc_library(
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -6475,12 +6477,17 @@ xla_cc_test(
         ":hlo_dce",
         ":hlo_matchers",
         ":topk_rewriter",
+        ":tuple_simplifier",
+        "//xla:status_macros",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
+        "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_cpu",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
