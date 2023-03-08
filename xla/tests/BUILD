@@ -1037,6 +1037,7 @@ xla_test(
         "//xla:array2d",
         "//xla:reference_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:local_client",
         "//xla/client:xla_builder",
