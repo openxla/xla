@@ -221,7 +221,7 @@ class float8_e4m3fn : public float8_base<float8_e4m3fn> {
   constexpr float8_e4m3fn() = default;
 
   template <typename T,
-            typename EnableIf = std::enable_if<std::is_arithmetic_v<T>>>
+            typename EnableIf = std::enable_if_t<std::is_arithmetic_v<T>>>
   explicit EIGEN_DEVICE_FUNC float8_e4m3fn(T f)
       : float8_e4m3fn(ConvertFrom(static_cast<float>(f))) {}
   explicit EIGEN_DEVICE_FUNC float8_e4m3fn(double f64)
@@ -238,7 +238,7 @@ class float8_e4m3fn : public float8_base<float8_e4m3fn> {
       : float8_e4m3fn(ConvertFrom(f8)) {}
 
   template <typename T,
-            typename EnableIf = std::enable_if<std::is_arithmetic_v<T>>>
+            typename EnableIf = std::enable_if_t<std::is_arithmetic_v<T>>>
   explicit EIGEN_DEVICE_FUNC operator T() const {
     return static_cast<T>(static_cast<float>(*this));
   }
@@ -273,7 +273,7 @@ class float8_e4m3b11 : public float8_base<float8_e4m3b11> {
   constexpr float8_e4m3b11() = default;
 
   template <typename T,
-            typename EnableIf = std::enable_if<std::is_arithmetic_v<T>>>
+            typename EnableIf = std::enable_if_t<std::is_arithmetic_v<T>>>
   explicit EIGEN_DEVICE_FUNC float8_e4m3b11(T f)
       : float8_e4m3b11(ConvertFrom(static_cast<float>(f))) {}
   explicit EIGEN_DEVICE_FUNC float8_e4m3b11(double f64)
@@ -301,7 +301,7 @@ class float8_e4m3b11 : public float8_base<float8_e4m3b11> {
   }
 
   template <typename T,
-            typename EnableIf = std::enable_if<std::is_arithmetic_v<T>>>
+            typename EnableIf = std::enable_if_t<std::is_arithmetic_v<T>>>
   explicit EIGEN_DEVICE_FUNC operator T() const {
     return static_cast<T>(static_cast<float>(*this));
   }
@@ -334,7 +334,7 @@ class float8_e5m2 : public float8_base<float8_e5m2> {
   constexpr float8_e5m2() = default;
 
   template <typename T,
-            typename EnableIf = std::enable_if<std::is_arithmetic_v<T>>>
+            typename EnableIf = std::enable_if_t<std::is_arithmetic_v<T>>>
   explicit EIGEN_DEVICE_FUNC float8_e5m2(T f)
       : float8_e5m2(ConvertFrom(static_cast<float>(f))) {}
   explicit EIGEN_DEVICE_FUNC float8_e5m2(double f64)
@@ -351,7 +351,7 @@ class float8_e5m2 : public float8_base<float8_e5m2> {
       : float8_e5m2(ConvertFrom(f8)) {}
 
   template <typename T,
-            typename EnableIf = std::enable_if<std::is_arithmetic_v<T>>>
+            typename EnableIf = std::enable_if_t<std::is_arithmetic_v<T>>>
   explicit EIGEN_DEVICE_FUNC operator T() const {
     return static_cast<T>(static_cast<float>(*this));
   }
