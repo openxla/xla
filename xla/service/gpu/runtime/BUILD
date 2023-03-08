@@ -67,6 +67,7 @@ cc_library(
         "//xla/service/gpu:gpu_conv_algorithm_picker",
         "//xla/service/gpu:gpu_conv_runner",
         "//xla/service/gpu:gpu_serializable_autotuner",
+        "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/translate/mhlo_to_hlo:attribute_exporter",
