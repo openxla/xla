@@ -1078,6 +1078,35 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "send_recv_latency_hiding_scheduler",
+    srcs = ["send_recv_latency_hiding_scheduler.cc"],
+    hdrs = ["send_recv_latency_hiding_scheduler.h"],
+    deps = [
+        ":latency_hiding_scheduler",
+        "//xla/hlo/ir:hlo",
+    ],
+)
+
+xla_cc_test(
+    name = "send_recv_latency_hiding_scheduler_test",
+    srcs = ["send_recv_latency_hiding_scheduler_test.cc"],
+    deps = [
+        ":latency_hiding_scheduler",
+        ":send_recv_latency_hiding_scheduler",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "profile_guided_latency_estimator",
     srcs = ["profile_guided_latency_estimator.cc"],
     hdrs = ["profile_guided_latency_estimator.h"],
