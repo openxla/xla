@@ -3,11 +3,22 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load("@tsl//tsl:tsl.bzl", "if_cuda_or_rocm")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("//xla:xla.bzl", "xla_cc_binary")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//xla:internal"],
     licenses = ["notice"],
+)
+
+build_test(
+    name = "hlo_runner_main_build_test",
+    tags = [
+        "gpu",
+    ],
+    targets = [
+        ":hlo_runner_main",
+    ],
 )
 
 xla_cc_binary(
