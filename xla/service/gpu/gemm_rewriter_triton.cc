@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
@@ -546,7 +547,9 @@ DotFusionAnalysis::DotFusionAnalysis(const HloInstruction* root) {
 bool IsTritonHandledGEMM(
     const HloInstruction& dot,
     const se::CudaComputeCapability cuda_compute_capability) {
-  if (dot.opcode() != HloOpcode::kDot) {
+  if (dot.opcode() != HloOpcode::kDot ||
+      absl::c_any_of(dot.precision_config().operand_precision(),
+                     [](int x) { return x != PrecisionConfig::DEFAULT; })) {
     return false;
   }
   const DotDimensionNumbers& dimension_numbers = dot.dot_dimension_numbers();
