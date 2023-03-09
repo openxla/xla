@@ -28,7 +28,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - name: "Getting started..."
         run: echo "Running the job on ${{ runner.os }}."

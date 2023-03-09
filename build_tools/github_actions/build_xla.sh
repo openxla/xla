@@ -19,7 +19,7 @@ echo "XLA build script is running..."
 
 start_time="$(date +%s)"
 echo "Start Time: ${start_time}"
-bazel build -c opt --nocheck_visibility --keep_going xla/hlo/ir:all
+bazel build -c opt --nocheck_visibility --keep_going xla/tools:run_hlo_module
 end_time="$(date +%s)"
 echo "End Time: ${end_time}"
 runtime="$((end_time - start_time))"
