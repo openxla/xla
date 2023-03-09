@@ -555,6 +555,7 @@ xla_test(
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "@tsl//tsl/platform:test",
     ],
 )
