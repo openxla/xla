@@ -1620,7 +1620,7 @@ cc_library(
     deps = [
         ":cublas_cudnn",
         "//xla:comparison_util",
-        "//xla:util",
+        "//xla:shape_util",
         "//xla:window_util",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:stream_executor_headers",
@@ -1712,6 +1712,7 @@ xla_cc_test(
     name = "cudnn_vectorize_convolutions_test",
     srcs = ["cudnn_vectorize_convolutions_test.cc"],
     deps = [
+        ":backend_configs_cc",
         ":cublas_cudnn",
         ":cudnn_vectorize_convolutions",
         "//xla:status_macros",
@@ -1731,6 +1732,7 @@ cc_library(
     srcs = ["cudnn_simplify_padding.cc"],
     hdrs = ["cudnn_simplify_padding.h"],
     deps = [
+        ":backend_configs_cc",
         ":cublas_cudnn",
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
