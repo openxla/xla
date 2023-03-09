@@ -36,7 +36,15 @@ jobs:
         uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
       - name: "Run test script"
         run: ./build_tools/github_actions/test_script.sh
+      - name: "Build docker"  # TODO(zacmustin): build once and reference docker image by digest.
+        run: |
+          docker build --file build_tools/docker/dockerfiles/benchmarking.Dockerfile \
+            --tag base \
+            build_tools/docker/context
+      - name: "Run docker test script"
+        run: |
+          docker run --mount="type=bind,src="${PWD}",target=/work" --workdir="/work" \
+            base:latest \
+            build_tools/github_actions/build_xla.sh
       - name: "Finishing up..."
         run: echo "Job done."
-      - name: "Adding dummy text to check if sync works..."
-        run: echo "Sync text added."
