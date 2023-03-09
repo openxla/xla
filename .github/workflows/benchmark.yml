@@ -28,7 +28,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: "Getting started..."
         run: echo "Running the job on ${{ runner.os }}."
@@ -41,7 +41,7 @@ jobs:
           docker build --file build_tools/docker/dockerfiles/benchmarking.Dockerfile \
             --tag base \
             build_tools/docker/context
-      - name: "Run docker test script"
+      - name: "Build XLA with docker"
         run: |
           docker run --mount="type=bind,src="${PWD}",target=/work" --workdir="/work" \
             base:latest \

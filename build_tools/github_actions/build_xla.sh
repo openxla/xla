@@ -16,3 +16,11 @@
 # ============================================================================
 
 echo "XLA build script is running..."
+
+start_time="$(date +%s)"
+echo "Start Time: ${start_time}"
+bazel build -c opt --nocheck_visibility --keep_going xla/hlo/ir:all
+end_time="$(date +%s)"
+echo "End Time: ${end_time}"
+runtime="$((end_time - start_time))"
+echo "Run time is ${runtime} seconds."
