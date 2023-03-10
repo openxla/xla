@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/literal_util.h"
-#include "xla/service/hlo_sharding_util.h"
 #include "xla/service/spmd/spmd_partitioner.h"
 #include "xla/shape_util.h"
 

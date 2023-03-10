@@ -20,9 +20,9 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/str_cat.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_fusible.h"
-#include "xla/service/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 
 namespace xla {

@@ -15,8 +15,8 @@ limitations under the License.
 
 #include "xla/service/defuser.h"
 
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
-#include "xla/service/hlo_matchers.h"
 #include "xla/shape_util.h"
 #include "xla/tests/hlo_test_base.h"
 

@@ -19,9 +19,9 @@ limitations under the License.
 #include <memory>
 
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/flatten_call_graph.h"
-#include "xla/service/hlo_matchers.h"
 #include "xla/service/hlo_ordering.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape_util.h"

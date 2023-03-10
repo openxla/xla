@@ -235,7 +235,7 @@ xla_cc_test(
     srcs = ["hlo_extractor_test.cc"],
     deps = [
         ":hlo_extractor",
-        "//xla/service:hlo_matchers",
+        "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/platform:test",
@@ -463,9 +463,9 @@ xla_cc_test(
     srcs = ["hlo_control_flow_flattening_test.cc"],
     deps = [
         ":hlo_control_flow_flattening",
+        "//xla/hlo/utils:hlo_matchers",
         "//xla/service:collective_ops_utils",
         "//xla/service:despecializer",
-        "//xla/service:hlo_matchers",
         "//xla/service:hlo_verifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep

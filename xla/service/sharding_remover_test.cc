@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/sharding_remover.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/status_macros.h"
 #include "xla/tests/hlo_test_base.h"

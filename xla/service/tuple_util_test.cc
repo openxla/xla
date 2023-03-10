@@ -18,7 +18,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/shape_util.h"

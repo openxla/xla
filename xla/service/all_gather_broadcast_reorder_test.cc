@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/all_gather_broadcast_reorder.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/statusor.h"
 

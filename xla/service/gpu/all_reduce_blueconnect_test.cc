@@ -20,7 +20,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
 #include "tsl/platform/status_matchers.h"

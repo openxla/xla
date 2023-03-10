@@ -172,7 +172,7 @@ xla_cc_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_matchers",
+        "//xla/hlo/utils:hlo_matchers",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_verifier",

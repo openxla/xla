@@ -24,7 +24,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_ordering.h"
 #include "xla/service/hlo_rematerialization.h"
 #include "xla/shape_util.h"

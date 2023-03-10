@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/instruction_fusion.h"
 
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_fusible.h"
-#include "xla/service/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
 #include "xla/util.h"

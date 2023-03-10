@@ -16,7 +16,7 @@ limitations under the License.
 #include "xla/service/spmd/canonicalize_all_gather_for_cse.h"
 
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/hlo_verifier.h"

@@ -15,8 +15,8 @@ limitations under the License.
 
 #include "xla/service/stable_sort_expander.h"
 
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/algebraic_simplifier.h"
-#include "xla/service/hlo_matchers.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"

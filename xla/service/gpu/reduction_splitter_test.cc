@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/reduction_splitter.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/shape_util.h"
 #include "xla/test.h"

@@ -17,7 +17,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/status_matchers.h"
 

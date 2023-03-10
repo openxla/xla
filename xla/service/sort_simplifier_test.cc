@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/sort_simplifier.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"

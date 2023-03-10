@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/spmd/collective_permute_motion.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/xla_data.pb.h"
 

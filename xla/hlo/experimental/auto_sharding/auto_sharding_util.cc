@@ -37,8 +37,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/array.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/index_util.h"
-#include "xla/service/hlo_sharding_util.h"
 #include "xla/shape_util.h"
 #include "tsl/platform/errors.h"
 

@@ -17,11 +17,11 @@ limitations under the License.
 
 #include <vector>
 
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/instruction_fusion.h"
 #include "xla/service/hlo_dce.h"
-#include "xla/service/hlo_matchers.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/service/hlo_pass_fix.h"
 #include "xla/service/hlo_pass_pipeline.h"

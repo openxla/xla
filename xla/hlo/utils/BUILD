@@ -76,3 +76,67 @@ xla_cc_test(
         "@tsl//tsl/platform:test",
     ],
 )
+
+cc_library(
+    name = "hlo_matchers",
+    testonly = 1,
+    srcs = ["hlo_matchers.cc"],
+    hdrs = ["hlo_matchers.h"],
+    deps = [
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_parser",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_matchers_test",
+    srcs = ["hlo_matchers_test.cc"],
+    deps = [
+        ":hlo_matchers",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+    ],
+)
+
+cc_library(
+    name = "hlo_sharding_util",
+    srcs = [
+        "hlo_sharding_util.cc",
+    ],
+    hdrs = [
+        "hlo_sharding_util.h",
+    ],
+    deps = [
+        "//xla:array",
+        "//xla:literal_util",
+        "//xla:protobuf_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:call_graph",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_sharding_util_test",
+    srcs = [
+        "hlo_sharding_util_test.cc",
+    ],
+    deps = [
+        ":hlo_sharding_util",
+        "//xla:test",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:xla_internal_test_main",
+    ],
+)

@@ -296,7 +296,7 @@ xla_cc_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_matchers",
+        "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/platform:test",
     ],

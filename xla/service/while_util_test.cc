@@ -18,7 +18,7 @@ limitations under the License.
 #include <memory>
 
 #include "absl/algorithm/container.h"
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/verified_hlo_module.h"

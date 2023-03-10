@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/bitcast_dtypes_expander.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/lib/core/status_test_util.h"

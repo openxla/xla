@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/while_loop_constant_sinking.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/lib/core/status_test_util.h"

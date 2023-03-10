@@ -21,7 +21,7 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/transpose_folding.h"
 #include "xla/shape.h"
 #include "xla/tests/hlo_test_base.h"

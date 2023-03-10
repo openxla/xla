@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/batch_dot_simplification.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 

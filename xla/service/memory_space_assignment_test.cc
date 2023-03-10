@@ -16,7 +16,7 @@ limitations under the License.
 #include "xla/service/memory_space_assignment.h"
 
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/instruction_hoister.h"
 #include "xla/tests/hlo_test_base.h"
 

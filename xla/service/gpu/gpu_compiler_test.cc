@@ -15,8 +15,8 @@ limitations under the License.
 
 #include <memory>
 
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/gpu/horizontal_loop_fusion.h"
-#include "xla/service/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 
 namespace xla {

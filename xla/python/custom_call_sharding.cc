@@ -24,9 +24,9 @@ limitations under the License.
 #include "pybind11/stl.h"  // from @pybind11
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/python/status_casters.h"
 #include "xla/service/custom_call_sharding_helper.h"
-#include "xla/service/hlo_sharding_util.h"
 #include "xla/service/spmd/spmd_partitioner_util.h"
 
 namespace xla {

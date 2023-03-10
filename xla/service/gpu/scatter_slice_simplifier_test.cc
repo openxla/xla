@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/scatter_slice_simplifier.h"
 
-#include "xla/service/hlo_matchers.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 
 namespace xla {
