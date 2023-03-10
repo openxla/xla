@@ -51,7 +51,7 @@ jobs:
       - name: add_label
         if: |
           steps.has_partner_email.outcome == "success" || # TODO
-          !steps.is_openxla_member
+          steps.is_openxla_member != "success"
         run: |
           curl -L \
           -X POST \
