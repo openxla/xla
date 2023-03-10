@@ -33,7 +33,7 @@ jobs:
     steps:
       - name: github_api
         run: |
-          (gh api /orgs/openxla/members
+          (gh api /orgs/openxla/members \
           | jq --exit-status '.[].login | select(. == "${{ github.actor }}")') \
           || (gh api /users/${{ github.actor }} | jq --exit-status \
           '.email // "" | split("@")[1] as $domain | ["nvidia.com", "intel.com", "apple.com", "linaro.org", "google.com"] | index($domain)')
