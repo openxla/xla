@@ -13,22 +13,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_TSL_PROFILER_CONVERT_TRACE_EVENTS_TO_JSON_H_
-#define TENSORFLOW_TSL_PROFILER_CONVERT_TRACE_EVENTS_TO_JSON_H_
-
-#include <string>
-
-#include "tsl/platform/types.h"
 #include "tsl/profiler/convert/trace_container.h"
+
+#include "tsl/platform/test.h"
+#include "tsl/profiler/protobuf/trace_events.pb.h"
 
 namespace tsl {
 namespace profiler {
+namespace {
 
-// Converts trace events in the trace proto to a JSON string that can be
-// consumed by catapult trace viewer.
-std::string TraceEventsToJson(const TraceContainer& container);
+TEST(TraceContainer, TraceEventAllocation) {
+  TraceContainer container;
 
+  TraceEvent* event = container.CreateEvent();
+  event->set_device_id(1);
+  event->set_resource_id(2);
+  event->set_name("A");
+  event->set_timestamp_ps(3);
+  event->set_duration_ps(4);
+}
+
+}  // namespace
 }  // namespace profiler
 }  // namespace tsl
-
-#endif  // TENSORFLOW_TSL_PROFILER_CONVERT_TRACE_EVENTS_TO_JSON_H_
