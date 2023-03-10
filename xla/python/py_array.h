@@ -211,7 +211,8 @@ class PyArray : public pybind11::object {
   bool IsDeleted() const;
 
   StatusOr<PyArray> CopyToDeviceWithSharding(ifrt::DeviceList devices,
-                                             pybind11::object dst_sharding);
+                                             pybind11::object dst_sharding,
+                                             bool committed);
 
  private:
   void CheckAndRearrange();

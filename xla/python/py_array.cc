@@ -507,10 +507,18 @@ PyArray::Storage::~PyArray_Storage() {
 }
 
 StatusOr<PyArray> PyArray::CopyToDeviceWithSharding(
-    ifrt::DeviceList devices, pybind11::object dst_sharding) {
+    ifrt::DeviceList devices, pybind11::object dst_sharding,
+    bool is_committed) {
   auto* ifrt_array_ptr = ifrt_array();
   if (ifrt_array_ptr->sharding().devices().devices() == devices.devices()) {
-    return *this;
+    if (committed()) {
+      return *this;
+    }
+    return PyArray(aval(), weak_type(), dtype(),
+                   std::vector<int64_t>(shape().begin(), shape().end()),
+                   dst_sharding, py_client(), traceback(),
+                   tsl::FormRef(ifrt_array_ptr), is_committed,
+                   /* skip_checks= */ true);
   }
   tsl::RCReference<ifrt::Array> out_array;
   {
@@ -550,7 +558,7 @@ StatusOr<PyArray> PyArray::CopyToDeviceWithSharding(
   return PyArray(aval(), weak_type(), dtype(),
                  std::vector<int64_t>(shape_span.begin(), shape_span.end()),
                  dst_sharding, py_client(), std::move(traceback),
-                 std::move(out_array), committed(), true);
+                 std::move(out_array), is_committed, true);
 }
 
 std::vector<py::object> PyClient::LiveArrays() {
@@ -657,14 +665,15 @@ Status PyArray::RegisterTypes(py::module& m) {
 
   m.attr("copy_array_to_devices_with_sharding") = py::cpp_function(
       [](PyArray self, std::vector<ClientAndPtr<PjRtDevice>> dst_devices,
-         py::object sharding) {
+         py::object sharding, bool committed) {
         ifrt::DeviceList::Devices devices;
         devices.reserve(dst_devices.size());
         for (auto& d : dst_devices) {
           devices.push_back(d.get());
         }
         return self.CopyToDeviceWithSharding(ifrt::DeviceList(devices),
-                                             std::move(sharding));
+                                             std::move(sharding),
+                                             std::move(committed));
       });
   m.attr("array_result_handler") = py::cpp_function(
       [](py::object aval, py::object sharding, bool committed,
