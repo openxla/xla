@@ -34,13 +34,13 @@ jobs:
       # This will fail if the user is not one of {public member, of the openxla
       # Github organization, has a partner email address}.
       - name: has_partner_email
-        continue_on_error: true
+        continue-on-error: true
         run: |
           echo ${{ github.event.pull_request.user.email }} | \
           jq --raw_input --exit_code \
           '. // "" | split("@")[1] as $domain | ["nvidia.com", "intel.com", "apple.com", "linaro.org", "google.com"] | index($domain)'
       - name: is_openxla_member
-        continue_on_error: true
+        continue-on-error: true
         run: |
           gh api /orgs/openxla/members | \
           jq --exit_code \
