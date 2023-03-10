@@ -46,5 +46,5 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             /users/${{ github.actor }} \
           | jq --exit-status \
-          '.email | split("@")[1] as $domain | ["nvidia.com", "intel.com", "apple.com", "linaro.org", "google.com"] | index($domain)')
+          '.email // "" | split("@")[1] as $domain | ["nvidia.com", "intel.com", "apple.com", "linaro.org", "google.com"] | index($domain)')
 
