@@ -174,45 +174,20 @@ std::vector<StackFrame> GetStackTrace(const ::tsl::Status& status) {
 
 Status::~Status() {}
 
-absl::Span<const SourceLocation> Status::GetSourceLocations() const {
-  return state_ != nullptr ? state_->source_locations
-                           : absl::Span<const SourceLocation>();
-}
-
-void Status::MaybeAddSourceLocation(SourceLocation loc) {
-  if (state_ == nullptr) {
-    return;
-  }
-  if (loc.line() <= 0) {
-    return;
-  }
-  if (loc.file_name() == nullptr) {
-    return;
-  }
-  if (loc.file_name()[0] == '\0') {
-    return;
-  }
-  state_->source_locations.push_back(loc);
-}
-
-Status::Status(tsl::errors::Code code, absl::string_view msg,
-               SourceLocation loc) {
+Status::Status(tsl::errors::Code code, absl::string_view msg) {
   assert(code != tsl::errors::Code::OK);
   state_ = std::make_unique<State>();
   state_->code = static_cast<tsl::error::Code>(code);
   state_->msg = std::string(msg);
-  MaybeAddSourceLocation(loc);
   VLOG(5) << "Generated non-OK status: \"" << *this << "\". "
           << CurrentStackTrace();
 }
 
-Status::Status(absl::StatusCode code, absl::string_view msg,
-               SourceLocation loc) {
+Status::Status(absl::StatusCode code, absl::string_view msg) {
   assert(code != absl::StatusCode::kOk);
   state_ = std::make_unique<State>();
   state_->code = static_cast<tsl::error::Code>(code);
   state_->msg = std::string(msg);
-  MaybeAddSourceLocation(loc);
   VLOG(5) << "Generated non-OK status: \"" << *this << "\". "
           << CurrentStackTrace();
 }
@@ -360,17 +335,11 @@ std::ostream& operator<<(std::ostream& os, const Status& x) {
 
 Status OkStatus() { return Status(); }
 
-Status FromAbslStatus(const absl::Status& s, SourceLocation loc) {
+Status FromAbslStatus(const absl::Status& s) {
   if (s.ok()) {
     return Status();
   }
-  absl::Span<const SourceLocation> locs = internal::GetSourceLocations(s);
-  const SourceLocation first_loc = locs.empty() ? loc : locs[0];
-  Status converted(static_cast<tsl::error::Code>(s.code()), s.message(),
-                   first_loc);
-  for (int i = 1; i < locs.size(); ++i) {
-    converted.MaybeAddSourceLocation(locs[i]);
-  }
+  Status converted(static_cast<tsl::error::Code>(s.code()), s.message());
   s.ForEachPayload(
       [&converted](absl::string_view key, const absl::Cord& value) {
         converted.SetPayload(key, value);
@@ -378,13 +347,13 @@ Status FromAbslStatus(const absl::Status& s, SourceLocation loc) {
   return converted;
 }
 
-absl::Status ToAbslStatus(const ::tsl::Status& s, SourceLocation loc) {
+absl::Status ToAbslStatus(const ::tsl::Status& s) {
   if (s.ok()) {
     return absl::OkStatus();
   }
 
-  absl::Status converted = internal::MakeAbslStatus(
-      s.code(), s.error_message(), s.GetSourceLocations(), loc);
+  absl::Status converted =
+      absl::Status(static_cast<absl::StatusCode>(s.code()), s.error_message());
   s.ForEachPayload([&converted](tsl::StringPiece key, const absl::Cord& value) {
     converted.SetPayload(key, value);
   });

@@ -51,8 +51,6 @@ namespace tsl {
 class [[nodiscard]] Status;
 #endif
 
-typedef SourceLocationImpl SourceLocation;
-
 namespace errors {
 typedef ::tensorflow::error::Code Code;
 }  // namespace errors
@@ -102,22 +100,20 @@ class Status {
 
   /// \brief Create a status with the specified error code and msg as a
   /// human-readable string containing more detailed information.
-  Status(absl::StatusCode code, absl::string_view msg,
-         SourceLocation loc = SourceLocation::current());
+  Status(absl::StatusCode code, absl::string_view msg);
   // Deprecated constructor using the Tensorflow protobuf enum error code.
 #ifndef SWIG
   ABSL_DEPRECATED(
       "Use `Status(absl::StatusCode, ...) instead of Status(tsl::errors::Code, "
       "...).")
 #endif
-  Status(tsl::errors::Code code, absl::string_view msg,
-         SourceLocation loc = SourceLocation::current());
+  Status(tsl::errors::Code code, absl::string_view msg);
 
   /// Copy the specified status.
   Status(const Status& s);
   Status& operator=(const Status& s);
 #ifndef SWIG
-  Status(Status&& s, SourceLocation loc = SourceLocation::current()) noexcept;
+  Status(Status&& s) noexcept;
   Status& operator=(Status&& s) noexcept;
 #endif  // SWIG
 
@@ -223,12 +219,8 @@ class Status {
       absl::FunctionRef<void(absl::string_view, const absl::Cord&)> visitor)
       const;
 
-  absl::Span<const SourceLocation> GetSourceLocations() const;
-
  private:
-  friend Status FromAbslStatus(const absl::Status& s, SourceLocation loc);
-
-  void MaybeAddSourceLocation(SourceLocation loc);
+  friend Status FromAbslStatus(const absl::Status& s);
 
   static const std::string& empty_string();
   struct State {
@@ -240,7 +232,6 @@ class Status {
     tsl::error::Code code;
     std::string msg;
     std::unordered_map<std::string, absl::Cord> payloads;
-    absl::InlinedVector<SourceLocation, 4> source_locations;
   };
 
   // OK status has a `NULL` state_.  Otherwise, `state_` points to
@@ -257,10 +248,8 @@ class Status {
 // usage of `OkStatus()` when constructing such an OK status.
 Status OkStatus();
 
-Status FromAbslStatus(const absl::Status& s,
-                      SourceLocation loc = SourceLocation::current());
-absl::Status ToAbslStatus(const ::tsl::Status& s,
-                          SourceLocation loc = SourceLocation::current());
+Status FromAbslStatus(const absl::Status& s);
+absl::Status ToAbslStatus(const ::tsl::Status& s);
 
 // TODO(b/197552541) Move this namespace to errors.h.
 namespace errors {
@@ -340,10 +329,7 @@ inline Status& Status::operator=(const Status& s) {
 }
 
 #ifndef SWIG
-inline Status::Status(Status&& s, SourceLocation loc) noexcept
-    : state_(std::move(s.state_)) {
-  MaybeAddSourceLocation(loc);
-}
+inline Status::Status(Status&& s) noexcept : state_(std::move(s.state_)) {}
 
 inline Status& Status::operator=(Status&& s) noexcept {
   if (state_ != s.state_) {
