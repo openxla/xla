@@ -31,20 +31,10 @@ jobs:
       github.event.pull_request.draft == false &&
       github.event.sender.type == 'User'
     steps:
-      - name: email
-        run: |
-          gh api /users/${{ github.actor }} --method GET
       - name: github_api
         run: |
-          (gh api \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            /orgs/openxla/members \
+          (gh api /orgs/openxla/members
           | jq --exit-status '.[].login | select(. == "${{ github.actor }}")') \
-          && (gh api \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            /users/${{ github.actor }} \
-          | jq --exit-status \
+          || (gh api /users/${{ github.actor }} | jq --exit-status \
           '.email // "" | split("@")[1] as $domain | ["nvidia.com", "intel.com", "apple.com", "linaro.org", "google.com"] | index($domain)')
 
