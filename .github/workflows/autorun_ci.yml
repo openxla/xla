@@ -47,11 +47,11 @@ jobs:
           '.[].login | select(. == "${{ github.event.pull_request.user.login }}")'
       # Kokoro will run automatically if the user is an organization member,
       # so only add the label in the case that they have a partner email but
-      # aren't an organization member.
+      # aren't an organization member. TODO change OR to AND
       - name: add_label
         if: |
-          steps.has_partner_email.outcome == "success" || # TODO
-          steps.is_openxla_member != "success"
+          steps.has_partner_email.outcome == 'success' ||
+          steps.is_openxla_member != 'success'
         run: |
           curl -L \
           -X POST \
