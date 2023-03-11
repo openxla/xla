@@ -15,7 +15,13 @@ limitations under the License.
 
 #include "xla/service/eigh_expander.h"
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
+#include <numeric>
+#include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "xla/client/lib/arithmetic.h"
@@ -89,7 +95,7 @@ XlaOp Hypot(XlaOp x, XlaOp y) {
 //   tau = (np.diag(w_br) - np.diag(w_tl)) / (2 * off_diag)
 //   t = np.where(tau >= 0, 1.0 / (tau + np.sqrt(1 + tau ** 2)),
 //                -1.0 / (-tau + np.sqrt(1 + tau ** 2)))
-//   pred = np.abs(off_diag) > 1e-6
+//   pred = np.abs(off_diag) > 0
 //   t = np.where(pred, t, 0.)
 //   c = 1.0 / np.sqrt(1.0 + t ** 2)
 //   s = t * c
@@ -116,11 +122,10 @@ StatusOr<Eigh2x2> HermitianEigenDecomposition2x2(XlaOp w_tl, XlaOp w_tr,
     w_tr = abs_tr;
   }
 
-  auto tol = ScalarLike(w_tr, 1e-6);
   auto tau = (w_br - w_tl) / (two * w_tr);
   auto t = Sqrt(one + Square(tau));
   t = Reciprocal(tau + Select(Ge(tau, zero), t, Neg(t)));
-  t = Select(Gt(Abs(w_tr), tol), t, ZerosLike(t));
+  t = Select(Ne(w_tr, zero), t, ZerosLike(t));
   auto c = Rsqrt(one + Square(t));
   auto s = t * c;
 
