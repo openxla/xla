@@ -133,7 +133,9 @@ Status Profile(const std::string& repository_root,
   TF_RETURN_IF_ERROR(status);
   // Expect one or more service addresses.
   DCHECK_GT(opts.service_addresses_size(), 0);
+  LOG(ERROR) << "before wait";
   std::vector<Response> responses = session->WaitForCompletion();
+  LOG(ERROR) << "WaitForCompletion";
   // Expect responses to have the same size as clients.
   DCHECK_EQ(responses.size(), opts.service_addresses_size());
 
@@ -214,14 +216,16 @@ Status CaptureRemoteTrace(const std::string& logdir, int num_tracing_attempts,
               << "Remaining attempt(s): " << --remaining_attempts << std::endl;
 
     if (is_cloud_tpu_session) {
+      LOG(ERROR) << "NewSession";
       status = NewSession(repository_root, session_id, opts);
     } else {
+      LOG(ERROR) << "Profile";
       status = Profile(repository_root, session_id, opts);
+      LOG(ERROR) << "end of profile" << status;
     }
     if (remaining_attempts <= 0 || status.ok() || !ShouldRetryTracing(status))
       break;
-    std::cout << "No trace event is collected. Automatically retrying.\n"
-              << std::endl;
+    LOG(ERROR) << "No trace event is collected. Automatically retrying.\n";
   }
 
   if (ShouldRetryTracing(status)) {

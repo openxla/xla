@@ -7,12 +7,12 @@ load(
     "if_windows",
 )
 load(
-    "@xla//third_party/llvm_openmp:cmake_vars.bzl",
+    "@tsl//third_party/llvm_openmp:cmake_vars.bzl",
     "cmake_var_string",
     "expand_cmake_vars",
 )
 load(
-    "@xla//third_party/llvm_openmp:openmp.bzl",
+    "@tsl//third_party/llvm_openmp:openmp.bzl",
     "dict_add",
     "libiomp5_cc_binary",
 )

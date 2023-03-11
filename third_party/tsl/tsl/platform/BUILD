@@ -870,6 +870,12 @@ filegroup(
 )
 
 cc_library(
+    name = "stacktrace_handler_hdrs_lib",
+    hdrs = ["stacktrace_handler.h"],
+    compatible_with = get_compatible_with_portable(),
+)
+
+cc_library(
     name = "stacktrace_handler",
     textual_hdrs = ["stacktrace_handler.h"],
     deps = tf_windows_aware_platform_deps("stacktrace_handler"),

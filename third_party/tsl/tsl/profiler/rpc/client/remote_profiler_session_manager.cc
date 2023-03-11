@@ -91,8 +91,10 @@ Status RemoteProfilerSessionManager::Init() {
     request.set_host_name(resolved_service_address);
 
     // Creation also issues Profile RPC asynchronously.
+    LOG(ERROR) << "before client crewate";
     auto client = RemoteProfilerSession::Create(resolved_service_address,
                                                 deadline, request);
+    LOG(ERROR) << "after client crewate";
     clients_.push_back(std::move(client));
   }
 

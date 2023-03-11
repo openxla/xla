@@ -1,7 +1,7 @@
 load("@tsl//tsl:tsl.bzl", "tf_openmp_copts")
-load("@xla//third_party/mkl:build_defs.bzl", "if_mkl")
-load("@xla//third_party/mkl_dnn:build_defs.bzl", "if_mkldnn_openmp")
-load("@xla//third_party/mkl:build_defs.bzl", "if_mkl_ml")
+load("@tsl//third_party/mkl:build_defs.bzl", "if_mkl")
+load("@tsl//third_party/mkl_dnn:build_defs.bzl", "if_mkldnn_openmp")
+load("@tsl//third_party/mkl:build_defs.bzl", "if_mkl_ml")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 exports_files(["LICENSE"])
@@ -69,7 +69,7 @@ expand_template(
     name = "dnnl_config_h",
     out = "include/oneapi/dnnl/dnnl_config.h",
     substitutions = select({
-        "@xla//third_party/mkl_dnn:build_with_mkldnn_openmp": _DNNL_RUNTIME_OMP,
+        "@tsl//third_party/mkl_dnn:build_with_mkldnn_openmp": _DNNL_RUNTIME_OMP,
         "//conditions:default": _DNNL_RUNTIME_THREADPOOL,
     }),
     template = "include/oneapi/dnnl/dnnl_config.h.in",
@@ -170,7 +170,7 @@ cc_library(
     textual_hdrs = _TEXTUAL_HDRS_LIST,
     visibility = ["//visibility:public"],
     deps = [":onednn_autogen"] + if_mkl_ml(
-        ["@xla//third_party/mkl:intel_binary_blob"],
+        ["@tsl//third_party/mkl:intel_binary_blob"],
         [],
     ),
 )

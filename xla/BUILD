@@ -1198,3 +1198,8 @@ filegroup(
 #     deps = [":xla_proto"],
 # )
 # copybara:uncomment_end
+
+cc_library(
+    name = "empty",
+    visibility = ["//visibility:public"],
+)

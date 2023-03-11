@@ -136,7 +136,7 @@ cc_library(
     name = "determinism_hdr_lib",
     hdrs = [":determinism_hdr"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//visibility:private"],
+    visibility = ["//visibility:public"],
 )
 
 # Note: This rule should not be used as a dependency for kernels. Use the

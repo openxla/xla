@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 
-// IWYU pragma: private, include "third_party/tensorflow/tsl/platform/types.h"
+// IWYU pragma: private, include "tsl/platform/types.h"
 // IWYU pragma: friend third_party/tensorflow/tsl/platform/types.h
 
 namespace tsl {

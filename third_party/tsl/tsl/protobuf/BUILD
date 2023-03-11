@@ -22,6 +22,7 @@ tf_proto_library(
     name = "bfc_memory_map_proto",
     srcs = ["bfc_memory_map.proto"],
     make_default_target_header_only = True,
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
@@ -29,24 +30,28 @@ tf_proto_library(
     srcs = ["autotuning.proto"],
     make_default_target_header_only = True,
     protodeps = [":dnn_proto"],
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
     name = "dnn_proto",
     srcs = ["dnn.proto"],
     make_default_target_header_only = True,
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
     name = "error_codes_proto_impl",
     srcs = ["error_codes.proto"],
     make_default_target_header_only = True,
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
     name = "histogram_proto",
     srcs = ["histogram.proto"],
     make_default_target_header_only = True,
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
@@ -54,6 +59,7 @@ tf_proto_library(
     srcs = ["coordination_config.proto"],
     cc_api_version = 2,
     make_default_target_header_only = True,
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
@@ -65,6 +71,7 @@ tf_proto_library(
     create_grpc_library = True,
     create_java_proto = False,
     create_service = True,
+    visibility = ["//visibility:public"],
 )
 
 # copybara:uncomment_begin(google-only)
@@ -80,12 +87,14 @@ tf_proto_library(
     name = "distributed_runtime_payloads_proto",
     srcs = ["distributed_runtime_payloads.proto"],
     make_default_target_header_only = True,
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
     name = "rpc_options_proto",
     srcs = ["rpc_options.proto"],
     make_default_target_header_only = True,
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(

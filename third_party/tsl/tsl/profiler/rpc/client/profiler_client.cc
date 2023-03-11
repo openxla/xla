@@ -144,13 +144,14 @@ std::unique_ptr<ProfileResponse> RemoteProfilerSession::WaitForCompletion(
   // completion queue to have exactly a single response because deadline is set
   // and completion queue is only drained once at destruction time.
   bool success = cq_.Next(&got_tag, &ok);
+  LOG(ERROR) << "success" << success;
   if (!success || !ok || got_tag == nullptr) {
     out_status =
         errors::Internal("Missing or invalid event from completion queue.");
     return nullptr;
   }
 
-  VLOG(1) << "Writing out status.";
+  LOG(ERROR) << "Writing out status.";
   // For the event read from the completion queue, expect that got_tag points to
   // the memory location of status_on_completion.
   DCHECK_EQ(got_tag, &status_on_completion_);

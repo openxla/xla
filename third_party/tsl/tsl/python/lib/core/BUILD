@@ -37,11 +37,11 @@ cc_library(
     ],
     deps = [
         ":custom_float",
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
         "//tsl/platform:logging",
         "//tsl/platform:types",
         "//tsl/python/lib/core:numpy",
         "@eigen_archive//:eigen3",
-        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -64,6 +64,7 @@ cc_shared_library(
         "//third_party/" + "eigen3:__subpackages__",
         "@local_config_python//:__subpackages__",
         "@nsync//:__subpackages__",
+        "//tsl:__subpackages__",
     ],
 )
 
@@ -77,7 +78,7 @@ tsl_pybind_extension(
     ],
     deps = [
         ":bfloat16_lib",
-        "@local_config_python//:python_headers",
+        "//third_party/python_runtime:headers",
         "@pybind11",
     ],
 )
@@ -88,11 +89,11 @@ cc_library(
         "custom_float.h",
     ],
     deps = [
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
         "//tsl/platform:logging",
         "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
-        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -102,7 +103,7 @@ cc_library(
         "float8.h",
     ],
     deps = [
-        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -117,10 +118,10 @@ cc_library(
     deps = [
         ":custom_float",
         ":numpy",
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
         "//tsl/platform:float8",
         "//tsl/platform:types",
         "@eigen_archive//:eigen3",
-        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -131,9 +132,9 @@ cc_library(
     deps = [
         ":bfloat16_lib",
         ":float8_lib",
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
         "//tsl/platform:types",
         "//tsl/python/lib/core:numpy",
-        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -149,8 +150,8 @@ cc_library(
     srcs = ["numpy.cc"],
     hdrs = ["numpy.h"],
     deps = [
-        "@local_config_python//:numpy_headers",
-        "@local_config_python//:python_headers",
+        "//third_party/py/numpy:headers",
+        "//third_party/python_runtime:headers",
     ],
 )
 
