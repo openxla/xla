@@ -1,13 +1,19 @@
 # Contribute to XLA
 
-This guide shows you how to get started developing the XLA project. First go to
-[CONTRIBUTING.md](../CONTRIBUTING.md), review the contribution process, and, if
-you haven't already done so, sign the
-[Contributor License Agreement](https://cla.developers.google.com/about). Then
-follow the steps below to get and build the source code.
+This guide shows you how to start contributing to the XLA project.
 
-This guide assumes that you're familiar with
-[Git](https://github.com/openxla/xla) and [GitHub](https://docs.github.com/).
+Before you begin, complete the following prerequisites:
+
+1. Go to [CONTRIBUTING.md](../CONTRIBUTING.md) and review the contribution
+process.
+2. If you haven't already done so, sign the
+   [Contributor License Agreement](https://cla.developers.google.com/about).
+3. Install or configure dependencies:
+   - A [GitHub](https://github.com/) account
+   - [Docker](https://www.docker.com/)
+
+Then follow the steps below to get the source code, set up an environment,
+build the repository, and create a pull request.
 
 ## Get the code
 
@@ -27,27 +33,27 @@ This guide assumes that you're familiar with
 
 ## Set up an environment
 
-To build XLA, you must have [Bazel](https://bazel.build/install) installed. The
-recommended way to install Bazel is using
-[Bazelisk](https://github.com/bazelbuild/bazelisk#readme), which automatically
-downloads the correct Bazel version for XLA. If Bazelisk is unavailable, you can
-install Bazel manually.
+1. Install [Bazel](https://bazel.build/install).
 
-We recommend using a
-[TensorFlow Docker container](https://www.tensorflow.org/install/docker) to
-build and test XLA.
+   To build XLA, you must have Bazel installed. The recommended way to install
+   Bazel is using [Bazelisk](https://github.com/bazelbuild/bazelisk#readme),
+   which automatically downloads the correct Bazel version for XLA. If Bazelisk
+   is unavailable, you can install Bazel manually.
+2. Create and run a
+   [TensorFlow Docker container](https://www.tensorflow.org/install/docker).
 
-To get the TensorFlow Docker image for CPU, run the following command:
+   To get the TensorFlow Docker image for CPU, run the following command:
 
-```sh
-docker run --name xla -w /xla -it -d --rm -v $PWD:/xla tensorflow/build:latest-python3.9 bash
-```
+   ```sh
+   docker run --name xla -w /xla -it -d --rm -v $PWD:/xla tensorflow/build:latest-python3.9 bash
+   ```
 
-To get the TensorFlow Docker image for GPU, run the following command:
+   Alternatively, to get the TensorFlow Docker image for GPU, run the following
+   command:
 
-```sh
-docker run --name xla_gpu -w /xla -it -d --rm -v $PWD:/xla tensorflow/tensorflow:devel-gpu bash
-```
+   ```sh
+   docker run --name xla_gpu -w /xla -it -d --rm -v $PWD:/xla tensorflow/tensorflow:devel-gpu bash
+   ```
 
 ## Build
 
