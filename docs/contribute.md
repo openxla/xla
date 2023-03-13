@@ -8,7 +8,7 @@ Before you begin, complete the following prerequisites:
 process.
 2. If you haven't already done so, sign the
    [Contributor License Agreement](https://cla.developers.google.com/about).
-3. Install or configure dependencies:
+3. Install or configure the following dependencies:
    - A [GitHub](https://github.com/) account
    - [Docker](https://www.docker.com/)
 
@@ -38,7 +38,8 @@ build the repository, and create a pull request.
    To build XLA, you must have Bazel installed. The recommended way to install
    Bazel is using [Bazelisk](https://github.com/bazelbuild/bazelisk#readme),
    which automatically downloads the correct Bazel version for XLA. If Bazelisk
-   is unavailable, you can install Bazel manually.
+   is unavailable, you can [install Bazel](https://bazel.build/install)
+   manually.
 2. Create and run a
    [TensorFlow Docker container](https://www.tensorflow.org/install/docker).
 
@@ -71,7 +72,7 @@ docker exec -e TF_NEED_CUDA=1 xla_gpu ./configure
 docker exec xla_gpu bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
 ```
 
-For more information on building XLA, see
+To learn more about building XLA, see
 [Build from source](build_from_source.md).
 
 ## Create a pull request
