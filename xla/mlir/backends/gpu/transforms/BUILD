@@ -48,6 +48,7 @@ cc_library(
         "//xla/mlir/runtime/utils:custom_calls",
         "//xla/mlir_hlo:lhlo",
         "//xla/mlir_hlo:lhlo_gpu",
+        "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:nccl_collective_thunks",
