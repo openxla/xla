@@ -97,7 +97,7 @@ string TslSrcRoot() {
   // enough version of bazel is used.
   const char* env = std::getenv("TEST_SRCDIR");
   const char* workspace = std::getenv("TEST_WORKSPACE");
-  const char* tsl_path = "tensorflow/tsl";
+  const char* tsl_path = "tsl";
   if (env && env[0] != '\0') {
     if (workspace && workspace[0] != '\0') {
       return io::JoinPath(env, workspace, tsl_path);

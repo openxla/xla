@@ -111,7 +111,7 @@ def pyx_library(
         native.cc_binary(
             name = shared_object_name,
             srcs = [stem + ".cpp"],
-            deps = cc_deps + ["@xla//third_party/python_runtime:headers"],
+            deps = cc_deps + ["@tsl//third_party/python_runtime:headers"],
             linkshared = 1,
             testonly = testonly,
             copts = copts,
@@ -679,17 +679,17 @@ def tf_additional_lib_hdrs():
     })
 
 def tf_additional_all_protos():
-    return [clean_dep("//tensorflow/core:protos_all")]
+    return ["//tensorflow/core:protos_all"]
 
 def tf_protos_all():
     return if_static(
         extra_deps = [
-            clean_dep("//tensorflow/core/protobuf:conv_autotuning_proto_cc_impl"),
-            clean_dep("//tensorflow/core:protos_all_cc_impl"),
+            "//tensorflow/core/protobuf:conv_autotuning_proto_cc_impl",
+            "//tensorflow/core:protos_all_cc_impl",
             clean_dep("//tsl/protobuf:autotuning_proto_cc_impl"),
             clean_dep("//tsl/protobuf:protos_all_cc_impl"),
         ],
-        otherwise = [clean_dep("//tensorflow/core:protos_all_cc")],
+        otherwise = ["//tensorflow/core:protos_all_cc"],
     )
 
 def tf_protos_profiler_service():
@@ -700,12 +700,12 @@ def tf_protos_profiler_service():
     ]
 
 def tf_protos_grappler_impl():
-    return [clean_dep("//tensorflow/core/grappler/costs:op_performance_data_cc_impl")]
+    return ["//tensorflow/core/grappler/costs:op_performance_data_cc_impl"]
 
 def tf_protos_grappler():
     return if_static(
         extra_deps = tf_protos_grappler_impl(),
-        otherwise = [clean_dep("//tensorflow/core/grappler/costs:op_performance_data_cc")],
+        otherwise = ["//tensorflow/core/grappler/costs:op_performance_data_cc"],
     )
 
 def tf_additional_device_tracer_srcs():
@@ -817,24 +817,24 @@ def tf_protobuf_compiler_deps():
 
 def tf_windows_aware_platform_deps(name):
     return select({
-        "//tsl:windows": [
-            "//tsl/platform/windows:" + name,
+        clean_dep("//tsl:windows"): [
+            clean_dep("//tsl/platform/windows:" + name),
         ],
         "//conditions:default": [
-            "//tsl/platform/default:" + name,
+            clean_dep("//tsl/platform/default:" + name),
         ],
     })
 
-def tf_platform_deps(name, platform_dir = "//tsl/platform/"):
+def tf_platform_deps(name, platform_dir = "@tsl//tsl/platform/"):
     return [platform_dir + "default:" + name]
 
-def tf_testing_deps(name, platform_dir = "//tsl/platform/"):
+def tf_testing_deps(name, platform_dir = "@tsl//tsl/platform/"):
     return tf_platform_deps(name, platform_dir)
 
-def tf_stream_executor_deps(name, platform_dir = "//tsl/platform/"):
+def tf_stream_executor_deps(name, platform_dir = "@tsl//tsl/platform/"):
     return tf_platform_deps(name, platform_dir)
 
-def tf_platform_alias(name, platform_dir = "//tsl/platform/"):
+def tf_platform_alias(name, platform_dir = "@tsl//tsl/platform/"):
     return [platform_dir + "default:" + name]
 
 def tf_logging_deps():

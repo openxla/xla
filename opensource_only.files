@@ -135,10 +135,6 @@ third_party/tensorrt/tensorrt/tensorrt_config.py.tpl:
 third_party/tensorrt/tensorrt_configure.bzl:
 third_party/tensorrt/workspace.bzl:
 third_party/zlib.BUILD:
-tools/def_file_filter/BUILD.tpl:
-tools/def_file_filter/BUILD:
-tools/def_file_filter/def_file_filter.py.tpl:
-tools/def_file_filter/def_file_filter_configure.bzl:
 tools/toolchains/BUILD:
 tools/toolchains/clang6/BUILD:
 tools/toolchains/cpus/py/BUILD:
@@ -170,8 +166,3 @@ tools/toolchains/win_1803/py36/BUILD:
 tools/toolchains/win_1803/py37/BUILD:
 tools/toolchains/win_1803/py38/BUILD:
 tools/toolchains/win_1803/py39/BUILD:
-tsl/mkl/BUILD:
-tsl/mkl/LICENSE:
-tsl/mkl/MKL_LICENSE:
-tsl/mkl/build_defs.bzl:
-tsl/platform/default/build_config/BUILD:

@@ -194,7 +194,7 @@ def get_pybind_export_symbols(symbols_file, lib_paths_file):
   # `[//tensorflow/python:safe_ptr]`
   # `[//tensorflow:target_name_v2_25]`
   # `[//tensorflow/-/24/util_:port-5]`
-  section_header_filter = r"^\[\/\/(tensorflow(\/[\w-]+)*(:|\/)[\w-]+)\]"
+  section_header_filter = r"^\[\/\/(\w+(\/[\w-]+)*(:|\/)[\w-]+)\]"
 
   # Create a dict of target libs and their symbols to be exported and populate
   # it. (key = cc_library target, value = list of symbols) that we need to
