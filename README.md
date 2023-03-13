@@ -32,8 +32,6 @@ If you'd like to contribute to XLA, see the
 
 ## Resources
 
-*   GitHub
-    ([current](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla))
 *   [Community Resources](https://github.com/openxla/community)
 
 ## Code of Conduct
