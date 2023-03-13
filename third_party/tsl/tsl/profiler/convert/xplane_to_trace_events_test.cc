@@ -26,7 +26,6 @@ namespace tsl {
 namespace profiler {
 namespace {
 
-using tensorflow::profiler::Trace;
 using tensorflow::profiler::XSpace;
 
 void CreateXSpace(XSpace* space) {

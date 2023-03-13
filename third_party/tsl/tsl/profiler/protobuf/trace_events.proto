@@ -14,8 +14,7 @@ message Trace {
   // more data about the specific device.
   map<uint32, Device> devices = 1;
 
-  // All trace events capturing in the profiling period.
-  repeated TraceEvent trace_events = 4;
+  reserved 4;
 }
 
 // A 'device' is a physical entity in the system and is comprised of several

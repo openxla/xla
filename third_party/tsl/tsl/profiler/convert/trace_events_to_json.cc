@@ -34,7 +34,6 @@ namespace {
 
 using tensorflow::profiler::Device;
 using tensorflow::profiler::Resource;
-using tensorflow::profiler::Trace;
 using tensorflow::profiler::TraceEvent;
 
 // Converts the given time from picoseconds to microseconds and then to a string
