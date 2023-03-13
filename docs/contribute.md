@@ -5,7 +5,7 @@ This guide shows you how to start contributing to the XLA project.
 Before you begin, complete the following prerequisites:
 
 1. Go to [CONTRIBUTING.md](../CONTRIBUTING.md) and review the contribution
-process.
+   process.
 2. If you haven't already done so, sign the
    [Contributor License Agreement](https://cla.developers.google.com/about).
 3. Install or configure the following dependencies:
@@ -71,6 +71,9 @@ Build for GPU:
 docker exec -e TF_NEED_CUDA=1 xla_gpu ./configure
 docker exec xla_gpu bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
 ```
+
+Your first build will take quite a while because it has to build the entire
+stack, including XLA, MLIR, and StableHLO.
 
 To learn more about building XLA, see
 [Build from source](build_from_source.md).
