@@ -7,9 +7,9 @@ cc_library(
     name = "host_tracer",
     srcs = ["host_tracer_factory.cc"],
     visibility = [
+        "//tensorflow/core/profiler:internal",
         "//third_party/car/onboard/gpu:__subpackages__",
         "//xla/backends/profiler:__pkg__",
-        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         ":host_tracer_impl",
@@ -25,7 +25,7 @@ cc_library(
     hdrs = ["host_tracer.h"],
     copts = tf_profiler_copts(),
     visibility = [
-        #"//tensorflow/core/profiler:internal",
+        "//tensorflow/core/profiler:internal",
     ],
     deps = [
         "@tsl//tsl/platform:errors",
@@ -45,8 +45,8 @@ cc_library(
     name = "python_tracer",
     srcs = ["python_tracer_factory.cc"],
     visibility = [
+        "//tensorflow/core/profiler:internal",
         "//xla/python:__pkg__",
-        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         ":python_tracer_impl",
@@ -63,7 +63,7 @@ cc_library(
     copts = tf_profiler_copts() + ["-fexceptions"],
     features = ["-use_header_modules"],
     visibility = [
-        #"//tensorflow/core/profiler:internal",
+        "//tensorflow/core/profiler:internal",
     ],
     deps = [
         "//xla/python/profiler/internal:python_hooks",
@@ -81,8 +81,8 @@ cc_library(
     srcs = ["metadata_collector.cc"],
     copts = tf_profiler_copts(),
     visibility = [
+        "//tensorflow/core/profiler:internal",
         "//xla/backends/profiler:__pkg__",
-        #"//tensorflow/core/profiler:internal",
     ],
     deps = [
         ":metadata_utils",
@@ -104,7 +104,7 @@ cc_library(
     name = "metadata_utils",
     hdrs = ["metadata_utils.h"],
     visibility = [
-        #"//tensorflow/core/profiler:internal",
+        "//tensorflow/core/profiler:internal",
     ],
     deps = [
         "//xla/service:hlo_proto_cc",

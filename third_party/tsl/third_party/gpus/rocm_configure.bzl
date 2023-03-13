@@ -548,7 +548,7 @@ def _create_local_rocm_repository(repository_ctx):
         "rocm:rocm_config.h",
     ]}
 
-    find_rocm_config_script = repository_ctx.path(Label("@xla//third_party/gpus:find_rocm_config.py.gz.base64"))
+    find_rocm_config_script = repository_ctx.path(Label("@tsl//third_party/gpus:find_rocm_config.py.gz.base64"))
 
     bash_bin = get_bash_bin(repository_ctx)
     rocm_config = _get_rocm_config(repository_ctx, bash_bin, find_rocm_config_script)

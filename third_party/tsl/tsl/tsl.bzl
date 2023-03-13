@@ -25,13 +25,13 @@ load(
     "if_mkl",
 )
 load(
-    "@xla//third_party/mkl_dnn:build_defs.bzl",
+    "//third_party/mkl_dnn:build_defs.bzl",
     "if_mkldnn_aarch64_acl",
     "if_mkldnn_aarch64_acl_openmp",
     "if_mkldnn_openmp",
 )
 load(
-    "@xla//third_party/compute_library:build_defs.bzl",
+    "//third_party/compute_library:build_defs.bzl",
     "if_enable_acl",
 )
 load("@bazel_skylib//lib:new_sets.bzl", "sets")
@@ -39,14 +39,14 @@ load("@bazel_skylib//lib:new_sets.bzl", "sets")
 two_gpu_tags = ["requires-gpu-nvidia:2", "notap", "manual", "no_pip"]
 
 def clean_dep(target):
-    """Returns string to 'target' in @xla repository.
+    """Returns string to 'target' in @tsl repository.
 
-    Use this function when referring to targets in the @xla
+    Use this function when referring to targets in the @tsl
     repository from macros that may be called from external repositories.
     """
 
     # A repo-relative label is resolved relative to the file in which the
-    # Label() call appears, i.e. @xla.
+    # Label() call appears, i.e. @tsl.
     return str(Label(target))
 
 def if_cuda_or_rocm(if_true, if_false = []):
@@ -284,8 +284,8 @@ def tf_openmp_copts():
         # "//tsl/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
         # "//tsl/mkl:build_with_mkl_windows_openmp": ["/openmp"],
         # copybara:uncomment_end_and_comment_begin
-        "@xla//third_party/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
-        "@xla//third_party/mkl:build_with_mkl_windows_openmp": ["/openmp:llvm"],
+        "@tsl//third_party/mkl:build_with_mkl_lnx_openmp": ["-fopenmp"],
+        "@tsl//third_party/mkl:build_with_mkl_windows_openmp": ["/openmp:llvm"],
         # copybara:comment_end
         "//conditions:default": [],
     })
@@ -723,7 +723,7 @@ def tsl_pybind_extension_opensource(
         data = select({
             clean_dep("//tsl:windows"): [pyd_file],
             "//conditions:default": [so_file],
-        }) + pytype_srcs,
+        }) + pytype_srcs + dynamic_deps,
         deps = pytype_deps,
         srcs_version = srcs_version,
         licenses = licenses,

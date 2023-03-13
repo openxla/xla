@@ -35,7 +35,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_THREAD_ANNOTATIONS_H_
 #define TENSORFLOW_TSL_PLATFORM_THREAD_ANNOTATIONS_H_
 
-// IWYU pragma: private, include "third_party/tensorflow/tsl/platform/thread_annotations.h"
+// IWYU pragma: private, include "tsl/platform/thread_annotations.h"
 // IWYU pragma: friend third_party/tensorflow/tsl/platform/thread_annotations.h
 
 #if defined(__clang__) && (!defined(SWIG))
