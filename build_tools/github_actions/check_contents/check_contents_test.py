@@ -134,12 +134,12 @@ class CheckDiffsTest(absltest.TestCase):
 
     self.assertEqual(locs, expected_locs)
 
-  def test_check_suppressed_diff_with_path_expressions(self):
+  def test_check_suppressed_diff_with_path_regexes(self):
     file_diffs = check_contents.parse_diff(SUPPRESSED_DIFF)
     filtered_diffs = check_contents.filter_diffs_by_path(
         file_diffs,
-        path_expressions=["src/important..."],
-        path_expression_exclusions=[],
+        path_regexes=["src/important\\..*"],
+        path_regex_exclusions=[],
     )
 
     self.assertLen(filtered_diffs, 1)
@@ -154,8 +154,8 @@ class CheckDiffsTest(absltest.TestCase):
     file_diffs = check_contents.parse_diff(SUPPRESSED_DIFF)
     filtered_diffs = check_contents.filter_diffs_by_path(
         file_diffs,
-        path_expressions=[],
-        path_expression_exclusions=["src/dir/..."],
+        path_regexes=[],
+        path_regex_exclusions=["src/dir/.*"],
     )
 
     self.assertLen(filtered_diffs, 1)
@@ -170,10 +170,10 @@ class CheckDiffsTest(absltest.TestCase):
     file_diffs = check_contents.parse_diff(SUPPRESSED_DIFF)
 
     filtered_diffs = check_contents.filter_diffs_by_path(
-        file_diffs, path_expressions=[], path_expression_exclusions=[]
+        file_diffs, path_regexes=[], path_regex_exclusions=[]
     )
 
-    # filtering without path_expression(_exclusions) is a noop
+    # filtering without path_regex(_exclusions) is a noop
     self.assertEqual(file_diffs, filtered_diffs)
 
     locs = check_contents.check_diffs(

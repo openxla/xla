@@ -135,51 +135,44 @@ def parse_diff(diff: str) -> list[FileDiff]:
 def filter_diffs_by_path(
     diffs: Iterable[FileDiff],
     *,
-    path_expressions: list[str],
-    path_expression_exclusions: list[str],
+    path_regexes: list[str],
+    path_regex_exclusions: list[str],
 ) -> list[FileDiff]:
-  """Filters files according to path_expressions.
+  """Filters files according to path_regexes.
 
-  If a file matches both a path_expression and a path_expression_exclusion, then
+  If a file matches both a path_regex and a path_regex_exclusion, then
   it will be filtered out.
 
   Arguments:
     diffs: A sequence of FileDiff objects representing the diffs of each file in
       the change.
-    path_expressions: A list of strings where `...` acts as a glob. Paths
-      matching these will pass through the filter. By default, every path is
-      matched.
-    path_expression_exclusions: A list of strings where `...` acts as a glob.
-      Paths that match both a path_expression and a path_expression_exclusion
-      won't pass through the filter.
+    path_regexes: A list of regexes. Paths matching these will pass through the
+      filter. By default, every path is matched.
+    path_regex_exclusions: A list of regexes. Paths that match both a path_regex
+      and a path_regex_exclusion won't pass through the filter.
 
   Returns:
-    A list of FileDiffs whose paths match a path_expression and don't match
-      any path_expression_exclusions.
+    A list of FileDiffs whose paths match a path_regex and don't match
+      any path_regex_exclusions.
   """
 
-  if not path_expressions:
-    path_expressions = ["..."]  # by default match everything
+  if not path_regexes:
+    path_regexes = [".*"]  # by default match everything
 
-  path_regex = re.compile(
-      "|".join(expr.replace("...", ".*") for expr in path_expressions)
-  )
+  path_regexes = [re.compile(regex) for regex in path_regexes]
 
-  # We can't join the exclusion or suppression regexes on '|' to make one
-  # regular expression, because the default case is a regex which can never
-  # have a match. This is possible, but would be pretty ugly.
-  exclusion_regexes = [
-      re.compile(expr.replace("...", ".*"))
-      for expr in path_expression_exclusions
-  ]
+  def should_include(path: str) -> bool:
+    return any(regex.search(path) for regex in path_regexes)
 
-  def should_not_exclude(path) -> bool:
-    return not any(regex.search(path) for regex in exclusion_regexes)
+  path_regex_exclusions = [re.compile(regex) for regex in path_regex_exclusions]
+
+  def should_exclude(path: str) -> bool:
+    return any(regex.search(path) for regex in path_regex_exclusions)
 
   return [
       diff
       for diff in diffs
-      if path_regex.search(diff.path) and should_not_exclude(diff.path)
+      if should_include(diff.path) and not should_exclude(diff.path)
   ]
 
 
@@ -230,8 +223,8 @@ def main(argv: Sequence[str]):
   parser = argparse.ArgumentParser(
       description="Check `git diff` for prohibited regexes."
   )
-  parser.add_argument("--path_expression", nargs="*", default=[])
-  parser.add_argument("--path_expression_exclusion", nargs="*", default=[])
+  parser.add_argument("--path_regex", nargs="*", default=[])
+  parser.add_argument("--path_regex_exclusion", nargs="*", default=[])
   parser.add_argument("--prohibited_regex", required=True)
   parser.add_argument("--suppression_regex")
   parser.add_argument("--failure_message", required=True)
@@ -241,8 +234,8 @@ def main(argv: Sequence[str]):
 
   file_diffs = filter_diffs_by_path(
       parse_diff(get_git_diff_stdout()),
-      path_expressions=args.path_expression,
-      path_expression_exclusions=args.path_expression_exclusion,
+      path_regexes=args.path_regex,
+      path_regex_exclusions=args.path_regex_exclusion,
   )
 
   regex_locations = check_diffs(
