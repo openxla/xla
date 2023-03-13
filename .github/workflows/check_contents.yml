@@ -33,9 +33,9 @@ jobs:
       - name: "Fetch HEAD of main branch"
         run: git fetch origin main --depth=1
       - name: "Check for tsl::{Status,StatusOr}"
-        run: |
-          python3 build_tools/github_actions/check_contents/check_contents.py \
-            --path_expression_exclusion ".github/workflows/check_contents.yml" \
-            --prohibited_regex "tsl::Status(Or)?" \
-            --suppression_regex "TENSORFLOW_STATUS_OK" \
-            --failure_message "Use plain Status(Or) rather than tsl::Status(Or) within XLA."
+        if: always() # We want to run all checks, not just til first failure
+        run: "python3 build_tools/github_actions/check_contents/check_contents.py
+            --path_regex_exclusion '.github/workflows/check_contents\\.yml'
+            --prohibited_regex 'tsl::Status(Or)?'
+            --suppression_regex 'TENSORFLOW_STATUS_OK'
+            --failure_message 'Use plain Status(Or) rather than tsl::Status(Or) within XLA.'"

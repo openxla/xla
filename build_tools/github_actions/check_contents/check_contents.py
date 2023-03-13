@@ -21,6 +21,7 @@ have been added in the diff.
 import argparse
 import dataclasses
 import itertools
+import logging  # Intended to run on vanilla Github Actions runner
 import re
 import subprocess
 import sys
@@ -246,16 +247,20 @@ def main(argv: Sequence[str]):
 
   if regex_locations:
     for loc in regex_locations:
-      err_msg = (
-          f"ERROR: Found {args.prohibited_regex} in "
-          f"{loc.path}:{loc.line_number}\nMatched `{loc.matched_text}` in"
-          f" line `{loc.line_contents}`.\n{args.failure_message}\n"
+      logging.error(
+          "Found `%s` in %s:%s",
+          args.prohibited_regex,
+          loc.path,
+          loc.line_number,
       )
-      sys.stderr.write(err_msg)
+      logging.error(
+          "Matched `%s` in line `%s`", loc.matched_text, loc.line_contents
+      )
+      logging.error("Failure message: %s", args.failure_message)
     sys.exit(1)
   else:
-    sys.stderr.write(
-        f"Prohibited regex {args.prohibited_regex} not found in diff!"
+    logging.info(
+        "Prohibited regex `%s` not found in diff!", args.prohibited_regex
     )
     sys.exit(0)
 
