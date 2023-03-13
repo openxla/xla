@@ -657,6 +657,7 @@ cc_library(
         "@pybind11",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
+        "@stablehlo//:stablehlo_serialization",
         "@tsl//tsl/platform:errors",
     ],
 )
