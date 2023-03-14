@@ -33,38 +33,57 @@ cc_library(
     ],
 )
 
+SHARED_GPU_CLIENT_DEPS = [
+    ":gpu_helpers",
+    "@com_google_absl//absl/strings",
+    "//xla/pjrt:pjrt_stream_executor_client",
+    "@com_google_absl//absl/base:core_headers",
+    "@com_google_absl//absl/container:flat_hash_map",
+    "//xla/service/gpu:gpu_executable_run_options",
+    "//xla:statusor",
+    "//xla/client:client_library",
+    "//xla/pjrt/distributed:client",
+    "//xla/service:platform_util",
+    "//xla:util",
+    "@tsl//tsl/framework:bfc_allocator",
+    "@tsl//tsl/framework:device_id",
+    "@tsl//tsl/framework:device_id_impl",
+    "@tsl//tsl/platform:env",
+    "@tsl//tsl/platform:errors",
+    "@tsl//tsl/util:env_var",
+    "//xla/stream_executor:device_mem_allocator",
+    "//xla/stream_executor:device_memory",
+    "//xla/stream_executor:tf_allocator_adapter",
+]
+
 cc_library(
     name = "se_gpu_pjrt_client",
     srcs = ["se_gpu_pjrt_client.cc"],
     hdrs = ["se_gpu_pjrt_client.h"],
     defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
     visibility = ["//xla/pjrt:friends"],
-    deps = [
-        ":gpu_helpers",
-        "@com_google_absl//absl/strings",
-        "//xla/pjrt:pjrt_stream_executor_client",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "//xla/service/gpu:gpu_executable_run_options",
-        "//xla:statusor",
-        "//xla/client:client_library",
-        "//xla/pjrt/distributed:client",
-        "//xla/service:platform_util",
-        "//xla:util",
-        "@tsl//tsl/framework:bfc_allocator",
-        "@tsl//tsl/framework:device_id",
-        "@tsl//tsl/framework:device_id_impl",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/util:env_var",
-        "//xla/stream_executor:device_mem_allocator",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:tf_allocator_adapter",
-    ] + if_cuda([
+    deps = SHARED_GPU_CLIENT_DEPS + if_cuda([
         ":nccl_id_store_cuda",
         "@local_config_cuda//cuda:cuda_headers",
         "//xla/stream_executor/cuda:cuda_activation_header",
         "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
+    ]) + if_rocm([
+        ":nccl_id_store_rocm",
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
+)
+
+cc_library(
+    name = "se_gpu_pjrt_client_no_cudamallocasync_allocator",
+    srcs = ["se_gpu_pjrt_client.cc"],
+    hdrs = ["se_gpu_pjrt_client.h"],
+    defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
+    visibility = ["//xla/pjrt:friends"],
+    deps = SHARED_GPU_CLIENT_DEPS + if_cuda([
+        ":nccl_id_store_cuda",
+        "@local_config_cuda//cuda:cuda_headers",
+        "//xla/stream_executor/cuda:cuda_activation_header",
+        "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator_header",
     ]) + if_rocm([
         ":nccl_id_store_rocm",
         "@local_config_rocm//rocm:rocm_headers",
