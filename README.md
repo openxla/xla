@@ -23,8 +23,8 @@ frontends and hardware backends.
 
 ## Contribute
 
-If you'd like to contribute to XLA, see the
-[contributor guide](docs/contribute.md).
+If you'd like to contribute to XLA, review [How to Contribute](CONTRIBUTING.md)
+and then see the [developer guide](docs/developer_guide.md).
 
 ## Contacts
 

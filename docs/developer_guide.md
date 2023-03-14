@@ -1,6 +1,6 @@
-# Contribute to XLA
+# XLA developer guide
 
-This guide shows you how to start contributing to the XLA project.
+This guide shows you how to get started developing the XLA project.
 
 Before you begin, complete the following prerequisites:
 
