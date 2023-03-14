@@ -21,6 +21,75 @@ package_group(
 )
 
 cc_library(
+    name = "hlo_creation_utils",
+    srcs = ["hlo_creation_utils.cc"],
+    hdrs = [
+        "hlo_creation_utils.h",
+    ],
+    deps = [
+        "//xla:comparison_util",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla/client:xla_builder",
+        "//xla/client:xla_computation",
+        "//xla/client/lib:comparators",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
+        "//xla/service:shape_inference",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "hlo_cost_analysis",
+    srcs = ["hlo_cost_analysis.cc"],
+    hdrs = ["hlo_cost_analysis.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:window_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@tsl//tsl/lib/gtl:map_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_cost_analysis_test",
+    srcs = ["hlo_cost_analysis_test.cc"],
+    deps = [
+        ":hlo_cost_analysis",
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:test_helpers",
+        "//xla:xla_data_proto_cc",
+        "//xla/client",
+        "//xla/client:client_library",
+        "//xla/client:local_client",
+        "//xla/client:padding",
+        "//xla/client:xla_builder",
+        "//xla/client:xla_computation",
+        "//xla/hlo/ir:hlo",
+        "//xla/service",
+        "//xla/service:cpu_plugin",
+        "//xla/service:hlo_parser",
+        "//xla/service:local_service",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
     name = "hlo_live_range",
     srcs = [
         "hlo_live_range.cc",
@@ -99,6 +168,18 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+    ],
+)
+
+cc_library(
+    name = "hlo_query",
+    srcs = ["hlo_query.cc"],
+    hdrs = ["hlo_query.h"],
+    deps = [
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
     ],
 )
 

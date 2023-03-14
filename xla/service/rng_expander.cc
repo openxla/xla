@@ -19,9 +19,9 @@ limitations under the License.
 
 #include "xla/client/lib/prng.h"
 #include "xla/client/xla_builder.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
-#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 

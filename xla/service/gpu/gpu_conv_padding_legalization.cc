@@ -18,10 +18,10 @@ limitations under the License.
 #include <memory>
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/gpu/cublas_cudnn.h"
-#include "xla/service/hlo_creation_utils.h"
 #include "xla/service/shape_inference.h"
 #include "xla/util.h"
 #include "xla/window_util.h"

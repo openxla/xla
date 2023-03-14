@@ -19,8 +19,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/service/gpu/gpu_fusible.h"
-#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 namespace gpu {

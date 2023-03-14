@@ -24,11 +24,11 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
-#include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/dnn.pb.h"
 #include "xla/stream_executor/stream_executor.h"

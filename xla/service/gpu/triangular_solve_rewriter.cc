@@ -17,8 +17,8 @@ limitations under the License.
 
 #include <numeric>
 
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/service/gpu/cublas_cudnn.h"
-#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 namespace gpu {

@@ -191,8 +191,8 @@ xla_cc_test(
     tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_codegen_test",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_module_config",
-        "//xla/service:hlo_query",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test_main",
     ],

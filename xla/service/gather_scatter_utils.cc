@@ -19,8 +19,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/permutation_util.h"
-#include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 

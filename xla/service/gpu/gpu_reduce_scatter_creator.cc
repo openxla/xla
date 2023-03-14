@@ -20,7 +20,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/hlo_query.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/reduce_scatter_utils.h"
 
 namespace xla {

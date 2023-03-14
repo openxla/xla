@@ -23,8 +23,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/literal_util.h"
-#include "xla/service/hlo_creation_utils.h"
 #include "xla/service/tuple_util.h"
 
 namespace xla {

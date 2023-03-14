@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <vector>
 
+#include "xla/hlo/utils/hlo_cost_analysis.h"
 #include "xla/literal.h"
-#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/status.h"
 

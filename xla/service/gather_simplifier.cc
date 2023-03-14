@@ -21,10 +21,10 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/literal_util.h"
 #include "xla/permutation_util.h"
 #include "xla/service/gather_scatter_utils.h"
-#include "xla/service/hlo_creation_utils.h"
 #include "xla/shape_util.h"
 #include "tsl/platform/statusor.h"
 

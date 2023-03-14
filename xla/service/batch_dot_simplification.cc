@@ -17,7 +17,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/service/hlo_creation_utils.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 
 namespace xla {
 StatusOr<bool>

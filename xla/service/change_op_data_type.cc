@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <optional>
 
-#include "xla/service/hlo_creation_utils.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 
 namespace xla {
 namespace {

@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/broadcast_canonicalizer.h"
 
-#include "xla/service/hlo_creation_utils.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 
 namespace xla {
 

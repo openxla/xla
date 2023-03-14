@@ -39,6 +39,7 @@ limitations under the License.
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/client/executable_build_options.h"
 #include "xla/client/xla_computation.h"
+#include "xla/hlo/utils/hlo_cost_analysis.h"
 #include "xla/literal.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "xla/service/cpu/cpu_xfeed.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
-#include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/statusor.h"
 #include "xla/xla_data.pb.h"

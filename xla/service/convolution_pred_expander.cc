@@ -21,7 +21,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/hlo_creation_utils.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/xla_data.pb.h"
 

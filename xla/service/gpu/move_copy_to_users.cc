@@ -22,7 +22,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/hlo_creation_utils.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {

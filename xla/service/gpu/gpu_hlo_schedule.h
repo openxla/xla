@@ -20,8 +20,8 @@ limitations under the License.
 #include <vector>
 
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/utils/hlo_cost_analysis.h"
 #include "xla/service/gpu/gpu_device_info.h"
-#include "xla/service/hlo_cost_analysis.h"
 
 namespace xla {
 namespace gpu {

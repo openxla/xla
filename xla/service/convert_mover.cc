@@ -16,7 +16,7 @@ limitations under the License.
 #include "xla/service/convert_mover.h"
 
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/hlo_creation_utils.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 
 namespace xla {
 namespace {

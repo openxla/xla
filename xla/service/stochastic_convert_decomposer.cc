@@ -20,8 +20,8 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/primitive_util.h"
-#include "xla/service/hlo_creation_utils.h"
 #include "xla/service/shape_inference.h"
 #include "xla/status.h"
 #include "xla/statusor.h"

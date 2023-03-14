@@ -33,10 +33,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "xla/client/xla_computation.h"
+#include "xla/hlo/utils/hlo_cost_analysis.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
-#include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/status.h"
 #include "xla/statusor.h"

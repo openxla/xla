@@ -22,9 +22,9 @@ limitations under the License.
 #include <sstream>
 #include <vector>
 
+#include "xla/hlo/utils/hlo_creation_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
-#include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/xla_data.pb.h"
 

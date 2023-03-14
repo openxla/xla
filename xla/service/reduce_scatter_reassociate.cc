@@ -21,10 +21,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/all_reduce_key.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo_domain_map.h"
-#include "xla/service/hlo_query.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
