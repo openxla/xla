@@ -19,10 +19,14 @@ the repository, and create a pull request.
 
 1.  Create a fork of the [XLA repository](https://github.com/openxla/xla).
 2.  Clone your fork of the repo, replacing `<USER>` with your GitHub username:
-    `sh git clone https://github.com/<USER>/xla.git`
-3.  Change into the `xla` directory: `sh cd xla`
-4.  Configure the remote upstream repo: `sh git remote add upstream
-    https://github.com/openxla/xla.git`
+    ```sh
+    git clone https://github.com/<USER>/xla.git
+    ```
+3.  Change into the `xla` directory: `cd xla`
+4.  Configure the remote upstream repo:
+    ```sh
+    git remote add upstream https://github.com/openxla/xla.git
+    ```
 
 ## Set up an environment
 

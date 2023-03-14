@@ -25,12 +25,18 @@ This project follows
 
 ## Contribution process
 
+### Developer Guide
+
+For a guide on how to setup a dev environment for XLA, please refer to the
+[XLA developer guide](https://github.com/openxla/xla/blob/main/docs/developer_guide.md).
+
 ### Code Reviews
 
 All submissions, including submissions by project members, require review. We
 use GitHub pull requests for this purpose. Consult
 [GitHub Help](https://help.github.com/articles/about-pull-requests/) for more
-information on using pull requests.
+information on using pull requests. Please ensure that your PR passes CI before
+requesting review!
 
 ### Notes on Testing and CI
 
