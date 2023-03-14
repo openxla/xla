@@ -27,7 +27,7 @@ cd "${KOKORO_ARTIFACTS_DIR}/github/xla"
 export PATH="$PATH:/c/Python38"
 
 TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/..."
-TAGS_FILTER="-no_oss,-gpu,-no_windows,-windows_excluded"
+TAGS_FILTER="-no_oss,-oss_excluded,-gpu,-no_windows,-windows_excluded"
 /c/tools/bazel.exe test \
   --nocheck_visibility \
   --keep_going \

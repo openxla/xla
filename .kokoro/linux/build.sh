@@ -42,7 +42,7 @@ docker run --name xla -w /tf/xla -itd --rm \
 # bazelrc Files currently come from https://github.com/tensorflow/tensorflow/tree/master/tensorflow/tools/tf_sig_build_dockerfiles/devel.usertools
 RC_FILE="/usertools/cpu.bazelrc"
 TARGET_FILTER=""
-TAGS_FILTER="-no_oss,-oss_serial"
+TAGS_FILTER="-no_oss,-oss_excluded,-oss_serial"
 ADDITIONAL_FLAGS=""
 
 if is_linux_gpu_job ; then
