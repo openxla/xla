@@ -5,8 +5,8 @@
 // CHECK-SAME:  %[[ARG0:.*]]: tensor<16x?xf32>, %[[ARG1:.*]]: tensor<16x?xf32>, %[[SHAPE:.*]]: tensor<3xindex>
 func.func @single_bcast(%arg0 : tensor<16x?xf32>, %arg1 : tensor<16x?xf32>,
     %shape : tensor<3xindex>) -> tensor<?x16x?xf32> {
-  // CHECK-DAG: %[[BCASTED_ARG0:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[SHAPE]])
-  // CHECK-DAG: %[[BCASTED_ARG1:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[SHAPE]])
+  // CHECK-DAG: %[[BCASTED_ARG0:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[SHAPE]]
+  // CHECK-DAG: %[[BCASTED_ARG1:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[SHAPE]]
   // CHECK-DAG: %[[ADD:.*]] = mhlo.add %[[BCASTED_ARG0]], %[[BCASTED_ARG1]] : [[BCASTED_TY:tensor<\?x16x\?xf32>]]
   // CHECK-DAG: %[[MUL:.*]] = mhlo.multiply %[[ADD]], %[[ADD]] : [[BCASTED_TY]]
   // CHECK-DAG: %[[SUB:.*]] = mhlo.subtract %[[ADD]], %[[ADD]] : [[BCASTED_TY]]
@@ -28,8 +28,8 @@ func.func @single_bcast(%arg0 : tensor<16x?xf32>, %arg1 : tensor<16x?xf32>,
 // CHECK-SAME:  %[[ARG0:.*]]: tensor<16x?xf32>, %[[ARG1:.*]]: tensor<16x?xf32>, %[[SHAPE:.*]]: tensor<3xindex>
 func.func @single_bcast_ensure_order(%arg0 : tensor<16x?xf32>, %arg1 : tensor<16x?xf32>,
     %shape : tensor<3xindex>) -> tensor<?x16x?xf32> {
-  // CHECK-DAG: %[[BCASTED_ARG0:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[SHAPE]])
-  // CHECK-DAG: %[[BCASTED_ARG1:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[SHAPE]])
+  // CHECK-DAG: %[[BCASTED_ARG0:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[SHAPE]]
+  // CHECK-DAG: %[[BCASTED_ARG1:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[SHAPE]]
   // CHECK-DAG: %[[ADD:.*]] = mhlo.add %[[BCASTED_ARG0]], %[[BCASTED_ARG1]] : [[BCASTED_TY:tensor<\?x16x\?xf32>]]
   // CHECK-DAG: %[[MUL:.*]] = mhlo.multiply %[[ADD]], %[[ADD]] : [[BCASTED_TY]]
   // CHECK-DAG: %[[SUB:.*]] = mhlo.subtract %[[MUL]], %[[MUL]] : [[BCASTED_TY]]
@@ -52,10 +52,10 @@ func.func @single_bcast_ensure_order(%arg0 : tensor<16x?xf32>, %arg1 : tensor<16
 func.func @double_bcasts(%arg0 : tensor<16x?xf32>, %arg1 : tensor<16x?xf32>,
     %shape0 : tensor<3xindex>, %shape1 : tensor<3xindex>)
     -> (tensor<?x16x?xf32>, tensor<?x16x?xf32>) {
-  // CHECK-DAG: %[[BCASTED_ARG00:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[SHAPE0]]) [[BCAST_DIMS0:{broadcast_dimensions = dense<\[1, 2\]> : tensor<2xi64>}]]
-  // CHECK-DAG: %[[BCASTED_ARG01:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[SHAPE1]]) [[BCAST_DIMS1:{broadcast_dimensions = dense<\[0, 2\]> : tensor<2xi64>}]]
-  // CHECK-DAG: %[[BCASTED_ARG10:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[SHAPE0]]) [[BCAST_DIMS0]]
-  // CHECK-DAG: %[[BCASTED_ARG11:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[SHAPE1]]) [[BCAST_DIMS1]]
+  // CHECK-DAG: %[[BCASTED_ARG00:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[SHAPE0]], dims = [[BCAST_DIMS0:\[1, 2\]]]
+  // CHECK-DAG: %[[BCASTED_ARG01:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[SHAPE1]], dims = [[BCAST_DIMS1:\[0, 2\]]]
+  // CHECK-DAG: %[[BCASTED_ARG10:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[SHAPE0]], dims = [[BCAST_DIMS0]]
+  // CHECK-DAG: %[[BCASTED_ARG11:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[SHAPE1]], dims = [[BCAST_DIMS1]]
   // CHECK-DAG: %[[ADD0:.*]] = mhlo.add %[[BCASTED_ARG00]], %[[BCASTED_ARG10]] : [[BCAST_TY:tensor<\?x16x\?xf32>]]
   // CHECK-DAG: %[[ADD1:.*]] = mhlo.add %[[BCASTED_ARG01]], %[[BCASTED_ARG11]] : [[BCAST_TY]]
   // CHECK-DAG: %[[MUL0:.*]] = mhlo.multiply %[[ADD0]], %[[ADD0]] : [[BCAST_TY]]
@@ -85,8 +85,8 @@ func.func @double_bcasts(%arg0 : tensor<16x?xf32>, %arg1 : tensor<16x?xf32>,
 func.func @late_output_dimensions(%arg0 : tensor<?x32xf32>, %arg1 : tensor<?x32xf32>,
     %arg2 : tensor<?x?x?xf32>) -> tensor<?x?x32xf32> {
   // CHECK-DAG: %[[SHAPE:.*]] = shape.shape_of %[[ARG2]]
-  // CHECK-DAG: %[[BCASTED_ARG0:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[SHAPE]]) {broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>}
-  // CHECK-DAG: %[[BCASTED_ARG1:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[SHAPE]]) {broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>}
+  // CHECK-DAG: %[[BCASTED_ARG0:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[SHAPE]], dims = [0, 1]
+  // CHECK-DAG: %[[BCASTED_ARG1:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[SHAPE]], dims = [0, 1]
   // CHECK-DAG: %[[SUB:.*]] = mhlo.subtract %[[BCASTED_ARG0]], %[[BCASTED_ARG1]] : [[BCAST_TY:tensor<\?x\?x32xf32>]]
   // CHECK-DAG: %[[ADD:.*]] = mhlo.add %[[SUB]], %[[SUB]] : [[BCAST_TY]]
   // CHECK:     return %[[ADD]] : [[BCAST_TY]]
@@ -106,8 +106,8 @@ func.func @late_output_dimensions(%arg0 : tensor<?x32xf32>, %arg1 : tensor<?x32x
 func.func @very_late_output_dimensions(%arg0 : tensor<?x32xf32>,
     %arg1 : tensor<?x32xf32>, %arg2 : tensor<?x?x?xf32>) -> tensor<?x?x32xf32> {
   // CHECK-DAG: %[[S:.*]] = shape.shape_of %[[ARG2:.*]]
-  // CHECK-DAG: %[[BCASTED_ARG0:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[S]])
-  // CHECK-DAG: %[[BCASTED_ARG1:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[S]])
+  // CHECK-DAG: %[[BCASTED_ARG0:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[S]]
+  // CHECK-DAG: %[[BCASTED_ARG1:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[S]]
   // CHECK-DAG: %[[ACC0:.*]] = mhlo.add %[[BCASTED_ARG0]], %[[BCASTED_ARG1]]
   // CHECK-DAG: %[[ACC1:.*]] = mhlo.multiply %[[ACC0]], %[[BCASTED_ARG1]]
   // CHECK-DAG: %[[ACC2:.*]] = mhlo.subtract %[[ACC1]], %[[BCASTED_ARG1]]
@@ -131,8 +131,8 @@ func.func @propagate_within_block(%arg0 : tensor<?x32xf32>, %arg1 : tensor<?x32x
     -> tensor<?x?x32xf32> {
   // CHECK-DAG: %[[SUB:.*]] = mhlo.subtract %[[ARG0]], %[[ARG1]] : tensor<?x32xf32>
   // CHECK:     %[[RESULT:.*]] = shape.assuming %[[W]]
-  // CHECK-DAG:   %[[BCASTED_ARG2:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG2]], %[[SHAPE]])
-  // CHECK-DAG:   %[[BCASTED_SUB:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[SUB]], %[[SHAPE]])
+  // CHECK-DAG:   %[[BCASTED_ARG2:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG2]], %[[SHAPE]]
+  // CHECK-DAG:   %[[BCASTED_SUB:.*]] = mhlo.dynamic_broadcast_in_dim %[[SUB]], %[[SHAPE]]
   // CHECK-DAG:   %[[ADD:.*]] = mhlo.add %[[BCASTED_SUB]], %[[BCASTED_ARG2]] : tensor<?x?x32xf32>
   // CHECK:       shape.assuming_yield %[[ADD]]
   // CHECK:     return %[[RESULT]]
@@ -153,9 +153,9 @@ func.func @propagate_within_block(%arg0 : tensor<?x32xf32>, %arg1 : tensor<?x32x
 // CHECK-SAME:  %[[ARG:.*]]: tensor<?x?x?xf32>, %[[S:.*]]: tensor<3xindex>, %[[W:.*]]: !shape.witness
 func.func @propagate_within_block_2(%arg : tensor<?x?x?xf32>,
     %shape: tensor<3xindex>, %w: !shape.witness) -> tensor<?x?x?xf32> {
-  // CHECK-DAG: %[[TMP:.*]] = "mhlo.dynamic_broadcast_in_dim"(%arg0, %[[S]])
+  // CHECK-DAG: %[[TMP:.*]] = mhlo.dynamic_broadcast_in_dim %arg0, %[[S]]
   // CHECK:     %[[RES:.*]] = shape.assuming %[[W]]
-  // CHECK-DAG:   %[[INNER_RES:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[TMP]], %[[S]])
+  // CHECK-DAG:   %[[INNER_RES:.*]] = mhlo.dynamic_broadcast_in_dim %[[TMP]], %[[S]]
   // CHECK:       shape.assuming_yield %[[INNER_RES]]
   // CHECK:     return %[[RES]]
   %0 = "mhlo.dynamic_broadcast_in_dim"(%arg, %shape)
@@ -176,7 +176,7 @@ func.func @propagate_within_block_2(%arg : tensor<?x?x?xf32>,
 // CHECK-SAME:  %[[ARG:.*]]: tensor<1xindex>
 func.func @propagate_across_bcasts_cst_src(%s : tensor<1xindex>) -> tensor<?xi1> {
   // CHECK-DAG: %[[C1:.*]] = mhlo.constant dense<true> : tensor<i1>
-  // CHECK-DAG: %[[RES:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[C1]], %[[ARG]]) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<i1>, tensor<1xindex>) -> tensor<?xi1>
+  // CHECK-DAG: %[[RES:.*]] = mhlo.dynamic_broadcast_in_dim %[[C1]], %[[ARG]], dims = [] : (tensor<i1>, tensor<1xindex>) -> tensor<?xi1>
   // CHECK:     return %[[RES]]
   %0 = mhlo.constant dense<true> : tensor<i1>
   %1 = "mhlo.dynamic_broadcast_in_dim"(%0, %s)
@@ -193,7 +193,7 @@ func.func @propagate_across_bcasts_cst_src(%s : tensor<1xindex>) -> tensor<?xi1>
 // CHECK-LABEL: @compose_bcast_dims
 // CHECK-SAME:  %[[ARG:.*]]: tensor<?x?xi1>, %[[S0:.*]]: tensor<3xindex>, %[[S1:.*]]: tensor<4xindex>
 func.func @compose_bcast_dims(%arg : tensor<?x?xi1>, %s0 : tensor<3xindex>, %s1 : tensor<4xindex>) -> tensor<1x?x1x?xi1> {
-  // CHECK-DAG: %[[RES:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG]], %[[S1]]) {broadcast_dimensions = dense<[1, 3]> : tensor<2xi64>} : (tensor<?x?xi1>, tensor<4xindex>) -> tensor<1x?x1x?xi1>
+  // CHECK-DAG: %[[RES:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG]], %[[S1]], dims = [1, 3] : (tensor<?x?xi1>, tensor<4xindex>) -> tensor<1x?x1x?xi1>
   // CHECK:     return %[[RES]]
   %1 = "mhlo.dynamic_broadcast_in_dim"(%arg, %s0)
       {broadcast_dimensions = dense<[1, 2]> : tensor<2xi64>}
@@ -209,7 +209,7 @@ func.func @compose_bcast_dims(%arg : tensor<?x?xi1>, %s0 : tensor<3xindex>, %s1 
 // CHECK-LABEL: @propagate_across_bcasts
 // CHECK-SAME:  %[[ARG:.*]]: tensor<?x?x?xf32>, %[[S:.*]]: tensor<3xindex>
 func.func @propagate_across_bcasts(%arg : tensor<?x?x?xf32>, %shape : tensor<3xindex>) -> tensor<?x?x?xf32> {
-  // CHECK-DAG: %[[RES:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG]], %[[S]]) {broadcast_dimensions = dense<[0, 1, 2]> : tensor<3xi64>} : (tensor<?x?x?xf32>, tensor<3xindex>) -> tensor<?x?x?xf32>
+  // CHECK-DAG: %[[RES:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG]], %[[S]], dims = [0, 1, 2] : (tensor<?x?x?xf32>, tensor<3xindex>) -> tensor<?x?x?xf32>
   // CHECK:     return %[[RES]]
   %0 = "mhlo.dynamic_broadcast_in_dim"(%arg, %shape)
       {broadcast_dimensions = dense<[0, 1, 2]> : tensor<3xi64>}

@@ -27,9 +27,7 @@ func.func @einsum_batched_matrix_high_rank_vector_mul(%arg0: tensor<8x2x6xf32>, 
 // CHECK-SAME:        lhs_contracting_dimensions = [2]
 // CHECK-SAME:        rhs_contracting_dimensions = [3]
 // CHECK-SAME:    : (tensor<8x2x6xf32>, tensor<8x5x3x6xf32>) -> tensor<8x2x5x3xf32>
-// CHECK:         %[[T:.+]] = "mhlo.transpose"(%[[DG]])
-// CHECK-SAME:      permutation = dense<[0, 2, 3, 1]
-// CHECK-SAME:    : (tensor<8x2x5x3xf32>) -> tensor<8x5x3x2xf32>
+// CHECK:         %[[T:.+]] = mhlo.transpose %[[DG]], dims = [0, 2, 3, 1] : (tensor<8x2x5x3xf32>) -> tensor<8x5x3x2xf32>
 
 func.func @matmul(%arg0: tensor<?x?xf32>, %arg1: tensor<?x?xf32>) -> tensor<?x?xf32> {
   %0 = "mhlo.einsum"(%arg0, %arg1) {einsum_config = "ij,jk->ik"} : (tensor<?x?xf32>, tensor<?x?xf32>) -> tensor<?x?xf32>

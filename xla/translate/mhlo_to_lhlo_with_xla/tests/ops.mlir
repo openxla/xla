@@ -794,7 +794,7 @@ func.func @main() -> tensor<1x10xf32> {
 // -----
 
 // CHECK-LABEL: func @main
-// CHECK: "mhlo.reverse"(%{{.*}}) {dimensions = dense<[1, 2]> : tensor<2xi64>} : (tensor<10x11x12x13xf32>) -> tensor<10x11x12x13xf32>
+// CHECK: mhlo.reverse %{{.*}}, dims = [1, 2] : tensor<10x11x12x13xf32>
 func.func @main(%arg0 : tensor<10x11x12x13xf32>) -> tensor<10x11x12x13xf32> {
   %result = "mhlo.reverse"(%arg0) {
     dimensions = dense<[1,2]> : tensor<2xi64>
@@ -843,7 +843,7 @@ func.func @main(%arg0: tensor<200x100x300xf32>, %arg1: tensor<10x2xi32>) -> tens
 // -----
 
 // CHECK-LABEL: func @main
-// CHECK: "mhlo.dynamic_slice"(%{{.*}}, %{{.*}}, %{{.*}}) {slice_sizes = dense<[1, 4]> : tensor<2xi64>} : (tensor<3x4xf32>, tensor<i64>, tensor<i64>) -> tensor<1x4xf32>
+// CHECK: mhlo.dynamic_slice %{{.*}}, %{{.*}}, %{{.*}}, sizes = [1, 4] : (tensor<3x4xf32>, tensor<i64>, tensor<i64>) -> tensor<1x4xf32>
 func.func @main(%arg: tensor<3x4xf32>, %start1: tensor<i64>, %start2: tensor<i64>) -> tensor<1x4xf32> {
   %0 = "mhlo.dynamic_slice"(%arg, %start1, %start2) {slice_sizes = dense<[1, 4]> : tensor<2xi64>} : (tensor<3x4xf32>, tensor<i64>, tensor<i64>) -> tensor<1x4xf32>
   func.return %0 : tensor<1x4xf32>

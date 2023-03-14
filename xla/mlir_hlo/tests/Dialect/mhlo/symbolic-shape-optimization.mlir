@@ -724,8 +724,7 @@ func.func @optimize_1dx1d_bcast(
     {rt.symbolic_shape = dense<[-2]> : tensor<1xi64>}
 ) -> tensor<?xf32> {
   // CHECK:      %[[SHAPE:.*]] = shape.shape_of %[[ARG0]]
-  // CHECK:      %[[DYNAMIC:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[SHAPE]])
-  // CHECK-SAME:     broadcast_dimensions = dense<0>
+  // CHECK:      %[[DYNAMIC:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[SHAPE]], dims = [0]
   // CHECK-SAME:     known_expanding_dimensions = dense<>
   // CHECK-SAME:     known_nonexpanding_dimensions = dense<0>
   // CHECK:      return %[[DYNAMIC]]
@@ -749,8 +748,7 @@ func.func @optimize_1dx2d_bcast_const_shape(
     {rt.symbolic_shape = dense<[-2, 512]> : tensor<2xi64>}
 ) -> tensor<?x512xf32> {
   // CHECK:      %[[SHAPE_0:.*]] = shape.shape_of %[[ARG1_0]]
-  // CHECK:      %[[DYNAMIC_0:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0_0]], %[[SHAPE_0]])
-  // CHECK-SAME:     broadcast_dimensions = dense<1>
+  // CHECK:      %[[DYNAMIC_0:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0_0]], %[[SHAPE_0]], dims = [1]
   // CHECK-SAME:     known_expanding_dimensions = dense<>
   // CHECK-SAME:     known_nonexpanding_dimensions = dense<0>
   // CHECK:      return %[[DYNAMIC_0]]
@@ -777,8 +775,7 @@ func.func @optimize_1dx1dx1d_bcast(
     {rt.symbolic_shape = dense<[-2]> : tensor<1xi64>}
 ) -> tensor<?xf32> {
   // CHECK:      %[[SHAPE_1:.*]] = shape.shape_of %[[ARG0_1]]
-  // CHECK:      %[[DYNAMIC_1:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0_1]], %[[SHAPE_1]])
-  // CHECK-SAME:     broadcast_dimensions = dense<0>
+  // CHECK:      %[[DYNAMIC_1:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0_1]], %[[SHAPE_1]], dims = [0]
   // CHECK-SAME:     known_expanding_dimensions = dense<>
   // CHECK-SAME:     known_nonexpanding_dimensions = dense<0>
   // CHECK:      return %[[DYNAMIC_1]]
@@ -806,12 +803,10 @@ func.func @optimize_2dx1d_bcast(
     {rt.symbolic_shape = dense<[-2]> : tensor<1xi64>}
 ) -> (tensor<10x?xf32>, tensor<10x?xf32>) {
   // CHECK:      %[[SHAPE_2:.*]] = shape.shape_of %[[ARG0_2]]
-  // CHECK:      %[[DYNAMIC_2:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0_2]], %[[SHAPE_2]])
-  // CHECK-SAME:     broadcast_dimensions = dense<[0, 1]>
+  // CHECK:      %[[DYNAMIC_2:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0_2]], %[[SHAPE_2]], dims = [0, 1]
   // CHECK-SAME:     known_expanding_dimensions = dense<>
   // CHECK-SAME:     known_nonexpanding_dimensions = dense<[0, 1]>
-  // CHECK:      %[[DYNAMIC_3:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1_2]], %[[SHAPE_2]])
-  // CHECK-SAME:     broadcast_dimensions = dense<1>
+  // CHECK:      %[[DYNAMIC_3:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG1_2]], %[[SHAPE_2]], dims = [1]
   // CHECK-SAME:     known_expanding_dimensions = dense<>
   // CHECK-SAME:     known_nonexpanding_dimensions = dense<0>
   // CHECK:      return %[[DYNAMIC_2]], %[[DYNAMIC_3]]

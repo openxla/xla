@@ -1845,6 +1845,12 @@ def MHLO_DynamicSliceOp: MHLO_Op<"dynamic_slice",
 
   let results = (outs MHLO_Tensor:$result);
   let hasCanonicalizer = 1;
+
+  let assemblyFormat = [{
+    $operand `,` custom<VariadicOperandWithAttribute>($start_indices)
+      `sizes` `=` custom<DenseI64Array>($slice_sizes)
+      attr-dict `:` functional-type(operands, results)
+  }];
 }
 
 def MHLO_DynamicUpdateSliceOp: MHLO_Op<"dynamic_update_slice",
@@ -2067,6 +2073,11 @@ def MHLO_BroadcastOp : MHLO_ShapedInterfaceOp<"broadcast",
   let results = (outs MHLO_Tensor);
 
   let hasFolder = 1;
+
+  let assemblyFormat = [{
+    $operand `,` `sizes` `=` custom<DenseI64Array>($broadcast_sizes)
+      attr-dict `:` functional-type(operands, results)
+  }];
 }
 
 def MHLO_BroadcastInDimOp : MHLO_Op<"broadcast_in_dim",
@@ -2096,6 +2107,11 @@ def MHLO_BroadcastInDimOp : MHLO_Op<"broadcast_in_dim",
   let hasVerifier = 1;
   // Only handles a static subset of the legacy format.
   let hasCustomHLOConverter = 1;
+
+  let assemblyFormat = [{
+    $operand `,` `dims` `=` custom<DenseI64Array>($broadcast_dimensions)
+      attr-dict `:` functional-type(operands, results)
+  }];
 }
 
 def MHLO_DynamicBroadcastInDimOp : MHLO_ShapedInterfaceOp<
@@ -2114,6 +2130,12 @@ def MHLO_DynamicBroadcastInDimOp : MHLO_ShapedInterfaceOp<
     assumed to be possibly expanding. The sets of dimensions that are known to
     be expanding and the set of dimensions that are known to be non-expanding
     must be disjoint and they must be a subset of the operand's dimensions.
+
+    Example:
+    ```mlir
+    %result = stablehlo.dynamic_broadcast_in_dim %operand, $output_dims, dims = [2, 1]
+      : (tensor<1x3xi32>) -> tensor<2x3x2xi32>
+    ```
   }];
   let arguments = (ins
     MHLO_Tensor:$operand,
@@ -2139,6 +2161,11 @@ def MHLO_DynamicBroadcastInDimOp : MHLO_ShapedInterfaceOp<
   let hasVerifier = 1;
   // Cannot be exported to legacy formats.
   let hasCustomHLOConverter = 1;
+
+  let assemblyFormat = [{
+    $operand `,` $output_dimensions `,` `dims` `=` custom<DenseI64Array>($broadcast_dimensions)
+      attr-dict `:` functional-type(operands, results)
+  }];
 }
 
 // Note: There is no MHLO_CallOp because the standard call operation mlir::func::CallOp
@@ -2607,6 +2634,11 @@ def MHLO_FftOp: MHLO_Op<"fft", [InferTensorType, Pure]> {
   );
 
   let results = (outs MHLO_Tensor);
+
+  let assemblyFormat = [{
+    $operand `,` `type` `=` $fft_type `,` `length` `=` custom<DenseI64Array>($fft_length)
+      attr-dict `:` functional-type(operands, results)
+  }];
 }
 
 def MHLO_GatherOp: MHLO_Op<"gather", [InferTensorTypeWithReify, Pure]> {
@@ -2979,9 +3011,14 @@ def MHLO_ReverseOp: MHLO_Op<"reverse",
 
   let hasVerifier = 1;
 
-  let results = (outs MHLO_Tensor);
+  let results = (outs MHLO_Tensor:$result);
 
   let hasFolder = 1;
+
+  let assemblyFormat = [{
+    $operand `,` `dims` `=` custom<DenseI64Array>($dimensions)
+      attr-dict `:` custom<SameOperandsAndResultType>(type($operand), type($result))
+  }];
 }
 
 def MHLO_PartitionIdOp : MHLO_Op<"partition_id", [
@@ -3037,6 +3074,14 @@ def MHLO_PadOp: MHLO_ShapedInterfaceOp<"pad",
 
   let hasCanonicalizer = 1;
   let hasFolder = 1;
+
+  let assemblyFormat = [{
+    $operand `,` $padding_value `,`
+      `low` `=` custom<DenseI64Array>($edge_padding_low) `,`
+      `high` `=` custom<DenseI64Array>($edge_padding_high) `,`
+      `interior` `=` custom<DenseI64Array>($interior_padding)
+      attr-dict `:` functional-type(operands, results)
+  }];
 }
 
 def MHLO_TraceOp: MHLO_Op<"trace", []> {
@@ -3086,6 +3131,11 @@ def MHLO_TransposeOp: MHLO_ShapedInterfaceOp<"transpose",
 
   let hasFolder = 1;
   let hasCanonicalizer = 1;
+
+  let assemblyFormat = [{
+    $operand `,` `dims` `=` custom<DenseI64Array>($permutation)
+      attr-dict `:` functional-type(operands, results)
+  }];
 }
 
 def MHLO_TriangularSolveOp: MHLO_Op<"triangular_solve",

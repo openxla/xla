@@ -20,7 +20,7 @@ func.func @dim1(%arg0: tensor<9x1x2x1x42xf32>) -> tensor<9x1x2x1x42xf32> {
 // CHECK-SAME: [[ARG:%[a-zA-Z0-9]+]]
 func.func @noop_reverse_dynamic_shape(%arg0 : tensor<10x?x512xf32>) -> tensor<10x?x512xf32> {
   %0 = "mhlo.reverse"(%arg0) {dimensions = dense<[0,1]> : tensor<2xi64>}: (tensor<10x?x512xf32>) -> tensor<10x?x512xf32>
-  // CHECK-NEXT: "mhlo.reverse"([[ARG]])
+  // CHECK-NEXT: mhlo.reverse [[ARG]]
   func.return %0 : tensor<10x?x512xf32>
 }
 

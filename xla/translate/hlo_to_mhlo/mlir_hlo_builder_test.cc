@@ -223,7 +223,7 @@ TEST_F(XlaBuilderTest, Pad) {
   TF_ASSERT_OK(xla_builder_.GetCurrentStatus());
   ExpectHasSubstr(
       GetMlirOpString(pad),
-      R"("mhlo.pad"(%0, %1) {edge_padding_high = dense<[2, 0]> : tensor<2xi64>, edge_padding_low = dense<[1, 3]> : tensor<2xi64>, interior_padding = dense<[0, 1]> : tensor<2xi64>} : (tensor<3x7xf32>, tensor<f32>) -> tensor<6x16xf32>)");
+      R"(mhlo.pad %0, %1, low = [1, 3], high = [2, 0], interior = [0, 1] : (tensor<3x7xf32>, tensor<f32>) -> tensor<6x16xf32>)");
 }
 
 TEST_F(XlaBuilderTest, CustomCallWithComputation) {

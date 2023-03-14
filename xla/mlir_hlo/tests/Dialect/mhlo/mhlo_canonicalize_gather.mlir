@@ -71,12 +71,12 @@ func.func @permuted_start_index_map(%operand: tensor<33x34x35xf32>,
 // CHECK-LABEL: func @permuted_start_index_map
 //  CHECK-SAME:   %[[OPERAND:.*]]: tensor<33x34x35xf32>
 //  CHECK-SAME:   %[[INDICES:.*]]: tensor<42x3xi32>
-//       CHECK:   %[[TRANSPOSED:.*]] = "mhlo.transpose"(%[[OPERAND]])
+//       CHECK:   %[[TRANSPOSED:.*]] = mhlo.transpose %[[OPERAND]]
 //  CHECK-SAME:     -> tensor<35x33x34xf32>
 //       CHECK:   %[[GATHER:.*]] = "mhlo.gather"(%[[TRANSPOSED]], %[[INDICES]])
 //  CHECK-SAME:     start_index_map = [0, 1, 2]
 //  CHECK-SAME:     slice_sizes = dense<[3, 1, 2]>
-//       CHECK:   %[[RESULT:.*]] = "mhlo.transpose"(%[[GATHER]])
+//       CHECK:   %[[RESULT:.*]] = mhlo.transpose %[[GATHER]]
 //  CHECK-SAME:     -> tensor<42x1x2x3xf32>
 //       CHECK:   return %[[RESULT]]
 
@@ -103,7 +103,7 @@ func.func @collapse_some_dims(%operand: tensor<33x34x35xf32>,
 //  CHECK-SAME:     -> tensor<42x1x7x1xf32>
 //       CHECK:   %[[COLLAPSED:.*]] = tensor.collapse_shape %[[GATHER]]
 //  CHECK-SAME:     into tensor<42x7xf32>
-//       CHECK:   %[[RESULT:.*]] = "mhlo.transpose"(%[[COLLAPSED]])
+//       CHECK:   %[[RESULT:.*]] = mhlo.transpose %[[COLLAPSED]]
 //  CHECK-SAME:     -> tensor<7x42xf32>
 //       CHECK:   return %[[RESULT]]
 

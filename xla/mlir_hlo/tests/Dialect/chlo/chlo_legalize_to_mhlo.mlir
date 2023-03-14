@@ -99,13 +99,13 @@ func.func @asin_complex_f32(%arg : tensor<complex<f32>>) -> tensor<complex<f32>>
 // CHECK-SAME:    %[[ARG0:.*]]: tensor<?xcomplex<f64>>) -> tensor<?xcomplex<f64>>
 // CHECK:  %[[TWO:.*]] = mhlo.constant dense<(2.000000e+00,0.000000e+00)>
 // CHECK:  %[[SHAPE:.*]] = shape.shape_of %[[ARG0]]
-// CHECK:  %[[TWO_BROADCASTED:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[TWO]], %[[SHAPE]])
+// CHECK:  %[[TWO_BROADCASTED:.*]] = mhlo.dynamic_broadcast_in_dim %[[TWO]], %[[SHAPE]]
 // CHECK:  %[[ONE:.*]] = mhlo.constant dense<(1.000000e+00,0.000000e+00)>
 // CHECK:  %[[SHAPE2:.*]] = shape.shape_of %[[ARG0]]
-// CHECK:  %[[ONE_BROADCASTED:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ONE]], %[[SHAPE2]])
+// CHECK:  %[[ONE_BROADCASTED:.*]] = mhlo.dynamic_broadcast_in_dim %[[ONE]], %[[SHAPE2]]
 // CHECK:  %[[ONE2:.*]] = mhlo.constant dense<(1.000000e+00,0.000000e+00)>
 // CHECK:  %[[SHAPE3:.*]] = shape.shape_of %[[ARG0]]
-// CHECK:  %[[ONE_BROADCASTED2:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ONE2]], %[[SHAPE3]])
+// CHECK:  %[[ONE_BROADCASTED2:.*]] = mhlo.dynamic_broadcast_in_dim %[[ONE2]], %[[SHAPE3]]
 // CHECK:  %[[SQUARE:.*]] = mhlo.multiply %[[ARG0]], %[[ARG0]]
 // CHECK:  %[[SUB:.*]] = mhlo.subtract %[[ONE_BROADCASTED2]], %[[SQUARE]]
 // CHECK:  %[[SQRT:.*]] = mhlo.sqrt %[[SUB]]
@@ -237,7 +237,7 @@ func.func @constant_like_static_shape(%arg : tensor<1x2xi64>) -> tensor<1x2xf32>
 func.func @constant_like_dynamic_shape(%arg : tensor<?x?xi64>) -> tensor<?x?xf32> {
   // CHECK: %[[CONSTANT:.*]] = mhlo.constant dense<3.200000e+00> : tensor<f32>
   // CHECK: %[[SHAPE:.*]] = shape.shape_of %[[ARG]] : tensor<?x?xi64> -> tensor<2xindex>
-  // CHECK: %[[BROADCASTED_CONSTANT:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[CONSTANT]], %[[SHAPE]]) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<f32>, tensor<2xindex>) -> tensor<?x?xf32>
+  // CHECK: %[[BROADCASTED_CONSTANT:.*]] = mhlo.dynamic_broadcast_in_dim %[[CONSTANT]], %[[SHAPE]], dims = [] : (tensor<f32>, tensor<2xindex>) -> tensor<?x?xf32>
   // CHECK: return %[[BROADCASTED_CONSTANT]] : tensor<?x?xf32>
   %result = "chlo.constant_like"(%arg) { value = 3.2 : f32 }
       : (tensor<?x?xi64>) -> tensor<?x?xf32>

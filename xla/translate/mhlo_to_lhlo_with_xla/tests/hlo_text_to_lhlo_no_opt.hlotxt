@@ -528,10 +528,7 @@ HloModule Test
 
 // CHECK: func @main
 // CHECK: "lmhlo.fusion"()
-// CHECK: "mhlo.pad"(%{{.*}}, %{{.*}}) {
-// CHECK-SAME: edge_padding_high = dense<[4, 5]> : tensor<2xi64>,
-// CHECK-SAME: edge_padding_low = dense<[2, 3]> : tensor<2xi64>,
-// CHECK-SAME: interior_padding = dense<1> : tensor<2xi64>}
+// CHECK: mhlo.pad %{{.*}}, %{{.*}}, low = [2, 3], high = [4, 5], interior = [1, 1]
 // CHECK-SAME: : (tensor<4x6xf32>, tensor<f32>) -> tensor<13x19xf32>
 ENTRY main {
   %arg0 = f32[4,6] parameter(0)
@@ -545,7 +542,7 @@ HloModule Test
 
 // CHECK: func @main
 // CHECK: "lmhlo.fusion"()
-// CHECK: "mhlo.transpose"(%{{.*}}) {permutation = dense<[1, 0, 3, 2]> : tensor<4xi64>} : (tensor<1x2x3x4xf32>) -> tensor<2x1x4x3xf32>
+// CHECK: mhlo.transpose %{{.*}}, dims = [1, 0, 3, 2] : (tensor<1x2x3x4xf32>) -> tensor<2x1x4x3xf32>
 ENTRY main {
   %arg0 = f32[1,2,3,4] parameter(0)
   %out = f32[2,1,4,3] transpose(%arg0), dimensions={1,0,3,2}
@@ -557,7 +554,7 @@ HloModule Test
 
 // CHECK: func @main
 // CHECK: "lmhlo.fusion"()
-// CHECK: "mhlo.broadcast_in_dim"(%{{.*}}) {broadcast_dimensions = dense<0> : tensor<1xi64>} : (tensor<1xf32>) -> tensor<10xf32>
+// CHECK: mhlo.broadcast_in_dim %{{.*}}, dims = [0] : (tensor<1xf32>) -> tensor<10xf32>
 ENTRY main {
   %arg0 = f32[1] parameter(0)
   %out = f32[10] broadcast(%arg0), dimensions={0}

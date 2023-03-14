@@ -91,7 +91,7 @@ func.func @move_index_vector_dim(%dst: tensor<3x3xf32>,
 // CHECK-SAME:      %[[IND:.*]]: tensor<2x1xi32>,
 // CHECK-SAME:      %[[UPD:.*]]: tensor<1x3x3xf32>
 
-// CHECK:         %[[IND_:.*]] = "mhlo.transpose"(%[[IND]]) {permutation = dense<[1, 0]> : tensor<2xi64>} : (tensor<2x1xi32>) -> tensor<1x2xi32>
+// CHECK:         %[[IND_:.*]] = mhlo.transpose %[[IND]], dims = [1, 0] : (tensor<2x1xi32>) -> tensor<1x2xi32>
 // CHECK:         "mhlo.scatter"(%[[DST]], %[[IND_]], %[[UPD]])
 // CHECK:           update_window_dims = [1, 2],
 // CHECK-SAME:      scatter_dims_to_operand_dims = [0, 1],
@@ -121,21 +121,15 @@ func.func @transform_updates_and_operands_using_scatter_dims(%dst: tensor<3x4x5x
 // CHECK-SAME:      %[[IND:.*]]: tensor<2x2xi32>,
 // CHECK-SAME:      %[[UPD:.*]]: tensor<2x1x1x3xf32>) -> tensor<3x4x5xf32> {
 
-// CHECK:         %[[DST_:.*]] = "mhlo.transpose"(%[[DST]]) {
-// CHECK-SAME:      permutation = dense<[2, 0, 1]> : tensor<3xi64>
-// CHECK-SAME:    } : (tensor<3x4x5xf32>) -> tensor<5x3x4xf32>
-// CHECK:         %[[UPD_:.*]] = "mhlo.transpose"(%[[UPD]]) {
-// CHECK-SAME:      permutation = dense<[0, 3, 1, 2]> : tensor<4xi64>
-// CHECK-SAME:    } : (tensor<2x1x1x3xf32>) -> tensor<2x3x1x1xf32>
+// CHECK:         %[[DST_:.*]] = mhlo.transpose %[[DST]], dims = [2, 0, 1] : (tensor<3x4x5xf32>) -> tensor<5x3x4xf32>
+// CHECK:         %[[UPD_:.*]] = mhlo.transpose %[[UPD]], dims = [0, 3, 1, 2] : (tensor<2x1x1x3xf32>) -> tensor<2x3x1x1xf32>
 
 // CHECK:         %[[NEW_OP:.*]] = "mhlo.scatter"(%[[DST_]], %[[IND]], %[[UPD_]])
 // CHECK:           update_window_dims = [1, 2, 3],
 // CHECK-SAME:      scatter_dims_to_operand_dims = [0, 1],
 // CHECK-SAME:      index_vector_dim = 1
 
-// CHECK-NEXT:    "mhlo.transpose"(%[[NEW_OP:.*]]) {
-// CHECK-SAME:      permutation = dense<[1, 2, 0]> : tensor<3xi64>
-// CHECK-SAME:    } : (tensor<5x3x4xf32>) -> tensor<3x4x5xf32>
+// CHECK-NEXT:    mhlo.transpose %[[NEW_OP:.*]], dims = [1, 2, 0] : (tensor<5x3x4xf32>) -> tensor<3x4x5xf32>
 
 // -----
 
@@ -161,9 +155,7 @@ func.func @make_scatter_dims_leading_in_updates(%dst: tensor<3xf32>,
 // CHECK-SAME:      %[[IND:.*]]: tensor<1x1xi32>,
 // CHECK-SAME:      %[[UPD:.*]]: tensor<2x1xf32>
 
-// CHECK:         %[[UPD_:.*]] = "mhlo.transpose"(%[[UPD]]) {
-// CHECK-SAME:      permutation = dense<[1, 0]> : tensor<2xi64>
-// CHECK-SAME:    } : (tensor<2x1xf32>) -> tensor<1x2xf32>
+// CHECK:         %[[UPD_:.*]] = mhlo.transpose %[[UPD]], dims = [1, 0] : (tensor<2x1xf32>) -> tensor<1x2xf32>
 
 // CHECK:         "mhlo.scatter"(%[[DST]], %[[IND]], %[[UPD_]]
 // CHECK:           update_window_dims = [1],
@@ -228,7 +220,7 @@ func.func @multiple_window_and_scatter_dims(
 // CHECK-SAME:      %[[IND:.*]]: tensor<6x7x2xi32>,
 // CHECK-SAME:      %[[UPD:.*]]: tensor<2x6x4x7xf32>
 // CHECK:         %[[IND0:.*]] = tensor.collapse_shape %[[IND]] {{.*}} into tensor<42x2xi32>
-// CHECK:         %[[UPD0:.*]] = "mhlo.transpose"(%[[UPD]]) {{.*}} -> tensor<6x7x2x4xf32>
+// CHECK:         %[[UPD0:.*]] = mhlo.transpose %[[UPD]], dims = {{.*}} -> tensor<6x7x2x4xf32>
 // CHECK:         %[[UPD1:.*]] = tensor.collapse_shape %[[UPD0]] {{.*}} into tensor<42x2x4xf32>
 // CHECK:         %[[UPD2:.*]] = tensor.expand_shape %[[UPD1]] {{.*}} into tensor<42x1x2x1x4x1xf32>
 // CHECK:         "mhlo.scatter"(%[[DST]], %[[IND0]], %[[UPD2]])

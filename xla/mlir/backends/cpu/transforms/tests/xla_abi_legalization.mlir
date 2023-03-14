@@ -18,11 +18,11 @@ func.func @all_custom(%arg0: tensor<2x3x4xf32>, %arg1: tensor<2x3x4xf32>)
 //  CHECK-SAME:   %[[ARG0:.*]]: tensor{{.*}}, %[[ARG1:.*]]: tensor{{.*}}
 //   CHECK-NOT:   attributes
 //       CHECK: %[[R0:.*]] = mhlo.reshape %[[ARG0]] {{.*}} -> tensor<4x3x2xf32>
-//       CHECK: %[[T0:.*]] = "mhlo.transpose"(%[[R0]]) {{.*}} -> tensor<2x3x4xf32>
+//       CHECK: %[[T0:.*]] = mhlo.transpose %[[R0]], dims = {{.*}} -> tensor<2x3x4xf32>
 //       CHECK: %[[R1:.*]] = mhlo.reshape %[[ARG1]] {{.*}} -> tensor<2x4x3xf32>
-//       CHECK: %[[T1:.*]] = "mhlo.transpose"(%[[R1]]) {{.*}} -> tensor<2x3x4xf32>
+//       CHECK: %[[T1:.*]] = mhlo.transpose %[[R1]], dims = {{.*}} -> tensor<2x3x4xf32>
 //       CHECK: %[[ADD:.*]] = mhlo.add %[[T0]], %[[T1]]
-//       CHECK: %[[TR:.*]] = "mhlo.transpose"(%[[ADD]]) {{.*}} -> tensor<3x2x4xf32>
+//       CHECK: %[[TR:.*]] = mhlo.transpose %[[ADD]], dims = {{.*}} -> tensor<3x2x4xf32>
 //       CHECK: %[[RR:.*]] = mhlo.reshape %[[TR]] {{.*}} -> tensor<2x3x4xf32>
 //       CHECK: return %[[RR]]
 
@@ -45,7 +45,7 @@ func.func @scalar_and_default_args(%arg0: tensor<f32>, %arg1: tensor<2x3xf32>,
 // CHECK-LABEL: @scalar_and_default_args
 //  CHECK-SAME:   %[[ARG0:.*]]: tensor{{.*}}, %[[ARG1:.*]]: tensor{{.*}}, %[[ARG2:.*]]: tensor{{.*}}
 //       CHECK: %[[R1:.*]] = mhlo.reshape %[[ARG1]] {{.*}} -> tensor<3x2xf32>
-//       CHECK: %[[T1:.*]] = "mhlo.transpose"(%[[R1]]) {{.*}} -> tensor<2x3xf32>
+//       CHECK: %[[T1:.*]] = mhlo.transpose %[[R1]], dims = {{.*}} -> tensor<2x3xf32>
 //       CHECK: %[[R:.*]] = "test.dummy"(%[[ARG0]], %[[T1]], %[[ARG2]])
 //       CHECK: return %[[R]]
 
@@ -90,11 +90,11 @@ func.func @custom_call(%arg0: tensor<f32>, %arg1: tensor<2x3xf32>) -> (tensor<6x
 //  CHECK-SAME:   %[[ARG0:.*]]: tensor{{.*}}, %[[ARG1:.*]]: tensor{{.*}}
 //   CHECK-NOT: operand_layouts
 //   CHECK-NOT: result_layouts
-//       CHECK: %[[T1:.*]] = "mhlo.transpose"(%[[ARG1]]) {{.*}} -> tensor<3x2xf32>
+//       CHECK: %[[T1:.*]] = mhlo.transpose %[[ARG1]], dims = {{.*}} -> tensor<3x2xf32>
 //       CHECK: %[[R1:.*]] = mhlo.reshape %[[T1]] {{.*}} -> tensor<2x3xf32>
 //       CHECK: %[[CC:.*]]:2 = mhlo.custom_call @yolo(%[[ARG0]], %[[R1]])
 //       CHECK: %[[RR:.*]] = mhlo.reshape %[[CC]]#0 {{.*}} -> tensor<3x6xf32>
-//       CHECK: %[[TR:.*]] = "mhlo.transpose"(%[[RR]]) {{.*}} -> tensor<6x3xf32>
+//       CHECK: %[[TR:.*]] = mhlo.transpose %[[RR]], dims = {{.*}} -> tensor<6x3xf32>
 //       CHECK: return %[[TR]], %[[CC]]#1
 
 // -----
@@ -121,7 +121,7 @@ func.func @constant_with_layout() -> tensor<2x3xf32> {
 
 // CHECK-LABEL: @constant_with_layout
 //       CHECK: %[[CST:.*]] = mhlo.constant {{.*}} : tensor<3x2xf32>
-//       CHECK: %[[TR:.*]] = "mhlo.transpose"(%[[CST]]) {{.*}} -> tensor<2x3xf32>
+//       CHECK: %[[TR:.*]] = mhlo.transpose %[[CST]], dims = {{.*}} -> tensor<2x3xf32>
 //       CHECK: return %[[TR]]
 
 // -----

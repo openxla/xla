@@ -15,18 +15,18 @@ func.func @tree_conjunction(%arg0: tensor<?xi1>, %arg1: tensor<?xi1>,
   // CHECK-DAG:   %[[S0_:.*]] = shape.shape_of %[[ARG0]]
   // CHECK-DAG:   %[[S1_:.*]] = shape.shape_of %[[ARG1]]
   // CHECK-DAG:   %[[S01:.*]] = shape.broadcast %[[S0_]], %[[S1_]]
-  // CHECK-DAG:   %[[BCASTED_ARG0:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[S01]])
-  // CHECK-DAG:   %[[BCASTED_ARG1:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[S01]])
+  // CHECK-DAG:   %[[BCASTED_ARG0:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[S01]]
+  // CHECK-DAG:   %[[BCASTED_ARG1:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[S01]]
   // CHECK-DAG:   %[[CONJ01:.*]] = mhlo.and %[[BCASTED_ARG0]], %[[BCASTED_ARG1]]
   // CHECK-DAG:   %[[S2:.*]] = shape.shape_of %[[ARG2]]
   // CHECK-DAG:   %[[S3:.*]] = shape.shape_of %[[ARG3]]
   // CHECK-DAG:   %[[S23:.*]] = shape.broadcast %[[S2]], %[[S3]]
-  // CHECK-DAG:   %[[BCASTED_ARG2:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG2]], %[[S23]])
-  // CHECK-DAG:   %[[BCASTED_ARG3:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG3]], %[[S23]])
+  // CHECK-DAG:   %[[BCASTED_ARG2:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG2]], %[[S23]]
+  // CHECK-DAG:   %[[BCASTED_ARG3:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG3]], %[[S23]]
   // CHECK-DAG:   %[[CONJ23:.*]] = mhlo.and %[[BCASTED_ARG2]], %[[BCASTED_ARG3]]
   // CHECK-DAG:   %[[S0123:.*]] = shape.broadcast %[[S01]], %[[S23]]
-  // CHECK-DAG:   %[[BCASTED_CONJ01:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[CONJ01]], %[[S0123]])
-  // CHECK-DAG:   %[[BCASTED_CONJ23:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[CONJ23]], %[[S0123]])
+  // CHECK-DAG:   %[[BCASTED_CONJ01:.*]] = mhlo.dynamic_broadcast_in_dim %[[CONJ01]], %[[S0123]]
+  // CHECK-DAG:   %[[BCASTED_CONJ23:.*]] = mhlo.dynamic_broadcast_in_dim %[[CONJ23]], %[[S0123]]
   // CHECK-DAG:   %[[CONJ0123:.*]] = mhlo.and %[[BCASTED_CONJ01]], %[[BCASTED_CONJ23]]
   // CHECK:       shape.assuming_yield %[[CONJ0123]]
   // CHECK:     return %[[RES]]

@@ -25,7 +25,7 @@ func.func @dynamic_broadcast_in_dim(%arg : tensor<?x?xf32>, %shape : tensor<3xin
 // CHECK-SAME:  %[[ARG:.*]]: tensor<?x?xf32>, %[[SHAPE:.*]]: tensor<3xindex>
 func.func @dynamic_broadcast_in_dim_expansion_behavior_known(
     %arg : tensor<?x?xf32>, %shape : tensor<3xindex>) -> tensor<?x?x?xf32> {
-  // CHECK:       %[[BCAST:.*]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG]], %[[SHAPE]])
+  // CHECK:       %[[BCAST:.*]] = mhlo.dynamic_broadcast_in_dim %[[ARG]], %[[SHAPE]]
   // CHECK:       return %[[BCAST]]
   %0 = "mhlo.dynamic_broadcast_in_dim"(%arg, %shape) {
       broadcast_dimensions = dense<[0, 2]> : tensor<2xi64>,

@@ -439,7 +439,7 @@ func.func @dynamic_update_slice_fold_fail_dynamic_shapes(%arg0: tensor<?x?xi64>,
 
 // CHECK-LABEL: dynamic_slice_variable_start
 func.func @dynamic_slice_variable_start(%arg0: tensor<3x4xi32>, %arg1: tensor<i64>, %arg2: tensor<i64>) -> tensor<1x4xi32> {
-  // CHECK: "mhlo.dynamic_slice"
+  // CHECK: mhlo.dynamic_slice
   %1 = "mhlo.dynamic_slice"(%arg0, %arg1, %arg2) {slice_sizes = dense<[1, 4]> : tensor<2xi64>} : (tensor<3x4xi32>, tensor<i64>, tensor<i64>) -> tensor<1x4xi32>
   func.return %1 : tensor<1x4xi32>
 }
@@ -710,8 +710,7 @@ func.func @broadcast_in_dim_not_identity_because_it_actually_broadcasts(%arg0: t
 
 // CHECK-LABEL: func @broadcast_in_dim_equivalent_transpose
 func.func @broadcast_in_dim_equivalent_transpose(%arg0: tensor<2x2xf32>) -> tensor<2x2xf32> {
-  // CHECK: mhlo.transpose
-  // CHECK-SAME: permutation = dense<[1, 0]>
+  // CHECK: mhlo.transpose {{.*}}, dims = [1, 0]
   %0 = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<[1, 0]> : tensor<2xi64>} : (tensor<2x2xf32>) -> tensor<2x2xf32>
   func.return %0 : tensor<2x2xf32>
 }
@@ -719,7 +718,7 @@ func.func @broadcast_in_dim_equivalent_transpose(%arg0: tensor<2x2xf32>) -> tens
 // CHECK-LABEL: func @broadcast_consecutive
 func.func @broadcast_consecutive(%arg0: tensor<2x3xf32>) -> tensor<2x3x4x5xf32> {
   // CHECK: mhlo.broadcast_in_dim
-  // CHECK-SAME: broadcast_dimensions = dense<[0, 1]>
+  // CHECK-SAME: dims = [0, 1]
   // CHECK-NEXT: return
   %0 = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>} : (tensor<2x3xf32>) -> tensor<2x3x4xf32>
   %1 = "mhlo.broadcast_in_dim"(%0) {broadcast_dimensions = dense<[0, 1, 2]> : tensor<3xi64>} : (tensor<2x3x4xf32>) -> tensor<2x3x4x5xf32>
@@ -728,7 +727,7 @@ func.func @broadcast_consecutive(%arg0: tensor<2x3xf32>) -> tensor<2x3x4x5xf32> 
 
 // CHECK-LABEL: func @dynamic_broadcast_in_dim_op_not_actually_dynamic
 func.func @dynamic_broadcast_in_dim_op_not_actually_dynamic(%arg0: tensor<4xf32>, %arg1: tensor<2xi64>) -> tensor<5x4xf32> {
-  // CHECK: %[[RESULT:.+]] = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<1> : tensor<1xi64>} : (tensor<4xf32>) -> tensor<5x4xf32>
+  // CHECK: %[[RESULT:.+]] = mhlo.broadcast_in_dim %arg0, dims = [1] : (tensor<4xf32>) -> tensor<5x4xf32>
   %0 = "mhlo.dynamic_broadcast_in_dim"(%arg0, %arg1) { broadcast_dimensions = dense<1> : tensor<1xi64> } : (tensor<4xf32>, tensor<2xi64>) -> tensor<5x4xf32>
   // CHECK: return %[[RESULT]] : tensor<5x4xf32>
   func.return %0 : tensor<5x4xf32>
@@ -737,7 +736,7 @@ func.func @dynamic_broadcast_in_dim_op_not_actually_dynamic(%arg0: tensor<4xf32>
 // CHECK-LABEL: func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_shape
 func.func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_shape(%arg0: tensor<i32>) -> tensor<4x32xi32> {
   %0 = mhlo.constant dense<[4, 32]> : tensor<2xi32>
-  // CHECK: %[[RESULT:.+]] = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<i32>) -> tensor<4x32xi32>
+  // CHECK: %[[RESULT:.+]] = mhlo.broadcast_in_dim %arg0, dims = [] : (tensor<i32>) -> tensor<4x32xi32>
   %1 = "mhlo.dynamic_broadcast_in_dim"(%arg0, %0) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<i32>, tensor<2xi32>) -> tensor<?x32xi32>
   %2 = "mhlo.dynamic_reshape"(%1, %0) : (tensor<?x32xi32>, tensor<2xi32>) -> tensor<4x32xi32>
   // CHECK: return %[[RESULT]] : tensor<4x32xi32>
@@ -747,7 +746,7 @@ func.func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_shape(%arg0
 // CHECK-LABEL: func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_index_shape
 func.func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_index_shape(%arg0: tensor<f32>) -> tensor<4x32xf32> {
   %0 = shape.const_shape [4, 32] : tensor<2xindex>
-  // CHECK: %[[RESULT:.+]] = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<f32>) -> tensor<4x32xf32>
+  // CHECK: %[[RESULT:.+]] = mhlo.broadcast_in_dim %arg0, dims = [] : (tensor<f32>) -> tensor<4x32xf32>
   %1 = "mhlo.dynamic_broadcast_in_dim"(%arg0, %0) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<f32>, tensor<2xindex>) -> tensor<?x32xf32>
   %2 = "mhlo.dynamic_reshape"(%1, %0) : (tensor<?x32xf32>, tensor<2xindex>) -> tensor<4x32xf32>
   // CHECK: return %[[RESULT]] : tensor<4x32xf32>
@@ -757,7 +756,7 @@ func.func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_index_shape
 // CHECK-LABEL: func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_requires_cast
 func.func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_requires_cast(%arg0: tensor<f32>) -> tensor<?x?xf32> {
   %0 = shape.const_shape [4, 32] : tensor<2xindex>
-  // CHECK: %[[BCAST:.+]] = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<f32>) -> tensor<4x32xf32>
+  // CHECK: %[[BCAST:.+]] = mhlo.broadcast_in_dim %arg0, dims = [] : (tensor<f32>) -> tensor<4x32xf32>
   %1 = "mhlo.dynamic_broadcast_in_dim"(%arg0, %0) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<f32>, tensor<2xindex>) -> tensor<?x?xf32>
   // CHECK: %[[RESULT:.*]] = tensor.cast %[[BCAST]] : tensor<4x32xf32> to tensor<?x?xf32>
   // CHECK: return %[[RESULT]] : tensor<?x?xf32>
@@ -766,7 +765,7 @@ func.func @dynamic_broadcast_in_dim_op_not_actually_dynamic_constant_requires_ca
 
 // CHECK-LABEL: func @dynamic_broadcast_in_dim_op_almost_not_actually_dynamic
 func.func @dynamic_broadcast_in_dim_op_almost_not_actually_dynamic(%arg0: tensor<?xf32>, %arg1: tensor<2xi64>) -> tensor<5x4xf32> {
-  // CHECK: %[[RESULT:.+]] = "mhlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {broadcast_dimensions = dense<1> : tensor<1xi64>} : (tensor<?xf32>, tensor<2xi64>) -> tensor<5x4xf32>
+  // CHECK: %[[RESULT:.+]] = mhlo.dynamic_broadcast_in_dim %arg0, %arg1, dims = [1] : (tensor<?xf32>, tensor<2xi64>) -> tensor<5x4xf32>
   %0 = "mhlo.dynamic_broadcast_in_dim"(%arg0, %arg1) { broadcast_dimensions = dense<1> : tensor<1xi64> } : (tensor<?xf32>, tensor<2xi64>) -> tensor<5x4xf32>
   // CHECK: return %[[RESULT]] : tensor<5x4xf32>
   func.return %0 : tensor<5x4xf32>
@@ -884,7 +883,7 @@ func.func @dynamic_iota_is_static(%arg0 : tensor<1xindex>) -> tensor<4xi32> {
 // CHECK-LABEL: @dynamic_iota_broadcast
 func.func @dynamic_iota_broadcast(%arg0 : tensor<2xindex>) -> tensor<5x?xi32> {
   // CHECK: [[IOTA:%.+]] = "mhlo.iota"() {iota_dimension = 0 : i64} : () -> tensor<5xi32>
-  // CHECK: [[BROADCAST:%.+]] = "mhlo.dynamic_broadcast_in_dim"([[IOTA]], %arg0) {broadcast_dimensions = dense<0> : tensor<1xi64>} : (tensor<5xi32>, tensor<2xindex>) -> tensor<5x?xi32>
+  // CHECK: [[BROADCAST:%.+]] = mhlo.dynamic_broadcast_in_dim [[IOTA]], %arg0, dims = [0] : (tensor<5xi32>, tensor<2xindex>) -> tensor<5x?xi32>
   %0 = "mhlo.dynamic_iota"(%arg0) {iota_dimension = 0 : i64} : (tensor<2xindex>) -> tensor<5x?xi32>
 
   // CHECK: return [[BROADCAST]]
@@ -897,7 +896,7 @@ func.func @dynamic_iota_broadcast_second(%arg0 : tensor<2xindex>) -> tensor<5x?x
   // CHECK-NEXT: [[SLICE:%.+]] = "mhlo.slice"([[CAST1]]) {limit_indices = dense<2> : tensor<1xi64>, start_indices = dense<1> : tensor<1xi64>, strides = dense<1> : tensor<1xi64>} : (tensor<2xi64>) -> tensor<1xi64>
   // CHECK-NEXT: [[CAST2:%.+]] = arith.index_cast [[SLICE]] : tensor<1xi64> to tensor<1xindex>
   // CHECK-NEXT: [[IOTA:%.+]] = "mhlo.dynamic_iota"([[CAST2]]) {iota_dimension = 0 : i64} : (tensor<1xindex>) -> tensor<?xi32>
-  // CHECK-NEXT: [[BROADCAST:%.+]] = "mhlo.dynamic_broadcast_in_dim"([[IOTA]], %arg0) {broadcast_dimensions = dense<1> : tensor<1xi64>} : (tensor<?xi32>, tensor<2xindex>) -> tensor<5x?xi32>
+  // CHECK-NEXT: [[BROADCAST:%.+]] = mhlo.dynamic_broadcast_in_dim [[IOTA]], %arg0, dims = [1] : (tensor<?xi32>, tensor<2xindex>) -> tensor<5x?xi32>
   %0 = "mhlo.dynamic_iota"(%arg0) {iota_dimension = 1 : i64} : (tensor<2xindex>) -> tensor<5x?xi32>
 
   // CHECK: return [[BROADCAST]]
@@ -907,7 +906,7 @@ func.func @dynamic_iota_broadcast_second(%arg0 : tensor<2xindex>) -> tensor<5x?x
 // CHECK-LABEL: @dynamic_iota_constant
 func.func @dynamic_iota_constant(%arg0 : tensor<2xindex>) -> tensor<1x?xi32> {
   // CHECK: [[IOTA:%.+]] = mhlo.constant dense<0> : tensor<1xi32>
-  // CHECK: [[BROADCAST:%.+]] = "mhlo.dynamic_broadcast_in_dim"([[IOTA]], %arg0) {broadcast_dimensions = dense<0> : tensor<1xi64>} : (tensor<1xi32>, tensor<2xindex>) -> tensor<1x?xi32>
+  // CHECK: [[BROADCAST:%.+]] = mhlo.dynamic_broadcast_in_dim [[IOTA]], %arg0, dims = [0] : (tensor<1xi32>, tensor<2xindex>) -> tensor<1x?xi32>
   %0 = "mhlo.dynamic_iota"(%arg0) {iota_dimension = 0 : i64} : (tensor<2xindex>) -> tensor<1x?xi32>
 
   // CHECK: return [[BROADCAST]]
@@ -943,7 +942,7 @@ func.func @iota_not_lowered_to_constant() -> tensor<4xi32> {
 // CHECK-LABEL: @iota_broadcast
 func.func @iota_broadcast() -> tensor<5x4xi32> {
   // CHECK: [[IOTA:%.+]] = "mhlo.iota"() {iota_dimension = 0 : i64} : () -> tensor<5xi32>
-  // CHECK: [[RESULT:%.+]] = "mhlo.broadcast_in_dim"([[IOTA]]) {broadcast_dimensions = dense<0> : tensor<1xi64>} : (tensor<5xi32>) -> tensor<5x4xi32>
+  // CHECK: [[RESULT:%.+]] = mhlo.broadcast_in_dim [[IOTA]], dims = [0] : (tensor<5xi32>) -> tensor<5x4xi32>
   %0 = "mhlo.iota"() {iota_dimension = 0 : i64} : () -> tensor<5x4xi32>
 
   func.return %0 : tensor<5x4xi32>
@@ -952,7 +951,7 @@ func.func @iota_broadcast() -> tensor<5x4xi32> {
 // CHECK-LABEL: @iota_broadcast
 func.func @iota_broadcast_second() -> tensor<5x4xi32> {
   // CHECK: [[IOTA:%.+]] = "mhlo.iota"() {iota_dimension = 0 : i64} : () -> tensor<4xi32>
-  // CHECK: [[RESULT:%.+]] = "mhlo.broadcast_in_dim"([[IOTA]]) {broadcast_dimensions = dense<1> : tensor<1xi64>} : (tensor<4xi32>) -> tensor<5x4xi32>
+  // CHECK: [[RESULT:%.+]] = mhlo.broadcast_in_dim [[IOTA]], dims = [1] : (tensor<4xi32>) -> tensor<5x4xi32>
   %0 = "mhlo.iota"() {iota_dimension = 1 : i64} : () -> tensor<5x4xi32>
 
   func.return %0 : tensor<5x4xi32>
@@ -1508,7 +1507,7 @@ func.func @simplify_broadcasted_not_as_select_pred(%arg0 : tensor<1xi1>, %arg1 :
   %2 = "mhlo.select"(%1, %arg1, %arg2) : (tensor<4xi1>, tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
   func.return %2 : tensor<4xf32>
 
-  // CHECK: %[[B:.*]] = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<0> : tensor<1xi64>} : (tensor<1xi1>) -> tensor<4xi1>
+  // CHECK: %[[B:.*]] = mhlo.broadcast_in_dim %arg0, dims = [0] : (tensor<1xi1>) -> tensor<4xi1>
   // CHECK: %[[R:.*]] = mhlo.select %[[B]], %arg2, %arg1
   // CHECK: return %[[R]]
 }
@@ -2351,7 +2350,7 @@ func.func @pad_negative_fold() -> tensor<4x4xi32> {
     interior_padding = dense<[0, 1]> : tensor<2xi64>
   } : (tensor<2x2xi32>, tensor<i32>) -> tensor<4x4xi32>
   func.return %3 : tensor<4x4xi32>
-  // CHECK: "mhlo.pad"
+  // CHECK: mhlo.pad
 }
 
 // CHECK-LABEL: @pad_fold_zero_elements
@@ -2374,7 +2373,7 @@ func.func @pad_float_fold() -> tensor<2xf32> {
 
 // CHECK-LABEL: @pad_zero_length
 func.func @pad_zero_length(%arg0: tensor<5x0xf32>, %arg1: tensor<f32>) -> tensor<7x2xf32> {
-  // CHECK: %[[RES:.+]] = "mhlo.broadcast_in_dim"(%arg1) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<f32>) -> tensor<7x2xf32>
+  // CHECK: %[[RES:.+]] = mhlo.broadcast_in_dim %arg1, dims = [] : (tensor<f32>) -> tensor<7x2xf32>
   %0 = "mhlo.pad"(%arg0, %arg1) {
     edge_padding_low = dense<1> : tensor<2xi64>,
     edge_padding_high = dense<1> : tensor<2xi64>,
@@ -2396,7 +2395,7 @@ func.func @pad_zero_length_dyn(%arg0: tensor<?x0xf32>, %arg1: tensor<f32>) -> te
   // CHECK-DAG: %[[ADD1:.+]] = arith.addi %[[DIM]], %[[MUL]]
   // CHECK-DAG: %[[ADD2:.+]] = arith.addi %[[ADD1]], %[[C2]]
   // CHECK-DAG: %[[SHAPE:.+]] = tensor.from_elements %[[ADD2]], %[[C2]] : tensor<2xindex>
-  // CHECK-DAG: %[[BROAD:.+]] = "mhlo.dynamic_broadcast_in_dim"(%arg1, %[[SHAPE]]) {broadcast_dimensions = dense<> : tensor<0xi64>} : (tensor<f32>, tensor<2xindex>) -> tensor<?x2xf32>
+  // CHECK-DAG: %[[BROAD:.+]] = mhlo.dynamic_broadcast_in_dim %arg1, %[[SHAPE]], dims = []  : (tensor<f32>, tensor<2xindex>) -> tensor<?x2xf32>
   %0 = "mhlo.pad"(%arg0, %arg1) {
     edge_padding_low = dense<1> : tensor<2xi64>,
     edge_padding_high = dense<1> : tensor<2xi64>,
@@ -2413,11 +2412,7 @@ func.func @dynamic_pad_identity_fold(%arg0: tensor<5x7xf32>) -> tensor<11x15xf32
   %2 = arith.constant dense<1> : tensor<2xi32>
   %3 = arith.constant dense<1> : tensor<2xi32>
   // CHECK: %[[CST:.+]] = arith.constant dense<0.000000e+00> : tensor<f32>
-  // CHECK: %[[PAD:.+]] = "mhlo.pad"(%arg0, %[[CST]])
-  // CHECK-SAME: edge_padding_high = dense<1> : tensor<2xi64>
-  // CHECK-SAME: edge_padding_low = dense<1> : tensor<2xi64>
-  // CHECK-SAME: interior_padding = dense<1> : tensor<2xi64>}
-  // CHECK-SAME: (tensor<5x7xf32>, tensor<f32>) -> tensor<11x15xf32>
+  // CHECK: %[[PAD:.+]] = mhlo.pad %arg0, %[[CST]], low = [1, 1], high = [1, 1], interior = [1, 1] : (tensor<5x7xf32>, tensor<f32>) -> tensor<11x15xf32>
   %4 = "mhlo.dynamic_pad"(%arg0, %0, %1, %2, %3) {
   } : (tensor<5x7xf32>, tensor<f32>, tensor<2xi32>, tensor<2xi32>, tensor<2xi32>) -> tensor<11x15xf32>
   // return %[[PAD]]
@@ -2449,7 +2444,7 @@ func.func @dynamic_pad_length_dyn(
   // CHECK: %[[EX4:.+]] = tensor.extract %arg2[%[[CI1]]]
   // CHECK: %[[ADD3:.+]] = arith.addi %[[EX3]], %[[EX4]] : i32
   // CHECK: %[[SHAPE:.+]] = tensor.from_elements %[[ADD2]], %[[ADD3]] : tensor<2xi32>
-  // CHECK: %[[BROAD:.+]] = "mhlo.dynamic_broadcast_in_dim"(%[[CST]], %[[SHAPE]]) {broadcast_dimensions = dense<> : tensor<0xi64>}
+  // CHECK: %[[BROAD:.+]] = mhlo.dynamic_broadcast_in_dim %[[CST]], %[[SHAPE]], dims = []
   %0 = arith.constant dense<0.0> : tensor<f32>
   %1 = "mhlo.dynamic_pad"(%arg0, %0, %arg1, %arg2, %arg3) {
   } : (tensor<?x0xf32>, tensor<f32>, tensor<2xi32>, tensor<2xi32>, tensor<2xi32>) -> tensor<?x?xf32>
@@ -2729,8 +2724,6 @@ func.func @simplify_real_dynamic_slice_to_dynamic_slice(%arg0: tensor<?x4xf32>, 
   // CHECK-NEXT: [[START_INDEX_0_0D:%.*]] = mhlo.reshape [[START_INDEX_0_1D]] : (tensor<1xi32>) -> tensor<i32>
   // CHECK-NEXT: [[START_INDEX_1_1D:%.*]] = "mhlo.slice"(%arg1) {limit_indices = dense<2> : tensor<1xi64>, start_indices = dense<1> : tensor<1xi64>, strides = dense<1> : tensor<1xi64>} : (tensor<2xi32>) -> tensor<1xi32>
   // CHECK-NEXT: [[START_INDEX_1_0D:%.*]] = mhlo.reshape [[START_INDEX_1_1D]] : (tensor<1xi32>) -> tensor<i32>
-  // CHECK-NEXT: [[RESULT:%.*]] = "mhlo.dynamic_slice"(%arg0, [[START_INDEX_0_0D]], [[START_INDEX_1_0D]]) {
-  // CHECK-SAME:   slice_sizes = dense<[1, 4]> : tensor<2xi64>
-  // CHECK-SAME: } : (tensor<?x4xf32>, tensor<i32>, tensor<i32>) -> tensor<1x4xf32>
+  // CHECK-NEXT: [[RESULT:%.*]] = mhlo.dynamic_slice %arg0, [[START_INDEX_0_0D]], [[START_INDEX_1_0D]], sizes = [1, 4] : (tensor<?x4xf32>, tensor<i32>, tensor<i32>) -> tensor<1x4xf32>
   // CHECK-NEXT: return [[RESULT]] : tensor<1x4xf32>
 }

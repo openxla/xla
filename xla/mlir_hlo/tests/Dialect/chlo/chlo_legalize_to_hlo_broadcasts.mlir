@@ -19,8 +19,8 @@ func.func @dynamicBroadcast(%arg0: tensor<?xf32>, %arg1: tensor<?x?xf32>) -> ten
   // CHECK-NEXT: %[[WITNESS:.+]] = shape.cstr_broadcastable %[[ARG0_S]], %[[ARG1_S]]
   // CHECK-NEXT: %[[FINAL_RESULT:.+]] = shape.assuming %[[WITNESS]]
   // CHECK-DAG:    %[[RESULT_EXTENTS:.+]] = shape.broadcast %[[ARG0_S]], %[[ARG1_S]]
-  // CHECK-DAG:    %[[ARG0_B:.+]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[RESULT_EXTENTS]]) {broadcast_dimensions = dense<1> : tensor<1xi64>}
-  // CHECK-DAG:    %[[ARG1_B:.+]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[RESULT_EXTENTS]]) {broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>}
+  // CHECK-DAG:    %[[ARG0_B:.+]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[RESULT_EXTENTS]], dims = [1]
+  // CHECK-DAG:    %[[ARG1_B:.+]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[RESULT_EXTENTS]], dims = [0, 1]
   // CHECK-NEXT:   %[[RESULT:.+]] = mhlo.add %[[ARG0_B]], %[[ARG1_B]]
   // CHECK-NEXT:   shape.assuming_yield %[[RESULT]]
   // CHECK-NEXT: }
@@ -39,8 +39,8 @@ func.func @dynamicBroadcastComplex(%arg0: tensor<?xf32>, %arg1: tensor<?x?xf32>)
   // CHECK-NEXT: %[[WITNESS:.+]] = shape.cstr_broadcastable %[[ARG0_S]], %[[ARG1_S]]
   // CHECK-NEXT: %[[FINAL_RESULT:.+]] = shape.assuming %[[WITNESS]]
   // CHECK-NEXT:   %[[RESULT_EXTENTS:.+]] = shape.broadcast %[[ARG0_S]], %[[ARG1_S]]
-  // CHECK-DAG:    %[[ARG0_B:.+]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[RESULT_EXTENTS]]) {broadcast_dimensions = dense<1> : tensor<1xi64>} : (tensor<?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
-  // CHECK-DAG:    %[[ARG1_B:.+]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[RESULT_EXTENTS]]) {broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>} : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+  // CHECK-DAG:    %[[ARG0_B:.+]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[RESULT_EXTENTS]], dims = [1] : (tensor<?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+  // CHECK-DAG:    %[[ARG1_B:.+]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[RESULT_EXTENTS]], dims = [0, 1] : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
   // CHECK-NEXT:   %[[RESULT:.+]] = mhlo.complex %[[ARG0_B]], %[[ARG1_B]] : tensor<?x?xcomplex<f32>>
   // CHECK-NEXT:   shape.assuming_yield %[[RESULT]]
   // CHECK-NEXT: }
@@ -59,8 +59,8 @@ func.func @dynamicBroadcastCompare(%arg0: tensor<?xf32>, %arg1: tensor<?x?xf32>)
   // CHECK: %[[WITNESS:.+]] = shape.cstr_broadcastable %[[ARG0_S]], %[[ARG1_S]]
   // CHECK: %[[FINAL_RESULT:.+]] = shape.assuming %[[WITNESS]]
   // CHECK: %[[RESULT_EXTENTS:.+]] = shape.broadcast %[[ARG0_S]], %[[ARG1_S]]
-  // CHECK-DAG: %[[ARG0_B:.+]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG0]], %[[RESULT_EXTENTS]]) {broadcast_dimensions = dense<1> : tensor<1xi64>} : (tensor<?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
-  // CHECK-DAG: %[[ARG1_B:.+]] = "mhlo.dynamic_broadcast_in_dim"(%[[ARG1]], %[[RESULT_EXTENTS]]) {broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>} : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+  // CHECK-DAG: %[[ARG0_B:.+]] = mhlo.dynamic_broadcast_in_dim %[[ARG0]], %[[RESULT_EXTENTS]], dims = [1] : (tensor<?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+  // CHECK-DAG: %[[ARG1_B:.+]] = mhlo.dynamic_broadcast_in_dim %[[ARG1]], %[[RESULT_EXTENTS]], dims = [0, 1] : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
   // CHECK: %[[RESULT:.+]] = mhlo.compare EQ, %[[ARG0_B]], %[[ARG1_B]] : (tensor<?x?xf32>, tensor<?x?xf32>) -> tensor<?x?xi1>
   // CHECK: shape.assuming_yield %[[RESULT]]
   // CHECK-NEXT: }
@@ -87,7 +87,7 @@ func.func @selectv2_pred_scalar(%arg0: tensor<i1>, %arg1: tensor<2xi32>, %arg2: 
 
 // CHECK-LABEL: func @selectv2_broadcast_then
 func.func @selectv2_broadcast_then(%arg0: tensor<i1>, %arg1: tensor<8x1xi32>, %arg2: tensor<2x8x8xi32>) -> tensor<2x8x8xi32> {
-  // CHECK-NEXT: %[[BROADCAST:.*]] = "mhlo.broadcast_in_dim"(%arg1) {broadcast_dimensions = dense<[1, 2]> : tensor<2xi64>} : (tensor<8x1xi32>) -> tensor<2x8x8xi32>
+  // CHECK-NEXT: %[[BROADCAST:.*]] = mhlo.broadcast_in_dim %arg1, dims = [1, 2] : (tensor<8x1xi32>) -> tensor<2x8x8xi32>
   // CHECK-NEXT: mhlo.select %arg0, %[[BROADCAST]], %arg2
   %0 = "chlo.broadcast_select"(%arg0, %arg1, %arg2) : (tensor<i1>, tensor<8x1xi32>, tensor<2x8x8xi32>) -> tensor<2x8x8xi32>
   func.return %0: tensor<2x8x8xi32>
@@ -95,7 +95,7 @@ func.func @selectv2_broadcast_then(%arg0: tensor<i1>, %arg1: tensor<8x1xi32>, %a
 
 // CHECK-LABEL: func @selectv2_broadcast_else
 func.func @selectv2_broadcast_else(%arg0: tensor<i1>, %arg1: tensor<2x8x8xi32>, %arg2: tensor<8x1xi32>) -> tensor<2x8x8xi32> {
-  // CHECK-NEXT: %[[BROADCAST:.*]] = "mhlo.broadcast_in_dim"(%arg2) {broadcast_dimensions = dense<[1, 2]> : tensor<2xi64>} : (tensor<8x1xi32>) -> tensor<2x8x8xi32>
+  // CHECK-NEXT: %[[BROADCAST:.*]] = mhlo.broadcast_in_dim %arg2, dims = [1, 2] : (tensor<8x1xi32>) -> tensor<2x8x8xi32>
   // CHECK-NEXT: mhlo.select %arg0, %arg1, %[[BROADCAST]]
   %0 = "chlo.broadcast_select"(%arg0, %arg1, %arg2) : (tensor<i1>, tensor<2x8x8xi32>, tensor<8x1xi32>) -> tensor<2x8x8xi32>
   func.return %0: tensor<2x8x8xi32>
@@ -103,7 +103,7 @@ func.func @selectv2_broadcast_else(%arg0: tensor<i1>, %arg1: tensor<2x8x8xi32>, 
 
 // CHECK-LABEL: func @selectv2_broadcast_pred
 func.func @selectv2_broadcast_pred(%arg0: tensor<1xi1>, %arg1: tensor<2x8x8xi32>, %arg2: tensor<2x8x8xi32>) -> tensor<2x8x8xi32> {
-  // CHECK-NEXT: %[[BROADCAST:.*]] = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<2> : tensor<1xi64>} : (tensor<1xi1>) -> tensor<2x8x8xi1>
+  // CHECK-NEXT: %[[BROADCAST:.*]] = mhlo.broadcast_in_dim %arg0, dims = [2] : (tensor<1xi1>) -> tensor<2x8x8xi1>
   // CHECK-NEXT: mhlo.select %[[BROADCAST]], %arg1, %arg2
   %0 = "chlo.broadcast_select"(%arg0, %arg1, %arg2) : (tensor<1xi1>, tensor<2x8x8xi32>, tensor<2x8x8xi32>) -> tensor<2x8x8xi32>
   func.return %0: tensor<2x8x8xi32>
@@ -111,7 +111,7 @@ func.func @selectv2_broadcast_pred(%arg0: tensor<1xi1>, %arg1: tensor<2x8x8xi32>
 
 // CHECK-LABEL: func @selectv2_broadcast_tensor_pred
 func.func @selectv2_broadcast_tensor_pred(%arg0: tensor<3xi1>, %arg1: tensor<2x3xf16>, %arg2: tensor<2x3xf16>) -> tensor<2x3xf16> {
-  // CHECK-NEXT: %[[BROADCAST:.*]] = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<1> : tensor<1xi64>} : (tensor<3xi1>) -> tensor<2x3xi1>
+  // CHECK-NEXT: %[[BROADCAST:.*]] = mhlo.broadcast_in_dim %arg0, dims = [1] : (tensor<3xi1>) -> tensor<2x3xi1>
   // CHECK-NEXT: mhlo.select %[[BROADCAST]], %arg1, %arg2
   %0 = "chlo.broadcast_select"(%arg0, %arg1, %arg2) : (tensor<3xi1>, tensor<2x3xf16>, tensor<2x3xf16>) -> tensor<2x3xf16>
   func.return %0: tensor<2x3xf16>
@@ -119,9 +119,9 @@ func.func @selectv2_broadcast_tensor_pred(%arg0: tensor<3xi1>, %arg1: tensor<2x3
 
 // CHECK-LABEL: func @selectv2_broadcast_all
 func.func @selectv2_broadcast_all(%arg0: tensor<8x1x1xi1>, %arg1: tensor<1x8x1xi32>, %arg2: tensor<1x1x8xi32>) -> tensor<8x8x8xi32> {
-  // CHECK-DAG: %[[BROADCAST_0:.*]] = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<[0, 1, 2]> : tensor<3xi64>} : (tensor<8x1x1xi1>) -> tensor<8x8x8xi1>
-  // CHECK-DAG: %[[BROADCAST_1:.*]] = "mhlo.broadcast_in_dim"(%arg1) {broadcast_dimensions = dense<[0, 1, 2]> : tensor<3xi64>} : (tensor<1x8x1xi32>) -> tensor<8x8x8xi32>
-  // CHECK-DAG: %[[BROADCAST_2:.*]] = "mhlo.broadcast_in_dim"(%arg2) {broadcast_dimensions = dense<[0, 1, 2]> : tensor<3xi64>} : (tensor<1x1x8xi32>) -> tensor<8x8x8xi32>
+  // CHECK-DAG: %[[BROADCAST_0:.*]] = mhlo.broadcast_in_dim %arg0, dims = [0, 1, 2] : (tensor<8x1x1xi1>) -> tensor<8x8x8xi1>
+  // CHECK-DAG: %[[BROADCAST_1:.*]] = mhlo.broadcast_in_dim %arg1, dims = [0, 1, 2] : (tensor<1x8x1xi32>) -> tensor<8x8x8xi32>
+  // CHECK-DAG: %[[BROADCAST_2:.*]] = mhlo.broadcast_in_dim %arg2, dims = [0, 1, 2] : (tensor<1x1x8xi32>) -> tensor<8x8x8xi32>
   // CHECK: mhlo.select %[[BROADCAST_0]], %[[BROADCAST_1]], %[[BROADCAST_2]]
   %0 = "chlo.broadcast_select"(%arg0, %arg1, %arg2) : (tensor<8x1x1xi1>, tensor<1x8x1xi32>, tensor<1x1x8xi32>) -> tensor<8x8x8xi32>
   func.return %0: tensor<8x8x8xi32>
@@ -135,9 +135,9 @@ func.func @selectv2_dynamic_ranked(%arg0: tensor<1xi1>, %arg1: tensor<2x?x8xi32>
   // CHECK-NEXT: %[[CSTR:.*]] = shape.cstr_broadcastable %[[SHAPE1]], %[[SHAPE0]], %[[SHAPE2]] : tensor<3xindex>, tensor<1xindex>, tensor<3xindex>
   // CHECK-NEXT: %[[ASSUME:.*]] = shape.assuming %[[CSTR]] -> (tensor<2x?x8xi32>) {
   // CHECK-NEXT:   %[[BCST:.*]] = shape.broadcast %[[SHAPE1]], %[[SHAPE2]] : tensor<3xindex>, tensor<3xindex> -> tensor<3xindex>
-  // CHECK-NEXT:   %[[BCST0:.*]] = "mhlo.dynamic_broadcast_in_dim"(%arg0, %[[BCST]]) {broadcast_dimensions = dense<2> : tensor<1xi64>} : (tensor<1xi1>, tensor<3xindex>) -> tensor<2x?x8xi1>
-  // CHECK-NEXT:   %[[BCST1:.*]] = "mhlo.dynamic_broadcast_in_dim"(%arg1, %[[BCST]]) {broadcast_dimensions = dense<[0, 1, 2]> : tensor<3xi64>} : (tensor<2x?x8xi32>, tensor<3xindex>) -> tensor<2x?x8xi32>
-  // CHECK-NEXT:   %[[BCST2:.*]] = "mhlo.dynamic_broadcast_in_dim"(%arg2, %[[BCST]]) {broadcast_dimensions = dense<[0, 1, 2]> : tensor<3xi64>} : (tensor<2x8x8xi32>, tensor<3xindex>) -> tensor<2x?x8xi32>
+  // CHECK-NEXT:   %[[BCST0:.*]] = mhlo.dynamic_broadcast_in_dim %arg0, %[[BCST]], dims = [2] : (tensor<1xi1>, tensor<3xindex>) -> tensor<2x?x8xi1>
+  // CHECK-NEXT:   %[[BCST1:.*]] = mhlo.dynamic_broadcast_in_dim %arg1, %[[BCST]], dims = [0, 1, 2] : (tensor<2x?x8xi32>, tensor<3xindex>) -> tensor<2x?x8xi32>
+  // CHECK-NEXT:   %[[BCST2:.*]] = mhlo.dynamic_broadcast_in_dim %arg2, %[[BCST]], dims = [0, 1, 2] : (tensor<2x8x8xi32>, tensor<3xindex>) -> tensor<2x?x8xi32>
   // CHECK-NEXT:   %[[SELECT:.*]] = mhlo.select %[[BCST0]], %[[BCST1]], %[[BCST2]] : tensor<2x?x8xi1>, tensor<2x?x8xi32>
   // CHECK-NEXT:   shape.assuming_yield %[[SELECT]] : tensor<2x?x8xi32>
   // CHECK-NEXT: }
