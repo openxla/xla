@@ -1637,11 +1637,11 @@ Status LayoutAssignment::PropagateUseConstraintToDefs(
       });
 }
 
-namespace {
 // A transpose or a reshape that only changes trivial dimensions have meaningful
 // layouts that are valuable to propagate in a depthfirst manner to avoid
 // unassigned layouts in the graph.
-bool InstructionShouldPropagateDepthFirst(const HloInstruction& hlo) {
+bool LayoutAssignment::InstructionShouldPropagateDepthFirst(
+    const HloInstruction& hlo) {
   switch (hlo.opcode()) {
     case HloOpcode::kFusion:
       return hlo.IsCustomFusion();
@@ -1651,14 +1651,13 @@ bool InstructionShouldPropagateDepthFirst(const HloInstruction& hlo) {
       return hlo.operand(0)->shape().rank() == 1 ||
              hlo.ReshapeMerelyInsertsOrDeletes1SizedDimensions().has_value();
     case HloOpcode::kScatter:
-    case HloOpcode::kTranspose:
       return true;
+    case HloOpcode::kTranspose:
+      return InstructionCanChangeLayoutInstance(&hlo);
     default:
       return false;
   }
 }
-
-}  // namespace
 
 Status LayoutAssignment::PropagateOperandConstraint(
     const OperandLayoutConstraint& operand_constraint,

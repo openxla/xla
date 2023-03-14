@@ -112,6 +112,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_triton_gemm(true);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(false);
   opts.set_xla_gpu_triton_gemm_any(false);
+  opts.set_xla_gpu_transpose_to_bitcast(true);
   return opts;
 }
 
@@ -879,6 +880,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_triton_gemm_any(),
                 "Use Triton-based matrix multiplication for any GEMM it "
                 "supports without filtering only faster ones."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_transpose_to_bitcast",
+      bool_setter_for(&DebugOptions::set_xla_gpu_transpose_to_bitcast),
+      debug_options->xla_gpu_transpose_to_bitcast(),
+      "Whether layout assignment should assign a layout to transposes that "
+      "make them a bitcast. Set to false if you want more control where the "
+      "transposes appear in optimized HloComputations."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
