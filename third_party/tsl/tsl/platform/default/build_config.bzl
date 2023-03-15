@@ -797,6 +797,7 @@ def tsl_cc_test(
                 # granularly
                 clean_dep("//tsl/protobuf:error_codes_proto_impl_cc_impl"),
                 clean_dep("//tsl/protobuf:histogram_proto_cc_impl"),
+                clean_dep("//tsl/protobuf:status_proto_cc_impl"),
                 clean_dep("//tsl/profiler/protobuf:xplane_proto_cc_impl"),
                 clean_dep("//tsl/profiler/protobuf:profiler_options_proto_cc_impl"),
             ],
