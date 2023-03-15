@@ -670,6 +670,33 @@ cc_library(
 )
 
 cc_library(
+    name = "tf_pjrt_client",
+    srcs = ["tf_pjrt_client.cc"],
+    hdrs = ["tf_pjrt_client.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_client",
+        ":pjrt_future",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+xla_cc_test(
+    name = "tf_pjrt_client_test",
+    srcs = ["tf_pjrt_client_test.cc"],
+    deps = [
+        ":tf_pjrt_client",
+        ":tfrt_cpu_pjrt_client",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/service:hlo_parser",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
     name = "host_callback",
     srcs = ["host_callback.cc"],
     hdrs = ["host_callback.h"],
