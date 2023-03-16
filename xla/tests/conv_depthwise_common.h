@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TESTS_CONV_DEPTHWISE_COMMON_H_
-#define TENSORFLOW_COMPILER_XLA_TESTS_CONV_DEPTHWISE_COMMON_H_
+#ifndef XLA_TESTS_CONV_DEPTHWISE_COMMON_H_
+#define XLA_TESTS_CONV_DEPTHWISE_COMMON_H_
 
 #include <optional>
 
@@ -51,4 +51,4 @@ std::string BuildHloTextDepthwiseConvolution2D(
     bool is_scheduled = false);
 
 }  // namespace xla
-#endif  // TENSORFLOW_COMPILER_XLA_TESTS_CONV_DEPTHWISE_COMMON_H_
+#endif  // XLA_TESTS_CONV_DEPTHWISE_COMMON_H_

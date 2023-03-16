@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
+#ifndef XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
+#define XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
 
 #include "xla/service/cpu/target_machine_features.h"
 
@@ -58,4 +58,4 @@ class TargetMachineFeaturesWithFakeAlignmentLogic
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
+#endif  // XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_

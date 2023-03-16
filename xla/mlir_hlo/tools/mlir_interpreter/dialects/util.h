@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_TOOLS_MLIR_INTERPRETER_DIALECTS_UTIL_H_
-#define MLIR_HLO_TOOLS_MLIR_INTERPRETER_DIALECTS_UTIL_H_
+#ifndef XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_DIALECTS_UTIL_H_
+#define XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_DIALECTS_UTIL_H_
 
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/AffineExpr.h"
@@ -78,4 +78,4 @@ llvm::SmallVector<int64_t> evalAffineMap(AffineMap map,
 }  // namespace interpreter
 }  // namespace mlir
 
-#endif  // MLIR_HLO_TOOLS_MLIR_INTERPRETER_DIALECTS_UTIL_H_
+#endif  // XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_DIALECTS_UTIL_H_

@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_STATUSOR_H_
-#define TENSORFLOW_COMPILER_XLA_STATUSOR_H_
+#ifndef XLA_STATUSOR_H_
+#define XLA_STATUSOR_H_
 
 #include "xla/status.h"
 #include "tsl/platform/statusor.h"
@@ -25,4 +25,4 @@ using tsl::StatusOr;  // TENSORFLOW_STATUS_OK
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_STATUSOR_H_
+#endif  // XLA_STATUSOR_H_

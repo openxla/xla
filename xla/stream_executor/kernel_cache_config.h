@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file contains declarations relating to kernel cache configuration
 // parameters recognized by the StreamExecutor.
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_CACHE_CONFIG_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_CACHE_CONFIG_H_
+#ifndef XLA_STREAM_EXECUTOR_KERNEL_CACHE_CONFIG_H_
+#define XLA_STREAM_EXECUTOR_KERNEL_CACHE_CONFIG_H_
 
 namespace stream_executor {
 
@@ -39,4 +39,4 @@ enum class KernelCacheConfig {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_CACHE_CONFIG_H_
+#endif  // XLA_STREAM_EXECUTOR_KERNEL_CACHE_CONFIG_H_

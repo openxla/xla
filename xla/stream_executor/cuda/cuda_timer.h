@@ -16,8 +16,8 @@ limitations under the License.
 // Defines the GpuTimer type - the CUDA-specific implementation of the generic
 // StreamExecutor Timer interface.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_TIMER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_TIMER_H_
+#ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_TIMER_H_
+#define XLA_STREAM_EXECUTOR_CUDA_CUDA_TIMER_H_
 
 #include "xla/stream_executor/gpu/gpu_timer.h"
 
@@ -29,4 +29,4 @@ using CUDATimer = gpu::GpuTimer;
 }  // namespace cuda
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_TIMER_H_
+#endif  // XLA_STREAM_EXECUTOR_CUDA_CUDA_TIMER_H_

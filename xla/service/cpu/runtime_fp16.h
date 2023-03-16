@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_FP16_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_FP16_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_FP16_H_
+#define XLA_SERVICE_CPU_RUNTIME_FP16_H_
 
 #include <stdint.h>
 
@@ -43,4 +43,4 @@ extern "C" float __gnu_h2f_ieee(XlaF16ABIType);
 // Converts an F64 value to a F16.
 extern "C" XlaF16ABIType __truncdfhf2(double);
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_FP16_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_FP16_H_

@@ -9,8 +9,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef MLIR_HLO_BINDINGS_C_ATTRIBUTES_H
-#define MLIR_HLO_BINDINGS_C_ATTRIBUTES_H
+#ifndef XLA_MLIR_HLO_BINDINGS_C_ATTRIBUTES_H_
+#define XLA_MLIR_HLO_BINDINGS_C_ATTRIBUTES_H_
 
 #include <sys/types.h>
 
@@ -385,4 +385,4 @@ mlirMhloTypeExtensionsGetBoundsElem(MlirAttribute attr, intptr_t pos);
 }
 #endif
 
-#endif  // MLIR_HLO_BINDINGS_C_ATTRIBUTES_H
+#endif  // XLA_MLIR_HLO_BINDINGS_C_ATTRIBUTES_H_

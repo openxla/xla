@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_LLVM_COMMAND_LINE_OPTIONS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_LLVM_COMMAND_LINE_OPTIONS_H_
+#ifndef XLA_SERVICE_LLVM_IR_LLVM_COMMAND_LINE_OPTIONS_H_
+#define XLA_SERVICE_LLVM_IR_LLVM_COMMAND_LINE_OPTIONS_H_
 
 #include <string>
 #include <vector>
@@ -58,4 +58,4 @@ void InitializeLLVMCommandLineOptions(const T& options) {
 }  // namespace llvm_ir
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_LLVM_COMMAND_LINE_OPTIONS_H_
+#endif  // XLA_SERVICE_LLVM_IR_LLVM_COMMAND_LINE_OPTIONS_H_

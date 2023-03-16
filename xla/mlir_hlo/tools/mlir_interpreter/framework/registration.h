@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_REGISTRATION_H_
-#define MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_REGISTRATION_H_
+#ifndef XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_REGISTRATION_H_
+#define XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_REGISTRATION_H_
 
 #include <functional>
 #include <optional>
@@ -29,8 +29,8 @@ limitations under the License.
 #include "tools/mlir_interpreter/framework/interpreter_value.h"
 #include "tools/mlir_interpreter/framework/interpreter_value_util.h"
 
-#define MLIR_INTERPRETER_CONCAT_IMPL(x, y) x##y
-#define MLIR_INTERPRETER_CONCAT(x, y) MLIR_INTERPRETER_CONCAT_IMPL(x, y)
+#define XLA_MLIR_INTERPRETER_CONCAT_IMPL(x, y) x##y
+#define XLA_MLIR_INTERPRETER_CONCAT(x, y) MLIR_INTERPRETER_CONCAT_IMPL(x, y)
 #define REGISTER_MLIR_INTERPRETER_OP(args...)                     \
   static int MLIR_INTERPRETER_CONCAT(init_, __COUNTER__) = []() { \
     ::mlir::interpreter::detail::registerInterpreterOp(args);     \
@@ -222,4 +222,4 @@ void registerInterpreterOp(llvm::StringRef name, llvm::StringRef original);
 }  // namespace interpreter
 }  // namespace mlir
 
-#endif  // MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_REGISTRATION_H_
+#endif  // XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_REGISTRATION_H_

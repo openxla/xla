@@ -16,8 +16,8 @@ limitations under the License.
 // Utilities common between the client and server for working with
 // StreamExecutor devices.
 
-#ifndef TENSORFLOW_COMPILER_XLA_DEVICE_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_DEVICE_UTIL_H_
+#ifndef XLA_DEVICE_UTIL_H_
+#define XLA_DEVICE_UTIL_H_
 
 #include <string>
 
@@ -36,4 +36,4 @@ std::string DeviceIdentifier(se::StreamExecutor* stream_exec) {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_DEVICE_UTIL_H_
+#endif  // XLA_DEVICE_UTIL_H_

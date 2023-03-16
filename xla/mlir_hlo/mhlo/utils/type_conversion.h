@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_MHLO_UTILS_TYPE_CONVERSION_H
-#define MLIR_HLO_MHLO_UTILS_TYPE_CONVERSION_H
+#ifndef XLA_MLIR_HLO_MHLO_UTILS_TYPE_CONVERSION_H_
+#define XLA_MLIR_HLO_MHLO_UTILS_TYPE_CONVERSION_H_
 
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Dialect.h"
@@ -96,4 +96,4 @@ void registerFuncOpsForTypeConversion(ConversionTarget& target,
 }  // namespace stablehlo
 }  // namespace mlir
 
-#endif  // MLIR_HLO_MHLO_UTILS_TYPE_CONVERSION_H
+#endif  // XLA_MLIR_HLO_MHLO_UTILS_TYPE_CONVERSION_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_RPC_GRPC_SERVICE_H_
-#define TENSORFLOW_COMPILER_XLA_RPC_GRPC_SERVICE_H_
+#ifndef XLA_RPC_GRPC_SERVICE_H_
+#define XLA_RPC_GRPC_SERVICE_H_
 
 #include "grpcpp/server_context.h"
 #include "xla/rpc/xla_service.grpc.pb.h"
@@ -91,4 +91,4 @@ class GRPCService : public grpc::XlaService::Service {
 };
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_RPC_GRPC_SERVICE_H_
+#endif  // XLA_RPC_GRPC_SERVICE_H_

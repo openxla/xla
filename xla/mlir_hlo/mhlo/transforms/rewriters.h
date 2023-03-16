@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_MHLO_TRANSFORMS_REWRITERS_H
-#define MLIR_HLO_MHLO_TRANSFORMS_REWRITERS_H
+#ifndef XLA_MLIR_HLO_MHLO_TRANSFORMS_REWRITERS_H_
+#define XLA_MLIR_HLO_MHLO_TRANSFORMS_REWRITERS_H_
 
 #include <functional>
 #include <memory>
@@ -203,4 +203,4 @@ void populateStablehloToHloPatterns(RewritePatternSet *patterns,
 
 }  // namespace mlir
 
-#endif  // MLIR_HLO_MHLO_TRANSFORMS_REWRITERS_H
+#endif  // XLA_MLIR_HLO_MHLO_TRANSFORMS_REWRITERS_H_

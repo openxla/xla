@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_ARRAY2D_H_
-#define TENSORFLOW_COMPILER_XLA_ARRAY2D_H_
+#ifndef XLA_ARRAY2D_H_
+#define XLA_ARRAY2D_H_
 
 #include <algorithm>
 #include <cstdint>
@@ -116,4 +116,4 @@ std::unique_ptr<Array2D<NativeT>> MakeLinspaceArray2D(double from, double to,
 }
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_ARRAY2D_H_
+#endif  // XLA_ARRAY2D_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_SPMD_CONVOLUTION_HANDLER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_SPMD_CONVOLUTION_HANDLER_H_
+#ifndef XLA_SERVICE_SPMD_CONVOLUTION_HANDLER_H_
+#define XLA_SERVICE_SPMD_CONVOLUTION_HANDLER_H_
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -40,4 +40,4 @@ StatusOr<HloInstruction*> PartitionConvolution(
 }  // namespace spmd
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_SPMD_CONVOLUTION_HANDLER_H_
+#endif  // XLA_SERVICE_SPMD_CONVOLUTION_HANDLER_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_GML_ST_TRANSFORMS_PASSES_H
-#define MLIR_HLO_GML_ST_TRANSFORMS_PASSES_H
+#ifndef XLA_MLIR_HLO_GML_ST_TRANSFORMS_PASSES_H_
+#define XLA_MLIR_HLO_GML_ST_TRANSFORMS_PASSES_H_
 
 #include <functional>
 #include <memory>
@@ -234,4 +234,4 @@ void addDefaultCPUTilingPipeline(OpPassManager &pm, StringRef cpuName,
 }  // namespace gml_st
 }  // namespace mlir
 
-#endif  // MLIR_HLO_GML_ST_TRANSFORMS_PASSES_H
+#endif  // XLA_MLIR_HLO_GML_ST_TRANSFORMS_PASSES_H_

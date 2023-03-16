@@ -19,8 +19,8 @@ limitations under the License.
 // * Invoking pre-canned high-performance library routines (like matrix
 //   multiply)
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_H_
+#ifndef XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_H_
+#define XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_H_
 
 #include "xla/stream_executor/device_description.h"  // IWYU pragma: export
 #include "xla/stream_executor/device_memory.h"  // IWYU pragma: export
@@ -46,4 +46,4 @@ using namespace stream_executor;  // NOLINT[build/namespaces]
 }  // namespace gputools
 }  // namespace perftools
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_H_
+#endif  // XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_H_

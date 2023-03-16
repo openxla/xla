@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_C_API_DEFN_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_C_API_DEFN_H_
+#ifndef XLA_STREAM_EXECUTOR_TPU_C_API_DEFN_H_
+#define XLA_STREAM_EXECUTOR_TPU_C_API_DEFN_H_
 
 #include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/event.h"
@@ -69,4 +69,4 @@ struct XLA_ComputationPlacer {};
 struct SE_TpuTopology {};
 struct SE_TpuTopology_Core {};
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_C_API_DEFN_H_
+#endif  // XLA_STREAM_EXECUTOR_TPU_C_API_DEFN_H_

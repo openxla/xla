@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_ITERATOR_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_ITERATOR_UTIL_H_
+#ifndef XLA_ITERATOR_UTIL_H_
+#define XLA_ITERATOR_UTIL_H_
 
 #include <cstddef>
 #include <iterator>
@@ -175,4 +175,4 @@ MakeFilteringUnwrappingIteratorRange(NestedIter begin_iter, NestedIter end_iter,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_ITERATOR_UTIL_H_
+#endif  // XLA_ITERATOR_UTIL_H_

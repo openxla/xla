@@ -16,8 +16,8 @@ limitations under the License.
 // This file contains LmhloStructuredInterface, which provides access to 'LmhloOp'
 // interface.
 
-#ifndef MLIR_LMHLO_STRUCTURED_INTERFACE
-#define MLIR_LMHLO_STRUCTURED_INTERFACE
+#ifndef XLA_MLIR_LMHLO_STRUCTURED_INTERFACE
+#define XLA_MLIR_LMHLO_STRUCTURED_INTERFACE
 
 include "mlir/IR/OpBase.td"
 
@@ -44,4 +44,4 @@ def LmhloStructuredInterface : OpInterface<"LmhloOp"> {
   ];
 }
 
-#endif // MLIR_LMHLO_STRUCTURED_INTERFACE
+#endif // XLA_MLIR_LMHLO_STRUCTURED_INTERFACE

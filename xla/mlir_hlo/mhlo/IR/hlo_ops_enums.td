@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ENUMS
-#define MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ENUMS
+#ifndef XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ENUMS
+#define XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ENUMS
 
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/PatternBase.td"
@@ -261,4 +261,4 @@ def MHLO_RngAlgorithmAttr : EnumAttr<MHLO_Dialect, MHLO_RngAlgorithm, "rng_algor
   let assemblyFormat = "`<` $value `>`";
 }
 
-#endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ENUMS
+#endif // XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ENUMS

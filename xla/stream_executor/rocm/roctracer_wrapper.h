@@ -17,8 +17,8 @@ limitations under the License.
 // have explicit linking to libroctracer. All TF hipsarse API usage should route
 // through this wrapper.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
+#ifndef XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
+#define XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
 
 #include "rocm/include/roctracer/roctracer.h"
 #include "rocm/include/roctracer/roctracer_hip.h"
@@ -109,4 +109,4 @@ FOREACH_ROCTRACER_API(ROCTRACER_API_WRAPPER)
 }  // namespace wrap
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
+#endif  // XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_

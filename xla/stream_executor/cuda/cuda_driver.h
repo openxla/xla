@@ -15,8 +15,8 @@ limitations under the License.
 
 // CUDA userspace driver library wrapper functionality.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_DRIVER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_DRIVER_H_
+#ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_DRIVER_H_
+#define XLA_STREAM_EXECUTOR_CUDA_CUDA_DRIVER_H_
 
 #include "absl/container/node_hash_map.h"
 #include "absl/memory/memory.h"
@@ -162,4 +162,4 @@ CUcontext CurrentContextOrDie();
 }  // namespace cuda
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_DRIVER_H_
+#endif  // XLA_STREAM_EXECUTOR_CUDA_CUDA_DRIVER_H_

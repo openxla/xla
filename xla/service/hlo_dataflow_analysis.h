@@ -17,8 +17,8 @@ limitations under the License.
 // (instructions and ShapeIndexes) in the HLO module. Analysis is module-scoped
 // tracking values across computation boundaries.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_DATAFLOW_ANALYSIS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_DATAFLOW_ANALYSIS_H_
+#ifndef XLA_SERVICE_HLO_DATAFLOW_ANALYSIS_H_
+#define XLA_SERVICE_HLO_DATAFLOW_ANALYSIS_H_
 
 #include <functional>
 #include <iterator>
@@ -348,4 +348,4 @@ class HloDataflowAnalysis {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_DATAFLOW_ANALYSIS_H_
+#endif  // XLA_SERVICE_HLO_DATAFLOW_ANALYSIS_H_

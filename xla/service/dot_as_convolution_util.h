@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_DOT_AS_CONVOLUTION_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_DOT_AS_CONVOLUTION_UTIL_H_
+#ifndef XLA_SERVICE_DOT_AS_CONVOLUTION_UTIL_H_
+#define XLA_SERVICE_DOT_AS_CONVOLUTION_UTIL_H_
 
 #include <memory>
 #include <optional>
@@ -99,4 +99,4 @@ DotConvolutionDimsInfo ParseDotGeneralFromDot(const HloInstruction* dot);
 }  // namespace dot_as_convolution_util
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_DOT_AS_CONVOLUTION_UTIL_H_
+#endif  // XLA_SERVICE_DOT_AS_CONVOLUTION_UTIL_H_

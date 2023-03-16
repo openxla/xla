@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_IR_EMISSION_UTILS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_IR_EMISSION_UTILS_H_
+#ifndef XLA_SERVICE_CPU_IR_EMISSION_UTILS_H_
+#define XLA_SERVICE_CPU_IR_EMISSION_UTILS_H_
 
 #include "llvm/IR/Value.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -47,4 +47,4 @@ using DynamicLoopBounds = std::vector<std::pair<llvm::Value*, llvm::Value*>>;
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_IR_EMISSION_UTILS_H_
+#endif  // XLA_SERVICE_CPU_IR_EMISSION_UTILS_H_

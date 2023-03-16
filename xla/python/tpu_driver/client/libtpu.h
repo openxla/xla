@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_CLIENT_LIBTPU_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_CLIENT_LIBTPU_H_
+#ifndef XLA_PYTHON_TPU_DRIVER_CLIENT_LIBTPU_H_
+#define XLA_PYTHON_TPU_DRIVER_CLIENT_LIBTPU_H_
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -309,4 +309,4 @@ struct TpuDriverFn {
   PrototypeTpuDriver_Version* TpuDriver_Version;                    // NOLINT
 };
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_CLIENT_LIBTPU_H_
+#endif  // XLA_PYTHON_TPU_DRIVER_CLIENT_LIBTPU_H_

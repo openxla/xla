@@ -17,8 +17,8 @@ limitations under the License.
 // buffer that are used by the GPU runtime to transfer buffers into an
 // executing GPU computation, e.g., to feed data into a while loop.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_INFEED_MANAGER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_INFEED_MANAGER_H_
+#ifndef XLA_SERVICE_GPU_INFEED_MANAGER_H_
+#define XLA_SERVICE_GPU_INFEED_MANAGER_H_
 
 #include "absl/base/thread_annotations.h"
 #include "xla/literal.h"
@@ -64,4 +64,4 @@ InfeedManager* GetOrCreateInfeedManager(se::StreamExecutor* executor);
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_INFEED_MANAGER_H_
+#endif  // XLA_SERVICE_GPU_INFEED_MANAGER_H_

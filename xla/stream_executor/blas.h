@@ -37,8 +37,8 @@ limitations under the License.
 // kernel launches (via StreamExecutor::ThenLaunch()) with these pre-canned BLAS
 // routines.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_BLAS_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_BLAS_H_
+#ifndef XLA_STREAM_EXECUTOR_BLAS_H_
+#define XLA_STREAM_EXECUTOR_BLAS_H_
 
 #include <complex>
 #include <vector>
@@ -791,4 +791,4 @@ class BlasSupport {
 }  // namespace blas
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_BLAS_H_
+#endif  // XLA_STREAM_EXECUTOR_BLAS_H_

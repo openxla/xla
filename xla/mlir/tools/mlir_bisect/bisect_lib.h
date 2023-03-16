@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_TOOLS_MLIR_BISECT_BISECT_LIB_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_TOOLS_MLIR_BISECT_BISECT_LIB_H_
+#ifndef XLA_MLIR_TOOLS_MLIR_BISECT_BISECT_LIB_H_
+#define XLA_MLIR_TOOLS_MLIR_BISECT_BISECT_LIB_H_
 
 #include <functional>
 #include <tuple>
@@ -93,4 +93,4 @@ void RegisterReduceStrategy(StringRef name,
 }  // namespace bisect
 }  // namespace mlir
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_TOOLS_MLIR_BISECT_BISECT_LIB_H_
+#endif  // XLA_MLIR_TOOLS_MLIR_BISECT_BISECT_LIB_H_

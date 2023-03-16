@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file supports the lowering of CHLO/HLO/LHLO dialect to Linalg dialect.
 
-#ifndef MLIR_HLO_DIALECT_MHLO_TRANSFORMS_LEGALIZE_TO_LINALG_UTILS_H_
-#define MLIR_HLO_DIALECT_MHLO_TRANSFORMS_LEGALIZE_TO_LINALG_UTILS_H_
+#ifndef XLA_MLIR_HLO_MHLO_UTILS_LEGALIZE_TO_LINALG_UTILS_H_
+#define XLA_MLIR_HLO_MHLO_UTILS_LEGALIZE_TO_LINALG_UTILS_H_
 
 #include <algorithm>
 #include <numeric>
@@ -186,4 +186,4 @@ class PointwiseToLinalgConverter : public OpConversionPattern<OpTy> {
 
 }  // namespace mlir
 
-#endif  // MLIR_HLO_DIALECT_MHLO_TRANSFORMS_LEGALIZE_TO_LINALG_UTILS_H_
+#endif  // XLA_MLIR_HLO_MHLO_UTILS_LEGALIZE_TO_LINALG_UTILS_H_

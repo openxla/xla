@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_LHLO_TRANSFORMS_MAP_LMHLO_TO_SCALAR_OP_H
-#define MLIR_HLO_LHLO_TRANSFORMS_MAP_LMHLO_TO_SCALAR_OP_H
+#ifndef XLA_MLIR_HLO_LHLO_TRANSFORMS_MAP_LMHLO_TO_SCALAR_OP_H_
+#define XLA_MLIR_HLO_LHLO_TRANSFORMS_MAP_LMHLO_TO_SCALAR_OP_H_
 
 #include "lhlo/transforms/map_lhlo_to_hlo_op.h"
 #include "mhlo/transforms/map_mhlo_to_scalar_op.h"
@@ -61,4 +61,4 @@ struct LhloOpToStdScalarOp {
 }  // namespace lmhlo
 }  // namespace mlir
 
-#endif  // MLIR_HLO_LHLO_TRANSFORMS_MAP_LMHLO_TO_SCALAR_OP_H
+#endif  // XLA_MLIR_HLO_LHLO_TRANSFORMS_MAP_LMHLO_TO_SCALAR_OP_H_

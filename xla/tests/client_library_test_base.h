@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TESTS_CLIENT_LIBRARY_TEST_BASE_H_
-#define TENSORFLOW_COMPILER_XLA_TESTS_CLIENT_LIBRARY_TEST_BASE_H_
+#ifndef XLA_TESTS_CLIENT_LIBRARY_TEST_BASE_H_
+#define XLA_TESTS_CLIENT_LIBRARY_TEST_BASE_H_
 
 #include <memory>
 #include <string>
@@ -719,4 +719,4 @@ std::unique_ptr<Array2D<NativeT>> ClientLibraryTestBase::CreatePseudorandomR2(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TESTS_CLIENT_LIBRARY_TEST_BASE_H_
+#endif  // XLA_TESTS_CLIENT_LIBRARY_TEST_BASE_H_

@@ -15,8 +15,8 @@ limitations under the License.
 
 // Utilities for dealing with Literal protobufs.
 
-#ifndef TENSORFLOW_COMPILER_XLA_LITERAL_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_LITERAL_UTIL_H_
+#ifndef XLA_LITERAL_UTIL_H_
+#define XLA_LITERAL_UTIL_H_
 
 #include <functional>
 #include <initializer_list>
@@ -549,4 +549,4 @@ template <PrimitiveType type, typename T>
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_LITERAL_UTIL_H_
+#endif  // XLA_LITERAL_UTIL_H_

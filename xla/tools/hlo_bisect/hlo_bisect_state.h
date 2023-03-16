@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TOOLS_HLO_BISECT_HLO_BISECT_STATE_H_
-#define TENSORFLOW_COMPILER_XLA_TOOLS_HLO_BISECT_HLO_BISECT_STATE_H_
+#ifndef XLA_TOOLS_HLO_BISECT_HLO_BISECT_STATE_H_
+#define XLA_TOOLS_HLO_BISECT_HLO_BISECT_STATE_H_
 
 #include <memory>
 #include <string>
@@ -93,4 +93,4 @@ class HloBisectState {
 }  // namespace bisect
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TOOLS_HLO_BISECT_HLO_BISECT_STATE_H_
+#endif  // XLA_TOOLS_HLO_BISECT_HLO_BISECT_STATE_H_

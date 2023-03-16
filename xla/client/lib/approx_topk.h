@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_APPROX_TOPK_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_APPROX_TOPK_H_
+#ifndef XLA_CLIENT_LIB_APPROX_TOPK_H_
+#define XLA_CLIENT_LIB_APPROX_TOPK_H_
 
 #include "xla/client/xla_builder.h"
 #include "xla/xla_data.pb.h"
@@ -67,4 +67,4 @@ XlaOp ApproxTopKFallback(XlaBuilder* builder, absl::Span<const XlaOp> operands,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_APPROX_TOPK_H_
+#endif  // XLA_CLIENT_LIB_APPROX_TOPK_H_

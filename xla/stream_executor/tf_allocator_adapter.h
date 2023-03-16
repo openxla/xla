@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TF_ALLOCATOR_ADAPTER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TF_ALLOCATOR_ADAPTER_H_
+#ifndef XLA_STREAM_EXECUTOR_TF_ALLOCATOR_ADAPTER_H_
+#define XLA_STREAM_EXECUTOR_TF_ALLOCATOR_ADAPTER_H_
 
 #include <memory>
 #include <utility>
@@ -126,4 +126,4 @@ class MultiDeviceAdapter : public DeviceMemoryAllocator {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TF_ALLOCATOR_ADAPTER_H_
+#endif  // XLA_STREAM_EXECUTOR_TF_ALLOCATOR_ADAPTER_H_

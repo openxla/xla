@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_ANALYSIS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_ANALYSIS_H_
+#ifndef XLA_SERVICE_WHILE_LOOP_ANALYSIS_H_
+#define XLA_SERVICE_WHILE_LOOP_ANALYSIS_H_
 
 #include <optional>
 
@@ -48,4 +48,4 @@ std::optional<int64_t> GetLoopInductionVarTupleIdx(
     const HloInstruction *while_op);
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_ANALYSIS_H_
+#endif  // XLA_SERVICE_WHILE_LOOP_ANALYSIS_H_

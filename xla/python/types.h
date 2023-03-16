@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_TYPES_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_TYPES_H_
+#ifndef XLA_PYTHON_TYPES_H_
+#define XLA_PYTHON_TYPES_H_
 
 #include <memory>
 #include <optional>
@@ -442,4 +442,4 @@ struct type_caster<xla::PrecisionConfig> {
 }  // namespace detail
 }  // namespace pybind11
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_TYPES_H_
+#endif  // XLA_PYTHON_TYPES_H_

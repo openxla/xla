@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_ENUMS_TD_
-#define TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_ENUMS_TD_
+#ifndef XLA_MLIR_XLA_CPU_ENUMS_TD_
+#define XLA_MLIR_XLA_CPU_ENUMS_TD_
 
 include "xla/mlir/xla_cpu/ir/xla_cpu_dialect.td"
 include "mlir/IR/EnumAttr.td"
@@ -36,4 +36,4 @@ def XlaCpuReductionKindEnum : EnumAttr<XlaCpuDialect, XlaCpuReductionKind, "redu
   let assemblyFormat = "`<` $value `>`";
 }
 
-#endif // TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_ENUMS_TD_
+#endif // XLA_MLIR_XLA_CPU_ENUMS_TD_

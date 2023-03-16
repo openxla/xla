@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_
+#ifndef XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_
+#define XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_
 
 #include <memory>
 #include <optional>
@@ -193,4 +193,4 @@ class PythonHooks {
 }  // namespace profiler
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_
+#endif  // XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_

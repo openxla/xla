@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_XFEED_QUEUE_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_XFEED_QUEUE_H_
+#ifndef XLA_SERVICE_GPU_XFEED_QUEUE_H_
+#define XLA_SERVICE_GPU_XFEED_QUEUE_H_
 
 #include <deque>
 #include <functional>
@@ -156,4 +156,4 @@ class BlockingXfeedQueue : public XfeedQueue<BufferType> {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_XFEED_QUEUE_H_
+#endif  // XLA_SERVICE_GPU_XFEED_QUEUE_H_

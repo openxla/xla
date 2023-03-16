@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_HLO_IR_DFS_HLO_VISITOR_WITH_DEFAULT_H_
-#define TENSORFLOW_COMPILER_XLA_HLO_IR_DFS_HLO_VISITOR_WITH_DEFAULT_H_
+#ifndef XLA_HLO_IR_DFS_HLO_VISITOR_WITH_DEFAULT_H_
+#define XLA_HLO_IR_DFS_HLO_VISITOR_WITH_DEFAULT_H_
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -389,4 +389,4 @@ using ConstFunctionVisitor = FunctionVisitorBase<const HloInstruction*>;
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_HLO_IR_DFS_HLO_VISITOR_WITH_DEFAULT_H_
+#endif  // XLA_HLO_IR_DFS_HLO_VISITOR_WITH_DEFAULT_H_

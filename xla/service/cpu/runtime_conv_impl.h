@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_CONV_IMPL_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_CONV_IMPL_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_CONV_IMPL_H_
+#define XLA_SERVICE_CPU_RUNTIME_CONV_IMPL_H_
 
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tsl/framework/convolution/eigen_spatial_convolutions.h"
@@ -194,4 +194,4 @@ void EigenConv3DImpl(
 }  // namespace xla
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_CONV_IMPL_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_CONV_IMPL_H_

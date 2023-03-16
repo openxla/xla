@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_GML_ST_TRANSFORMS_FUSION_FUSION_H
-#define MLIR_HLO_GML_ST_TRANSFORMS_FUSION_FUSION_H
+#ifndef XLA_MLIR_HLO_GML_ST_TRANSFORMS_FUSION_FUSION_H_
+#define XLA_MLIR_HLO_GML_ST_TRANSFORMS_FUSION_FUSION_H_
 
 #include "gml_st/IR/gml_st_ops.h"
 #include "gml_st/transforms/peeling/peeling.h"
@@ -76,4 +76,4 @@ LogicalResult tilePeeledOpsToScalars(
 
 }  // namespace mlir::gml_st
 
-#endif  // MLIR_HLO_GML_ST_TRANSFORMS_FUSION_FUSION_H
+#endif  // XLA_MLIR_HLO_GML_ST_TRANSFORMS_FUSION_FUSION_H_

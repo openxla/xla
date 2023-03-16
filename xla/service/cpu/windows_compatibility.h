@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_WINDOWS_COMPATIBILITY_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_WINDOWS_COMPATIBILITY_H_
+#ifndef XLA_SERVICE_CPU_WINDOWS_COMPATIBILITY_H_
+#define XLA_SERVICE_CPU_WINDOWS_COMPATIBILITY_H_
 
 #ifdef _MSC_VER
 
@@ -28,4 +28,4 @@ void sincosf(float x, float *sinv, float *cosv);
 
 #endif  // _MSC_VER
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_WINDOWS_COMPATIBILITY_H_
+#endif  // XLA_SERVICE_CPU_WINDOWS_COMPATIBILITY_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TOOLS_RUN_HLO_MODULE_H_
-#define TENSORFLOW_COMPILER_XLA_TOOLS_RUN_HLO_MODULE_H_
+#ifndef XLA_TOOLS_RUN_HLO_MODULE_H_
+#define XLA_TOOLS_RUN_HLO_MODULE_H_
 
 #include <functional>
 #include <random>
@@ -93,4 +93,4 @@ Status RunAndCompare(
     std::function<void(HloModuleConfig*)> config_modifier_hook = {});
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TOOLS_RUN_HLO_MODULE_H_
+#endif  // XLA_TOOLS_RUN_HLO_MODULE_H_

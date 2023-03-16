@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_
+#define XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_
 
 extern "C" {
 
@@ -24,4 +24,4 @@ extern bool __xla_cpu_runtime_StatusIsSuccess(
     const void* /* XlaCustomCallStatus* */ status_ptr);
 }
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_

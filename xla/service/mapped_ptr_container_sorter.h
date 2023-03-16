@@ -27,8 +27,8 @@ limitations under the License.
 //   auto status = Sorter::Sort(map_fn, Sorter::IndexAfterMappedElementsFn(),
 //                              original, clone);
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_MAPPED_PTR_CONTAINER_SORTER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_MAPPED_PTR_CONTAINER_SORTER_H_
+#ifndef XLA_SERVICE_MAPPED_PTR_CONTAINER_SORTER_H_
+#define XLA_SERVICE_MAPPED_PTR_CONTAINER_SORTER_H_
 
 #include <array>
 #include <cstddef>
@@ -454,4 +454,4 @@ Status MappedPtrContainerSorter<PointedToTy>::Sort(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_MAPPED_PTR_CONTAINER_SORTER_H_
+#endif  // XLA_SERVICE_MAPPED_PTR_CONTAINER_SORTER_H_

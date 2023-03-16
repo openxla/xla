@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_PIMPL_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_PIMPL_H_
+#ifndef XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_PIMPL_H_
+#define XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_PIMPL_H_
 
 #include <atomic>
 #include <cstdint>
@@ -911,4 +911,4 @@ DeviceMemory<T> StreamExecutor::GetSubBuffer(DeviceMemory<T>* parent,
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_PIMPL_H_
+#endif  // XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_PIMPL_H_

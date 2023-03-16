@@ -17,8 +17,8 @@ limitations under the License.
 // have explicit linking to librocsolver. All TF hipsarse API usage should route
 // through this wrapper.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCSOLVER_WRAPPER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCSOLVER_WRAPPER_H_
+#ifndef XLA_STREAM_EXECUTOR_ROCM_ROCSOLVER_WRAPPER_H_
+#define XLA_STREAM_EXECUTOR_ROCM_ROCSOLVER_WRAPPER_H_
 
 #include "rocm/rocm_config.h"
 #if (TF_ROCM_VERSION >= 50200)
@@ -117,4 +117,4 @@ FOREACH_ROCSOLVER_API(ROCSOLVER_API_WRAPPER)
 }  // namespace wrap
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCSOLVER_WRAPPER_H_
+#endif  // XLA_STREAM_EXECUTOR_ROCM_ROCSOLVER_WRAPPER_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CUSTOM_CALL_STATUS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CUSTOM_CALL_STATUS_H_
+#ifndef XLA_SERVICE_CUSTOM_CALL_STATUS_H_
+#define XLA_SERVICE_CUSTOM_CALL_STATUS_H_
 
 #include <string.h>
 
@@ -42,4 +42,4 @@ void XlaCustomCallStatusSetFailure(XlaCustomCallStatus* status,
 }  // extern "C"
 #endif
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CUSTOM_CALL_STATUS_H_
+#endif  // XLA_SERVICE_CUSTOM_CALL_STATUS_H_

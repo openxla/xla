@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PJRT_HOST_CALLBACK_H_
-#define TENSORFLOW_COMPILER_XLA_PJRT_HOST_CALLBACK_H_
+#ifndef XLA_PJRT_HOST_CALLBACK_H_
+#define XLA_PJRT_HOST_CALLBACK_H_
 
 #include <atomic>
 #include <functional>
@@ -138,4 +138,4 @@ CreateHostCallbackStateAndAppendSendRecvCallbacks(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PJRT_HOST_CALLBACK_H_
+#endif  // XLA_PJRT_HOST_CALLBACK_H_

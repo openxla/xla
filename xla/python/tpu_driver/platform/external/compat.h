@@ -13,8 +13,8 @@
 // limitations under the License.
 // ==============================================================================
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_PLATFORM_EXTERNAL_COMPAT_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_PLATFORM_EXTERNAL_COMPAT_H_
+#ifndef XLA_PYTHON_TPU_DRIVER_PLATFORM_EXTERNAL_COMPAT_H_
+#define XLA_PYTHON_TPU_DRIVER_PLATFORM_EXTERNAL_COMPAT_H_
 
 #include <thread>  // NOLINT
 
@@ -47,4 +47,4 @@ class TraceMe {
 
 }  // namespace tpu_driver
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_PLATFORM_EXTERNAL_COMPAT_H_
+#endif  // XLA_PYTHON_TPU_DRIVER_PLATFORM_EXTERNAL_COMPAT_H_

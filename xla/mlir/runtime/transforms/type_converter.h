@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_TRANSFORMS_TYPE_CONVERTER_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_TRANSFORMS_TYPE_CONVERTER_H_
+#ifndef XLA_MLIR_RUNTIME_TRANSFORMS_TYPE_CONVERTER_H_
+#define XLA_MLIR_RUNTIME_TRANSFORMS_TYPE_CONVERTER_H_
 
 #include <functional>
 #include <memory>
@@ -84,4 +84,4 @@ class TypeConverter {
 }  // namespace runtime
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_TRANSFORMS_TYPE_CONVERTER_H_
+#endif  // XLA_MLIR_RUNTIME_TRANSFORMS_TYPE_CONVERTER_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_
+#define XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_
 
 #include <stdint.h>
 
@@ -28,4 +28,4 @@ extern void __xla_cpu_runtime_EigenSingleThreadedFft(
 
 }  // extern "C"
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_FFT_H_

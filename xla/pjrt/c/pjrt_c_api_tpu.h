@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PJRT_C_PJRT_C_API_TPU_H_
-#define TENSORFLOW_COMPILER_XLA_PJRT_C_PJRT_C_API_TPU_H_
+#ifndef XLA_PJRT_C_PJRT_C_API_TPU_H_
+#define XLA_PJRT_C_PJRT_C_API_TPU_H_
 
 #include "xla/pjrt/c/pjrt_c_api.h"
 
@@ -32,4 +32,4 @@ const PJRT_Api* GetPjrtApi();
 }
 #endif
 
-#endif  // TENSORFLOW_COMPILER_XLA_PJRT_C_PJRT_C_API_TPU_H_
+#endif  // XLA_PJRT_C_PJRT_C_API_TPU_H_

@@ -1,5 +1,5 @@
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_GRPC_TPU_DRIVER_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_GRPC_TPU_DRIVER_H_
+#ifndef XLA_PYTHON_TPU_DRIVER_GRPC_TPU_DRIVER_H_
+#define XLA_PYTHON_TPU_DRIVER_GRPC_TPU_DRIVER_H_
 
 // Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 //
@@ -28,4 +28,4 @@ xla::StatusOr<std::unique_ptr<TpuDriver>> CreateGrpcTpuDriver(
 
 }  // namespace tpu_driver
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_TPU_DRIVER_GRPC_TPU_DRIVER_H_
+#endif  // XLA_PYTHON_TPU_DRIVER_GRPC_TPU_DRIVER_H_

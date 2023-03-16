@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_GML_ST_TRANSFORMS_PEELING_PEELING_H
-#define MLIR_HLO_GML_ST_TRANSFORMS_PEELING_PEELING_H
+#ifndef XLA_MLIR_HLO_GML_ST_TRANSFORMS_PEELING_PEELING_H_
+#define XLA_MLIR_HLO_GML_ST_TRANSFORMS_PEELING_PEELING_H_
 
 #include "gml_st/IR/gml_st_ops.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -48,4 +48,4 @@ SCFForPeelingResult peelSCFForOp(RewriterBase &rewriter, scf::ForOp);
 }  // namespace gml_st
 }  // namespace mlir
 
-#endif  // MLIR_HLO_GML_ST_TRANSFORMS_PEELING_PEELING_H
+#endif  // XLA_MLIR_HLO_GML_ST_TRANSFORMS_PEELING_PEELING_H_

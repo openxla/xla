@@ -20,8 +20,8 @@ limitations under the License.
 // Having this file separate from rocm/rocm_gpu_executor.h means that dependent
 // code does not also have to depend on rocm.h.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_ACTIVATION_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_ACTIVATION_H_
+#ifndef XLA_STREAM_EXECUTOR_ROCM_ROCM_ACTIVATION_H_
+#define XLA_STREAM_EXECUTOR_ROCM_ROCM_ACTIVATION_H_
 
 #include "xla/stream_executor/gpu/gpu_activation.h"
 
@@ -36,4 +36,4 @@ using ScopedActivateExecutorContext = gpu::ScopedActivateExecutorContext;
 }  // namespace rocm
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_ACTIVATION_H_
+#endif  // XLA_STREAM_EXECUTOR_ROCM_ROCM_ACTIVATION_H_

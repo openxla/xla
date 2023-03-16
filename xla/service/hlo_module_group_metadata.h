@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_GROUP_METADATA_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_GROUP_METADATA_H_
+#ifndef XLA_SERVICE_HLO_MODULE_GROUP_METADATA_H_
+#define XLA_SERVICE_HLO_MODULE_GROUP_METADATA_H_
 
 #include <memory>
 #include <optional>
@@ -287,4 +287,4 @@ class HloModuleGroupMetadata {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_GROUP_METADATA_H_
+#endif  // XLA_SERVICE_HLO_MODULE_GROUP_METADATA_H_

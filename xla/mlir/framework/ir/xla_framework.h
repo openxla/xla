@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file defines the operations and types used in the XLAFramework dialect.
 //
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_H_
+#ifndef XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_H_
+#define XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_H_
 
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
@@ -33,4 +33,4 @@ limitations under the License.
 
 #undef GET_OP_CLASSES
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_H_
+#endif  // XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_H_

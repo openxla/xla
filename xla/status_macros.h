@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STATUS_MACROS_H_
-#define TENSORFLOW_COMPILER_XLA_STATUS_MACROS_H_
+#ifndef XLA_STATUS_MACROS_H_
+#define XLA_STATUS_MACROS_H_
 
 #include <memory>
 #include <ostream>  // NOLINT
@@ -194,4 +194,4 @@ class StatusAdaptorForMacros {
       .with_log_stack_trace()                                        \
       .add_ret_check_failure(#condition)
 
-#endif  // TENSORFLOW_COMPILER_XLA_STATUS_MACROS_H_
+#endif  // XLA_STATUS_MACROS_H_

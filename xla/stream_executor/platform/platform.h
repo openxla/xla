@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_PLATFORM_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_PLATFORM_H_
+#ifndef XLA_STREAM_EXECUTOR_PLATFORM_PLATFORM_H_
+#define XLA_STREAM_EXECUTOR_PLATFORM_PLATFORM_H_
 
 #if !defined(PLATFORM_POSIX) && !defined(PLATFORM_GOOGLE) &&                 \
     !defined(PLATFORM_POSIX_ANDROID) && !defined(PLATFORM_GOOGLE_ANDROID) && \
@@ -40,4 +40,4 @@ limitations under the License.
 #endif
 #endif
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_PLATFORM_H_
+#endif  // XLA_STREAM_EXECUTOR_PLATFORM_PLATFORM_H_

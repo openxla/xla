@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_DEALLOACTION_DEALLOCATION_OPS_H
-#define MLIR_HLO_DEALLOACTION_DEALLOCATION_OPS_H
+#ifndef XLA_MLIR_HLO_DEALLOCATION_IR_DEALLOCATION_OPS_H_
+#define XLA_MLIR_HLO_DEALLOCATION_IR_DEALLOCATION_OPS_H_
 
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -29,4 +29,4 @@ limitations under the License.
 #include "deallocation/IR/deallocation_ops.h.inc"
 #undef GET_OP_CLASSES
 
-#endif  // MLIR_HLO_DEALLOACTION_DEALLOCATION_OPS_H
+#endif  // XLA_MLIR_HLO_DEALLOCATION_IR_DEALLOCATION_OPS_H_

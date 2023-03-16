@@ -15,8 +15,8 @@ limitations under the License.
 
 // IWYU pragma: private, include "third_party/tensorflow/compiler/xla/stream_executor/stream_executor.h"
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_PORT_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_PORT_H_
+#ifndef XLA_STREAM_EXECUTOR_PLATFORM_PORT_H_
+#define XLA_STREAM_EXECUTOR_PLATFORM_PORT_H_
 
 #include "tsl/platform/macros.h"
 #include "tsl/platform/types.h"
@@ -45,4 +45,4 @@ using std::string;
 #define SE_PREDICT_TRUE TF_PREDICT_TRUE
 #define SE_PREDICT_FALSE TF_PREDICT_FALSE
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_PORT_H_
+#endif  // XLA_STREAM_EXECUTOR_PLATFORM_PORT_H_

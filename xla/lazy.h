@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_LAZY_H_
-#define TENSORFLOW_COMPILER_XLA_LAZY_H_
+#ifndef XLA_LAZY_H_
+#define XLA_LAZY_H_
 
 #include <variant>
 
@@ -42,4 +42,4 @@ class Lazy {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_LAZY_H_
+#endif  // XLA_LAZY_H_

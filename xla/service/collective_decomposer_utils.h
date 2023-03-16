@@ -18,8 +18,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/collective_ops_utils.h"
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_COLLECTIVE_DECOMPOSER_UTILS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_COLLECTIVE_DECOMPOSER_UTILS_H_
+#ifndef XLA_SERVICE_COLLECTIVE_DECOMPOSER_UTILS_H_
+#define XLA_SERVICE_COLLECTIVE_DECOMPOSER_UTILS_H_
 
 namespace xla {
 
@@ -32,4 +32,4 @@ CreateStartIndicesForCollectiveDecomposition(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_COLLECTIVE_DECOMPOSER_UTILS_H_
+#endif  // XLA_SERVICE_COLLECTIVE_DECOMPOSER_UTILS_H_

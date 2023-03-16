@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_RUNTIME_CUSTOM_CALL_H_
-#define TENSORFLOW_COMPILER_XLA_RUNTIME_CUSTOM_CALL_H_
+#ifndef XLA_RUNTIME_CUSTOM_CALL_H_
+#define XLA_RUNTIME_CUSTOM_CALL_H_
 
 #include <algorithm>
 #include <any>
@@ -1891,4 +1891,4 @@ XLA_RUNTIME_DECLARE_EXPLICIT_TYPE_ID(
     tsl::AsyncValueRef<xla::runtime::MemrefView>);
 XLA_RUNTIME_DECLARE_EXPLICIT_TYPE_ID(tsl::AsyncValueRef<tsl::Chain>);
 
-#endif  // TENSORFLOW_COMPILER_XLA_RUNTIME_CUSTOM_CALL_H_
+#endif  // XLA_RUNTIME_CUSTOM_CALL_H_

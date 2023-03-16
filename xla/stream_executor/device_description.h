@@ -17,8 +17,8 @@ limitations under the License.
 // device and platform properties. Also contains convenience functions for
 // checking/calculating launch dimensionality based on device properties.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DEVICE_DESCRIPTION_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DEVICE_DESCRIPTION_H_
+#ifndef XLA_STREAM_EXECUTOR_DEVICE_DESCRIPTION_H_
+#define XLA_STREAM_EXECUTOR_DEVICE_DESCRIPTION_H_
 
 #include <map>
 #include <memory>
@@ -526,4 +526,4 @@ void CalculateDimensionality(const DeviceDescription &device_description,
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DEVICE_DESCRIPTION_H_
+#endif  // XLA_STREAM_EXECUTOR_DEVICE_DESCRIPTION_H_

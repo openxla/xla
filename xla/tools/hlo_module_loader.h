@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TOOLS_HLO_MODULE_LOADER_H_
-#define TENSORFLOW_COMPILER_XLA_TOOLS_HLO_MODULE_LOADER_H_
+#ifndef XLA_TOOLS_HLO_MODULE_LOADER_H_
+#define XLA_TOOLS_HLO_MODULE_LOADER_H_
 
 #include <functional>
 #include <memory>
@@ -96,4 +96,4 @@ StatusOr<std::unique_ptr<RunHloModuleIterationLiterals>> LoadInputFromFile(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TOOLS_HLO_MODULE_LOADER_H_
+#endif  // XLA_TOOLS_HLO_MODULE_LOADER_H_

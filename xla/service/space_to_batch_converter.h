@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_SPACE_TO_BATCH_CONVERTER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_SPACE_TO_BATCH_CONVERTER_H_
+#ifndef XLA_SERVICE_SPACE_TO_BATCH_CONVERTER_H_
+#define XLA_SERVICE_SPACE_TO_BATCH_CONVERTER_H_
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -67,4 +67,4 @@ class SpaceToBatchConverter : public HloModulePass {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_SPACE_TO_BATCH_CONVERTER_H_
+#endif  // XLA_SERVICE_SPACE_TO_BATCH_CONVERTER_H_

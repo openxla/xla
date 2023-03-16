@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_STATUS_HELPER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_STATUS_HELPER_H_
+#ifndef XLA_STREAM_EXECUTOR_TPU_STATUS_HELPER_H_
+#define XLA_STREAM_EXECUTOR_TPU_STATUS_HELPER_H_
 
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
@@ -54,4 +54,4 @@ class StatusHelper {
   TF_Status* const c_status;  // NOLINT
 };
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_STATUS_HELPER_H_
+#endif  // XLA_STREAM_EXECUTOR_TPU_STATUS_HELPER_H_

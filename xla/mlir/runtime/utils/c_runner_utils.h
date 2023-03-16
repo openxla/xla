@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_UTILS_C_RUNNER_UTILS_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_UTILS_C_RUNNER_UTILS_H_
+#ifndef XLA_MLIR_RUNTIME_UTILS_C_RUNNER_UTILS_H_
+#define XLA_MLIR_RUNTIME_UTILS_C_RUNNER_UTILS_H_
 
 #include <string_view>
 
@@ -45,4 +45,4 @@ inline llvm::orc::SymbolMap CRunnerUtilsSymbolMap(
 }  // namespace runtime
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_UTILS_C_RUNNER_UTILS_H_
+#endif  // XLA_MLIR_RUNTIME_UTILS_C_RUNNER_UTILS_H_

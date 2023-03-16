@@ -16,8 +16,8 @@ limitations under the License.
 // HLO shardings describe how an HLO instruction is split across multiple
 // computations.
 
-#ifndef TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_SHARDING_H_
-#define TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_SHARDING_H_
+#ifndef XLA_HLO_IR_HLO_SHARDING_H_
+#define XLA_HLO_IR_HLO_SHARDING_H_
 
 #include <map>
 #include <optional>
@@ -482,4 +482,4 @@ std::ostream& operator<<(std::ostream& out, const HloSharding& sharding);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_SHARDING_H_
+#endif  // XLA_HLO_IR_HLO_SHARDING_H_

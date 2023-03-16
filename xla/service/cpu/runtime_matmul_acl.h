@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_MATMUL_ACL_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_MATMUL_ACL_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_MATMUL_ACL_H_
+#define XLA_SERVICE_CPU_RUNTIME_MATMUL_ACL_H_
 
 #include <iostream>
 
@@ -84,4 +84,4 @@ extern void __xla_cpu_runtime_ACLBatchMatMulF32(
 }
 }  // extern "C"
 #endif  // XLA_CPU_USE_ACL
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_MATMUL_ACL_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_MATMUL_ACL_H_

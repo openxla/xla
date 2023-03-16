@@ -16,8 +16,8 @@ limitations under the License.
 // Shapes are protobuf messages, so this utility header offers a bunch of
 // functionality for querying / poking at them.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SHAPE_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_SHAPE_UTIL_H_
+#ifndef XLA_SHAPE_UTIL_H_
+#define XLA_SHAPE_UTIL_H_
 
 #include <algorithm>
 #include <functional>
@@ -952,4 +952,4 @@ inline bool ShapeUtil::ForEachState::IsZeroElementArray() const {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SHAPE_UTIL_H_
+#endif  // XLA_SHAPE_UTIL_H_

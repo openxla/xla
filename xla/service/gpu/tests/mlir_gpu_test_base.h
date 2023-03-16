@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TESTS_MLIR_GPU_TEST_BASE_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TESTS_MLIR_GPU_TEST_BASE_H_
+#ifndef XLA_SERVICE_GPU_TESTS_MLIR_GPU_TEST_BASE_H_
+#define XLA_SERVICE_GPU_TESTS_MLIR_GPU_TEST_BASE_H_
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "xla/tests/hlo_test_base.h"
@@ -71,4 +71,4 @@ class MlirGpuTestBase : public HloTestBase {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_TESTS_MLIR_GPU_TEST_BASE_H_
+#endif  // XLA_SERVICE_GPU_TESTS_MLIR_GPU_TEST_BASE_H_

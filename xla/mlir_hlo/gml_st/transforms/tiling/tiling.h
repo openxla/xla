@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_GML_ST_TRANSFORMS_TILING_TILING_H
-#define MLIR_HLO_GML_ST_TRANSFORMS_TILING_TILING_H
+#ifndef XLA_MLIR_HLO_GML_ST_TRANSFORMS_TILING_TILING_H_
+#define XLA_MLIR_HLO_GML_ST_TRANSFORMS_TILING_TILING_H_
 
 #include <functional>
 
@@ -46,4 +46,4 @@ SmallVector<Value> getYieldedValues(scf::InParallelOp inParallelOp);
 
 }  // namespace mlir::gml_st
 
-#endif  // MLIR_HLO_GML_ST_TRANSFORMS_TILING_TILING_H
+#endif  // XLA_MLIR_HLO_GML_ST_TRANSFORMS_TILING_TILING_H_

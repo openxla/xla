@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_SIMPLIFY_PADDING_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_SIMPLIFY_PADDING_H_
+#ifndef XLA_SERVICE_GPU_CUDNN_SIMPLIFY_PADDING_H_
+#define XLA_SERVICE_GPU_CUDNN_SIMPLIFY_PADDING_H_
 
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/statusor.h"
@@ -61,4 +61,4 @@ class CudnnSimplifyPadding : public HloModulePass {
 
 }  // namespace xla::gpu
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUDNN_SIMPLIFY_PADDING_H_
+#endif  // XLA_SERVICE_GPU_CUDNN_SIMPLIFY_PADDING_H_

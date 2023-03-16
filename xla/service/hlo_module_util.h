@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_UTIL_H_
+#ifndef XLA_SERVICE_HLO_MODULE_UTIL_H_
+#define XLA_SERVICE_HLO_MODULE_UTIL_H_
 
 #include <functional>
 #include <memory>
@@ -50,4 +50,4 @@ void UpdateEntryComputationLayout(
     bool empty_tiles_only = true);
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_UTIL_H_
+#endif  // XLA_SERVICE_HLO_MODULE_UTIL_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_HLO_LOCATION_EXPORTER_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_HLO_LOCATION_EXPORTER_H_
+#ifndef XLA_TRANSLATE_MHLO_TO_HLO_LOCATION_EXPORTER_H_
+#define XLA_TRANSLATE_MHLO_TO_HLO_LOCATION_EXPORTER_H_
 
 #include <string>
 
@@ -39,4 +39,4 @@ std::string GetDebugNameFromLocation(mlir::Location location);
 }  // namespace mhlo
 }  // namespace mlir
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_HLO_LOCATION_EXPORTER_H_
+#endif  // XLA_TRANSLATE_MHLO_TO_HLO_LOCATION_EXPORTER_H_

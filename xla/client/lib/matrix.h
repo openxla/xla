@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_MATRIX_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_MATRIX_H_
+#ifndef XLA_CLIENT_LIB_MATRIX_H_
+#define XLA_CLIENT_LIB_MATRIX_H_
 
 #include <array>
 #include <optional>
@@ -153,4 +153,4 @@ xla::XlaOp MaybeTransposeInMinorDims(xla::XlaOp x, bool transpose);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_MATRIX_H_
+#endif  // XLA_CLIENT_LIB_MATRIX_H_

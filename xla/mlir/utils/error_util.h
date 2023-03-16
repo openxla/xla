@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_UTILS_ERROR_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_UTILS_ERROR_UTIL_H_
+#ifndef XLA_MLIR_UTILS_ERROR_UTIL_H_
+#define XLA_MLIR_UTILS_ERROR_UTIL_H_
 
 #include <string>
 
@@ -69,4 +69,4 @@ class BaseScopedDiagnosticHandler : public SourceMgrDiagnosticHandler {
 };
 }  // namespace mlir
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_UTILS_ERROR_UTIL_H_
+#endif  // XLA_MLIR_UTILS_ERROR_UTIL_H_

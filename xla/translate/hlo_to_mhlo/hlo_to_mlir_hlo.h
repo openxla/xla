@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_TO_MLIR_HLO_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_TO_MLIR_HLO_H_
+#ifndef XLA_TRANSLATE_HLO_TO_MHLO_HLO_TO_MLIR_HLO_H_
+#define XLA_TRANSLATE_HLO_TO_MHLO_HLO_TO_MLIR_HLO_H_
 
 #include "xla/status.h"
 
@@ -41,4 +41,4 @@ Status ConvertHloToMlirHlo(mlir::ModuleOp module, xla::HloModule* hlo_module,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_TO_MLIR_HLO_H_
+#endif  // XLA_TRANSLATE_HLO_TO_MHLO_HLO_TO_MLIR_HLO_H_

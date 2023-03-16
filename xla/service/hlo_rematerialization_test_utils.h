@@ -15,8 +15,8 @@ limitations under the License.
 
 // Class to create computations for testing rematerialization methods.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_REMATERIALIZATION_TEST_UTILS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_REMATERIALIZATION_TEST_UTILS_H_
+#ifndef XLA_SERVICE_HLO_REMATERIALIZATION_TEST_UTILS_H_
+#define XLA_SERVICE_HLO_REMATERIALIZATION_TEST_UTILS_H_
 
 #include <memory>
 #include <string>
@@ -149,4 +149,4 @@ class RematerializationTestBase : public HloTestBase {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_REMATERIALIZATION_TEST_UTILS_H_
+#endif  // XLA_SERVICE_HLO_REMATERIALIZATION_TEST_UTILS_H_

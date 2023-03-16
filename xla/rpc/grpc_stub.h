@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_RPC_GRPC_STUB_H_
-#define TENSORFLOW_COMPILER_XLA_RPC_GRPC_STUB_H_
+#ifndef XLA_RPC_GRPC_STUB_H_
+#define XLA_RPC_GRPC_STUB_H_
 
 #include "xla/rpc/xla_service.grpc.pb.h"
 #include "xla/service_interface.h"
@@ -87,4 +87,4 @@ class GRPCStub : public ServiceInterface {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_RPC_GRPC_STUB_H_
+#endif  // XLA_RPC_GRPC_STUB_H_

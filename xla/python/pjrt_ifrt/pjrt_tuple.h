@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PJRT_IFRT_PJRT_TUPLE_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PJRT_IFRT_PJRT_TUPLE_H_
+#ifndef XLA_PYTHON_PJRT_IFRT_PJRT_TUPLE_H_
+#define XLA_PYTHON_PJRT_IFRT_PJRT_TUPLE_H_
 
 #include <memory>
 #include <optional>
@@ -79,4 +79,4 @@ class PjRtTuple final : public llvm::RTTIExtends<PjRtTuple, Tuple> {
 }  // namespace ifrt
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PJRT_IFRT_PJRT_TUPLE_H_
+#endif  // XLA_PYTHON_PJRT_IFRT_PJRT_TUPLE_H_

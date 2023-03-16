@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_BFLOAT16_PROPAGATION_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_BFLOAT16_PROPAGATION_H_
+#ifndef XLA_SERVICE_BFLOAT16_PROPAGATION_H_
+#define XLA_SERVICE_BFLOAT16_PROPAGATION_H_
 
 #include <memory>
 #include <vector>
@@ -226,4 +226,4 @@ class BFloat16Propagation : public HloModulePass {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_BFLOAT16_PROPAGATION_H_
+#endif  // XLA_SERVICE_BFLOAT16_PROPAGATION_H_

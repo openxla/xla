@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_DOT_OP_EMITTER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_DOT_OP_EMITTER_H_
+#ifndef XLA_SERVICE_CPU_DOT_OP_EMITTER_H_
+#define XLA_SERVICE_CPU_DOT_OP_EMITTER_H_
 
 #include "absl/strings/string_view.h"
 #include "llvm/IR/IRBuilder.h"
@@ -69,4 +69,4 @@ Status EmitDotOperation(const HloInstruction& dot,
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_DOT_OP_EMITTER_H_
+#endif  // XLA_SERVICE_CPU_DOT_OP_EMITTER_H_

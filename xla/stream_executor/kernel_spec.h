@@ -43,8 +43,8 @@ limitations under the License.
 // For the loader functionality that accepts these KernelLoaderSpecs in order
 // to grab the kernel appropriately, see StreamExecutor::GetKernel().
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_SPEC_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_SPEC_H_
+#ifndef XLA_STREAM_EXECUTOR_KERNEL_SPEC_H_
+#define XLA_STREAM_EXECUTOR_KERNEL_SPEC_H_
 
 #include <stddef.h>
 
@@ -375,4 +375,4 @@ class MultiKernelLoaderSpec {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_SPEC_H_
+#endif  // XLA_STREAM_EXECUTOR_KERNEL_SPEC_H_

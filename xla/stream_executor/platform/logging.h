@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_LOGGING_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_LOGGING_H_
+#ifndef XLA_STREAM_EXECUTOR_PLATFORM_LOGGING_H_
+#define XLA_STREAM_EXECUTOR_PLATFORM_LOGGING_H_
 
 #include "xla/stream_executor/platform/port.h"
 #include "tsl/platform/logging.h"
@@ -27,4 +27,4 @@ limitations under the License.
 
 #endif
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_LOGGING_H_
+#endif  // XLA_STREAM_EXECUTOR_PLATFORM_LOGGING_H_

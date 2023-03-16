@@ -19,8 +19,8 @@ limitations under the License.
 // The notions from the StreamExecutor basically correspond to the CUDA streams
 // programming model provided by the libcuda.so driver APIs, so we don't have
 // to do much more than wrap the calls to the libraries appropriately.
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_EXECUTOR_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_EXECUTOR_H_
+#ifndef XLA_STREAM_EXECUTOR_GPU_GPU_EXECUTOR_H_
+#define XLA_STREAM_EXECUTOR_GPU_GPU_EXECUTOR_H_
 
 #include <cstdint>
 #include <memory>
@@ -442,4 +442,4 @@ inline GpuExecutor* ExtractGpuExecutor(StreamExecutor* stream_exec) {
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_EXECUTOR_H_
+#endif  // XLA_STREAM_EXECUTOR_GPU_GPU_EXECUTOR_H_

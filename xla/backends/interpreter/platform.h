@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_BACKENDS_INTERPRETER_PLATFORM_H_
-#define TENSORFLOW_COMPILER_XLA_BACKENDS_INTERPRETER_PLATFORM_H_
+#ifndef XLA_BACKENDS_INTERPRETER_PLATFORM_H_
+#define XLA_BACKENDS_INTERPRETER_PLATFORM_H_
 
 #include <memory>
 #include <string>
@@ -73,4 +73,4 @@ class XlaInterpreterPlatform : public Platform {
 }  // namespace interpreter
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_BACKENDS_INTERPRETER_PLATFORM_H_
+#endif  // XLA_BACKENDS_INTERPRETER_PLATFORM_H_

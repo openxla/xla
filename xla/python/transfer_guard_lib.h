@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_TRANSFER_GUARD_LIB_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_TRANSFER_GUARD_LIB_H_
+#ifndef XLA_PYTHON_TRANSFER_GUARD_LIB_H_
+#define XLA_PYTHON_TRANSFER_GUARD_LIB_H_
 
 #include <optional>
 #include <string>
@@ -94,4 +94,4 @@ void BuildTransferGuardSubmodule(pybind11::module& m);
 
 }  // namespace jax
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_TRANSFER_GUARD_LIB_H_
+#endif  // XLA_PYTHON_TRANSFER_GUARD_LIB_H_

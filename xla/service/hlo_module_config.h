@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_CONFIG_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_CONFIG_H_
+#ifndef XLA_SERVICE_HLO_MODULE_CONFIG_H_
+#define XLA_SERVICE_HLO_MODULE_CONFIG_H_
 
 #include <memory>
 #include <optional>
@@ -482,4 +482,4 @@ class HloModuleConfig {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_CONFIG_H_
+#endif  // XLA_SERVICE_HLO_MODULE_CONFIG_H_

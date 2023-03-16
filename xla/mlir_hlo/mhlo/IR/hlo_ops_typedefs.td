@@ -14,8 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 
-#ifndef MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_TYPEDEFS
-#define MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_TYPEDEFS
+#ifndef XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_TYPEDEFS
+#define XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_TYPEDEFS
 
 def MHLO_AsyncBundleTypeDef : TypeDef<MHLO_Dialect, "AsyncBundle"> {
   let mnemonic = "async_bundle";
@@ -58,4 +58,4 @@ def MHLO_AsyncBundle :
                        "AsyncBundleType::getFlattenedTypes($_self.cast<::mlir::mhlo::AsyncBundleType>())",
                        "async_bundle">;
 
-#endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_TYPEDEFS
+#endif // XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_TYPEDEFS

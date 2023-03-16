@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PJRT_GPU_NCCL_ID_STORE_H_
-#define TENSORFLOW_COMPILER_XLA_PJRT_GPU_NCCL_ID_STORE_H_
+#ifndef XLA_PJRT_GPU_NCCL_ID_STORE_H_
+#define XLA_PJRT_GPU_NCCL_ID_STORE_H_
 
 #include <memory>
 #include <string>
@@ -56,4 +56,4 @@ class NcclIdStore {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PJRT_GPU_NCCL_ID_STORE_H_
+#endif  // XLA_PJRT_GPU_NCCL_ID_STORE_H_

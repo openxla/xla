@@ -32,8 +32,8 @@ limitations under the License.
 // count has much less modest limits -- typically they're similar to the maximum
 // amount of addressable memory.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LAUNCH_DIM_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LAUNCH_DIM_H_
+#ifndef XLA_STREAM_EXECUTOR_LAUNCH_DIM_H_
+#define XLA_STREAM_EXECUTOR_LAUNCH_DIM_H_
 
 #include <string>
 
@@ -75,4 +75,4 @@ struct BlockDim : public Dim3D {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_LAUNCH_DIM_H_
+#endif  // XLA_STREAM_EXECUTOR_LAUNCH_DIM_H_

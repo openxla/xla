@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_LHLO_TRANSFORMS_MAP_LHLO_TO_HLO_OP_H
-#define MLIR_HLO_LHLO_TRANSFORMS_MAP_LHLO_TO_HLO_OP_H
+#ifndef XLA_MLIR_HLO_LHLO_TRANSFORMS_MAP_LHLO_TO_HLO_OP_H_
+#define XLA_MLIR_HLO_LHLO_TRANSFORMS_MAP_LHLO_TO_HLO_OP_H_
 
 #include <type_traits>
 
@@ -103,4 +103,4 @@ MAP_LHLO_TO_HLO(XorOp);
 }  // namespace lmhlo
 }  // namespace mlir
 
-#endif  // MLIR_HLO_LHLO_TRANSFORMS_MAP_LHLO_TO_HLO_OP_H
+#endif  // XLA_MLIR_HLO_LHLO_TRANSFORMS_MAP_LHLO_TO_HLO_OP_H_

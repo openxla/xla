@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_DIALECT_MHLO_IR_HLO_BASE
-#define MLIR_HLO_DIALECT_MHLO_IR_HLO_BASE
+#ifndef XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_BASE
+#define XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_BASE
 
 include "stablehlo/dialect/Base.td"
 
@@ -119,4 +119,4 @@ defvar MHLO_StaticShapeIntOrFpTensor = HLO_StaticShapeIntOrFpTensor;
 
 defvar MHLO_StaticShapeIntFpOrComplexTensor = HLO_StaticShapeIntFpOrComplexTensor;
 
-#endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_BASE
+#endif // XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_BASE

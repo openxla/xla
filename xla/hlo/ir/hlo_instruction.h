@@ -18,8 +18,8 @@ limitations under the License.
 // in a platform-aware way by traversing the HLO DAG and emitting a lowered
 // form; e.g. see DfsHloVisitor.
 
-#ifndef TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INSTRUCTION_H_
-#define TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INSTRUCTION_H_
+#ifndef XLA_HLO_IR_HLO_INSTRUCTION_H_
+#define XLA_HLO_IR_HLO_INSTRUCTION_H_
 
 #include <functional>
 #include <iosfwd>
@@ -2479,4 +2479,4 @@ using ConstHloInstructionSet =
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INSTRUCTION_H_
+#endif  // XLA_HLO_IR_HLO_INSTRUCTION_H_

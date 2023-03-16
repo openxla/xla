@@ -66,8 +66,8 @@ limitations under the License.
 // will be typedef'd by automatically generated code; for example, see
 // stream_executor::executor_sample::VecReduceAddKernel.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_H_
+#ifndef XLA_STREAM_EXECUTOR_KERNEL_H_
+#define XLA_STREAM_EXECUTOR_KERNEL_H_
 
 #include <array>
 #include <memory>
@@ -722,4 +722,4 @@ struct KernelParamsOk<TypedKernel<Params...>, Args...> {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_KERNEL_H_
+#endif  // XLA_STREAM_EXECUTOR_KERNEL_H_

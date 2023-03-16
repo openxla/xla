@@ -1,5 +1,5 @@
-#ifndef MLIR_HLO_UTILS_PLACEMENT_UTILS_H
-#define MLIR_HLO_UTILS_PLACEMENT_UTILS_H
+#ifndef XLA_MLIR_HLO_UTILS_PLACEMENT_UTILS_H_
+#define XLA_MLIR_HLO_UTILS_PLACEMENT_UTILS_H_
 
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
@@ -34,4 +34,4 @@ constexpr llvm::StringRef cGpu = "gpu";
 
 #endif  // TENSORFLOW_COMPILER_MLIR_HLO_INCLUDE_MLIR_HLO_UTILS_PLACEMENT_UTIL_H_
 
-#endif
+#endif  // XLA_MLIR_HLO_UTILS_PLACEMENT_UTILS_H_

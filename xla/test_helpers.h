@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TEST_HELPERS_H_
-#define TENSORFLOW_COMPILER_XLA_TEST_HELPERS_H_
+#ifndef XLA_TEST_HELPERS_H_
+#define XLA_TEST_HELPERS_H_
 
 #include <list>
 #include <vector>
@@ -68,4 +68,4 @@ inline const Status& GetStatus(const StatusOr<T>& status) {
   ASSERT_NE(::tsl::OkStatus(),       \
             xla::testing::internal_status::GetStatus(expression))
 
-#endif  // TENSORFLOW_COMPILER_XLA_TEST_HELPERS_H_
+#endif  // XLA_TEST_HELPERS_H_

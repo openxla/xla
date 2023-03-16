@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SHARDING_OP_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_SHARDING_OP_UTIL_H_
+#ifndef XLA_SHARDING_OP_UTIL_H_
+#define XLA_SHARDING_OP_UTIL_H_
 
 #include <string>
 #include <vector>
@@ -37,4 +37,4 @@ Status ParseAttributes(absl::string_view opaque,
 }  // namespace sharding_op_util
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SHARDING_OP_UTIL_H_
+#endif  // XLA_SHARDING_OP_UTIL_H_

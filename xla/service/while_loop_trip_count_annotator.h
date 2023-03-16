@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_TRIP_COUNT_ANNOTATOR_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_TRIP_COUNT_ANNOTATOR_H_
+#ifndef XLA_SERVICE_WHILE_LOOP_TRIP_COUNT_ANNOTATOR_H_
+#define XLA_SERVICE_WHILE_LOOP_TRIP_COUNT_ANNOTATOR_H_
 
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
@@ -48,4 +48,4 @@ class WhileLoopTripCountAnnotator : public HloModulePass {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_WHILE_LOOP_TRIP_COUNT_ANNOTATOR_H_
+#endif  // XLA_SERVICE_WHILE_LOOP_TRIP_COUNT_ANNOTATOR_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SIDE_EFFECT_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_SIDE_EFFECT_UTIL_H_
+#ifndef XLA_SIDE_EFFECT_UTIL_H_
+#define XLA_SIDE_EFFECT_UTIL_H_
 
 namespace xla {
 
@@ -66,4 +66,4 @@ extern const char kXlaPadValueAttr[];
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SIDE_EFFECT_UTIL_H_
+#endif  // XLA_SIDE_EFFECT_UTIL_H_

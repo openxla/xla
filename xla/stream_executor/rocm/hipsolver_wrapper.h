@@ -17,8 +17,8 @@ limitations under the License.
 // have explicit linking to libhipsolver. All TF hipsolver API usage should
 // route through this wrapper.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_HIPSOLVER_WRAPPER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_HIPSOLVER_WRAPPER_H_
+#ifndef XLA_STREAM_EXECUTOR_ROCM_HIPSOLVER_WRAPPER_H_
+#define XLA_STREAM_EXECUTOR_ROCM_HIPSOLVER_WRAPPER_H_
 
 #include "rocm/rocm_config.h"
 
@@ -135,4 +135,4 @@ FOREACH_HIPSOLVER_API(HIPSOLVER_API_WRAPPER)
 }  // namespace stream_executor
 
 #endif  // TF_ROCM_VERSION
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_HIPSOLVER_WRAPPER_H_
+#endif  // XLA_STREAM_EXECUTOR_ROCM_HIPSOLVER_WRAPPER_H_

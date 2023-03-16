@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_H_
+#ifndef XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_H_
+#define XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_H_
 
 #include "absl/container/flat_hash_map.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -120,4 +120,4 @@ class LLVMTargetMachineFeatures : public TargetMachineFeatures {
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_H_
+#endif  // XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_H_

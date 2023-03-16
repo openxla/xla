@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_RNG_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_RNG_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_RNG_H_
+#define XLA_SERVICE_CPU_RUNTIME_RNG_H_
 
 #include "xla/runtime/custom_call_registry.h"
 
@@ -26,4 +26,4 @@ void PopulateXlaCpuRngCall(runtime::DirectCustomCallRegistry& registry);
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_RNG_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_RNG_H_

@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file defines the operations used in the THLO dialect.
 
-#ifndef MLIR_HLO_THLO_IR_THLO_OPS_H
-#define MLIR_HLO_THLO_IR_THLO_OPS_H
+#ifndef XLA_MLIR_HLO_THLO_IR_THLO_OPS_H_
+#define XLA_MLIR_HLO_THLO_IR_THLO_OPS_H_
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
@@ -34,4 +34,4 @@ limitations under the License.
 #define GET_OP_CLASSES
 #include "thlo/IR/thlo_ops.h.inc"
 
-#endif  // MLIR_HLO_THLO_IR_THLO_OPS_H
+#endif  // XLA_MLIR_HLO_THLO_IR_THLO_OPS_H_

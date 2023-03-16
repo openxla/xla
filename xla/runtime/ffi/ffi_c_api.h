@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_RUNTIME_FFI_FFI_C_API_H_
-#define TENSORFLOW_COMPILER_XLA_RUNTIME_FFI_FFI_C_API_H_
+#ifndef XLA_RUNTIME_FFI_FFI_C_API_H_
+#define XLA_RUNTIME_FFI_FFI_C_API_H_
 
 #include <stddef.h>
 #include <stdint.h>
@@ -266,4 +266,4 @@ const XLA_FFI_Api* GetXlaFfiApi();
 }
 #endif
 
-#endif  // TENSORFLOW_COMPILER_XLA_RUNTIME_FFI_FFI_C_API_H_
+#endif  // XLA_RUNTIME_FFI_FFI_C_API_H_

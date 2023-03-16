@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_CPU_PYTHON_TRACER_H_
-#define TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_CPU_PYTHON_TRACER_H_
+#ifndef XLA_BACKENDS_PROFILER_CPU_PYTHON_TRACER_H_
+#define XLA_BACKENDS_PROFILER_CPU_PYTHON_TRACER_H_
 
 #include <memory>
 
@@ -40,4 +40,4 @@ std::unique_ptr<tsl::profiler::ProfilerInterface> CreatePythonTracer(
 }  // namespace profiler
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_CPU_PYTHON_TRACER_H_
+#endif  // XLA_BACKENDS_PROFILER_CPU_PYTHON_TRACER_H_

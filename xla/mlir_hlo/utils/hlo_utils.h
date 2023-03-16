@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_UTILS_HLO_UTILS_H
-#define MLIR_HLO_UTILS_HLO_UTILS_H
+#ifndef XLA_MLIR_HLO_UTILS_HLO_UTILS_H_
+#define XLA_MLIR_HLO_UTILS_HLO_UTILS_H_
 
 #include <string>
 
@@ -139,4 +139,4 @@ Value getConstantLikeSmallestFiniteValue(OpBuilder& b, Location loc, Value val);
 }  // namespace chlo
 }  // namespace mlir
 
-#endif  // MLIR_HLO_UTILS_HLO_UTILS_H
+#endif  // XLA_MLIR_HLO_UTILS_HLO_UTILS_H_

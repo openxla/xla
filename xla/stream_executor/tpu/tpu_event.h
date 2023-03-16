@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
+#ifndef XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
+#define XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
 
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
@@ -36,4 +36,4 @@ class TpuEvent : public ::stream_executor::internal::EventInterface {
 }  // namespace tpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_
+#endif  // XLA_STREAM_EXECUTOR_TPU_TPU_EVENT_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_DEALLOCATION_UTILS_UTIL_H_
-#define MLIR_HLO_DEALLOCATION_UTILS_UTIL_H_
+#ifndef XLA_MLIR_HLO_DEALLOCATION_UTILS_UTIL_H_
+#define XLA_MLIR_HLO_DEALLOCATION_UTILS_UTIL_H_
 
 #include <optional>
 #include <set>
@@ -147,4 +147,4 @@ using ValueMap = std::map<Value, T, detail::ValueComparator>;
 }  // namespace deallocation
 }  // namespace mlir
 
-#endif  // MLIR_HLO_DEALLOCATION_UTILS_UTIL_H_
+#endif  // XLA_MLIR_HLO_DEALLOCATION_UTILS_UTIL_H_

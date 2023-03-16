@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
-#define TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
+#ifndef XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
+#define XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
 
 #include "absl/container/fixed_array.h"
 #include "absl/container/flat_hash_map.h"
@@ -392,4 +392,4 @@ class RocmTracer {
 
 }  // namespace profiler
 }  // namespace xla
-#endif  // TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
+#endif  // XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_

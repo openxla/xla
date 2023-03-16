@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PARSE_FLAGS_FROM_ENV_H_
-#define TENSORFLOW_COMPILER_XLA_PARSE_FLAGS_FROM_ENV_H_
+#ifndef XLA_PARSE_FLAGS_FROM_ENV_H_
+#define XLA_PARSE_FLAGS_FROM_ENV_H_
 
 // This module exports ParseFlagsFromEnvAndDieIfUnknown(), which allows other
 // modules to parse flags from an environment variable, or (if the first
@@ -70,4 +70,4 @@ void ResetFlagsFromEnvForTesting(absl::string_view envvar, int** pargc,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PARSE_FLAGS_FROM_ENV_H_
+#endif  // XLA_PARSE_FLAGS_FROM_ENV_H_

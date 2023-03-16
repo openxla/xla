@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_SHARDING_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_SHARDING_H_
+#ifndef XLA_PYTHON_SHARDING_H_
+#define XLA_PYTHON_SHARDING_H_
 
 #include <optional>
 #include <utility>
@@ -206,4 +206,4 @@ void RegisterSharding(pybind11::module& m);
 
 }  // namespace jax
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_SHARDING_H_
+#endif  // XLA_PYTHON_SHARDING_H_

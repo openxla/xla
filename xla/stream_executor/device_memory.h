@@ -21,8 +21,8 @@ limitations under the License.
 // be specialized for a given allocation type (like a device T*) using
 // DeviceMemory<T>.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DEVICE_MEMORY_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DEVICE_MEMORY_H_
+#ifndef XLA_STREAM_EXECUTOR_DEVICE_MEMORY_H_
+#define XLA_STREAM_EXECUTOR_DEVICE_MEMORY_H_
 
 #include <stddef.h>
 
@@ -210,4 +210,4 @@ static_assert(sizeof(Double2) == 2 * sizeof(double), "Double2 must be packed");
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DEVICE_MEMORY_H_
+#endif  // XLA_STREAM_EXECUTOR_DEVICE_MEMORY_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_TOOLS_MLIR_BISECT_TEST_PASSES_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_TOOLS_MLIR_BISECT_TEST_PASSES_H_
+#ifndef XLA_MLIR_TOOLS_MLIR_BISECT_TEST_PASSES_H_
+#define XLA_MLIR_TOOLS_MLIR_BISECT_TEST_PASSES_H_
 
 namespace mlir {
 namespace bisect {
@@ -26,4 +26,4 @@ void RegisterTestPasses();
 }  // namespace bisect
 }  // namespace mlir
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_TOOLS_MLIR_BISECT_TEST_PASSES_H_
+#endif  // XLA_MLIR_TOOLS_MLIR_BISECT_TEST_PASSES_H_

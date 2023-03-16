@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_MHLO_IR_HLO_OPS_COMMON_H
-#define MLIR_HLO_MHLO_IR_HLO_OPS_COMMON_H
+#ifndef XLA_MLIR_HLO_MHLO_IR_HLO_OPS_COMMON_H_
+#define XLA_MLIR_HLO_MHLO_IR_HLO_OPS_COMMON_H_
 
 // This file defines functionality shared between chlo/mhlo/lhlo dialects.
 
@@ -55,4 +55,4 @@ ParseResult parseWindowAttributes(OpAsmParser& parser,
 }  // namespace hlo
 }  // namespace mlir
 
-#endif  // MLIR_HLO_MHLO_IR_HLO_OPS_COMMON_H
+#endif  // XLA_MLIR_HLO_MHLO_IR_HLO_OPS_COMMON_H_

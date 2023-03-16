@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_STATUS_CASTERS_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_STATUS_CASTERS_H_
+#ifndef XLA_PYTHON_STATUS_CASTERS_H_
+#define XLA_PYTHON_STATUS_CASTERS_H_
 
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/python/exceptions.h"
@@ -79,4 +79,4 @@ struct type_caster<xla::StatusOr<T>> {
 }  // namespace detail
 }  // namespace pybind11
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_STATUS_CASTERS_H_
+#endif  // XLA_PYTHON_STATUS_CASTERS_H_

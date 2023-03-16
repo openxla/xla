@@ -15,8 +15,8 @@ limitations under the License.
 
 // This is the operation definition file for MHLO ops.
 
-#ifndef MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS
-#define MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS
+#ifndef XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS
+#define XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS
 
 include "mlir/Dialect/Shape/IR/ShapeBase.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
@@ -3744,4 +3744,4 @@ def MHLO_CstrReshapableOp :
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
 }
 
-#endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS
+#endif // XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS

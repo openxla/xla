@@ -15,8 +15,8 @@ limitations under the License.
 
 // Utility functions related to layouts of Shapes.
 
-#ifndef TENSORFLOW_COMPILER_XLA_LAYOUT_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_LAYOUT_UTIL_H_
+#ifndef XLA_LAYOUT_UTIL_H_
+#define XLA_LAYOUT_UTIL_H_
 
 #include <optional>
 #include <string>
@@ -277,4 +277,4 @@ class LayoutUtil {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_LAYOUT_UTIL_H_
+#endif  // XLA_LAYOUT_UTIL_H_

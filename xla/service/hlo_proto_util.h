@@ -15,8 +15,8 @@ limitations under the License.
 
 // Utilities to manipulate data in hlo.proto.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_PROTO_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_PROTO_UTIL_H_
+#ifndef XLA_SERVICE_HLO_PROTO_UTIL_H_
+#define XLA_SERVICE_HLO_PROTO_UTIL_H_
 
 #include <string>
 
@@ -57,4 +57,4 @@ StatusOr<const ShapeProto*> EntryComputationOutputShape(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_PROTO_UTIL_H_
+#endif  // XLA_SERVICE_HLO_PROTO_UTIL_H_

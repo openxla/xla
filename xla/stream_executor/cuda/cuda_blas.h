@@ -17,8 +17,8 @@ limitations under the License.
 // capabilities, and is only included into CUDA implementation code -- it will
 // not introduce cuda headers into other code.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_H_
+#ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_H_
+#define XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_H_
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
@@ -149,4 +149,4 @@ class CUDABlas : public blas::BlasSupport {
 }  // namespace cuda
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_H_
+#endif  // XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_H_

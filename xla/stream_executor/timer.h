@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TIMER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TIMER_H_
+#ifndef XLA_STREAM_EXECUTOR_TIMER_H_
+#define XLA_STREAM_EXECUTOR_TIMER_H_
 
 #include <memory>
 
@@ -70,4 +70,4 @@ class Timer {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TIMER_H_
+#endif  // XLA_STREAM_EXECUTOR_TIMER_H_

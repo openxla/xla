@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file defines the StreamExecutor trace listener, used for inserting
 // non-device-specific instrumentation into the StreamExecutor.
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TRACE_LISTENER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TRACE_LISTENER_H_
+#ifndef XLA_STREAM_EXECUTOR_TRACE_LISTENER_H_
+#define XLA_STREAM_EXECUTOR_TRACE_LISTENER_H_
 
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/kernel.h"
@@ -71,4 +71,4 @@ class TraceListener {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TRACE_LISTENER_H_
+#endif  // XLA_STREAM_EXECUTOR_TRACE_LISTENER_H_

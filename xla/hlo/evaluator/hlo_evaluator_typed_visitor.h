@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_HLO_EVALUATOR_HLO_EVALUATOR_TYPED_VISITOR_H_
-#define TENSORFLOW_COMPILER_XLA_HLO_EVALUATOR_HLO_EVALUATOR_TYPED_VISITOR_H_
+#ifndef XLA_HLO_EVALUATOR_HLO_EVALUATOR_TYPED_VISITOR_H_
+#define XLA_HLO_EVALUATOR_HLO_EVALUATOR_TYPED_VISITOR_H_
 
 #include <fenv.h>  // NOLINT
 
@@ -1700,4 +1700,4 @@ extern template class HloEvaluatorTypedVisitor<tsl::float8_e4m3fn, float>;
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_HLO_EVALUATOR_HLO_EVALUATOR_TYPED_VISITOR_H_
+#endif  // XLA_HLO_EVALUATOR_HLO_EVALUATOR_TYPED_VISITOR_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_LITERAL_H_
-#define TENSORFLOW_COMPILER_XLA_LITERAL_H_
+#ifndef XLA_LITERAL_H_
+#define XLA_LITERAL_H_
 
 #include <algorithm>
 #include <cstring>
@@ -1525,4 +1525,4 @@ Literal LiteralBase::Replicate(int64_t times) const {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_LITERAL_H_
+#endif  // XLA_LITERAL_H_

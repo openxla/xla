@@ -15,8 +15,8 @@ limitations under the License.
 
 // This is the utils file for the HLO dialect.
 
-#ifndef MLIR_HLO_DIALECT_MHLO_IR_HLO_UTILS
-#define MLIR_HLO_DIALECT_MHLO_IR_HLO_UTILS
+#ifndef XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_UTILS
+#define XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_UTILS
 
 include "mlir/IR/OpBase.td"
 include "mlir/IR/PatternBase.td"
@@ -67,4 +67,4 @@ def NonComplexElementType : Type<
   CPred<"!$_self.cast<ShapedType>().getElementType().isa<ComplexType>()">,
   "Non-complex element type">;
 
-#endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_UTILS
+#endif // XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_UTILS

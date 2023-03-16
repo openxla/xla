@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file defines the operations used in the MHLO dialect.
 
-#ifndef MLIR_HLO_MHLO_IR_HLO_OPS_H
-#define MLIR_HLO_MHLO_IR_HLO_OPS_H
+#ifndef XLA_MLIR_HLO_MHLO_IR_HLO_OPS_H_
+#define XLA_MLIR_HLO_MHLO_IR_HLO_OPS_H_
 
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Quant/QuantTypes.h"
@@ -109,4 +109,4 @@ SortOp createSortOp(PatternRewriter *rewriter, const Location &loc,
 }  // end namespace mhlo
 }  // end namespace mlir
 
-#endif  // MLIR_HLO_MHLO_IR_HLO_OPS_H
+#endif  // XLA_MLIR_HLO_MHLO_IR_HLO_OPS_H_

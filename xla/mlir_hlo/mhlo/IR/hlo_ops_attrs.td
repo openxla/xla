@@ -14,8 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 
-#ifndef MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ATTRS
-#define MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ATTRS
+#ifndef XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ATTRS
+#define XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ATTRS
 
 include "mlir/IR/OpBase.td"
 include "mlir/IR/TensorEncoding.td"
@@ -336,4 +336,4 @@ def MHLO_ConvolutionAttributes {
   );
 }
 
-#endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ATTRS
+#endif // XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_ATTRS

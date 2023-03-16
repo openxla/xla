@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file defines the operations used in the GML ST dialect.
 
-#ifndef MLIR_HLO_GML_ST_IR_GML_ST_OPS_H
-#define MLIR_HLO_GML_ST_IR_GML_ST_OPS_H
+#ifndef XLA_MLIR_HLO_GML_ST_IR_GML_ST_OPS_H_
+#define XLA_MLIR_HLO_GML_ST_IR_GML_ST_OPS_H_
 
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
@@ -32,4 +32,4 @@ limitations under the License.
 #define GET_OP_CLASSES
 #include "gml_st/IR/gml_st_ops.h.inc"
 
-#endif  // MLIR_HLO_GML_ST_IR_GML_ST_OPS_H
+#endif  // XLA_MLIR_HLO_GML_ST_IR_GML_ST_OPS_H_

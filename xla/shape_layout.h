@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SHAPE_LAYOUT_H_
-#define TENSORFLOW_COMPILER_XLA_SHAPE_LAYOUT_H_
+#ifndef XLA_SHAPE_LAYOUT_H_
+#define XLA_SHAPE_LAYOUT_H_
 
 #include <string>
 
@@ -101,4 +101,4 @@ class ShapeLayout {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SHAPE_LAYOUT_H_
+#endif  // XLA_SHAPE_LAYOUT_H_

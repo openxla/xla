@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_ATTRIBUTE_IMPORTER_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_ATTRIBUTE_IMPORTER_H_
+#ifndef XLA_TRANSLATE_HLO_TO_MHLO_ATTRIBUTE_IMPORTER_H_
+#define XLA_TRANSLATE_HLO_TO_MHLO_ATTRIBUTE_IMPORTER_H_
 
 #include <utility>
 #include <vector>
@@ -86,4 +86,4 @@ StatusOr<mlir::ArrayAttr> ExtractLayoutsFromTuple(const xla::Shape shape,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_ATTRIBUTE_IMPORTER_H_
+#endif  // XLA_TRANSLATE_HLO_TO_MHLO_ATTRIBUTE_IMPORTER_H_

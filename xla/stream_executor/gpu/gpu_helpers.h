@@ -18,8 +18,8 @@ limitations under the License.
 // These are typically placed here for use by multiple source components (for
 // example, BLAS and executor components).
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_HELPERS_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_HELPERS_H_
+#ifndef XLA_STREAM_EXECUTOR_GPU_GPU_HELPERS_H_
+#define XLA_STREAM_EXECUTOR_GPU_GPU_HELPERS_H_
 
 #include <stddef.h>
 
@@ -111,4 +111,4 @@ inline GpuDoubleComplexType GpuComplexValue(std::complex<double> val) {
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_HELPERS_H_
+#endif  // XLA_STREAM_EXECUTOR_GPU_GPU_HELPERS_H_

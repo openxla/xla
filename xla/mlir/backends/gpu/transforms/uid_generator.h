@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_BACKENDS_GPU_TRANSFORMS_UID_GENERATOR_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_BACKENDS_GPU_TRANSFORMS_UID_GENERATOR_H_
+#ifndef XLA_MLIR_BACKENDS_GPU_TRANSFORMS_UID_GENERATOR_H_
+#define XLA_MLIR_BACKENDS_GPU_TRANSFORMS_UID_GENERATOR_H_
 
 #include <atomic>
 
@@ -39,4 +39,4 @@ class UidGenerator {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_BACKENDS_GPU_TRANSFORMS_UID_GENERATOR_H_
+#endif  // XLA_MLIR_BACKENDS_GPU_TRANSFORMS_UID_GENERATOR_H_

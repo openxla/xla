@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_TESTING_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_TESTING_H_
+#ifndef XLA_CLIENT_LIB_TESTING_H_
+#define XLA_CLIENT_LIB_TESTING_H_
 
 #include <memory>
 #include <vector>
@@ -45,4 +45,4 @@ std::vector<std::unique_ptr<GlobalData>> MakeFakeArgumentsOrDie(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_TESTING_H_
+#endif  // XLA_CLIENT_LIB_TESTING_H_

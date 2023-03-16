@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_OP_EXECUTABLE_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_OP_EXECUTABLE_H_
+#ifndef XLA_STREAM_EXECUTOR_TPU_TPU_OP_EXECUTABLE_H_
+#define XLA_STREAM_EXECUTOR_TPU_TPU_OP_EXECUTABLE_H_
 
 #include <cstdint>
 #include <functional>
@@ -73,4 +73,4 @@ class TpuOpExecutable : public xla::TpuExecutableInterface {
 
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_OP_EXECUTABLE_H_
+#endif  // XLA_STREAM_EXECUTOR_TPU_TPU_OP_EXECUTABLE_H_

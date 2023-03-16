@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_SCHEDULE_H_
-#define TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_SCHEDULE_H_
+#ifndef XLA_HLO_IR_HLO_SCHEDULE_H_
+#define XLA_HLO_IR_HLO_SCHEDULE_H_
 
 #include <string>
 #include <vector>
@@ -218,4 +218,4 @@ std::ostream& operator<<(std::ostream& out, const HloSchedule& schedule);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_SCHEDULE_H_
+#endif  // XLA_HLO_IR_HLO_SCHEDULE_H_

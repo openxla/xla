@@ -16,8 +16,8 @@ limitations under the License.
 // Library for comparing literals without taking a dependency on testing
 // libraries.
 
-#ifndef TENSORFLOW_COMPILER_XLA_LITERAL_COMPARISON_H_
-#define TENSORFLOW_COMPILER_XLA_LITERAL_COMPARISON_H_
+#ifndef XLA_LITERAL_COMPARISON_H_
+#define XLA_LITERAL_COMPARISON_H_
 
 #include "xla/error_spec.h"
 #include "xla/literal.h"
@@ -93,4 +93,4 @@ std::string ToStringTruncated(const LiteralSlice& literal);
 }  // namespace literal_comparison
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_LITERAL_COMPARISON_H_
+#endif  // XLA_LITERAL_COMPARISON_H_

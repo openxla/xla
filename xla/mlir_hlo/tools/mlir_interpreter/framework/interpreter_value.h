@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_INTERPRETER_VALUE_H_
-#define MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_INTERPRETER_VALUE_H_
+#ifndef XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_INTERPRETER_VALUE_H_
+#define XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_INTERPRETER_VALUE_H_
 
 #include <complex>
 #include <cstddef>
@@ -223,4 +223,4 @@ auto dispatchScalarType(mlir::Type ty, Fn&& functor) {
 }  // namespace interpreter
 }  // namespace mlir
 
-#endif  // MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_INTERPRETER_VALUE_H_
+#endif  // XLA_MLIR_HLO_TOOLS_MLIR_INTERPRETER_FRAMEWORK_INTERPRETER_VALUE_H_

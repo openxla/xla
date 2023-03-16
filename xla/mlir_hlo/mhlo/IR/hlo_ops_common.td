@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_COMMON
-#define MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_COMMON
+#ifndef XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_COMMON
+#define XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_COMMON
 
 def MHLO_Dialect : Dialect {
   let name = "mhlo";
@@ -29,4 +29,4 @@ include "mhlo/IR/hlo_ops_enums.td"
 include "mhlo/IR/hlo_ops_attrs.td"
 include "mhlo/IR/hlo_ops_typedefs.td"
 
-#endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_COMMON
+#endif // XLA_MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS_COMMON

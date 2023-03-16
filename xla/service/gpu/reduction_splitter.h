@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_REDUCTION_SPLITTER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_REDUCTION_SPLITTER_H_
+#ifndef XLA_SERVICE_GPU_REDUCTION_SPLITTER_H_
+#define XLA_SERVICE_GPU_REDUCTION_SPLITTER_H_
 
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
@@ -49,4 +49,4 @@ class ReductionSplitter : public HloModulePass {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_REDUCTION_SPLITTER_H_
+#endif  // XLA_SERVICE_GPU_REDUCTION_SPLITTER_H_

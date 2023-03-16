@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_ALL_REDUCE_KERNEL_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_ALL_REDUCE_KERNEL_H_
+#ifndef XLA_SERVICE_GPU_ALL_REDUCE_KERNEL_H_
+#define XLA_SERVICE_GPU_ALL_REDUCE_KERNEL_H_
 
 #include "third_party/nccl/nccl.h"
 
@@ -32,4 +32,4 @@ const void* GetAllReduceKernel(ncclDataType_t dtype, int64_t* num_elements,
 
 }  // namespace xla::gpu
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_ALL_REDUCE_KERNEL_H_
+#endif  // XLA_SERVICE_GPU_ALL_REDUCE_KERNEL_H_

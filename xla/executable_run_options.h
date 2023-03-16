@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_EXECUTABLE_RUN_OPTIONS_H_
-#define TENSORFLOW_COMPILER_XLA_EXECUTABLE_RUN_OPTIONS_H_
+#ifndef XLA_EXECUTABLE_RUN_OPTIONS_H_
+#define XLA_EXECUTABLE_RUN_OPTIONS_H_
 
 #include <cstdint>
 #include <functional>
@@ -235,4 +235,4 @@ class ExecutableRunOptions {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_EXECUTABLE_RUN_OPTIONS_H_
+#endif  // XLA_EXECUTABLE_RUN_OPTIONS_H_

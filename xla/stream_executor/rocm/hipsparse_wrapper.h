@@ -17,8 +17,8 @@ limitations under the License.
 // have explicit linking to libhipsparse. All TF hipsarse API usage should route
 // through this wrapper.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_HIPSPARSE_WRAPPER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_HIPSPARSE_WRAPPER_H_
+#ifndef XLA_STREAM_EXECUTOR_ROCM_HIPSPARSE_WRAPPER_H_
+#define XLA_STREAM_EXECUTOR_ROCM_HIPSPARSE_WRAPPER_H_
 
 #if (TF_ROCM_VERSION >= 50200)
 #include "rocm/include/hipsparse/hipsparse.h"
@@ -150,4 +150,4 @@ FOREACH_HIPSPARSE_API(HIPSPARSE_API_WRAPPER)
 }  // namespace wrap
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_HIPSPARSE_WRAPPER_H_
+#endif  // XLA_STREAM_EXECUTOR_ROCM_HIPSPARSE_WRAPPER_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INPUT_OUTPUT_ALIAS_CONFIG_H_
-#define TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INPUT_OUTPUT_ALIAS_CONFIG_H_
+#ifndef XLA_HLO_IR_HLO_INPUT_OUTPUT_ALIAS_CONFIG_H_
+#define XLA_HLO_IR_HLO_INPUT_OUTPUT_ALIAS_CONFIG_H_
 
 #include <optional>
 #include <utility>
@@ -147,4 +147,4 @@ std::ostream& operator<<(std::ostream& out,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INPUT_OUTPUT_ALIAS_CONFIG_H_
+#endif  // XLA_HLO_IR_HLO_INPUT_OUTPUT_ALIAS_CONFIG_H_

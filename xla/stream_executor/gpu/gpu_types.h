@@ -15,8 +15,8 @@ limitations under the License.
 
 // GPU (ROCm / CUDA) specific type handle resolution
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
+#ifndef XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
+#define XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
 
 #if TENSORFLOW_USE_ROCM
 
@@ -85,4 +85,4 @@ using GpuRngHandle = curandGenerator_t;
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
+#endif  // XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_

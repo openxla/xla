@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_FUNCTION_IMPORTER_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_FUNCTION_IMPORTER_H_
+#ifndef XLA_TRANSLATE_HLO_TO_MHLO_HLO_FUNCTION_IMPORTER_H_
+#define XLA_TRANSLATE_HLO_TO_MHLO_HLO_FUNCTION_IMPORTER_H_
 
 #include <string>
 #include <unordered_map>
@@ -284,4 +284,4 @@ class HloFunctionImporter {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_FUNCTION_IMPORTER_H_
+#endif  // XLA_TRANSLATE_HLO_TO_MHLO_HLO_FUNCTION_IMPORTER_H_

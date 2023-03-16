@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_HLO_TRANSLATE_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_HLO_TRANSLATE_H_
+#ifndef XLA_TRANSLATE_MHLO_TO_HLO_TRANSLATE_H_
+#define XLA_TRANSLATE_MHLO_TO_HLO_TRANSLATE_H_
 
 #include "llvm/Support/raw_os_ostream.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
@@ -34,4 +34,4 @@ mlir::LogicalResult MlirHloToHloTextTranslateFunction(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_HLO_TRANSLATE_H_
+#endif  // XLA_TRANSLATE_MHLO_TO_HLO_TRANSLATE_H_

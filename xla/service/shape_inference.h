@@ -16,8 +16,8 @@ limitations under the License.
 // Shape inference is used by the XLA service as the user builds up
 // computation requests.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_SHAPE_INFERENCE_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_SHAPE_INFERENCE_H_
+#ifndef XLA_SERVICE_SHAPE_INFERENCE_H_
+#define XLA_SERVICE_SHAPE_INFERENCE_H_
 
 #include <vector>
 
@@ -420,4 +420,4 @@ class ShapeInference {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_SHAPE_INFERENCE_H_
+#endif  // XLA_SERVICE_SHAPE_INFERENCE_H_

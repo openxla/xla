@@ -16,8 +16,8 @@ limitations under the License.
 // Defines types and declares functions for identifying and extracting
 // information about the types of platforms and supporting libraries for which
 // StreamExecutor implementations exist.
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_H_
+#ifndef XLA_STREAM_EXECUTOR_PLATFORM_H_
+#define XLA_STREAM_EXECUTOR_PLATFORM_H_
 
 #include <map>
 #include <memory>
@@ -222,4 +222,4 @@ class Platform {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_H_
+#endif  // XLA_STREAM_EXECUTOR_PLATFORM_H_

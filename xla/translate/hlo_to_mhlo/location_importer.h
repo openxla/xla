@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_LOCATION_IMPORTER_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_LOCATION_IMPORTER_H_
+#ifndef XLA_TRANSLATE_HLO_TO_MHLO_LOCATION_IMPORTER_H_
+#define XLA_TRANSLATE_HLO_TO_MHLO_LOCATION_IMPORTER_H_
 
 #include "mlir/IR/Location.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -30,4 +30,4 @@ mlir::Location GenerateInstructionLocation(
 }  // namespace mhlo
 }  // namespace mlir
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_LOCATION_IMPORTER_H_
+#endif  // XLA_TRANSLATE_HLO_TO_MHLO_LOCATION_IMPORTER_H_

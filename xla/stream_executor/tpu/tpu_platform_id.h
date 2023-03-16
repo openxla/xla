@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_
+#ifndef XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_
+#define XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_
 
 #include "xla/stream_executor/platform.h"
 
@@ -26,4 +26,4 @@ namespace tpu {
 }  // namespace tpu
 }  // namespace tensorflow
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_
+#endif  // XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_ID_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_MLIR_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_MLIR_H_
+#ifndef XLA_PYTHON_MLIR_H_
+#define XLA_PYTHON_MLIR_H_
 
 #include "pybind11/pybind11.h"  // from @pybind11
 
@@ -24,4 +24,4 @@ void BuildMlirSubmodule(pybind11::module& m);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_MLIR_H_
+#endif  // XLA_PYTHON_MLIR_H_

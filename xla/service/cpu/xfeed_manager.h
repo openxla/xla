@@ -17,8 +17,8 @@ limitations under the License.
 // is used by the CPU runtime to transfer buffers into an executing
 // CPU computation, e.g., to feed data into a while loop.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_XFEED_MANAGER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_XFEED_MANAGER_H_
+#ifndef XLA_SERVICE_CPU_XFEED_MANAGER_H_
+#define XLA_SERVICE_CPU_XFEED_MANAGER_H_
 
 #include <deque>
 
@@ -123,4 +123,4 @@ int64_t GetByteSizeRequirement(const Shape& shape, int64_t pointer_size);
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_XFEED_MANAGER_H_
+#endif  // XLA_SERVICE_CPU_XFEED_MANAGER_H_

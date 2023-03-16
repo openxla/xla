@@ -16,8 +16,8 @@ limitations under the License.
 // This file implements utilities for the canonicalization of ScatterOp and
 // GatherOp.
 
-#ifndef MLIR_HLO_DIALECT_MHLO_TRANSFORMS_MHLO_SCATTER_GATHER_UTILS_H_
-#define MLIR_HLO_DIALECT_MHLO_TRANSFORMS_MHLO_SCATTER_GATHER_UTILS_H_
+#ifndef XLA_MLIR_HLO_MHLO_UTILS_MHLO_SCATTER_GATHER_UTILS_H_
+#define XLA_MLIR_HLO_MHLO_UTILS_MHLO_SCATTER_GATHER_UTILS_H_
 
 #include <utility>
 
@@ -72,4 +72,4 @@ TypedValue<TensorType> canonicalizeStartIndices(OpBuilder& b, Location loc,
 }  // namespace mhlo
 }  // namespace mlir
 
-#endif  // MLIR_HLO_DIALECT_MHLO_TRANSFORMS_MHLO_SCATTER_GATHER_UTILS_H_
+#endif  // XLA_MLIR_HLO_MHLO_UTILS_MHLO_SCATTER_GATHER_UTILS_H_

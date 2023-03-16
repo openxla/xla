@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_COMPILE_ONLY_CLIENT_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_COMPILE_ONLY_CLIENT_H_
+#ifndef XLA_CLIENT_COMPILE_ONLY_CLIENT_H_
+#define XLA_CLIENT_COMPILE_ONLY_CLIENT_H_
 
 #include "xla/client/client.h"
 #include "xla/client/xla_computation.h"
@@ -72,4 +72,4 @@ class CompileOnlyClient : public Client {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_COMPILE_ONLY_CLIENT_H_
+#endif  // XLA_CLIENT_COMPILE_ONLY_CLIENT_H_

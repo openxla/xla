@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_AUTOTUNE_SERIALIZE_H_
-#define TENSORFLOW_COMPILER_XLA_AUTOTUNE_SERIALIZE_H_
+#ifndef XLA_AUTOTUNE_SERIALIZE_H_
+#define XLA_AUTOTUNE_SERIALIZE_H_
 
 #include <string>
 
@@ -67,4 +67,4 @@ Status LoadAutotuneResults(absl::string_view data);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_AUTOTUNE_SERIALIZE_H_
+#endif  // XLA_AUTOTUNE_SERIALIZE_H_

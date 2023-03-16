@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_UTILS_CYCLE_DETECTOR_H
-#define MLIR_HLO_UTILS_CYCLE_DETECTOR_H
+#ifndef XLA_MLIR_HLO_UTILS_CYCLE_DETECTOR_H_
+#define XLA_MLIR_HLO_UTILS_CYCLE_DETECTOR_H_
 
 #include <optional>
 #include <vector>
@@ -163,4 +163,4 @@ class GraphCycles {
 
 }  // namespace mlir
 
-#endif  // MLIR_HLO_UTILS_CYCLE_DETECTOR_H
+#endif  // XLA_MLIR_HLO_UTILS_CYCLE_DETECTOR_H_

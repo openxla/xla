@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_OPS_TD_
-#define TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_OPS_TD_
+#ifndef XLA_MLIR_XLA_CPU_OPS_TD_
+#define XLA_MLIR_XLA_CPU_OPS_TD_
 
 include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.td"
 include "mlir/IR/AttrTypeBase.td"
@@ -315,4 +315,4 @@ def AddDependencyOp : XlaCpu_Op<"add_dependency", [BufferizableOpInterface]> {
   }];
 }
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_OPS_TD_
+#endif  // XLA_MLIR_XLA_CPU_OPS_TD_

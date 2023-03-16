@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef MLIR_HLO_GML_ST_TRANSFORMS_SCALARIZATION_SCALARIZATION_H
-#define MLIR_HLO_GML_ST_TRANSFORMS_SCALARIZATION_SCALARIZATION_H
+#ifndef XLA_MLIR_HLO_GML_ST_TRANSFORMS_SCALARIZATION_SCALARIZATION_H_
+#define XLA_MLIR_HLO_GML_ST_TRANSFORMS_SCALARIZATION_SCALARIZATION_H_
 
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -55,4 +55,4 @@ FailureOr<scf::IfOp> rewriteScatterOpAsIfOp(thlo::ScatterOp scatterOp,
 }  // namespace gml_st
 }  // namespace mlir
 
-#endif  // MLIR_HLO_GML_ST_TRANSFORMS_SCALARIZATION_SCALARIZATION_H
+#endif  // XLA_MLIR_HLO_GML_ST_TRANSFORMS_SCALARIZATION_SCALARIZATION_H_
