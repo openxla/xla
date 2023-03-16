@@ -100,7 +100,7 @@ jobs:
                               strings::StrCat|\
                               str_util::|\
                               tensorflow::StringPiece|\
-                              ))\\b'
+                              )\\b'
           --suppression_regex '(?i)non-absl ok'
           --failure_message 'Use Abseil types and functions instead of those in Tensorflow/TSL.'"
 
