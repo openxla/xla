@@ -18,6 +18,8 @@ limitations under the License.
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "xla/pjrt/pjrt_client.h"
@@ -46,6 +48,15 @@ class PjRtDeviceTopology {
 
   // If non-null, overrides the compiler for this topology.
   virtual std::optional<PjRtCompiler*> compiler() const { return std::nullopt; }
+
+  // If not-null, returns vendor specific attributes about each device. For
+  // example, the model number of a GPU, or the mesh coordinates of a TPU
+  // device.
+  virtual std::optional<
+      std::vector<absl::flat_hash_map<std::string, PjRtDeviceAttribute>>>
+  DeviceAttributes() const {
+    return std::nullopt;
+  }
 };
 
 // Abstract interface that all registered compilers must implement.
