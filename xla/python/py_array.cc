@@ -412,26 +412,36 @@ void PyArray::SetIfrtArray(tsl::RCReference<ifrt::Array> ifrt_array) {
   GetStorage().ifrt_array = std::move(ifrt_array);
 }
 
-const std::vector<PyArray>& PyArray::py_arrays_cached() {
-  auto& py_arrays = this->py_arrays();
+const std::vector<PyBuffer::object>& PyArray::py_buffers_cached() {
+  auto& py_buffers = this->py_buffers();
 
-  if (py_arrays.empty()) {
-    auto ifrt_arrays = ifrt_array()->DisassembleIntoSingleDeviceArrays(
-        ifrt::ArrayCopySemantics::kReuseInput);
-    if (!ifrt_arrays.ok()) {
-      throw py::value_error(
-          absl::StrCat("Failed to disassemble into single-device arrays: ",
-                       ifrt_arrays.status().ToString()));
-    }
-    py_arrays.reserve(ifrt_arrays->size());
-    for (auto& ifrt_array : *ifrt_arrays) {
-      py_arrays.push_back(PyArray::MakeFromSingleDeviceArray(
-          py_client(), traceback(), std::move(ifrt_array), weak_type(),
-          committed()));
+  if (py_buffers.empty()) {
+    if (llvm::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding())) {
+      py_buffers.reserve(1);
+      py_buffers.push_back(
+          PyBuffer::Make(py_client(),
+                         ifrt_array()
+                             ->Reshard(ifrt_array()->shared_ptr_sharding(),
+                                       ifrt::ArrayCopySemantics::kReuseInput)
+                             .value(),
+                         traceback()));
+    } else {
+      auto ifrt_arrays = ifrt_array()->DisassembleIntoSingleDeviceArrays(
+          ifrt::ArrayCopySemantics::kReuseInput);
+      if (!ifrt_arrays.ok()) {
+        throw py::value_error(
+            absl::StrCat("Failed to disassemble into single-device arrays: ",
+                         ifrt_arrays.status().ToString()));
+      }
+      py_buffers.reserve(ifrt_arrays->size());
+      for (auto& ifrt_array : *ifrt_arrays) {
+        py_buffers.push_back(
+            PyBuffer::Make(py_client(), std::move(ifrt_array), traceback()));
+      }
     }
   }
 
-  return py_arrays;
+  return py_buffers;
 }
 
 py::object PyArray::arrays() {
@@ -442,19 +452,13 @@ py::object PyArray::arrays() {
   // them later.
   if (ifrt_array() == nullptr) return py::none();
 
-  if (llvm::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding())) {
-    std::vector<PyArray> py_arrays;
-    py_arrays.push_back(*this);
-    return py::cast(py_arrays);
-  }
-
-  return py::cast(py_arrays_cached());
+  return py::cast(py_buffers_cached());
 }
 
 Status PyArray::set_arrays(py::object obj) {
   if (obj.is_none()) {
     SetIfrtArray(tsl::RCReference<ifrt::Array>());
-    py_arrays().clear();
+    py_buffers().clear();
     return OkStatus();
   }
 
@@ -468,7 +472,7 @@ Status PyArray::set_arrays(py::object obj) {
   if (list.empty()) return OkStatus();
 
   SetIfrtArray(tsl::RCReference<ifrt::Array>());
-  py_arrays().clear();
+  py_buffers().clear();
   std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
   ifrt_arrays.reserve(list.size());
   ifrt::DeviceList::Devices devices;
@@ -476,6 +480,8 @@ Status PyArray::set_arrays(py::object obj) {
   std::vector<ifrt::Shape> shapes;
   shapes.reserve(list.size());
   for (py::handle obj : list) {
+    // TODO(chky): Currently only List[Buffer] is handled here. We need to
+    // handle List[Array] as well.
     if (obj.get_type().ptr() == PyBuffer::type()) {
       auto* py_buffer = PyBuffer::AsPyBufferUnchecked(obj);
       DCHECK_EQ(py_buffer->client(), py_client());
@@ -516,11 +522,13 @@ Status PyArray::set_arrays(py::object obj) {
 
 Status PyArray::BlockUntilReady() const {
   pybind11::gil_scoped_release gil_release;
+  Status status;
   if (ifrt_array() == nullptr) {
     return InvalidArgument(
         "BlockHostUntilReady() called on deleted or donated buffer");
   }
   return AwaitBuffersReady(ifrt_array());
+  return status;
 }
 
 StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
@@ -529,79 +537,55 @@ StatusOr<size_t> PyArray::GetOnDeviceSizeInBytes() {
         "GetOnDeviceSizeInBytes() called on deleted or donated buffer");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      size_t shard_size,
-      IfrtHelpers::pjrt_buffer(ifrt_array())->GetOnDeviceSizeInBytes());
+  TF_ASSIGN_OR_RETURN(size_t shard_size,
+                      py_buffers_cached()[0].buf()->OnDeviceSizeInBytes());
   return shard_size * py::len(sharding().attr("device_set"));
 }
 
-StatusOr<PyArray> PyArray::FetchSingleShard(std::string_view api) {
+StatusOr<PyBuffer::object> PyArray::FetchSingleShard(std::string_view api) {
   if (ifrt_array() == nullptr) {
     return InvalidArgument("%s( called on deleted or donated buffer", api);
   }
 
-  if (llvm::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding())) {
-    return *this;
-  }
-
-  auto& py_arrays = py_arrays_cached();
-  if (py_arrays.empty() || py_arrays[0].shape() != shape()) {
+  auto& py_buffers = py_buffers_cached();
+  if (py_buffers.empty() ||
+      py_buffers[0].buf()->ifrt_array()->shape().dims() != shape()) {
     return InvalidArgument("%s() is supported only for unsharded arrays.", api);
   }
-  return py_arrays[0];
+  return py_buffers[0];
 }
 
 StatusOr<pybind11::object> PyArray::SingleDeviceArrayToNumpyArray() {
-  TF_ASSIGN_OR_RETURN(auto arr,
+  TF_ASSIGN_OR_RETURN(auto buf,
                       FetchSingleShard("SingleDeviceArrayToNumpyArray"));
-  return PyHostValue::AsNumPyArray(arr.GetStorage().host_value,
-                                   arr.GetStorage().dynamic_shape,
-                                   arr.ifrt_array(), arr);
+  return buf.buf()->AsNumPyArray(buf);
 }
 
 Status PyArray::CopySingleDeviceArrayToHostAsync() {
-  TF_ASSIGN_OR_RETURN(auto arr,
+  TF_ASSIGN_OR_RETURN(auto buf,
                       FetchSingleShard("CopySingleDeviceArrayToHostAsync"));
-  return PyHostValue::CopyToHostAsync(arr.GetStorage().host_value,
-                                      arr.GetStorage().dynamic_shape,
-                                      arr.ifrt_array());
-}
-
-StatusOr<PyArray> PyArray::AssertUnsharded(std::string_view api) {
-  if (ifrt_array() == nullptr) {
-    return InvalidArgument("%s( called on deleted or donated buffer", api);
-  }
-
-  if (llvm::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding())) {
-    return *this;
-  }
-
-  auto& py_arrays = py_arrays_cached();
-  if (py_arrays.size() != 1) {
-    return InvalidArgument("%s() is supported only for unsharded arrays.", api);
-  }
-  return py_arrays[0];
-}
-
-StatusOr<std::uintptr_t> PyArray::UnsafeBufferPointer() {
-  TF_ASSIGN_OR_RETURN(auto arr, AssertUnsharded("UnsafeBufferPointer"));
-
-  return py_client()->pjrt_client()->UnsafeBufferPointer(
-      IfrtHelpers::pjrt_buffer(arr.ifrt_array()));
+  return buf.buf()->CopyToHostAsync();
 }
 
 StatusOr<py::dict> PyArray::CudaArrayInterface() {
-  TF_ASSIGN_OR_RETURN(auto arr, AssertUnsharded("UnsafeBufferPointer"));
+  if (ifrt_array() == nullptr) {
+    return InvalidArgument(
+        "CudaArrayInterface() called on deleted or donated buffer");
+  }
 
-  return IfrtHelpers::CudaArrayInterface(arr.ifrt_array(),
-                                         arr.GetStorage().dynamic_shape);
+  auto& py_buffers = py_buffers_cached();
+  if (py_buffers.size() != 1) {
+    return InvalidArgument(
+        "CudaArrayInterface() is supported only for unsharded arrays.");
+  }
+  return py_buffers[0].buf()->CudaArrayInterface();
 }
 
 Status PyArray::Delete() {
-  for (auto& arr : py_arrays()) {
-    TF_RETURN_IF_ERROR(arr.Delete());
+  for (auto& arr : py_buffers()) {
+    arr.buf()->Delete();
   }
-  py_arrays().clear();
+  py_buffers().clear();
   if (ifrt_array() != nullptr) {
     TF_RETURN_IF_ERROR(ifrt_array()->Delete().Await());
     SetIfrtArray(tsl::RCReference<ifrt::Array>());
@@ -861,9 +845,12 @@ Status PyArray::RegisterTypes(py::module& m) {
   type.attr("_npy_value") =
       jax::property(&PyArray::npy_value, &PyArray::set_npy_value);
   type.attr("_committed") = jax::property_readonly(&PyArray::committed);
-  type.attr("unsafe_buffer_pointer") =
-      py::cpp_function([](PyArray self) { return self.UnsafeBufferPointer(); },
-                       py::is_method(type));
+  type.attr("unsafe_buffer_pointer") = py::cpp_function(
+      [](PyArray self) {
+        return self.py_client()->pjrt_client()->UnsafeBufferPointer(
+            IfrtHelpers::pjrt_buffer(self.ifrt_array()));
+      },
+      py::is_method(type));
   type.attr("__cuda_array_interface__") = jax::property_readonly(
       [](PyArray self) { return self.CudaArrayInterface(); });
   type.attr("on_device_size_in_bytes") =
