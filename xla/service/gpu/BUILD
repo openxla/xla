@@ -2032,6 +2032,7 @@ cc_library(
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:status",

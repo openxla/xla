@@ -190,6 +190,7 @@ limitations under the License.
 #include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
@@ -638,7 +639,11 @@ Status GpuCompiler::OptimizeHloModule(
   if (stream_exec != nullptr) {
     gpu_version = GetGpuVersion(stream_exec);
     se::dnn::DnnSupport* dnn = stream_exec->AsDnn();
-    TF_RET_CHECK(dnn != nullptr);
+    if (dnn == nullptr) {
+      return tsl::errors::FailedPrecondition(
+          "DNN library initialization failed."
+          " Look at the errors above for more details.");
+    }
     TF_ASSIGN_OR_RETURN(dnn_version, dnn->GetVersion());
   }
 
