@@ -659,6 +659,7 @@ cc_library(
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
+        "@stablehlo//:version",
         "@tsl//tsl/platform:errors",
     ],
 )

@@ -27,6 +27,7 @@ limitations under the License.
 #include "stablehlo/dialect/ChloOps.h"  // from @stablehlo
 #include "stablehlo/dialect/Serialization.h"  // from @stablehlo
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
+#include "stablehlo/dialect/Version.h"  // from @stablehlo
 #include "xla/client/xla_computation.h"
 #include "xla/mlir/utils/error_util.h"
 #include "xla/mlir_hlo/_virtual_includes/mhlo_passes/mhlo/transforms/passes.h"
@@ -189,6 +190,14 @@ StatusOr<std::string> PyDeserializePortableArtifact(std::string bytecode_str) {
   return PrintModule(*module);
 }
 
+StatusOr<std::string> PyGetEarliestCompatibleStablehloVersion() {
+  return mlir::vhlo::Version::getMinimumVersion().toString();
+}
+
+StatusOr<std::string> PyGetCurrentStablehloVersion() {
+  return mlir::vhlo::Version::getCurrentVersion().toString();
+}
+
 }  // namespace
 
 void BuildMlirSubmodule(py::module& m) {
@@ -209,6 +218,10 @@ void BuildMlirSubmodule(py::module& m) {
                   py::arg("mlir_module"), py::arg("target"));
   mlir_module.def("deserialize_portable_artifact",
                   &PyDeserializePortableArtifact, py::arg("mlir_module"));
+  mlir_module.def("get_earliest_compatible_stablehlo_version",
+                  &PyGetEarliestCompatibleStablehloVersion);
+  mlir_module.def("get_current_stablehlo_version",
+                  &PyGetCurrentStablehloVersion);
 }
 
 }  // namespace xla
