@@ -16,8 +16,8 @@ limitations under the License.
 // Declares the "host" platform, which is a CPU-only implementation of the
 // StreamExecutor. The host platform only supports memory operations and plugin
 // routines, and is primarily used for testing.
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_HOST_HOST_PLATFORM_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_HOST_HOST_PLATFORM_H_
+#ifndef XLA_STREAM_EXECUTOR_HOST_HOST_PLATFORM_H_
+#define XLA_STREAM_EXECUTOR_HOST_HOST_PLATFORM_H_
 
 #include <memory>
 #include <string>
@@ -80,4 +80,4 @@ class HostPlatform : public Platform {
 }  // namespace host
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_HOST_HOST_PLATFORM_H_
+#endif  // XLA_STREAM_EXECUTOR_HOST_HOST_PLATFORM_H_

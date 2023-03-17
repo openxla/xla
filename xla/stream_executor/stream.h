@@ -18,8 +18,8 @@ limitations under the License.
 // be created between Streams to do task management (i.e. limit which tasks
 // can be performed concurrently and specify what task dependencies exist).
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_H_
+#ifndef XLA_STREAM_EXECUTOR_STREAM_H_
+#define XLA_STREAM_EXECUTOR_STREAM_H_
 
 #include <complex>
 #include <cstdint>
@@ -1718,4 +1718,4 @@ struct Quantization<int32_t> {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_H_
+#endif  // XLA_STREAM_EXECUTOR_STREAM_H_

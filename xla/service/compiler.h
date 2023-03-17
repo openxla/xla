@@ -17,8 +17,8 @@ limitations under the License.
 // run on a given platform. This is a registry and abstract interface, for
 // pluggability by the various platforms.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_COMPILER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_COMPILER_H_
+#ifndef XLA_SERVICE_COMPILER_H_
+#define XLA_SERVICE_COMPILER_H_
 
 #include <any>
 #include <functional>
@@ -408,4 +408,4 @@ class Compiler {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_COMPILER_H_
+#endif  // XLA_SERVICE_COMPILER_H_

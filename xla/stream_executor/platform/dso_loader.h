@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_DSO_LOADER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_DSO_LOADER_H_
+#ifndef XLA_STREAM_EXECUTOR_PLATFORM_DSO_LOADER_H_
+#define XLA_STREAM_EXECUTOR_PLATFORM_DSO_LOADER_H_
 
 #include "xla/stream_executor/platform/platform.h"
 
@@ -28,4 +28,4 @@ limitations under the License.
 #error Define the appropriate PLATFORM_<foo> macro for this platform
 #endif
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_DSO_LOADER_H_
+#endif  // XLA_STREAM_EXECUTOR_PLATFORM_DSO_LOADER_H_

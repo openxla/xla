@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_RNG_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_RNG_H_
+#ifndef XLA_STREAM_EXECUTOR_GPU_GPU_RNG_H_
+#define XLA_STREAM_EXECUTOR_GPU_GPU_RNG_H_
 
 #include <cstdint>
 
@@ -124,4 +124,4 @@ std::string TypeString<std::complex<double>>() {
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_RNG_H_
+#endif  // XLA_STREAM_EXECUTOR_GPU_GPU_RNG_H_

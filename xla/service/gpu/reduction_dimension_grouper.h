@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_REDUCTION_DIMENSION_GROUPER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_REDUCTION_DIMENSION_GROUPER_H_
+#ifndef XLA_SERVICE_GPU_REDUCTION_DIMENSION_GROUPER_H_
+#define XLA_SERVICE_GPU_REDUCTION_DIMENSION_GROUPER_H_
 
 #include <optional>
 
@@ -53,4 +53,4 @@ class ReductionDimensionGrouper : public HloModulePass {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_REDUCTION_DIMENSION_GROUPER_H_
+#endif  // XLA_SERVICE_GPU_REDUCTION_DIMENSION_GROUPER_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_IFRT_ARRAY_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_IFRT_ARRAY_H_
+#ifndef XLA_PYTHON_IFRT_ARRAY_H_
+#define XLA_PYTHON_IFRT_ARRAY_H_
 
 #include <memory>
 #include <optional>
@@ -138,4 +138,4 @@ std::vector<Array*> MakeArrayPointerList(
 }  // namespace ifrt
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_IFRT_ARRAY_H_
+#endif  // XLA_PYTHON_IFRT_ARRAY_H_

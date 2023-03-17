@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_IR_TESTS_TESTLIB_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_IR_TESTS_TESTLIB_H_
+#ifndef XLA_MLIR_RUNTIME_IR_TESTS_TESTLIB_H_
+#define XLA_MLIR_RUNTIME_IR_TESTS_TESTLIB_H_
 
 #include <cstdint>
 
@@ -48,4 +48,4 @@ inline void AddTestlibTypeConversions(mlir::TypeConverter& converter) {
 }  // namespace runtime
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_IR_TESTS_TESTLIB_H_
+#endif  // XLA_MLIR_RUNTIME_IR_TESTS_TESTLIB_H_

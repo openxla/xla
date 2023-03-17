@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_TRANSFORMS_CPU_PASSES_TD_
-#define TENSORFLOW_COMPILER_XLA_MLIR_TRANSFORMS_CPU_PASSES_TD_
+#ifndef XLA_MLIR_TRANSFORMS_CPU_PASSES_TD_
+#define XLA_MLIR_TRANSFORMS_CPU_PASSES_TD_
 
 include "mlir/Pass/PassBase.td"
 
@@ -146,4 +146,4 @@ def RewriteReallocToAllocPass :
   let constructor = "createRewriteReallocToAllocPass()";
 }
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_TRANSFORMS_CPU_PASSES_TD_
+#endif  // XLA_MLIR_TRANSFORMS_CPU_PASSES_TD_

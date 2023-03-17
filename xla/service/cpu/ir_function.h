@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_IR_FUNCTION_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_IR_FUNCTION_H_
+#ifndef XLA_SERVICE_CPU_IR_FUNCTION_H_
+#define XLA_SERVICE_CPU_IR_FUNCTION_H_
 
 #include "absl/types/span.h"
 #include "llvm/IR/Function.h"
@@ -153,4 +153,4 @@ Status EmitCallToParallelForkJoin(
 }  // namespace cpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_IR_FUNCTION_H_
+#endif  // XLA_SERVICE_CPU_IR_FUNCTION_H_

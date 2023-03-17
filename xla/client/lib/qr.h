@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_QR_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_QR_H_
+#ifndef XLA_CLIENT_LIB_QR_H_
+#define XLA_CLIENT_LIB_QR_H_
 
 #include "xla/client/xla_builder.h"
 #include "xla/xla_data.pb.h"
@@ -49,4 +49,4 @@ void QrExplicit(XlaOp a, bool full_matrices, XlaOp& q, XlaOp& r);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_QR_H_
+#endif  // XLA_CLIENT_LIB_QR_H_

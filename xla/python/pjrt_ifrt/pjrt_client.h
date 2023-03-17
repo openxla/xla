@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PJRT_IFRT_PJRT_CLIENT_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PJRT_IFRT_PJRT_CLIENT_H_
+#ifndef XLA_PYTHON_PJRT_IFRT_PJRT_CLIENT_H_
+#define XLA_PYTHON_PJRT_IFRT_PJRT_CLIENT_H_
 
 #include <functional>
 #include <memory>
@@ -164,4 +164,4 @@ class PjRtClient final
 }  // namespace ifrt
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PJRT_IFRT_PJRT_CLIENT_H_
+#endif  // XLA_PYTHON_PJRT_IFRT_PJRT_CLIENT_H_

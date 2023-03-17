@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_RUNTIME_GEMM_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_RUNTIME_GEMM_H_
+#ifndef XLA_SERVICE_GPU_RUNTIME_GEMM_H_
+#define XLA_SERVICE_GPU_RUNTIME_GEMM_H_
 
 #include "absl/container/node_hash_map.h"
 #include "xla/runtime/custom_call_registry.h"
@@ -33,4 +33,4 @@ class GemmConfigs : public runtime::StateVector<GemmConfig> {};
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_RUNTIME_GEMM_H_
+#endif  // XLA_SERVICE_GPU_RUNTIME_GEMM_H_

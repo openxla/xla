@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_REPLICATION_ANALYSIS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_REPLICATION_ANALYSIS_H_
+#ifndef XLA_SERVICE_HLO_REPLICATION_ANALYSIS_H_
+#define XLA_SERVICE_HLO_REPLICATION_ANALYSIS_H_
 
 #include <string>
 
@@ -150,4 +150,4 @@ class HloReplicationAnalysis {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_HLO_REPLICATION_ANALYSIS_H_
+#endif  // XLA_SERVICE_HLO_REPLICATION_ANALYSIS_H_

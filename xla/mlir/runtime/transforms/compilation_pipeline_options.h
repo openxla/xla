@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_TRANSFORMS_COMPILATION_PIPELINE_OPTIONS_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_TRANSFORMS_COMPILATION_PIPELINE_OPTIONS_H_
+#ifndef XLA_MLIR_RUNTIME_TRANSFORMS_COMPILATION_PIPELINE_OPTIONS_H_
+#define XLA_MLIR_RUNTIME_TRANSFORMS_COMPILATION_PIPELINE_OPTIONS_H_
 
 #include <functional>
 
@@ -49,4 +49,4 @@ struct CompilationPipelineOptions {
 }  // namespace runtime
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_TRANSFORMS_COMPILATION_PIPELINE_OPTIONS_H_
+#endif  // XLA_MLIR_RUNTIME_TRANSFORMS_COMPILATION_PIPELINE_OPTIONS_H_

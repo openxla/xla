@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_RUNTIME_FFI_FFI_API_H_
-#define TENSORFLOW_COMPILER_XLA_RUNTIME_FFI_FFI_API_H_
+#ifndef XLA_RUNTIME_FFI_FFI_API_H_
+#define XLA_RUNTIME_FFI_FFI_API_H_
 
 #include <algorithm>
 #include <cstddef>
@@ -1134,4 +1134,4 @@ auto AggregateDecoder(Members... m) {
 }  // namespace runtime
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_RUNTIME_FFI_FFI_API_H_
+#endif  // XLA_RUNTIME_FFI_FFI_API_H_

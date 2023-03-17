@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_EXECUTABLE_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_EXECUTABLE_H_
+#ifndef XLA_SERVICE_EXECUTABLE_H_
+#define XLA_SERVICE_EXECUTABLE_H_
 
 #include <memory>
 #include <set>
@@ -410,4 +410,4 @@ class Executable {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_EXECUTABLE_H_
+#endif  // XLA_SERVICE_EXECUTABLE_H_

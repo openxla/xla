@@ -17,8 +17,8 @@ limitations under the License.
 // capabilities, and is only included into ROCM implementation code -- it will
 // not introduce rocm headers into other code.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_FFT_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_FFT_H_
+#ifndef XLA_STREAM_EXECUTOR_ROCM_ROCM_FFT_H_
+#define XLA_STREAM_EXECUTOR_ROCM_ROCM_FFT_H_
 
 #if TENSORFLOW_USE_ROCM
 
@@ -148,4 +148,4 @@ class ROCMFft : public fft::FftSupport {
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_FFT_H_
+#endif  // XLA_STREAM_EXECUTOR_ROCM_ROCM_FFT_H_

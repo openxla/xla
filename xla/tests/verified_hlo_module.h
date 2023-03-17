@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_TESTS_VERIFIED_HLO_MODULE_H_
-#define TENSORFLOW_COMPILER_XLA_TESTS_VERIFIED_HLO_MODULE_H_
+#ifndef XLA_TESTS_VERIFIED_HLO_MODULE_H_
+#define XLA_TESTS_VERIFIED_HLO_MODULE_H_
 
 #include <functional>
 
@@ -62,4 +62,4 @@ class VerifiedHloModule : public HloModule {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TESTS_VERIFIED_HLO_MODULE_H_
+#endif  // XLA_TESTS_VERIFIED_HLO_MODULE_H_

@@ -61,8 +61,8 @@ limitations under the License.
 //    //third_party/tensorflow/compiler/xla/stream_executor/cuda:cublas_plugin
 //    //third_party/tensorflow/compiler/xla/stream_executor/cuda:curand_plugin
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_
+#ifndef XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_
+#define XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_
 
 #include <functional>
 #include <map>
@@ -174,4 +174,4 @@ class MultiPlatformManager {
 DECLARE_MODULE_INITIALIZER(multi_platform_manager);
 DECLARE_MODULE_INITIALIZER(multi_platform_manager_listener);
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_
+#endif  // XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PY_CLIENT_GPU_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PY_CLIENT_GPU_H_
+#ifndef XLA_PYTHON_PY_CLIENT_GPU_H_
+#define XLA_PYTHON_PY_CLIENT_GPU_H_
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/include/hip/hip_runtime.h"
@@ -37,4 +37,4 @@ void XlaPythonGpuCallback(gpuStreamHandle stream, void** buffers,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PY_CLIENT_GPU_H_
+#endif  // XLA_PYTHON_PY_CLIENT_GPU_H_

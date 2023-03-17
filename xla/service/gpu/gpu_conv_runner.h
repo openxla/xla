@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_CONV_RUNNER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_CONV_RUNNER_H_
+#ifndef XLA_SERVICE_GPU_GPU_CONV_RUNNER_H_
+#define XLA_SERVICE_GPU_GPU_CONV_RUNNER_H_
 
 #include <optional>
 
@@ -225,4 +225,4 @@ inline se::dnn::DataType BiasTypeForInputType(se::dnn::DataType input_type) {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_GPU_CONV_RUNNER_H_
+#endif  // XLA_SERVICE_GPU_GPU_CONV_RUNNER_H_

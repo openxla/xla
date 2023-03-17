@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STATUS_H_
-#define TENSORFLOW_COMPILER_XLA_STATUS_H_
+#ifndef XLA_STATUS_H_
+#define XLA_STATUS_H_
 
 #include "tsl/platform/status.h"  // IWYU pragma: export
 
@@ -27,4 +27,4 @@ using tsl::ToAbslStatus;
 // NOLINTEND(misc-unused-using-decls)
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_STATUS_H_
+#endif  // XLA_STATUS_H_

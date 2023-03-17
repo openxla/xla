@@ -15,8 +15,8 @@ limitations under the License.
 
 // Utility functions related to layouts of Shapes.
 
-#ifndef TENSORFLOW_COMPILER_XLA_INDEX_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_INDEX_UTIL_H_
+#ifndef XLA_INDEX_UTIL_H_
+#define XLA_INDEX_UTIL_H_
 
 #include <vector>
 
@@ -156,4 +156,4 @@ class IndexUtil {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_INDEX_UTIL_H_
+#endif  // XLA_INDEX_UTIL_H_

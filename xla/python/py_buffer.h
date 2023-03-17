@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PY_BUFFER_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PY_BUFFER_H_
+#ifndef XLA_PYTHON_PY_BUFFER_H_
+#define XLA_PYTHON_PY_BUFFER_H_
 
 #include <memory>
 #include <optional>
@@ -283,4 +283,4 @@ StatusOr<pybind11::dtype> ToPybind11DType(ifrt::DType dtype);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PY_BUFFER_H_
+#endif  // XLA_PYTHON_PY_BUFFER_H_

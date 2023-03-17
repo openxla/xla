@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_ARRAY_H_
-#define TENSORFLOW_COMPILER_XLA_ARRAY_H_
+#ifndef XLA_ARRAY_H_
+#define XLA_ARRAY_H_
 
 #include <algorithm>
 #include <array>
@@ -639,4 +639,4 @@ void Array<complex64>::FillRandom(const complex64& stddev, const double mean,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_ARRAY_H_
+#endif  // XLA_ARRAY_H_

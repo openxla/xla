@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_EVENT_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_EVENT_H_
+#ifndef XLA_STREAM_EXECUTOR_GPU_GPU_EVENT_H_
+#define XLA_STREAM_EXECUTOR_GPU_GPU_EVENT_H_
 
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
@@ -59,4 +59,4 @@ class GpuEvent : public internal::EventInterface {
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_GPU_EVENT_H_
+#endif  // XLA_STREAM_EXECUTOR_GPU_GPU_EVENT_H_

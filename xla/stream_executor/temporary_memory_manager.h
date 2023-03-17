@@ -18,8 +18,8 @@ limitations under the License.
 // Stream::BlockHostUntilDone call for efficiency purposes (as deallocation
 // itself generally forces synchronization to occur).
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TEMPORARY_MEMORY_MANAGER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TEMPORARY_MEMORY_MANAGER_H_
+#ifndef XLA_STREAM_EXECUTOR_TEMPORARY_MEMORY_MANAGER_H_
+#define XLA_STREAM_EXECUTOR_TEMPORARY_MEMORY_MANAGER_H_
 
 #include <map>
 #include <memory>
@@ -149,4 +149,4 @@ TemporaryMemoryManager::AllocateArray(uint64_t element_count) {
 }  // namespace internal
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TEMPORARY_MEMORY_MANAGER_H_
+#endif  // XLA_STREAM_EXECUTOR_TEMPORARY_MEMORY_MANAGER_H_

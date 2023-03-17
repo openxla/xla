@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_LOGDET_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_LOGDET_H_
+#ifndef XLA_CLIENT_LIB_LOGDET_H_
+#define XLA_CLIENT_LIB_LOGDET_H_
 
 #include "xla/client/xla_builder.h"
 
@@ -34,4 +34,4 @@ XlaOp LogDet(XlaOp a);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_LOGDET_H_
+#endif  // XLA_CLIENT_LIB_LOGDET_H_

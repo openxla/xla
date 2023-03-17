@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PPROF_PROFILE_BUILDER_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PPROF_PROFILE_BUILDER_H_
+#ifndef XLA_PYTHON_PPROF_PROFILE_BUILDER_H_
+#define XLA_PYTHON_PPROF_PROFILE_BUILDER_H_
 
 #include <string>
 #include <utility>
@@ -63,4 +63,4 @@ StatusOr<std::string> PprofProfileToJson(pybind11::bytes binary_proto);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PPROF_PROFILE_BUILDER_H_
+#endif  // XLA_PYTHON_PPROF_PROFILE_BUILDER_H_

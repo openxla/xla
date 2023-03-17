@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PACKED_LITERAL_READER_H_
-#define TENSORFLOW_COMPILER_XLA_PACKED_LITERAL_READER_H_
+#ifndef XLA_PACKED_LITERAL_READER_H_
+#define XLA_PACKED_LITERAL_READER_H_
 
 #include <memory>
 
@@ -56,4 +56,4 @@ class PackedLiteralReader {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PACKED_LITERAL_READER_H_
+#endif  // XLA_PACKED_LITERAL_READER_H_

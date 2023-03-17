@@ -15,8 +15,8 @@ limitations under the License.
 
 // Helpers for converting Python values into buffers.
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PY_VALUES_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PY_VALUES_H_
+#ifndef XLA_PYTHON_PY_VALUES_H_
+#define XLA_PYTHON_PY_VALUES_H_
 
 #include <memory>
 #include <string>
@@ -99,4 +99,4 @@ H AbslHashValue(H h, const xla::PyArgSignature& s) {
 }
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PY_VALUES_H_
+#endif  // XLA_PYTHON_PY_VALUES_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_POOLING_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_POOLING_H_
+#ifndef XLA_CLIENT_LIB_POOLING_H_
+#define XLA_CLIENT_LIB_POOLING_H_
 
 #include "absl/container/inlined_vector.h"
 #include "xla/client/xla_builder.h"
@@ -77,4 +77,4 @@ XlaOp AvgPoolGrad(XlaOp out_backprop, absl::Span<const int64_t> gradients_size,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_POOLING_H_
+#endif  // XLA_CLIENT_LIB_POOLING_H_

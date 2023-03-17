@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTOR_API_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTOR_API_H_
+#ifndef XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTOR_API_H_
+#define XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTOR_API_H_
 
 #include "xla/stream_executor/tpu/libtftpu.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
@@ -35,4 +35,4 @@ bool IsInitialized(TfTpu_ExecutorApiFn* executor_api_fn);
 }  // namespace tpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTOR_API_H_
+#endif  // XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTOR_API_H_

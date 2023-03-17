@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_KERNEL_MAPPING_SCHEME_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_KERNEL_MAPPING_SCHEME_H_
+#ifndef XLA_SERVICE_GPU_KERNEL_MAPPING_SCHEME_H_
+#define XLA_SERVICE_GPU_KERNEL_MAPPING_SCHEME_H_
 
 #include <string>
 
@@ -250,4 +250,4 @@ class ReductionCodegenState {
 }  // end namespace gpu
 }  // end namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_KERNEL_MAPPING_SCHEME_H_
+#endif  // XLA_SERVICE_GPU_KERNEL_MAPPING_SCHEME_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
+#ifndef XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
+#define XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
 
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
@@ -51,4 +51,4 @@ class BufferComparator {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_
+#endif  // XLA_SERVICE_GPU_BUFFER_COMPARATOR_H_

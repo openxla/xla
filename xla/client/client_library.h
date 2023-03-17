@@ -18,8 +18,8 @@ limitations under the License.
 // client. ClientLibrary::GetOrCreateLocalClient will spawn a local service,
 // and return a client that's connected to it and ready to run XLA
 // computations.
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_CLIENT_LIBRARY_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_CLIENT_LIBRARY_H_
+#ifndef XLA_CLIENT_CLIENT_LIBRARY_H_
+#define XLA_CLIENT_CLIENT_LIBRARY_H_
 
 #include <functional>
 #include <memory>
@@ -143,4 +143,4 @@ class ClientLibrary {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_CLIENT_LIBRARY_H_
+#endif  // XLA_CLIENT_CLIENT_LIBRARY_H_

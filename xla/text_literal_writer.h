@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TEXT_LITERAL_WRITER_H_
-#define TENSORFLOW_COMPILER_XLA_TEXT_LITERAL_WRITER_H_
+#ifndef XLA_TEXT_LITERAL_WRITER_H_
+#define XLA_TEXT_LITERAL_WRITER_H_
 
 #include "absl/strings/string_view.h"
 #include "xla/literal.h"
@@ -45,4 +45,4 @@ class TextLiteralWriter {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TEXT_LITERAL_WRITER_H_
+#endif  // XLA_TEXT_LITERAL_WRITER_H_

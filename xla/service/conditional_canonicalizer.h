@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CONDITIONAL_CANONICALIZER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CONDITIONAL_CANONICALIZER_H_
+#ifndef XLA_SERVICE_CONDITIONAL_CANONICALIZER_H_
+#define XLA_SERVICE_CONDITIONAL_CANONICALIZER_H_
 
 #include <utility>
 
@@ -38,4 +38,4 @@ class ConditionalCanonicalizer : public HloModulePass {
 };
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CONDITIONAL_CANONICALIZER_H_
+#endif  // XLA_SERVICE_CONDITIONAL_CANONICALIZER_H_

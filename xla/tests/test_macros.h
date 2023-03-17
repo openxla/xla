@@ -25,8 +25,8 @@ limitations under the License.
 //   redefining the DISABLED_ON_$TARGET macro to prepend "DISABLED_" to the test
 //   name.
 
-#ifndef TENSORFLOW_COMPILER_XLA_TESTS_TEST_MACROS_H_
-#define TENSORFLOW_COMPILER_XLA_TESTS_TEST_MACROS_H_
+#ifndef XLA_TESTS_TEST_MACROS_H_
+#define XLA_TESTS_TEST_MACROS_H_
 
 #define DISABLED_ON_CPU(X) X
 #define DISABLED_ON_GPU(X) X
@@ -97,4 +97,4 @@ inline const char** TestPlatform() {
 
 #define XLA_TYPED_TEST(CaseName, TestName) TYPED_TEST(CaseName, TestName)
 
-#endif  // TENSORFLOW_COMPILER_XLA_TESTS_TEST_MACROS_H_
+#endif  // XLA_TESTS_TEST_MACROS_H_

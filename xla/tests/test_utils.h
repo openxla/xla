@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TESTS_TEST_UTILS_H_
-#define TENSORFLOW_COMPILER_XLA_TESTS_TEST_UTILS_H_
+#ifndef XLA_TESTS_TEST_UTILS_H_
+#define XLA_TESTS_TEST_UTILS_H_
 
 #include <initializer_list>
 #include <memory>
@@ -117,4 +117,4 @@ bool IsMlirLoweringEnabled();
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TESTS_TEST_UTILS_H_
+#endif  // XLA_TESTS_TEST_UTILS_H_

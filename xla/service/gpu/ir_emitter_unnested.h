@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_IR_EMITTER_UNNESTED_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_IR_EMITTER_UNNESTED_H_
+#ifndef XLA_SERVICE_GPU_IR_EMITTER_UNNESTED_H_
+#define XLA_SERVICE_GPU_IR_EMITTER_UNNESTED_H_
 
 #include <array>
 #include <functional>
@@ -921,4 +921,4 @@ class IrEmitterUnnested : public IrEmitter {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_IR_EMITTER_UNNESTED_H_
+#endif  // XLA_SERVICE_GPU_IR_EMITTER_UNNESTED_H_

@@ -41,8 +41,8 @@ limitations under the License.
 // kernel launches (via StreamExecutor::ThenLaunch()) with these pre-canned FFT
 // routines.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_FFT_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_FFT_H_
+#ifndef XLA_STREAM_EXECUTOR_FFT_H_
+#define XLA_STREAM_EXECUTOR_FFT_H_
 
 #include <complex>
 #include <memory>
@@ -267,4 +267,4 @@ class FftSupport {
 }  // namespace fft
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_FFT_H_
+#endif  // XLA_STREAM_EXECUTOR_FFT_H_

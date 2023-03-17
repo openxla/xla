@@ -16,8 +16,8 @@ limitations under the License.
 // The CUDA-specific DNN library support, implementing the general DnnSupport
 // interface.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
+#ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
+#define XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
 
 #include <cstdint>
 #include <optional>
@@ -696,4 +696,4 @@ class CudnnSupport : public dnn::DnnSupport {
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_
+#endif  // XLA_STREAM_EXECUTOR_CUDA_CUDA_DNN_H_

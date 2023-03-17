@@ -15,8 +15,8 @@ limitations under the License.
 
 // Utilities for working with permutations.
 
-#ifndef TENSORFLOW_COMPILER_XLA_PERMUTATION_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_PERMUTATION_UTIL_H_
+#ifndef XLA_PERMUTATION_UTIL_H_
+#define XLA_PERMUTATION_UTIL_H_
 
 #include <vector>
 
@@ -82,4 +82,4 @@ bool IsIdentityPermutation(absl::Span<const int64_t> permutation);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PERMUTATION_UTIL_H_
+#endif  // XLA_PERMUTATION_UTIL_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_LHLO_WITH_XLA_MHLO_TO_LHLO_WITH_XLA_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_LHLO_WITH_XLA_MHLO_TO_LHLO_WITH_XLA_H_
+#ifndef XLA_TRANSLATE_MHLO_TO_LHLO_WITH_XLA_MHLO_TO_LHLO_WITH_XLA_H_
+#define XLA_TRANSLATE_MHLO_TO_LHLO_WITH_XLA_MHLO_TO_LHLO_WITH_XLA_H_
 
 #include <functional>
 #include <memory>
@@ -327,4 +327,4 @@ void RegisterMhloToLhloWithXlaPass();
 
 }  // namespace mlir
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_MHLO_TO_LHLO_WITH_XLA_MHLO_TO_LHLO_WITH_XLA_H_
+#endif  // XLA_TRANSLATE_MHLO_TO_LHLO_WITH_XLA_MHLO_TO_LHLO_WITH_XLA_H_

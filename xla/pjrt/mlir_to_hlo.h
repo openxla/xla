@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PJRT_MLIR_TO_HLO_H_
-#define TENSORFLOW_COMPILER_XLA_PJRT_MLIR_TO_HLO_H_
+#ifndef XLA_PJRT_MLIR_TO_HLO_H_
+#define XLA_PJRT_MLIR_TO_HLO_H_
 
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
@@ -39,4 +39,4 @@ Status ParseMlirModuleStringAndConvertToXlaComputation(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PJRT_MLIR_TO_HLO_H_
+#endif  // XLA_PJRT_MLIR_TO_HLO_H_

@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_MLIR_HLO_BUILDER_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_MLIR_HLO_BUILDER_H_
+#ifndef XLA_TRANSLATE_HLO_TO_MHLO_MLIR_HLO_BUILDER_H_
+#define XLA_TRANSLATE_HLO_TO_MHLO_MLIR_HLO_BUILDER_H_
 
 #include <memory>
 #include <string>
@@ -309,4 +309,4 @@ class MlirHloBuilder : public XlaBuilder {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_MLIR_HLO_BUILDER_H_
+#endif  // XLA_TRANSLATE_HLO_TO_MHLO_MLIR_HLO_BUILDER_H_

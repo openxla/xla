@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_INITIALIZE_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_INITIALIZE_H_
+#ifndef XLA_STREAM_EXECUTOR_PLATFORM_INITIALIZE_H_
+#define XLA_STREAM_EXECUTOR_PLATFORM_INITIALIZE_H_
 
 #include "xla/stream_executor/platform/platform.h"
 
@@ -24,4 +24,4 @@ limitations under the License.
 #include "xla/stream_executor/platform/default/initialize.h"
 #endif
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_INITIALIZE_H_
+#endif  // XLA_STREAM_EXECUTOR_PLATFORM_INITIALIZE_H_

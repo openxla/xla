@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_INSTRUCTION_FUSION_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_INSTRUCTION_FUSION_H_
+#ifndef XLA_SERVICE_INSTRUCTION_FUSION_H_
+#define XLA_SERVICE_INSTRUCTION_FUSION_H_
 
 #include <functional>
 #include <optional>
@@ -339,4 +339,4 @@ class InstructionFusion : public HloModulePass {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_INSTRUCTION_FUSION_H_
+#endif  // XLA_SERVICE_INSTRUCTION_FUSION_H_

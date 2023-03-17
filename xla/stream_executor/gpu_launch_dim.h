@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_
+#ifndef XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_
+#define XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_
 
 // TODO(rspringer): Temporary redirection until all users - including gcudacc -
 // are using the new file.
 #include "xla/stream_executor/launch_dim.h"
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_
+#endif  // XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_

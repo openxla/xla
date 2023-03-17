@@ -19,8 +19,8 @@ limitations under the License.
 #include "xla/service/op_expander_pass.h"
 #include "xla/statusor.h"
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_BITCAST_DTYPES_EXPANDER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_BITCAST_DTYPES_EXPANDER_H_
+#ifndef XLA_SERVICE_BITCAST_DTYPES_EXPANDER_H_
+#define XLA_SERVICE_BITCAST_DTYPES_EXPANDER_H_
 
 namespace xla {
 
@@ -42,4 +42,4 @@ class BitcastDtypesExpander : public OpExpanderPass {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_BITCAST_DTYPES_EXPANDER_H_
+#endif  // XLA_SERVICE_BITCAST_DTYPES_EXPANDER_H_

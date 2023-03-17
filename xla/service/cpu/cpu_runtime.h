@@ -23,8 +23,8 @@ limitations under the License.
 // runtime_conv2d and runtime_matmul. As individual libraries, callers for
 // ahead-of-time compilation can link only the required subset.
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_RUNTIME_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_RUNTIME_H_
+#ifndef XLA_SERVICE_CPU_CPU_RUNTIME_H_
+#define XLA_SERVICE_CPU_CPU_RUNTIME_H_
 
 #include "xla/executable_run_options.h"
 #include "xla/service/cpu/xfeed_manager.h"
@@ -207,4 +207,4 @@ extern void __xla_cpu_runtime_ReplicaId(
 
 }  // extern "C"
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_CPU_RUNTIME_H_
+#endif  // XLA_SERVICE_CPU_CPU_RUNTIME_H_

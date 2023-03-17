@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_GPU_CUDA_TEST_H_
-#define TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_GPU_CUDA_TEST_H_
+#ifndef XLA_BACKENDS_PROFILER_GPU_CUDA_TEST_H_
+#define XLA_BACKENDS_PROFILER_GPU_CUDA_TEST_H_
 
 namespace xla {
 namespace profiler {
@@ -52,4 +52,4 @@ void MemCopyP2PExplicit();
 }  // namespace profiler
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_BACKENDS_PROFILER_GPU_CUDA_TEST_H_
+#endif  // XLA_BACKENDS_PROFILER_GPU_CUDA_TEST_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_SERVICE_EXECUTABLE_RUN_OPTIONS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_SERVICE_EXECUTABLE_RUN_OPTIONS_H_
+#ifndef XLA_SERVICE_SERVICE_EXECUTABLE_RUN_OPTIONS_H_
+#define XLA_SERVICE_SERVICE_EXECUTABLE_RUN_OPTIONS_H_
 
 #include "xla/executable_run_options.h"
 #include "xla/service/stream_pool.h"
@@ -63,4 +63,4 @@ class ServiceExecutableRunOptions {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_SERVICE_EXECUTABLE_RUN_OPTIONS_H_
+#endif  // XLA_SERVICE_SERVICE_EXECUTABLE_RUN_OPTIONS_H_

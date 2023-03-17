@@ -38,8 +38,8 @@ limitations under the License.
 //
 // Also see tests for executable sample usage.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TEMPORARY_DEVICE_MEMORY_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TEMPORARY_DEVICE_MEMORY_H_
+#ifndef XLA_STREAM_EXECUTOR_TEMPORARY_DEVICE_MEMORY_H_
+#define XLA_STREAM_EXECUTOR_TEMPORARY_DEVICE_MEMORY_H_
 
 #include "xla/stream_executor/device_memory.h"
 
@@ -133,4 +133,4 @@ class TemporaryDeviceMemory : public TemporaryDeviceMemoryBase {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_TEMPORARY_DEVICE_MEMORY_H_
+#endif  // XLA_STREAM_EXECUTOR_TEMPORARY_DEVICE_MEMORY_H_

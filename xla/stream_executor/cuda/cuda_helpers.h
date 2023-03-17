@@ -17,9 +17,9 @@ limitations under the License.
 //
 // These are typically placed here for use by multiple source components (for
 // example, BLAS and executor components).
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_HELPERS_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_HELPERS_H_
+#ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_HELPERS_H_
+#define XLA_STREAM_EXECUTOR_CUDA_CUDA_HELPERS_H_
 
 #include "xla/stream_executor/gpu/gpu_helpers.h"
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_HELPERS_H_
+#endif  // XLA_STREAM_EXECUTOR_CUDA_CUDA_HELPERS_H_

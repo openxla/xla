@@ -16,8 +16,8 @@ limitations under the License.
 // Common DSO loading functionality: exposes callables that dlopen DSOs
 // in either the runfiles directories
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_DEFAULT_DSO_LOADER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_DEFAULT_DSO_LOADER_H_
+#ifndef XLA_STREAM_EXECUTOR_PLATFORM_DEFAULT_DSO_LOADER_H_
+#define XLA_STREAM_EXECUTOR_PLATFORM_DEFAULT_DSO_LOADER_H_
 
 #include <vector>
 
@@ -84,4 +84,4 @@ using tsl::internal::CachedDsoLoader::GetRoctracerDsoHandle;
 }  // namespace internal
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_PLATFORM_DEFAULT_DSO_LOADER_H_
+#endif  // XLA_STREAM_EXECUTOR_PLATFORM_DEFAULT_DSO_LOADER_H_

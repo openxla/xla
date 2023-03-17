@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_WINDOW_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_WINDOW_UTIL_H_
+#ifndef XLA_WINDOW_UTIL_H_
+#define XLA_WINDOW_UTIL_H_
 
 #include "absl/types/span.h"
 #include "xla/types.h"
@@ -93,4 +93,4 @@ int64_t StridedBound(int64_t bound, int64_t window_size, int64_t stride);
 }  // namespace window_util
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_WINDOW_UTIL_H_
+#endif  // XLA_WINDOW_UTIL_H_

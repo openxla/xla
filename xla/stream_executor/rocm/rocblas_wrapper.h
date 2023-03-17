@@ -17,8 +17,8 @@ limitations under the License.
 // have explicit linking to librocblas. All TF hipsarse API usage should route
 // through this wrapper.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCBLAS_WRAPPER_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCBLAS_WRAPPER_H_
+#ifndef XLA_STREAM_EXECUTOR_ROCM_ROCBLAS_WRAPPER_H_
+#define XLA_STREAM_EXECUTOR_ROCM_ROCBLAS_WRAPPER_H_
 
 #include "rocm/include/rocblas/rocblas.h"
 #include "xla/stream_executor/gpu/gpu_activation.h"
@@ -273,4 +273,4 @@ FOREACH_ROCBLAS_API(ROCBLAS_API_WRAPPER)
 }  // namespace wrap
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCBLAS_WRAPPER_H_
+#endif  // XLA_STREAM_EXECUTOR_ROCM_ROCBLAS_WRAPPER_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_RUNTIME_DEFAULT_MEMORY_MAPPER_H_
-#define TENSORFLOW_COMPILER_XLA_RUNTIME_DEFAULT_MEMORY_MAPPER_H_
+#ifndef XLA_RUNTIME_DEFAULT_MEMORY_MAPPER_H_
+#define XLA_RUNTIME_DEFAULT_MEMORY_MAPPER_H_
 
 #include <errno.h>
 
@@ -35,4 +35,4 @@ static auto RetryOnEINTR(FunctionType func, decltype(func()) failure_value) {
 }  // namespace runtime
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_RUNTIME_DEFAULT_MEMORY_MAPPER_H_
+#endif  // XLA_RUNTIME_DEFAULT_MEMORY_MAPPER_H_

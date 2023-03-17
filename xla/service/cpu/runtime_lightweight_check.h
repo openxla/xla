@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_LIGHTWEIGHT_CHECK_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_LIGHTWEIGHT_CHECK_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_LIGHTWEIGHT_CHECK_H_
+#define XLA_SERVICE_CPU_RUNTIME_LIGHTWEIGHT_CHECK_H_
 
 #include <cstdlib>
 #include <iostream>
@@ -33,4 +33,4 @@ limitations under the License.
     }                                                                       \
   } while (0)
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CPU_RUNTIME_LIGHTWEIGHT_CHECK_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_LIGHTWEIGHT_CHECK_H_

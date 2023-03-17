@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_LAUNCH_DIMENSIONS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_LAUNCH_DIMENSIONS_H_
+#ifndef XLA_SERVICE_GPU_LAUNCH_DIMENSIONS_H_
+#define XLA_SERVICE_GPU_LAUNCH_DIMENSIONS_H_
 
 #include <map>
 #include <memory>
@@ -142,4 +142,4 @@ StatusOr<LaunchDimensions> CalculateLaunchDimensions(
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_GPU_LAUNCH_DIMENSIONS_H_
+#endif  // XLA_SERVICE_GPU_LAUNCH_DIMENSIONS_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_PRNG_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_PRNG_H_
+#ifndef XLA_CLIENT_LIB_PRNG_H_
+#define XLA_CLIENT_LIB_PRNG_H_
 
 #include <array>
 
@@ -94,4 +94,4 @@ xla::XlaOp PhiloxIncreaseCounter(xla::XlaOp counter, xla::XlaOp delta);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_PRNG_H_
+#endif  // XLA_CLIENT_LIB_PRNG_H_

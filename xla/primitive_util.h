@@ -15,8 +15,8 @@ limitations under the License.
 
 // Utilities for dealing with XLA primitive types.
 
-#ifndef TENSORFLOW_COMPILER_XLA_PRIMITIVE_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_PRIMITIVE_UTIL_H_
+#ifndef XLA_PRIMITIVE_UTIL_H_
+#define XLA_PRIMITIVE_UTIL_H_
 
 #include <string>
 #include <tuple>
@@ -550,4 +550,4 @@ bool IsCanonicalRepresentation(PrimitiveType type) {
 }  // namespace primitive_util
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PRIMITIVE_UTIL_H_
+#endif  // XLA_PRIMITIVE_UTIL_H_

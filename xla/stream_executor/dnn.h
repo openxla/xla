@@ -19,8 +19,8 @@ limitations under the License.
 // neural net operations; it accommodates implementations such as the cudnn
 // library operations.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DNN_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DNN_H_
+#ifndef XLA_STREAM_EXECUTOR_DNN_H_
+#define XLA_STREAM_EXECUTOR_DNN_H_
 
 #include <cstdint>
 #include <functional>
@@ -2749,4 +2749,4 @@ class DnnSupport {
 }  // namespace dnn
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_DNN_H_
+#endif  // XLA_STREAM_EXECUTOR_DNN_H_

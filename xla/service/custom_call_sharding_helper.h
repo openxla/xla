@@ -19,8 +19,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_CUSTOM_CALL_SHARDING_HELPER_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_CUSTOM_CALL_SHARDING_HELPER_H_
+#ifndef XLA_SERVICE_CUSTOM_CALL_SHARDING_HELPER_H_
+#define XLA_SERVICE_CUSTOM_CALL_SHARDING_HELPER_H_
 
 namespace xla {
 
@@ -69,4 +69,4 @@ void RegisterCustomCallPartitioner(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_CUSTOM_CALL_SHARDING_HELPER_H__
+#endif  // XLA_SERVICE_CUSTOM_CALL_SHARDING_HELPER_H__

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_C_C_API_DECL_H_
-#define TENSORFLOW_COMPILER_XLA_C_C_API_DECL_H_
+#ifndef XLA_C_C_API_DECL_H_
+#define XLA_C_C_API_DECL_H_
 
 extern "C" {
 
@@ -26,4 +26,4 @@ typedef enum {
 } XLA_LayoutPreference;
 }
 
-#endif  // TENSORFLOW_COMPILER_XLA_C_C_API_DECL_H_
+#endif  // XLA_C_C_API_DECL_H_

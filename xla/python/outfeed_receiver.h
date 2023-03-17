@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_OUTFEED_RECEIVER_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_OUTFEED_RECEIVER_H_
+#ifndef XLA_PYTHON_OUTFEED_RECEIVER_H_
+#define XLA_PYTHON_OUTFEED_RECEIVER_H_
 
 #include <cstdint>
 #include <functional>
@@ -76,4 +76,4 @@ class OutfeedReceiver {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_OUTFEED_RECEIVER_H_
+#endif  // XLA_PYTHON_OUTFEED_RECEIVER_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TESTS_PJRT_CLIENT_REGISTRY_H_
-#define TENSORFLOW_COMPILER_XLA_TESTS_PJRT_CLIENT_REGISTRY_H_
+#ifndef XLA_TESTS_PJRT_CLIENT_REGISTRY_H_
+#define XLA_TESTS_PJRT_CLIENT_REGISTRY_H_
 
 #include <functional>
 #include <memory>
@@ -91,4 +91,4 @@ bool ShouldUsePjRt();
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TESTS_PJRT_CLIENT_REGISTRY_H_
+#endif  // XLA_TESTS_PJRT_CLIENT_REGISTRY_H_

@@ -15,8 +15,8 @@ limitations under the License.
 
 // Casting utility functions for HLO instructions.
 
-#ifndef TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_CASTING_UTILS_H_
-#define TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_CASTING_UTILS_H_
+#ifndef XLA_HLO_IR_HLO_CASTING_UTILS_H_
+#define XLA_HLO_IR_HLO_CASTING_UTILS_H_
 
 #include <type_traits>
 
@@ -112,4 +112,4 @@ T* DynCastOrNull(HloInstruction* instruction) {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_CASTING_UTILS_H_
+#endif  // XLA_HLO_IR_HLO_CASTING_UTILS_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_CONV_GRAD_SIZE_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_CONV_GRAD_SIZE_UTIL_H_
+#ifndef XLA_CLIENT_LIB_CONV_GRAD_SIZE_UTIL_H_
+#define XLA_CLIENT_LIB_CONV_GRAD_SIZE_UTIL_H_
 
 #include "xla/client/padding.h"
 
@@ -40,4 +40,4 @@ ConvGradExtractAndVerifyDimension(int64_t input_size, int64_t filter_size,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_CONV_GRAD_SIZE_UTIL_H_
+#endif  // XLA_CLIENT_LIB_CONV_GRAD_SIZE_UTIL_H_

@@ -23,8 +23,8 @@ limitations under the License.
 // Eigen::half and tsl::bfloat16. Those types are effectively stored as
 // a sequence of bits, but the classes are not trivially copyable.
 
-#ifndef TENSORFLOW_COMPILER_XLA_BIT_CAST_H_
-#define TENSORFLOW_COMPILER_XLA_BIT_CAST_H_
+#ifndef XLA_BIT_CAST_H_
+#define XLA_BIT_CAST_H_
 
 #include "absl/base/casts.h"
 #include "Eigen/Core"  // from @eigen_archive
@@ -63,4 +63,4 @@ inline uint16_t BitCast<uint16_t, Eigen::half>(Eigen::half src) {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_BIT_CAST_H_
+#endif  // XLA_BIT_CAST_H_

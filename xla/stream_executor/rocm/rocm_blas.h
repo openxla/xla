@@ -17,8 +17,8 @@ limitations under the License.
 // library capabilities, and is only included into ROCM implementation code --
 // it will not introduce rocm headers into other code.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_BLAS_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_BLAS_H_
+#ifndef XLA_STREAM_EXECUTOR_ROCM_ROCM_BLAS_H_
+#define XLA_STREAM_EXECUTOR_ROCM_ROCM_BLAS_H_
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
@@ -212,4 +212,4 @@ class ROCMBlas : public blas::BlasSupport {
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_ROCM_ROCM_BLAS_H_
+#endif  // XLA_STREAM_EXECUTOR_ROCM_ROCM_BLAS_H_

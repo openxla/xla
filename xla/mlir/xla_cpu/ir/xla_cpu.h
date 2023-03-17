@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file defines the operations and types used in the XLAFramework dialect.
 //
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_IR_XLA_CPU_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_IR_XLA_CPU_H_
+#ifndef XLA_MLIR_XLA_CPU_IR_XLA_CPU_H_
+#define XLA_MLIR_XLA_CPU_IR_XLA_CPU_H_
 
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
@@ -35,4 +35,4 @@ limitations under the License.
 #include "xla/mlir/xla_cpu/ir/xla_cpu_attrdefs.h.inc"
 #undef GET_OP_CLASSES
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_XLA_CPU_IR_XLA_CPU_H_
+#endif  // XLA_MLIR_XLA_CPU_IR_XLA_CPU_H_

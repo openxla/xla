@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PJRT_METRICS_H_
-#define TENSORFLOW_COMPILER_XLA_PJRT_METRICS_H_
+#ifndef XLA_PJRT_METRICS_H_
+#define XLA_PJRT_METRICS_H_
 
 #include "tsl/lib/monitoring/counter.h"
 
@@ -26,4 +26,4 @@ void ReportExecutableEnqueueTime(const uint64_t running_time_usecs);
 
 }
 
-#endif  // TENSORFLOW_COMPILER_XLA_PJRT_METRICS_H_
+#endif  // XLA_PJRT_METRICS_H_

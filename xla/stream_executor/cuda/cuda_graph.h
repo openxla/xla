@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_GRAPH_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_GRAPH_H_
+#ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_GRAPH_H_
+#define XLA_STREAM_EXECUTOR_CUDA_CUDA_GRAPH_H_
 
 #include <cstdint>
 #include <functional>
@@ -88,4 +88,4 @@ tsl::StatusOr<OwnedCudaGraphExec> InstantiateCudaGraph(OwnedCudaGraph graph);
 }  // namespace gpu
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_GRAPH_H_
+#endif  // XLA_STREAM_EXECUTOR_CUDA_CUDA_GRAPH_H_

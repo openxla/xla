@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_TUPLE_OPS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_TUPLE_OPS_H_
+#ifndef XLA_SERVICE_LLVM_IR_TUPLE_OPS_H_
+#define XLA_SERVICE_LLVM_IR_TUPLE_OPS_H_
 
 #include "absl/types/span.h"
 #include "llvm/IR/IRBuilder.h"
@@ -53,4 +53,4 @@ llvm::Value* EmitGetTupleElement(const Shape& target_shape, int64_t index,
 }  // namespace llvm_ir
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_TUPLE_OPS_H_
+#endif  // XLA_SERVICE_LLVM_IR_TUPLE_OPS_H_

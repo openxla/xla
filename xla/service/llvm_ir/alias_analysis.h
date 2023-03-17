@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_ALIAS_ANALYSIS_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_ALIAS_ANALYSIS_H_
+#ifndef XLA_SERVICE_LLVM_IR_ALIAS_ANALYSIS_H_
+#define XLA_SERVICE_LLVM_IR_ALIAS_ANALYSIS_H_
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
@@ -89,4 +89,4 @@ class AliasAnalysis {
 }  // namespace llvm_ir
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_LLVM_IR_ALIAS_ANALYSIS_H_
+#endif  // XLA_SERVICE_LLVM_IR_ALIAS_ANALYSIS_H_

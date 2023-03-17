@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_TYPES_H_
-#define TENSORFLOW_COMPILER_XLA_TYPES_H_
+#ifndef XLA_TYPES_H_
+#define XLA_TYPES_H_
 
 #include <complex>
 #include <istream>
@@ -169,4 +169,4 @@ class numeric_limits<xla::s4> : public numeric_limits_int4t<xla::s4> {
 // NOLINTEND
 }  // namespace std
 
-#endif  // TENSORFLOW_COMPILER_XLA_TYPES_H_
+#endif  // XLA_TYPES_H_

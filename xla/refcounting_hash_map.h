@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_REFCOUNTING_HASH_MAP_H_
-#define TENSORFLOW_COMPILER_XLA_REFCOUNTING_HASH_MAP_H_
+#ifndef XLA_REFCOUNTING_HASH_MAP_H_
+#define XLA_REFCOUNTING_HASH_MAP_H_
 
 #include <functional>
 #include <memory>
@@ -101,4 +101,4 @@ class RefcountingHashMap {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_REFCOUNTING_HASH_MAP_H_
+#endif  // XLA_REFCOUNTING_HASH_MAP_H_

@@ -18,8 +18,8 @@ limitations under the License.
 // the StreamExecutor is just a husk that delegates calls to the
 // platform-specific objects which implement the interfaces defined here.
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_INTERNAL_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_INTERNAL_H_
+#ifndef XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_INTERNAL_H_
+#define XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_INTERNAL_H_
 
 #include <cstdint>
 #include <functional>
@@ -409,4 +409,4 @@ class StreamExecutorInterface {
 }  // namespace internal
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_INTERNAL_H_
+#endif  // XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_INTERNAL_H_

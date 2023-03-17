@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
+#ifndef XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
+#define XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
 
 #include "xla/statusor.h"
 
@@ -45,4 +45,4 @@ StatusOr<std::pair<int64_t, int64_t>> ApproxTopKReductionOutputSize(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
+#endif  // XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_

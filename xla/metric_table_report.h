@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_METRIC_TABLE_REPORT_H_
-#define TENSORFLOW_COMPILER_XLA_METRIC_TABLE_REPORT_H_
+#ifndef XLA_METRIC_TABLE_REPORT_H_
+#define XLA_METRIC_TABLE_REPORT_H_
 
 #include <string>
 #include <vector>
@@ -172,4 +172,4 @@ class MetricTableReport {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_METRIC_TABLE_REPORT_H_
+#endif  // XLA_METRIC_TABLE_REPORT_H_

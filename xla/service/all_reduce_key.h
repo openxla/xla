@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_SERVICE_ALL_REDUCE_KEY_H_
-#define TENSORFLOW_COMPILER_XLA_SERVICE_ALL_REDUCE_KEY_H_
+#ifndef XLA_SERVICE_ALL_REDUCE_KEY_H_
+#define XLA_SERVICE_ALL_REDUCE_KEY_H_
 
 #include <tuple>
 #include <vector>
@@ -40,4 +40,4 @@ std::optional<AllReduceKey> GetAllReduceKey(
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_SERVICE_ALL_REDUCE_KEY_H_
+#endif  // XLA_SERVICE_ALL_REDUCE_KEY_H_

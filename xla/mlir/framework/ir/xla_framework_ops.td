@@ -15,8 +15,8 @@ limitations under the License.
 
 // This is the operation definition file for XLA Framework ops.
 
-#ifndef TENSORFLOW_COMPILER_MLIR_XLA_XLA_FRAMEWORK_OPS_TD_
-#define TENSORFLOW_COMPILER_MLIR_XLA_XLA_FRAMEWORK_OPS_TD_
+#ifndef XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_OPS_TD_
+#define XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_OPS_TD_
 
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
@@ -109,4 +109,4 @@ def XLAFramework_MemToXLABufferOp : XLAFramework_Op<"mem_to_buffer",
   }];
 }
 
-#endif // TENSORFLOW_COMPILER_MLIR_XLA_XLA_FRAMEWORK_OPS_TD_
+#endif // XLA_MLIR_FRAMEWORK_IR_XLA_FRAMEWORK_OPS_TD_

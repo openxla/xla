@@ -16,8 +16,8 @@ limitations under the License.
 // Generally useful utility functions that are common to (not specific to any
 // given part of) the XLA code base.
 
-#ifndef TENSORFLOW_COMPILER_XLA_UTIL_H_
-#define TENSORFLOW_COMPILER_XLA_UTIL_H_
+#ifndef XLA_UTIL_H_
+#define XLA_UTIL_H_
 
 #include <algorithm>
 #include <array>
@@ -700,4 +700,4 @@ using Vector3 = std::array<int64_t, 3>;
   XLA_LOG_LINES(::tsl::ERROR, X); \
   LOG(FATAL) << "Aborting in " << __FUNCTION__ << " due to previous errors.";
 
-#endif  // TENSORFLOW_COMPILER_XLA_UTIL_H_
+#endif  // XLA_UTIL_H_

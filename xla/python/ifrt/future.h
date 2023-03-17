@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_IFRT_FUTURE_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_IFRT_FUTURE_H_
+#ifndef XLA_PYTHON_IFRT_FUTURE_H_
+#define XLA_PYTHON_IFRT_FUTURE_H_
 
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/status.h"
@@ -48,4 +48,4 @@ Future<Status> JoinFutures(absl::Span<Future<Status>> futures);
 }  // namespace ifrt
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_IFRT_FUTURE_H_
+#endif  // XLA_PYTHON_IFRT_FUTURE_H_

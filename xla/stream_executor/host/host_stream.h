@@ -15,8 +15,8 @@ limitations under the License.
 
 // Class declaration for Stream type that enqueues tasks onto a host/CPU-based
 // execution context (as opposed to a GPU device), HostExecutor.
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_HOST_HOST_STREAM_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_HOST_HOST_STREAM_H_
+#ifndef XLA_STREAM_EXECUTOR_HOST_HOST_STREAM_H_
+#define XLA_STREAM_EXECUTOR_HOST_HOST_STREAM_H_
 
 #include <functional>
 #include <memory>
@@ -66,4 +66,4 @@ class HostStream : public internal::StreamInterface {
 }  // namespace host
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_HOST_HOST_STREAM_H_
+#endif  // XLA_STREAM_EXECUTOR_HOST_HOST_STREAM_H_

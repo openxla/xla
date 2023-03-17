@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_UTILS_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_UTILS_H_
+#ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_UTILS_H_
+#define XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_UTILS_H_
 
 #include <string>
 
@@ -38,4 +38,4 @@ cublasOperation_t AsCublasOperation(blas::Transpose trans);
 }  // namespace cuda
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_UTILS_H_
+#endif  // XLA_STREAM_EXECUTOR_CUDA_CUDA_BLAS_UTILS_H_

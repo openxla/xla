@@ -15,8 +15,8 @@ limitations under the License.
 
 // All HloInstruction subclasses are put in this file.
 
-#ifndef TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INSTRUCTIONS_H_
-#define TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INSTRUCTIONS_H_
+#ifndef XLA_HLO_IR_HLO_INSTRUCTIONS_H_
+#define XLA_HLO_IR_HLO_INSTRUCTIONS_H_
 
 #include <functional>
 #include <memory>
@@ -2464,4 +2464,4 @@ class HloRngBitGeneratorInstruction : public HloInstruction {
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_HLO_IR_HLO_INSTRUCTIONS_H_
+#endif  // XLA_HLO_IR_HLO_INSTRUCTIONS_H_

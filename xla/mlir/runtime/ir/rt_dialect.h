@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_IR_RT_DIALECT_H_
-#define TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_IR_RT_DIALECT_H_
+#ifndef XLA_MLIR_RUNTIME_IR_RT_DIALECT_H_
+#define XLA_MLIR_RUNTIME_IR_RT_DIALECT_H_
 
 #include "mlir/IR/Dialect.h"  // from @llvm-project  // IWYU pragma: keep
 #include "mlir/IR/OpImplementation.h"  // from @llvm-project  // IWYU pragma: keep
@@ -38,4 +38,4 @@ static constexpr char const* kExportedAttrName = "rt.exported";
 }  // namespace runtime
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_MLIR_RUNTIME_IR_RT_DIALECT_H_
+#endif  // XLA_MLIR_RUNTIME_IR_RT_DIALECT_H_

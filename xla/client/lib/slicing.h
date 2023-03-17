@@ -17,8 +17,8 @@ limitations under the License.
 #include "xla/client/xla_builder.h"
 #include "xla/types.h"
 
-#ifndef TENSORFLOW_COMPILER_XLA_CLIENT_LIB_SLICING_H_
-#define TENSORFLOW_COMPILER_XLA_CLIENT_LIB_SLICING_H_
+#ifndef XLA_CLIENT_LIB_SLICING_H_
+#define XLA_CLIENT_LIB_SLICING_H_
 
 namespace xla {
 
@@ -85,4 +85,4 @@ XlaOp TorchIndexSelect(XlaOp input, XlaOp index, int64_t dim,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_CLIENT_LIB_SLICING_H_
+#endif  // XLA_CLIENT_LIB_SLICING_H_

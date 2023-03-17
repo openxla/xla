@@ -15,8 +15,8 @@ limitations under the License.
 
 // This file defines helpers useful when creating or manipulating lhlo/hlo.
 
-#ifndef TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_UTILS_H_
-#define TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_UTILS_H_
+#ifndef XLA_TRANSLATE_HLO_TO_MHLO_HLO_UTILS_H_
+#define XLA_TRANSLATE_HLO_TO_MHLO_HLO_UTILS_H_
 
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/SparseTensor/IR/Enums.h"  // from @llvm-project
@@ -166,4 +166,4 @@ static StatusOr<mlir::Type> ConvertShapeToType(const Shape& shape,
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_TRANSLATE_HLO_TO_MHLO_HLO_UTILS_H_
+#endif  // XLA_TRANSLATE_HLO_TO_MHLO_HLO_UTILS_H_

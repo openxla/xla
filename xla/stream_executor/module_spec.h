@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_MODULE_SPEC_H_
-#define TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_MODULE_SPEC_H_
+#ifndef XLA_STREAM_EXECUTOR_MODULE_SPEC_H_
+#define XLA_STREAM_EXECUTOR_MODULE_SPEC_H_
 
 #include <cstdint>
 
@@ -64,4 +64,4 @@ class MultiModuleLoaderSpec {
 
 }  // namespace stream_executor
 
-#endif  // TENSORFLOW_COMPILER_XLA_STREAM_EXECUTOR_MODULE_SPEC_H_
+#endif  // XLA_STREAM_EXECUTOR_MODULE_SPEC_H_
