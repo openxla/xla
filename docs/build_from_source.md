@@ -29,14 +29,33 @@ both cases you can change the default.
 
 ### CPU support
 
-If you are using
-[TensorFlow's docker container](https://www.tensorflow.org/install/docker) you
-can build XLA with CPU support using the following commands:
+We recommend using a suitable docker container to build/test XLA, such as
+[TensorFlow's docker container](https://www.tensorflow.org/install/docker):
+
+```
+docker run --name xla -w /xla -it -d --rm -v $PWD:/xla tensorflow/build:latest-python3.9 bash
+```
+
+Using a docker container you can build XLA with CPU support using the following commands:
 
 ```
 docker exec xla ./configure
 docker exec xla bazel build //xla/...  --spawn_strategy=sandboxed --nocheck_visibility --test_output=all
 ```
+
+If you want to build XLA targets with CPU support without Docker you need to install gcc-10:
+
+```
+apt install gcc-10 g++-10
+```
+
+Then configure and build targets using the following commands:
+```
+yes '' | GCC_HOST_COMPILER_PATH=/usr/bin/gcc-10 CC=/usr/bin/gcc-10 TF_NEED_ROCM=0 TF_NEED_CUDA=0 TF_CUDA_CLANG=0 ./configure
+
+bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
+```
+
 
 ### GPU support
 
@@ -47,12 +66,23 @@ as:
 docker run --name xla_gpu -w /xla -it -d --rm -v $PWD:/xla tensorflow/tensorflow:devel-gpu bash
 ```
 
-Now you can build XLA with GPU support using the following command:
+To build XLA with GPU support use the following command:
 
 ```
 docker exec -e TF_NEED_CUDA=1 xla_gpu ./configure
 docker exec xla_gpu bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
 ```
+
+If you want to build XLA targets with GPU support without Docker you need to install the following dependencies additional to CPU dependencies: [`cuda-11.2`](https://developer.nvidia.com/cuda-11.2.2-download-archive), [`cuDNN-8.1`](https://developer.nvidia.com/cudnn).
+
+Then configure and build targets using the following commands:
+
+```
+yes '' | GCC_HOST_COMPILER_PATH=/usr/bin/gcc-10 CC=/usr/bin/gcc-10 TF_NEED_ROCM=0 TF_NEED_CUDA=1 TF_CUDA_CLANG=0 ./configure
+
+bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
+```
+
 
 For more details regarding
 [TensorFlow's GPU docker images you can check out this document.](https://www.tensorflow.org/install/source#gpu_support_3)
