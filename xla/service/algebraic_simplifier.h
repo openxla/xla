@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/util.h"
 
@@ -44,12 +45,17 @@ class AlgebraicSimplifierOptions {
   // Platform dependent callback to determine if a set of reverse dimensions is
   // lowerable
   using ConvIsLowerableCallback = std::function<bool(HloInstruction* window)>;
+  // Platform dependent callback to determine if a layout change is expensive.
+  using LayoutChangeExpensiveCallback =
+      std::function<bool(const Shape& shape, const Layout& target_layout)>;
 
   explicit AlgebraicSimplifierOptions(
       ReshapeIsBitcastCallback reshape_is_bitcast_callback = {},
-      ConvIsLowerableCallback conv_is_lowerable_callback = {})
+      ConvIsLowerableCallback conv_is_lowerable_callback = {},
+      LayoutChangeExpensiveCallback layout_change_expensive = {})
       : reshape_is_bitcast_callback_(std::move(reshape_is_bitcast_callback)),
-        conv_is_lowerable_callback_(std::move(conv_is_lowerable_callback)) {}
+        conv_is_lowerable_callback_(std::move(conv_is_lowerable_callback)),
+        layout_change_expensive_(std::move(layout_change_expensive)) {}
 
   // Use the platform specific callback if set. It is not sensible to return
   // true here if the options are not layout sensitive.
@@ -69,6 +75,14 @@ class AlgebraicSimplifierOptions {
       return true;
     }
     return conv_is_lowerable_callback_(reverse_dims);
+  }
+
+  bool LayoutChangeExpensive(const Shape& shape,
+                             const Layout& target_layout) const {
+    if (!layout_change_expensive_) {
+      return true;
+    }
+    return layout_change_expensive_(shape, target_layout);
   }
 
   // If is_layout_sensitive is true, then the simplifier preserves layout during
@@ -208,6 +222,7 @@ class AlgebraicSimplifierOptions {
   };
   ReshapeIsBitcastCallback reshape_is_bitcast_callback_;
   ConvIsLowerableCallback conv_is_lowerable_callback_;
+  LayoutChangeExpensiveCallback layout_change_expensive_;
   bool is_layout_sensitive_{false};
   bool enable_dot_strength_reduction_{true};
   bool supports_non_canonical_dots_{true};

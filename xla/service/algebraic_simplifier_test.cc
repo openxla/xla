@@ -9217,5 +9217,55 @@ TEST_F(AlgebraicSimplifierTest, MultiplyOfConvertedPred) {
   EXPECT_TRUE(verifier().Run(m.get()).status().ok());
 }
 
+TEST_F(AlgebraicSimplifierTest, ConvertReduceIntoCopyAndBitcast) {
+  const char* kModuleStr = R"(
+   HloModule m
+    add {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      ROOT out = f32[] add(p0, p1)
+    }
+
+    ENTRY mod {
+    parameter.0 = f32[1,8192,4096]{2,0,1:T(2,128)} parameter(0)
+    constant = f32[] constant(0)
+    ROOT reduce = f32[8192,4096]{1,0:T(8,128)} reduce(parameter.0, constant), dimensions={0},
+                  to_apply=add
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  SCOPED_TRACE("Before rewrite\n" + m->ToString());
+  // Special reshape_is_bitcast for this test only, which detects that reshape
+  // only gets rid of the leading major size-1 dimensions.
+  auto reshape_is_bitcast = [](const Shape& from_shape, const Shape& to_shape) {
+    if (from_shape.rank() < to_shape.rank()) {
+      return false;
+    }
+    for (auto i = 0; i != to_shape.rank(); ++i) {
+      if (to_shape.dimensions_minor(i) != from_shape.dimensions_minor(i)) {
+        return false;
+      }
+    }
+    for (auto i = to_shape.rank(); i != from_shape.rank(); ++i) {
+      if (from_shape.dimensions_minor(i) != 1) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto layout_change_expensive =
+      [](const Shape& shape, const Layout& target_layout) { return false; };
+  AlgebraicSimplifierOptions options(reshape_is_bitcast,
+                                     /*conv_is_lowerable_callback=*/nullptr,
+                                     layout_change_expensive);
+  options.set_is_layout_sensitive(true);
+  AlgebraicSimplifier simplifier(options);
+  auto g = simplifier.Run(m.get()).value();
+  SCOPED_TRACE("After rewrite\n" + m->ToString());
+  ASSERT_TRUE(g);
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Bitcast(m::Copy(m::Parameter(0)))));
+}
+
 }  // namespace
 }  // namespace xla
