@@ -22,9 +22,9 @@ cc_library(
         "port.h",
     ],
     deps = [
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/platform:logging",
     ] + tf_stream_executor_deps("platform", "//xla/stream_executor/platform/"),
 )
 

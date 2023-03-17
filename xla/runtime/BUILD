@@ -371,9 +371,9 @@ cc_library(
     hdrs = ["memory_mapper.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        "@tsl//tsl/platform",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform",
     ] + tf_platform_deps(
         "memory_mapper",
         platform_dir = "//xla/runtime/",

@@ -87,10 +87,10 @@ xla_cc_test(
         "//xla/tests:literal_test_util",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:net",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:subprocess",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/platform:path",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -99,8 +99,8 @@ cc_library(
     srcs = ["grpc_service.cc"],
     hdrs = ["grpc_service.h"],
     deps = [
-        ":xla_service_proto_cc",
         ":xla_service_cc_grpc_proto",
+        ":xla_service_proto_cc",
         "//xla/service",
         "//xla/service:platform_util",
         "@tsl//tsl/distributed_runtime/rpc:grpc_util",

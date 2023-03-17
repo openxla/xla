@@ -406,11 +406,11 @@ xla_cc_binary(
     deps = [
         ":run_hlo_module_lib",
         "@com_google_absl//absl/strings",
+        "//xla:debug_options_flags",
         "//xla/service:cpu_plugin",
         "//xla/service:hlo_runner",
         "//xla/service:interpreter_plugin",
         "//xla/service:platform_util",
-        "//xla:debug_options_flags",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",

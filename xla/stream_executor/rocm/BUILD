@@ -443,8 +443,8 @@ cc_library(
 cc_library(
     name = "stream_executor_rocm",
     deps = [
-        "//xla/stream_executor:stream_executor_bundle",
         ":rocm_rpath",
+        "//xla/stream_executor:stream_executor_bundle",
     ] + if_static(
         [":all_runtime"],
     ),

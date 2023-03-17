@@ -112,8 +112,8 @@ tsl_gpu_cc_test(
     size = "small",
     srcs = ["cupti_error_manager_test.cc"],
     tags = tf_cuda_tests_tags() + [
-        "nomac",
         "gpu_cupti",
+        "nomac",
     ],
     deps = [
         "@tsl//tsl/platform:test_main",
@@ -246,17 +246,17 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:abi",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
         "@tsl//tsl/profiler/utils:parse_annotation",
+        "@tsl//tsl/profiler/utils:trace_utils",
         "@tsl//tsl/profiler/utils:xplane_builder",
         "@tsl//tsl/profiler/utils:xplane_schema",
         "@tsl//tsl/profiler/utils:xplane_utils",
-        "@tsl//tsl/profiler/utils:trace_utils",
     ] + tf_additional_cupti_deps(),
 )
 
