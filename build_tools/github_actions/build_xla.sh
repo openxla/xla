@@ -15,12 +15,28 @@
 # limitations under the License.
 # ============================================================================
 
-echo "XLA build script is running..."
+echo "XLA run_hlo_module script is running..."
 
-start_time="$(date +%s)"
-echo "Start Time: ${start_time}"
+# Build run_hlo_module
+build_start_time="$(date +%s)"
+echo "run_hlo_module build start time: ${build_start_time}"
 bazel build -c opt --nocheck_visibility --keep_going xla/tools:run_hlo_module
-end_time="$(date +%s)"
-echo "End Time: ${end_time}"
-runtime="$((end_time - start_time))"
-echo "Run time is ${runtime} seconds."
+build_end_time="$(date +%s)"
+echo "run_hlo_module build end time: ${build_end_time}"
+build_time="$((build_end_time - build_start_time))"
+echo "Build time is ${build_time} seconds."
+
+# Run run_hlo_module
+num_iterations=5
+run_start_time="$(date +%s)"
+echo "run_hlo_module execution start time: ${run_start_time}"
+bazel run -c opt --nocheck_visibility xla/tools/run_hlo_module -- \
+    --input_format=hlo \
+    --platform=CPU \
+    --iterations=$num_iterations \
+    --reference_platform= \
+    xla/tools/data/must_alias.hlo
+run_end_time="$(date +%s)"
+echo "run_hlo_module execution end time: ${run_end_time}"
+runtime="$((run_end_time - run_start_time))"
+echo "Run time for ${num_iterations} iterations is ${runtime} seconds."
