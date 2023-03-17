@@ -2352,7 +2352,6 @@ cc_library(
     deps = [
         ":cublas_cudnn",
         ":gpu_device_info",
-        ":ir_emission_utils",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_value",
@@ -2361,7 +2360,6 @@ cc_library(
         "//xla/service:hlo_ordering",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:latency_hiding_scheduler",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
     ],
 )

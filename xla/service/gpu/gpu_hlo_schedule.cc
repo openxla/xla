@@ -15,20 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 
-#include <cstddef>
 #include <deque>
-#include <iostream>
 #include <memory>
-#include <optional>
 #include <utility>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/cublas_cudnn.h"
-#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/latency_hiding_scheduler.h"
