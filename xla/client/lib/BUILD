@@ -293,6 +293,7 @@ cc_library(
     hdrs = ["prng.h"],
     deps = [
         ":constants",
+        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
