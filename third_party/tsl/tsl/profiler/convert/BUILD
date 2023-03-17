@@ -12,21 +12,6 @@ package(
 )
 
 cc_library(
-    name = "trace_container",
-    srcs = ["trace_container.cc"],
-    hdrs = ["trace_container.h"],
-    copts = tf_profiler_copts(),
-    visibility = [
-        "//tsl/profiler:internal",
-    ],
-    deps = [
-        "//tsl/platform:protobuf",
-        "//tsl/profiler/protobuf:trace_events_proto_cc",
-        "@com_google_absl//absl/container:flat_hash_set",
-    ],
-)
-
-cc_library(
     name = "xla_op_utils",
     hdrs = ["xla_op_utils.h"],
     visibility = [
@@ -70,7 +55,6 @@ cc_library(
         "//tsl/profiler:internal",
     ],
     deps = [
-        ":trace_container",
         "//tsl/platform:protobuf",
         "//tsl/platform:types",
         "//tsl/profiler/protobuf:trace_events_proto_cc",
@@ -83,21 +67,9 @@ cc_library(
 )
 
 tsl_cc_test(
-    name = "trace_container_test",
-    srcs = ["trace_container_test.cc"],
-    deps = [
-        ":trace_container",
-        "//tsl/platform:test",
-        "//tsl/platform:test_main",
-        "//tsl/profiler/protobuf:trace_events_proto_cc",
-    ],
-)
-
-tsl_cc_test(
     name = "trace_events_to_json_test",
     srcs = ["trace_events_to_json_test.cc"],
     deps = [
-        ":trace_container",
         ":trace_events_to_json",
         "//tsl/platform:protobuf",
         "//tsl/platform:test",
@@ -116,7 +88,6 @@ cc_library(
         "//tsl/profiler:internal",
     ],
     deps = [
-        ":trace_container",
         "//tsl/platform:types",
         "//tsl/profiler/protobuf:trace_events_proto_cc",
         "//tsl/profiler/protobuf:xplane_proto_cc",

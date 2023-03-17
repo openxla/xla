@@ -19,14 +19,14 @@ limitations under the License.
 #include <string>
 
 #include "tsl/platform/types.h"
-#include "tsl/profiler/convert/trace_container.h"
+#include "tsl/profiler/protobuf/trace_events.pb.h"
 
 namespace tsl {
 namespace profiler {
 
 // Converts trace events in the trace proto to a JSON string that can be
 // consumed by catapult trace viewer.
-std::string TraceEventsToJson(const TraceContainer& container);
+std::string TraceEventsToJson(const tensorflow::profiler::Trace& trace);
 
 }  // namespace profiler
 }  // namespace tsl
