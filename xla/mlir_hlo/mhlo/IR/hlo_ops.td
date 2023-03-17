@@ -1495,7 +1495,8 @@ def MHLO_AllGatherOp : MHLO_Op<"all_gather", [SameOperandsAndResultElementType]>
 }
 
 def MHLO_AllReduceOp : MHLO_Op<"all_reduce",
-    [HLO_CompatibleOperandsAndResultType]> {
+    [SameVariadicOperandSize, SameOperandsAndResultElementType,
+     SingleBlockImplicitTerminator<"ReturnOp">, InferTensorType]> {
   let summary = "AllReduce operation";
   let description = [{
     Within each process group in the process grid, applies a reduction function
@@ -1521,17 +1522,22 @@ def MHLO_AllReduceOp : MHLO_Op<"all_reduce",
   }];
 
   let arguments = (ins
-    MHLO_Tensor:$operand,
+    Variadic<MHLO_Tensor>:$operands,
     I64ElementsAttr:$replica_groups,
     OptionalAttr<MHLO_ChannelHandle>:$channel_handle,
     UnitAttr:$use_global_device_ids
   );
   let regions = (region SizedRegion<1>:$computation);
-  let results = (outs MHLO_Tensor);
-  let hasVerifier = 1;
+  let results = (outs Variadic<MHLO_Tensor>);
+
+  let builders = [
+    OpBuilder<(ins
+      "::mlir::Type":$result_type, "::mlir::Value":$operand,
+      "::mlir::DenseIntElementsAttr":$replica_groups,
+      "::mlir::mhlo::ChannelHandleAttr":$channel_handle)>
+ ];
 
   let hasCustomHLOConverter = 1;
-  let hasVerifier = 1;
 }
 
 def MHLO_ReduceScatterOp : MHLO_Op<"reduce_scatter",

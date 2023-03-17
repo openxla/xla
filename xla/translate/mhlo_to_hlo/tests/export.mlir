@@ -248,6 +248,24 @@ func.func @main(%arg0: tensor<10xf32>) -> tensor<10xf32> {
 
 // -----
 
+func.func private @main(%arg0: tensor<8xf32>, %arg1: tensor<f32>) -> tuple<tensor<8xf32>, tensor<f32>> {
+  // CHECK:      %[[ARG0:.*]] = f32[8] parameter(0)
+  // CHECK-NEXT: %[[ARG1:.*]] = f32[] parameter(1)
+  // CHECK-NEXT: %[[TUPLE:.*]] = (f32[8], f32[]) tuple
+  // CHECK-NEXT: %[[TUPLE_ARG0:.*]] = f32[8] get-tuple-element((f32[8], f32[]) %[[TUPLE]]), index=0
+  // CHECK-NEXT: %[[TUPLE_ARG1:.*]] = f32[] get-tuple-element((f32[8], f32[]) %[[TUPLE]]), index=1
+  // CHECK-NEXT: (f32[8], f32[]) all-reduce(f32[8] %[[TUPLE_ARG0]], f32[] %[[TUPLE_ARG1]]), replica_groups={}, to_apply={{.*}}
+  %0:2 = "mhlo.all_reduce"(%arg0, %arg1) ({
+  ^bb0(%arg2: tensor<f32>, %arg3: tensor<f32>):
+    %2 = mhlo.add %arg2, %arg3 : tensor<f32>
+    mhlo.return %2 : tensor<f32>
+  }) {replica_groups = dense<> : tensor<0x0xi64>} : (tensor<8xf32>, tensor<f32>) -> (tensor<8xf32>, tensor<f32>)
+  %1 = mhlo.tuple %0#0, %0#1 {xla_shape = "(f32[8]{0}, f32[])"} : tuple<tensor<8xf32>, tensor<f32>>
+  return %1 : tuple<tensor<8xf32>, tensor<f32>>
+}
+
+// -----
+
 // CHECK:  HloModule
 func.func @main(%arg0: tensor<10xf32>) -> tensor<5xf32> {
   %0 = "mhlo.reduce_scatter"(%arg0) ({
