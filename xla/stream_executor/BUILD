@@ -108,6 +108,7 @@ cc_library(
         ":kernel",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:status",
     ],
 )
 
