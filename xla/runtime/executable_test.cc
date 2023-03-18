@@ -371,8 +371,6 @@ TEST(ExecutableTest, MemrefF8Arg) {
   Arguments<MemrefDesc> args(1);
   args.emplace_back(std::move(arg0));
 
-  VLOG(0) << CompileAndExecute(module, args, converter).status().message();
-
   ASSERT_TRUE(CompileAndExecute(module, args, converter).ok());
   EXPECT_EQ(result, 42);
 }
