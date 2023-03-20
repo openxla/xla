@@ -81,7 +81,7 @@ JitState& ThreadLocalJitState();
 // fallback to global state.
 bool GetDisableJit();
 bool GetEnableX64();
-bool GetEnableJaxArray();
+
 // TODO(skyewm): return a C++ type when all JAX backends support a single C++
 // device interface
 std::optional<pybind11::object> GetDefaultDevice();
