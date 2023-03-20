@@ -35,7 +35,7 @@ bazel run -c opt --nocheck_visibility xla/tools/run_hlo_module -- \
     --platform=CPU \
     --iterations=$num_iterations \
     --reference_platform= \
-    xla/tools/data/must_alias.hlo
+    xla/tools/data/benchmarking/mobilenet_v2.hlo
 run_end_time="$(date +%s)"
 echo "run_hlo_module execution end time: ${run_end_time}"
 runtime="$((run_end_time - run_start_time))"
