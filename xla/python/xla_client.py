@@ -415,6 +415,7 @@ def execute_with_python_values_replicated(executable, arguments, backend):
 class PaddingType(enum.Enum):
   VALID = 1
   SAME = 2
+  SAME_LOWER = 3
 
 
 def window_padding_type_to_pad_values(padding_type, lhs_dims, rhs_dims,
@@ -429,20 +430,31 @@ def window_padding_type_to_pad_values(padding_type, lhs_dims, rhs_dims,
       padding_type = PaddingType.VALID
     elif padding_type.upper() == 'SAME':
       padding_type = PaddingType.SAME
+    elif padding_type.upper() == 'SAME_LOWER':
+      padding_type = PaddingType.SAME_LOWER
     else:
       msg = 'Unknown padding type string: expected "VALID" or "SAME", got {}.'
       raise ValueError(msg.format(padding_type))
 
   if padding_type == PaddingType.VALID:
     return [(0, 0)] * len(window_strides)
-  elif padding_type == PaddingType.SAME:
+  elif (
+      padding_type == PaddingType.SAME or padding_type == PaddingType.SAME_LOWER
+  ):
     out_shape = np.ceil(np.true_divide(lhs_dims, window_strides)).astype(int)
     pad_sizes = [
         max((out_size - 1) * stride + filter_size - in_size, 0)
         for out_size, stride, filter_size, in_size in zip(
             out_shape, window_strides, rhs_dims, lhs_dims)
     ]
-    return [(pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes]
+    if padding_type == PaddingType.SAME:
+      return [
+          (pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes
+      ]
+    else:
+      return [
+          (pad_size - pad_size // 2, pad_size // 2) for pad_size in pad_sizes
+      ]
   else:
     msg = 'Unexpected PaddingType value: {}'
     raise ValueError(msg.format(padding_type))
