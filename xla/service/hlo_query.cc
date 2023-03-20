@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/hlo_query.h"
 
+#include <algorithm>
+
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -27,7 +29,9 @@ namespace hlo_query {
 bool IsCollectiveCommunicationOp(HloOpcode op) {
   return op == HloOpcode::kAllReduce || op == HloOpcode::kAllGather ||
          op == HloOpcode::kAllToAll || op == HloOpcode::kCollectivePermute ||
-         op == HloOpcode::kReduceScatter;
+         op == HloOpcode::kReduceScatter || op == HloOpcode::kAllReduceStart ||
+         op == HloOpcode::kAllGatherStart ||
+         op == HloOpcode::kCollectivePermuteStart;
 }
 
 bool IsConstantR0F32(HloInstruction* instruction, float* out) {

@@ -2463,6 +2463,7 @@ cc_library(
         ":hlo_pass",
         "//xla:array2d",
         "//xla:statusor",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
