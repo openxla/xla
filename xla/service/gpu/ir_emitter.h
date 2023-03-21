@@ -34,7 +34,6 @@ limitations under the License.
 #include "xla/service/gpu/elemental_ir_emitter.h"
 #include "xla/service/gpu/hlo_to_ir_bindings.h"
 #include "xla/service/gpu/ir_emitter_context.h"
-#include "xla/service/gpu/kernel_thunk.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
