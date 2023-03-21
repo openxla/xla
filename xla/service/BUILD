@@ -2461,10 +2461,8 @@ cc_library(
     hdrs = ["collectives_schedule_linearizer.h"],
     deps = [
         ":hlo_pass",
-        "//xla:array2d",
         "//xla:statusor",
         "//xla:util",
-        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
         "@com_google_absl//absl/container:flat_hash_map",
