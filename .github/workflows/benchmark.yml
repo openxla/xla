@@ -14,11 +14,13 @@
 # ============================================================================
 
 name: A/B Diff Performance Benchmarking
+
 on:
   pull_request:
     types: [labeled, synchronize]
+
 jobs:
-  run-test-script:
+  run-benchmark-at-pr:
     if: contains(github.event.pull_request.labels.*.name, 'A/B diff benchmarking')
     runs-on:
       - self-hosted  # must come first
@@ -30,9 +32,7 @@ jobs:
         shell: bash
     timeout-minutes: 60
     steps:
-      - name: "Getting started..."
-        run: echo "Running the job on ${{ runner.os }}."
-      - name: "Checking out repository"
+      - name: "Checking out PR repository"
         uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
       - name: "Run test script"
         run: ./build_tools/github_actions/test_script.sh
@@ -41,7 +41,16 @@ jobs:
           docker build --file build_tools/docker/dockerfiles/benchmarking.Dockerfile \
             --tag base \
             build_tools/docker/context
-      - name: "Build XLA with docker"
+      - name: "Benchmark at PR"
+        run: |
+          docker run --mount="type=bind,src="${PWD}",target=/work" --workdir="/work" \
+            base:latest \
+            build_tools/github_actions/build_xla.sh
+      - name: "Checking out base repository"
+        uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
+        with:
+          ref: "${{ github.event.pull_request.base.sha }}"
+      - name: "Benchmark at Base"
         run: |
           docker run --mount="type=bind,src="${PWD}",target=/work" --workdir="/work" \
             base:latest \
