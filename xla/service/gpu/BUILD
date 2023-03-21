@@ -1977,6 +1977,7 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_proto_cc",
+        "//xla/service:hlo_rematerialization",
         "//xla/service:hlo_verifier",
         "//xla/service:layout_normalization",
         "//xla/service:llvm_compiler",
