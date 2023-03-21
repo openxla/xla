@@ -97,6 +97,7 @@ xla_test(
     },
     backends = ["gpu"],
     data = [
+        "data/sharded_16_devices.hlo",
         "data/sharded_2_devices.hlo",
         "data/single_device.hlo",
         "data/single_device_tupled.hlo",
@@ -104,8 +105,10 @@ xla_test(
     tags = ["nomac"],
     deps = [
         ":functional_hlo_runner",
+        "//xla/tests:filecheck",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
