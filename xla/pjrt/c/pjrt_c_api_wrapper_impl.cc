@@ -1072,8 +1072,13 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
       "PJRT_Buffer_ToHostBuffer_Args",
       PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE, args->struct_size));
 
-  const xla::Shape& host_shape = xla::ShapeUtil::DeviceShapeToHostShape(
-      args->src->buffer->on_device_shape());
+  xla::Shape device_shape = args->src->buffer->on_device_shape();
+  if (device_shape.is_dynamic()) {
+    PJRT_ASSIGN_OR_RETURN(device_shape,
+                          args->src->buffer->logical_on_device_shape());
+  }
+  const xla::Shape& host_shape =
+      xla::ShapeUtil::DeviceShapeToHostShape(device_shape);
 
   size_t host_buffer_size = xla::ShapeUtil::ByteSizeOfElements(host_shape);
 
