@@ -337,11 +337,16 @@ runtime::JitExecutable::Options GetXlaRuntimeJitExecutableOptions(
         GetDebugOptionsFromFlags().xla_cpu_enable_mlir_tiling_and_fusion();
     options.cpu_name = llvm::sys::getHostCPUName();
 
-    if (GetDebugOptionsFromFlags().xla_cpu_enable_mlir_fusion_outlining()) {
-      options.enable_fusion_outlining = true;
+    if (GetDebugOptionsFromFlags().xla_cpu_enable_experimental_deallocation() ||
+        GetDebugOptionsFromFlags().xla_cpu_enable_mlir_fusion_outlining()) {
+      // Sparse bufferization and experimental deallocation are mutually
+      // exclusive.
       options.sparse_bufferization = false;
       options.experimental_deallocation = true;
     }
+
+    options.enable_fusion_outlining =
+        GetDebugOptionsFromFlags().xla_cpu_enable_mlir_fusion_outlining();
 
     Status status = CreateHloXlaRuntimePipeline(passes, options);
     if (!status.ok()) {
