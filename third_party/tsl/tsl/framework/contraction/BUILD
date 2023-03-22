@@ -84,8 +84,8 @@ cc_library(
     deps = [
         "@com_google_absl//absl/base",
         "@eigen_archive//:eigen3",
-        "//tsl/platform:dynamic_annotations",
         "//tsl/framework/fixedpoint",
+        "//tsl/platform:dynamic_annotations",
     ] + select({
         "//tsl:android_x86": [],
         "//tsl:arm_any": [],

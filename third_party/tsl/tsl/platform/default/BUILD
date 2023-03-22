@@ -342,13 +342,13 @@ cc_library(
     ],
     deps = [
         "@com_google_absl//absl/base",
+        "//tsl/platform",
         "//tsl/platform:byte_order",
         "//tsl/platform:dynamic_annotations",
         "//tsl/platform:logging",
         "//tsl/platform:macros",
-        "//tsl/platform/profile_utils:profile_utils_cpu_utils",
         "//tsl/platform:types",
-        "//tsl/platform:platform",
+        "//tsl/platform/profile_utils:profile_utils_cpu_utils",
         "@snappy",
     ] + select({
         # TF Additional NUMA dependencies
