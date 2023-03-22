@@ -508,3 +508,39 @@ module attributes {gpu.container_module} {
 // CHECK-NEXT: lmhlo_gpu.conv_forward
 // CHECK-NEXT: gpu.launch_func @gpu_module::@fn0
 // CHECK-NEXT: return
+
+// -----
+// Check that all_reduce is captured by cuda graphs.
+
+module attributes {gpu.container_module} {
+
+  gpu.module @gpu_module attributes {binary = "kernel binary"} {
+    gpu.func @fn0() kernel { gpu.return }
+  }
+
+
+  // CHECK: @func(%[[ARG0:.*]]: memref<10xf32>, %[[ARG1:.*]]: memref<10xf32>)
+  func.func @func(%arg0: memref<10xf32>, %arg_out: memref<10xf32>) -> () {
+    %c0 = arith.constant 0 : index
+
+    // CHECK: call @xla.gpu.cuda.graph.launch(%[[ARG0]], %[[ARG1]])
+    // CHECK-SAME: {capture = @xla.gpu.cuda.graph.capture}
+    "lmhlo.all_reduce"(%arg0, %arg_out) ({
+      ^bb0(%lhs: tensor<f32>, %rhs: tensor<f32>):
+      %max = mhlo.maximum %lhs, %rhs : tensor<f32>
+      "mhlo.return"(%max) : (tensor<f32>) -> ()
+    })
+    { replica_groups = dense<[[0, 2, 4, 6], [1, 3, 5, 7]]> : tensor<2x4xi64> }: (memref<10xf32>, memref<10xf32>) -> ()
+
+    gpu.launch_func  @gpu_module::@fn0 blocks in (%c0, %c0, %c0)
+      threads in (%c0, %c0, %c0) args()
+
+    func.return
+  }
+}
+
+// CHECK: func @xla.gpu.cuda.graph.capture
+// CHECK-NEXT: arith.constant 0
+// CHECK-NEXT: "lmhlo.all_reduce"
+// CHECK: gpu.launch_func @gpu_module::@fn0
+// CHECK-NEXT: return

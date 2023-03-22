@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/mlir/runtime/ir/rt_dialect.h"
 #include "xla/mlir/runtime/ir/rt_ops.h"
 #include "xla/mlir/runtime/utils/custom_calls.h"
+#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/stream_executor/blas.h"
@@ -148,6 +149,7 @@ struct GemmOpCapture : public OpCapturePattern {
 };
 
 // Capture pure operations by cloning them into graph capture function.
+struct AllReduceOpCapture : public MoveOp<mlir::lmhlo::AllReduceOp> {};
 struct ConstantOpCapture : public CloneOp<arith::ConstantOp> {};
 struct ViewOpCapture : public CloneOp<memref::ViewOp> {};
 
@@ -389,6 +391,7 @@ void OutlineCudaGraphsPass::runOnOperation() {
   patterns.emplace_back(new ConstantOpCapture());
   patterns.emplace_back(new GemmOpCapture());
   patterns.emplace_back(new ViewOpCapture());
+  patterns.emplace_back(new AllReduceOpCapture());
 
   unsigned ordinal = 1;  // entry point will be exported with ordinal 0
   for (auto& seq : CollectCaptureSequences(getAnalysis<DominanceInfo>(),
