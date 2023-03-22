@@ -7,7 +7,6 @@ cc_library(
     name = "host_tracer",
     srcs = ["host_tracer_factory.cc"],
     visibility = [
-        "//third_party/car/onboard/gpu:__subpackages__",
         "//xla/backends/profiler:__pkg__",
         #"//tensorflow/core/profiler:internal",
     ],
