@@ -12,6 +12,7 @@ package_group(
     name = "friends",
     packages = [
         "//platforms/...",
+        "//xla/service/gpu/...",
     ],
 )
 
