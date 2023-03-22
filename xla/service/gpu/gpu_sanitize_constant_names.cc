@@ -15,9 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_sanitize_constant_names.h"
 
-#include <memory>
-#include <set>
-#include <vector>
+#include <string>
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -42,9 +40,7 @@ StatusOr<bool> GpuSanitizeConstantNames::Run(
         continue;
       }
 
-      const std::string& old_name = instr->name();
       instr->UniquifyName(&instr_name_uniquer);
-      CHECK_EQ(old_name, instr->name());
     }
   }
 
