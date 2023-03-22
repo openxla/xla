@@ -15,6 +15,7 @@ xla_cc_binary(
     deps = [
         ":mlir_replay_lib",
         "//xla:debug_options_flags",
+        "//xla/mlir/framework/ir:xla_framework",
         "//xla/mlir/runtime/ir:rt",
         "//xla/mlir/tools/mlir_replay/public:compiler_trace_proto_cc",
         "//xla/mlir/tools/mlir_replay/public:compiler_trace_proto_cc_impl",
@@ -30,6 +31,7 @@ xla_cc_binary(
         "//xla/mlir_hlo:mlir_interpreter_framework",
         "//xla/mlir_hlo:thlo",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:IR",
@@ -47,10 +49,12 @@ cc_library(
     hdrs = ["mlir_replay_lib.h"],
     deps = [
         "//xla:xla_data_proto_cc",
+        "//xla/mlir/framework/ir:xla_framework",
         "//xla/mlir/tools/mlir_replay/public:execution_trace_proto_cc",
         "//xla/mlir/tools/mlir_replay/public:execution_trace_utils",
         "//xla/mlir_hlo:mlir_interpreter_framework",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/random:bit_gen_ref",
         "@llvm-project//llvm:Support",
