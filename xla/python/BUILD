@@ -191,8 +191,6 @@ cc_library(
         "@pybind11_abseil//pybind11_abseil:absl_casters",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/python/lib/core:bfloat16_lib",
-        "@tsl//tsl/python/lib/core:float8_lib",
     ],
 )
 
@@ -936,8 +934,6 @@ tsl_pybind_extension(
         "//xla/python/pjrt_ifrt",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/python/lib/core:bfloat16_lib",
-        "@tsl//tsl/python/lib/core:float8_lib",
         "@tsl//tsl/python/lib/core:numpy",
     ] + select({
         ":gpu_enabled": [
