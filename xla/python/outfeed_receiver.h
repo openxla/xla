@@ -19,8 +19,10 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "xla/client/executable_build_options.h"
 #include "xla/client/xla_builder.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -47,8 +49,10 @@ class OutfeedReceiver {
   //   max_callback_queue_size_bytes: the maximum number of bytes for all
   //     received outfeeds queued to be processed. When this limit is reached
   //     we pause receiving outfeeds from devices.
-  OutfeedReceiver(Callback callback, absl::Span<PjRtClient* const> clients,
-                  ssize_t max_callback_queue_size_bytes);
+  OutfeedReceiver(
+      Callback callback, absl::Span<PjRtClient* const> clients,
+      ssize_t max_callback_queue_size_bytes,
+      const std::optional<ExecutableBuildOptions>& executable_build_options);
 
   OutfeedReceiver(const OutfeedReceiver&) = delete;
   OutfeedReceiver& operator=(const OutfeedReceiver&) = delete;
