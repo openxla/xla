@@ -189,6 +189,7 @@ cc_library(
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -519,6 +520,7 @@ cc_library(
         ":pjrt_client",
         ":pjrt_executable",
         ":pjrt_future",
+        ":pjrt_host_memory_space_and_buffer",
         ":semaphore",
         ":tracked_tfrt_cpu_device_buffer",
         ":transpose",
@@ -573,6 +575,13 @@ xla_cc_test(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
     ],
+)
+
+cc_library(
+    name = "pjrt_host_memory_space_and_buffer",
+    srcs = ["pjrt_host_memory_space_and_buffer.cc"],
+    hdrs = ["pjrt_host_memory_space_and_buffer.h"],
+    deps = [":pjrt_client"],
 )
 
 cc_library(

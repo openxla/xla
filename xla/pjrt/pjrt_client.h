@@ -45,6 +45,7 @@ limitations under the License.
 #include "tsl/framework/allocator.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/platform/status.h"
 
 // API notes:
 // PjRt stands for "Pretty much Just another RunTime".
@@ -88,11 +89,43 @@ inline constexpr absl::string_view PjRtRuntimeTypeString(PjRtRuntimeType type) {
   }
 }
 
+// Forward declaration.
+class PjRtBuffer;
+class PjRtDevice;
 class PjRtClient;
 
 using PjRtValueType =
     std::variant<std::string, int64_t, std::vector<int64_t>, float>;
 using PjRtDeviceAttribute = PjRtValueType;
+
+class PjRtMemorySpace {
+ public:
+  // Buffer transfer semantics that dictates how data transfers will take place.
+  // Might be able to use HostBufferSemantics instead.
+  struct BufferTransferOptions {
+    // zero copy
+    bool zero_copy;
+  };
+  virtual ~PjRtMemorySpace() = default;
+
+  virtual PjRtClient* client() const = 0;
+
+  // The devices that this memory space is attached to.
+  virtual absl::Span<PjRtDevice* const> devices() const = 0;
+
+  // The ID of this memory space. IDs are unique among memory spaces of this
+  // type, e.g., the HBM memory spaces attached to the TPU Device 1 and the TPU
+  // device 2.
+  virtual int id() const = 0;
+
+  // A platform-dependent string that uniquely identifies the kind of the
+  // memory space, e.g. Host, Or TPU HBM, etc.
+  virtual absl::string_view memory_space_kind() const = 0;
+
+  // Debug string suitable for logging when errors occur. Should be verbose
+  // enough to describe the current memory space unambiguously.
+  virtual absl::string_view DebugString() const = 0;
+};
 
 class PjRtDevice {
  public:
@@ -161,10 +194,13 @@ class PjRtDevice {
   virtual StatusOr<tsl::AllocatorStats> GetAllocatorStats() const {
     return Unimplemented("GetAllocatorStats is not supported");
   }
-};
 
-// Forward declaration.
-class PjRtBuffer;
+  // Return number of memory space attached to this device.
+  virtual int memory_space_count() const = 0;
+
+  // Returns all memory spaces attached to this device.
+  virtual absl::Span<PjRtMemorySpace* const> memory_spaces() const = 0;
+};
 
 // Helper struct for cross host transfers, returned by the callback from a call
 // to PjRtBuffer::MakeCrossHostReceiveBuffers or
@@ -439,6 +475,12 @@ class PjRtClient {
   virtual StatusOr<PjRtDevice*> LookupAddressableDevice(
       int local_hardware_id) const = 0;
 
+  // Returns the number of memory spaces known to the client.
+  virtual int memory_space_count() const = 0;
+
+  // Return all memory spaces known to the client.
+  virtual absl::Span<PjRtMemorySpace* const> memory_spaces() const = 0;
+
   // Return an ID that identifies the platform (CPU/GPU/TPU).
   virtual PjRtPlatformId platform_id() const = 0;
 
@@ -673,6 +715,16 @@ class PjRtClient {
   virtual StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
       const LiteralSlice& literal, PjRtDevice* device) = 0;
 
+  virtual StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
+      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+      std::optional<absl::Span<int64_t const>> byte_strides,
+      HostBufferSemantics host_buffer_semantics,
+      std::function<void()> on_done_with_host_buffer,
+      PjRtMemorySpace* memory_space) = 0;
+
+  virtual StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
+      const LiteralSlice& literal, PjRtMemorySpace* memory_space) = 0;
+
   // Creates a PjRtBuffer that is a non-owned view of an on-device
   // buffer (typically allocated by another library).
   // on_delete_callback is called when the PjRtBuffer is done with the on-device
@@ -793,7 +845,16 @@ class PjRtBuffer {
   // Since this method actually acquires locks and communicate with the device,
   // it does not have the const qualifier, similar to what ToLiteral does.
   virtual StatusOr<Shape> logical_on_device_shape() = 0;
+  virtual PjRtMemorySpace* memory_space() const = 0;
+
+  // TODO(yunlongl): To be removed after we migrate to using memory spaces in
+  // PJRT.
   virtual PjRtDevice* device() const = 0;
+
+  // TODO(yunlongl): To be removed after we migrate to using memory spaces.
+  // We might not need this client() method if we allow PjRtBuffers being able
+  // to float across different clients. I believe this client() can be safely
+  // removed after we have memory spaces in PjRt.
   virtual PjRtClient* client() const = 0;
 
   // ExternalReference is a potentially long-lived reference held while a buffer

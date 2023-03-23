@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/pjrt_host_memory_space_and_buffer.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/tracked_tfrt_cpu_device_buffer.h"
 #include "xla/pjrt/transpose.h"
@@ -46,6 +47,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
@@ -80,6 +82,16 @@ class TfrtCpuDevice final : public PjRtDevice {
 
   absl::string_view ToString() const override;
 
+  int memory_space_count() const override { return memory_spaces_.size(); }
+
+  absl::Span<PjRtMemorySpace* const> memory_spaces() const override {
+    return memory_spaces_;
+  }
+
+  void AttachMemorySpace(PjRtMemorySpace* memory_space) {
+    memory_spaces_.push_back(memory_space);
+  }
+
   Status TransferToInfeed(const LiteralSlice& literal) override;
 
   Status TransferFromOutfeed(MutableBorrowingLiteral literal) override;
@@ -102,6 +114,7 @@ class TfrtCpuDevice final : public PjRtDevice {
  private:
   int id_;
   PjRtClient* client_ = nullptr;
+  std::vector<PjRtMemorySpace*> memory_spaces_;
   std::string debug_string_;
   std::string to_string_;
 
@@ -139,6 +152,12 @@ class TfrtCpuClient final : public PjRtClient {
 
   StatusOr<PjRtDevice*> LookupAddressableDevice(
       int local_hardware_id) const override;
+
+  int memory_space_count() const override { return memory_spaces_.size(); }
+
+  absl::Span<PjRtMemorySpace* const> memory_spaces() const override {
+    return memory_spaces_;
+  }
 
   PjRtPlatformId platform_id() const override {
     return tsl::Fingerprint64(CpuName());
@@ -189,6 +208,22 @@ class TfrtCpuClient final : public PjRtClient {
 
   StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
       const LiteralSlice& literal, PjRtDevice* device) override;
+
+  StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
+      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+      std::optional<absl::Span<int64_t const>> byte_strides,
+      HostBufferSemantics host_buffer_semantics,
+      std::function<void()> on_done_with_host_buffer,
+      PjRtMemorySpace* memory_space) override {
+    return Unimplemented(
+        "BufferFromHostBuffer is not supported for PjRtMemorySpace.");
+  }
+
+  StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
+      const LiteralSlice& literal, PjRtMemorySpace* memory_space) override {
+    return Unimplemented(
+        "BufferFromHostLiteral is not supported for PjRtMemorySpace.");
+  }
 
   StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
@@ -254,6 +289,8 @@ class TfrtCpuClient final : public PjRtClient {
   std::vector<PjRtDevice*> addressable_devices_;
   std::unique_ptr<ComputationPlacer> computation_placer_;
 
+  std::vector<PjRtMemorySpace*> memory_spaces_;
+
   // Thread pool for running PjRtClient tasks.
   std::unique_ptr<tsl::thread::ThreadPool> pjrt_client_thread_pool_;
 
@@ -298,6 +335,7 @@ class TfrtCpuBuffer final : public PjRtBuffer {
   const Shape& on_device_shape() const override { return on_device_shape_; }
   TfrtCpuDevice* device() const override { return device_; }
   TfrtCpuClient* client() const override { return client_; }
+  PjRtMemorySpace* memory_space() const override { return memory_space_; }
 
   StatusOr<Shape> logical_on_device_shape() override;
 
@@ -450,6 +488,7 @@ class TfrtCpuBuffer final : public PjRtBuffer {
   TfrtCpuClient* client_;
   const Shape on_device_shape_;
   TfrtCpuDevice* const device_;
+  PjRtMemorySpace* memory_space_;
 
   mutable absl::Mutex mu_;
   std::unique_ptr<TrackedTfrtCpuDeviceBuffer> tracked_device_buffer_
