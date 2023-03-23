@@ -27,6 +27,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/Dominance.h"  // from @llvm-project
 #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project
@@ -328,8 +329,14 @@ static LogicalResult Outline(unsigned ordinal,
 
   // Create a fused location out of LaunchFuncOp operations.
   llvm::SmallVector<Location> locations;
-  for (auto& op : seq) locations.push_back(op.first->getLoc());
-  ImplicitLocOpBuilder b(FusedLoc::get(ctx, locations), sym_table.getOp());
+  for (int i = 0; i < seq.size(); ++i) {
+    Operation* op = seq[i].first;
+    if (auto call = dyn_cast<gpu::LaunchFuncOp>(op)) {
+      locations.push_back(op->getLoc());
+    }
+  }
+  auto fused_loc = FusedLoc::get(ctx, locations);
+  ImplicitLocOpBuilder b(fused_loc, sym_table.getOp());
 
   // Arguments of the graph capture function.
   std::vector<Value> args = GetGraphCaptureFuncArgs(seq);
