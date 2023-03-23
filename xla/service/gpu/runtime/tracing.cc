@@ -15,10 +15,13 @@ limitations under the License.
 
 #include "xla/service/gpu/runtime/tracing.h"
 
-#include <memory>
+#include <string>
+#include <string_view>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_replace.h"
 #include "xla/runtime/executable.h"
 #include "xla/runtime/tracing.h"
 #include "xla/service/gpu/runtime/support.h"
@@ -46,9 +49,13 @@ void RegisterTracingTypeIdNames(runtime::TypeIDNameRegistry& registry) {
 
 static absl::StatusOr<int64_t> ActivityStart(runtime::HloTrace annotation) {
   return ScopedAnnotationStack::ActivityStart([&] {
-    // We use the same tracing annotation scheme as the ThunkSequence (see
-    // implementation of `GetThunkInfo` in `ir_emitter_unnested.cc`).
-    return absl::StrFormat("Thunk:#hlo_op=%s#", annotation.hlo_op);
+    // When multiple HLO operations outlined into cuda graph capture function,
+    // they use fused location to carry locations of all captured operations.
+    // All original location concatenated with a `;` delimiter, which
+    // unfortunately breaks Xprof UI.
+    return absl::StrFormat(
+        "Thunk:#hlo_op=%s#",
+        absl::StrReplaceAll(annotation.hlo_op, {{";", "+"}}));
   });
 }
 
