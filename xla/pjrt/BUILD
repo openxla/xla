@@ -658,7 +658,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
-        "//xla/pjrt/c:pjrt_c_api_wrapper_impl_header",  # TODO(b/269360974): remove
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor/tpu:c_api_conversions",  # TODO(b/238999986): Remove this.
         "//xla/stream_executor/tpu:tpu_initializer_helper",
