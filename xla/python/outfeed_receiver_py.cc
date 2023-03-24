@@ -16,8 +16,10 @@ limitations under the License.
 #include "xla/python/outfeed_receiver_py.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -30,6 +32,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/outfeed_receiver.h"
 #include "xla/python/py_client.h"
+#include "xla/python/status_casters.h"
 #include "xla/python/types.h"
 
 namespace xla {

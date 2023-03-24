@@ -21,6 +21,7 @@ limitations under the License.
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/python/python_ref_manager.h"
+#include "xla/python/status_casters.h"
 #include "xla/python/tpu_driver/client/tpu_client.h"
 #include "xla/python/types.h"
 #include "xla/python/util.h"

@@ -16,9 +16,11 @@ limitations under the License.
 #include "xla/python/profiler.h"
 
 #include <memory>
+#include <string>
 
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/python/profiler/internal/traceme_wrapper.h"
+#include "xla/python/status_casters.h"
 #include "xla/python/types.h"
 #include "xla/status.h"
 #include "tsl/profiler/lib/profiler_session.h"
@@ -71,12 +73,12 @@ void BuildProfilerSubmodule(py::module* m) {
       }))
       .def("stop_and_export",
            [](tsl::ProfilerSession* sess,
-              const std::string& tensorboard_dir) -> xla::Status {
+              const std::string& tensorboard_dir) -> void {
              tensorflow::profiler::XSpace xspace;
              // Disables the ProfilerSession
-             TF_RETURN_IF_ERROR(sess->CollectData(&xspace));
-             return tsl::profiler::ExportToTensorBoard(
-                 xspace, tensorboard_dir, /* also_export_trace_json= */ true);
+             xla::ThrowIfError(sess->CollectData(&xspace));
+             xla::ThrowIfError(tsl::profiler::ExportToTensorBoard(
+                 xspace, tensorboard_dir, /* also_export_trace_json= */ true));
            });
 
   py::class_<tensorflow::ProfileOptions> profile_options_class(

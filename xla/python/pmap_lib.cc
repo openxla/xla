@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/python/python_utils.h"
 #include "xla/python/sharded_device_array.h"
 #include "xla/python/sharding.h"
+#include "xla/python/status_casters.h"
 #include "xla/python/types.h"
 #include "xla/python/util.h"
 #include "xla/xla_data.pb.h"
