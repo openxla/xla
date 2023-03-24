@@ -1039,6 +1039,8 @@ xla_cc_test(
     deps = [
         ":gemm_rewriter_triton",
         "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
