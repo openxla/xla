@@ -15,8 +15,8 @@ cc_library(
     deps = [
         "//xla/runtime:async_runtime",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/functional:any_invocable",
         "@llvm-project//llvm:OrcJIT",
-        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:mlir_async_runtime_api",
         "@tf_runtime//:async_value",
         "@tsl//tsl/platform:platform_port",
