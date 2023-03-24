@@ -21,6 +21,7 @@ tensorflow::swig::RegisterPyObject
 tensorflow::swig::RegisterType
 tensorflow::swig::IsEagerTensorSlow
 tensorflow::swig::GetRegisteredPyObject
+tensorflow::swig::GetUID
 
 [//tensorflow/python/util:cpp_nest] # nest
 tensorflow::FlattenDictItems
@@ -177,7 +178,6 @@ TFE_Py_RegisterFallbackExceptionClass
 TFE_Py_RegisterGradientFunction
 TFE_Py_RegisterJVPFunction
 TFE_GetPythonString
-TFE_Py_UID
 TFE_DeleteContextCapsule
 TFE_Py_InitEagerTensor
 TFE_Py_SetEagerTensorProfiler
