@@ -1,5 +1,6 @@
 compiler/xla/glob_lit_test.bzl:
 compiler/xla/mlir_hlo/WORKSPACE:
+compiler/xla/service/profile_viz_utils.cc:
 compiler/xla/stream_executor/build_defs.bzl:
 third_party/BUILD:
 third_party/__init__:.py

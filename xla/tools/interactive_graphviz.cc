@@ -50,6 +50,7 @@ limitations under the License.
 #include "tsl/protobuf/error_codes.pb.h"
 #include "tsl/util/command_line_flags.h"
 #if defined(PLATFORM_GOOGLE)
+#include "xla/service/profile_viz_utils.h"
 #include "util/readline/readline.h"
 #endif
 
@@ -81,6 +82,9 @@ struct Options {
   std::string hlo_text;
   std::string platform;
   std::string browser;
+#if defined(PLATFORM_GOOGLE)
+  std::string profiler_session_id;
+#endif
 };
 
 const char* const kUsage = R"(
@@ -605,6 +609,11 @@ void DoPlotCommand(const Options& opts, const HloModule& module,
     }
   }
 
+#if defined(PLATFORM_GOOGLE)
+  profile_viz_utils::PopulateStats(module, node_name, instr, comp,
+                                   &hlo_render_options);
+#endif
+
   // Generate the graph and print the resulting string, which should be a
   // graphviz url.
   if (comp) {
@@ -722,6 +731,12 @@ void RealMain(const Options& opts) {
                  .value();
   }
 
+#if defined(PLATFORM_GOOGLE)
+  if (!opts.profiler_session_id.empty()) {
+    module = profile_viz_utils::ReadModule(opts.profiler_session_id).value();
+  }
+#endif
+
   // If a platform was specified, compile the module for that platform.
   if (!opts.platform.empty()) {
     se::Platform* platform = PlatformUtil::GetPlatform(opts.platform).value();
@@ -753,19 +768,23 @@ int main(int argc, char** argv) {
   opts.browser = "/usr/bin/sensible-browser";
   bool need_help = false;
   const std::vector<tsl::Flag> flag_list = {
-      tsl::Flag("hlo_snapshot", &opts.hlo_snapshot,
-                "HloSnapshot proto to interactively dump to graphviz"),
-      tsl::Flag("hlo_proto", &opts.hlo_proto,
-                "XLA hlo proto to interactively dump to graphviz"),
-      tsl::Flag("hlo_module_proto", &opts.hlo_module_proto,
-                "XLA hlomodule proto to interactively dump to graphviz"),
-      tsl::Flag("hlo_text", &opts.hlo_text,
-                "XLA hlo proto to interactively dump to graphviz"),
-      tsl::Flag("platform", &opts.platform,
-                "Platform to compile for: CPU, CUDA, etc"),
-      tsl::Flag("browser", &opts.browser,
-                "Path to web browser used to display produced graphs."),
-      tsl::Flag("help", &need_help, "Prints this help message"),
+    tsl::Flag("hlo_snapshot", &opts.hlo_snapshot,
+              "HloSnapshot proto to interactively dump to graphviz"),
+    tsl::Flag("hlo_proto", &opts.hlo_proto,
+              "XLA hlo proto to interactively dump to graphviz"),
+    tsl::Flag("hlo_module_proto", &opts.hlo_module_proto,
+              "XLA hlomodule proto to interactively dump to graphviz"),
+    tsl::Flag("hlo_text", &opts.hlo_text,
+              "XLA hlo proto to interactively dump to graphviz"),
+    tsl::Flag("platform", &opts.platform,
+              "Platform to compile for: CPU, CUDA, etc"),
+    tsl::Flag("browser", &opts.browser,
+              "Path to web browser used to display produced graphs."),
+    tsl::Flag("help", &need_help, "Prints this help message"),
+#if defined(PLATFORM_GOOGLE)
+    tsl::Flag("profiler_session_id", &opts.profiler_session_id,
+              "XProf session id to use as source for HLO graphs and timings."),
+#endif
   };
   std::string usage = tsl::Flags::Usage(argv[0], flag_list);
   bool parse_ok = tsl::Flags::Parse(&argc, argv, flag_list);

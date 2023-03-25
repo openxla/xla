@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/service/hlo_render_options.h"
 #include "xla/types.h"
 #include "xla/xla.pb.h"
 
@@ -49,14 +50,6 @@ enum class RenderedGraphFormat {
   kDot,
   kHtml,
   kUrl,
-};
-
-struct HloRenderOptions {
-  // Include the backend config string in the rendered graph.
-  bool show_backend_config = false;
-
-  // Include the fusion subcomputations in the rendered graph.
-  bool show_fusion_subcomputations = true;
 };
 
 // Renders an HLO module as a human-readable visual graph.

@@ -5293,11 +5293,36 @@ cc_library(
 )
 
 cc_library(
+    name = "hlo_render_options",
+    srcs = [],
+    hdrs = ["hlo_render_options.h"],
+    deps = [
+    ],
+)
+
+cc_library(
+    name = "profile_viz_utils",
+    srcs = ["profile_viz_utils.cc"],
+    hdrs = ["profile_viz_utils.h"],
+    deps = [
+        ":hlo_render_options",
+        "//xla/hlo/ir:hlo",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+        # copybara:uncomment_begin(google-only)
+        # "@com_google_absl//absl/strings",
+        # copybara:uncomment_end
+    ],
+)
+
+cc_library(
     name = "hlo_graph_dumper",
     srcs = ["hlo_graph_dumper.cc"],
     hdrs = ["hlo_graph_dumper.h"],
     deps = [
+        ":hlo_render_options",
         ":pattern_matcher",
+        ":profile_viz_utils",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:types",

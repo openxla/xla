@@ -46,7 +46,11 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/hlo_render_options.h"
 #include "xla/service/pattern_matcher.h"
+#if defined(PLATFORM_GOOGLE)
+#include "xla/service/profile_viz_utils.h"
+#endif
 #include "xla/shape_util.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/types.h"
@@ -499,6 +503,11 @@ stylesheet=<
     StrAppend(&graph_label, " (in fusion instruction ",
               computation_->FusionInstruction()->name(), ")");
   }
+
+#if defined(PLATFORM_GOOGLE)
+  StrAppend(&graph_label, profile_viz_utils::ReadComputationStats(
+                              *computation_, hlo_render_options_));
+#endif
 
   // Create CSS rules that say, when you hover over the given node or cluster,
   // turn the given edge the given color.
@@ -1342,6 +1351,15 @@ std::string HloDotDumper::GetInstructionNodeExtraInfo(
   if (debug_options_.xla_hlo_graph_addresses()) {
     lines.push_back(StrFormat("[%p]", instr));
   }
+
+#if defined(PLATFORM_GOOGLE)
+  const std::string instruction_stats =
+      profile_viz_utils::ReadInstructionStats(*instr, hlo_render_options_);
+  if (instruction_stats.length() > 0) {
+    lines.push_back(instruction_stats);
+  }
+#endif
+
   return StrJoin(lines, "<br/>");
 }
 
