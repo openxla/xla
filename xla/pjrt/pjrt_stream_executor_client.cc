@@ -2869,6 +2869,8 @@ PjRtStreamExecutorClient::DeserializeExecutable(
       addressable_device_logical_ids = extras.addressable_device_logical_ids;
   std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
 
+  if (serialized.empty())
+    return InternalError("Serialized executable is empty");
   std::string str(serialized);
   TF_ASSIGN_OR_RETURN(std::unique_ptr<LocalExecutable> loaded,
                       client()->Load(str, options->executable_build_options));
