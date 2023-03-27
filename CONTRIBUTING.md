@@ -47,3 +47,6 @@ sheparding your PR will communicate any internal test failures and describe
 what needs to be fixed.
 
 We are actively working on increasing the number of tests run on Github!
+
+### Copybara quirks
+There are some oddities you may see while contributing, please see [this file](docs/copybara.md).
