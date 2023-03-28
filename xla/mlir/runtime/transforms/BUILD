@@ -106,6 +106,7 @@ cc_library(
         "//xla/mlir/framework/transforms:passes",
         "//xla/mlir/math/transforms:passes",
         "//xla/mlir/memref/transforms:passes",
+        "//xla/mlir_hlo:transforms_passes",
         "//xla/runtime:compiler",
         "@llvm-project//mlir:AMXToLLVMIRTranslation",
         "@llvm-project//mlir:AffineDialect",
