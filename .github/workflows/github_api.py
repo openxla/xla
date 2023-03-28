@@ -60,8 +60,7 @@ class GitHubAPI:
   def get_commit(self, repo: str, commit_id: str) -> requests.Response:
     """Gets a commit by it's SHA-1 hash.
 
-    https://docs.github.com/en/rest/commits/commits?apiVersion=2022-11-28#get-a-
-    commit
+    https://docs.github.com/en/rest/commits/commits?apiVersion=2022-11-28#get-a-commit
 
     Arguments:
       repo: a string of the form `owner/repo_name`, e.g. openxla/xla.
@@ -82,8 +81,7 @@ class GitHubAPI:
   ) -> requests.Response:
     """Writes a comment on an issue (or PR).
 
-    https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-
-    28#create-an-issue-comment
+    https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment
 
     Arguments:
       repo: a string of the form `owner/repo_name`, e.g. openxla/xla
@@ -104,8 +102,7 @@ class GitHubAPI:
   ) -> requests.Response:
     """Sets the status of an issue (or PR).
 
-    https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28#update-
-    an-issue
+    https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28#update-an-issue
 
     Arguments:
       repo: a string of the form `owner/repo_name`, e.g. openxla/xla
@@ -120,3 +117,24 @@ class GitHubAPI:
     """
     endpoint = f"repos/{repo}/issues/{issue_number}"
     return self._make_request("POST", endpoint, status=status)
+
+  def add_issue_assignees(
+      self, repo: str, issue_number: int, assignees: list[str]
+  ) -> requests.Response:
+    """Adds assignees to an issue (or PR).
+
+    https://docs.github.com/en/rest/issues/assignees?apiVersion=2022-11-28#add-assignees-to-an-issue
+
+    Arguments:
+      repo: a string of the form `owner/repo_name`, e.g. openxla/xla
+      issue_number: the issue (or PR) to set the status of
+      assignees: the GitHub usernames to add as assignees
+
+    Returns:
+      a requests.Response object containing the response from the API.
+
+    Raises:
+      requests.exceptions.HTTPError
+    """
+    endpoint = f"repos/{repo}/issues/{issue_number}/assignees"
+    return self._make_request("POST", endpoint, assignees=assignees)
