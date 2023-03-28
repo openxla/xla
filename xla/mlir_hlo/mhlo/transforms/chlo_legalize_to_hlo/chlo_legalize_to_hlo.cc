@@ -553,7 +553,12 @@ Value materializeErfApproximationF32(ConversionPatternRewriter &rewriter,
   Value betaPoly = materializePolynomialApproximation(rewriter, loc, xSq,
                                                       llvm::ArrayRef(kBeta));
   Value xMulAlphaPoly = rewriter.create<mhlo::MulOp>(loc, x, alphaPoly);
-  return rewriter.create<mhlo::DivOp>(loc, xMulAlphaPoly, betaPoly);
+
+  lb = chlo::getConstantLike(rewriter, loc, -1.0, x);
+  ub = chlo::getConstantLike(rewriter, loc, 1.0, x);
+  return rewriter.create<mhlo::ClampOp>(
+      loc, x.getType(), lb,
+      rewriter.create<mhlo::DivOp>(loc, xMulAlphaPoly, betaPoly), ub);
 }
 
 Value materializeErfcApproximationF32(ConversionPatternRewriter &rewriter,
