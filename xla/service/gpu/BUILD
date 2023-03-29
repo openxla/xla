@@ -443,6 +443,7 @@ cc_library(
     hdrs = if_cuda_is_configured(["triton_autotuner.h"]),
     deps = if_cuda_is_configured([
         ":buffer_comparator",
+        ":gemm_rewriter_triton",
         ":gpu_asm_opts_util",
         ":gpu_device_info",
         ":ir_emission_utils",
@@ -464,7 +465,7 @@ cc_library(
         "//xla/stream_executor/gpu:redzone_allocator",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/util/proto:proto_utils",
-    ]),
+    ]) + ["//xla/stream_executor:device_memory"],
 )
 
 xla_test(
@@ -1023,12 +1024,16 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
         "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 
@@ -1044,6 +1049,9 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
     ],
 )
