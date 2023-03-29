@@ -1,4 +1,5 @@
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
+load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -162,6 +163,45 @@ cc_library(
         "//xla/service/gpu:fft_thunk",
         "//xla/stream_executor:fft",
         "//xla/translate/mhlo_to_hlo:attribute_exporter",
+    ],
+)
+
+cuda_library(
+    name = "topk_kernel",
+    srcs = if_cuda_is_configured(["topk_kernel.cu.cc"]),
+    hdrs = if_cuda_is_configured(["topk_kernel.h"]),
+    compatible_with = [],
+    deps = [
+        "//xla/runtime/ffi:ffi_api",
+        "//xla/service/gpu:nccl_utils",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
+    ],
+)
+
+cc_library(
+    name = "topk",
+    srcs = if_cuda_is_configured(
+        ["topk.cc"],
+        ["topk_no_cuda.cc"],
+    ),
+    hdrs = ["topk.h"],
+    deps = if_cuda_is_configured([":topk_kernel"]) + [
+        "//xla:executable_run_options",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/mlir/runtime/transforms:custom_call_encoding",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime/ffi:ffi_api",
+        "//xla/runtime/ffi:ffi_c_api_hdrs",
+        "//xla/service:executable",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
