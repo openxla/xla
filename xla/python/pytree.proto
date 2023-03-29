@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package jax;
+
+message DictKeysProto {
+  repeated uint32 str_id = 1;
+}
+
+// Arbitrary data (handled via the registered handler).
+message CustomNodeDefProto {
+  oneof value {
+    // Serialized ids.
+    uint32 pickle_id = 1;
+    // Interned strings (for dict keys).
+    DictKeysProto dict_keys = 2;
+  }
+}
+
+// Registers a new custom type.
+message CustomNodeRegistrationProto {
+  // A stable registered key for this type.
+  // Taken: s, d, l, t, n,
+  string registration_key = 1;
+  // Optional pickled python type (for custom types).
+  uint32 pickled_id = 3;
+}
+
+// Common data for when serializing multiple py-trees.
+message PyTreeCommonStateProto {
+  // List of all registered types.
+  repeated CustomNodeRegistrationProto registered_node_types = 1;
+  // If allowed, set to a pickled py::list of custom_data.
+  bytes pickled_data = 2;
+  // Extra strings.
+  repeated string interned_strings = 3;
+}
+
+// A Pytree.
+message PyTreeNodeProto {
+  // Recovers the tree structure (packed).
+  repeated uint32 num_arity = 1;
+  // An index into registered_node_types (packed).
+  repeated uint32 node_type = 2;
+  // Auxiliary data (wastes 2 bytes when unused).
+  repeated CustomNodeDefProto custom_data = 3;
+  // May be defined externally when serializing multiple pytrees.
+  PyTreeCommonStateProto common_metadata = 4;
+}

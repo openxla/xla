@@ -20,10 +20,12 @@ limitations under the License.
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -38,6 +40,7 @@ limitations under the License.
 #include "pybind11/stl.h"  // from @pybind11
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
 #include "xla/python/exceptions.h"
+#include "xla/python/pytree.pb.h"
 #include "tsl/platform/logging.h"
 
 namespace xla {
@@ -811,6 +814,260 @@ PyTreeDef PyTreeDef::FromPickleable(py::object pickleable) {
   return tree;
 }
 
+void PyTreeDef::SetNumLeavesAndNumNodes() {
+  // num_leaves and num_nodes are fully determined by arity.
+  std::vector<std::pair<int, int>> starts;
+  int num_leaves = 0;
+  for (int i = 0; i < traversal_.size(); ++i) {
+    std::pair<int, int> start = {num_leaves, i};
+    if (traversal_[i].kind == PyTreeKind::kLeaf) {
+      num_leaves += 1;
+    }
+    if (traversal_[i].arity == 0) {
+      starts.push_back(start);
+    } else {
+      starts.resize(starts.size() - (traversal_[i].arity - 1));
+    }
+    traversal_[i].num_leaves = num_leaves - starts.back().first;
+    traversal_[i].num_nodes = i + 1 - starts.back().second;
+  }
+}
+
+void PyTreeDefSerializer::Finalize() {
+  if (!to_pickle_.empty()) {
+    common_state_->set_pickled_data(
+        std::string_view(py::bytes(pickling_fn_(to_pickle_))));
+  }
+}
+
+uint32_t PyTreeDefSerializer::RegisterToPickle(py::handle obj) {
+  auto id = to_pickle_.size();
+  to_pickle_.append(obj);
+  return id;
+}
+
+pybind11::object PyTreeDefDeserializer::LookupPickled(uint32_t id) {
+  if (!unpickled_.has_value()) {
+    throw std::invalid_argument("backup pickling not enabled.");
+  }
+  if (id >= unpickled_->size()) {
+    throw std::invalid_argument(
+        absl::StrCat("pickle id: ", id, " out of range."));
+  }
+  return (*unpickled_)[id];
+}
+
+const pybind11::str& PyTreeDefDeserializer::LookupInternedString(uint32_t id) {
+  if (id >= interned_strings_.size()) {
+    throw std::invalid_argument(absl::StrCat("interned string id: ", id,
+                                             " out of range [0, ",
+                                             interned_strings_.size(), ")"));
+  }
+  return interned_strings_[id];
+}
+
+PyTreeDefDeserializer::PyTreeDefDeserializer(
+    const jax::PyTreeCommonStateProto& common_state, py::object unpickling_fn) {
+  if (!common_state.pickled_data().empty()) {
+    unpickled_ = py::cast<py::list>(
+        unpickling_fn(py::bytes(common_state.pickled_data())));
+  }
+  common_state_ = &common_state;
+  for (auto& str : common_state.interned_strings()) {
+    interned_strings_.push_back(py::str(str));
+  }
+  for (auto& node_type_proto : common_state.registered_node_types()) {
+    if (node_type_proto.registration_key().size() == 1) {
+      switch (node_type_proto.registration_key()[0]) {
+        case '*':
+          node_types_.push_back({PyTreeKind::kLeaf, nullptr, py::none()});
+          break;
+        case 'l':
+          node_types_.push_back({PyTreeKind::kList, nullptr, py::none()});
+          break;
+        case 'n':
+          node_types_.push_back({PyTreeKind::kNone, nullptr, py::none()});
+          break;
+        case 't':
+          node_types_.push_back({PyTreeKind::kTuple, nullptr, py::none()});
+          break;
+        case 'd':
+          node_types_.push_back({PyTreeKind::kDict, nullptr, py::none()});
+          break;
+        case 'c':
+          node_types_.push_back({PyTreeKind::kCustom,
+                                 PyTreeTypeRegistry::Lookup(LookupPickled(
+                                     node_type_proto.pickled_id())),
+                                 py::none()});
+          break;
+        case 'N':
+          node_types_.push_back({PyTreeKind::kNamedTuple, nullptr,
+                                 LookupPickled(node_type_proto.pickled_id())});
+          break;
+        default:
+          throw std::invalid_argument(
+              absl::StrCat("Malformed CustomNodeRegistrationProto: \"",
+                           node_type_proto.registration_key(), "\""));
+      }
+    }
+  }
+}
+
+std::vector<pybind11::object> PyTreeDefDeserializer::GetDictNodeData(
+    const jax::CustomNodeDefProto& custom_data) {
+  switch (custom_data.value_case()) {
+    case jax::CustomNodeDefProto::kDictKeys: {
+      std::vector<pybind11::object> result;
+      for (uint32_t str_id : custom_data.dict_keys().str_id()) {
+        result.push_back(LookupInternedString(str_id));
+      }
+      return result;
+    }
+    case jax::CustomNodeDefProto::kPickleId:
+      return LookupPickled(custom_data.pickle_id())
+          .cast<std::vector<pybind11::object>>();
+    default:
+      throw std::invalid_argument("Malformed CustomNodeDefProto");
+  }
+}
+
+pybind11::object PyTreeDefDeserializer::GetCustomNodePickledData(
+    const jax::CustomNodeDefProto& custom_data) {
+  switch (custom_data.value_case()) {
+    case jax::CustomNodeDefProto::kPickleId:
+      return LookupPickled(custom_data.pickle_id());
+    default:
+      throw std::invalid_argument("Malformed CustomNodeDefProto");
+  }
+}
+
+void PyTreeDefSerializer::SerializeDictNodeData(
+    jax::CustomNodeDefProto* custom_data,
+    const std::vector<pybind11::object>& sorted_dict_keys) {
+  bool all_strings = true;
+  for (auto& key : sorted_dict_keys) {
+    if (!py::isinstance<py::str>(key)) {
+      all_strings = false;
+    }
+  }
+  if (all_strings) {
+    auto* result = custom_data->mutable_dict_keys();
+    for (auto& key : sorted_dict_keys) {
+      result->add_str_id(InternString(py::cast<std::string>(key)));
+    }
+  } else {
+    py::object node_data = py::cast(sorted_dict_keys);
+    custom_data->set_pickle_id(RegisterToPickle(node_data));
+  }
+}
+
+uint32_t PyTreeDefSerializer::GetNodeType(
+    PyTreeKind kind, const PyTreeTypeRegistry::Registration* custom,
+    PyObject* named_tuple_type) {
+  KeyType key{kind, custom, named_tuple_type};
+  auto it = type_list_.find(key);
+  if (it != type_list_.end()) {
+    return it->second;
+  }
+  uint32_t value = common_state_->registered_node_types_size();
+  auto* registered_node_type = common_state_->add_registered_node_types();
+  switch (kind) {
+    case PyTreeKind::kLeaf:
+      registered_node_type->set_registration_key("*");
+      break;
+    case PyTreeKind::kList:
+      registered_node_type->set_registration_key("l");
+      break;
+    case PyTreeKind::kNone:
+      registered_node_type->set_registration_key("n");
+      break;
+    case PyTreeKind::kTuple:
+      registered_node_type->set_registration_key("t");
+      break;
+    case PyTreeKind::kDict:
+      registered_node_type->set_registration_key("d");
+      break;
+    case PyTreeKind::kNamedTuple:
+      registered_node_type->set_registration_key("N");
+      registered_node_type->set_pickled_id(RegisterToPickle(
+          py::reinterpret_borrow<py::object>(named_tuple_type)));
+      break;
+    case PyTreeKind::kCustom:
+      registered_node_type->set_registration_key("c");
+      registered_node_type->set_pickled_id(RegisterToPickle(custom->type));
+      break;
+  }
+  type_list_[key] = value;
+  return value;
+}
+
+PyTreeDefDeserializer::NodeType PyTreeDefDeserializer::GetNodeType(
+    uint32_t type) {
+  if (type >= node_types_.size()) {
+    throw std::invalid_argument(absl::StrCat(
+        "type id id: ", type, " out of range [0, ", node_types_.size(), ")"));
+  }
+  return node_types_[type];
+}
+
+void PyTreeDef::SerializeTo(PyTreeDefSerializer& serializer,
+                            jax::PyTreeNodeProto& result) const {
+  for (const auto& node : traversal_) {
+    result.add_num_arity(node.arity);
+    result.add_node_type(serializer.GetNodeType(
+        node.kind, node.custom,
+        node.kind == PyTreeKind::kNamedTuple ? node.node_data.ptr() : nullptr));
+    auto* custom_data = result.add_custom_data();
+    switch (node.kind) {
+      case PyTreeKind::kLeaf:
+      case PyTreeKind::kList:
+      case PyTreeKind::kNone:
+      case PyTreeKind::kTuple:
+      case PyTreeKind::kNamedTuple:
+        break;
+      case PyTreeKind::kDict:
+        serializer.SerializeDictNodeData(custom_data, node.sorted_dict_keys);
+        break;
+      case PyTreeKind::kCustom:
+        custom_data->set_pickle_id(serializer.RegisterToPickle(node.node_data));
+        break;
+    }
+  }
+}
+
+PyTreeDef PyTreeDef::DeserializeFrom(const jax::PyTreeNodeProto& input,
+                                     PyTreeDefDeserializer& deserializer) {
+  PyTreeDef result;
+  for (int i = 0; i < input.node_type().size(); ++i) {
+    result.traversal_.emplace_back();
+    auto& node = result.traversal_.back();
+    node.arity = input.num_arity(i);
+    auto node_type = deserializer.GetNodeType(input.node_type(i));
+    node.kind = std::get<0>(node_type);
+    node.custom = std::get<1>(node_type);
+    switch (node.kind) {
+      case PyTreeKind::kDict:
+        node.sorted_dict_keys =
+            deserializer.GetDictNodeData(input.custom_data(i));
+        break;
+      case PyTreeKind::kNamedTuple:
+        node.node_data = std::get<2>(node_type).cast<py::type>();
+        break;
+      case PyTreeKind::kCustom:
+        node.node_data =
+            deserializer.GetCustomNodePickledData(input.custom_data(i));
+        break;
+      case PyTreeKind::kLeaf:
+      case PyTreeKind::kList:
+      case PyTreeKind::kNone:
+      case PyTreeKind::kTuple:
+        break;
+    }
+  }
+  result.SetNumLeavesAndNumNodes();
+  return result;
+}
+
 void BuildPytreeSubmodule(py::module& m) {
   py::module pytree = m.def_submodule("pytree", "Python tree library");
   pytree.attr("version") = py::int_(3);
@@ -839,9 +1096,38 @@ void BuildPytreeSubmodule(py::module& m) {
       .def("__ne__",
            [](const PyTreeDef& a, const PyTreeDef& b) { return a != b; })
       .def("__hash__", [](const PyTreeDef& t) { return absl::HashOf(t); })
-      .def(py::pickle(
-          [](const PyTreeDef& t) { return t.ToPickleable(); },
-          [](py::object o) { return PyTreeDef::FromPickleable(o); }));
+      .def(
+          py::pickle([](const PyTreeDef& t) { return t.ToPickleable(); },
+                     [](py::object o) { return PyTreeDef::FromPickleable(o); }))
+      .def(
+          "serialize",
+          [](const PyTreeDef& t, py::object pickling_fn) -> py::bytes {
+            jax::PyTreeNodeProto result;
+            PyTreeDefSerializer serializer(*result.mutable_common_metadata(),
+                                           pickling_fn);
+            t.SerializeTo(serializer, result);
+            serializer.Finalize();
+            return py::bytes(result.SerializeAsString());
+          },
+          py::arg("pickling_fn") = py::none());
+
+  pytree.def(
+      "deserialize",
+      [](py::bytes data, py::object unpickling_fn) -> PyTreeDef {
+        jax::PyTreeNodeProto input;
+        std::string_view serialized = data;
+        if (serialized.size() > std::numeric_limits<int>::max()) {
+          throw xla::XlaRuntimeError(
+              "Pytree serialization too large to deserialize.");
+        }
+        if (!input.ParseFromArray(serialized.data(), serialized.size())) {
+          throw xla::XlaRuntimeError("Could not deserialize PyTreeNodeProto.");
+        }
+        PyTreeDefDeserializer deserializer(input.common_metadata(),
+                                           unpickling_fn);
+        return PyTreeDef::DeserializeFrom(input, deserializer);
+      },
+      py::arg("data"), py::arg("unpickling_fn") = py::none());
 
   pytree.def("register_node", [](py::object type, py::function to_iterable,
                                  py::function from_iterable) {

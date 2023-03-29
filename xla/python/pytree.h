@@ -23,8 +23,10 @@ limitations under the License.
 // binding code and the idiomatic way to emit Python exceptions.
 
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -34,6 +36,7 @@ limitations under the License.
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
 #include "pybind11/stl.h"  // from @pybind11
+#include "xla/python/pytree.pb.h"
 
 namespace xla {
 
@@ -97,6 +100,70 @@ class PyTreeTypeRegistry {
   absl::flat_hash_map<pybind11::object, std::unique_ptr<Registration>, TypeHash,
                       TypeEq>
       registrations_;
+};
+
+class PyTreeDefSerializer {
+ public:
+  explicit PyTreeDefSerializer(jax::PyTreeCommonStateProto& common_state,
+                               pybind11::object pickling_fn)
+      : pickling_fn_(pickling_fn), common_state_(&common_state) {}
+
+  void Finalize();
+
+  uint32_t RegisterToPickle(pybind11::handle obj);
+
+  void SerializeDictNodeData(
+      jax::CustomNodeDefProto* custom_data,
+      const std::vector<pybind11::object>& sorted_dict_keys);
+
+  uint32_t GetNodeType(PyTreeKind kind,
+                       const PyTreeTypeRegistry::Registration* custom,
+                       PyObject* named_tuple_type);
+
+  uint32_t InternString(std::string key) {
+    auto [it, added] =
+        interned_strings_.emplace(key, common_state_->interned_strings_size());
+    if (added) {
+      common_state_->add_interned_strings(key);
+    }
+    return it->second;
+  }
+
+ private:
+  using KeyType =
+      std::tuple<PyTreeKind, const PyTreeTypeRegistry::Registration*,
+                 PyObject*>;
+  absl::flat_hash_map<KeyType, uint32_t> type_list_;
+  absl::flat_hash_map<std::string, uint32_t> interned_strings_;
+  pybind11::list to_pickle_;
+  pybind11::object pickling_fn_;
+  jax::PyTreeCommonStateProto* common_state_;
+};
+
+class PyTreeDefDeserializer {
+ public:
+  PyTreeDefDeserializer(const jax::PyTreeCommonStateProto& common_state,
+                        pybind11::object unpickling_fn);
+
+  pybind11::object LookupPickled(uint32_t id);
+  const pybind11::str& LookupInternedString(uint32_t id);
+
+  std::vector<pybind11::object> GetDictNodeData(
+      const jax::CustomNodeDefProto& custom_data);
+
+  pybind11::object GetCustomNodePickledData(
+      const jax::CustomNodeDefProto& custom_data);
+
+  using NodeType =
+      std::tuple<PyTreeKind, const PyTreeTypeRegistry::Registration*,
+                 pybind11::object>;
+  NodeType GetNodeType(uint32_t type);
+
+ private:
+  const jax::PyTreeCommonStateProto* common_state_;
+  std::optional<pybind11::list> unpickled_;
+  std::vector<NodeType> node_types_;
+  std::vector<pybind11::str> interned_strings_;
 };
 
 // A PyTreeDef describes the tree structure of a PyTree. A PyTree is a tree of
@@ -178,7 +245,15 @@ class PyTreeDef {
   // to implement `PyTreeDef.__setstate__`.
   static PyTreeDef FromPickleable(pybind11::object pickleable);
 
+  void SerializeTo(PyTreeDefSerializer& serializer,
+                   jax::PyTreeNodeProto& result) const;
+
+  static PyTreeDef DeserializeFrom(const jax::PyTreeNodeProto& input,
+                                   PyTreeDefDeserializer& deserializer);
+
  private:
+  void SetNumLeavesAndNumNodes();
+
   struct Node {
     PyTreeKind kind = PyTreeKind::kLeaf;
 
