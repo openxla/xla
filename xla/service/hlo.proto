@@ -544,6 +544,17 @@ message HloModuleProto {
 
   // DeviceAssignment object information.
   DeviceAssignmentProto device_assignment = 15;
+
+  // Collected stats for a node, used in XProf only.
+  message NodeStats {
+    // The name of the node (e.g. "fusion.31")
+    string node_name = 1;
+    // The run times of the node as observed in the profile (in nanoseconds).
+    repeated int64 runtime_ns = 2;
+  }
+
+  // Collected stats for all nodes in the module.
+  repeated NodeStats node_stats = 17;
 }
 
 // Serialization of LogicalBuffer.
