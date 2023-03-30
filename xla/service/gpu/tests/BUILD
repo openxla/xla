@@ -790,6 +790,7 @@ xla_cc_binary(
     srcs = ["hlo_to_llvm_ir.cc"],
     copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]),
     deps = [
+        "@llvm-project//llvm:Target",
         "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:gpu_compiler",
@@ -802,7 +803,6 @@ xla_cc_binary(
         "//xla/stream_executor:stream_executor_impl",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/tools:hlo_module_loader",
-        "@llvm-project//llvm:Target",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/util:command_line_flags",
@@ -867,10 +867,10 @@ xla_cc_test(
     srcs = if_cuda_is_configured(["dynamic_shared_memory_test.cc"]),
     tags = tf_cuda_tests_tags(),
     deps = [
+        "@com_google_absl//absl/strings",
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_proto_cc",
-        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",

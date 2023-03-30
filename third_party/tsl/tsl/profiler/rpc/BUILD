@@ -27,6 +27,9 @@ cc_library(
         "//tsl/profiler/rpc/client:__pkg__",
     ],
     deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
         "//tsl/platform:env",
         "//tsl/platform:env_time",
         "//tsl/platform:errors",
@@ -43,9 +46,6 @@ cc_library(
         "//tsl/profiler/utils:math_utils",
         "//tsl/profiler/utils:time_utils",
         "//tsl/profiler/utils:xplane_utils",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -70,10 +70,10 @@ cc_library(
     ],
     deps = [
         ":profiler_service_impl",
+        "@com_google_absl//absl/strings",
         "//tsl/platform:logging",
         "//tsl/platform:types",
         "//tsl/profiler/protobuf:profiler_service_cc_grpc_proto",
-        "@com_google_absl//absl/strings",
     ] + tsl_grpc_cc_dependencies(),
     alwayslink = True,
 )
