@@ -261,8 +261,8 @@ cc_library(
     ] + select({
         "@tsl//tsl:linux_x86_64": [
             "hwloc/topology-linux.c",
-            "include/hwloc/linux.h",
             "hwloc/topology-x86.c",
+            "include/hwloc/linux.h",
             "include/private/cpuid-x86.h",
         ],
         "@tsl//tsl:linux_aarch64": [
