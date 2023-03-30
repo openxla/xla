@@ -26,6 +26,24 @@ limitations under the License.
 
 namespace xla {
 
+namespace {
+
+XlaComputation BuildGtComputation(PrimitiveType value_type,
+                                  PrimitiveType indices_type,
+                                  XlaBuilder* builder) {
+  auto b = builder->CreateSubBuilder("topk-greater-than");
+  auto value_shape = ShapeUtil::MakeShape(value_type, {});
+  auto lhs_param = Parameter(b.get(), 0, value_shape, "value.lhs");
+  auto rhs_param = Parameter(b.get(), 1, value_shape, "value.rhs");
+  auto index_shape = ShapeUtil::MakeShape(indices_type, {});
+  Parameter(b.get(), 2, index_shape, "index.lhs");
+  Parameter(b.get(), 3, index_shape, "index.rhs");
+  GtTotalOrder(lhs_param, rhs_param);
+  return b->BuildAndNoteError();
+}
+
+}  // namespace
+
 XlaOp TopK(XlaOp input, int64_t k, PrimitiveType index_type) {
   XlaBuilder* const builder = input.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
@@ -136,8 +154,8 @@ XlaOp TopK(XlaOp input, int64_t k, PrimitiveType index_type) {
     } else {
       XlaOp sort_result =
           Sort({input, iota},
-               CreateScalarGtComputation(
-                   {input_shape.element_type(), index_type}, iota.builder()),
+               BuildGtComputation(input_shape.element_type(),
+                                  iota_shape.element_type(), iota.builder()),
                last_dim, /*is_stable=*/true);
       values = Slice(GetTupleElement(sort_result, 0), start_indices,
                      limit_indices, strides);
