@@ -5,15 +5,16 @@ load("//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//tsl:tsl.bzl",
     "if_windows",
+    "set_external_visibility",
     "tsl_copts",
 )
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
+    default_visibility = set_external_visibility([
         ":dependency_allowlist",
-    ],
+    ]),
     licenses = ["notice"],
 )
 
