@@ -4128,12 +4128,14 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "hlo_activation_analysis",
-    srcs = ["hlo_activation_analysis.cc"],
-    hdrs = ["hlo_activation_analysis.h"],
+    name = "hlo_value_semantics_analysis",
+    srcs = ["hlo_value_semantics_analysis.cc"],
+    hdrs = ["hlo_value_semantics_analysis.h"],
     deps = [
+        ":hlo_value",
+        "//xla:shape_tree",
         "//xla:shape_util",
-        "//xla:statusor",
+        "//xla:status",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
@@ -4141,14 +4143,17 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
 xla_cc_test(
-    name = "hlo_activation_analysis_test",
-    srcs = ["hlo_activation_analysis_test.cc"],
+    name = "hlo_value_semantics_analysis_test",
+    srcs = ["hlo_value_semantics_analysis_test.cc"],
     deps = [
-        ":hlo_activation_analysis",
+        ":hlo_value_semantics_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
