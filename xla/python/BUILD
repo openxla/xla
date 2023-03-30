@@ -146,7 +146,32 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "@pybind11",
+        "@tsl//tsl/platform:macros",
     ],
+)
+
+tsl_pybind_extension(
+    name = "status_casters_ext",
+    srcs = ["status_casters_ext.cc"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":exceptions",
+        ":status_casters",
+        "@pybind11",
+    ],
+)
+
+py_test(
+    name = "status_casters_test",
+    srcs = ["status_casters_test.py"],
+    main = "status_casters_test.py",
+    python_version = "PY3",
+    srcs_version = "PY3",
+    tags = ["no_oss"],
+    deps = [
+        ":status_casters_ext",
+        "@absl_py//absl/testing:absltest",
+    ] + xla_py_test_deps(),
 )
 
 cc_library(
@@ -176,7 +201,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":exceptions",
-        ":status_casters",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
@@ -399,6 +423,7 @@ cc_library(
         ":python_ref_manager",
         ":python_utils",
         ":pytree",
+        ":status_casters",
         ":types",
         ":util",
         "//xla:shape_util",
@@ -457,6 +482,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":status_casters",
         ":types",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
@@ -538,6 +564,7 @@ cc_library(
         ":jax_jit",
         ":py_client",
         ":python_utils",
+        ":status_casters",
         ":types",
         ":util",
         "//xla:xla_data_proto_cc",
@@ -593,6 +620,7 @@ cc_library(
     deps = [
         ":outfeed_receiver",
         ":py_client",
+        ":status_casters",
         ":types",
         "//xla/client:executable_build_options",
         "//xla/client:xla_builder",
@@ -639,6 +667,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":status_casters",
         ":types",
         "//xla:status",
         "//xla/client:xla_computation",
@@ -674,6 +703,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":status_casters",
         ":types",
         "//xla:status",
         "//xla/backends/profiler:profiler_backends",
@@ -699,6 +729,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = [":friends"],
     deps = [
+        ":status_casters",
         "//xla:status",
         "//xla:util",
         "@com_google_absl//absl/base:core_headers",
@@ -759,6 +790,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":py_client",
+        ":status_casters",
         ":types",
         "//xla:debug_options_flags",
         "//xla:shape_util",
@@ -905,6 +937,7 @@ tsl_pybind_extension(
         ":py_client",
         ":python_ref_manager",
         ":pytree",
+        ":status_casters",
         ":traceback",
         ":transfer_guard_lib",
         ":types",

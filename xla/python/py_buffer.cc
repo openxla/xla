@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/python/py_client.h"
 #include "xla/python/python_ref_manager.h"
 #include "xla/python/python_utils.h"
+#include "xla/python/status_casters.h"
 #include "xla/python/transfer_guard_lib.h"
 #include "xla/python/types.h"
 #include "xla/python/util.h"

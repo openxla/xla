@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/layout_util.h"
 #include "xla/python/py_client.h"
+#include "xla/python/status_casters.h"
 #include "xla/python/types.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/computation_placer.h"
@@ -711,7 +712,12 @@ void BuildXlaCompilerSubmodule(py::module& m) {
           });
 
   // Custom-call targets.
-  m.def("register_custom_call_target", &PyRegisterCustomCallTarget);
+  m.def("register_custom_call_target",
+        [](const std::string& fn_name, py::capsule capsule,
+           const std::string& platform) {
+          xla::ThrowIfError(PyRegisterCustomCallTarget(
+              fn_name, std::move(capsule), platform));
+        });
 
   py::class_<DebugOptions>(m, "DebugOptions")
       .def("__repr__", &DebugOptions::DebugString)

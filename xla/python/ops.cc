@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <optional>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "absl/types/span.h"
@@ -33,6 +35,7 @@ limitations under the License.
 #include "xla/client/lib/svd.h"
 #include "xla/client/xla_builder.h"
 #include "xla/client/xla_computation.h"
+#include "xla/python/status_casters.h"
 #include "xla/python/types.h"
 #include "xla/xla_data.pb.h"
 

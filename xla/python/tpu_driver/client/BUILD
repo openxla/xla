@@ -62,6 +62,7 @@ tsl_pybind_extension(
         "//third_party/py/numpy:headers",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/python:python_ref_manager",
+        "//xla/python:status_casters",
         "//xla/python:types",
         "//xla/python:util",
         "//xla/service:computation_placer",

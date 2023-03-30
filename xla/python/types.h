@@ -16,8 +16,10 @@ limitations under the License.
 #ifndef XLA_PYTHON_TYPES_H_
 #define XLA_PYTHON_TYPES_H_
 
+#include <algorithm>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
@@ -27,7 +29,6 @@ limitations under the License.
 #include "pybind11/stl.h"  // from @pybind11
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
 #include "xla/literal.h"
-#include "xla/python/status_casters.h"
 #include "xla/shape.h"
 #include "xla/status.h"
 #include "xla/statusor.h"
