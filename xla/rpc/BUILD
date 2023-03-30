@@ -54,8 +54,8 @@ cc_library(
     srcs = ["grpc_service_main.cc"],
     deps = [
         ":grpc_service",
-        "@com_google_absl//absl/strings:str_format",
         "//xla/service:platform_util",
+        "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/util:command_line_flags",
@@ -81,10 +81,10 @@ xla_cc_test(
     ],
     deps = [
         ":grpc_stub",
-        "@com_google_absl//absl/strings:str_format",
         "//xla/client",
         "//xla/client:xla_builder",
         "//xla/tests:literal_test_util",
+        "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:net",
         "@tsl//tsl/platform:path",

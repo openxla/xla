@@ -33,9 +33,9 @@ xla_cc_binary(
     deps = [
         ":functional_hlo_runner",
         ":hlo_runner_flags",
-        "@com_google_absl//absl/strings",
         "//xla:debug_options_flags",
         "//xla:status",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
