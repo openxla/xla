@@ -30,7 +30,6 @@ limitations under the License.
 #else
 #if !defined(PLATFORM_WINDOWS)
 #include <link.h>
-#include <sys/sysmacros.h>
 #include <unistd.h>
 #endif
 #include <sys/stat.h>
