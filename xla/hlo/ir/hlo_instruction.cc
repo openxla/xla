@@ -2901,6 +2901,9 @@ bool HloInstruction::has_to_apply() const {
     case HloOpcode::kReduceWindow:
     case HloOpcode::kScatter:
     case HloOpcode::kSort:
+    case HloOpcode::kAsyncStart:
+    case HloOpcode::kAsyncDone:
+    case HloOpcode::kAsyncUpdate:
       return true;
     case HloOpcode::kCustomCall:
       // CustomCall can have a to_apply computation, but it is not required to
