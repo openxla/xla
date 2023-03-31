@@ -44,6 +44,7 @@ limitations under the License.
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "xla/hlo/experimental/auto_sharding/auto_sharding.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -418,6 +419,7 @@ Status GpuCompiler::OptimizeHloModule(
   }
 
   const int64_t num_partitions = hlo_module->config().num_partitions();
+  bool auto_sharding = hlo_module->config().use_auto_spmd_partitioning();
   if (num_partitions > 1) {
     if (!hlo_module->config().use_spmd_partitioning()) {
       return InvalidArgument(
@@ -457,6 +459,34 @@ Status GpuCompiler::OptimizeHloModule(
     spmd_simplify.AddPass<HloDCE>();
 
     spmd_pipeline.AddPass<HloConstantSplitter>();
+
+    if (auto_sharding) {
+      AutoShardingOption option;
+      option.enable = true;
+      if (!hlo_module->config().auto_spmd_partitioning_mesh_shape().empty()) {
+        option.device_mesh_shape =
+            hlo_module->config().auto_spmd_partitioning_mesh_shape();
+      } else {
+        // Use a simple mesh shape if not specified.
+        option.device_mesh_shape = {
+            stream_exec->GetDeviceDescription().core_count(), 1};
+      }
+      if (!hlo_module->config().auto_spmd_partitioning_mesh_ids().empty()) {
+        option.device_mesh_ids =
+            hlo_module->config().auto_spmd_partitioning_mesh_ids();
+      }
+      option.memory_budget_per_device =
+          hlo_module->config()
+              .debug_options()
+              .xla_gpu_auto_spmd_partitioning_memory_budget_gb() *
+          1024 * 1024 * 1024;
+      option.memory_budget_ratio =
+          hlo_module->config()
+              .debug_options()
+              .xla_gpu_auto_spmd_partitioning_memory_budget_ratio();
+      spmd_pipeline.AddPass<AutoSharding>(option);
+    }
+
     spmd_pipeline.AddPass<ShardingPropagation>(
         /*is_spmd=*/true, /*propagate_metadata=*/false,
         hlo_module->config().allow_spmd_sharding_propagation_to_output());

@@ -41,9 +41,6 @@ cc_library(
     visibility = ["//xla/pjrt:friends"],
     deps = [
         ":gpu_helpers",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings",
         "//xla:statusor",
         "//xla:util",
         "//xla/client:client_library",
@@ -54,6 +51,9 @@ cc_library(
         "//xla/stream_executor:device_mem_allocator",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:tf_allocator_adapter",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/framework:bfc_allocator",
         "@tsl//tsl/framework:device_id",
         "@tsl//tsl/framework:device_id_impl",
@@ -97,14 +97,14 @@ cc_library(
     hdrs = ["nccl_id_store.h"],
     defines = if_nccl(["NCCL_ENABLED=1"]),
     deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/synchronization",
         "//xla:statusor",
         "//xla:util",
         "//xla/pjrt/distributed:client",
         "//xla/service:global_device_id",
         "//xla/service/gpu:gpu_executable_run_options",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/synchronization",
     ] + if_nccl(["@local_config_nccl//:nccl"]),
 )
 
@@ -114,14 +114,14 @@ cc_library(
     hdrs = ["nccl_id_store.h"],
     defines = if_nccl(["NCCL_ENABLED=1"]),
     deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/synchronization",
         "//xla:statusor",
         "//xla:util",
         "//xla/pjrt/distributed:client",
         "//xla/service:global_device_id",
         "//xla/service/gpu:gpu_executable_run_options",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/synchronization",
     ] + if_nccl(["@local_config_nccl//:nccl"]),
 )
 

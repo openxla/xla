@@ -171,7 +171,6 @@ cc_library(
     hdrs = ["gemm.h"],
     deps = [
         ":support",
-        "@com_google_absl//absl/container:node_hash_map",
         "//xla:status",
         "//xla:xla_proto_cc",
         "//xla/runtime:custom_call",
@@ -184,6 +183,7 @@ cc_library(
         "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory",
+        "@com_google_absl//absl/container:node_hash_map",
     ] + if_cuda_is_configured([
         "//xla/service/gpu:gemm_algorithm_picker",
         "//xla/stream_executor/gpu:redzone_allocator",
@@ -199,8 +199,6 @@ cc_library(
         ":gemm",
         ":kernel_launch",
         ":support",
-        "@com_google_absl//absl/container:node_hash_map",
-        "@com_google_absl//absl/synchronization",
         "//xla:types",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
@@ -209,6 +207,8 @@ cc_library(
         "//xla/service:executable",
         "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor",
+        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/synchronization",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_graph",
     ]),
