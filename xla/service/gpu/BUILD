@@ -627,6 +627,7 @@ tsl_gpu_library(
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
+        "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_activation",
         "//xla/stream_executor/gpu:gpu_activation_header",
