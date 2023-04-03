@@ -308,7 +308,6 @@ void DuccFftImpl(void *out, void *in, internal::FftType fft_type,
       // Unsupported FFT rank
       abort();
   }
-  scale = 100.;
 
   switch (fft_type) {
   case internal::FftType::IFFT:
