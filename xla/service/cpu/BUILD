@@ -1035,6 +1035,7 @@ cc_library(
     srcs = [
         "runtime_fft_impl.h",
         "runtime_single_threaded_fft.cc",
+        "runtime_fft_impl.cc",
     ],
     hdrs = ["runtime_single_threaded_fft.h"],
     copts = runtime_copts(),
