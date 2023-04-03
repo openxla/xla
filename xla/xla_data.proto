@@ -383,6 +383,20 @@ message OpMetadata {
   // E.g. If we have fusion.1, fusion.2, and fusion.3 marked as duplicates,
   // fusion.2 and fusion.3 will have deduplicated_name = fusion.1
   string deduplicated_name = 12;
+
+  // Full call stack for the lowering of the operator (excluding data already in
+  // fields 3 and 4
+  message OpCallStack {
+    // Stack frame containing file and line number relating to the operator
+    message CallStackFrame {
+      string source_file = 1;
+      int32 source_line = 2;
+    }
+    repeated CallStackFrame frame = 1;
+  }
+
+  // Call stack info for operator lowering
+  OpCallStack call_stack = 13;
 }
 
 // Profile data from the execution of a computation.
