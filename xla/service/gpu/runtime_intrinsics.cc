@@ -70,8 +70,8 @@ static void AssertionCustomCall(void* stream_handle, void** buffers,
       AssertOnGpu(stream_handle, buffers[0],
                   absl::string_view{opaque, static_cast<uint64_t>(opaque_len)});
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
-                                  s.error_message().size());
+    auto message = s.message();
+    XlaCustomCallStatusSetFailure(status, message.data(), message.size());
   }
 }
 

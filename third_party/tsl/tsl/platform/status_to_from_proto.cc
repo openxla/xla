@@ -27,8 +27,8 @@ tensorflow::StatusProto StatusToProto(const Status& s) {
   }
 
   status_proto.set_code(static_cast<tsl::error::Code>(s.code()));
-  if (!s.error_message().empty()) {
-    status_proto.set_message(s.error_message());
+  if (!s.message().empty()) {
+    status_proto.set_message(s.message());
   }
   return status_proto;
 }
