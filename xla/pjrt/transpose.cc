@@ -1325,7 +1325,7 @@ std::string TransposePlan::ToString() const {
       scratch_size_, nodes_str);
 }
 
-bool TransposePlanCacheKey::operator==(
+bool TransposePlanCache::TransposePlanCacheKey::operator==(
     const TransposePlanCacheKey& other) const {
   return elem_size_in_bytes == other.elem_size_in_bytes && dims == other.dims &&
          permutation == other.permutation &&
@@ -1337,7 +1337,7 @@ bool TransposePlanCacheKey::operator==(
 }
 
 template <typename H>
-H AbslHashValue(H h, const TransposePlanCacheKey& key) {
+H AbslHashValue(H h, const TransposePlanCache::TransposePlanCacheKey& key) {
   return H::combine(std::move(h), key.elem_size_in_bytes,
                     key.input_layout_is_tiling, key.num_threads,
                     key.transformation, key.dims, key.permutation,

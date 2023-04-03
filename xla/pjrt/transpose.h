@@ -240,22 +240,6 @@ class TransposePlan {
   int64_t scratch_size_ = 0;
 };
 
-struct TransposePlanCacheKey {
-  size_t elem_size_in_bytes;
-  absl::InlinedVector<int64_t, 4> dims;
-  absl::InlinedVector<int64_t, 4> permutation;
-  bool input_layout_is_tiling;
-  absl::InlinedVector<int64_t, 4> input_layout;
-  absl::InlinedVector<int64_t, 4> output_tiling;
-  TransposePlan::Transformation transformation;
-  int num_threads;
-
-  bool operator==(const TransposePlanCacheKey& other) const;
-};
-
-template <typename H>
-H AbslHashValue(H h, const TransposePlanCacheKey& key);
-
 // An LRU cache for transpose plans. Not thread-safe.
 // Transpose plans aren't cheap to build, but once computed for a particular set
 // of inputs can be cached and reused for arrays. TransposePlanCache implements
@@ -282,11 +266,31 @@ class TransposePlanCache {
       int num_threads = 1);
 
  private:
+  struct TransposePlanCacheKey {
+    template <typename H>
+    friend H AbslHashValue(
+        H h, const TransposePlanCache::TransposePlanCacheKey& key);
+
+    size_t elem_size_in_bytes;
+    absl::InlinedVector<int64_t, 4> dims;
+    absl::InlinedVector<int64_t, 4> permutation;
+    bool input_layout_is_tiling;
+    absl::InlinedVector<int64_t, 4> input_layout;
+    absl::InlinedVector<int64_t, 4> output_tiling;
+    TransposePlan::Transformation transformation;
+    int num_threads;
+
+    bool operator==(const TransposePlanCacheKey& other) const;
+  };
+
   LRUCache<TransposePlanCacheKey,
            StatusOr<std::shared_ptr<TransposePlan>>>::LRUList lru_list_;
   LRUCache<TransposePlanCacheKey, StatusOr<std::shared_ptr<TransposePlan>>>
       cache_;
 };
+
+template <typename H>
+H AbslHashValue(H h, const TransposePlanCache::TransposePlanCacheKey& key);
 
 }  // namespace xla
 
