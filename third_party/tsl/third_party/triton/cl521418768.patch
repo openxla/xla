@@ -1,0 +1,56 @@
+==== triton/lib/Target/LLVMIR/LLVMIRTranslation.cpp#12 - triton/lib/Target/LLVMIR/LLVMIRTranslation.cpp ====
+# action=edit type=text
+--- triton/lib/Target/LLVMIR/LLVMIRTranslation.cpp	2023-03-24 10:56:56.000000000 -0700
++++ triton/lib/Target/LLVMIR/LLVMIRTranslation.cpp	2023-04-03 04:08:49.000000000 -0700
+@@ -1,5 +1,17 @@
+ #include "triton/Target/LLVMIR/LLVMIRTranslation.h"
+ 
++#include <dlfcn.h>
++
++#include <filesystem>
++#include <iterator>
++
++#include "llvm/ADT/APInt.h"
++#include "llvm/ADT/STLExtras.h"
++#include "llvm/ADT/SmallVector.h"
++#include "llvm/IR/Constants.h"
++#include "llvm/IRReader/IRReader.h"
++#include "llvm/Linker/Linker.h"
++#include "llvm/Support/SourceMgr.h"
+ #include "mlir/Conversion/Passes.h"
+ #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+ #include "mlir/ExecutionEngine/ExecutionEngine.h"
+@@ -13,20 +25,10 @@
+ #include "mlir/Target/LLVMIR/Export.h"
+ #include "mlir/Target/LLVMIR/LLVMTranslationInterface.h"
+ #include "mlir/Transforms/Passes.h"
++#include "third_party/py/triton/google/find_cuda.h"
+ #include "triton/Conversion/TritonGPUToLLVM/ArithToIndexPass.h"
+ #include "triton/Conversion/TritonGPUToLLVM/TritonGPUToLLVMPass.h"
+ #include "triton/Tools/Sys/GetEnv.hpp"
+-#include "llvm/ADT/APInt.h"
+-#include "llvm/ADT/STLExtras.h"
+-#include "llvm/ADT/SmallVector.h"
+-#include "llvm/IR/Constants.h"
+-#include "llvm/IRReader/IRReader.h"
+-#include "llvm/Linker/Linker.h"
+-#include "llvm/Support/SourceMgr.h"
+-#include "third_party/py/triton/google/find_cuda.h"
+-#include <dlfcn.h>
+-#include <filesystem>
+-#include <iterator>
+ 
+ namespace mlir {
+ namespace triton {
+@@ -284,7 +286,10 @@
+ translateTritonGPUToLLVMIR(llvm::LLVMContext *llvmContext,
+                            mlir::ModuleOp module, int computeCapability) {
+   mlir::PassManager pm(module->getContext());
+-  applyPassManagerCLOptions(pm);
++  if (failed(applyPassManagerCLOptions(pm))) {
++    llvm::errs() << "failed to apply pass manager CL options";
++    return nullptr;
++  }
+   auto printingFlags = mlir::OpPrintingFlags();
+   printingFlags.elideLargeElementsAttrs(16);
+   pm.enableIRPrinting(
