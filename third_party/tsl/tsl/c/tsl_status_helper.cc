@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tsl/c/tsl_status_helper.h"
 
+#include <string>
+
 #include "tsl/c/tsl_status_internal.h"
 #include "tsl/platform/errors.h"
 
@@ -22,7 +24,8 @@ namespace tsl {
 
 void Set_TSL_Status_from_Status(TSL_Status* tsl_status, const Status& status) {
   absl::StatusCode code = static_cast<absl::StatusCode>(status.code());
-  const char* message(status.error_message().c_str());
+  std::string error_message(status.message());
+  const char* message(error_message.c_str());
 
   switch (code) {
     case absl::StatusCode::kOk:
