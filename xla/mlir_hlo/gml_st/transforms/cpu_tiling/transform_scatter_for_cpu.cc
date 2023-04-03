@@ -49,8 +49,9 @@ struct TileScatterPattern : public OpRewritePattern<thlo::ScatterOp> {
     opts.setTileSizeComputationFunction([](OpBuilder &b, Operation *op) {
       OpBuilder::InsertionGuard guard(b);
       b.setInsertionPointToStart(
-          &op->getParentOfType<func::FuncOp>().getBody().front());
-
+          &op->getParentWithTrait<OpTrait::IsIsolatedFromAbove>()
+               ->getRegion(0)
+               .front());
       auto loops = cast<TilingInterface>(op).getLoopIteratorTypes();
       return SmallVector<Value>(
           loops.size(), b.create<arith::ConstantIndexOp>(op->getLoc(), 1));
