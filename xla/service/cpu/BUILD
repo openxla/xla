@@ -915,6 +915,7 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
+        "@ducc",
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
         "//xla:types",
@@ -1039,6 +1040,7 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
+        "@ducc",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/base:core_headers",
