@@ -815,7 +815,7 @@ blas::BlasSupport* GpuExecutor::CreateBlas() {
                                                         plugin_config_.blas());
   if (!status.ok()) {
     LOG(ERROR) << "Unable to retrieve BLAS factory: "
-               << status.status().error_message();
+               << status.status().message();
     return nullptr;
   }
 
@@ -829,7 +829,7 @@ dnn::DnnSupport* GpuExecutor::CreateDnn() {
                                                        plugin_config_.dnn());
   if (!status.ok()) {
     LOG(ERROR) << "Unable to retrieve DNN factory: "
-               << status.status().error_message();
+               << status.status().message();
     return nullptr;
   }
 
@@ -843,7 +843,7 @@ fft::FftSupport* GpuExecutor::CreateFft() {
                                                        plugin_config_.fft());
   if (!status.ok()) {
     LOG(ERROR) << "Unable to retrieve FFT factory: "
-               << status.status().error_message();
+               << status.status().message();
     return nullptr;
   }
 
@@ -857,7 +857,7 @@ rng::RngSupport* GpuExecutor::CreateRng() {
                                                        plugin_config_.rng());
   if (!status.ok()) {
     LOG(ERROR) << "Unable to retrieve RNG factory: "
-               << status.status().error_message();
+               << status.status().message();
     return nullptr;
   }
 
