@@ -105,16 +105,16 @@ xla_cc_binary(
     srcs = ["xla_translate_opt_main.cc"],
     deps = [
         ":mhlo_to_lhlo_with_xla",  # buildcleaner: keep
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:AllPassesAndDialects",
-        "@llvm-project//mlir:MlirOptLib",
-        "@stablehlo//:register",
         "//xla/mlir/framework/ir:xla_framework",
         "//xla/mlir/framework/transforms:passes",
         "//xla/mlir_hlo:all_passes",
         "//xla/mlir_hlo:hlo_dialect_registration",
         "//xla/service:gpu_plugin",
         "//xla/stream_executor:stream_executor_impl",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AllPassesAndDialects",
+        "@llvm-project//mlir:MlirOptLib",
+        "@stablehlo//:register",
         "@tsl//tsl/platform:platform_port",
     ] + if_cuda(["//xla/stream_executor/cuda:cublas_plugin"]),
 )

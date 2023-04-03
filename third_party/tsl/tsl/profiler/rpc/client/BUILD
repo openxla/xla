@@ -116,9 +116,6 @@ cc_library(
         "//tensorflow/python/profiler/internal:__pkg__",
     ]),
     deps = [
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/time",
         "//tsl/platform:errors",
         "//tsl/platform:logging",
         "//tsl/platform:status",
@@ -126,6 +123,9 @@ cc_library(
         "//tsl/profiler/protobuf:profiler_analysis_cc_grpc_proto",
         "//tsl/profiler/protobuf:profiler_service_cc_grpc_proto",
         "//tsl/protobuf:error_codes_proto_impl_cc",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
     ] + tsl_grpc_cc_dependencies(),
     alwayslink = True,
 )
@@ -135,15 +135,15 @@ cc_library(
     testonly = 1,
     hdrs = ["profiler_client_test_util.h"],
     deps = [
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/time",
         "//tsl/platform:logging",
         "//tsl/platform:test",
         "//tsl/platform:types",
         "//tsl/profiler/lib:profiler_session",
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "//tsl/profiler/rpc:profiler_server_impl",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
     ] + tf_protos_profiler_service(),
 )
 
@@ -154,7 +154,6 @@ tsl_cc_test(
         ":profiler_client",
         ":profiler_client_impl",  # for oss
         ":profiler_client_test_util",
-        "@com_google_absl//absl/time",
         "//tsl/platform:env_impl",
         "//tsl/platform:errors",
         "//tsl/platform:status",
@@ -166,6 +165,7 @@ tsl_cc_test(
         "//tsl/profiler/rpc:profiler_server_impl",
         "//tsl/profiler/rpc:profiler_service_impl",
         "//tsl/profiler/utils:time_utils_impl",
+        "@com_google_absl//absl/time",
     ] + tf_protos_profiler_service(),
 )
 
@@ -198,7 +198,6 @@ tsl_cc_test(
         ":profiler_client_impl",  # for oss
         ":profiler_client_test_util",
         ":remote_profiler_session_manager",
-        "@com_google_absl//absl/time",
         "//tsl/platform:env_impl",
         "//tsl/platform:errors",
         "//tsl/platform:status",
@@ -211,5 +210,6 @@ tsl_cc_test(
         "//tsl/profiler/rpc:profiler_server_impl",
         "//tsl/profiler/rpc:profiler_service_impl",
         "//tsl/profiler/utils:time_utils_impl",
+        "@com_google_absl//absl/time",
     ] + tf_protos_profiler_service(),
 )

@@ -184,7 +184,6 @@ cc_library(
         "//tsl/profiler:internal",
     ]),
     deps = [
-        "@com_google_absl//absl/memory",
         "//tsl/platform:errors",
         "//tsl/platform:logging",
         "//tsl/platform:mutex",
@@ -192,6 +191,7 @@ cc_library(
         "//tsl/platform:types",
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "//tsl/profiler/protobuf:xplane_proto_cc",
+        "@com_google_absl//absl/memory",
     ] + if_not_android([
         ":profiler_collection",
         ":profiler_factory",
@@ -243,11 +243,11 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":traceme_encode",
-        "@com_google_absl//absl/strings",
         "//tsl/platform",
         "//tsl/platform:logging",
         "//tsl/platform:macros",
         "//tsl/platform:types",
+        "@com_google_absl//absl/strings",
     ] + if_not_android([
         "//tsl/profiler/backends/cpu:traceme_recorder",
         "//tsl/profiler/utils:time_utils",
@@ -259,10 +259,10 @@ cc_library(
     hdrs = ["nvtx_utils.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "@com_google_absl//absl/strings",
         "//tsl/platform:logging",
         "//tsl/platform:macros",
         "//tsl/platform:types",
+        "@com_google_absl//absl/strings",
     ] + if_not_android([
         "//tsl/profiler/backends/cpu:annotation_stack",
     ]),
@@ -273,9 +273,9 @@ cc_library(
     hdrs = ["scoped_annotation.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "@com_google_absl//absl/strings",
         "//tsl/platform:macros",
         "//tsl/platform:types",
+        "@com_google_absl//absl/strings",
     ] + if_not_android([
         ":nvtx_utils",
         "//tsl/profiler/backends/cpu:annotation_stack",

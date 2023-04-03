@@ -35,14 +35,14 @@ cc_library(
     srcs = ["grpc_util.cc"],
     hdrs = ["grpc_util.h"],
     deps = [
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings:cord",
         "//tsl/platform:protobuf",
         "//tsl/platform:random",
         "//tsl/platform:status",
         "//tsl/platform:stringpiece",
         "//tsl/platform:stringprintf",
         "//tsl/protobuf:distributed_runtime_payloads_proto_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:cord",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -82,7 +82,6 @@ cc_library(
     deps = [
         ":grpc_channel_common",
         ":grpc_util",
-        "@com_google_absl//absl/strings",
         "//tsl/lib/gtl:map_util",
         "//tsl/platform:errors",
         "//tsl/platform:logging",
@@ -96,6 +95,7 @@ cc_library(
         "//tsl/platform:types",
         "//tsl/protobuf:rpc_options_proto_cc",
         "//tsl/util:device_name_utils",
+        "@com_google_absl//absl/strings",
     ] + tsl_grpc_cc_dependencies(),
 )
 
