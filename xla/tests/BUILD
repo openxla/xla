@@ -857,6 +857,24 @@ xla_test(
 )
 
 xla_test(
+    name = "fft_test_single_threaded",
+    srcs = ["fft_test.cc"],
+    backend_args = {
+        "cpu": [
+            "--xla_cpu_multi_thread_eigen=false",
+        ],
+    },
+    deps = [
+        ":hlo_test_base",
+        ":test_macros_header",
+        ":test_utils",
+        ":xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+
+xla_test(
     name = "dot_operation_test",
     srcs = ["dot_operation_test.cc"],
     shard_count = 20,
