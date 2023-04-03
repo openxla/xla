@@ -1878,6 +1878,71 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_float_support",
+    srcs = ["gpu_float_support.cc"],
+    hdrs = ["gpu_float_support.h"],
+    deps = [
+        "//xla/service:float_support",
+    ],
+)
+
+cc_library(
+    name = "compile_module_to_llvm_ir",
+    srcs = [
+        "compile_module_to_llvm_ir.cc",
+    ],
+    hdrs = [
+        "compile_module_to_llvm_ir.h",
+    ],
+    deps = [
+        ":executable_proto_cc",
+        ":gpu_constants",
+        ":gpu_device_info",
+        ":gpu_executable",
+        ":gpu_float_support",
+        ":gpu_hlo_schedule",
+        ":ir_emitter",
+        ":metrics",
+        ":runtime_intrinsics",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/mlir/backends/gpu/transforms:passes",
+        "//xla/mlir/runtime/transforms:compilation_pipeline_gpu",
+        "//xla/mlir_hlo:transforms_gpu_passes",
+        "//xla/service:bitcast_dtypes_expander",
+        "//xla/service:buffer_assignment",
+        "//xla/service:convert_async_collectives_to_sync",
+        "//xla/service:dump",
+        "//xla/service:hlo_dataflow_analysis",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service:hlo_rematerialization",
+        "//xla/service:optimization_barrier_expander",
+        "//xla/service/llvm_ir:llvm_util",
+        "//xla/stream_executor",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/translate/hlo_to_mhlo:hlo_utils",
+        "//xla/translate/mhlo_to_hlo:location_exporter",
+        "//xla/translate/mhlo_to_lhlo_with_xla",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:AsmParser",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "gpu_compiler",
     srcs = [
         "gpu_compiler.cc",
@@ -1888,6 +1953,7 @@ cc_library(
     deps = [
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
+        ":compile_module_to_llvm_ir",
         ":conv_layout_normalization",
         ":dot_dimension_sorter",
         ":executable_proto_cc",
@@ -1900,6 +1966,7 @@ cc_library(
         ":gpu_conv_rewriter",
         ":gpu_device_info",
         ":gpu_executable",
+        ":gpu_float_support",
         ":gpu_hlo_cost_analysis",
         ":gpu_hlo_schedule",
         ":gpu_layout_assignment",
