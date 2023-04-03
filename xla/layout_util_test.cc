@@ -168,7 +168,7 @@ TEST_F(LayoutUtilTest, CopyLayoutNotCompatibleDifferentRank) {
   Shape dst = MakeShapeWithLayout(F32, {2, 3}, {1, 0});
   auto status = LayoutUtil::CopyLayoutBetweenShapes(src, &dst);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::ContainsRegex("cannot copy layout from shape"));
 }
 
@@ -187,7 +187,7 @@ TEST_F(LayoutUtilTest, CopyLayoutNotCompatibleTuple) {
 
   auto status = LayoutUtil::CopyLayoutBetweenShapes(src, &dst);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::ContainsRegex("cannot copy layout from shape"));
 }
 
@@ -199,10 +199,9 @@ TEST_F(LayoutUtilTest, CopyLayoutBogusLayout) {
 
   auto status = LayoutUtil::CopyLayoutBetweenShapes(src, &dst);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(
-      status.error_message(),
-      ::testing::ContainsRegex("layout minor_to_major field contains .* "
-                               "elements, but shape is rank"));
+  EXPECT_THAT(status.message(), ::testing::ContainsRegex(
+                                    "layout minor_to_major field contains .* "
+                                    "elements, but shape is rank"));
 }
 
 TEST_F(LayoutUtilTest, CopyTokenLayout) {
@@ -399,13 +398,13 @@ TEST_F(LayoutUtilTest, ValidateLayout_InvalidArrayLayout) {
   auto status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/false);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::HasSubstr("layout minor_to_major field "
                                    "contains 3 elements, but shape is rank 2"));
   status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/true);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::HasSubstr("layout minor_to_major field "
                                    "contains 3 elements, but shape is rank 2"));
 }
@@ -418,13 +417,13 @@ TEST_F(LayoutUtilTest, ValidateLayout_InvalidDimLevelTypes) {
   auto status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/false);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::HasSubstr("layout dim_level_types field "
                                    "contains 3 elements, but shape is rank 2"));
   status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/true);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::HasSubstr("layout dim_level_types field "
                                    "contains 3 elements, but shape is rank 2"));
 }
@@ -435,7 +434,7 @@ TEST_F(LayoutUtilTest, ValidateLayout_MissingArrayLayout) {
   auto status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/false);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::HasSubstr("shape f32[2,3] does not have a layout"));
   status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/true);
@@ -497,7 +496,7 @@ TEST_F(LayoutUtilTest, ValidateLayout_TupleSubshapesWithMissingLayouts) {
   auto status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/false);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::HasSubstr("shape f32[1,2] does not have a layout"));
   status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/true);
@@ -510,7 +509,7 @@ TEST_F(LayoutUtilTest, ValidateLayout_TupleSubshapesWithMissingLayouts) {
   status =
       LayoutUtil::ValidateLayoutInShape(shape, /*allow_missing_layouts=*/true);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(),
+  EXPECT_THAT(status.message(),
               ::testing::HasSubstr("layout minor_to_major field "
                                    "contains 3 elements, but shape is rank 1"));
 }
