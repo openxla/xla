@@ -2083,6 +2083,48 @@ xla_test(
 )
 
 xla_test(
+    name = "collective_ops_test_e2e",
+    srcs = ["collective_ops_test_e2e.cc"],
+    args = ["--xla_force_host_platform_device_count=4"],
+    backend_tags = {
+        # This test is tagged "manual" because it requires multiple GPUs, and
+        # Forge only supports single-GPU tests.  Guitar skips "manual" tests
+        # unless they're also tagged "guitar".
+        "gpu": [
+            "guitar",
+            "manual",
+            "multi_gpu",
+            "no_oss",
+            "notap",
+            "jitrt_executable",
+        ],
+        "cpu": [
+            "notsan",
+        ],
+    },
+    backends = [
+        "gpu",
+    ],
+    deps = [
+        ":client_library_test_base",
+        ":hlo_test_base",
+        ":literal_test_util",
+        ":test_macros_header",
+        ":test_utils",
+        ":xla_internal_test_main",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:test",
+        "//xla:test_helpers",
+        "//xla:xla_data_proto_cc",
+        "//xla/client:local_client",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_runner",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_test(
     name = "replicated_io_feed_test",
     srcs = ["replicated_io_feed_test.cc"],
     backend_tags = {
