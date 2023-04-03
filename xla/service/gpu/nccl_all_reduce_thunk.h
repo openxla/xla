@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_NCCL_ALL_REDUCE_THUNK_H_
 #define XLA_SERVICE_GPU_NCCL_ALL_REDUCE_THUNK_H_
 
-#include <memory>
 #include <optional>
 #include <vector>
 
@@ -24,7 +23,6 @@ limitations under the License.
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {

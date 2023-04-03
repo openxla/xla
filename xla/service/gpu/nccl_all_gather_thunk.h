@@ -21,7 +21,6 @@ limitations under the License.
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {

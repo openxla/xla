@@ -15,16 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/nccl_all_to_all_thunk.h"
 
-#include <chrono>  // NOLINT (required by TF interfaces)
 #include <cstdlib>
-#include <memory>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
-#include "absl/strings/str_format.h"
-#include "xla/layout_util.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
 #include "xla/shape_util.h"

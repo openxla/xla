@@ -26,10 +26,8 @@ limitations under the License.
 #include <memory>
 #include <numeric>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -84,7 +82,6 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/conditional_thunk.h"
@@ -141,7 +138,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/human_readable_json.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/protobuf/dnn.pb.h"
