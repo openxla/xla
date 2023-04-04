@@ -261,44 +261,6 @@ static ConvolutionDimensionNumbers VectorizeDnums(
 // cudnnReorderFilterAndBias.  Also marks that the filter + bias are reordered
 // in the conv's backend-config.
 Status ReorderInt8NchwVect(HloCustomCallInstruction* conv, XlaOp* operands) {
-  bool has_bias = conv->operand_count() > 2;
-  VLOG(1) << "Reordering filter" << (has_bias ? " and bias" : "")
-          << " (replacement for cudnnReorderFilterAndBias)";
-
-  auto builder = operands->builder();
-  ConvolutionDimensionNumbers dnums = conv->convolution_dimension_numbers();
-
-  // Update convolution backend config.
-  TF_ASSIGN_OR_RETURN(auto config,
-                      conv->backend_config<CudnnConvBackendConfig>());
-  config.set_reordered_int8_nchw_vect(true);
-  TF_RETURN_IF_ERROR(conv->set_backend_config(config));
-
-  // Reorder the filter.
-  TF_ASSIGN_OR_RETURN(Shape filter_shape, builder->GetShape(operands[1]));
-  TF_ASSIGN_OR_RETURN(auto reorder, CudnnInferTransposeForFilterReordering(
-                                        filter_shape, dnums));
-  XlaOp reshape = Reshape(reorder.transpose_shape, operands[1]);
-  XlaOp transpose = Transpose(reshape, reorder.permutation);
-  operands[1] = Reshape(reorder.result_shape, transpose);
-
-  // The reshape-transpose-reshape we did above makes sure the resulting filter
-  // has dimension numbers corresponding to "oihw?", so update them.
-  dnums.set_kernel_output_feature_dimension(0);
-  dnums.set_kernel_input_feature_dimension(1);
-  dnums.set_kernel_spatial_dimensions(0, 2);
-  dnums.set_kernel_spatial_dimensions(1, 3);
-  conv->set_convolution_dimension_numbers(dnums);
-
-  if (has_bias) {
-    // Reorder the bias.
-    TF_ASSIGN_OR_RETURN(Shape bias_shape, builder->GetShape(operands[2]));
-    TF_ASSIGN_OR_RETURN(reorder,
-                        CudnnInferTransposeForBiasReordering(bias_shape));
-    reshape = Reshape(reorder.transpose_shape, operands[2]);
-    transpose = Transpose(reshape, reorder.permutation);
-    operands[2] = Reshape(reorder.result_shape, transpose);
-  }
   return OkStatus();
 }
 
