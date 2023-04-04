@@ -5735,7 +5735,6 @@ xla_cc_test(
     deps = [
         ":hlo_verifier",
         ":while_loop_all_reduce_code_motion",
-        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
