@@ -394,12 +394,14 @@ tsl::Status CudnnSupport::Init() {
   ScopedActivateExecutorContext context(parent_);
 
   // Peek at the last error to give more information in cases of errors.
-  cudaError_t cerr = cudaPeekAtLastError();
-  if (cerr != cudaSuccess) {
-    // Printing the cerr value is useful when cudaGetErrorName doesn't work.
-    LOG(WARNING) << "There was an error before creating cudnn handle ("
-                 << cerr << "): " << cudaGetErrorName(cerr) << " : ",
-                 << cudaGetErrorString(cerr);
+  cudaError_t cuda_error = cudaPeekAtLastError();
+  if (cuda_error != cudaSuccess) {
+    // Printing the cuda_error value is useful when cudaGetErrorName doesn't work.
+    const std::string error = absl::StrCat(
+        "There was an error before creating cudnn handle (",
+        cuda_error, "): ", cudaGetErrorName(cuda_error), " : ",
+        cudaGetErrorString(cuda_error));
+    LOG(ERROR) << error;
     return tsl::Status(absl::StatusCode::kInternal, error);
   }
 
