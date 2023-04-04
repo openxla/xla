@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_comparison.h"
@@ -5724,22 +5725,48 @@ Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   // identity of the reduction function, we can therefore replace the reduce
   // with a simple reshape, ignoring the reduction function completely.
   if (ShapeUtil::ElementsIn(reduce_result_shape) ==
-          ShapeUtil::ElementsIn(arg->shape()) &&
-      (!options_.is_layout_sensitive() ||
-       options_.ReshapeIsBitcast(arg->shape(), reduce_result_shape))) {
-    if (multi_output_reduce) {
-      std::vector<HloInstruction*> reshaped_args;
-      int64_t inputs = reduce->input_count();
-      for (int64_t i = 0; i < inputs; ++i) {
-        reshaped_args.push_back(
-            reduce->AddInstruction(HloInstruction::CreateReshape(
-                reduce->shape().tuple_shapes(i), reduce->inputs()[i])));
+      ShapeUtil::ElementsIn(arg->shape())) {
+    if (!options_.is_layout_sensitive() ||
+        options_.ReshapeIsBitcast(arg->shape(), reduce_result_shape)) {
+      if (multi_output_reduce) {
+        std::vector<HloInstruction*> reshaped_args;
+        int64_t inputs = reduce->input_count();
+        for (int64_t i = 0; i < inputs; ++i) {
+          reshaped_args.push_back(
+              reduce->AddInstruction(HloInstruction::CreateReshape(
+                  reduce->shape().tuple_shapes(i), reduce->inputs()[i])));
+        }
+        return ReplaceWithNewInstruction(
+            reduce, HloInstruction::CreateTuple(reshaped_args));
+      } else {
+        return ReplaceWithNewInstruction(
+            reduce, HloInstruction::CreateReshape(reduce_result_shape, arg));
       }
-      return ReplaceWithNewInstruction(
-          reduce, HloInstruction::CreateTuple(reshaped_args));
-    } else {
-      return ReplaceWithNewInstruction(
-          reduce, HloInstruction::CreateReshape(reduce_result_shape, arg));
+    }
+    // Opportunistically change reduces reducing only one-sized dimensions into
+    // a not expensive copy and a bitcast.
+    if (reduce_result_shape.rank() >= 2) {
+      Layout target_layout = arg->shape().layout();
+      DimensionVector minor_to_major;
+      for (auto dim : arg->shape().layout().minor_to_major()) {
+        if (!absl::c_linear_search(reduce->dimensions(), dim)) {
+          minor_to_major.push_back(dim);
+        }
+      }
+      minor_to_major.insert(minor_to_major.end(), reduce->dimensions().begin(),
+                            reduce->dimensions().end());
+      *target_layout.mutable_minor_to_major() = std::move(minor_to_major);
+      if (!options_.LayoutChangeExpensive(arg->shape(), target_layout)) {
+        Shape target_shape = arg->shape();
+        *target_shape.mutable_layout() = std::move(target_layout);
+        simplifier_->UpdateLayout(&target_shape);
+        HloInstruction* copy = reduce->AddInstruction(
+            HloInstruction::CreateUnary(target_shape, HloOpcode::kCopy, arg));
+        CHECK(options_.ReshapeIsBitcast(copy->shape(), reduce_result_shape));
+        return ReplaceWithNewInstruction(
+            reduce, HloInstruction::CreateUnary(reduce_result_shape,
+                                                HloOpcode::kBitcast, copy));
+      }
     }
   }
 
