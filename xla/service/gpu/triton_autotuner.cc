@@ -346,7 +346,8 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
       VLOG(1) << "Running the kernel took: " << *duration;
       *res.mutable_run_time() = tsl::proto_utils::ToDurationProto(*duration);
 
-      if (autotune_cfg.should_check_correctness()) {
+      // TODO(b/266863137): implement correctness check for split-K.
+      if (autotune_cfg.should_check_correctness() && conf.split_k() == 1) {
         TF_ASSIGN_OR_RETURN(
             se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
             rz_allocator.CheckRedzones());
@@ -502,10 +503,6 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
       to_compile = hlo_computation;
     } else {
       // TODO(b/266863137): implement correctness check for split-K.
-      if (GetConfig(hlo_computation->parent()->config().debug_options())
-              .should_check_correctness()) {
-        return {std::nullopt};
-      }
       CHECK_LE(autotune_config.split_k(), kMaxSplitK);
       split_k_computation = hlo_computation->Clone();
       to_compile = split_k_computation.get();

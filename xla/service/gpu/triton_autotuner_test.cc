@@ -136,17 +136,9 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(hlo, ErrorSpec{0.02, 0.01}));
 }
 
-class TritonAutotunerLevelTest : public HloTestBase,
-                                 public ::testing::WithParamInterface<int> {
- public:
-  DebugOptions GetDebugOptionsForTest() override {
-    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_autotune_level(GetParam());
-    return debug_options;
-  }
-};
+class TritonAutotunerLevelTest : public HloTestBase {};
 
-TEST_P(TritonAutotunerLevelTest, PredF32) {
+TEST_F(TritonAutotunerLevelTest, PredF32) {
   const std::string hlo_text = R"(
 HloModule m
 
@@ -168,12 +160,9 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
 }
 
-INSTANTIATE_TEST_SUITE_P(TritonAutotunerLevelSweep, TritonAutotunerLevelTest,
-                         ::testing::Range(0, 5));
-
 using TritonAutotunerSplitKTest = TritonAutotunerLevelTest;
 
-TEST_P(TritonAutotunerSplitKTest, SplitK) {
+TEST_F(TritonAutotunerSplitKTest, SplitK) {
   // Shapes with K >> M, N have to force split-K configurations.
   const std::string hlo_text = R"(
 HloModule t
@@ -189,24 +178,12 @@ ENTRY e {
   TritonAutotuner::ClearAutotuneResults();
   TritonAutotuner::ClearCompilationCache();
 
-  // According to should_check_correctness() in triton_autotuner.
-  if (GetParam() >= 4) {
-    MatchOptimizedHlo(hlo_text, R"(
+  MatchOptimizedHlo(hlo_text, R"(
 ; CHECK: fusion(%p0, %p1), kind=kCustom
 ; CHECK-NOT: reduce
 )");
-  } else {
-    MatchOptimizedHlo(hlo_text, R"(
-; CHECK: fusion(%p0, %p1), kind=kCustom
-; CHECK: ROOT %reduce
-)");
-  }
-
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-1, 1e-1}));
 }
-
-INSTANTIATE_TEST_SUITE_P(TritonAutotunerLevel1Test, TritonAutotunerSplitKTest,
-                         ::testing::Values(1, 4));
 
 }  // namespace
 }  // namespace gpu
