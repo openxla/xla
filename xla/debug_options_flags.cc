@@ -77,6 +77,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   // TODO(b/258036887): Enable once CUDA Graphs are fully supported.
   opts.set_xla_gpu_cuda_graph_level(0);
+  opts.set_xla_gpu_cuda_graph_instantiation_threshold(2);
 
   // Despite the name, fast min/max on GPUs does not seem to be any faster, and
   // adds very counter-intuitive "NaN-swallowing" behavior.
@@ -735,6 +736,21 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_enable_async_collective_permute(),
       "Converts synchronous collective-permute ops into asynchronous."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_async_all_gather",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_async_all_gather),
+      debug_options->xla_gpu_enable_async_all_gather(),
+      "Converts synchronous all-gather ops into asynchronous."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_async_reduce_scatter",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_async_reduce_scatter),
+      debug_options->xla_gpu_enable_async_reduce_scatter(),
+      "Converts synchronous reduce-scatter ops into asynchronous."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_async_all_to_all",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_async_all_to_all),
+      debug_options->xla_gpu_enable_async_all_to_all(),
+      "Converts synchronous all-to-all ops into asynchronous."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_all_reduce_combine_threshold_bytes",
       int64_setter_for(
           &DebugOptions::set_xla_gpu_all_reduce_combine_threshold_bytes),
@@ -776,6 +792,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_cuda_graph_level(),
       "Set CUDA graph level. 0 = off; 1 = capture fusions and memcpys; 2 = "
       "capture convolutions and gemms; 3 = capture collectives."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_cuda_graph_instantiation_threshold",
+      int32_setter_for(
+          &DebugOptions::set_xla_gpu_cuda_graph_instantiation_threshold),
+      debug_options->xla_gpu_cuda_graph_instantiation_threshold(),
+      "Instantiate a cuda graph after the time a captured function is executed "
+      "reaches the threshold."));
   flag_list->push_back(
       tsl::Flag("xla_dump_disable_metadata",
                 bool_setter_for(&DebugOptions::set_xla_dump_disable_metadata),

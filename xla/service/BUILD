@@ -4594,6 +4594,7 @@ cc_library(
     deps = [
         ":heap_simulator",
         ":hlo_cost_analysis",
+        ":memory_space_assignment_proto_cc",
         ":memory_space_assignment_repacking",
         ":memory_space_assignment_tuning_utils",
         ":memory_space_assignment_utils",
@@ -5722,6 +5723,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
     ],
@@ -7098,4 +7100,11 @@ xla_cc_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ]),
+)
+
+tf_proto_library(
+    name = "memory_space_assignment_proto",
+    srcs = ["memory_space_assignment.proto"],
+    cc_api_version = 2,
+    make_default_target_header_only = True,
 )
