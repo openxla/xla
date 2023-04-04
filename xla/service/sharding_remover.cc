@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -34,6 +35,8 @@ namespace xla {
 StatusOr<bool> ShardingRemover::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  CHECK(module->config().num_partitions() == 1)
+      << "Number of partitions must be 1";
   bool changed = false;
 
   const absl::flat_hash_set<absl::string_view> to_remove_sharding_ops = {
@@ -52,6 +55,22 @@ StatusOr<bool> ShardingRemover::Run(
       }
       CHECK(instruction->operand_count() == 1)
           << "Sharding instruction must have exactly one operand";
+      if (instruction->custom_call_target() != "Sharding" &&
+          instruction->has_sharding() && !instruction->sharding().IsManual()) {
+        const int64_t num_tiles = instruction->sharding().TotalNumTiles();
+        CHECK(num_tiles == 1) << absl::StrFormat(
+            "Sharding instruction: %s must have exactly one tile, but it has "
+            "%d instead.",
+            instruction->ToString(), num_tiles);
+      }
+      const HloInstruction* operand = instruction->operand(0);
+      if (operand->has_sharding() && !operand->sharding().IsManual()) {
+        const int64_t num_tiles = operand->sharding().TotalNumTiles();
+        CHECK(num_tiles == 1) << absl::StrFormat(
+            "Operand: %s of sharding instruction: %s must have exactly one "
+            "tile, but it has %d instead.",
+            instruction->ToString(), operand->ToString(), num_tiles);
+      }
       TF_RETURN_IF_ERROR(
           instruction->ReplaceAllUsesWith(instruction->mutable_operand(0)));
       changed = true;
