@@ -3368,15 +3368,9 @@ cc_library(
     deps = [
         ":hlo_pass",
         ":op_expander_pass",
-        "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
