@@ -13,20 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "llvm/Target/TargetMachine.h"
-#include "xla/service/gpu/gpu_compiler.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
-#if GOOGLE_CUDA
-#include "xla/service/gpu/nvptx_compiler.h"
-#endif
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/status.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "tsl/platform/init_main.h"
-#include "tsl/platform/logging.h"
 #include "tsl/util/command_line_flags.h"
 
 const char* const kUsage = R"(

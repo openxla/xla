@@ -792,6 +792,7 @@ xla_cc_binary(
     deps = [
         "//xla:status",
         "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:compile_module_to_llvm_ir",
         "//xla/service/gpu:gpu_compiler",
         "//xla/service/gpu:gpu_device_info",
         "//xla/service/gpu:target_constants",
