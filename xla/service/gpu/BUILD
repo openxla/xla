@@ -2615,6 +2615,7 @@ xla_cc_test(
     srcs = if_cuda_is_configured(["buffer_comparator_test.cc"]),
     tags = tf_cuda_tests_tags(),
     deps = [
+        ":stream_executor_util",
         "//xla:shape_util",
         "//xla:types",
         "@tsl//tsl/platform:test",

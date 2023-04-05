@@ -16,10 +16,13 @@ limitations under the License.
 #include "xla/service/gpu/buffer_comparator.h"
 
 #include <complex>
+#include <cstdint>
 #include <limits>
 #include <string>
 
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/stream_executor_util.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/types.h"
 #include "tsl/platform/test.h"
@@ -253,6 +256,27 @@ TEST_F(BufferComparatorTest, TestMultiple) {
       rhs[i] = 0;
     }
   }
+}
+
+TEST_F(BufferComparatorTest, BF16) {
+  const int element_count = 3123;
+  int64_t rng_state = 0;
+
+  se::Stream stream(stream_exec_);
+  stream.Init();
+
+  se::ScopedDeviceMemory<Eigen::bfloat16> lhs =
+      stream_exec_->AllocateOwnedArray<Eigen::bfloat16>(element_count);
+  InitializeBuffer(&stream, BF16, &rng_state, *lhs.ptr());
+
+  se::ScopedDeviceMemory<Eigen::bfloat16> rhs =
+      stream_exec_->AllocateOwnedArray<Eigen::bfloat16>(element_count);
+  InitializeBuffer(&stream, BF16, &rng_state, *rhs.ptr());
+
+  BufferComparator comparator(ShapeUtil::MakeShape(BF16, {element_count}),
+                              HloModuleConfig());
+  EXPECT_FALSE(
+      comparator.CompareEqual(&stream, *lhs.ptr(), *rhs.ptr()).value());
 }
 
 }  // namespace
