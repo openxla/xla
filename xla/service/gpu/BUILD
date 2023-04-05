@@ -2,7 +2,6 @@
 #   GPU-specific components in XLA service implementation.
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -615,7 +614,6 @@ tsl_gpu_library(
         ":nccl_utils",
         ":thunk",
         "//xla:shape_util",
-        "//xla:status",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -625,11 +623,8 @@ tsl_gpu_library(
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
         "//xla/service/llvm_ir:llvm_util",
-        "//xla/stream_executor",
-        "//xla/stream_executor/gpu:gpu_activation",
         "//xla/stream_executor/gpu:gpu_activation_header",
         "//xla/stream_executor/gpu:gpu_stream",
-        "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/translate/hlo_to_mhlo:hlo_utils",
         "//xla/translate/mhlo_to_hlo:attribute_exporter",
         "//xla/translate/mhlo_to_hlo:type_to_shape",
@@ -643,17 +638,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/synchronization",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:logging",
-    ] + if_nccl([":all_reduce_kernel"]),
-)
-
-cuda_library(
-    name = "all_reduce_kernel",
-    srcs = if_cuda_is_configured(["all_reduce_kernel.cu.cc"]),
-    hdrs = if_cuda_is_configured(["all_reduce_kernel.h"]),
-    compatible_with = [],
-    tags = ["manual"],  # only builds if_nccl.
-    deps = if_cuda_is_configured(["@local_config_nccl//:nccl"]),
-    alwayslink = 1,
+    ],
 )
 
 # Empty library to implement nested dependency conditions.
