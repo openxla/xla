@@ -380,6 +380,7 @@ cc_library(
         ":launch_dimensions",
         ":matmul_utils",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service/llvm_ir:llvm_util",
@@ -414,7 +415,7 @@ cc_library(
 
 xla_test(
     name = "ir_emitter_triton_test",
-    srcs = ["ir_emitter_triton_test.cc"],
+    srcs = if_cuda_is_configured(["ir_emitter_triton_test.cc"]),
     backend_tags = {"gpu": [
         "requires-gpu-sm70",
     ]},
@@ -423,6 +424,7 @@ xla_test(
     ],
     tags = ["nomac"],
     deps = [
+        ":gpu_device_info",
         ":ir_emitter_triton",
         "//xla:comparison_util",
         "//xla:xla_data_proto_cc",
@@ -432,8 +434,12 @@ xla_test(
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform/default/build_config:cublas_plugin",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 
