@@ -1020,6 +1020,7 @@ cc_library(
     deps = [
         ":ir_emission_utils",
         ":matmul_utils",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
         "//xla:util",
@@ -1031,6 +1032,8 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
