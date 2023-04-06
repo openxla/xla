@@ -262,7 +262,9 @@ void EigenFftImpl(const EigenDevice& device, void* out, void* operand,
       abort();
   }
 }
-void DuccFftImpl(void *out, void *in, internal::FftType fft_type,
+
+// For now, we will use Eigen thread pools via `EigenDevice`
+void DuccFftImpl(bool use_thread_pool, void *out, void *in, internal::FftType fft_type,
                  bool double_precision, int32_t fft_rank, int64_t input_batch, 
                  int64_t fft_length0, int64_t fft_length1, int64_t fft_length2);
 

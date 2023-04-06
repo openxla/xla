@@ -7,8 +7,7 @@ namespace xla {
 using shape_t = ducc0::fmav_info::shape_t;
 using stride_t = ducc0::fmav_info::stride_t;
 
-// TODO: add thread pool
-void DuccFftImpl(void *out, void *in, internal::FftType fft_type,
+void DuccFftImpl(bool use_thread_pool, void *out, void *in, internal::FftType fft_type,
                  bool double_precision, int32_t fft_rank, int64_t input_batch, 
                  int64_t fft_length0, int64_t fft_length1, int64_t fft_length2) {
   // What we do: similar to the Eigen-based implementation we reinterpret 
@@ -16,6 +15,7 @@ void DuccFftImpl(void *out, void *in, internal::FftType fft_type,
   // to the last out/in shape axis for R2C and C2R respectively.
   //
   // TODO: convert this to generics?
+  std::ignore = use_thread_pool;
   auto forward = fft_type == internal::FftType::FFT || fft_type == internal::FftType::RFFT;
   shape_t shape;  
   shape_t axes;

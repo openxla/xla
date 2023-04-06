@@ -16,8 +16,11 @@ cc_library(
         "src/ducc0/infra/useful_macros.h",
         "src/ducc0/math/cmplx.h",
         "src/ducc0/math/unity_roots.h",
+        "src/ducc0/external/ducc0_custom_lowlevel_threading.h"
     ],
-    hdrs = ["src/ducc0/fft/fft.h"],
+    hdrs = [
+        "src/ducc0/fft/fft.h",
+    ],
     copts = [
         "-fexceptions",
         "-ffast-math",
@@ -26,5 +29,7 @@ cc_library(
     include_prefix = "ducc",
     includes = [
         "src",
+        "src/ducc0/external",
     ],
+    defines = ["DUCC0_NO_LOWLEVEL_THREADING"]
 )
