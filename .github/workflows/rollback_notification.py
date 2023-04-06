@@ -52,7 +52,7 @@ def get_associated_prs(
   regex = re.compile(r"PR #(\d+)")
   for commit_hash in commit_hashes:
     response = api.get_commit("openxla/xla", commit_hash)
-    message = response.json()["commit"]["message"]
+    message = response["commit"]["message"]
     if maybe_match := regex.match(message):
       pr_number = maybe_match.group(1)
       print(f"Found PR #{pr_number} associated with commit hash {commit_hash}")
