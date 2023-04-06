@@ -2162,6 +2162,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/hlo/experimental/auto_sharding",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms:hlo_constant_splitter",
         "//xla/mlir/backends/gpu/transforms:passes",
