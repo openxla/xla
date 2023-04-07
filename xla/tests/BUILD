@@ -2118,7 +2118,6 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/client:local_client",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_matchers",
         "//xla/service:hlo_runner",
         "@tsl//tsl/platform:test",
     ],

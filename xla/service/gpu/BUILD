@@ -2007,6 +2007,7 @@ cc_library(
         "//xla/service:all_reduce_folder",
         "//xla/service:all_reduce_promotion",
         "//xla/service:all_reduce_reassociate",
+        "//xla/service:all_to_all_decomposer",
         "//xla/service:async_collective_creator",
         "//xla/service:batchnorm_expander",
         "//xla/service:bitcast_dtypes_expander",
