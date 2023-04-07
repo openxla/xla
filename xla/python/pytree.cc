@@ -409,7 +409,14 @@ py::list PyTreeDef::FlattenUpTo(py::handle xs) const {
         break;
 
       case PyTreeKind::kNone:
-        break;
+        if (object.is_none()) {
+          break;
+        } else {
+          throw std::invalid_argument(
+              absl::StrFormat("If shallow structure is a None, input must also "
+                              "be a None. But got input type: %s.",
+                              py::repr(py::type::of(object))));
+        }
 
       case PyTreeKind::kTuple: {
         if (!PyTuple_CheckExact(object.ptr())) {
