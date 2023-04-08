@@ -3453,6 +3453,7 @@ cc_library(
     srcs = ["reshape_mover.cc"],
     hdrs = ["reshape_mover.h"],
     deps = [
+        ":hlo_creation_utils",
         ":hlo_pass",
         "//xla:literal",
         "//xla:permutation_util",
@@ -3717,6 +3718,11 @@ xla_cc_test(
     name = "reshape_mover_test",
     srcs = ["reshape_mover_test.cc"],
     deps = [
+        ":algebraic_simplifier",
+        ":hlo_pass",
+        ":hlo_verifier",
+        ":pattern_matcher",
+        ":pattern_matcher_gmock",
         ":reshape_mover",
         "//xla:literal",
         "//xla:shape_util",
@@ -3730,6 +3736,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/memory",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:logging",
     ],
 )
