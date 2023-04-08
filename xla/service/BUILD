@@ -115,6 +115,8 @@ xla_cc_test(
         ":async_collective_creator",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/lib/core:status_test_util",
