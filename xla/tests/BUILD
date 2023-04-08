@@ -1988,6 +1988,7 @@ xla_test(
     deps = [
         ":test_macros_header",
         "//xla:shape_util",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/client:local_client",
         "//xla/client:xla_builder",
