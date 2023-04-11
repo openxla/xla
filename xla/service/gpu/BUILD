@@ -464,13 +464,15 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "//xla/service/gpu/llvm_gpu_backend",
+        "//xla/stream_executor:device_memory",
         "//xla/stream_executor/gpu:asm_compiler_header",
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_timer_header",
         "//xla/stream_executor/gpu:redzone_allocator",
+        "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/util/proto:proto_utils",
-    ]) + ["//xla/stream_executor:device_memory"],
+    ]),
 )
 
 xla_test(
