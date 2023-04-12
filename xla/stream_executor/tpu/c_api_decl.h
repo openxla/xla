@@ -25,7 +25,6 @@ limitations under the License.
 extern "C" {
 #endif
 
-struct TSL_Status;
 typedef struct TSL_Status TF_Status;
 
 // Maximum number of array elements to inline into structs for performance.
@@ -327,10 +326,10 @@ typedef struct XLA_HloModuleConfig {
 
 typedef struct SE_HloExecutionProfile SE_HloExecutionProfile;
 
-struct SE_StreamExecutorList {
+typedef struct SE_StreamExecutorList {
   SE_StreamExecutor** exec;
   int count;
-};
+} SE_StreamExecutorList;
 
 typedef struct XLA_HloModuleGroup {
   TpuSerializedProto proto;
