@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 // TODO(b/238999986): Remove this.
 #include "xla/stream_executor/tpu/c_api_decl.h"
@@ -756,13 +757,13 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_LoadedExecutable_IsDeleted_Args, is_deleted);
 typedef PJRT_Error* PJRT_LoadedExecutable_IsDeleted(
     PJRT_LoadedExecutable_IsDeleted_Args* args);
 
-struct PJRT_Chunk {
+typedef struct PJRT_Chunk {
   void* data;
   size_t size;
   void (*deleter)(void* data, void* deleter_arg);
   // `deleter_arg` will be passed to `deleter` as `deleter_arg` argument.
   void* deleter_arg;
-};
+} PJRT_Chunk;
 
 // TODO(b/263390934) implement C API that calls `AddChunk` and other
 // `xla::CopyToDeviceStream`.
@@ -817,8 +818,8 @@ struct PJRT_ExecuteOptions {
   // functions must outlive the execution (but not the info structs or lists).
   PJRT_SendCallbackInfo** send_callbacks;
   PJRT_RecvCallbackInfo** recv_callbacks;
-  size_t num_send_ops = 0;
-  size_t num_recv_ops = 0;
+  size_t num_send_ops;
+  size_t num_recv_ops;
   // If non-zero, identifies this execution as part of a potentially
   // multi-device launch. This can be used to detect scheduling errors, e.g. if
   // multi-host programs are launched in different orders on different hosts,
