@@ -93,7 +93,6 @@ TAGS_FILTER="-no_oss,-oss_excluded,-gpu,-no_mac,-nomac,-mac_excluded"
 
 bazel test \
     --output_filter="" \
-    --nocheck_visibility \
     --keep_going \
     --config=nonccl \
     --build_tag_filters=$TAGS_FILTER  --test_tag_filters=$TAGS_FILTER \

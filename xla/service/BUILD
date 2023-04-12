@@ -188,8 +188,10 @@ cc_library(
         ":hlo_domain_map",
         ":hlo_pass",
         ":hlo_query",
+        "//xla:literal",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -199,10 +201,13 @@ xla_cc_test(
     srcs = ["all_reduce_reassociate_test.cc"],
     deps = [
         ":all_reduce_reassociate",
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -6400,6 +6405,8 @@ cc_library(
         ":global_device_id",
         ":pattern_matcher",
         "//xla:executable_run_options",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:statusor",
         "//xla:util",
         "//xla/hlo/ir:hlo",
