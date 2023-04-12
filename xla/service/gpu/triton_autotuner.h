@@ -15,6 +15,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_TRITON_AUTOTUNER_H_
 #define XLA_SERVICE_GPU_TRITON_AUTOTUNER_H_
 
+#include <memory>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/gpu_serializable_autotuner.h"
 #include "xla/service/hlo_pass_interface.h"
@@ -46,6 +48,11 @@ class TritonAutotuner : public HloModulePass {
   AutotuningConfig config_;
   tsl::thread::ThreadPool* thread_pool_;
 };
+
+// Extracts an HLO instruction into a new HLO module replacing its operands
+// with parameter instructions.
+std::unique_ptr<HloModule> ExtractInstructionIntoNewModule(
+    const HloInstruction& hlo);
 
 }  // namespace gpu
 }  // namespace xla
