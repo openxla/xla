@@ -105,6 +105,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_simplify_all_fp_conversions(true);
   opts.set_xla_dump_latency_hiding_schedule(false);
   opts.set_xla_gpu_enable_latency_hiding_scheduler(false);
+  opts.set_xla_gpu_lhs_enable_gpu_async_tracker(false);
 
   opts.set_xla_cpu_enable_mlir_tiling_and_fusion(true);
   opts.set_xla_cpu_enable_custom_matmul_tiling(false);
@@ -120,8 +121,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(false);
 
-  opts.set_xla_gpu_allow_all_reduce_kernel(false);
+  // Moving reduce-scatter out of while loops can incrase memory footprint, so
+  // turning it off by default.
+  opts.set_xla_gpu_enable_while_loop_reduce_scatter_code_motion(false);
 
+  opts.set_xla_gpu_collective_inflation_factor(1);
   return opts;
 }
 
@@ -772,6 +776,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "ReduceScatter-AllReduce-AllGather sequence, with the initial "
       "ReduceScatter being performed over all of the devices in the same host. "
       "Set to < 1 to disable all-reduce decomposition."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_while_loop_reduce_scatter_code_motion",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_enable_while_loop_reduce_scatter_code_motion),
+      debug_options->xla_gpu_enable_while_loop_reduce_scatter_code_motion(),
+      "Enable hoisting of reduce-scatter outside while loops."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_collective_inflation_factor",
+      int32_setter_for(&DebugOptions::set_xla_gpu_collective_inflation_factor),
+      debug_options->xla_gpu_collective_inflation_factor(),
+      "Inflation factor for collectives. If set to > 1, each XLA/GPU "
+      "collective will execute multiple times (will yield incorrect results)"));
+
   flag_list->push_back(
       tsl::Flag("xla_gpu_dump_llvmir",
                 bool_setter_for(&DebugOptions::set_xla_gpu_dump_llvmir),
@@ -915,6 +933,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_enable_latency_hiding_scheduler(),
                 "Enable latency-hiding scheduler for XLA:GPU"));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_lhs_enable_gpu_async_tracker",
+      bool_setter_for(&DebugOptions::set_xla_gpu_lhs_enable_gpu_async_tracker),
+      debug_options->xla_gpu_lhs_enable_gpu_async_tracker(),
+      "Enable GPU async tracker for latency-hiding scheduler in XLA:GPU"));
+  flag_list->push_back(tsl::Flag(
       "xla_partitioning_algorithm", setter_for_xla_partitioning_algorithm,
       DebugOptions::PartitioningAlgorithm_Name(
           debug_options->xla_partitioning_algorithm()),
@@ -937,11 +960,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_triton_gemm_any(),
                 "Use Triton-based matrix multiplication for any GEMM it "
                 "supports without filtering only faster ones."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_allow_all_reduce_kernel",
-      bool_setter_for(&DebugOptions::set_xla_gpu_allow_all_reduce_kernel),
-      debug_options->xla_gpu_allow_all_reduce_kernel(),
-      "Mark all reduce ops to use costum kernel if feasible."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

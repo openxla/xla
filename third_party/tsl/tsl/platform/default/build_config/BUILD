@@ -2,9 +2,9 @@
 # Platform-specific build configurations.
 
 load("//tsl/platform:rules_cc.bzl", "cc_library")
-load("//tsl:tsl.bzl", "tsl_copts")
+load("//tsl:tsl.bzl", "set_external_visibility", "tsl_copts")
 
-package(default_visibility = ["//tsl:internal"])
+package(default_visibility = set_external_visibility(["//tsl:internal"]))
 
 licenses(["notice"])  # Apache 2.0
 

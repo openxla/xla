@@ -18,20 +18,13 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
-#include "absl/algorithm/container.h"
-#include "absl/strings/str_join.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
-#include "xla/literal_util.h"
 #include "xla/shape_util.h"
-#include "xla/status_macros.h"
-#include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 bool AllToAllDecomposer::InstructionMatchesPattern(

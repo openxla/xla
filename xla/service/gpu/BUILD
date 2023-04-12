@@ -2,7 +2,6 @@
 #   GPU-specific components in XLA service implementation.
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -380,6 +379,7 @@ cc_library(
         ":launch_dimensions",
         ":matmul_utils",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service/llvm_ir:llvm_util",
@@ -414,7 +414,7 @@ cc_library(
 
 xla_test(
     name = "ir_emitter_triton_test",
-    srcs = ["ir_emitter_triton_test.cc"],
+    srcs = if_cuda_is_configured(["ir_emitter_triton_test.cc"]),
     backend_tags = {"gpu": [
         "requires-gpu-sm70",
     ]},
@@ -423,6 +423,7 @@ xla_test(
     ],
     tags = ["nomac"],
     deps = [
+        ":gpu_device_info",
         ":ir_emitter_triton",
         "//xla:comparison_util",
         "//xla:xla_data_proto_cc",
@@ -432,8 +433,12 @@ xla_test(
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform/default/build_config:cublas_plugin",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 
@@ -443,29 +448,53 @@ cc_library(
     hdrs = if_cuda_is_configured(["triton_autotuner.h"]),
     deps = if_cuda_is_configured([
         ":buffer_comparator",
+        ":compile_module_to_llvm_ir",
         ":gemm_rewriter_triton",
         ":gpu_asm_opts_util",
         ":gpu_device_info",
+        ":gpu_executable",
+        ":gpu_float_support",
+        ":gpu_fusible",
+        ":gpu_serializable_autotuner",
+        ":instruction_fusion",
         ":ir_emission_utils",
         ":ir_emitter_triton",
         ":launch_dimensions",
         ":stream_executor_util",
         ":target_constants",
         ":target_util",
-        ":gpu_serializable_autotuner",
+        ":thunk",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:ir_headers",
         "//xla:autotune_results_proto_cc",
+        "//xla:util",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:float_normalization",
+        "//xla/service:hlo_module_config",
         "//xla/service:hlo_pass",
         "//xla/service/gpu/llvm_gpu_backend",
+        "//xla/stream_executor:device_memory",
         "//xla/stream_executor/gpu:asm_compiler_header",
+        "//xla/stream_executor/gpu:gpu_asm_opts",
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_timer_header",
         "//xla/stream_executor/gpu:redzone_allocator",
+        "//xla/tools:hlo_extractor",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/protobuf:autotuning_proto_cc",
         "@tsl//tsl/util/proto:proto_utils",
-    ]) + ["//xla/stream_executor:device_memory"],
+    ]),
 )
 
 xla_test(
@@ -487,9 +516,9 @@ xla_test(
         "//xla/service:hlo_pass_pipeline",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
         "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
@@ -609,7 +638,6 @@ tsl_gpu_library(
         ":nccl_utils",
         ":thunk",
         "//xla:shape_util",
-        "//xla:status",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -619,11 +647,8 @@ tsl_gpu_library(
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
         "//xla/service/llvm_ir:llvm_util",
-        "//xla/stream_executor",
-        "//xla/stream_executor/gpu:gpu_activation",
         "//xla/stream_executor/gpu:gpu_activation_header",
         "//xla/stream_executor/gpu:gpu_stream",
-        "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/translate/hlo_to_mhlo:hlo_utils",
         "//xla/translate/mhlo_to_hlo:attribute_exporter",
         "//xla/translate/mhlo_to_hlo:type_to_shape",
@@ -637,17 +662,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/synchronization",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:logging",
-    ] + if_nccl([":all_reduce_kernel"]),
-)
-
-cuda_library(
-    name = "all_reduce_kernel",
-    srcs = if_cuda_is_configured(["all_reduce_kernel.cu.cc"]),
-    hdrs = if_cuda_is_configured(["all_reduce_kernel.h"]),
-    compatible_with = [],
-    tags = ["manual"],  # only builds if_nccl.
-    deps = if_cuda_is_configured(["@local_config_nccl//:nccl"]),
-    alwayslink = 1,
+    ],
 )
 
 # Empty library to implement nested dependency conditions.
@@ -1020,6 +1035,7 @@ cc_library(
     deps = [
         ":ir_emission_utils",
         ":matmul_utils",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
         "//xla:util",
@@ -1031,6 +1047,8 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -2464,14 +2482,12 @@ xla_cc_test(
     deps = [
         ":gpu_device_info",
         ":gpu_hlo_schedule",
-        "//xla:test_helpers",
-        "//xla:types",
         "//xla/hlo/ir:hlo",
         "//xla/service:gpu_plugin",
+        "//xla/service:hlo_query",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
     ],
@@ -2613,6 +2629,7 @@ xla_cc_test(
     srcs = if_cuda_is_configured(["buffer_comparator_test.cc"]),
     tags = tf_cuda_tests_tags(),
     deps = [
+        ":stream_executor_util",
         "//xla:shape_util",
         "//xla:types",
         "@tsl//tsl/platform:test",

@@ -21,7 +21,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/primitive_util.h"
-#include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_macros.h"
@@ -49,14 +48,17 @@ class CollectiveOpsTest : public HloTestBase {
   CollectiveOpsTest() : num_devices_(backend().device_count()) {
     VLOG(1) << "Running with " << num_devices_ << " devices";
   }
-  static void SetUpTestSuite() {
-    // Not needed structly, since this test exercises cross replica collective
-    // permute which does not use NCCL. But keeping it here for testing.
-    tsl::setenv("NCCL_LAUNCH_MODE", "PARALLEL", /*overwrite=*/1);
-    HloTestBase::SetUpTestSuite();
-  }
 
  protected:
+  DebugOptions GetDebugOptionsForTest() override {
+    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
+    // Disable async->sync collective conversion pass to enable unit testing
+    // of async collectives.
+    debug_options.add_xla_disable_hlo_passes(
+        "convert-async-collectives-to-sync");
+    return debug_options;
+  }
+
   std::unique_ptr<HloModule> MakeCrsModule(
       const Shape& shape, std::vector<std::vector<int64_t>> replica_groups,
       const HloModuleConfig& config, std::string op = "add",

@@ -20,7 +20,6 @@ limitations under the License.
 
 #include "tsl/platform/types.h"
 #include "tsl/profiler/convert/trace_container.h"
-#include "tsl/profiler/protobuf/trace_events.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {

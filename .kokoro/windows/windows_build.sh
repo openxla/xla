@@ -29,7 +29,6 @@ export PATH="$PATH:/c/Python38"
 TARGET_FILTER="-//xla/hlo/experimental/... -//xla/python_api/... -//xla/python/..."
 TAGS_FILTER="-no_oss,-oss_excluded,-gpu,-no_windows,-windows_excluded"
 /c/tools/bazel.exe test \
-  --nocheck_visibility \
   --keep_going \
   --build_tag_filters=$TAGS_FILTER  --test_tag_filters=$TAGS_FILTER \
   -- //xla/... $TARGET_FILTER |& grep -v "violates visibility of" \

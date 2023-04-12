@@ -272,8 +272,10 @@ cc_library(
     deps = [
         ":curl_http_request",
         ":http_request",
+        "//tsl/platform:env",
         "//tsl/platform:retrying_utils",
         "//tsl/platform:status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -487,6 +489,7 @@ tsl_cc_test(
     deps = [
         ":compute_engine_metadata_client",
         ":http_request_fake",
+        "//tsl/platform:env",
         "//tsl/platform:env_impl",
         "//tsl/platform:test",
         "//tsl/platform:test_main",

@@ -199,7 +199,7 @@ void CreateTritonPipeline(mlir::OpPassManager& pm,
                           int num_stages) {
   const int ccAsInt = cc.major * 10 + cc.minor;
   // Based on optimize_triton_ir() in
-  // @triton//:python/triton/compiler.py
+  // @triton//:python/triton/compiler/compiler.py
   pm.addPass(mlir::createInlinerPass());
   pm.addPass(mt::createCombineOpsPass());
   pm.addPass(mlir::createCanonicalizerPass());
@@ -207,10 +207,10 @@ void CreateTritonPipeline(mlir::OpPassManager& pm,
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
   pm.addPass(mlir::createSymbolDCEPass());
   // Based on ttir_to_ttgir() in
-  // @triton//:python/triton/compiler.py
+  // @triton//:python/triton/compiler/compiler.py
   pm.addPass(mt::createConvertTritonToTritonGPUPass(num_warps));
   // Based on optimize_ttgir() in
-  // @triton//:python/triton/compiler.py
+  // @triton//:python/triton/compiler/compiler.py
   pm.addPass(mlir::createTritonGPUCoalescePass());
   pm.addPass(mlir::createTritonGPURemoveLayoutConversionsPass());
   pm.addPass(mlir::createTritonGPUAccelerateMatmulPass(ccAsInt));
@@ -318,7 +318,7 @@ struct GeneralizeKernelSignaturePass
 
 // Variable naming: lhs [m, k] x rhs [k, n] -> out [m, n].
 // TODO(b/270937368): Split this up into smaller functions.
-std::optional<LaunchDimensions> MatMul(
+StatusOr<LaunchDimensions> MatMul(
     mlir::OpBuilder builder, const HloDotInstruction* dot_instr,
     mlir::func::FuncOp fn,
     const tensorflow::AutotuneResult::TritonGemmKey& config, int shmem_budget) {
@@ -446,9 +446,10 @@ std::optional<LaunchDimensions> MatMul(
   const int block_m = config.block_m();
   const int block_k = config.block_k();
   const int block_n = config.block_n();
-  CHECK_GE(block_m, 32);
-  CHECK_GE(block_k, 32);
-  CHECK_GE(block_n, 32);
+
+  CHECK_GE(block_m, 16);
+  CHECK_GE(block_k, 16);
+  CHECK_GE(block_n, 16);
 
   VLOG(3) << block_m << " " << block_k << " " << block_n << " "
           << config.num_warps() << " " << config.num_stages();
@@ -476,9 +477,8 @@ std::optional<LaunchDimensions> MatMul(
                                   block_k * config.num_stages() / 8;
   // TODO(b/266857785): Add dynamic shared memory size.
   if (required_shmem_size > shmem_budget) {
-    VLOG(2) << "Requires too much shared memory: " << required_shmem_size
-            << " B.";
-    return std::nullopt;
+    return ResourceExhausted("Requires too much shared memory: %d",
+                             required_shmem_size);
   }
 
   // TODO(b/266862493): Accumulator can be integer too.
@@ -687,17 +687,16 @@ std::optional<LaunchDimensions> MatMul(
       build_bcast(rm_cmp.getResult().cast<TensorValue>(), shape_m_n),
       build_bcast(rn_cmp.getResult().cast<TensorValue>(), shape_m_n));
 
-  b.create<mt::StoreOp>(out_ptrs, Cast(b, loc, acc_final, root_ty), mask);
+  b.create<mt::StoreOp>(out_ptrs, Cast(b, loc, acc_final, root_ty), mask,
+                        mt::CacheModifier::NONE, mt::EvictionPolicy::NORMAL);
   return launch_dimensions;
 }
 
-std::optional<LaunchDimensions> TritonWrapper(
+StatusOr<LaunchDimensions> TritonWrapper(
     absl::string_view fn_name, const HloComputation* hlo_computation,
     const se::CudaComputeCapability& cc, const GpuDeviceInfo& device_info,
     const AutotuneResult::TritonGemmKey& config, llvm::Module* llvm_module,
-    LaunchDimensionsGenerator generator) {
-  // TODO(b/264317991): Pass in a context instead if this becomes to slow.
-  mlir::MLIRContext mlir_context;
+    LaunchDimensionsGenerator generator, mlir::MLIRContext& mlir_context) {
   mlir_context.loadDialect<mt::TritonDialect>();
   mlir::OpBuilder b(&mlir_context);
   auto loc = mlir::NameLoc::get(b.getStringAttr(hlo_computation->name()));
@@ -732,12 +731,10 @@ std::optional<LaunchDimensions> TritonWrapper(
   fn.addEntryBlock();
   b.setInsertionPointToStart(&fn.front());
 
-  std::optional<LaunchDimensions> launch_dimensions =
-      generator(b, ::xla::Cast<HloDotInstruction>(root), fn, config,
-                device_info.shared_memory_per_block);
-  if (!launch_dimensions.has_value()) {
-    return std::nullopt;
-  }
+  TF_ASSIGN_OR_RETURN(LaunchDimensions launch_dimensions,
+                      generator(b, xla::Cast<HloDotInstruction>(root), fn,
+                                config, device_info.shared_memory_per_block));
+
   b.create<mlir::func::ReturnOp>(loc);
   CHECK(mlir::succeeded(mlir::verify(triton_module)));
 
@@ -789,13 +786,12 @@ std::optional<LaunchDimensions> TritonWrapper(
   VLOG(2) << "Shared memory usage: " << shared_mem_bytes << " B";
   // TODO(b/266857785): Add dynamic shared memory size.
   if (shared_mem_bytes > device_info.shared_memory_per_block) {
-    LOG(WARNING) << "Shared memory size limit exceeded.";
-    return std::nullopt;
+    return ResourceExhausted("Shared memory size limit exceeded.");
   }
-  launch_dimensions->SetSharedMemBytes(shared_mem_bytes);
+  launch_dimensions.SetSharedMemBytes(shared_mem_bytes);
 
-  std::unique_ptr<llvm::Module> ll_triton_module =
-      mt::translateLLVMToLLVMIR(&llvm_module->getContext(), triton_module);
+  std::unique_ptr<llvm::Module> ll_triton_module = mt::translateLLVMToLLVMIR(
+      &llvm_module->getContext(), triton_module, /*isROCM=*/false);
   LogAndVerify(ll_triton_module.get());
   for (auto& metadata :
        llvm::make_early_inc_range(ll_triton_module->named_metadata())) {

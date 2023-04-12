@@ -102,7 +102,8 @@ def mkl_deps():
     """
     return select({
         "@tsl//tsl/mkl:build_with_mkl_aarch64": ["@mkl_dnn_acl_compatible//:mkl_dnn_acl"],
-        "@tsl//tsl:linux_x86_64": ["@mkl_dnn_v1//:mkl_dnn"],
+        "@tsl//tsl:linux_x86_64_with_onednn_v2": ["@mkl_dnn_v1//:mkl_dnn"],
+        "@tsl//tsl:linux_x86_64_with_onednn_v3": ["@onednn_v3//:mkl_dnn"],
         "@tsl//tsl:windows": ["@mkl_dnn_v1//:mkl_dnn"],
         "//conditions:default": [],
     })

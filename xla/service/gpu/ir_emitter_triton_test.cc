@@ -13,12 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "xla/service/gpu/ir_emitter_triton.h"
+
 #include <string>
 
 #include "absl/strings/substitute.h"
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status_matchers.h"
+#include "tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -38,6 +45,59 @@ class TritonGemmTest : public GpuCodegenTest {
         .cuda_compute_capability();
   }
 };
+
+TEST_F(TritonGemmTest, FailIfTooMuchShmem) {
+  const std::string kHloText = R"(
+HloModule module, is_scheduled=true
+
+triton_gemm_dot {
+  p0 = s8[1024,1024] parameter(0)
+  p1 = f32[1024,1024] parameter(1)
+  c0 = f32[1024,1024] convert(p0)
+  ROOT dot.0 = f32[1024,1024] dot(c0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = s8[1024,1024] parameter(0)
+  p1 = f32[1024,1024] parameter(1)
+  ROOT r = f32[1024,1024] fusion(p0, p1),
+    kind=kCustom, calls=triton_gemm_dot
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kHloText));
+  const HloComputation* triton_dot_computation =
+      hlo_module->entry_computation()
+          ->root_instruction()
+          ->fused_instructions_computation();
+  const GpuDeviceInfo dev_info =
+      GetGpuDeviceInfo(backend().default_stream_executor());
+  llvm::LLVMContext llvm_ctx;
+  llvm::Module llvm_module("module", llvm_ctx);
+  mlir::MLIRContext mlir_context;
+
+  tensorflow::AutotuneResult::TritonGemmKey config;
+  config.set_block_m(512);
+  config.set_block_n(512);
+  config.set_block_k(512);
+  config.set_split_k(1);
+  config.set_num_stages(1);
+  config.set_num_warps(2);
+  EXPECT_THAT(
+      TritonWrapper("test_fn", triton_dot_computation,
+                    GetCudaComputeCapability(), dev_info, config, &llvm_module,
+                    &MatMul, mlir_context),
+      tsl::testing::StatusIs(tsl::error::RESOURCE_EXHAUSTED,
+                             "Requires too much shared memory: 1310720"));
+
+  config.set_block_m(32);
+  config.set_block_n(32);
+  config.set_block_k(32);
+  TF_EXPECT_OK(TritonWrapper("test_fn", triton_dot_computation,
+                             GetCudaComputeCapability(), dev_info, config,
+                             &llvm_module, &MatMul, mlir_context)
+                   .status());
+}
 
 TEST_F(TritonGemmTest, MultipleDims) {
   const std::string hlo_text = R"(
@@ -474,7 +534,7 @@ INSTANTIATE_TEST_SUITE_P(RewriteTestSuite, ParametrizedRewriteTest,
 // into Triton fusions.
 using CompareTest = TritonGemmTest;
 
-TEST_F(CompareTest, DifferentTilings) {
+TEST_F(CompareTest, DifferentTilingsProduceSameResult) {
   const char* hlo_text_ref = R"(
 HloModule t
 
@@ -489,7 +549,7 @@ ENTRY e {
   p0 = s8[101,202]{1,0} parameter(0)
   p1 = f32[202,303]{1,0} parameter(1)
   ROOT _ = f32[101,303] fusion(p0, p1), kind=kCustom, calls=triton_dot,
-    backend_config="{\"block_m\":\"128\",\"block_n\":\"64\",\"block_k\":\"32\",\"split_k\":\"1\",\"num_stages\":\"3\",\"num_warps\":\"8\"}"
+    backend_config="{\"block_m\":\"16\",\"block_n\":\"64\",\"block_k\":\"32\",\"split_k\":\"1\",\"num_stages\":\"3\",\"num_warps\":\"8\"}"
 })";
 
   const char* hlo_text_triton = R"(
@@ -618,7 +678,7 @@ ENTRY e {
   arg0 = bf16[512,16]{1,0} parameter(0)
   arg1 = bf16[512,256]{1,0} parameter(1)
   ROOT _ = bf16[16,256]{1,0} fusion(arg0, arg1), kind=kCustom, calls=triton_dot,
-    backend_config="{\"block_m\":\"128\",\"block_n\":\"32\",\"block_k\":\"64\",\"split_k\":\"1\",\"num_stages\":\"2\",\"num_warps\":\"4\"}"
+    backend_config="{\"block_m\":\"128\",\"block_n\":\"32\",\"block_k\":\"16\",\"split_k\":\"1\",\"num_stages\":\"2\",\"num_warps\":\"4\"}"
 }
 )";
 

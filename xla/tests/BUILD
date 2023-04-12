@@ -392,6 +392,7 @@ xla_test(
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
+        ":test_utils",
         ":verified_hlo_module",
         ":xla_internal_test_main",
         "//xla:literal",
@@ -401,9 +402,7 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/service:backend",
         "//xla/service:executable",
-        "@com_google_absl//absl/memory",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -675,17 +674,12 @@ xla_test(
     srcs = ["conditional_test.cc"],
     shard_count = 2,
     deps = [
+        ":client_library_test_base",
+        ":literal_test_util",
         ":test_macros_header",
-        "//xla:xla_data_proto_cc",
-        "//xla/client:global_data",
-        "//xla/client:local_client",
+        ":xla_internal_test_main",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
-        "//xla/tests:client_library_test_base",
-        "//xla/tests:literal_test_util",
-        "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -738,7 +732,10 @@ xla_test(
     name = "deallocation_test",
     srcs = ["deallocation_test.cc"],
     deps = [
+        ":client_library_test_base",
         ":test_macros_header",
+        ":test_utils",
+        ":xla_internal_test_main",
         "//xla:statusor",
         "//xla:test",
         "//xla:test_helpers",
@@ -746,8 +743,6 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
-        "//xla/tests:client_library_test_base",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -756,7 +751,9 @@ xla_test(
     name = "deconstruct_tuple_test",
     srcs = ["deconstruct_tuple_test.cc"],
     deps = [
+        ":client_library_test_base",
         ":test_macros_header",
+        ":xla_internal_test_main",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:statusor",
@@ -767,8 +764,6 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
-        "//xla/tests:client_library_test_base",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:test",
     ],
@@ -866,7 +861,6 @@ xla_test(
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
-        ":literal_test_util",
         ":test_macros_header",
         ":test_utils",
         ":xla_internal_test_main",
@@ -880,7 +874,6 @@ xla_test(
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
     ],
@@ -987,9 +980,9 @@ xla_test(
         ":client_library_test_base",
         ":hlo_test_base",
         ":test_macros_header",
+        ":xla_internal_test_main",
         "//xla:status_macros",
         "//xla:test",
-        "//xla/tests:xla_internal_test_main",
     ],
 )
 
@@ -1673,11 +1666,11 @@ xla_test(
     name = "reduce_hlo_test",
     srcs = ["reduce_hlo_test.cc"],
     deps = [
+        ":hlo_test_base",
         ":test_macros_header",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
+        ":test_utils",
+        ":xla_internal_test_main",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -1988,6 +1981,7 @@ xla_test(
     deps = [
         ":test_macros_header",
         "//xla:shape_util",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/client:local_client",
         "//xla/client:xla_builder",
@@ -2065,7 +2059,6 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:literal",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:test_helpers",
         "//xla:xla_data_proto_cc",
         "//xla/client:local_client",

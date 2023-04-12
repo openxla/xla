@@ -115,6 +115,8 @@ xla_cc_test(
         ":async_collective_creator",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/lib/core:status_test_util",
@@ -186,8 +188,10 @@ cc_library(
         ":hlo_domain_map",
         ":hlo_pass",
         ":hlo_query",
+        "//xla:literal",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -197,10 +201,13 @@ xla_cc_test(
     srcs = ["all_reduce_reassociate_test.cc"],
     deps = [
         ":all_reduce_reassociate",
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -3368,15 +3375,9 @@ cc_library(
     deps = [
         ":hlo_pass",
         ":op_expander_pass",
-        "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -5735,7 +5736,6 @@ xla_cc_test(
     deps = [
         ":hlo_verifier",
         ":while_loop_all_reduce_code_motion",
-        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
@@ -6405,6 +6405,8 @@ cc_library(
         ":global_device_id",
         ":pattern_matcher",
         "//xla:executable_run_options",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:statusor",
         "//xla:util",
         "//xla/hlo/ir:hlo",
