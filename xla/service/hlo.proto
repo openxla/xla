@@ -565,7 +565,7 @@ message HloModuleProto {
   // Store for paths in the module.  The primary target for this is
   // efficiently stored call stack file locations, but it can be used to
   // store other string data efficiently represented in a tree
-  PathTree path_tree = 16;
+  PathTree path_tree = 17;
 }
 
 // Serialization of LogicalBuffer.
