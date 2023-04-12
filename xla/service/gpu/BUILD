@@ -2465,7 +2465,6 @@ cc_library(
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_value",
-        "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_memory_scheduler",
         "//xla/service:hlo_ordering",
         "//xla/service:hlo_pass_pipeline",
