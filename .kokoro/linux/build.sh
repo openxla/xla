@@ -58,7 +58,6 @@ docker exec xla bazel --bazelrc=$RC_FILE \
         test \
         --build_tag_filters=$TAGS_FILTER  \
         --test_tag_filters=$TAGS_FILTER \
-        --nocheck_visibility \
         --keep_going \
         --profile=/tf/pkg/profile.json.gz \
         --config=nonccl \
@@ -75,7 +74,6 @@ docker exec xla bazel analyze-profile "/tf/pkg/profile.json.gz"
 docker exec xla bazel --bazelrc=$RC_FILE \
         build \
         --build_tag_filters=$TAGS_FILTER  \
-        --nocheck_visibility \
         --keep_going \
         --profile=/tf/pkg/profile.json.gz \
         --config=nonccl \
