@@ -76,7 +76,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cublaslt(false);
 
   // TODO(b/258036887): Enable once CUDA Graphs are fully supported.
-  opts.set_xla_gpu_cuda_graph_level(0);
+  opts.set_xla_gpu_cuda_graph_level(1);
   opts.set_xla_gpu_cuda_graph_instantiation_threshold(2);
 
   // Despite the name, fast min/max on GPUs does not seem to be any faster, and
