@@ -389,14 +389,14 @@ message OpMetadata {
   message OpCallStack {
     // Stack frame containing file and line number relating to the operator
     message CallStackFrame {
-      string source_file = 1;
+      int32 source_file_as_path_segment_id = 1;
       int32 source_line = 2;
     }
-    repeated CallStackFrame frame = 1;
+    repeated CallStackFrame call_stack_frame = 1;
   }
 
   // Call stack info for operator lowering
-  OpCallStack call_stack = 13;
+  OpCallStack op_call_stack = 13;
 }
 
 // Profile data from the execution of a computation.

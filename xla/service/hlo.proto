@@ -482,6 +482,23 @@ message CrossProgramPrefetch {
   int64 offset = 3;
 }
 
+// Tree of absolute paths segments used in xla_data OpMetadata.OpCallStack
+message PathTree {
+  // A segment of the path
+	message PathSegment {
+	  // The string for the path segment (e.g. 'home' in '/home/ubuntu/test.py')
+	  string name = 1;
+	  // Identifier / handle - must start from 1 (0 is reserved for 'no parent')
+	  int32 id = 2;
+	  // Parent handle - use zero for none (e.g. the root segment 'home')
+	  int32 parent_id = 3;
+	}
+
+  // Array of paths - note that in the example above using the path segment ID
+  // for 'test.py' uniquely describes the path for '/home/ubuntu/test.py'
+	repeated PathSegment path_segment = 1;
+}
+
 // Serialization of HloModule.
 message HloModuleProto {
   string name = 1;
@@ -544,6 +561,11 @@ message HloModuleProto {
 
   // DeviceAssignment object information.
   DeviceAssignmentProto device_assignment = 15;
+
+  // Store for paths in the module.  The primary target for this is
+  // efficiently stored call stack file locations, but it can be used to
+  // store other string data efficiently represented in a tree
+  PathTree path_tree = 16;
 }
 
 // Serialization of LogicalBuffer.
