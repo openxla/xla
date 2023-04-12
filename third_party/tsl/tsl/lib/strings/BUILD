@@ -1,3 +1,4 @@
+load("//tsl:tsl.bzl", "set_external_visibility")
 load("//tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
@@ -10,12 +11,12 @@ cc_library(
     name = "proto_serialization",
     srcs = ["proto_serialization.cc"],
     hdrs = ["proto_serialization.h"],
-    visibility = [
+    visibility = set_external_visibility([
         "//tensorflow/compiler/xla/python:__pkg__",
         "//tensorflow/compiler/xla/service:__pkg__",
         "//tensorflow/compiler/xla/stream_executor:__pkg__",
         "//tensorflow/core/lib/strings:__pkg__",
-    ],
+    ]),
     deps = [
         "//tsl/lib/gtl:inlined_vector",
         "//tsl/platform:hash",
