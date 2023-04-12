@@ -132,12 +132,7 @@ class GSPMDSharding : public XLACompatibleSharding {
         devices_(std::move(devices)),  // Implicitly converts a list to a tuple.
         op_sharding_(std::move(op_sharding)) {}
 
-  GSPMDSharding(pybind11::tuple devices, xla::OpSharding op_sharding)
-      : XLACompatibleSharding(/*num_devices=*/devices.size()),
-        devices_(std::move(devices)),
-        op_sharding_(std::move(op_sharding)) {}
-
-  const pybind11::tuple& devices() const { return devices_; }
+  const pybind11::list& devices() const { return devices_; }
   const xla::OpSharding& op_sharding() const { return op_sharding_; }
 
   size_t Hash() {
@@ -196,7 +191,7 @@ class GSPMDSharding : public XLACompatibleSharding {
     return a.hlo_sharding() == b.hlo_sharding();
   }
 
-  pybind11::tuple devices_;
+  pybind11::list devices_;
   xla::OpSharding op_sharding_;
 
   std::optional<size_t> hash_;
