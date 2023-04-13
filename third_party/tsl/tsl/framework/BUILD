@@ -255,6 +255,22 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "device_id_utils",
+    srcs = ["device_id_utils.cc"],
+    hdrs = [
+        "device_id_utils.h",
+    ],
+    deps = [
+        ":device_id_impl",
+        ":device_type",
+        "//tsl/platform:errors",
+        "//tsl/platform:status",
+        "//tsl/platform:str_util",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
 filegroup(
     name = "device_runtime_headers",
     srcs = [
@@ -396,5 +412,19 @@ exports_files(
         "cancellation.h",
         "numeric_types.h",
         "type_traits.h",
+    ],
+)
+
+tsl_cc_test(
+    name = "device_id_utils_test",
+    srcs = [
+        "device_id_utils_test.cc",
+    ],
+    deps = [
+        ":device_id_impl",
+        ":device_id_utils",
+        "//tsl/lib/core:status_test_util",
+        "//tsl/platform:status_matchers",
+        "//tsl/platform:test_main",
     ],
 )
