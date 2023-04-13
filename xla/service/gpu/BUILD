@@ -3231,6 +3231,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_asm_opts",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/rocm:rocm_helpers",
     ]),
 )
 
