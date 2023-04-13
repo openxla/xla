@@ -237,7 +237,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_device_info_test",
     srcs = if_cuda_is_configured(["gpu_device_info_test.cc"]),
-    tags = tf_cuda_tests_tags(),
+    tags = tf_cuda_tests_tags() + ["no_rocm"],
     deps = if_cuda_is_configured([
         ":gpu_device_info_for_tests",
         "@com_google_absl//absl/strings",
