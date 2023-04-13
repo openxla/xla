@@ -65,6 +65,7 @@ cc_library(
         ":location_exporter",
         ":type_to_shape",
         "//xla:comparison_util",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
