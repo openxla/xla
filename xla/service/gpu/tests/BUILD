@@ -811,7 +811,10 @@ xla_cc_binary(
         "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/stream_executor/cuda:cublas_plugin",
     ]) + if_rocm_is_configured([
+        "@tsl//tsl/platform:rocm_rocdl_path",
         "//xla/service/gpu:amdgpu_compiler_impl",
+        "//xla/stream_executor/rocm:rocblas_plugin",
+        "//xla/stream_executor/rocm:rocm_helpers",
     ]),
 )
 
