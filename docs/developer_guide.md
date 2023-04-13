@@ -60,14 +60,14 @@ Build for CPU:
 
 ```sh
 docker exec xla ./configure
-docker exec xla bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
+docker exec xla bazel build --test_output=all --spawn_strategy=sandboxed //xla/...
 ```
 
 Build for GPU:
 
 ```sh
 docker exec -e TF_NEED_CUDA=1 xla_gpu ./configure
-docker exec xla_gpu bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
+docker exec xla_gpu bazel build --test_output=all --spawn_strategy=sandboxed //xla/...
 ```
 
 Your first build will take quite a while because it has to build the entire

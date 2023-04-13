@@ -40,7 +40,7 @@ Using a docker container you can build XLA with CPU support using the following 
 
 ```
 docker exec xla ./configure
-docker exec xla bazel build //xla/...  --spawn_strategy=sandboxed --nocheck_visibility --test_output=all
+docker exec xla bazel build //xla/...  --spawn_strategy=sandboxed --test_output=all
 ```
 
 If you want to build XLA targets with CPU support without Docker you need to install gcc-10:
@@ -53,7 +53,7 @@ Then configure and build targets using the following commands:
 ```
 yes '' | GCC_HOST_COMPILER_PATH=/usr/bin/gcc-10 CC=/usr/bin/gcc-10 TF_NEED_ROCM=0 TF_NEED_CUDA=0 TF_CUDA_CLANG=0 ./configure
 
-bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
+bazel build --test_output=all --spawn_strategy=sandboxed //xla/...
 ```
 
 
@@ -70,7 +70,7 @@ To build XLA with GPU support use the following command:
 
 ```
 docker exec -e TF_NEED_CUDA=1 xla_gpu ./configure
-docker exec xla_gpu bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
+docker exec xla_gpu bazel build --test_output=all --spawn_strategy=sandboxed //xla/...
 ```
 
 If you want to build XLA targets with GPU support without Docker you need to install the following dependencies additional to CPU dependencies: [`cuda-11.2`](https://developer.nvidia.com/cuda-11.2.2-download-archive), [`cuDNN-8.1`](https://developer.nvidia.com/cudnn).
@@ -80,7 +80,7 @@ Then configure and build targets using the following commands:
 ```
 yes '' | GCC_HOST_COMPILER_PATH=/usr/bin/gcc-10 CC=/usr/bin/gcc-10 TF_NEED_ROCM=0 TF_NEED_CUDA=1 TF_CUDA_CLANG=0 ./configure
 
-bazel build --test_output=all --spawn_strategy=sandboxed --nocheck_visibility //xla/...
+bazel build --test_output=all --spawn_strategy=sandboxed //xla/...
 ```
 
 

@@ -65,8 +65,7 @@ docker exec xla bazel --bazelrc=$RC_FILE \
         --config=rbe \
         --jobs=150 \
         $ADDITIONAL_FLAGS \
-        -- //xla/... //build_tools/... $TARGET_FILTER \
-                |& grep -v "violates visibility of"
+        -- //xla/... //build_tools/... $TARGET_FILTER
 
 # Print build time statistics, including critical path.
 docker exec xla bazel analyze-profile "/tf/pkg/profile.json.gz"
@@ -80,8 +79,7 @@ docker exec xla bazel --bazelrc=$RC_FILE \
         --config=rbe \
         --jobs=150 \
         $ADDITIONAL_FLAGS \
-        -- //xla/... //build_tools/... $TARGET_FILTER \
-                |& grep -v "violates visibility of"
+        -- //xla/... //build_tools/... $TARGET_FILTER
 
 docker exec xla bazel analyze-profile "/tf/pkg/profile.json.gz"
 # Stop container

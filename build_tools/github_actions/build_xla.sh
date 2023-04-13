@@ -20,7 +20,7 @@ echo "XLA run_hlo_module script is running..."
 # Build run_hlo_module
 build_start_time="$(date +%s)"
 echo "run_hlo_module build start time: ${build_start_time}"
-bazel build -c opt --nocheck_visibility --keep_going xla/tools:run_hlo_module
+bazel build -c opt --keep_going xla/tools:run_hlo_module
 build_end_time="$(date +%s)"
 echo "run_hlo_module build end time: ${build_end_time}"
 build_time="$((build_end_time - build_start_time))"
@@ -31,7 +31,7 @@ num_iterations=5
 run_start_time="$(date +%s)"
 echo "run_hlo_module execution start time: ${run_start_time}"
 # TODO(zacmustin): use `run_hlo_module`'s timing utils instead of `date`.
-bazel run -c opt --nocheck_visibility xla/tools:run_hlo_module -- \
+bazel run -c opt xla/tools:run_hlo_module -- \
     --input_format=hlo \
     --platform=CPU \
     --iterations=$num_iterations \
