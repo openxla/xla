@@ -223,6 +223,12 @@ void DefRepeatedProperty(py::class_<T>& cls, const char* name,
       });
 }
 
+template <typename T>
+py::array XlaArrayToNumpyArray(const Array<T>& data,
+                               pybind11::handle base = pybind11::handle()) {
+  return py::array(py::dtype::of<T>(), data.dimensions(), data.data(), base);
+}
+
 }  // namespace
 
 void BuildXlaCompilerSubmodule(py::module& m) {
@@ -886,6 +892,10 @@ void BuildXlaCompilerSubmodule(py::module& m) {
       .def("is_replicated", &xla::HloSharding::IsReplicated)
       .def("tile", [](const xla::HloSharding& self,
                       xla::Shape shape) { return self.TileShape(shape); })
+      .def("tile_assignment",
+           [](const xla::HloSharding& a) {
+             return XlaArrayToNumpyArray(a.tile_assignment());
+           })
       .def("__repr__",
            [](const xla::HloSharding& self) { return self.ToString(); })
       .def("to_proto", &xla::HloSharding::ToProto);
