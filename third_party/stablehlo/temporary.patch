@@ -12,4 +12,45 @@ diff --ruN a/stablehlo/stablehlo/integrations/python/mlir/dialects/stablehlo.py 
 +    is still forward compatible with.
 +  """
 +  return "0.9.0"
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+--- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
++++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+@@ -494,7 +494,7 @@
+ // users of this op if any updates to its results have happened during execution
+ // of the function.
+ LogicalResult refineReturnTypes(PatternRewriter& rewriter, Operation* op,
+-                                ArrayRef<Type> types) {
++                                TypeRange types) {
+   if (failed(refineValues(rewriter, op, op->getResults(), types)))
+     return failure();
+ 
+@@ -676,6 +676,20 @@
+       refinements.emplace_back(refinement);
+     }
+     return refineReturnTypes(rewriter, op, refinements);
++  }
++};
++
++struct RefineCustomCallShardingOpPattern : public OpRewritePattern<CustomCallOp> {
++  using OpRewritePattern::OpRewritePattern;
++  LogicalResult matchAndRewrite(CustomCallOp op,
++                                PatternRewriter& rewriter) const override {
++    if (op.getCallTargetName() != "Sharding")
++      return rewriter.notifyMatchFailure(
++          op, "not a Sharding custom_call op");
++    if (op.getNumOperands() != 1 || op.getNumResults() != 1)
++      return rewriter.notifyMatchFailure(
++          op, "Sharding custom_call expects one argument and one result");
++    return refineReturnTypes(rewriter, op, op.getOperandTypes());
+   }
+ };
+ 
+@@ -1091,6 +1105,7 @@
+     patterns.add<RefineConvertOpPattern>(&getContext());
+     patterns.add<RefineConvolutionOpPattern>(&getContext());
+     patterns.add<RefineCustomCallOpPattern>(&getContext());
++    patterns.add<RefineCustomCallShardingOpPattern>(&getContext());
+     patterns.add<RefineDotGeneralOpPattern>(&getContext());
+     patterns.add<RefineDynamicBroadcastInDimOpPattern>(&getContext());
+     patterns.add<RefineDynamicConvOpPattern>(&getContext());
 
