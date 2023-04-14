@@ -1079,14 +1079,15 @@ PjRtFuture<Status> TfrtCpuBuffer::ToLiteral(MutableLiteralBase* literal) {
     if (!on_device_shape().IsTuple()) {
       const std::shared_ptr<MaybeOwningCpuMemory>& b =
           device_buffer->Buffers()[0];
-      std::memcpy(literal->untyped_data(), b->data(), b->size());
+      std::memcpy(literal->untyped_data(), b->data(), literal->size_bytes());
     } else {
       // Tuple case.
       int num_leaves = literal->shape().tuple_shapes().size();
       for (int i = 0; i < num_leaves; ++i) {
         const std::shared_ptr<MaybeOwningCpuMemory>& b =
             device_buffer->Buffers()[i];
-        std::memcpy(literal->untyped_data({i}), b->data(), b->size());
+        std::memcpy(literal->untyped_data({i}), b->data(),
+                    literal->size_bytes({i}));
       }
     }
     // Unblock ToLiteral caller.
@@ -1115,14 +1116,16 @@ PjRtFuture<Status> TfrtCpuBuffer::ToLiteral(MutableLiteralBase* literal) {
           if (!on_device_shape().IsTuple()) {
             const std::shared_ptr<MaybeOwningCpuMemory>& b =
                 device_buffer->Buffers()[0];
-            std::memcpy(literal->untyped_data(), b->data(), b->size());
+            std::memcpy(literal->untyped_data(), b->data(),
+                        literal->size_bytes());
           } else {
             // Tuple case.
             int num_leaves = literal->shape().tuple_shapes().size();
             for (int i = 0; i < num_leaves; ++i) {
               const std::shared_ptr<MaybeOwningCpuMemory>& b =
                   device_buffer->Buffers()[i];
-              std::memcpy(literal->untyped_data({i}), b->data(), b->size());
+              std::memcpy(literal->untyped_data({i}), b->data(),
+                          literal->size_bytes({i}));
             }
           }
 
