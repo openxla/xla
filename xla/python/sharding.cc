@@ -162,8 +162,6 @@ void RegisterSharding(py::module& m) {
                                                    py::dynamic_attr())
       .def(py::init<py::list, xla::OpSharding>(), py::arg("devices"),
            py::arg("op_sharding"))
-      .def(py::init<py::tuple, xla::OpSharding>(), py::arg("devices"),
-           py::arg("op_sharding"))
       .def_property_readonly("_devices", &GSPMDSharding::devices)
       .def_property_readonly("_op_sharding", &GSPMDSharding::op_sharding);
 }
