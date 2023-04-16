@@ -819,6 +819,16 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "singleton_stream_manager",
+    srcs = ["singleton_stream_manager.cc"],
+    hdrs = ["singleton_stream_manager.h"],
+    deps = [
+        ":stream_executor_headers",
+        "@tsl//tsl/platform:mutex",
+    ],
+)
+
 xla_cc_test(
     name = "stream_test",
     size = "small",

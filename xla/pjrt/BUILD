@@ -127,6 +127,7 @@ cc_library(
         "//xla/client:local_client",
         "//xla/stream_executor",
         "//xla/stream_executor:event",
+        "//xla/stream_executor:singleton_stream_manager",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/profiler/lib:traceme",

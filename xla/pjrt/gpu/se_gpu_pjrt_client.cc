@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <fstream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -45,6 +46,7 @@ limitations under the License.
 #endif  // TENSORFLOW_USE_ROCM
 
 #include "xla/client/client_library.h"
+#include "xla/debug_options_flags.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/platform_util.h"
 #include "xla/statusor.h"
@@ -57,6 +59,10 @@ limitations under the License.
 
 namespace xla {
 namespace {
+
+static bool GpuUseGlobalStreams() {
+  return GetDebugOptionsFromFlags().xla_gpu_use_global_streams();
+}
 
 #if defined(GOOGLE_CUDA) && CUDA_VERSION >= 11020
 
@@ -165,7 +171,8 @@ BuildLocalDeviceStates(LocalClient* xla_client, bool asynchronous) {
         std::make_unique<LocalDeviceState>(
             executor, xla_client, LocalDeviceState::kComputeSynchronized,
             /*max_inflight_computations=*/32,
-            /*allow_event_reuse=*/true, /*use_callback_stream=*/true));
+            /*allow_event_reuse=*/true, /*use_callback_stream=*/true,
+            /*use_global_streams=*/GpuUseGlobalStreams()));
   }
   return std::move(addressable_devices);
 }
@@ -374,6 +381,7 @@ StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       auto allocator,
       GetStreamExecutorGpuDeviceAllocator(
           xla_client->platform(), allocator_config, local_device_states));
+
   auto host_memory_allocator =
       GetGpuHostAllocator(local_device_states.begin()->second->executor());
 

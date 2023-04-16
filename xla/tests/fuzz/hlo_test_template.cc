@@ -13,24 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdlib>
 #include <iostream>
 #include <ostream>
 #include <string>
-#include <vector>
 
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/env.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {
 
 class HloTest : public HloTestBase {};
 
-TEST_F(HloTest, HLO_TEST_NAME) {
-  std::string path_to_hlo =
-      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "tests", "fuzz", HLO_PATH);
+TEST_F(HloTest, HloTest) {
+  std::string path_to_hlo = std::getenv("HLO_PATH");
+  std::cout << path_to_hlo << std::endl;
   std::string hlo;
   TF_CHECK_OK(tsl::ReadFileToString(tsl::Env::Default(), path_to_hlo, &hlo));
   std::cerr << hlo << std::endl;

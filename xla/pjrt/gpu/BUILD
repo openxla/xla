@@ -41,6 +41,7 @@ cc_library(
     visibility = ["//xla/pjrt:friends"],
     deps = [
         ":gpu_helpers",
+        "//xla:debug_options_flags",
         "//xla:statusor",
         "//xla:util",
         "//xla/client:client_library",
@@ -50,6 +51,7 @@ cc_library(
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor:device_mem_allocator",
         "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:tf_allocator_adapter",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",

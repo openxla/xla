@@ -19,6 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/synchronization/mutex.h"
+#include "xla/stream_executor/singleton_stream_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -26,29 +27,45 @@ limitations under the License.
 
 namespace xla {
 
-LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
-                                   LocalClient* client,
-                                   AllocationModel allocation_model,
-                                   int max_inflight_computations,
-                                   bool allow_event_reuse,
-                                   bool use_callback_stream)
+LocalDeviceState::LocalDeviceState(
+    se::StreamExecutor* executor, LocalClient* client,
+    AllocationModel allocation_model, int max_inflight_computations,
+    bool allow_event_reuse, bool use_callback_stream, bool use_global_streams)
     : allocation_model_(allocation_model),
       event_pool_(allow_event_reuse),
       compute_semaphore_(
           /*capacity=*/max_inflight_computations),
       executor_(executor),
       client_(client),
+      use_global_streams_(use_global_streams),
       prng_seed_generator_(prng_seed_device_()),
       prng_seed_distribution_(std::numeric_limits<int>::min(),
                               std::numeric_limits<int>::max()) {
-  compute_stream_ = std::make_unique<se::Stream>(executor);
-  host_to_device_stream_ = std::make_unique<se::Stream>(executor);
-  compute_stream_->Init();
-  host_to_device_stream_->Init();
   if (use_callback_stream) {
     callback_stream_map_ =
         absl::flat_hash_map<se::Stream*, std::unique_ptr<se::Stream>>();
   }
+  execute_thread_ =
+      std::make_unique<WorkerThread>(tsl::Env::Default(), "py_xla_execute");
+  callback_thread_ =
+      std::make_unique<WorkerThread>(tsl::Env::Default(), "py_xla_callback");
+
+  if (use_global_streams_) {
+    const auto& se_stream_group = se::StreamManager::Global().GetOrCreate(
+        executor->device_ordinal(), executor, /*priority=*/0,
+        /*num_device_to_host_streams=*/kNumDeviceToHostStreams,
+        /*num_device_to_device_streams=*/kNumDeviceToDeviceStreams);
+    compute_stream_ = se_stream_group.compute_stream;
+    host_to_device_stream_ = se_stream_group.host_to_device_stream;
+    device_to_host_streams_ = se_stream_group.device_to_host_streams;
+    device_to_device_streams_ = se_stream_group.device_to_device_streams;
+    return;
+  }
+
+  compute_stream_ = std::make_unique<se::Stream>(executor);
+  host_to_device_stream_ = std::make_unique<se::Stream>(executor);
+  compute_stream_->Init();
+  host_to_device_stream_->Init();
   device_to_host_streams_.reserve(kNumDeviceToHostStreams);
   for (int i = 0; i < kNumDeviceToHostStreams; ++i) {
     auto stream = std::make_unique<se::Stream>(executor);
@@ -61,10 +78,6 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
     stream->Init();
     device_to_device_streams_.push_back(std::move(stream));
   }
-  execute_thread_ =
-      std::make_unique<WorkerThread>(tsl::Env::Default(), "py_xla_execute");
-  callback_thread_ =
-      std::make_unique<WorkerThread>(tsl::Env::Default(), "py_xla_callback");
 }
 
 LocalDeviceState::~LocalDeviceState() {

@@ -127,6 +127,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_while_loop_reduce_scatter_code_motion(false);
 
   opts.set_xla_gpu_collective_inflation_factor(1);
+
+  opts.set_xla_gpu_use_global_streams(true);
   return opts;
 }
 
@@ -969,6 +971,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_triton_gemm_any(),
                 "Use Triton-based matrix multiplication for any GEMM it "
                 "supports without filtering only faster ones."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_use_global_streams",
+      bool_setter_for(&DebugOptions::set_xla_gpu_use_global_streams),
+      debug_options->xla_gpu_use_global_streams(), "Use global streams."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

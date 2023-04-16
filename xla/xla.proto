@@ -501,7 +501,9 @@ message DebugOptions {
 
   bool xla_gpu_triton_gemm_any = 190;
 
-  // Next id: 207
+  bool xla_gpu_use_global_streams = 207;
+
+  // Next id: 208
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

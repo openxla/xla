@@ -91,7 +91,7 @@ class LocalDeviceState {
   LocalDeviceState(se::StreamExecutor* executor, LocalClient* client,
                    AllocationModel allocation_model,
                    int max_inflight_computations, bool allow_event_reuse,
-                   bool use_callback_stream);
+                   bool use_callback_stream, bool use_global_streams = false);
   virtual ~LocalDeviceState();
 
   se::StreamExecutor* executor() const { return executor_; }
@@ -173,10 +173,11 @@ class LocalDeviceState {
 
   se::StreamExecutor* const executor_;
   LocalClient* const client_;
-  std::unique_ptr<se::Stream> compute_stream_;
-  std::unique_ptr<se::Stream> host_to_device_stream_;
-  std::vector<std::unique_ptr<se::Stream>> device_to_host_streams_;
-  std::vector<std::unique_ptr<se::Stream>> device_to_device_streams_;
+  bool use_global_streams_;
+  std::shared_ptr<se::Stream> compute_stream_;
+  std::shared_ptr<se::Stream> host_to_device_stream_;
+  std::vector<std::shared_ptr<se::Stream>> device_to_host_streams_;
+  std::vector<std::shared_ptr<se::Stream>> device_to_device_streams_;
 
   // Number of device-to-host and device-to-device streams.
   static constexpr int kNumDeviceToHostStreams = 4;
