@@ -266,7 +266,10 @@ cc_library(
         ":device_type",
         "//tsl/platform:errors",
         "//tsl/platform:status",
+        "//tsl/platform:statusor",
         "//tsl/platform:str_util",
+        "//tsl/util:device_name_utils",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -426,5 +429,6 @@ tsl_cc_test(
         "//tsl/lib/core:status_test_util",
         "//tsl/platform:status_matchers",
         "//tsl/platform:test_main",
+        "//tsl/util:device_name_utils",
     ],
 )
