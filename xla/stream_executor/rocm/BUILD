@@ -288,6 +288,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_activation_header",
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_timer_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
         "@com_google_absl//absl/algorithm:container",

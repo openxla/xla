@@ -780,6 +780,8 @@ def system_specific_test_config(environ_cp):
       write_to_bazelrc('test --test_env=LD_LIBRARY_PATH')
     else:
       test_and_build_filters.append('-gpu')
+    if environ_cp.get('TF_NEED_ROCM', None) == '1':
+      test_and_build_filters.append('-no_rocm')
 
   write_to_bazelrc('test --test_tag_filters=%s' %
                    ','.join(test_and_build_filters + test_only_filters))

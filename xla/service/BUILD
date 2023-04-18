@@ -22,6 +22,7 @@ load(
 )
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm",
     "if_rocm_is_configured",
 )
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
@@ -1286,6 +1287,7 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:timer",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
@@ -6960,7 +6962,15 @@ xla_cc_binary(
         "//xla/service/gpu:executable_proto_cc",
         "//xla/service/gpu:gpu_compiler",
         "//xla/service/gpu:nvptx_compiler_impl",
-    ]) + if_cuda(["//xla/stream_executor/cuda:cublas_plugin"]),
+    ]) + if_rocm_is_configured([
+        "//xla/service/gpu:executable_proto_cc",
+        "//xla/service/gpu:gpu_compiler",
+        "//xla/service/gpu:amdgpu_compiler_impl",
+    ]) + if_cuda([
+        "//xla/stream_executor/cuda:cublas_plugin",
+    ]) + if_rocm([
+        "//xla/stream_executor/rocm:rocblas_plugin",
+    ]),
 )
 
 # A simple test of xla_aot_compile which generates an output file from an mhlo file.

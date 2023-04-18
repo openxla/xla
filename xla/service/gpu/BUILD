@@ -237,7 +237,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_device_info_test",
     srcs = if_cuda_is_configured(["gpu_device_info_test.cc"]),
-    tags = tf_cuda_tests_tags(),
+    tags = tf_cuda_tests_tags() + ["no_rocm"],
     deps = if_cuda_is_configured([
         ":gpu_device_info_for_tests",
         "@com_google_absl//absl/strings",
@@ -648,6 +648,7 @@ tsl_gpu_library(
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
         "//xla/service/llvm_ir:llvm_util",
+        "//xla/stream_executor/gpu:gpu_activation",
         "//xla/stream_executor/gpu:gpu_activation_header",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/translate/hlo_to_mhlo:hlo_utils",
@@ -3253,6 +3254,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_asm_opts",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/rocm:rocm_helpers",
     ]),
 )
 
