@@ -255,6 +255,7 @@ const StatTypeMap& GetStatTypeMap() {
       {"model_version", kModelVersion},
       {"bytes_transferred", kBytesTransferred},
       {"queue", kDmaQueue},
+      {"collective_algorithm", kTpuCollectiveAlgorithm},
       // Performance counter related.
       {"Raw Value", kRawValue},
       {"Scaled Value", kScaledValue},
@@ -284,7 +285,7 @@ const StatTypeMap& GetStatTypeMap() {
       {"theoretical_occupancy_pct", kTheoreticalOccupancyPct},
       {"occupancy_min_grid_size", kOccupancyMinGridSize},
       {"occupancy_suggested_block_size", kOccupancySuggestedBlockSize},
-      // Aggregrated Stat
+      // Aggregated Stat
       {"self_duration_ps", kSelfDurationPs},
       {"min_duration_ps", kMinDurationPs},
       {"total_profile_duration_ps", kTotalProfileDurationPs},
