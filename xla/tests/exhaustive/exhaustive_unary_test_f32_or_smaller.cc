@@ -338,13 +338,11 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Logistic, {
 
   Run(
       Logistic, fn, +[](NativeT) {
-        // Notice that we use the same absolute and relative tolerance.
-        // Since Logistic(x) -> 0 for x -> -Inf, the relative error
-        // is actually enormous for x < -5, say.
-        // For example, Logistic(-13.8183346) = 1.9967556e-06 while the expected
-        // value is 9.97178972e-07.
-        float tol = 200.0f * std::numeric_limits<NativeT>::epsilon();
-        return ErrorSpec(tol, tol);
+        float rtol = 90.0f * std::numeric_limits<NativeT>::epsilon();
+        // We need a tiny absolute tolerance, since we do not consider flushing
+        // near-subnormal values to zero an error.
+        float atol = 3 * std::numeric_limits<NativeT>::min();
+        return ErrorSpec(atol, rtol);
       });
 })
 
