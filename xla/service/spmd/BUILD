@@ -85,15 +85,11 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/hlo/utils:hlo_sharding_util",
-        "//xla/service:hlo_parser",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_verifier",
-        "//xla/service:sharding_propagation",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 

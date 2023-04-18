@@ -955,6 +955,10 @@ void BuildXlaCompilerSubmodule(py::module& m) {
                       &xla::OpSharding::mutable_tile_assignment_dimensions);
   DefRepeatedProperty(op_sharding, "tile_assignment_devices",
                       &xla::OpSharding::mutable_tile_assignment_devices);
+  DefRepeatedProperty(op_sharding, "iota_reshape_dims",
+                      &xla::OpSharding::mutable_iota_reshape_dims);
+  DefRepeatedProperty(op_sharding, "iota_transpose_perm",
+                      &xla::OpSharding::mutable_iota_transpose_perm);
   DefRepeatedProperty(op_sharding, "tuple_shardings",
                       &xla::OpSharding::mutable_tuple_shardings);
   DefRepeatedProperty(op_sharding, "last_tile_dims",
