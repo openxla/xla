@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +13,15 @@
 # limitations under the License.
 # ============================================================================
 
-# Build `run_hlo_module` and print the path to the binary output.
-bazel run \
-    -c opt \
-    --keep_going \
-    --run_under=echo \
-    xla/tools:run_hlo_module
+# Runs docker configured for usage with GitHub Actions, translating GitHub
+# Actions environment variables into generic ones and then invoking the generic
+# docker_run script.
+
+# Drawn from https://github.com/openxla/iree/blob/0c0c34f7c8d5a920942f888db4521f64737d598c/build_tools/github_actions/docker_run.sh
+
+set -euo pipefail
+
+export DOCKER_HOST_WORKDIR="${GITHUB_WORKSPACE}"
+export DOCKER_HOST_TMPDIR="${RUNNER_TEMP}"
+
+"${GITHUB_WORKSPACE}/build_tools/docker/docker_run.sh" "$@"

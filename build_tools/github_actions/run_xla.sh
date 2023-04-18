@@ -15,9 +15,22 @@
 # limitations under the License.
 # ============================================================================
 
-# Build `run_hlo_module` and print the path to the binary output.
-bazel run \
-    -c opt \
-    --keep_going \
-    --run_under=echo \
-    xla/tools:run_hlo_module
+BUILD_BINARY=$1
+
+echo "Running XLA's run_hlo_module at ${BUILD_BINARY}"
+echo "---------"
+
+# Run run_hlo_module
+num_iterations=5
+run_start_time="$(date +%s)"
+echo "run_hlo_module execution start time: ${run_start_time}"
+# TODO(b/277240370): use `run_hlo_module`'s timing utils instead of `date`.
+${BUILD_BINARY} -- \
+    --input_format=hlo \
+    --platform=CPU \  # TODO(b/277243133): use GPU to run benchmarks
+    --iterations=$num_iterations \
+    --reference_platform= \
+    xla/tools/data/benchmarking/mobilenet_v2.hlo
+run_end_time="$(date +%s)"
+runtime="$((run_end_time - run_start_time))"
+echo "Run time for ${num_iterations} iterations is ${runtime} seconds."

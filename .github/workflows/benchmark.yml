@@ -19,38 +19,57 @@ on:
   pull_request:
     types: [labeled, synchronize]
 
+env:
+  # This needs to be in env instead of the outputs of other jobs because it contains
+  # the run attempt and we want that to be the current attempt, not attempts from other runs.
+  GCS_DIR: gs://openxla-github-actions-presubmit-artifacts/${{ github.run_id }}/${{ github.run_attempt }}
+
 jobs:
-  run-benchmark-at-pr:
+  build-at-pr-and-base:
+    if: contains(github.event.pull_request.labels.*.name, 'A/B diff benchmarking')
+    uses: ./.github/workflows/build_run_hlo_module.yml
+
+  run-benchmarks:
     # TODO(b/278787029): Rework triggering to prevent new labels from overriding job status.
     if: contains(github.event.pull_request.labels.*.name, 'A/B diff benchmarking')
     runs-on:
       - self-hosted  # must come first
       - environment=testing
-      - cpu
+      - cpu  # TODO(b/277243133): use GPU to run benchmarks
       - os-family=Linux
+    needs: [build-at-pr-and-base]
     defaults:
       run:
         shell: bash
     timeout-minutes: 60
+    env:
+      PR_BUILD_BINARY: ${{ needs.build-at-pr-and-base.outputs.pr-build-binary }}
+      BASE_BUILD_BINARY: ${{ needs.build-at-pr-and-base.outputs.base-build-binary }}
+      BUILD_BINARY_ARCHIVE: ${{ needs.build-at-pr-and-base.outputs.build-binary-archive }}
+      BUILD_BINARY_GCS_ARTIFACT: ${{ needs.build-at-pr-and-base.outputs.build-binary-gcs-artifact }}
     steps:
       - name: "Checking out PR repository"
-        uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
+        uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3.3.0
       - name: "Build docker"  # TODO(b/277242108): build once and reference docker image by digest.
         run: |
           docker build --file build_tools/docker/dockerfiles/benchmarking.Dockerfile \
             --tag base \
             build_tools/docker/context
+      - name: "Downloading build binaries"
+        run: |
+          gcloud storage cp "${BUILD_BINARY_GCS_ARTIFACT}" "${BUILD_BINARY_ARCHIVE}"
+      - name: "Extracting build binaries"
+        run: |
+          tar -xf "${BUILD_BINARY_ARCHIVE}"
       - name: "Benchmark at PR"
         run: |
-          docker run --mount="type=bind,src="${PWD}",target=/work" --workdir="/work" \
+          build_tools/github_actions/docker_run.sh \
             base:latest \
-            build_tools/github_actions/build_xla.sh
-      - name: "Checking out base repository"
-        uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
-        with:
-          ref: "${{ github.event.pull_request.base.sha }}"
+            build_tools/github_actions/run_xla.sh \
+              "${PR_BUILD_BINARY}"
       - name: "Benchmark at Base"
         run: |
-          docker run --mount="type=bind,src="${PWD}",target=/work" --workdir="/work" \
+          build_tools/github_actions/docker_run.sh \
             base:latest \
-            build_tools/github_actions/build_xla.sh
+            build_tools/github_actions/run_xla.sh \
+              "${BASE_BUILD_BINARY}"

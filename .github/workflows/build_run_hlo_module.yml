@@ -1,0 +1,139 @@
+# Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
+
+# Drawn from https://github.com/openxla/iree/blob/d2f5a7c9b2c757da93241afe443a254b3b3d22a1/.github/workflows/build_all.yml
+
+name: Build XLA's run_hlo_module.
+
+on:
+  workflow_call:
+    outputs: # fix all these
+      pr-build-binary:
+        description: |
+          Local path that stores compiled binary at PR.
+        value: ${{ jobs.build-run-hlo-module.outputs.pr-build-binary }}
+      base-build-binary:
+        description: |
+          Local path that stores compiled binary at BASE.
+        value: ${{ jobs.build-run-hlo-module.outputs.base-build-binary }}
+      build-binary-archive:
+        description: |
+          Local path to the archived build binaries.
+        value: ${{ jobs.build-run-hlo-module.outputs.build-binary-archive }}
+      build-binary-gcs-artifact:
+        description: |
+          GCS path to the uploaded build archive.
+        value: ${{ jobs.build-run-hlo-module.outputs.build-binary-gcs-artifact }}
+
+env:
+  # This duplicates the variable from benchmark.yml. The variable needs to be in env
+  # instead of the outputs of other jobs because it contains the run attempt and we
+  # want that to be the current attempt, not attempts from other runs.
+  # It therefore can't be passed in via inputs because the env context isn't available there.
+  GCS_DIR: gs://openxla-github-actions-presubmit-artifacts/${{ github.run_id }}/${{ github.run_attempt }}
+
+jobs:
+  build-run-hlo-module:
+    runs-on:
+      - self-hosted # must come first
+      - environment=testing
+      - cpu
+      - os-family=Linux
+    env:
+      BUILD_BINARY_DIR: build-binary-dir
+    outputs:
+      # Pass through the build binaries as output so it's available to
+      # dependent jobs.
+      pr-build-binary: ${{ steps.copy-pr.outputs.pr-build-binary-dir }}
+      base-build-binary: ${{ steps.copy-base.outputs.base-build-binary-dir }}
+      build-binary-dir: ${{ env.BUILD_BINARY_DIR }}
+      build-binary-archive: ${{ steps.archive.outputs.build-binary-archive }}
+      build-binary-gcs-artifact: ${{ steps.upload.outputs.build-binary-gcs-artifact }}
+    steps:
+      - name: "Check out PR repository"
+        uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3.3.0
+      - name: "Build docker"  # TODO(b/277242108): build once and reference docker image by digest.
+        run: |
+          docker system prune
+          docker build --file build_tools/docker/dockerfiles/benchmarking.Dockerfile \
+            --tag base \
+            build_tools/docker/context
+      - name: "Make build binary directory"
+        run: |
+          mkdir ${BUILD_BINARY_DIR}
+      - name: "Build run_hlo_module at PR"
+        id: build-pr
+        run: |
+          bin_path="$(build_tools/github_actions/docker_run.sh \
+            base:latest \
+            build_tools/github_actions/build_xla.sh)"
+          echo "pr-build-binary=${bin_path}" >> "${GITHUB_OUTPUT}"
+          echo ${bin_path} 
+      - name: "Copying PR build binary to build binary dir"
+        id: copy-pr
+        env:
+          PR_BUILD_BINARY: ${{ steps.build-pr.outputs.pr-build-binary }}
+          PR_BUILD_BINARY_DIR: ${{ env.BUILD_BINARY_DIR }}/run_hlo_module_pr
+        run: |
+          echo "ls home:"
+          ls /home
+          echo "ls GITHUB_WORKSPACE (${GITHUB_WORKSPACE}):"
+          ls ${GITHUB_WORKSPACE}
+          echo "ls ${GITHUB_WORKSPACE}/home:"
+          ls ${GITHUB_WORKSPACE}/home
+          echo "ls ${GITHUB_WORKSPACE}/home/runner:"
+          ls ${GITHUB_WORKSPACE}/home/runner
+          echo "ls ${GITHUB_WORKSPACE}/home/runner/.cache:"
+          ls ${GITHUB_WORKSPACE}/home/runner/.cache
+          cp ${GITHUB_WORKSPACE}/${PR_BUILD_BINARY} ${PR_BUILD_BINARY_DIR}
+          echo "pr-build-binary-dir=${GITHUB_WORKSPACE}/${PR_BUILD_BINARY_DIR}" >> "${GITHUB_OUTPUT}"
+
+      - name: "Check out base repository"
+        uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3.3.0
+        # temporarily disabling the base checkout since `docker_run.sh` hasn't been added yet.
+        # with:
+        #  ref: "${{ github.event.pull_request.base.sha }}"
+      - name: "Build run_hlo_module at BASE"
+        id: build-base
+        run: |
+          bin_path="$(build_tools/github_actions/docker_run.sh \
+            base:latest \
+            build_tools/github_actions/build_xla.sh)"
+          echo "base-build-binary=${bin_path}" >> "${GITHUB_OUTPUT}"
+          echo ${bin_path} 
+      - name: "Copying BASE build binary to build binary dir"
+        id: copy-base
+        env:
+          BASE_BUILD_BINARY: ${{ steps.build-base.outputs.base-build-binary }}
+          BASE_BUILD_BINARY_DIR: ${{ env.BUILD_BINARY_DIR }}/run_hlo_module_base
+        run: |
+          cp ${BASE_BUILD_BINARY} ${BASE_BUILD_BINARY_DIR}
+          echo "base-build-binary-dir=${BASE_BUILD_BINARY_DIR}" >> "${GITHUB_OUTPUT}"
+      - name: "Creating build dir archive"
+        id: archive
+        env:
+          BUILD_BINARY_ARCHIVE: ${ env.BUILD_BINARY_DIR }.tar.zst
+        run: |
+          tar -I 'zstd -T0' \
+            -cf ${BUILD_BINARY_ARCHIVE} ${BUILD_BINARY_DIR}
+          echo "build-binary-archive=${BUILD_BINARY_ARCHIVE}" >> "${GITHUB_OUTPUT}"
+      - name: "Uploading build binary archive"
+        id: upload
+        env:
+          BUILD_BINARY_ARCHIVE: ${{ steps.archive.outputs.build-binary-archive }}
+          BUILD_BINARY_GCS_ARTIFACT: ${{ env.GCS_DIR }}/${{ steps.archive.outputs.build-binary-archive }}
+        run: |
+          gcloud storage cp "${BUILD_BINARY_ARCHIVE}" "${BUILD_BINARY_GCS_ARTIFACT}"
+          echo "build-binary-gcs-artifact=${BUILD_BINARY_GCS_ARTIFACT}" >> "${GITHUB_OUTPUT}"
