@@ -787,6 +787,7 @@ build_test(
 
 xla_cc_binary(
     name = "hlo_to_llvm_ir",
+    testonly = True,
     srcs = ["hlo_to_llvm_ir.cc"],
     copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]),
     deps = [
@@ -794,7 +795,7 @@ xla_cc_binary(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:compile_module_to_llvm_ir",
         "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:gpu_device_info",
+        "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:target_constants",
         "//xla/service/gpu/llvm_gpu_backend",
         "//xla/stream_executor:device_description",
