@@ -967,29 +967,22 @@ bool RefineManualAutoShardingFromAuto(
   // We are also merging the non-manual sharding into the manual sharding. To
   // leverage existing merging implementation, we treat the manual dim as a
   // data dim, and add it right before the replication dim.
-  auto partial_tiling_for_manual = partial_rep.tile_assignment();
   std::vector<int64_t> partial_manual_shape(
-      partial_tiling_for_manual.dimensions().begin(),
-      partial_tiling_for_manual.dimensions().end());
+      partial_rep.tile_assignment().dimensions().begin(),
+      partial_rep.tile_assignment().dimensions().end());
   partial_manual_shape.insert(partial_manual_shape.begin() + data_rank, 1);
+  auto partial_tiling_for_manual = partial_rep.tile_assignment();
   partial_tiling_for_manual.Reshape(partial_manual_shape);
   HloSharding partial_rep_for_manual = HloSharding::PartialTile(
       partial_tiling_for_manual, partial_rep.metadata());
   Array<int64_t> man_tiling = manual_sharding->tile_assignment();
   if (manual_sharding->subgroup_types().back() != OpSharding::REPLICATED) {
+    LOG(FATAL);
     // Move the manual dim before replication dim.
-    std::vector<int64_t> transposed_dims(man_tiling.dimensions().begin(),
-                                         man_tiling.dimensions().end());
-    transposed_dims[data_rank] = transposed_dims.back();
-    transposed_dims.back() = man_tiling.dim(data_rank);
-    Array<int64_t> transposed(transposed_dims);
-    man_tiling.Each([&](absl::Span<const int64_t> indices, int64_t device) {
-      std::vector<int64_t> xposed_idx(indices.begin(), indices.end() - 2);
-      xposed_idx.push_back(indices.back());
-      xposed_idx.push_back(indices[data_rank]);
-      transposed(xposed_idx) = device;
-    });
-    man_tiling = std::move(transposed);
+    std::vector<int64_t> transposed_dims(man_tiling.num_dimensions());
+    absl::c_iota(transposed_dims, 0);
+    std::swap(transposed_dims.back(), transposed_dims[data_rank]);
+    man_tiling.TransposeDimensions(transposed_dims);
   }
   HloSharding tmp_sharding_for_merging =
       HloSharding::PartialTile(man_tiling, manual_sharding->metadata());
