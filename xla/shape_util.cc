@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/threadpool.h"
 
 namespace xla {
@@ -869,8 +870,13 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
   CHECK(LayoutUtil::IsDenseArray(shape)) << shape.ShortDebugString();
   allocated_element_count = ElementsIn(shape);
-  return allocated_element_count *
-         ByteSizeOfPrimitiveType(shape.element_type());
+  // PRED is treated as a byte
+  if (shape.element_type() == PRED) {
+    return allocated_element_count;
+  }
+  int64_t num_bits =
+      allocated_element_count * primitive_util::BitWidth(shape.element_type());
+  return CeilOfRatio<int64_t>(num_bits, CHAR_BIT);
 }
 
 /* static */ Status ShapeUtil::ValidateShapeWithOptionalLayoutInternal(
@@ -2008,8 +2014,11 @@ Status ShapeUtil::ByteStrides(const Shape& shape, absl::Span<int64_t> strides) {
     indices.push_back(dim - 1);
   }
   int64_t size = LayoutUtil::LinearIndex(shape, indices) + 1;
+  // PRED is treated as a byte
+  if (shape.element_type() == PRED) {
+    return size;
+  }
   int64_t num_bits = size * primitive_util::BitWidth(shape.element_type());
-
   return CeilOfRatio<int64_t>(num_bits, CHAR_BIT);
 }
 

@@ -2688,5 +2688,19 @@ TEST_F(HloVerifierTest, InvalidU4Usage) {
       HasSubstr("S4/U4 is currently only supported in matmul and convolution"));
 }
 
+TEST_F(HloVerifierTestLayoutSensitive, S32ToS4Bitcast) {
+  const char* const hlo = R"(
+  HloModule Module
+
+  ENTRY entry {
+    param0 = s32[1152,6144]{1,0:T(8,128)} parameter(0)
+    ROOT bitcast = s4[9216,6144]{1,0:T(64,128)(8,1)} bitcast(param0)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_TRUE(status.ok());
+}
+
 }  // namespace
 }  // namespace xla

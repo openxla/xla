@@ -321,6 +321,12 @@ TEST(ShapeUtilTest, ByteSizeOfWithoutPadding) {
   EXPECT_EQ(8, ShapeUtil::ByteSizeOf(ShapeUtil::MakeShape(C64, {})));
   EXPECT_EQ(1600, ShapeUtil::ByteSizeOf(ShapeUtil::MakeShape(C64, {10, 20})));
 
+  EXPECT_EQ(64 * 128 / 2,
+            ShapeUtil::ByteSizeOf(ShapeUtil::MakeShape(S4, {64, 128})));
+
+  EXPECT_EQ(64 * 128,
+            ShapeUtil::ByteSizeOf(ShapeUtil::MakeShape(PRED, {64, 128})));
+
   EXPECT_EQ(0, ShapeUtil::ByteSizeOfPrimitiveType(TOKEN));
   EXPECT_EQ(0, ShapeUtil::ByteSizeOf(ShapeUtil::MakeTokenShape()));
 }
@@ -1132,6 +1138,11 @@ TEST(ShapeUtilTest, Int4ShapeSize) {
   *layout->mutable_tiles(0) = Tile({8 * (32 / 4), 128});
   *layout->mutable_tiles(1) = Tile({32 / 4, 1});
   EXPECT_EQ(ShapeUtil::ArrayDataSize(int4_shape2), 9216 * 6144 / 2);
+}
+
+TEST(ShapeUtilTest, PredShapeSize) {
+  Shape pred_shape = ShapeUtil::MakeShape(S4, {64, 128});
+  EXPECT_EQ(ShapeUtil::ArrayDataSize(pred_shape), 64 * 128);
 }
 
 TEST(Transpose021Test, NoTranspose) {
