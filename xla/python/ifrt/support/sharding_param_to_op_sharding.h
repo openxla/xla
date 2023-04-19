@@ -13,15 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PYTHON_IFRT_IR_IFRT_DIALECT_H_
-#define XLA_PYTHON_IFRT_IR_IFRT_DIALECT_H_
+#ifndef XLA_PYTHON_IFRT_SUPPORT_SHARDING_PARAM_TO_OP_SHARDING_H_
+#define XLA_PYTHON_IFRT_SUPPORT_SHARDING_PARAM_TO_OP_SHARDING_H_
 
-#include "mlir/IR/Dialect.h"  // from @llvm-project
 #include "xla/python/ifrt/ir/sharding_param.h"
+#include "xla/xla_data.pb.h"
 
-// Generated definitions.
-#include "xla/python/ifrt/ir/ifrt_dialect.h.inc"  // IWYU pragma: export
-#define GET_TYPEDEF_CLASSES
-#include "xla/python/ifrt/ir/ifrt_types.h.inc"  // IWYU pragma: export
+namespace xla {
+namespace ifrt {
+namespace support {
 
-#endif  // XLA_PYTHON_IFRT_IR_IFRT_DIALECT_H_
+// Converts ShardingParam to OpSharding.
+//
+// This assumes that `sharding_param` is valid.
+OpSharding ToOpSharding(const ShardingParam& sharding_param);
+
+}  // namespace support
+}  // namespace ifrt
+}  // namespace xla
+
+#endif  // XLA_PYTHON_IFRT_SUPPORT_SHARDING_PARAM_TO_OP_SHARDING_H_
