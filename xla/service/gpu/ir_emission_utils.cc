@@ -493,7 +493,7 @@ static int64_t GetMemRefSizeInBytes(mlir::MemRefType type) {
   if (type.getElementType().isInteger(/*width=*/1)) {
     return type.getNumElements();
   } else {
-    return type.cast<mlir::ShapedType>().getSizeInBits() / CHAR_BIT;
+    return type.getNumElements() * type.getElementTypeBitWidth() / CHAR_BIT;
   }
 }
 
