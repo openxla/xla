@@ -1227,6 +1227,7 @@ xla_cc_test(
         ":matmul_utils",
         "//xla:test",
         "//xla/service:hlo_parser",
+        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:status_matchers",
