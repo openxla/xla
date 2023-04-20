@@ -876,6 +876,7 @@ xla_cc_test(
         "//xla:types",
         "//xla:xla_proto_cc",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
