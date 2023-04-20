@@ -484,6 +484,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_pass",
         "//xla/service/gpu/llvm_gpu_backend",
+        "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor/gpu:asm_compiler_header",
         "//xla/stream_executor/gpu:gpu_asm_opts",
@@ -496,7 +497,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:autotuning_proto_cc",
         "@tsl//tsl/util/proto:proto_utils",
-    ]),
+    ]) + ["@com_google_absl//absl/algorithm:container"],
 )
 
 xla_test(
@@ -517,6 +518,7 @@ xla_test(
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
+        "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:verified_hlo_module",
