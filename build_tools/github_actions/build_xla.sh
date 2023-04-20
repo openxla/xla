@@ -30,7 +30,7 @@ echo "Build time is ${build_time} seconds."
 num_iterations=5
 run_start_time="$(date +%s)"
 echo "run_hlo_module execution start time: ${run_start_time}"
-# TODO(zacmustin): use `run_hlo_module`'s timing utils instead of `date`.
+# TODO(b/277240370): use `run_hlo_module`'s timing utils instead of `date`.
 bazel run -c opt xla/tools:run_hlo_module -- \
     --input_format=hlo \
     --platform=CPU \
@@ -38,7 +38,7 @@ bazel run -c opt xla/tools:run_hlo_module -- \
     --reference_platform= \
     xla/tools/data/benchmarking/mobilenet_v2.hlo
 # add sleep to test base vs PR
-sleep 60  # TODO(zacmustin): remove this
+sleep 60  # TODO(b/277240370): remove this
 run_end_time="$(date +%s)"
 echo "run_hlo_module execution end time: ${run_end_time}"
 runtime="$((run_end_time - run_start_time))"

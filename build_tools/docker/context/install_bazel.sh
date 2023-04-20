@@ -22,7 +22,7 @@ if ! [[ -f .bazelversion ]]; then
   exit 1
 fi
 
-# TODO(zacmustin): avoid duplicating .bazelversion (repo level from TF, local)
+# TODO(b/277241075): avoid duplicating .bazelversion (repo level from TF, local)
 BAZEL_VERSION="$(cat .bazelversion)"
 
 # We could do the whole apt install dance, but this technique works across a

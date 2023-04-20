@@ -21,6 +21,7 @@ on:
 
 jobs:
   run-benchmark-at-pr:
+    # TODO(b/278787029): Rework triggering to prevent new labels from overriding job status.
     if: contains(github.event.pull_request.labels.*.name, 'A/B diff benchmarking')
     runs-on:
       - self-hosted  # must come first
@@ -34,9 +35,7 @@ jobs:
     steps:
       - name: "Checking out PR repository"
         uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
-      - name: "Run test script"
-        run: ./build_tools/github_actions/test_script.sh
-      - name: "Build docker"  # TODO(zacmustin): build once and reference docker image by digest.
+      - name: "Build docker"  # TODO(b/277242108): build once and reference docker image by digest.
         run: |
           docker build --file build_tools/docker/dockerfiles/benchmarking.Dockerfile \
             --tag base \
@@ -55,5 +54,3 @@ jobs:
           docker run --mount="type=bind,src="${PWD}",target=/work" --workdir="/work" \
             base:latest \
             build_tools/github_actions/build_xla.sh
-      - name: "Finishing up..."
-        run: echo "Job done."

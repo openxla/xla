@@ -16,8 +16,6 @@
 # Inspired by https://github.com/openxla/iree/blob/main/build_tools/docker/dockerfiles
 
 # 22.04
-# TODO(zacmustin): check what versions XLA supports and decide what versioning
-# to use for our docker images.
 FROM ubuntu@sha256:965fbcae990b0467ed5657caceaec165018ef44a4d2d46c7cdea80a9dff0d1ea
 
 SHELL ["/bin/bash", "-e", "-u", "-o", "pipefail", "-c"]
