@@ -1022,6 +1022,8 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   GpuFloatSupport f8e5m2_support(F8E5M2);
   GpuFloatSupport f8e4m3fn_support(F8E4M3FN);
   FloatSupport f8e4m3b11fnuz_support(F8E4M3B11FNUZ);
+  FloatSupport f8e4m3fnuz_support(F8E4M3FNUZ);
+  FloatSupport f8e5m2fnuz_support(F8E5M2FNUZ);
 
   auto add_float_normalization = [&](HloPassPipeline& pipeline) {
     auto& sub_pipeline =

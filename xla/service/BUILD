@@ -5014,10 +5014,28 @@ cc_library(
 )
 
 cc_library(
+    name = "float8_fnuz_ir_emitter",
+    srcs = [
+        "float8_fnuz_ir_emitter.cc",
+    ],
+    hdrs = [
+        "float8_fnuz_ir_emitter.h",
+    ],
+    deps = [
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "@llvm-project//llvm:Core",
+    ],
+)
+
+cc_library(
     name = "elemental_ir_emitter",
     srcs = ["elemental_ir_emitter.cc"],
     hdrs = ["elemental_ir_emitter.h"],
     deps = [
+        ":float8_fnuz_ir_emitter",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status_macros",
