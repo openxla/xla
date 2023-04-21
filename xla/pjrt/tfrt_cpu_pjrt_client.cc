@@ -105,6 +105,7 @@ static tfrt::AsyncValueRef<CpuEvent> GetOrCreateReadyEvent() {
   return ready_event->CopyRef();
 }
 
+// For test.
 static void EnqueueWork(tsl::thread::ThreadPool* pool,
                         absl::AnyInvocable<void()> callee) {
   // TSL TheadPool expects std::function that must be copyable, so we are
