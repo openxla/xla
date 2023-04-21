@@ -395,6 +395,7 @@ cc_library(
         "//xla/mlir/framework/transforms:passes",
         "//xla/mlir/runtime/transforms:compiler",
         "//xla/mlir_hlo:all_passes",
+        "//xla/mlir_hlo:gml_st_bufferizable_op_interface",
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/mlir_hlo:transforms_passes",
         "//xla/runtime:compiler",
