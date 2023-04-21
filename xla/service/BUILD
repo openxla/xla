@@ -1515,18 +1515,13 @@ xla_cc_test(
         "//xla:test",
         "//xla:test_helpers",
         "//xla:types",
-        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:test",
     ],
 )
 
