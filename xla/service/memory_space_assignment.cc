@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "xla/debug_options_flags.h"
+#include "xla/service/heap_simulator.h"
 #include "xla/service/memory_space_assignment_tuning_utils.h"
 #include "xla/service/memory_space_assignment_utils.h"
 #include "xla/service/tuple_util.h"
@@ -40,7 +41,8 @@ namespace memory_space_assignment {
 namespace {
 // Define a dummy chunk for chunks that will be allocated in the default memory
 // space and for keeping track of number of asynchronous copies.
-const HeapSimulator::Chunk kDummyChunk{-1, -1};
+const HeapSimulator::Chunk kDummyChunk =
+    HeapSimulator::Chunk::FromOffsetSize(-1, -1);
 // For cross-program prefetched buffer, we only perform the freeing optimization
 // if the buffer occupies less of the execution time ratio than this value.
 const float kCrossProgramPrefetchOccupyFreeingLimit = 0.6;
@@ -1258,26 +1260,6 @@ FilterUpdatePreferredPrefetch::ParseFilterUpdatePreferredPrefetch(
       ParseOverrideType(filter_update_config[filter_update_config.size() - 2]));
   result.override_value_ = filter_update_config.back();
   return result;
-}
-
-bool MemorySpaceAssignment::Allocation::operator==(
-    const MemorySpaceAssignment::Allocation& other) const {
-  return defining_position() == other.defining_position() &&
-         uses() == other.uses() && memory_space() == other.memory_space() &&
-         chunk() == other.chunk() && start_time() == other.start_time() &&
-         end_time() == other.end_time() &&
-         earliest_available_time() == other.earliest_available_time() &&
-         is_copy_allocation() == other.is_copy_allocation() &&
-         is_scoped_allocation() == other.is_scoped_allocation();
-}
-
-bool MemorySpaceAssignment::CopyAllocation::operator==(
-    const MemorySpaceAssignment::CopyAllocation& other) const {
-  return static_cast<const Allocation&>(*this) ==
-             static_cast<const Allocation&>(other) &&
-         copy_done_schedule_before() == other.copy_done_schedule_before() &&
-         copy_start_schedule_after() == other.copy_start_schedule_after() &&
-         copy_start() == other.copy_start() && copy_done() == other.copy_done();
 }
 
 std::string MemorySpaceAssignment::AllocationValue::ToString() const {
@@ -3055,7 +3037,8 @@ void AlternateMemoryBestFitHeap::ImportRepackedAllocations() {
     allocation_block.allocation->mutable_chunk()->offset =
         allocation_block.offset;
     interval_tree_.Add(allocation_block.start_time, allocation_block.end_time,
-                       {allocation_block.offset, allocation_block.size});
+                       HeapSimulator::Chunk::FromOffsetSize(
+                           allocation_block.offset, allocation_block.size));
     allocation_block.initial_offset = allocation_block.offset;
     allocation_block.offset = -1;
   }
@@ -3284,8 +3267,8 @@ AlternateMemoryBestFitHeap::Result AlternateMemoryBestFitHeap::AllocateSegment(
       std::optional<Chunk> aliased_chunk = std::nullopt;
       if (required_assignment_at_start->memory_space ==
           MemorySpace::kAlternate) {
-        aliased_chunk =
-            Chunk{required_assignment_at_start->offset->offset, request.size};
+        aliased_chunk = Chunk::FromOffsetSize(
+            required_assignment_at_start->offset->offset, request.size);
       }
       allocation_sequence->push_back(
           std::make_unique<MemorySpaceAssignment::Allocation>(

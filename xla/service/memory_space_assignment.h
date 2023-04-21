@@ -622,7 +622,6 @@ class MemorySpaceAssignment {
       return std::nullopt;
     }
 
-    bool operator==(const Allocation& other) const;
     virtual std::string ToString() const;
 
    protected:
@@ -705,7 +704,6 @@ class MemorySpaceAssignment {
       return cross_program_prefetch_index_;
     }
 
-    bool operator==(const CopyAllocation& other) const;
     std::string ToString() const override;
 
    private:
