@@ -25,8 +25,20 @@ message SlicedPrefetchOptions {
   // The maximum number of slices into which to slice a prefetch.
   uint32 max_slices = 1;
 
-  // The minimum size (in bytes) of any slice.
-  uint64 min_slice_bytes = 2;
+  // The minimum tensor size in bytes that we will attempt to slice.
+  uint64 min_bytes = 2;
+
+  // This option should never be set to true in production. When this is true,
+  // we will crash if the sum of proposed slice sizes does not equal the
+  // prefetch request size. Otherwise, we will choose not to slice such
+  // situations, which is always safe.
+  bool fail_if_slice_sum_ne_request_size = 3;
+
+  // This option should never be set to true in production. When this is true,
+  // we will crash if we propose a slice (other than the final slice) with a
+  // size that is not a multiple of the required hardware alignment. Otherwise,
+  // we will choose not to slice such situations, which is always safe.
+  bool fail_on_non_alignment_boundary_slice_proposal = 4;
 }
 
 // Options for memory-bound loop optimizations in memory space assignment. If
