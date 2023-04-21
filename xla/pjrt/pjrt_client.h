@@ -45,6 +45,7 @@ limitations under the License.
 #include "tsl/framework/allocator.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/platform/threadpool.h"
 
 // API notes:
 // PjRt stands for "Pretty much Just another RunTime".
@@ -234,6 +235,9 @@ class PjRtDevice {
   virtual StatusOr<tsl::AllocatorStats> GetAllocatorStats() const {
     return Unimplemented("GetAllocatorStats is not supported");
   }
+
+  // Returns the host memory space attached to this device.
+  virtual PjRtMemorySpace* host_memory_space() const { return nullptr; }
 
   // Returns all memory spaces attached to this device.
   virtual absl::Span<PjRtMemorySpace* const> memory_spaces() const {
@@ -520,6 +524,11 @@ class PjRtClient {
   // Return all memory spaces owned by the client.
   virtual absl::Span<PjRtMemorySpace* const> memory_spaces() const {
     return {};
+  }
+
+  // Return the thread pool owned by the client.
+  virtual tsl::thread::ThreadPool* pjrt_client_thread_pool() const {
+    return nullptr;
   }
 
   // Return an ID that identifies the platform (CPU/GPU/TPU).
