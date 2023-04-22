@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/memset.h"
 #include "xla/service/gpu/runtime/send_recv.h"
 #include "xla/service/gpu/runtime/support.h"
+#include "xla/service/gpu/runtime/topk.h"
 #include "xla/service/gpu/runtime/tracing.h"
 #include "xla/service/service_executable_run_options.h"
 #include "tsl/protobuf/dnn.pb.h"
@@ -94,6 +95,7 @@ void RegisterXlaGpuRuntimeCustomCalls(DirectCustomCallRegistry& registry) {
   RegisterIoFeedCustomCalls(registry);
   RegisterMemsetCustomCalls(registry);
   RegisterSendRecvCustomCalls(registry);
+  RegisterTopkCustomCall(registry);
 
 #if GOOGLE_CUDA
   // Graph launch kernels depend on Cuda Graph API.
