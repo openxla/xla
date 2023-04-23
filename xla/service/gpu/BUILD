@@ -1025,6 +1025,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
+        "//xla/service/gpu:gpu_types",
         "//xla/service:pattern_matcher",
         "//xla/stream_executor:blas",
         "@com_google_absl//absl/algorithm:container",
