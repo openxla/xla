@@ -3038,6 +3038,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:collective_ops_utils",
         "//xla/service:hlo_pass",
+        "//xla/service/gpu:gpu_types",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/strings",

@@ -37,7 +37,12 @@ class TreeReductionRewriterTest : public HloTestBase {
   void CheckTreeRewriter(absl::string_view hlo,
                          std::optional<absl::string_view> expected) {
     RunAndFilecheckHloRewrite(
-        hlo, gpu::GpuTreeReductionRewriter{se::CudaComputeCapability{8, 1}},
+        hlo, 
+#if GOOGLE_CUDA
+        gpu::GpuTreeReductionRewriter{se::CudaComputeCapability{8, 1}},
+#elif TENSORFLOW_USE_ROCM
+        gpu::GpuTreeReductionRewriter{se::RocmComputeCapability{"908"}},
+#endif        
         expected);
   }
 };
