@@ -332,6 +332,22 @@ Status BuildDistributedDevices(
 
 }  // namespace
 
+Status BuildDistributedDevices(
+    bool asynchronous, const std::optional<std::set<int>>& allowed_devices,
+    std::optional<std::string> platform_name,
+    std::shared_ptr<DistributedRuntimeClient> distributed_client, int node_id,
+    std::vector<std::unique_ptr<PjRtStreamExecutorDevice>>* devices,
+    gpu::GpuExecutableRunOptions* gpu_executable_run_options) {
+  TF_ASSIGN_OR_RETURN(LocalClient * xla_client,
+                      GetGpuXlaClient(platform_name, allowed_devices));
+  std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states;
+  TF_ASSIGN_OR_RETURN(local_device_states,
+                      BuildLocalDeviceStates(xla_client, asynchronous));
+  return BuildDistributedDevices(std::move(local_device_states),
+                                 distributed_client, node_id, devices,
+                                 gpu_executable_run_options);
+}
+
 StreamExecutorGpuDevice::StreamExecutorGpuDevice(
     int id, std::unique_ptr<LocalDeviceState> local_device_state,
     std::string device_kind, std::string device_vendor, int node_id,

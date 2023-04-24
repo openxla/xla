@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/memory/memory.h"
 #include "absl/types/span.h"
@@ -34,8 +35,31 @@ char PjRtCompatibleClient::ID = 0;
 char PjRtClient::ID = 0;
 
 std::unique_ptr<PjRtClient> PjRtClient::Create(
-    std::shared_ptr<xla::PjRtClient> pjrt_client) {
-  return absl::WrapUnique(new PjRtClient(std::move(pjrt_client)));
+    std::shared_ptr<xla::PjRtClient> pjrt_client,
+    std::vector<std::unique_ptr<Device>> devices) {
+  return absl::WrapUnique(
+      new PjRtClient(std::move(pjrt_client), std::move(devices)));
+}
+
+PjRtClient::PjRtClient(std::shared_ptr<xla::PjRtClient> pjrt_client,
+                       std::vector<std::unique_ptr<Device>> devices)
+    : pjrt_client_(std::move(pjrt_client)),
+      default_compiler_(this),
+      owned_devices_(std::move(devices)) {
+  if (owned_devices_.empty()) {
+    for (Device* device : pjrt_client_->devices()) {
+      devices_.push_back(device);
+      CHECK(id_to_device_.insert({device->id(), device}).second)
+          << "Duplicate device id: " << device->id();
+    }
+  } else {
+    for (const std::unique_ptr<Device>& device : owned_devices_) {
+      devices_.push_back(device.get());
+      CHECK(id_to_device_.insert({device->id(), device.get()}).second)
+          << "Duplicate device id: " << device->id();
+      // device->SetClient(this);
+    }
+  }
 }
 
 StatusOr<tsl::RCReference<PjRtCompatibleArray>> PjRtClient::CreatePjRtArray(

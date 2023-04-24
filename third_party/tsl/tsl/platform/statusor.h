@@ -136,7 +136,7 @@ class StatusOr : private internal_statusor::StatusOrData<T>,
   // constructor, calls to value() will succeed, and calls to status() will
   // return OK.
   //
-  // NOTE: Not explicit - we want to use StatusOr<T> as a return type
+  // NOTE - we want to use StatusOr<T> as a return type
   // so it is convenient and sensible to be able to do 'return T()'
   // when the return type is StatusOr<T>.
   //
@@ -146,7 +146,7 @@ class StatusOr : private internal_statusor::StatusOrData<T>,
   // Constructs a new StatusOr with the given non-ok status. After calling
   // this constructor, calls to value() will CHECK-fail.
   //
-  // NOTE: Not explicit - we want to use StatusOr<T> as a return
+  // NOTE - we want to use StatusOr<T> as a return
   // value, so it is convenient and sensible to be able to do 'return
   // Status()' when the return type is StatusOr<T>.
   //

@@ -20,7 +20,9 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -59,7 +61,8 @@ class PjRtClient final
     : public llvm::RTTIExtends<PjRtClient, PjRtCompatibleClient> {
  public:
   static std::unique_ptr<PjRtClient> Create(
-      std::shared_ptr<xla::PjRtClient> pjrt_client);
+      std::shared_ptr<xla::PjRtClient> pjrt_client,
+      std::vector<std::unique_ptr<Device>> devices = {});
 
   // PjRtCompatibleClient implementation.
 
@@ -111,7 +114,7 @@ class PjRtClient final
 
   int device_count() const override {
     DCHECK(this);
-    return pjrt_client_->device_count();
+    return devices_.size();
   }
   int addressable_device_count() const override {
     DCHECK(this);
@@ -119,7 +122,7 @@ class PjRtClient final
   }
   absl::Span<Device* const> devices() const override {
     DCHECK(this);
-    return pjrt_client_->devices();
+    return devices_;
   }
   absl::Span<Device* const> addressable_devices() const override {
     DCHECK(this);
@@ -133,8 +136,12 @@ class PjRtClient final
                                                     num_partitions);
   }
   StatusOr<Device*> LookupDevice(int device_id) const override {
-    DCHECK(this);
-    return pjrt_client_->LookupDevice(device_id);
+    auto it = id_to_device_.find(device_id);
+    if (it != id_to_device_.end()) {
+      return it->second;
+    }
+    return InvalidArgument("No matching device found for device_id %d",
+                           device_id);
   }
 
   StatusOr<ChannelHandle> CreateDeviceToHostChannelHandle() override {
@@ -154,11 +161,16 @@ class PjRtClient final
   static char ID;  // NOLINT
 
  private:
-  explicit PjRtClient(std::shared_ptr<xla::PjRtClient> pjrt_client)
-      : pjrt_client_(std::move(pjrt_client)), default_compiler_(this) {}
+  explicit PjRtClient(std::shared_ptr<xla::PjRtClient> pjrt_client,
+                      std::vector<std::unique_ptr<Device>> devices);
 
   std::shared_ptr<xla::PjRtClient> pjrt_client_;
   PjRtCompiler default_compiler_;
+  std::vector<std::unique_ptr<Device>> owned_devices_;
+  // Pointers to `owned_devices_`.
+  std::vector<Device*> devices_;
+  // Maps Device::id() to the corresponding Device. Includes all devices.
+  absl::flat_hash_map<int, Device*> id_to_device_;
 };
 
 }  // namespace ifrt

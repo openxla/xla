@@ -590,7 +590,7 @@ void AggregateXPlane(const XPlane& full_trace, XPlane& aggregated_trace) {
 }
 
 bool IsHostPlane(const XPlane& plane) {
-  // NOTE: remove me after all legacy traces are gone (i.e. 2022/08/04).
+  // NOTE -.
   constexpr absl::string_view kLegacyCustomPlanePrefix = "/custom:";
   return plane.name() == kHostThreadsPlaneName ||
          plane.name() == kHostCpusPlaneName ||

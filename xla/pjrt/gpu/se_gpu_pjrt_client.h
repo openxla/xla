@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/gpu/gpu_helpers.h"
@@ -54,6 +55,13 @@ StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     std::shared_ptr<DistributedRuntimeClient> distributed_client, int node_id,
     const std::optional<std::set<int>>& allowed_devices = std::nullopt,
     std::optional<std::string> platform_name = std::nullopt);
+
+Status BuildDistributedDevices(
+    bool asynchronous, const std::optional<std::set<int>>& allowed_devices,
+    std::optional<std::string> platform_name,
+    std::shared_ptr<DistributedRuntimeClient> distributed_client, int node_id,
+    std::vector<std::unique_ptr<PjRtStreamExecutorDevice>>* devices,
+    gpu::GpuExecutableRunOptions* gpu_executable_run_options);
 
 }  // namespace xla
 

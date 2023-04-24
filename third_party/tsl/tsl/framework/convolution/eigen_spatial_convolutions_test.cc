@@ -1112,7 +1112,7 @@ static void PackLhsHelper(::testing::benchmark::State& state,
     SubMapper sub_mapper =
         input_mappers[filter_idx].getSubMapper(row_offset, col_offset);
 
-// NOTE: Eigen gemm_pack_lhs accepts contraction depth (k-th dimension) as a
+// NOTE - as a
 // first argument (aka block cols). MKL-DNN pack is generic for lhs and rhs
 // and accepts block rows and cols in the same order for lhs and rhs.
 #if defined(TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL)

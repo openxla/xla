@@ -407,10 +407,22 @@ PYBIND11_MODULE(xla_extension, m) {
         py::gil_scoped_release gil_release;
         std::unique_ptr<PjRtClient> client =
             xla::ValueOrThrow(GetStreamExecutorGpuClient(
-                asynchronous, allocator_config, std::move(distributed_client),
+                asynchronous, allocator_config, /*distributed_client=*/nullptr,
                 node_id, allowed_devices, platform_name));
+        std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> se_devices;
+        auto gpu_run_options = std::make_unique<gpu::GpuExecutableRunOptions>();
+        if (distributed_client != nullptr) {
+          BuildDistributedDevices(asynchronous, allowed_devices, platform_name,
+                                  std::move(distributed_client), node_id,
+                                  &se_devices, gpu_run_options.get());
+        }
+        std::vector<std::unique_ptr<PjRtDevice>> devices;
+        devices.reserve(se_devices.size());
+        for (auto& se_device : se_devices) {
+          devices.push_back(std::move(se_device));
+        }
         return std::make_shared<PyClient>(
-            ifrt::PjRtClient::Create(std::move(client)));
+            ifrt::PjRtClient::Create(std::move(client), std::move(devices)));
       },
       py::arg("asynchronous") = true,
       py::arg("allocator_config") = GpuAllocatorConfig(),

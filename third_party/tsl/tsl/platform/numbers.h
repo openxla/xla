@@ -34,7 +34,7 @@ namespace strings {
 //    return a pointer to the beginning of the output, which is the same as
 //    the beginning of the input buffer.
 //
-//    NOTE: In 64-bit land, sizeof(time_t) is 8, so it is possible
+//    NOTE:  sizeof(time_t - is 8, so it is possible
 //    to pass to FastTimeToBuffer() a time whose year cannot be
 //    represented in 4 digits. In this case, the output buffer
 //    will contain the string "Invalid:<value>"
