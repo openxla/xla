@@ -426,22 +426,43 @@ xla_test(
     ],
     tags = ["nomac"],
     deps = [
-        ":gpu_device_info",
+        ":gpu_device_info_for_tests",
         ":ir_emitter_triton",
-        "//xla:comparison_util",
-        "//xla:xla_data_proto_cc",
+        ":launch_dimensions",
+        "//xla:error_spec",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu/tests:gpu_codegen_test",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:test_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:errors",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform/default/build_config:cublas_plugin",
         "@tsl//tsl/protobuf:autotuning_proto_cc",
+    ],
+)
+
+xla_test(
+    name = "ir_emitter_triton_parametrized_test",
+    srcs = if_cuda_is_configured(["ir_emitter_triton_parametrized_test.cc"]),
+    backend_tags = {"gpu": [
+        "requires-gpu-sm70",
+    ]},
+    backends = [
+        "gpu",
+    ],
+    tags = ["nomac"],
+    deps = [
+        "//xla:comparison_util",
+        "//xla:error_spec",
+        "//xla:xla_data_proto_cc",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
     ],
 )
 
