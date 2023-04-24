@@ -1327,6 +1327,35 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "gpu_convert_async_collectives_to_sync",
+    srcs = ["gpu_convert_async_collectives_to_sync.cc"],
+    hdrs = ["gpu_convert_async_collectives_to_sync.h"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:convert_async_collectives_to_sync",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_convert_async_collectives_to_sync_test",
+    srcs = ["gpu_convert_async_collectives_to_sync_test.cc"],
+    deps = [
+        ":backend_configs_cc",
+        ":gpu_convert_async_collectives_to_sync",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_query",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:test_macros_header",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
+    ],
+)
+
+cc_library(
     name = "gpu_conv_algorithm_picker",
     srcs = ["gpu_conv_algorithm_picker.cc"],
     hdrs = ["gpu_conv_algorithm_picker.h"],
