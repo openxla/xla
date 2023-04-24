@@ -57,7 +57,8 @@ ENTRY e {
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })")
                     .value();
-  EXPECT_TRUE(GemmRewriterTriton({se::CudaComputeCapability::AMPERE, 0})
+  GpuVersion gpu_version;
+  EXPECT_TRUE(GemmRewriterTriton(gpu_version)
                   .Run(module.get())
                   .value());
 }
@@ -82,7 +83,8 @@ ENTRY e {
     lhs_batch_dims={0}, rhs_batch_dims={0}
 })")
                     .value();
-  EXPECT_TRUE(GemmRewriterTriton({se::CudaComputeCapability::AMPERE, 0})
+  GpuVersion gpu_version;
+  EXPECT_TRUE(GemmRewriterTriton(gpu_version)
                   .Run(module.get())
                   .value());
   EXPECT_THAT(module->entry_computation()->root_instruction(),
