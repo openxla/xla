@@ -61,6 +61,18 @@ tf_proto_library(
     ],
 )
 
+xla_cc_test(
+    name = "backend_configs_test",
+    srcs = ["backend_configs_test.cc"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/platform:status_matchers",
+    ],
+)
+
 cc_library(
     name = "gpu_executable_run_options",
     srcs = ["gpu_executable_run_options.cc"],
@@ -1285,6 +1297,32 @@ xla_cc_test(
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+    ],
+)
+
+cc_library(
+    name = "gpu_async_collective_annotator",
+    srcs = ["gpu_async_collective_annotator.cc"],
+    hdrs = ["gpu_async_collective_annotator.h"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "//xla/service:hlo_query",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_async_collective_annotator_test",
+    srcs = ["gpu_async_collective_annotator_test.cc"],
+    deps = [
+        ":backend_configs_cc",
+        ":gpu_async_collective_annotator",
+        "//xla/service:hlo_query",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:test_macros_header",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
     ],
 )
 
