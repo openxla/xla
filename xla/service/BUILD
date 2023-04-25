@@ -3351,7 +3351,6 @@ cc_library(
         ":hlo_creation_utils",
         ":hlo_pass",
         "//xla/hlo/ir:hlo",
-        "//xla/service/graphcycles",
     ],
 )
 
