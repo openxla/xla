@@ -2635,7 +2635,6 @@ cc_library(
         "@tsl//tsl/platform:regexp",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/protobuf:autotuning_proto_cc",
-        "@tsl//tsl/util:determinism_for_kernels",
         "@tsl//tsl/util:env_var",
         "@tsl//tsl/util/proto:proto_utils",
     ],
