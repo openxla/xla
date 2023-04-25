@@ -3483,7 +3483,7 @@ cc_library(
         "//xla/runtime:state",
         "//xla/service:executable",
         "//xla/service:hlo_pass",
-        "//xla/service:hlo_proto_cc_impl",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:tuple_util",
         "//xla/service/gpu/runtime:support",
         "//xla/service/gpu/runtime:topk_kernel",
