@@ -125,6 +125,7 @@ limitations under the License.
 #include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/parallel_task_assignment.h"
 #include "xla/service/cpu/runtime/collectives.h"
+#include "xla/service/cpu/runtime/convolution_call.h"
 #include "xla/service/cpu/runtime/custom_call.h"
 #include "xla/service/cpu/runtime/fft_call.h"
 #include "xla/service/cpu/runtime/rng.h"
@@ -327,10 +328,11 @@ runtime::JitExecutable::Options GetXlaRuntimeJitExecutableOptions(
   opts.compiler.symbols_binding = runtime::ToSymbolsBinding(
       [](runtime::DirectCustomCallRegistry& registry) {
         PopulateXlaCpuCollectivesCall(registry);
+        PopulateXlaCpuConvolutionCall(registry);
         PopulateXlaCpuCustomCall(registry);
-        PopulateXlaXfeedCall(registry);
         PopulateXlaCpuFftCall(registry);
         PopulateXlaCpuRngCall(registry);
+        PopulateXlaXfeedCall(registry);
       });
   opts.compiler
       .create_compilation_pipeline = [&module, copts](

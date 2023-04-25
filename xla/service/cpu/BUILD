@@ -294,6 +294,7 @@ cc_library(
         "//xla/service:while_loop_simplifier",
         "//xla/service:zero_sized_hlo_elimination",
         "//xla/service/cpu/runtime:collectives",
+        "//xla/service/cpu/runtime:convolution_call",
         "//xla/service/cpu/runtime:custom_call",
         "//xla/service/cpu/runtime:fft_call",
         "//xla/service/cpu/runtime:retain",
