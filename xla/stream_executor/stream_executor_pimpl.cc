@@ -406,7 +406,7 @@ StreamExecutor::createRnnSequenceTensorDescriptor(int max_seq_length,
 tsl::StatusOr<std::unique_ptr<dnn::RnnSequenceTensorDescriptor>>
 StreamExecutor::createRnnSequenceTensorDescriptor(
     int max_seq_length, int batch_size, int data_size,
-    const absl::Span<const int>& seq_lengths, bool time_major,
+    const absl::Span<const int> seq_lengths, bool time_major,
     dnn::DataType data_type) {
   dnn::DnnSupport* dnn_support = AsDnn();
   if (!dnn_support) {
