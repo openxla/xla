@@ -172,12 +172,17 @@ cc_library(
     ],
 )
 
-cuda_library(
+cc_library(
     name = "topk_kernel",
-    srcs = if_cuda_is_configured(["topk_kernel.cu.cc"]),
+    srcs = if_cuda_is_configured(
+        [
+            "topk_kernel.cc",
+        ],
+    ),
     hdrs = if_cuda_is_configured(["topk_kernel.h"]),
     compatible_with = [],
     deps = [
+        ":topk_kernel_cuda",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor:platform",
@@ -187,6 +192,22 @@ cuda_library(
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cuda_library(
+    name = "topk_kernel_cuda",
+    srcs = if_cuda_is_configured(
+        [
+            "topk_kernel.cu.cc",
+        ],
+    ),
+    hdrs = if_cuda_is_configured(["topk_kernel_common.h"]),
+    compatible_with = [],
+    deps = [
+        "@eigen_archive//:eigen3",
+        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 
