@@ -457,6 +457,28 @@ xla_test(
 )
 
 xla_test(
+    name = "ir_emitter_triton_large_test",
+    srcs = if_cuda_is_configured(["ir_emitter_triton_large_test.cc"]),
+    backend_tags = {"gpu": [
+        "requires-gpu-sm70",
+    ]},
+    backends = [
+        "gpu",
+    ],
+    tags = [
+        "large",
+        "no_oss",
+        "nomac",
+        "notap",
+    ],
+    deps = [
+        "//xla:error_spec",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+    ],
+)
+
+xla_test(
     name = "ir_emitter_triton_parametrized_test",
     srcs = if_cuda_is_configured(["ir_emitter_triton_parametrized_test.cc"]),
     backend_tags = {"gpu": [
