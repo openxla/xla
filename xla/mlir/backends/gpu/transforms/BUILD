@@ -44,6 +44,8 @@ cc_library(
     compatible_with = [],
     deps = [
         ":passes_inc_gen",
+        "//xla:debug_options_flags",
+        "//xla:xla_proto_cc",
         "//xla/mlir/runtime/ir:rt",
         "//xla/mlir/runtime/utils:custom_calls",
         "//xla/mlir_hlo:lhlo",
