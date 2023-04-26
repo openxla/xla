@@ -225,6 +225,7 @@ cc_library(
     deps = [
         "//xla:statusor",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
