@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_PJRT_TFRT_CPU_PJRT_CLIENT_H_
 #define XLA_PJRT_TFRT_CPU_PJRT_CLIENT_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -24,10 +26,17 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
-#include "xla/client/executable_build_options.h"
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "xla/client/xla_computation.h"
-#include "xla/layout.h"
+#include "xla/executable_run_options.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -35,19 +44,19 @@ limitations under the License.
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/tracked_tfrt_cpu_device_buffer.h"
 #include "xla/pjrt/transpose.h"
-#include "xla/pjrt/worker_thread.h"
 #include "xla/runtime/cpu_event.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/cpu/cpu_compiler.h"
-#include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/hlo_module_util.h"
-#include "xla/statusor.h"
+#include "xla/shape.h"
+#include "xla/status.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/traceme.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/threadpool.h"
 #include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
 
 namespace xla {

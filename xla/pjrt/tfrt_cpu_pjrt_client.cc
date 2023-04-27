@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/tfrt_cpu_pjrt_client.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -25,42 +26,86 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/literal_util.h"
-#include "xla/runtime/cpu_event.h"
-#include "xla/util.h"
-#include "tsl/platform/errors.h"
-
 #define EIGEN_USE_THREADS
 
+#include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
+#include "absl/base/dynamic_annotations.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "xla/array.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/xla_computation.h"
+#include "xla/cpu_function_runtime.h"
+#include "xla/debug_options_flags.h"
+#include "xla/executable_run_options.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/tracked_tfrt_cpu_device_buffer.h"
+#include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/cpu_event.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/compiler.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/cpu_xfeed.h"
+#include "xla/service/custom_call_status.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_dataflow_analysis.h"
+#include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_module_util.h"
+#include "xla/service/hlo_value.h"
+#include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
-#include "xla/statusor.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 #include "tsl/platform/denormal.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/setround.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/threadpool.h"
 #include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tfrt/concurrency/async_value.h"  // from @tf_runtime
+#include "tfrt/concurrency/async_value_ref.h"  // from @tf_runtime
+#include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 #include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
 #include "tfrt/support/forward_decls.h"  // from @tf_runtime
 
