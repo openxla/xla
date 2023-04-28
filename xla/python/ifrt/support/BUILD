@@ -11,9 +11,12 @@ cc_library(
     hdrs = ["sharding_param_to_op_sharding.h"],
     visibility = ["//xla/python/ifrt:friends"],
     deps = [
+        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/python/ifrt/ir",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -26,7 +29,10 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/python/ifrt/ir",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
     ],
 )
