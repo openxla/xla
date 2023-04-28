@@ -2033,6 +2033,7 @@ cc_library(
     deps = [
         ":executable_proto_cc",
         ":gpu_constants",
+        ":gpu_convert_async_collectives_to_sync",
         ":gpu_device_info",
         ":gpu_executable",
         ":gpu_float_support",
@@ -2050,7 +2051,6 @@ cc_library(
         "//xla/mlir_hlo:transforms_gpu_passes",
         "//xla/service:bitcast_dtypes_expander",
         "//xla/service:buffer_assignment",
-        "//xla/service:convert_async_collectives_to_sync",
         "//xla/service:dump",
         "//xla/service:hlo_dataflow_analysis",
         "//xla/service:hlo_pass_pipeline",
@@ -2097,6 +2097,7 @@ cc_library(
         ":gemm_broadcast_folding_rewriter",
         ":gemm_rewriter",
         ":gemm_rewriter_triton",
+        ":gpu_async_collective_annotator",
         ":gpu_constants",
         ":gpu_conv_algorithm_picker",
         ":gpu_conv_rewriter",
