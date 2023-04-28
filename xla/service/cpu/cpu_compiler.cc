@@ -670,11 +670,12 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<LogisticExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
-  auto dynamic_padder_options = DynamicPadderOptions();
-  dynamic_padder_options.shape_check_mode =
-      DynamicDimensionInference::ShapeCheckMode::kCompileTime;
-  pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
+  // Turn off expansions for ops supported natively by XLA:CPU Next.
   if (!is_mlir_compile) {
+    auto dynamic_padder_options = DynamicPadderOptions();
+    dynamic_padder_options.shape_check_mode =
+        DynamicDimensionInference::ShapeCheckMode::kCompileTime;
+    pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
     pipeline.AddPass<SelectAndScatterExpander>();
     pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
   }
