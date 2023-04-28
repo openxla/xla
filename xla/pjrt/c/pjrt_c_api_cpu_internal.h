@@ -12,8 +12,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "xla/pjrt/c/pjrt_c_api_cpu.h"
 
-#include "xla/pjrt/c/pjrt_c_api_cpu_internal.h"
+#ifndef XLA_PJRT_C_PJRT_C_API_CPU_INTERNAL_H_
+#define XLA_PJRT_C_PJRT_C_API_CPU_INTERNAL_H_
 
-const PJRT_Api* GetPjrtApi() { return pjrt::cpu_plugin::GetCpuPjrtApi(); }
+#include "xla/pjrt/c/pjrt_c_api.h"
+
+namespace pjrt {
+namespace cpu_plugin {
+
+const PJRT_Api* GetCpuPjrtApi();
+
+}  // namespace cpu_plugin
+}  // namespace pjrt
+
+#endif  // XLA_PJRT_C_PJRT_C_API_CPU_INTERNAL_H_

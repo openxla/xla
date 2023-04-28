@@ -85,6 +85,17 @@ cc_library(
     hdrs = ["pjrt_c_api_cpu.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":pjrt_c_api_cpu_internal",
+        ":pjrt_c_api_hdrs",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_cpu_internal",
+    srcs = ["pjrt_c_api_cpu_internal.cc"],
+    hdrs = ["pjrt_c_api_cpu_internal.h"],
+    visibility = ["//visibility:public"],
+    deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
