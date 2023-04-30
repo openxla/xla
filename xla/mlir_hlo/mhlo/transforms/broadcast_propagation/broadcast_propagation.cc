@@ -158,8 +158,7 @@ void findBroadcastIntents(
 
   // We use result vector of broadcast intents as a worklist, the first `i`
   // intents of which have been processed.
-  for (int64_t i = 0; i < static_cast<int64_t>(bcastIntents.size()); ++i) {
-    BroadcastIntent it = bcastIntents[i];
+  for (auto it : bcastIntents) {
     Operation *producerOp = it.targetValue.getDefiningOp();
 
     // We can propagate broadcasts over (broadcasting) element-wise operations
