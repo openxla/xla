@@ -64,6 +64,10 @@ extern const char kXlaShardingStrategyDiv[];
 // XLA frontend attribute for pad value.
 extern const char kXlaPadValueAttr[];
 
+// XLA frontend attributes for simulated quantization.
+extern const char kXlaQuantizationHighValueAttr[];
+extern const char kXlaQuantizationLowValueAttr[];
+extern const char kXlaQuantizationNumBucketsValueAttr[];
 }  // namespace xla
 
 #endif  // XLA_SIDE_EFFECT_UTIL_H_
