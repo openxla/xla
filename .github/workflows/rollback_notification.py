@@ -57,6 +57,7 @@ def get_associated_prs(
       pr_number = maybe_match.group(1)
       print(f"Found PR #{pr_number} associated with commit hash {commit_hash}")
       yield int(pr_number)
+  print(f"Didn't find any PRs associated with commit hashes: {commit_hashes}")
 
 
 def main():
