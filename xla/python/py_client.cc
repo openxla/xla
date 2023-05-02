@@ -25,13 +25,14 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/numbers.h"
-#include "xla/python/ifrt/client.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/python/callback.h"
 #include "xla/python/exceptions.h"
+#include "xla/python/ifrt/client.h"
+#include "xla/python/ifrt/compiler.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/py_array.h"
 #include "xla/python/py_buffer.h"
@@ -222,8 +223,7 @@ PyClient::GetDefaultDeviceAssignment1D(int num_replicas) {
 
 StatusOr<py::object> PyClient::BufferFromPyval(
     pybind11::handle argument, PjRtDevice* device, bool force_copy,
-    ifrt::Client::HostBufferSemantics host_buffer_semantics
-) {
+    ifrt::Client::HostBufferSemantics host_buffer_semantics) {
   if (device == nullptr) {
     TF_RET_CHECK(!ifrt_client_->addressable_devices().empty());
     device = ifrt_client_->addressable_devices().front();
@@ -349,7 +349,7 @@ StatusOr<std::shared_ptr<PyLoadedExecutable>> PyClient::Compile(
                         ParseMlirModuleString(mlir_module, context));
     TF_ASSIGN_OR_RETURN(ifrt_loaded_executable,
                         ifrt_client_->GetDefaultCompiler()->Compile(
-                            module.get(), std::move(options)));
+                            module.get(), {std::move(options)}));
     TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   }
   auto traceback = Traceback::Get();
@@ -373,7 +373,10 @@ StatusOr<std::shared_ptr<PyLoadedExecutable>> PyClient::DeserializeExecutable(
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         ifrt_client_->GetDefaultCompiler()->DeserializeLoadedExecutable(
-            serialized, std::move(options)));
+            serialized,
+            options.has_value()
+                ? std::optional<ifrt::CompileOptions>({*std::move(options)})
+                : std::nullopt));
     TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());

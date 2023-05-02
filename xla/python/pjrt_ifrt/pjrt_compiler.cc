@@ -40,9 +40,12 @@ StatusOr<std::unique_ptr<LoadedExecutable>>
 PjRtCompiler::DeserializeLoadedExecutable(
     absl::string_view serialized, std::optional<CompileOptions> options) {
   DCHECK(this);
-  TF_ASSIGN_OR_RETURN(auto pjrt_loaded_executble,
-                      client_->pjrt_client()->DeserializeExecutable(
-                          serialized, std::move(options)));
+  TF_ASSIGN_OR_RETURN(
+      auto pjrt_loaded_executble,
+      client_->pjrt_client()->DeserializeExecutable(
+          serialized, options.has_value() ? std::optional<xla::CompileOptions>(
+                                                std::move(options)->xla_options)
+                                          : std::nullopt));
   return PjRtLoadedExecutable::Create(client_,
                                       std::move(pjrt_loaded_executble));
 }
