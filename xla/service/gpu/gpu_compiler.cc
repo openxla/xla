@@ -57,7 +57,6 @@ limitations under the License.
 #include "xla/service/all_reduce_folder.h"
 #include "xla/service/all_reduce_promotion.h"
 #include "xla/service/all_reduce_reassociate.h"
-#include "xla/service/all_to_all_decomposer.h"
 #include "xla/service/async_collective_creator.h"
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/bitcast_dtypes_expander.h"
@@ -430,7 +429,6 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
     AddHloVerifier(&pipeline);
     pipeline.AddPass<TopkSpecializer>();
     pipeline.AddPass<TopkDecomposer>();
-    pipeline.AddPass<AllToAllDecomposer>();
 
     HloPredicate upcaster_filter = [&](const HloInstruction* instr) {
       return !stream_exec->GetDeviceDescription()
