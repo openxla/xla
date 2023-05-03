@@ -839,6 +839,7 @@ cc_library(
         "//xla/service:platform_util",
         "//xla/service:tuple_simplifier",
         "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@pybind11",
