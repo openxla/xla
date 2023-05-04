@@ -1123,8 +1123,8 @@ cc_library(
         ":latency_hiding_scheduler",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_query",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1141,8 +1141,6 @@ xla_cc_test(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
     ],
 )
