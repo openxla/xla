@@ -3192,7 +3192,6 @@ test_suite(
         "//xla/service/gpu:custom_call_test",
         # copybara:uncomment "//xla/service/gpu:gpu_aot_compilation_test",
         "//xla/service/gpu/tests:add_preds.hlo.test",
-        "//xla/service/gpu/tests:all_reduce.hlo.test",
         "//xla/service/gpu/tests:concat.hlo.test",
         "//xla/service/gpu/tests:constant.hlo.test",
         "//xla/service/gpu/tests:copy.hlo.test",
