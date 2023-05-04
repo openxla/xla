@@ -741,12 +741,40 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "tflite_portable_logging",
+    hdrs = [
+        "//tsl/platform:tflite_portable_logging_hdrs",
+        "//tsl/platform/default:integral_types.h",
+        "//tsl/platform/default:logging.h",
+    ],
+    compatible_with = get_compatible_with_portable(),
+    copts = tsl_copts(),
+    linkopts = select({
+        "//tensorflow:freebsd": [],
+        "//tensorflow:windows": [],
+        "//conditions:default": [
+            "-ldl",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":platform_base",
+        "//tsl/platform:logging",
+    ],
+)
+
 filegroup(
     name = "tflite_portable_logging_hdrs",
     srcs = [
         "bfloat16.h",
+        "float8.h",
+        "logging.h",
         "macros.h",
         "platform.h",
+        "tstring.h",
+        "types.h",
+        ":ctstring",
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = set_external_visibility([
