@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/gpu/gpu_types.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/statusor.h"
 
@@ -75,9 +76,8 @@ namespace gpu {
 //
 class GpuTreeReductionRewriter : public HloModulePass {
  public:
-  explicit GpuTreeReductionRewriter(
-      se::CudaComputeCapability cuda_compute_capability)
-      : cuda_compute_capability_(cuda_compute_capability) {}
+  explicit GpuTreeReductionRewriter(GpuVersion gpu_version)
+      : gpu_version_(gpu_version) {}
 
   ~GpuTreeReductionRewriter() override = default;
   absl::string_view name() const override {
@@ -90,7 +90,7 @@ class GpuTreeReductionRewriter : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  se::CudaComputeCapability cuda_compute_capability_;
+  GpuVersion gpu_version_;
 };
 
 }  // end namespace gpu
