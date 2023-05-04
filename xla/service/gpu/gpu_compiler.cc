@@ -125,6 +125,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime_intrinsics.h"
 #include "xla/service/gpu/scatter_slice_simplifier.h"
 #include "xla/service/gpu/topk_specializer.h"
+#include "xla/service/gpu/topk_splitter.h"
 #include "xla/service/gpu/tree_reduction_rewriter.h"
 #include "xla/service/gpu/variadic_op_splitter.h"
 #include "xla/service/hlo_computation_deduplicator.h"
@@ -416,6 +417,7 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
   {
     HloPassPipeline pipeline("optimization");
     AddHloVerifier(&pipeline);
+    pipeline.AddPass<TopKSplitter>();
     pipeline.AddPass<TopkSpecializer>();
     pipeline.AddPass<TopkDecomposer>();
 

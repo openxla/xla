@@ -2132,6 +2132,7 @@ cc_library(
         ":runtime_intrinsics",
         ":scatter_slice_simplifier",
         ":topk_specializer",
+        ":topk_splitter",
         ":tree_reduction_rewriter",
         ":variadic_op_splitter",
         "//xla:autotune_results_proto_cc",
@@ -3475,6 +3476,7 @@ cc_library(
     srcs = ["conv_layout_normalization.cc"],
     hdrs = ["conv_layout_normalization.h"],
     deps = [
+        ":cublas_cudnn",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:statusor",
@@ -3484,7 +3486,6 @@ cc_library(
         "//xla/client:padding",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_creation_utils",
-        "//xla/service/gpu:cublas_cudnn",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
@@ -3524,5 +3525,48 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "topk_splitter",
+    srcs = ["topk_splitter.cc"],
+    hdrs = ["topk_splitter.h"],
+    deps = [
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/numeric:bits",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "topk_splitter_test",
+    srcs = ["topk_splitter_test.cc"],
+    deps = [
+        ":topk_splitter",
+        "//xla:error_spec",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_dce",
+        "//xla/service:pattern_matcher",
+        "//xla/service:topk_rewriter",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:verified_hlo_module",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
 )
