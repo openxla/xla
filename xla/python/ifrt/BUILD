@@ -65,6 +65,8 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla/pjrt:pjrt_client",
+        "//xla/python/ifrt/ir",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
@@ -137,9 +139,13 @@ xla_cc_test(
     srcs = ["sharding_test.cc"],
     deps = [
         ":ifrt",
+        "//xla/python/ifrt/ir",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
