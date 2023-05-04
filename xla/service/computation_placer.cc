@@ -141,7 +141,7 @@ StatusOr<int> ComputationPlacer::DeviceId(int replica, int computation,
   TF_RET_CHECK(replica < replica_count);
   TF_RET_CHECK(computation < computation_count);
 
-  return computation * replica_count + replica;
+  return replica * computation_count + computation;
 }
 
 StatusOr<DeviceAssignment> ComputationPlacer::AssignDevices(
