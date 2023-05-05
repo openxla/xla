@@ -39,6 +39,8 @@ cc_library(
         "//tsl/platform:platform_port",
         "//tsl/platform:status",
         "//tsl/platform:types",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
     alwayslink = True,
 )
@@ -67,6 +69,8 @@ cc_library(
         "//tsl/platform:errors",
         "//tsl/platform:platform_port",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
     alwayslink = True,
 )
@@ -95,5 +99,7 @@ tsl_cc_test(
         "//tsl/platform:env_impl",
         "//tsl/platform:test",
         "//tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )

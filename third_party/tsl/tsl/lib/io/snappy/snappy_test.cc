@@ -15,6 +15,8 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/lib/io/inputbuffer.h"
 #include "tsl/lib/io/random_inputstream.h"
@@ -154,7 +156,7 @@ Status TestMultipleWrites(size_t compress_input_buf_size,
     }
 
     if (actual_result != expected_result) {
-      return errors::DataLoss("Actual and expected results don't match.");
+      return absl::DataLossError("Actual and expected results don't match.");
     }
     TF_RETURN_IF_ERROR(in.Reset());
   }
@@ -193,7 +195,7 @@ Status TestMultipleWritesInputStream(
     }
 
     if (actual_result != expected_result) {
-      return errors::DataLoss("Actual and expected results don't match.");
+      return absl::DataLossError("Actual and expected results don't match.");
     }
     TF_RETURN_IF_ERROR(snappy_input_stream.Reset());
   }
@@ -336,9 +338,9 @@ TEST(SnappyBuffers, SmallUncompressInputStream) {
     return;
   }
   CHECK_EQ(TestMultipleWritesInputStream(10000, 10000, 10000, 10, 2, true),
-           errors::ResourceExhausted(
+           absl::ResourceExhaustedError(absl::StrCat(
                "Output buffer(size: 10 bytes) too small. ",
-               "Should be larger than ", GetRecord().size(), " bytes."));
+               "Should be larger than ", GetRecord().size(), " bytes.")));
 }
 
 TEST(SnappyBuffers, CorruptBlock) {
@@ -371,7 +373,7 @@ TEST(SnappyBuffers, CorruptBlockLargeInputBuffer) {
     return;
   }
   CHECK_EQ(TestMultipleWrites(10000, 10000, 2000, 10000, 2, true, 1, true),
-           errors::OutOfRange("EOF reached"));
+           absl::OutOfRangeError("EOF reached"));
 }
 
 TEST(SnappyBuffers, CorruptBlockLargeInputStream) {
