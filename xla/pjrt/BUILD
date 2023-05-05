@@ -738,6 +738,7 @@ cc_library(
         ":pjrt_client",
         ":pjrt_future",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
