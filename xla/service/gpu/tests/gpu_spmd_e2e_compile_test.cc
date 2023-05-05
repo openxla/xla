@@ -15,9 +15,9 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_query.h"
 #include "tsl/lib/core/status_test_util.h"
 
 namespace xla {

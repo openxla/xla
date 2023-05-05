@@ -25,8 +25,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/gpu_device_info.h"
-#include "xla/service/hlo_query.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
 

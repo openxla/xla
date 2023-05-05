@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/gather_expander.h"
 
-#include "xla/service/hlo_query.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"

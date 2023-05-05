@@ -15,8 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_async_collective_annotator.h"
 
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/hlo_query.h"
 
 namespace xla {
 namespace gpu {

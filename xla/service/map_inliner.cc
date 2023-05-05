@@ -23,7 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/hlo_query.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "tsl/platform/errors.h"

@@ -20,8 +20,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/hlo_query.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
 

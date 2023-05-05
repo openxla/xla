@@ -264,9 +264,9 @@ xla_cc_test(
     srcs = ["cpu_spmd_compile_test.cc"],
     deps = [
         ":cpu_codegen_test",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_parser",
-        "//xla/service:hlo_query",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:test_header_helper",
         "//xla/tests:hlo_test_base",

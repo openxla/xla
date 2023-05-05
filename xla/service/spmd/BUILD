@@ -46,6 +46,7 @@ cc_library(
         "//xla/client/lib:comparators",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
+        "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:call_graph",
         "//xla/service:custom_call_sharding_helper",
@@ -56,7 +57,6 @@ cc_library(
         "//xla/service:hlo_lexer",
         "//xla/service:hlo_pass",
         "//xla/service:hlo_pass_pipeline",
-        "//xla/service:hlo_query",
         "//xla/service:pattern_matcher",
         "//xla/service:shape_inference",
         "//xla/service:sharding_propagation",
@@ -121,8 +121,8 @@ cc_library(
     hdrs = ["canonicalize_all_gather_for_cse.h"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_pass",
-        "//xla/service:hlo_query",
         "@com_google_absl//absl/types:span",
     ],
 )

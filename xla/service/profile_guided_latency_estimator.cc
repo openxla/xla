@@ -21,7 +21,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/hlo_query.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/xla.pb.h"
 

@@ -140,3 +140,15 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
     ],
 )
+
+cc_library(
+    name = "hlo_query",
+    srcs = ["hlo_query.cc"],
+    hdrs = ["hlo_query.h"],
+    deps = [
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
+    ],
+)
