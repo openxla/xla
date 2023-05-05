@@ -21,7 +21,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "xla/service/hlo_cost_analysis.h"
+#include "xla/hlo/utils/hlo_cost_analysis.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "tsl/platform/init_main.h"
 

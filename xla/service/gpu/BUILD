@@ -2766,8 +2766,8 @@ cc_library(
         ":cublas_cudnn",
         ":ir_emission_utils",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_cost_analysis",
         "//xla/service:elemental_ir_emitter",
-        "//xla/service:hlo_cost_analysis",
         "@com_google_absl//absl/container:node_hash_map",
     ],
 )

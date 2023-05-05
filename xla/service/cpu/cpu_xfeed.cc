@@ -24,11 +24,11 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
+#include "xla/hlo/utils/hlo_cost_analysis.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/cpu/cpu_runtime.h"
 #include "xla/service/cpu/xfeed_manager.h"
-#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
