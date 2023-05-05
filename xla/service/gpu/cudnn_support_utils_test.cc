@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -58,7 +59,7 @@ class CudnnSupportUtilsTest : public HloTestBase {
         if (inst->IsCustomCall(target)) {
           VLOG(1) << inst->ToString();
           if (call != nullptr) {
-            return tsl::errors::FailedPrecondition(
+            return absl::FailedPreconditionError(
                 "Found more than one custom call.");
           }
           call = Cast<HloCustomCallInstruction>(inst);
@@ -66,7 +67,7 @@ class CudnnSupportUtilsTest : public HloTestBase {
       }
     }
     if (call == nullptr) {
-      return tsl::errors::FailedPrecondition(
+      return absl::FailedPreconditionError(
           "Did not find any matching custom call.");
     }
     return call;

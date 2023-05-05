@@ -27,6 +27,8 @@ cc_library(
         #"//tensorflow/core/profiler:internal",
     ],
     deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:types",

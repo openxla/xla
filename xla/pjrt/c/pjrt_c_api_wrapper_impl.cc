@@ -28,6 +28,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -278,7 +280,7 @@ xla::StatusOr<xla::CompileOptions> ParseCompileOptions(
   xla::CompileOptionsProto options_proto;
   // Open source ParseFromString doesn't support string_view.
   if (!options_proto.ParseFromArray(options_str.data(), options_str.size())) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "PJRT_Client_Compile: failed to deserialize CompileOptionsProto");
   }
   return xla::CompileOptions::FromProto(options_proto);
@@ -305,12 +307,12 @@ ParsePjrtProgram(std::optional<mlir::MLIRContext>& context,
     xla::HloModuleProto module_proto;
     // Open source ParseFromString doesn't support string_view.
     if (!module_proto.ParseFromArray(module_str.data(), module_str.size())) {
-      return tsl::errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "PJRT_Client_Compile: failed to deserialize HloModuleProto");
     }
     return ProgramVariant(xla::XlaComputation(module_proto));
   } else {
-    return tsl::errors::InvalidArgument(ProgramFormatErrorMsg(format_str));
+    return absl::InvalidArgumentError(ProgramFormatErrorMsg(format_str));
   }
 }
 
@@ -372,7 +374,7 @@ PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
   const int partitions = args->num_partitions;
   const size_t buffer_size = args->default_assignment_size;
   if (buffer_size < replicas * partitions) {
-    xla::Status status = tsl::errors::FailedPrecondition(
+    xla::Status status = absl::FailedPreconditionError(
         absl::StrCat(__func__, ": `default_assignment_size` ", buffer_size,
                      " < `num_replicas * num_partitions`, ", replicas, " * ",
                      partitions, " = ", replicas * partitions));

@@ -19,6 +19,8 @@ limitations under the License.
 #include <string>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "grpcpp/server_builder.h"
@@ -113,7 +115,7 @@ DistributedRuntimeServiceImpl::~DistributedRuntimeServiceImpl() {
   {
     absl::MutexLock lock(&mu_);
     state_ = State::kClosed;
-    service_status_ = tsl::errors::FailedPrecondition("Service shutting down.");
+    service_status_ = absl::FailedPreconditionError("Service shutting down.");
     if (!stop_heartbeat_thread_.HasBeenNotified()) {
       stop_heartbeat_thread_.Notify();
     }
@@ -185,7 +187,7 @@ xla::Status DistributedRuntimeServiceImpl::ValidateSessionId(
   if (state_ != State::kInitializing) {
     // This most likely indicates that a client task was restarted but the
     // old master is still up. Clients should retry on failure.
-    return xla::ToGrpcStatus(tsl::errors::Aborted(
+    return xla::ToGrpcStatus(absl::AbortedError(
         "Connect() called when system is not initializing."));
   }
   int node_id = request->node_id();
@@ -210,9 +212,9 @@ xla::Status DistributedRuntimeServiceImpl::ValidateSessionId(
           connect_timeout)) {
     nodes_[node_id].present = false;
     --num_nodes_present_;
-    return xla::ToGrpcStatus(tsl::errors::DeadlineExceeded(
-        "Timed out after ", absl::FormatDuration(connect_timeout),
-        " waiting for all nodes to call Connect()"));
+    return xla::ToGrpcStatus(absl::DeadlineExceededError(
+        absl::StrCat("Timed out after ", absl::FormatDuration(connect_timeout),
+                     " waiting for all nodes to call Connect()")));
   }
 
   if (nodes_[node_id].client_id != request->client_id()) {
@@ -228,7 +230,7 @@ xla::Status DistributedRuntimeServiceImpl::ValidateSessionId(
     // In this scenario we take whichever client showed up most recently and
     // evict the client with an out-of-date client ID.
     return xla::ToGrpcStatus(
-        tsl::errors::Aborted("Duplicate node ID ", node_id));
+        absl::AbortedError(absl::StrCat("Duplicate node ID ", node_id)));
   }
 
   if (node_id == 0) {
@@ -278,9 +280,9 @@ xla::Status DistributedRuntimeServiceImpl::ValidateSessionId(
   if (!mu_.AwaitWithTimeout(absl::Condition(&all_nodes_shutting_down),
                             options_.shutdown_timeout)) {
     state_ = State::kClosed;
-    return xla::ToGrpcStatus(tsl::errors::DeadlineExceeded(
+    return xla::ToGrpcStatus(absl::DeadlineExceededError(absl::StrCat(
         "Timed out after ", absl::FormatDuration(options_.shutdown_timeout),
-        " waiting for all nodes to call Shutdown()"));
+        " waiting for all nodes to call Shutdown()")));
   }
   state_ = State::kClosed;
   if (!stop_heartbeat_thread_.HasBeenNotified()) {
@@ -322,10 +324,10 @@ xla::Status DistributedRuntimeServiceImpl::ValidateSessionId(
   };
   if (!mu_.AwaitWithTimeout(absl::Condition(&all_topologies_present),
                             options_.enumerate_devices_timeout)) {
-    return xla::ToGrpcStatus(tsl::errors::DeadlineExceeded(
-        "Timed out after ",
-        absl::FormatDuration(options_.enumerate_devices_timeout),
-        " waiting for all nodes to call EnumerateDevices()"));
+    return xla::ToGrpcStatus(absl::DeadlineExceededError(
+        absl::StrCat("Timed out after ",
+                     absl::FormatDuration(options_.enumerate_devices_timeout),
+                     " waiting for all nodes to call EnumerateDevices()")));
   }
   if (!service_status_.ok()) {
     return xla::ToGrpcStatus(service_status_);
@@ -393,8 +395,8 @@ void DistributedRuntimeServiceImpl::HeartbeatLoop() {
           now) {
         LOG(INFO) << "Missed heartbeats from node " << i << ". Shutting down.";
         state_ = State::kClosed;
-        service_status_ = tsl::errors::Aborted(
-            "Shutting down due to missed heartbeat from task ", i);
+        service_status_ = absl::AbortedError(absl::StrCat(
+            "Shutting down due to missed heartbeat from task ", i));
         return;
       }
     }
@@ -495,9 +497,9 @@ void DistributedRuntimeServiceImpl::HeartbeatLoop() {
   // service here.
   if (!mu_.AwaitWithTimeout(absl::Condition(&all_nodes_at_barrier), timeout)) {
     barrier_id_to_num_nodes_[barrier_id] = kBarrierTimedOut;
-    return xla::ToGrpcStatus(tsl::errors::DeadlineExceeded(
-        "Timed out after ", timeout,
-        " waiting for all nodes to be at WaitAtBarrier()"));
+    return xla::ToGrpcStatus(absl::DeadlineExceededError(
+        absl::StrCat("Timed out after ", timeout,
+                     " waiting for all nodes to be at WaitAtBarrier()")));
   }
 
   if (!service_status_.ok()) {

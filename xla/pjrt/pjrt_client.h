@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
@@ -696,10 +697,10 @@ class PjRtClient {
       HostBufferSemantics host_buffer_semantics,
       std::function<void()> on_done_with_host_buffer, PjRtDevice* device,
       const Layout* device_layout) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(absl::StrCat(
         "BufferFromHostBuffer with an optional device layout is not "
         "implemented on platform: ",
-        platform_name());
+        platform_name()));
   }
 
   // TODO(b/277820585): remove BufferFromHostBuffer with PjRtDevice after the
@@ -710,10 +711,10 @@ class PjRtClient {
       HostBufferSemantics host_buffer_semantics,
       std::function<void()> on_done_with_host_buffer,
       PjRtMemorySpace* memory_space, const Layout* device_layout) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(absl::StrCat(
         "BufferFromHostBuffer with PjRtMemorySpace is not implemented on "
         "platform: ",
-        platform_name());
+        platform_name()));
   }
 
   // Note that literal must remain in scope until the transfer has completed, so
@@ -726,10 +727,10 @@ class PjRtClient {
   // migration is done.
   virtual StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
       const LiteralSlice& literal, PjRtMemorySpace* memory_space) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(absl::StrCat(
         "BufferFromHostLiteral with PjRtMemorySpace is not implemented on "
         "platform: ",
-        platform_name());
+        platform_name()));
   }
 
   // Creates a PjRtBuffer that is a non-owned view of an on-device

@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/numeric/bits.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -199,26 +200,26 @@ Status AppendStatus(Status prior, absl::string_view context);
 template <typename... Args>
 Status InvalidArgument(const absl::FormatSpec<Args...>& format,
                        const Args&... args) {
-  return WithLogBacktrace(
-      tsl::errors::InvalidArgument(absl::StrFormat(format, args...)));
+  return WithLogBacktrace(absl::InvalidArgumentError(
+      absl::StrCat(absl::StrFormat(format, args...))));
 }
 template <typename... Args>
 Status Unimplemented(const absl::FormatSpec<Args...>& format,
                      const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::Unimplemented(absl::StrFormat(format, args...)));
+      absl::UnimplementedError(absl::StrFormat(format, args...)));
 }
 template <typename... Args>
 Status InternalError(const absl::FormatSpec<Args...>& format,
                      const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::Internal(absl::StrFormat(format, args...)));
+      absl::InternalError(absl::StrFormat(format, args...)));
 }
 template <typename... Args>
 Status FailedPrecondition(const absl::FormatSpec<Args...>& format,
                           const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::FailedPrecondition(absl::StrFormat(format, args...)));
+      absl::FailedPreconditionError(absl::StrFormat(format, args...)));
 }
 template <typename... Args>
 Status Cancelled(const absl::FormatSpec<Args...>& format, const Args&... args) {
@@ -229,7 +230,7 @@ template <typename... Args>
 Status ResourceExhausted(const absl::FormatSpec<Args...>& format,
                          const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::ResourceExhausted(absl::StrFormat(format, args...)));
+      absl::ResourceExhaustedError(absl::StrFormat(format, args...)));
 }
 template <typename... Args>
 Status NotFound(const absl::FormatSpec<Args...>& format, const Args&... args) {
@@ -244,8 +245,7 @@ Status Unavailable(const absl::FormatSpec<Args...>& format,
 }
 template <typename... Args>
 Status Unknown(const absl::FormatSpec<Args...>& format, const Args&... args) {
-  return WithLogBacktrace(
-      tsl::errors::Unknown(absl::StrFormat(format, args...)));
+  return WithLogBacktrace(absl::UnknownError(absl::StrFormat(format, args...)));
 }
 template <typename... Args>
 Status Internal(const absl::FormatSpec<Args...>& format, const Args&... args) {

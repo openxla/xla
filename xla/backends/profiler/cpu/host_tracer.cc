@@ -19,6 +19,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/types.h"
@@ -70,7 +72,7 @@ HostTracer::~HostTracer() { Stop().IgnoreError(); }  // NOLINT
 
 tsl::Status HostTracer::Start() {  // TENSORFLOW_STATUS_OK
   if (recording_) {
-    return tsl::errors::Internal("TraceMeRecorder already started");
+    return absl::InternalError("TraceMeRecorder already started");
   }
 
   // All TraceMe captured should have a timestamp greater or equal to
@@ -79,14 +81,14 @@ tsl::Status HostTracer::Start() {  // TENSORFLOW_STATUS_OK
   start_timestamp_ns_ = tsl::profiler::GetCurrentTimeNanos();
   recording_ = tsl::profiler::TraceMeRecorder::Start(host_trace_level_);
   if (!recording_) {
-    return tsl::errors::Internal("Failed to start TraceMeRecorder");
+    return absl::InternalError("Failed to start TraceMeRecorder");
   }
   return tsl::OkStatus();
 }
 
 tsl::Status HostTracer::Stop() {  // TENSORFLOW_STATUS_OK
   if (!recording_) {
-    return tsl::errors::Internal("TraceMeRecorder not started");
+    return absl::InternalError("TraceMeRecorder not started");
   }
   events_ = tsl::profiler::TraceMeRecorder::Stop();
   recording_ = false;
@@ -97,7 +99,7 @@ tsl::Status HostTracer::CollectData(  // TENSORFLOW_STATUS_OK
     tensorflow::profiler::XSpace* space) {
   VLOG(2) << "Collecting data to XSpace from HostTracer.";
   if (recording_) {
-    return tsl::errors::Internal("TraceMeRecorder not stopped");
+    return absl::InternalError("TraceMeRecorder not stopped");
   }
   if (events_.empty()) {
     return tsl::OkStatus();

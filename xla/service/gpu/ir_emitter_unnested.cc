@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -191,11 +192,11 @@ class UnreachableThunk : public Thunk {
 
   Status Initialize(const GpuExecutable& executable,
                     se::StreamExecutor* executor) final {
-    return tsl::errors::Internal(error_message_);
+    return absl::InternalError(error_message_);
   }
 
   Status ExecuteOnStream(const ExecuteParams& params) final {
-    return tsl::errors::Internal(error_message_);
+    return absl::InternalError(error_message_);
   }
 
  private:

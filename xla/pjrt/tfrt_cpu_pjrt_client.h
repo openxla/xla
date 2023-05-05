@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -384,8 +385,7 @@ class TfrtCpuExecutable final : public PjRtLoadedExecutable {
     memory_stats.generated_code_size_in_bytes = SizeOfGeneratedCodeInBytes();
     const HloProto* proto = cpu_executable_->hlo_proto();
     if (!proto) {
-      return tsl::errors::FailedPrecondition(
-          "cpu_executable_ has no hlo_proto.");
+      return absl::FailedPreconditionError("cpu_executable_ has no hlo_proto.");
     }
     memory_stats.serialized_hlo_proto = proto->SerializeAsString();
     return memory_stats;

@@ -24,6 +24,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -154,7 +156,7 @@ StatusOr<xla::Literal> CreateArrayLiteralFromAttr(mlir::ElementsAttr attr,
                                                   xla::Layout layout) {
   auto dense_attr = attr.dyn_cast<mlir::DenseElementsAttr>();
   if (!dense_attr)
-    return tsl::errors::Unimplemented("Only dense elements attr are supported");
+    return absl::UnimplementedError("Only dense elements attr are supported");
 
   xla::Shape shape = xla::TypeToShape(dense_attr.getType());
 
@@ -186,7 +188,7 @@ StatusOr<xla::Literal> CreateArrayLiteralFromAttr(mlir::ElementsAttr attr,
     ELEMENTS_ATTR_TO_LITERAL(xla::PrimitiveType::F8E4M3B11FNUZ,
                              tsl::float8_e4m3b11)
     default:
-      return tsl::errors::Internal(absl::StrCat(  // NOLINT
+      return absl::InternalError(absl::StrCat(  // NOLINT
           "Unsupported type: ", xla::PrimitiveType_Name(shape.element_type())));
   }
 #undef ELEMENTS_ATTR_TO_LITERAL
@@ -3439,7 +3441,7 @@ xla::Status PrepareForExport(mlir::ModuleOp module) {
     pm.addNestedPass<mlir::func::FuncOp>(mhlo::createShapeLegalizeToHloPass());
   }
   if (failed(pm.run(module)))
-    return tsl::errors::Internal("Unable to prepare for XLA export");
+    return absl::InternalError("Unable to prepare for XLA export");
   return ::tsl::OkStatus();
 }
 
@@ -3452,7 +3454,7 @@ xla::Status ConvertRegionToComputation(mlir::Region* region,
   xla::XlaBuilder module_builder("main");
   ConvertToHloModule converter(module, module_builder, true, true, options);
   if (failed(converter.LowerRegionAsComputation(region, func)))
-    return tsl::errors::Internal("failed to convert region to computation");
+    return absl::InternalError("failed to convert region to computation");
   return ::tsl::OkStatus();
 }
 
@@ -3478,7 +3480,7 @@ xla::Status ConvertMlirHloToHlo(mlir::ModuleOp module, xla::HloProto* hlo_proto,
     mlir::PassManager pm(module->getContext());
     pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
     if (failed(pm.run(module)))
-      return tsl::errors::Internal("Unable to convert StableHLO to MHLO");
+      return absl::InternalError("Unable to convert StableHLO to MHLO");
   }
 
   TF_RETURN_IF_ERROR(PrepareForExport(module));
@@ -3544,9 +3546,9 @@ xla::Status BuildHloFromMlirHlo(mlir::Block& block, xla::XlaBuilder& builder,
   // xla_params should only include non-constant parameters the block arguments
   // correspond to.
   if (xla_params.size() != block.getArguments().size())
-    return tsl::errors::Internal("xla_params size (", xla_params.size(),
-                                 ") != block arguments size (",
-                                 block.getArguments().size(), ")");
+    return absl::InternalError(absl::StrCat(
+        "xla_params size (", xla_params.size(), ") != block arguments size (",
+        block.getArguments().size(), ")"));
   for (BlockArgument& arg : block.getArguments()) {
     auto num = arg.getArgNumber();
     lowering[arg] = xla_params[num];

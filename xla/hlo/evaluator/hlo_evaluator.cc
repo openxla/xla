@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/base/internal/endian.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -269,10 +270,10 @@ std::optional<EvalErrorDetail> ParseEvalErrorDetail(const Status& error) {
 }
 
 Status MakeEvalErrorDueToParamOrInfeed(const HloInstruction& eval_instruction) {
-  Status error = tsl::errors::FailedPrecondition(
+  Status error = absl::FailedPreconditionError(absl::StrCat(
       "Failed to evaluate instruction (", eval_instruction.name(),
       ") since it depends on infeed or parameters to its parent computation (",
-      eval_instruction.parent()->name(), ").");
+      eval_instruction.parent()->name(), ")."));
   std::string error_payload;
   error_payload.resize(sizeof(EvalErrorDetail));
   absl::little_endian::Store32(
@@ -1133,20 +1134,20 @@ Status HloEvaluator::EvaluateParameterFromCallerArgument(
   // If the parent computation has multiple callers, we cannot determine from
   // which caller the arguments are passed.
   if (computation_callers.size() != 1) {
-    return tsl::errors::FailedPrecondition(
-        "The computation ", parent_computation->name(), " is called by ",
-        computation_callers.size(),
-        " callers and thus its argument value "
-        "cannot be determined statically.");
+    return absl::FailedPreconditionError(
+        absl::StrCat("The computation ", parent_computation->name(),
+                     " is called by ", computation_callers.size(),
+                     " callers and thus its argument value "
+                     "cannot be determined statically."));
   }
   HloInstruction* computation_caller = computation_callers[0];
   HloInstruction* caller_operand = computation_caller->mutable_operand(0);
   if (computation_caller->opcode() != HloOpcode::kWhile &&
       computation_caller->opcode() != HloOpcode::kCall) {
-    return tsl::errors::FailedPrecondition(
+    return absl::FailedPreconditionError(absl::StrCat(
         "The computation ", parent_computation->name(), " is called by ",
         "instruction ", computation_caller->name(),
-        ", which is not yet supported.");
+        ", which is not yet supported."));
   }
   if (computation_caller->opcode() == HloOpcode::kWhile) {
     HloComputation* while_body = computation_caller->while_body();
@@ -1223,7 +1224,7 @@ Status HloEvaluator::EvaluateInternal(
 
   if (!recursively_evaluate_nonconstant_operands) {
     if (!hlo_query::AllOperandsAreConstants(*instruction)) {
-      return tsl::errors::FailedPrecondition("Not all operands are constants.");
+      return absl::FailedPreconditionError("Not all operands are constants.");
     }
   } else {
     if (instruction->opcode() == HloOpcode::kGetTupleElement) {
@@ -1362,7 +1363,7 @@ Status HloEvaluator::HandleSetDimensionSize(
 Status HloEvaluator::HandleParameter(HloInstruction* parameter) {
   if (!IsAlreadyEvaluated(parameter, visitor_shape_index_)) {
     if (!enable_partial_evaluation_) {
-      return tsl::errors::FailedPrecondition(
+      return absl::FailedPreconditionError(
           "Failed to evaluate instruction since its operands are unknown "
           "or undetermined and partial evaluation is not enabled.");
     }
@@ -1392,7 +1393,7 @@ Status HloEvaluator::HandleParameter(HloInstruction* parameter) {
 
 Status HloEvaluator::HandleInfeed(HloInstruction* infeed) {
   if (!enable_partial_evaluation_) {
-    return tsl::errors::FailedPrecondition(
+    return absl::FailedPreconditionError(
         "Failed to evaluate instruction since its operands are unknown "
         "or undetermined and partial evaluation is not enabled.");
   }
@@ -3193,7 +3194,7 @@ Status HloEvaluator::HandleAsyncDone(HloInstruction* async_done) {
 Status HloEvaluator::HandleCopyStart(HloInstruction* copy_start) {
   if (copy_start->user_count() != 1 ||
       copy_start->users().at(0)->opcode() != HloOpcode::kCopyDone) {
-    return tsl::errors::FailedPrecondition(
+    return absl::FailedPreconditionError(
         "Cannot evaluate a kCopyStart that doesn't have a single kCopyDone "
         "user.");
   }
@@ -3213,7 +3214,7 @@ Status HloEvaluator::HandleCopyStart(HloInstruction* copy_start) {
 Status HloEvaluator::HandleCopyDone(HloInstruction* copy_done) {
   const HloInstruction* operand = copy_done->operand(0);
   if (operand->opcode() != HloOpcode::kCopyStart) {
-    return tsl::errors::FailedPrecondition(
+    return absl::FailedPreconditionError(
         "Cannot evaluate a kCopyDone that doesn't have a kCopyStart as "
         "operand.");
   }
@@ -4500,7 +4501,7 @@ Status HloEvaluator::Preprocess(HloInstruction* hlo) {
     for (HloInstruction* operand : hlo->mutable_operands()) {
       if (!IsAlreadyEvaluated(operand) ||
           !GetEvaluatedLiteralFor(operand).IsKnown()) {
-        return tsl::errors::FailedPrecondition(
+        return absl::FailedPreconditionError(
             "Failed to evaluate instruction since its operands are unknown "
             "or undetermined and partial evaluation is not enabled.");
       }
