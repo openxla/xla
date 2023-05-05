@@ -445,13 +445,13 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor/cuda:cublas_plugin",
         "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
         "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
@@ -494,9 +494,9 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor/cuda:cublas_plugin",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
     ],
 )
 
@@ -924,10 +924,10 @@ cc_library(
         ":precompiled_kernels",
         ":triangular_solve_thunk",
     ]) + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cublas_plugin",
         "//xla/stream_executor/cuda:cuda_stream",
-        "//xla/stream_executor/cuda:cudnn_plugin",
-        "//xla/stream_executor/cuda:cufft_plugin",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
+        "@tsl//tsl/platform/default/build_config:cudnn_plugin",
+        "@tsl//tsl/platform/default/build_config:cufft_plugin",
         "//xla/stream_executor/cuda:stream_executor_cuda",
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm_is_configured([
@@ -1164,10 +1164,10 @@ cc_library(
         ":thunk",
         "//xla/service:buffer_assignment",
         "//xla:status",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/cuda:cublas_lt_header",
-        "//xla/stream_executor/cuda:cublas_plugin",
     ]) + ["@tsl//tsl/platform:logging"],
 )
 
@@ -1193,12 +1193,12 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:blas",
         "//xla/stream_executor/cuda:cublas_lt_header",
-        "//xla/stream_executor/cuda:cublas_plugin",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor/gpu:redzone_allocator",
         "//xla:util",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
         "@tsl//tsl/platform:logger",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
@@ -1271,7 +1271,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cublas_lt_header",
-        "//xla/stream_executor/cuda:cublas_plugin",
+        "@tsl//tsl/platform/default/build_config:cublas_plugin",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "//xla/stream_executor:host_or_device_scalar",
         "//xla/stream_executor:scratch_allocator",
