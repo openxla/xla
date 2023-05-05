@@ -91,6 +91,8 @@ tsl_cc_test(
         "//tsl/protobuf:coordination_service_proto_cc_impl",
         "//tsl/protobuf:distributed_runtime_payloads_proto_cc_impl",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
     ] + tsl_grpc_cc_dependencies(),
 )

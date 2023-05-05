@@ -44,5 +44,6 @@ cc_library(
         "//tsl/platform:thread_annotations",
         "//tsl/protobuf:coordination_service_cc_grpc_proto",
         "//tsl/protobuf:coordination_service_proto_cc",
+        "@com_google_absl//absl/status",
     ] + tsl_grpc_cc_dependencies(),
 )
