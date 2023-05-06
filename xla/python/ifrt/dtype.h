@@ -71,10 +71,9 @@ class DType {
     kToken = 17,
 
     kF8E4M3FN = 19,
-    kF8E4M3B11FNUZ = 23,
     kF8E5M2 = 20,
 
-    // Next = 24
+    // Next = 21
 
     // String is not support in XLA. DType.Kind needs to match xla.PrimitiveType
     // enum, so choose a large enum to avoid collision.

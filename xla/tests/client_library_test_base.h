@@ -465,7 +465,6 @@ void ClientLibraryTestBase::ComputeAndCompareR0(
                     std::is_same<NativeT, half>::value ||
                     std::is_same<NativeT, tsl::float8_e5m2>::value ||
                     std::is_same<NativeT, tsl::float8_e4m3fn>::value ||
-                    std::is_same<NativeT, tsl::float8_e4m3b11>::value ||
                     std::is_same<NativeT, complex64>::value ||
                     std::is_same<NativeT, complex128>::value,
                 "Float or complex type required when specifying an ErrorSpec");
@@ -493,7 +492,6 @@ void ClientLibraryTestBase::ComputeAndCompareR1(
                     std::is_same<NativeT, half>::value ||
                     std::is_same<NativeT, tsl::float8_e5m2>::value ||
                     std::is_same<NativeT, tsl::float8_e4m3fn>::value ||
-                    std::is_same<NativeT, tsl::float8_e4m3b11>::value ||
                     std::is_same<NativeT, complex64>::value ||
                     std::is_same<NativeT, complex128>::value,
                 "Float or complex type required when specifying an ErrorSpec");
@@ -522,7 +520,6 @@ void ClientLibraryTestBase::ComputeAndCompareR2(
                     std::is_same<NativeT, half>::value ||
                     std::is_same<NativeT, tsl::float8_e5m2>::value ||
                     std::is_same<NativeT, tsl::float8_e4m3fn>::value ||
-                    std::is_same<NativeT, tsl::float8_e4m3b11>::value ||
                     std::is_same<NativeT, complex64>::value ||
                     std::is_same<NativeT, complex128>::value,
                 "Float or complex type required when specifying an ErrorSpec");
@@ -552,7 +549,6 @@ void ClientLibraryTestBase::ComputeAndCompareR3(
                     std::is_same<NativeT, half>::value ||
                     std::is_same<NativeT, tsl::float8_e5m2>::value ||
                     std::is_same<NativeT, tsl::float8_e4m3fn>::value ||
-                    std::is_same<NativeT, tsl::float8_e4m3b11>::value ||
                     std::is_same<NativeT, complex64>::value ||
                     std::is_same<NativeT, complex128>::value,
                 "Float or complex type required when specifying an ErrorSpec");
@@ -582,7 +578,6 @@ void ClientLibraryTestBase::ComputeAndCompareR4(
                     std::is_same<NativeT, half>::value ||
                     std::is_same<NativeT, tsl::float8_e5m2>::value ||
                     std::is_same<NativeT, tsl::float8_e4m3fn>::value ||
-                    std::is_same<NativeT, tsl::float8_e4m3b11>::value ||
                     std::is_same<NativeT, complex64>::value ||
                     std::is_same<NativeT, complex128>::value,
                 "Float or complex type required when specifying an ErrorSpec");
@@ -611,7 +606,6 @@ void ClientLibraryTestBase::ComputeAndCompare(
                     std::is_same<NativeT, half>::value ||
                     std::is_same<NativeT, tsl::float8_e5m2>::value ||
                     std::is_same<NativeT, tsl::float8_e4m3fn>::value ||
-                    std::is_same<NativeT, tsl::float8_e4m3b11>::value ||
                     std::is_same<NativeT, complex64>::value ||
                     std::is_same<NativeT, complex128>::value,
                 "Float or complex type required when specifying an ErrorSpec");

@@ -114,9 +114,6 @@ Literal CreateScalar(PrimitiveType primitive_type, Args... args) {
     case F8E4M3FN:
       return CreateScalarImpl<F8E4M3FN>(F<F8E4M3FN>{},
                                         std::forward<Args>(args)...);
-    case F8E4M3B11FNUZ:
-      return CreateScalarImpl<F8E4M3B11FNUZ>(F<F8E4M3B11FNUZ>{},
-                                             std::forward<Args>(args)...);
     case F16:
       return CreateScalarImpl<F16>(F<F16>{}, std::forward<Args>(args)...);
     case BF16:
@@ -162,8 +159,7 @@ struct IsReal {
       std::is_integral<T>::value || std::is_floating_point<T>::value ||
       std::is_same<bfloat16, T>::value || std::is_same<half, T>::value ||
       std::is_same<tsl::float8_e5m2, T>::value ||
-      std::is_same<tsl::float8_e4m3fn, T>::value ||
-      std::is_same<tsl::float8_e4m3b11, T>::value;
+      std::is_same<tsl::float8_e4m3fn, T>::value;
 };
 
 template <typename T>
@@ -217,18 +213,6 @@ GetMaxImpl() {
 
 template <typename NativeT>
 std::enable_if_t<std::is_same<NativeT, tsl::float8_e4m3fn>::value, NativeT>
-GetMinImpl() {
-  return std::numeric_limits<NativeT>::lowest();
-}
-
-template <typename NativeT>
-std::enable_if_t<std::is_same<NativeT, tsl::float8_e4m3b11>::value, NativeT>
-GetMaxImpl() {
-  return std::numeric_limits<NativeT>::max();
-}
-
-template <typename NativeT>
-std::enable_if_t<std::is_same<NativeT, tsl::float8_e4m3b11>::value, NativeT>
 GetMinImpl() {
   return std::numeric_limits<NativeT>::lowest();
 }

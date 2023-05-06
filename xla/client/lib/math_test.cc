@@ -26,7 +26,6 @@ limitations under the License.
 #include "xla/tests/test_macros.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {
@@ -222,7 +221,7 @@ XLA_TEST_F(MathTest, RealFpOnlyOps) {
     } else {
       continue;
     }
-    if (ty == F8E5M2 || ty == F8E4M3FN || ty == F8E4M3B11FNUZ) {
+    if (ty == F8E5M2 || ty == F8E4M3FN) {
       // TODO(b/259609697): Add FP8 support to math ops
       continue;
     }
@@ -245,11 +244,7 @@ XLA_TEST_F(MathTest, RealFpOnlyOps) {
       XlaOp p = Parameter(&b, 0, shape, "p0");
       test.first(p);
 
-      if (primitive_util::IsFloatingPointType(ty)) {
-        TF_EXPECT_OK(b.first_error());
-      } else {
-        EXPECT_FALSE(b.first_error().ok());
-      }
+      EXPECT_EQ(b.first_error().ok(), primitive_util::IsFloatingPointType(ty));
     }
   }
 }
