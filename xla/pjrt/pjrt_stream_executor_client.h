@@ -175,7 +175,7 @@ class PjRtStreamExecutorClient : public PjRtClient {
   explicit PjRtStreamExecutorClient(
       std::string platform_name, LocalClient* client,
       std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices,
-      int process_index, std::unique_ptr<se::DeviceMemoryAllocator> allocator,
+      int process_index, std::shared_ptr<se::DeviceMemoryAllocator> allocator,
       std::unique_ptr<tsl::Allocator> host_memory_allocator,
       bool should_stage_host_to_device_transfers,
       std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options);
@@ -382,7 +382,7 @@ class PjRtStreamExecutorClient : public PjRtClient {
   // because it is the device destructor that waits for any outstanding work to
   // complete.
   se::DeviceMemoryAllocator* allocator_;
-  std::unique_ptr<se::DeviceMemoryAllocator> owned_allocator_;
+  std::shared_ptr<se::DeviceMemoryAllocator> owned_allocator_;
 
   // Includes all devices, including non-local devices on multi-host platforms.
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> owned_devices_;
