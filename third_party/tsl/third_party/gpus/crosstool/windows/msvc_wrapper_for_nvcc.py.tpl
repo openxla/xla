@@ -193,6 +193,18 @@ def InvokeNvcc(argv, log=False):
   proc.wait()
   return proc.returncode
 
+
+def ProcessFlagForCommandFile(flag):
+  if flag.startswith("/D") or flag.startswith("-D"):
+    # We need to re-escape /DFOO="BAR" as /DFOO=\"BAR\", so that we get
+    # `#define FOO "BAR"` after expansion as a string literal define
+    if flag.endswith('"') and not flag.endswith('\\"'):
+      flag = '\\"'.join(flag.split('"', 1))
+      flag = '\\"'.join(flag.rsplit('"', 1))
+      return flag
+  return flag
+
+
 def main():
   parser = ArgumentParser()
   parser.add_argument('-x', nargs=1)
@@ -213,7 +225,18 @@ def main():
                              if not flag.startswith(('--cuda_log'))
                              and not flag.startswith(('-nvcc_options'))]
 
-  return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
+  output = [flag for flag in cpu_compiler_flags if flag.startswith("/Fo")]
+
+  # Store command line options in a file to avoid hitting the character limit.
+  if len(output) == 1:
+    commandfile_path = output[0][3:] + ".msvc_params"
+    commandfile = open(commandfile_path, "w")
+    cpu_compiler_flags = [ProcessFlagForCommandFile(flag) for flag in cpu_compiler_flags]
+    commandfile.write("\n".join(cpu_compiler_flags))
+    commandfile.close()
+    return subprocess.call([CPU_COMPILER, "@" + commandfile_path])
+  else:
+    return subprocess.call([CPU_COMPILER] + cpu_compiler_flags)
 
 if __name__ == '__main__':
   sys.exit(main())
