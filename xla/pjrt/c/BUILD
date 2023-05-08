@@ -1,5 +1,9 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load(
+    "@tsl//tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+)
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
@@ -85,6 +89,44 @@ cc_library(
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt:tfrt_cpu_pjrt_client",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_gpu_internal",
+    srcs = ["pjrt_c_api_gpu_internal.cc"],
+    hdrs = ["pjrt_c_api_gpu_internal.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_helpers",
+        ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt/gpu:gpu_helpers",
+        "//xla/pjrt/gpu:se_gpu_pjrt_client",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_gpu",
+    srcs = ["pjrt_c_api_gpu.cc"],
+    hdrs = ["pjrt_c_api_gpu.h"],
+    deps = [
+        ":pjrt_c_api_gpu_internal",
+        ":pjrt_c_api_hdrs",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_c_api_gpu_test",
+    srcs = ["pjrt_c_api_gpu_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        ":pjrt_c_api_gpu",
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt:pjrt_client",
+        "//xla/service:gpu_plugin",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
