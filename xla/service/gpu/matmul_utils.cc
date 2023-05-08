@@ -25,9 +25,11 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
+#include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -37,7 +39,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"
@@ -527,12 +528,12 @@ MatrixDescriptor GetMatrixDesc(const MatrixLayout& layout,
   };
 }
 
-template <typename Input, typename Output>
+template <typename Scale, typename Input, typename Output>
 Status DoGemmWithAlgorithm(int64_t batch_size, int64_t m, int64_t n, int64_t k,
                            const MatrixDescriptor& lhs,
                            const MatrixDescriptor& rhs,
-                           const MatrixDescriptor& output, Output alpha,
-                           Output beta, se::Stream* stream,
+                           const MatrixDescriptor& output, Scale alpha,
+                           Scale beta, se::Stream* stream,
                            se::blas::AlgorithmType algorithm,
                            se::blas::ComputePrecision compute_precision,
                            se::blas::ProfileResult* profile_result) {
@@ -560,19 +561,19 @@ Status DoGemmWithAlgorithm(int64_t batch_size, int64_t m, int64_t n, int64_t k,
   }
 }
 
-template <typename Input>
+template <typename Scale, typename Input, typename Output>
 Status DoGemm(int64_t batch_size, int64_t m, int64_t n, int64_t k,
               const MatrixDescriptor& lhs, const MatrixDescriptor& rhs,
-              const MatrixDescriptor& output, Input alpha, Input beta,
+              const MatrixDescriptor& output, Scale alpha, Scale beta,
               se::Stream* stream,
               std::optional<se::blas::AlgorithmType> algorithm,
               se::blas::ComputePrecision compute_precision,
               se::blas::ProfileResult* profile_result) {
   CHECK(output.transpose == se::blas::Transpose::kNoTranspose);
-  se::DeviceMemory<Input> output_data(output.data);
+  se::DeviceMemory<Output> output_data(output.data);
 
   if (algorithm) {
-    return DoGemmWithAlgorithm<Input, Input>(
+    return DoGemmWithAlgorithm<Scale, Input, Output>(
         batch_size, m, n, k, lhs, rhs, output, alpha, beta, stream, *algorithm,
         compute_precision, profile_result);
   }
@@ -620,62 +621,62 @@ Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
 
   if (!algorithm) algorithm = config.algorithm;
 
-  if ((output_layout.dtype == F16 || output_layout.dtype == BF16 ||
-       output_layout.dtype == F32 || output_layout.dtype == F64 ||
-       output_layout.dtype == C64 || output_layout.dtype == C128) &&
-      (lhs_layout.dtype != output_layout.dtype ||
-       rhs_layout.dtype != output_layout.dtype)) {
-    return InternalError(
-        "GEMM lhs type(%s) and rhs type(%s) must match output type(%s)",
-        primitive_util::LowercasePrimitiveTypeName(lhs_layout.dtype),
-        primitive_util::LowercasePrimitiveTypeName(rhs_layout.dtype),
-        primitive_util::LowercasePrimitiveTypeName(output_layout.dtype));
+  std::tuple<PrimitiveType, PrimitiveType, PrimitiveType> operand_types{
+      lhs_layout.dtype, rhs_layout.dtype, output_layout.dtype};
+
+#define TYPED_GEMM(SCALENTYPE, ATYPE, BTYPE, CTYPE)                         \
+  if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE)) {              \
+    using NativeScaleType =                                                 \
+        primitive_util::PrimitiveTypeToNative<SCALENTYPE>::type;            \
+    using NativeAType = primitive_util::PrimitiveTypeToNative<ATYPE>::type; \
+    using NativeCType = primitive_util::PrimitiveTypeToNative<CTYPE>::type; \
+    return DoGemm<NativeScaleType, NativeAType, NativeCType>(               \
+        batch_size, m, n, k, lhs, rhs, output,                              \
+        static_cast<NativeScaleType>(config.alpha.real()),                  \
+        static_cast<NativeScaleType>(config.beta), stream, algorithm,       \
+        config.compute_precision, profile_result);                          \
   }
 
-  switch (output_layout.dtype) {
-    case S32:
-      if (!algorithm) algorithm = se::blas::kDefaultGemmAlgo;
-      return DoGemmWithAlgorithm<int8_t, int32_t>(
-          batch_size, m, n, k, lhs, rhs, output,
-          static_cast<int32_t>(config.alpha.real()),
-          static_cast<int32_t>(config.beta), stream, *algorithm,
-          se::blas::kDefaultComputePrecision, profile_result);
-    case F16:
-      return DoGemm<Eigen::half>(batch_size, m, n, k, lhs, rhs, output,
-                                 static_cast<Eigen::half>(config.alpha.real()),
-                                 static_cast<Eigen::half>(config.beta), stream,
-                                 algorithm, config.compute_precision,
-                                 profile_result);
-    case BF16:
-      return DoGemm<Eigen::bfloat16>(
-          batch_size, m, n, k, lhs, rhs, output,
-          static_cast<Eigen::bfloat16>(config.alpha.real()),
-          static_cast<Eigen::bfloat16>(config.beta), stream, algorithm,
-          config.compute_precision, profile_result);
-    case F32:
-      return DoGemm<float>(batch_size, m, n, k, lhs, rhs, output,
-                           config.alpha.real(), config.beta, stream, algorithm,
-                           config.compute_precision, profile_result);
-    case F64:
-      return DoGemm<double>(batch_size, m, n, k, lhs, rhs, output,
-                            config.alpha.real(), config.beta, stream, algorithm,
-                            config.compute_precision, profile_result);
-    case C64:
-      return DoGemm<complex64>(batch_size, m, n, k, lhs, rhs, output,
-                               static_cast<complex64>(config.alpha),
-                               static_cast<complex64>(config.beta), stream,
-                               algorithm, config.compute_precision,
-                               profile_result);
-    case C128:
-      return DoGemm<complex128>(
-          batch_size, m, n, k, lhs, rhs, output, config.alpha,
-          static_cast<complex128>(config.beta), stream, algorithm,
-          config.compute_precision, profile_result);
-    default:
-      return InternalError(
-          "Unexpected GEMM dtype: %s",
-          primitive_util::LowercasePrimitiveTypeName(output_layout.dtype));
+#define TYPED_GEMM_COMPLEX(SCALENTYPE, ATYPE, BTYPE, CTYPE)                 \
+  if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE)) {              \
+    using NativeScaleType =                                                 \
+        primitive_util::PrimitiveTypeToNative<SCALENTYPE>::type;            \
+    using NativeAType = primitive_util::PrimitiveTypeToNative<ATYPE>::type; \
+    using NativeCType = primitive_util::PrimitiveTypeToNative<CTYPE>::type; \
+    return DoGemm<NativeScaleType, NativeAType, NativeCType>(               \
+        batch_size, m, n, k, lhs, rhs, output,                              \
+        static_cast<NativeScaleType>(config.alpha),                         \
+        static_cast<NativeScaleType>(config.beta), stream, algorithm,       \
+        config.compute_precision, profile_result);                          \
   }
+
+  if (output_layout.dtype == S32) {
+    if (!algorithm) algorithm = se::blas::kDefaultGemmAlgo;
+    return DoGemmWithAlgorithm<int32_t, int8_t, int32_t>(
+        batch_size, m, n, k, lhs, rhs, output,
+        static_cast<int32_t>(config.alpha.real()),
+        static_cast<int32_t>(config.beta), stream, *algorithm,
+        se::blas::kDefaultComputePrecision, profile_result);
+  }
+
+  // TYPED_GEMM(F16, F16, F16, F16)
+  TYPED_GEMM(F32, BF16, BF16, BF16)
+  TYPED_GEMM(F32, F16, F16, F16)
+  // TYPED_GEMM(F32, S8, S8, F32)
+  TYPED_GEMM(F32, BF16, BF16, F32)
+  TYPED_GEMM(F32, F16, F16, F32)
+  TYPED_GEMM(F32, F32, F32, F32)
+  TYPED_GEMM(F64, F64, F64, F64)
+  TYPED_GEMM_COMPLEX(C64, C64, C64, C64)
+  TYPED_GEMM_COMPLEX(C128, C128, C128, C128)
+
+#undef TYPED_GEMM
+#undef TYPED_GEMM_COMPLEX
+  return InternalError(
+      "Unexpected GEMM dtype: %s %s %s",
+      primitive_util::LowercasePrimitiveTypeName(lhs_layout.dtype),
+      primitive_util::LowercasePrimitiveTypeName(rhs_layout.dtype),
+      primitive_util::LowercasePrimitiveTypeName(output_layout.dtype));
 }
 
 namespace cublas_lt {
@@ -991,8 +992,11 @@ Status MatmulPlan::ExecuteOnStream(
 #endif
 
   // Other data types:
-  TYPED_MATMUL(float, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F)
+  // TYPED_MATMUL(Eigen::half, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F)
   TYPED_MATMUL(float, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_16BF)
+  TYPED_MATMUL(float, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F)
+  TYPED_MATMUL(float, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_32F, CUDA_R_32F)
+  TYPED_MATMUL(float, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F)
   TYPED_MATMUL(float, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F)
   TYPED_MATMUL(double, CUDA_R_64F, CUDA_R_64F, CUDA_R_64F, CUDA_R_64F)
   TYPED_MATMUL(complex64, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F)
