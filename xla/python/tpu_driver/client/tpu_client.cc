@@ -591,7 +591,7 @@ PyTpuExecutable::ExecuteResult PyTpuExecutable::ExecuteHelper(
   }
 
   xla::DeviceAssignmentProto device_assignment;
-  CHECK(device_assignment_.Serialize(&device_assignment).ok());
+  CHECK_OK(device_assignment_.Serialize(&device_assignment));
   std::shared_ptr<tpu_driver::Event> on_execute_finished =
       client_->driver()->ExecuteProgram(
           executables_.find(replica)->second.get(), inputs,
