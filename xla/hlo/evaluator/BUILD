@@ -72,6 +72,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:bitmap",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
