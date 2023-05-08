@@ -29,44 +29,12 @@ limitations under the License.
 
 #include "Eigen/Core"  // from @eigen_archive
 #include "tsl/platform/types.h"
+#include "tsl/python/lib/core/bfloat16.h"
+#include "tsl/python/lib/core/bfloat16_typedescriptor.h"
 #include "tsl/python/lib/core/custom_float.h"
+#include "tsl/python/lib/core/float8_typedescriptor.h"
 
 namespace tsl {
-namespace custom_float_internal {
-
-template <>
-struct TypeDescriptor<float8_e4m3fn>
-    : custom_float_internal::CustomFloatTypeDescriptor<float8_e4m3fn> {
-  typedef float8_e4m3fn T;
-  static constexpr const char* kTypeName = "float8_e4m3fn";
-  static constexpr const char* kTpDoc = "float8_e4m3fn floating-point values";
-  // We must register float8_e4m3fn with a unique kind, because numpy
-  // considers two types with the same kind and size to be equal.
-  // The downside of this is that NumPy scalar promotion does not work with
-  // float8 values.  Using 'V' to mirror bfloat16 vs float16.
-  static constexpr char kNpyDescrKind = 'V';
-  // TODO(phawkins): there doesn't seem to be a way of guaranteeing a type
-  // character is unique.
-  static constexpr char kNpyDescrType = '4';
-  static constexpr char kNpyDescrByteorder = '=';
-};
-
-template <>
-struct TypeDescriptor<float8_e5m2>
-    : custom_float_internal::CustomFloatTypeDescriptor<float8_e5m2> {
-  typedef float8_e5m2 T;
-  static constexpr const char* kTypeName = "float8_e5m2";
-  static constexpr const char* kTpDoc = "float8_e5m2 floating-point values";
-  // Treating e5m2 as the natural "float" type since it is IEEE-754 compliant.
-  static constexpr char kNpyDescrKind = 'f';
-  // TODO(phawkins): there doesn't seem to be a way of guaranteeing a type
-  // character is unique.
-  static constexpr char kNpyDescrType = '5';
-  static constexpr char kNpyDescrByteorder = '=';
-};
-
-}  // namespace custom_float_internal
-
 namespace {
 
 // Initializes the module.
@@ -90,13 +58,17 @@ bool Initialize() {
           numpy.get(), &float8_already_registered)) {
     return false;
   }
+  if (!tsl::custom_float_internal::RegisterNumpyDtype<float8_e4m3b11>(
+          numpy.get())) {
+    return false;
+  }
   if (!tsl::custom_float_internal::RegisterNumpyDtype<float8_e5m2>(
           numpy.get())) {
     return false;
   }
 
   // Register casts between float8 types. Only perform the cast if
-  // float8_e4m3b11 hasn't been previously registered, presumably by a different
+  // float8_e4m3fn hasn't been previously registered, presumably by a different
   // library. In this case, we assume the cast has also already been registered,
   // and registering it again can cause segfaults due to accessing an
   // uninitialized type descriptor in this library.
@@ -134,6 +106,31 @@ PyObject* Float8e4m3fnDtype() {
 
 int Float8e4m3fnNumpyType() {
   return tsl::custom_float_internal::TypeDescriptor<float8_e4m3fn>::Dtype();
+}
+
+bool RegisterNumpyFloat8e4m3b11() {
+  if (tsl::custom_float_internal::TypeDescriptor<float8_e4m3b11>::Dtype() !=
+      NPY_NOTYPE) {
+    // Already initialized.
+    return true;
+  }
+  if (!Initialize()) {
+    if (!PyErr_Occurred()) {
+      PyErr_SetString(PyExc_RuntimeError, "cannot load float8_e4m3b11 module.");
+    }
+    PyErr_Print();
+    return false;
+  }
+  return true;
+}
+
+PyObject* Float8e4m3b11Dtype() {
+  return reinterpret_cast<PyObject*>(
+      tsl::custom_float_internal::TypeDescriptor<float8_e4m3b11>::type_ptr);
+}
+
+int Float8e4m3b11NumpyType() {
+  return tsl::custom_float_internal::TypeDescriptor<float8_e4m3b11>::Dtype();
 }
 
 bool RegisterNumpyFloat8e5m2() {

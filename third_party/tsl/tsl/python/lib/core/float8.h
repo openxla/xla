@@ -29,6 +29,15 @@ PyObject* Float8e4m3fnDtype();
 // Returns the id number of the float8_e4m3fn numpy type.
 int Float8e4m3fnNumpyType();
 
+// Register the float8_e4m3b11 numpy type. Returns true on success.
+bool RegisterNumpyFloat8e4m3b11();
+
+// Returns a pointer to the float8_e4m3b11 dtype object.
+PyObject* Float8e4m3b11Dtype();
+
+// Returns the id number of the float8_e4m3b11 numpy type.
+int Float8e4m3b11NumpyType();
+
 // Register the float8_e5m2 numpy type. Returns true on success.
 bool RegisterNumpyFloat8e5m2();
 

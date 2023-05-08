@@ -20,7 +20,4 @@ PYBIND11_MODULE(pywrap_bfloat16, m) {
   tsl::RegisterNumpyBfloat16();
 
   m.def("bfloat16_type", [] { return pybind11::handle(tsl::Bfloat16Dtype()); });
-
-  m.def("float8_e4m3b11_type",
-        [] { return pybind11::handle(tsl::Float8_E4M3B11Dtype()); });
 }

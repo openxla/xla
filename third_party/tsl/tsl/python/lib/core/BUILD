@@ -5,11 +5,12 @@ load("//tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("//tsl/platform:rules_cc.bzl", "cc_shared_library")
 
 package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//visibility:public",
     ],
     features = [
-        # For bfloat16.so (see b/259896740)
+        # For bfloat16.so and float8.so (see b/259896740)
         "windows_export_all_symbols",
     ],
     licenses = ["notice"],
@@ -36,8 +37,9 @@ cc_library(
         "bfloat16.h",
     ],
     deps = [
+        ":bfloat16_hdr",
         ":custom_float",
-        "//tsl/platform:logging",
+        "//tsl/platform:bfloat16",
         "//tsl/platform:types",
         "//tsl/python/lib/core:numpy",
         "@eigen_archive//:eigen3",
@@ -82,6 +84,21 @@ tsl_pybind_extension(
     ],
 )
 
+tsl_pybind_extension(
+    name = "pywrap_float8",
+    srcs = ["float8_wrapper.cc"],
+    dynamic_deps = [":float8.so"],
+    static_deps = [
+        "@pybind11//:__subpackages__",
+        "@local_config_python//:__subpackages__",
+    ],
+    deps = [
+        ":float8_lib",
+        "@local_config_python//:python_headers",
+        "@pybind11",
+    ],
+)
+
 cc_library(
     name = "custom_float",
     hdrs = [
@@ -97,11 +114,29 @@ cc_library(
 )
 
 cc_library(
+    name = "bfloat16_hdr",
+    hdrs = [
+        "bfloat16.h",
+        "bfloat16_typedescriptor.h",
+    ],
+    deps = [
+        ":custom_float",
+        "//tsl/platform:bfloat16",
+        "//tsl/python/lib/core:numpy",
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+    ],
+)
+
+cc_library(
     name = "float8_hdr",
     hdrs = [
         "float8.h",
+        "float8_typedescriptor.h",
     ],
     deps = [
+        ":custom_float",
+        "//tsl/platform:float8",
+        "//tsl/python/lib/core:numpy",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
@@ -115,12 +150,36 @@ cc_library(
         "float8.h",
     ],
     deps = [
+        ":bfloat16_hdr",
         ":custom_float",
-        ":numpy",
+        ":float8_hdr",
         "//tsl/platform:float8",
         "//tsl/platform:types",
+        "//tsl/python/lib/core:numpy",
         "@eigen_archive//:eigen3",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+    ],
+)
+
+cc_shared_library(
+    name = "float8.so",
+    roots = [":float8_lib"],
+    # TODO(tlongeri): If this is not explicitly specified, dependent DLLs will expect "float8.so"
+    # and we will generate "float8.so.dll", for some reason
+    shared_lib_name = if_windows("float8.so", None),
+    static_deps = [
+        # TODO(ddunleavy): If cc_shared_library is ever not a noop in g3, change
+        # this to be more specific.
+        "//:__subpackages__",
+        "@//:__subpackages__",
+        "@com_google_absl//:__subpackages__",
+        # TODO(tlongeri): Ugly work-around to avoid reverse copybara check breaking. Change to
+        # just "@eigen_archive//:eigen3" after OSS TF removes //third_party/eigen3 in favor of
+        # @eigen_archive
+        "@" + "eigen_archive//:__subpackages__",
+        "//third_party/" + "eigen3:__subpackages__",
+        "@local_config_python//:__subpackages__",
+        "@nsync//:__subpackages__",
     ],
 )
 
