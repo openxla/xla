@@ -18,7 +18,9 @@ limitations under the License.
 
 #include <memory>
 #include <optional>
+#include <string>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/python/ifrt/executable.h"
@@ -27,7 +29,14 @@ namespace xla {
 namespace ifrt {
 
 // TODO(hyeontaek): Generalize `xla::CompileOptions`.
-using CompileOptions = ::xla::CompileOptions;
+struct CompileOptions {
+  xla::CompileOptions xla_options;
+
+  // Map from `getSymName()` of declared LoadedExecutableOp in the `mlir_module`
+  // to pre-compiled LoadedExecutable instance. The LoadedExecutables must
+  // outlive the LoadedExecutable to be compiled.
+  absl::flat_hash_map<std::string, LoadedExecutable*> loaded_exec_binding;
+};
 
 // Represents a compiler that creates an `Executable` that can run a computation
 // on devices.

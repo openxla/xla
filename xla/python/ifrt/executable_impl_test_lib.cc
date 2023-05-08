@@ -55,7 +55,7 @@ StatusOr<std::unique_ptr<LoadedExecutable>> CompileOnDevices(
 
   CompileOptions compile_options;
   ExecutableBuildOptions& build_options =
-      compile_options.executable_build_options;
+      compile_options.xla_options.executable_build_options;
   for (Device* device : devices) {
     build_options.set_device_ordinal(device->id());
     if (replicated) {
