@@ -193,6 +193,16 @@ def InvokeNvcc(argv, log=False):
   proc.wait()
   return proc.returncode
 
+def ExpandParamsFileForArgv():
+  new_argv = []
+  for arg in sys.argv:
+    if arg.startswith("@"):
+      with open(arg.strip("@")) as f:
+        new_argv.extend([l.strip() for l in f.readlines()])
+    else:
+      new_argv.append(arg)
+
+  sys.argv = new_argv
 
 def ProcessFlagForCommandFile(flag):
   if flag.startswith("/D") or flag.startswith("-D"):
@@ -206,6 +216,7 @@ def ProcessFlagForCommandFile(flag):
 
 
 def main():
+  ExpandParamsFileForArgv()
   parser = ArgumentParser()
   parser.add_argument('-x', nargs=1)
   parser.add_argument('--cuda_log', action='store_true')
