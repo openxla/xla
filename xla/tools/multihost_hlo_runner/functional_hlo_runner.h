@@ -136,6 +136,8 @@ class FunctionalHloRunner {
     // If set, we will flatten all while loops to the specified number of
     // iterations.
     std::optional<int> while_execution_count = std::nullopt;
+    std::optional<int> max_outer_loop_count = std::nullopt;
+    std::optional<int> max_loop_count = std::nullopt;
     // If set, we will remove all infeed and outfeed operations.
     bool remove_infeed_outfeed = true;
 

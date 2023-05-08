@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tools/multihost_hlo_runner/functional_hlo_runner.h"
 
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -708,13 +709,17 @@ Status FunctionalHloRunner::PrepareHloModuleForCompilation(
       preproc_options.remove_infeed_outfeed) {
     int while_execution_count =
         preproc_options.while_execution_count.value_or(0);
+    // To maintain previous behavior when max_outer_loop_count or max_loop_count
+    // is not set expecifically.
+    int max_outer_loop_count =
+        preproc_options.max_outer_loop_count.value_or(while_execution_count);
+    int max_loop_count =
+        preproc_options.max_loop_count.value_or(while_execution_count);
     HloControlFlowFlattening hlo_control_flow_flattening(
         HloControlFlowFlattening::Options{
             /*while_execution_count=*/while_execution_count,
-            /*max_outer_loop_count=*/
-            while_execution_count,
-            /*max_loop_count=*/
-            while_execution_count,
+            /*max_outer_loop_count=*/max_outer_loop_count,
+            /*max_loop_count=*/max_loop_count,
             /*remove_infeed_outfeed=*/preproc_options.remove_infeed_outfeed,
             /*flatten_while_loop=*/preproc_options.flatten_while_loop(),
             /*remove_comm=*/false, /*remove_host_transfer=*/true});
@@ -1331,7 +1336,7 @@ FunctionalHloRunner::CopyArgumentsToDevice(
     for (int index : curr_device_arguments_indices) {
       const Literal& literal = argument_literals[index];
       if (log_input) {
-        LOG(INFO) << "device_id=" << curr_device_id
+        LOG(INFO) << "device_id=" << curr_device_id << ", index=" << index
                   << ", input = " << literal.ToString();
       }
       TF_ASSIGN_OR_RETURN(
