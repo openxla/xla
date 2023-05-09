@@ -32,6 +32,7 @@ namespace ifrt {
 namespace {
 
 void PrintDims(llvm::raw_ostream& os, llvm::ArrayRef<int64_t> dims) {
+  if (dims.empty()) return;
   os << dims[0];
   for (int i = 1; i < dims.size(); ++i) {
     os << "x" << dims[i];
