@@ -369,6 +369,12 @@ PYBIND11_MODULE(xla_extension, m) {
     return std::make_shared<PyClient>(
         ifrt::PjRtClient::Create(std::move(client)));
   });
+  m.def("pjrt_plugin_exists",
+        [](std::string platform_name, std::string library_path) -> bool {
+          xla::StatusOr<const PJRT_Api*> pjrt_api =
+              pjrt::PjrtApi(platform_name);
+          return pjrt_api.ok();
+        });
   m.def("load_pjrt_plugin",
         [](std::string platform_name, std::string library_path) {
           xla::ThrowIfError(pjrt::LoadPjrtPlugin(platform_name, library_path));
