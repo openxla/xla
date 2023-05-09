@@ -50,8 +50,8 @@ class PjRtTopologyDescription {
   virtual std::optional<PjRtCompiler*> compiler() const { return std::nullopt; }
 
   // Returns an unordered list of descriptions for all devices in this topology.
-  virtual std::vector<std::unique_ptr<const PjRtDeviceDescription>>
-  DeviceDescriptions() const = 0;
+  virtual std::vector<const PjRtDeviceDescription*> DeviceDescriptions()
+      const = 0;
 };
 
 // Abstract interface that all registered compilers must implement.

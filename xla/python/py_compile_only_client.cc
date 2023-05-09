@@ -81,11 +81,10 @@ class CompileOnlyIfRtClient final
  public:
   explicit CompileOnlyIfRtClient(
       std::shared_ptr<PjRtTopologyDescription> topology)
-      : topology_(std::move(topology)),
-        descriptions_(topology_->DeviceDescriptions()) {
-    for (auto& description : descriptions_) {
+      : topology_(std::move(topology)) {
+    for (auto* description : topology_->DeviceDescriptions()) {
       owned_devices_.push_back(
-          std::make_unique<PjRtCompileOnlyDevice>(description.get()));
+          std::make_unique<PjRtCompileOnlyDevice>(description));
       devices_.push_back(owned_devices_.back().get());
     }
   }
@@ -165,7 +164,6 @@ class CompileOnlyIfRtClient final
  private:
   InvalidIfrtCompiler default_compiler_;
   std::shared_ptr<PjRtTopologyDescription> topology_;
-  std::vector<std::unique_ptr<const PjRtDeviceDescription>> descriptions_;
   std::vector<std::unique_ptr<PjRtCompileOnlyDevice>> owned_devices_;
   std::vector<PjRtDevice*> devices_;
 };
