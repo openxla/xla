@@ -64,7 +64,6 @@ static llvm::Value* AddrCastToDefault(llvm::Value* arg, llvm::IRBuilder<>& b) {
 
 namespace xla {
 
-using llvm_ir::IrName;
 using llvm_ir::SetToFirstInsertPoint;
 
 namespace gpu {
