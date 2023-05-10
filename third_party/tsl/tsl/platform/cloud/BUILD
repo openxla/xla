@@ -130,6 +130,7 @@ cc_library(
         "//tsl/platform:thread_annotations",
         "//tsl/profiler/lib:traceme",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
         "@jsoncpp_git//:jsoncpp",
     ],
     alwayslink = 1,
@@ -173,6 +174,7 @@ cc_library(
         "//tsl/platform:thread_annotations",
         "//tsl/profiler/lib:traceme",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
         "@jsoncpp_git//:jsoncpp",
     ],
     alwayslink = 1,
@@ -436,6 +438,7 @@ tsl_cc_test(
         "//tsl/platform:platform_port",
         "//tsl/platform:test",
         "//tsl/platform:test_main",
+        "@com_google_absl//absl/status",
     ],
 )
 
