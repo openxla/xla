@@ -345,6 +345,21 @@ cc_library(
 )
 
 cc_library(
+    name = "concurrent_region",
+    srcs = ["concurrent_region.cc"],
+    hdrs = ["concurrent_region.h"],
+    deps = [
+        ":graph_launch",
+        ":support",
+        "//xla:types",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/stream_executor",
+    ],
+)
+
+cc_library(
     name = "io_feed",
     srcs = ["io_feed.cc"],
     hdrs = ["io_feed.h"],
