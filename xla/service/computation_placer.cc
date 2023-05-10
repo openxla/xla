@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/computation_placer.h"
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,9 +29,6 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
-#include "xla/stream_executor/cuda/cuda_platform_id.h"
-#include "xla/stream_executor/host/host_platform_id.h"
-#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
@@ -199,17 +197,3 @@ ComputationPlacer::GetPlatformComputationPlacers() {
 
 }  // namespace xla
 
-static std::unique_ptr<xla::ComputationPlacer> CreateComputationPlacer() {
-  return std::make_unique<xla::ComputationPlacer>();
-}
-
-static bool InitModule() {
-  xla::ComputationPlacer::RegisterComputationPlacer(
-      stream_executor::host::kHostPlatformId, &CreateComputationPlacer);
-  xla::ComputationPlacer::RegisterComputationPlacer(
-      stream_executor::cuda::kCudaPlatformId, &CreateComputationPlacer);
-  xla::ComputationPlacer::RegisterComputationPlacer(
-      stream_executor::rocm::kROCmPlatformId, &CreateComputationPlacer);
-  return true;
-}
-static bool module_initialized = InitModule();

@@ -3731,6 +3731,18 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "computation_placer_registration",
+    srcs = ["computation_placer_registration.cc"],
+    deps = [
+        ":computation_placer",
+        "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/stream_executor/host:host_platform_id",
+        "//xla/stream_executor/rocm:rocm_platform_id",
+    ],
+    alwayslink = True,  # Contains per-platform computation placer registration
+)
+
+cc_library(
     name = "computation_placer",
     srcs = ["computation_placer.cc"],
     hdrs = ["computation_placer.h"],
@@ -3747,9 +3759,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor/cuda:cuda_platform_id",
-        "//xla/stream_executor/host:host_platform_id",
-        "//xla/stream_executor/rocm:rocm_platform_id",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
@@ -3757,7 +3766,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
     ] + if_libtpu([":tpu_computation_placer"]),
-    alwayslink = True,  # Contains per-platform computation placer registration
+    alwayslink = True,
 )
 
 cc_library(
@@ -5249,6 +5258,7 @@ cc_library(
     deps = [
         ":computation_layout",
         ":computation_placer",
+        ":computation_placer_registration",
         ":hlo_proto_cc",
         "//xla:debug_options_flags",
         "//xla:shape_layout",
