@@ -125,6 +125,7 @@ cc_library(
     deps = [
         ":cholesky",
         ":collectives",
+        ":concurrent_region",
         ":conv",
         ":conv_reorder",
         ":cublas_lt_matmul",
@@ -349,13 +350,12 @@ cc_library(
     srcs = ["concurrent_region.cc"],
     hdrs = ["concurrent_region.h"],
     deps = [
-        ":graph_launch",
         ":support",
-        "//xla:types",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
-        "//xla/stream_executor",
+        "//xla/service:executable",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
