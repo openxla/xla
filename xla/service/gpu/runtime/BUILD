@@ -355,6 +355,8 @@ cc_library(
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
         "//xla/service:executable",
+        "//xla/service:stream_pool",
+        "//xla/stream_executor",
         "@tsl//tsl/platform:statusor",
     ],
 )
