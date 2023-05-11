@@ -82,6 +82,7 @@ cc_library(
     includes = ["include"],
     deps = [
         "//xla:literal",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",

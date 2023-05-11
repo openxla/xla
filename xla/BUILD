@@ -559,6 +559,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/lib/core:bitmap",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:float8",
