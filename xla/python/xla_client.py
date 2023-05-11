@@ -204,7 +204,7 @@ PrimitiveType = _xla.PrimitiveType
 
 bfloat16 = ml_dtypes.bfloat16
 float8_e4m3fn = ml_dtypes.float8_e4m3fn
-float8_e4m3b11fnuz = ml_dtypes.float8_e4m3b11
+float8_e4m3b11fnuz = ml_dtypes.float8_e4m3b11fnuz
 float8_e5m2 = ml_dtypes.float8_e5m2
 
 XLA_ELEMENT_TYPE_TO_DTYPE = {

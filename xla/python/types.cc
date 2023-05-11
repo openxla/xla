@@ -63,7 +63,7 @@ xla::StatusOr<py::dtype> PrimitiveTypeToDtype(PrimitiveType type) {
     return new FloatTypes{
         py::dtype::from_args(ml_dtypes.attr("bfloat16")),
         py::dtype::from_args(ml_dtypes.attr("float8_e4m3fn")),
-        py::dtype::from_args(ml_dtypes.attr("float8_e4m3b11")),
+        py::dtype::from_args(ml_dtypes.attr("float8_e4m3b11fnuz")),
         py::dtype::from_args(ml_dtypes.attr("float8_e5m2")),
     };
   }();
@@ -127,7 +127,7 @@ const NumpyScalarTypes& GetNumpyScalarTypes() {
     dtypes->np_bfloat16 = py::object(ml_dtypes.attr("bfloat16"));
     dtypes->np_float8_e4m3fn = py::object(ml_dtypes.attr("float8_e4m3fn"));
     dtypes->np_float8_e4m3b11fnuz =
-        py::object(ml_dtypes.attr("float8_e4m3b11"));
+        py::object(ml_dtypes.attr("float8_e4m3b11fnuz"));
     dtypes->np_float8_e5m2 = py::object(ml_dtypes.attr("float8_e5m2"));
     dtypes->np_float16 = py::object(numpy.attr("float16"));
     dtypes->np_float32 = py::object(numpy.attr("float32"));
