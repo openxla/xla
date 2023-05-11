@@ -66,6 +66,16 @@ Status ValidateHostPortPair(const string& host_port) {
 
 ::grpc::ChannelArguments* CreateDefaultChannelArguments() {
   ::grpc::ChannelArguments* args = new ::grpc::ChannelArguments();
+  // Configure good default arguments.
+  args->SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 60000);
+  args->SetInt(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 14400000);
+  args->SetInt(GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA, 0);
+  args->SetInt(GRPC_ARG_HTTP2_MAX_PING_STRIKES, 0);
+  args->SetInt(GRPC_ARG_MAX_MESSAGE_LENGTH, std::numeric_limits<int32>::max());
+  // NOTE(mrry): Some versions of gRPC use a 20-second minimum backoff
+  // on connection failure, which makes our tests time out.
+  args->SetInt(GRPC_ARG_MAX_RECONNECT_BACKOFF_MS, 1000);
+
   const char* env = std::getenv("TF_GRPC_DEFAULT_OPTIONS");
   if (env != nullptr) {
     for (auto& grpc_option : absl::StrSplit(env, ',')) {
@@ -109,10 +119,6 @@ const ::grpc::ChannelArguments* GetDefaultChannelArguments() {
 ::grpc::ChannelArguments GetChannelArguments(const RPCOptions* rpc_options) {
   // TODO(mrry): Implement secure channels.
   ::grpc::ChannelArguments args = *GetDefaultChannelArguments();
-  args.SetInt(GRPC_ARG_MAX_MESSAGE_LENGTH, std::numeric_limits<int32>::max());
-  // NOTE(mrry): Some versions of gRPC use a 20-second minimum backoff
-  // on connection failure, which makes our tests time out.
-  args.SetInt(GRPC_ARG_MAX_RECONNECT_BACKOFF_MS, 1000);
   if (rpc_options != nullptr) {
     if (rpc_options->compression_algorithm() == "deflate") {
       args.SetCompressionAlgorithm(GRPC_COMPRESS_DEFLATE);
