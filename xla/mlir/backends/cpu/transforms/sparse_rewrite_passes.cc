@@ -83,11 +83,11 @@ struct SparseBatchedPackCallRewriter {
   }
 };
 
-struct SparseUnpackCallRewriter {
+struct SparseBatchedUnpackCallRewriter {
   LogicalResult operator()(mhlo::CustomCallOp op, PatternRewriter& rewriter) {
     assert(op.getResults().size() == 3 &&
            "Must be unpacking into data/indices/nnz");
-    assert(op.getInputs().size() == 1 &&
+    assert(op.getInputs().size() == 2 &&
            "Must be unpacking from one sparse tensor");
 
     SmallVector<Type, 3> unpack_ret_tp(op.getResults().getTypes());
@@ -95,11 +95,12 @@ struct SparseUnpackCallRewriter {
     auto nnz_type = unpack_ret_tp.back().cast<RankedTensorType>();
     assert(nnz_type.getRank() == 0 && "nnz tensor must be zero ranked");
     unpack_ret_tp.back() = nnz_type.getElementType();
-
     // Constructs the UnpackOp.
+    llvm::APInt batchedLvls =
+        *getDenseIntAttrFromConstant(op.getInputs()[1]).begin();
     auto unpack_op = rewriter.create<sparse_tensor::UnpackOp>(
-        op.getLoc(), unpack_ret_tp, op.getInputs());
-
+        op.getLoc(), unpack_ret_tp, op.getInputs()[0],
+        IntegerAttr::get(rewriter.getIndexType(), batchedLvls));
     // Converts the scalar nnz returned from UnpackOp back to tensor type.
     SmallVector<Value, 3> unpack_ret_v(unpack_op.getResults());
     auto scalar_nnz = unpack_op.getNse();
@@ -404,7 +405,8 @@ class SparseCustomCallRewriter : public OpRewritePattern<mhlo::CustomCallOp> {
   const llvm::StringMap<SparseCustomTargetRewriter> rewriter_map_{
       std::make_pair("sparse_tensor_sparse_pack",
                      SparseBatchedPackCallRewriter()),
-      std::make_pair("sparse_tensor_sparse_unpack", SparseUnpackCallRewriter()),
+      std::make_pair("sparse_tensor_sparse_unpack",
+                     SparseBatchedUnpackCallRewriter()),
       std::make_pair("sparse_tensor_transpose", SparseTransposeCallRewriter()),
       std::make_pair("sparse_tensor_dot_general", SparseDotCallRewriter()),
       std::make_pair("sparse_tensor_concatenate",
