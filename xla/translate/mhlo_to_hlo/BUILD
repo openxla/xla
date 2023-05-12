@@ -22,6 +22,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:lhlo_gpu",
+        "//xla/service:hlo_parser",
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:dnn",
         "@llvm-project//mlir:IR",
