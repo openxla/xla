@@ -630,6 +630,21 @@ Status MakeDotComputationSplitKBatch(
       MakeDotHlo(lhs, rhs, new_dim_numbers, dot->precision_config(),
                  dot->shape().element_type())
           .value();
+
+  // Setting layout of `new_dot` based on `dot`, but adding axis 0 as the most
+  // major dimension.
+  // This is really needed if the layout of `dot` is non-standard.
+  absl::Span<const int64_t> dot_minor_to_major =
+      dot->shape().layout().minor_to_major();
+  DimensionVector* new_dot_minor_to_major =
+      new_dot->mutable_shape()->mutable_layout()->mutable_minor_to_major();
+  TF_RET_CHECK(new_dot_minor_to_major->size() == dot_minor_to_major.size() + 1);
+  for (size_t i = 0; i < dot_minor_to_major.size(); ++i) {
+    // Each axis number is increased by one, as we added a new axis 0.
+    new_dot_minor_to_major->at(i) = dot_minor_to_major.at(i) + 1;
+  }
+  new_dot_minor_to_major->back() = 0;
+
   dot->SetupDerivedInstruction(new_dot);
   TF_RETURN_IF_ERROR(dot->ReplaceAllUsesWithDifferentShape(new_dot));
   TF_RETURN_IF_ERROR(dot->parent()->RemoveInstruction(dot));

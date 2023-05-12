@@ -225,7 +225,8 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/0.5, /*arel=*/1e-1}));
 }
 
-TEST_F(TritonAutotunerTest, SkipConfigsProducingDeviantResults) {
+TEST_F(TritonAutotunerTest,
+       GeneratesLayoutsCorrectlyWhenTheOutputLayoutIsNonStandard) {
   const std::string kHloText = R"(
 HloModule module
 
@@ -237,12 +238,12 @@ ENTRY e {
     lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
 
-  // Here split-K configs deviate strongly due to intermediate rounding
-  // but do execute fast - make sure they are filtered out (split_k = 1).
-
+  // We select different `split_k` values on different GPUs (for example: 1 and
+  // 4), so the `dot` can have different layouts on different GPUs.
   MatchOptimizedHlo(kHloText, R"(
-; CHECK: fusion(%tmp_1, %tmp_3), kind=kCustom
-; CHECK-SAME: split_k\":\"1\"
+; CHECK: ROOT %{{.*}} = f16[{{.*}}]{{[{](0,1|1,2,0)[}]}} dot(
+; CHECK: ENTRY
+; CHECK: ROOT %{{.*}} = f16[8192,4096]{0,1}
 )");
 }
 
