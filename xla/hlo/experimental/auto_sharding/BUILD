@@ -171,8 +171,7 @@ xla_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        #"//tensorflow/core:test",
-        "@tsl//tsl/lib/core:status_test_util",
         "@com_google_ortools//ortools/linear_solver",
+        "@tsl//tsl/lib/core:status_test_util",
     ],
 )
