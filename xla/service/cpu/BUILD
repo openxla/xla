@@ -89,6 +89,8 @@ filegroup(
 filegroup(
     name = "runtime_hdrs",
     srcs = [
+        # XLA Runtime support.
+        "buffer_desc.h",
         # Single-threaded support.
         "runtime_custom_call_status.h",
         "runtime_conv_impl.h",
@@ -109,20 +111,6 @@ filegroup(
         "runtime_lightweight_check.h",
         "runtime_matmul.h",
     ],
-    visibility = [":friends"],
-)
-
-filegroup(
-    name = "xla_runtime_runner_hdrs",
-    srcs = [
-        "buffer_desc.h",
-    ],
-    visibility = [":friends"],
-)
-
-filegroup(
-    name = "xla_runtime_runner_srcs",
-    srcs = [],
     visibility = [":friends"],
 )
 
@@ -188,6 +176,7 @@ cc_library(
     hdrs = ["buffer_info_util.h"],
     deps = [
         "//xla:cpu_function_runtime",
+        "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "@com_google_absl//absl/types:span",
     ],
@@ -784,6 +773,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
+        "//xla/runtime:execution_engine",
         "//xla/service:llvm_compiler",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/memory",
