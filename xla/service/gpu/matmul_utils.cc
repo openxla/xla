@@ -659,10 +659,8 @@ Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
         se::blas::kDefaultComputePrecision, profile_result);
   }
 
-  // TYPED_GEMM(F16, F16, F16, F16)
   TYPED_GEMM(F32, BF16, BF16, BF16)
   TYPED_GEMM(F32, F16, F16, F16)
-  // TYPED_GEMM(F32, S8, S8, F32)
   TYPED_GEMM(F32, BF16, BF16, F32)
   TYPED_GEMM(F32, F16, F16, F32)
   TYPED_GEMM(F32, F32, F32, F32)
@@ -992,7 +990,6 @@ Status MatmulPlan::ExecuteOnStream(
 #endif
 
   // Other data types:
-  // TYPED_MATMUL(Eigen::half, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F)
   TYPED_MATMUL(float, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_16BF)
   TYPED_MATMUL(float, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F)
   TYPED_MATMUL(float, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_32F, CUDA_R_32F)
