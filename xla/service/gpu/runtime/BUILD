@@ -381,6 +381,7 @@ cc_library(
     srcs = ["kernel_launch.cc"],
     hdrs = ["kernel_launch.h"],
     deps = [
+        ":concurrent_region",
         ":support",
         "//xla:types",
         "//xla/runtime:custom_call",
