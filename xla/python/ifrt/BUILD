@@ -65,6 +65,7 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt/ir",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",

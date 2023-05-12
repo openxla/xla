@@ -54,6 +54,7 @@ cc_library(
         "//xla/client:xla_computation",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:utils",
         "//xla/python/ifrt",
         "//xla/service:hlo_proto_cc",
