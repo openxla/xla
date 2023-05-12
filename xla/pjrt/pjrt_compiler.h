@@ -22,12 +22,42 @@ limitations under the License.
 #include <vector>
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "xla/pjrt/pjrt_client.h"
+#include "xla/client/xla_computation.h"
+#include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
+using PjRtPlatformId = uint64_t;
+
+inline const char* CpuName() {
+  static constexpr char kCpuName[] = "cpu";
+  return kCpuName;
+}
+inline const char* GpuName() {
+  static constexpr char kGpuName[] = "gpu";
+  return kGpuName;
+}
+inline const char* TpuName() {
+  static constexpr char kTpuName[] = "tpu";
+  return kTpuName;
+}
+inline PjRtPlatformId CpuId() {
+  static const PjRtPlatformId kCpuId = tsl::Fingerprint64(CpuName());
+  return kCpuId;
+}
+inline PjRtPlatformId GpuId() {
+  static const PjRtPlatformId kGpuId = tsl::Fingerprint64(GpuName());
+  return kGpuId;
+}
+inline PjRtPlatformId TpuId() {
+  static const PjRtPlatformId kTpuId = tsl::Fingerprint64(TpuName());
+  return kTpuId;
+}
+
 class PjRtCompiler;
+class PjRtClient;
 
 // TODO(b/240299401): Move CompileOptions to this file.
 
