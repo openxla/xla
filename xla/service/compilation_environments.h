@@ -52,6 +52,10 @@ class CompilationEnvironments {
   CompilationEnvironments() = default;
   CompilationEnvironments(const CompilationEnvironments& rhs) { *this = rhs; }
   CompilationEnvironments& operator=(const CompilationEnvironments& rhs);
+
+  CompilationEnvironments(CompilationEnvironments&& rhs) = default;
+  CompilationEnvironments& operator=(CompilationEnvironments&& rhs) = default;
+
   ~CompilationEnvironments() = default;
 
   // Deserializes the given CompilationEnvironments proto.
