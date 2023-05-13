@@ -4604,11 +4604,15 @@ xla_cc_test(
     deps = [
         ":instruction_hoister",
         ":memory_space_assignment",
+        ":memory_space_assignment_utils",
+        "//xla:test",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
     ],
 )
 
