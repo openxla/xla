@@ -327,6 +327,7 @@ cc_library(
     srcs = ["graph_launch.cc"],
     hdrs = ["graph_launch.h"],
     deps = [
+        ":concurrent_region",
         ":conv",
         ":gemm",
         ":kernel_launch",
@@ -341,6 +342,7 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/profiler/lib:scoped_annotation_stack",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_graph",
     ]),
