@@ -173,6 +173,19 @@ xla_cc_test(
     ]),
 )
 
+xla_cc_test(
+    name = "gpu_copy_insertion_test",
+    srcs = ["gpu_copy_insertion_test.cc"],
+    deps = [
+        ":gpu_compiler",
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:copy_insertion",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+    ],
+)
+
 cc_library(
     name = "hlo_to_ir_bindings",
     srcs = ["hlo_to_ir_bindings.cc"],
@@ -2240,6 +2253,7 @@ cc_library(
         "//xla/translate/hlo_to_mhlo:hlo_utils",
         "//xla/translate/mhlo_to_hlo:location_exporter",
         "//xla/translate/mhlo_to_lhlo_with_xla",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:variant",
         "@llvm-project//llvm:AsmParser",
