@@ -102,6 +102,7 @@ cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     hdrs = ["custom_call.h"],
+    copts = ["-fexceptions"],
     deps = [
         ":support",
         ":triangular_solve",
