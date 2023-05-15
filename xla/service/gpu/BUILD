@@ -1301,6 +1301,7 @@ cc_library(
     deps = [
         "//xla:permutation_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
@@ -2172,6 +2173,7 @@ cc_library(
         "//xla/service:convolution_pred_expander",
         "//xla/service:copy_insertion",
         "//xla/service:dot_decomposer",
+        "//xla/service:dot_dimension_merger",
         "//xla/service:dot_merger",
         "//xla/service:dump",
         "//xla/service:dynamic_dimension_simplifier",
