@@ -41,7 +41,6 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:sharding_propagation",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
