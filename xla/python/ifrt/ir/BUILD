@@ -133,3 +133,16 @@ cc_library(
         "@llvm-project//mlir:Support",
     ],
 )
+
+cc_library(
+    name = "compile_options",
+    srcs = ["compile_options.cc"],
+    hdrs = ["compile_options.h"],
+    visibility = ["//xla/python/ifrt:friends"],
+    deps = [
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@llvm-project//llvm:Support",
+    ],
+)
