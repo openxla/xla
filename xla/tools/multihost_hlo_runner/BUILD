@@ -58,6 +58,7 @@ cc_library(
     hdrs = ["functional_hlo_runner.h"],
     deps = [
         "//xla:literal",
+        "//xla:shape_util",
         "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:pjrt_client",

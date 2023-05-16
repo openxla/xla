@@ -197,6 +197,7 @@ cc_library(
     hdrs = ["custom_call_encoding.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
+        "//xla:shape_util",
         "//xla/mlir/runtime/ir:rt",
         "//xla/runtime:custom_call",
         "//xla/runtime:tracing",
@@ -293,7 +294,6 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla/mlir/runtime/ir:rt",
-        "//xla/runtime:errors",
         "//xla/runtime:types",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
