@@ -6432,6 +6432,7 @@ cc_library(
         "//xla:literal_util",
         "//xla:statusor",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/functional:function_ref",
         "@tsl//tsl/platform:blocking_counter",
