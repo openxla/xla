@@ -15,9 +15,8 @@ limitations under the License.
 
 #include "xla/stream_executor/host/host_platform.h"
 
-#include <thread>
+#include <utility>
 
-#include "absl/memory/memory.h"
 #include "absl/strings/str_format.h"
 #include "xla/stream_executor/host/host_gpu_executor.h"
 #include "xla/stream_executor/host/host_platform_id.h"
@@ -100,12 +99,3 @@ static void InitializeHostPlatform() {
 
 }  // namespace host
 }  // namespace stream_executor
-
-REGISTER_MODULE_INITIALIZER(host_platform,
-                            stream_executor::host::InitializeHostPlatform());
-
-// Note that module initialization sequencing is not supported in the
-// open-source project, so this will be a no-op there.
-REGISTER_MODULE_INITIALIZER_SEQUENCE(host_platform, multi_platform_manager);
-REGISTER_MODULE_INITIALIZER_SEQUENCE(multi_platform_manager_listener,
-                                     host_platform);

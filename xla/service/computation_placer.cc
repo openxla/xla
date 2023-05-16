@@ -163,7 +163,10 @@ StatusOr<DeviceAssignment> ComputationPlacer::AssignDevices(
     ComputationPlacerCreationFunction creation_function) {
   absl::MutexLock lock(&ComputationPlacer::platform_computation_placer_mutex_);
   auto* computation_placers = GetPlatformComputationPlacers();
-  CHECK(computation_placers->find(platform_id) == computation_placers->end());
+  if (computation_placers->find(platform_id) == computation_placers->end()) {
+    LOG(WARNING)
+        << "Computation placer already registered. Please check linkage.";
+  }
   (*computation_placers)[platform_id].creation_function = creation_function;
 }
 

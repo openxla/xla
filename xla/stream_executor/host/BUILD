@@ -34,6 +34,7 @@ cc_library(
     name = "host_platform",
     srcs = [
         "host_platform.cc",
+        "host_platform_registration.cc",
     ],
     hdrs = [
         "host_platform.h",
@@ -51,6 +52,28 @@ cc_library(
         "@tsl//tsl/platform:errors",
     ],
     alwayslink = True,  # Registers itself with the MultiPlatformManager.
+)
+
+cc_library(
+    name = "host_platform_no_registration",
+    srcs = [
+        "host_platform.cc",
+    ],
+    hdrs = [
+        "host_platform.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":host_gpu_executor",
+        ":host_platform_id",
+        "//xla/stream_executor:executor_cache",
+        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:errors",
+    ],
 )
 
 cc_library(

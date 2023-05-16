@@ -147,6 +147,37 @@ cc_library(
 )
 
 cc_library(
+    name = "local_client_no_host_platform_registration",
+    srcs = ["local_client.cc"],
+    hdrs = ["local_client.h"],
+    deps = [
+        ":client",
+        ":executable_build_options",
+        ":xla_computation",
+        "//xla:executable_run_options",
+        "//xla:shape_tree",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:backend",
+        "//xla/service:compiler",
+        "//xla/service:dump",
+        "//xla/service:executable",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service:local_service",
+        "//xla/service:maybe_owning_device_memory",
+        "//xla/service:shaped_buffer",
+        "//xla/service:source_map_util",
+        "//xla/service:stream_pool",
+        "//xla/stream_executor",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor/host:host_platform_no_registration",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:TargetParser",
+    ],
+)
+
+cc_library(
     name = "compile_only_client",
     srcs = ["compile_only_client.cc"],
     hdrs = ["compile_only_client.h"],
@@ -173,6 +204,29 @@ cc_library(
     deps = [
         ":compile_only_client",
         ":local_client",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla:types",
+        "//xla:util",
+        "//xla/service:backend",
+        "//xla/service:compile_only_service",
+        "//xla/service:local_service",
+        "//xla/service:platform_util",
+        "//xla/stream_executor",
+        "//xla/stream_executor:device_memory_allocator",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/memory",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "client_library_no_host_platform_registration",
+    srcs = ["client_library.cc"],
+    hdrs = ["client_library.h"],
+    deps = [
+        ":compile_only_client",
+        ":local_client_no_host_platform_registration",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:types",
