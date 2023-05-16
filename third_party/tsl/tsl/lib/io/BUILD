@@ -61,6 +61,7 @@ cc_library(
         ":inputstream_interface",
         ":random_inputstream",
         "//tsl/platform:env",
+        "@com_google_absl//absl/status",
     ],
     alwayslink = True,
 )
