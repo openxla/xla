@@ -7,9 +7,6 @@ cc_library(
     name = "pjrt_c_api_hdrs",
     hdrs = ["pjrt_c_api.h"],
     visibility = ["//visibility:public"],
-    deps = [
-        "//xla/stream_executor/tpu:c_api_decl",  # TODO(b/238999986): Remove this.
-    ],
 )
 
 cc_library(
@@ -56,7 +53,6 @@ cc_library(
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
         "//xla/service:hlo_proto_cc",
-        "//xla/stream_executor/tpu:c_api_conversions",  # TODO(b/238999986): Remove this.
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
     ],
