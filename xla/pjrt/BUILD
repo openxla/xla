@@ -75,6 +75,18 @@ xla_cc_test(
 
 cc_library(
     name = "tracked_device_buffer",
+    visibility = [
+        "//learning/pathways/data_parallel:__pkg__",
+        "//xla:internal",
+    ],
+    deps = [
+        ":tracked_device_buffer_no_host_platform_registration",
+        "//xla/stream_executor/host:host_platform_registration",
+    ],
+)
+
+cc_library(
+    name = "tracked_device_buffer_no_host_platform_registration",
     srcs = ["tracked_device_buffer.cc"],
     hdrs = ["tracked_device_buffer.h"],
     visibility = [
@@ -83,7 +95,7 @@ cc_library(
     ],
     deps = [
         ":event_pool",
-        ":local_device_state",
+        ":local_device_state_no_host_platform_registration",
         "//xla:shape_util",
         "//xla:types",
         "//xla/service:shaped_buffer",
@@ -116,6 +128,14 @@ xla_cc_test(
 
 cc_library(
     name = "local_device_state",
+    deps = [
+        ":local_device_state_no_host_platform_registration",
+        "//xla/stream_executor/host:host_platform_registration",
+    ],
+)
+
+cc_library(
+    name = "local_device_state_no_host_platform_registration",
     srcs = ["local_device_state.cc"],
     hdrs = ["local_device_state.h"],
     deps = [
@@ -124,7 +144,7 @@ cc_library(
         ":worker_thread",
         "//xla:status",
         "//xla:util",
-        "//xla/client:local_client",
+        "//xla/client:local_client_no_host_platform_registration",
         "//xla/stream_executor",
         "//xla/stream_executor:event",
         "@com_google_absl//absl/memory",
@@ -316,17 +336,26 @@ cc_library(
 
 cc_library(
     name = "pjrt_stream_executor_client",
+    visibility = ["//xla:friends"],
+    deps = [
+        ":pjrt_stream_executor_client_no_host_platform_registration",
+        "//xla/stream_executor/host:host_platform_registration",
+    ],
+)
+
+cc_library(
+    name = "pjrt_stream_executor_client_no_host_platform_registration",
     srcs = ["pjrt_stream_executor_client.cc"],
     hdrs = ["pjrt_stream_executor_client.h"],
     visibility = ["//xla:friends"],
     deps = [
         ":event_pool",
-        ":local_device_state",
+        ":local_device_state_no_host_platform_registration",
         ":metrics",
         ":mlir_to_hlo",
         ":pjrt_client",
         ":pjrt_future",
-        ":tracked_device_buffer",
+        ":tracked_device_buffer_no_host_platform_registration",
         ":transpose",
         ":utils",
         "//xla:cpu_function_runtime",
@@ -338,7 +367,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:executable_build_options",
-        "//xla/client:local_client",
+        "//xla/client:local_client_no_host_platform_registration",
         "//xla/client:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:protocol_proto_cc",

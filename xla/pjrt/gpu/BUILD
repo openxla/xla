@@ -14,6 +14,15 @@ package(
 
 cc_library(
     name = "gpu_helpers",
+    visibility = ["//xla/pjrt:friends"],
+    deps = [
+        ":gpu_helpers_no_host_platform_registration",
+        "//xla/stream_executor/host:host_platform_registration",
+    ],
+)
+
+cc_library(
+    name = "gpu_helpers_no_host_platform_registration",
     srcs = ["gpu_helpers.cc"],
     hdrs = ["gpu_helpers.h"],
     visibility = ["//xla/pjrt:friends"],
@@ -21,8 +30,8 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
-        "//xla/client:client_library",
-        "//xla/client:local_client",
+        "//xla/client:client_library_no_host_platform_registration",
+        "//xla/client:local_client_no_host_platform_registration",
         "//xla/service:platform_util",
         "//xla/stream_executor:device_mem_allocator",
         "//xla/stream_executor:kernel",
@@ -35,18 +44,27 @@ cc_library(
 
 cc_library(
     name = "se_gpu_pjrt_client",
+    visibility = ["//xla/pjrt:friends"],
+    deps = [
+        ":se_gpu_pjrt_client_no_host_platform_registration",
+        "//xla/stream_executor/host:host_platform_registration",
+    ],
+)
+
+cc_library(
+    name = "se_gpu_pjrt_client_no_host_platform_registration",
     srcs = ["se_gpu_pjrt_client.cc"],
     hdrs = ["se_gpu_pjrt_client.h"],
     defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
     visibility = ["//xla/pjrt:friends"],
     deps = [
-        ":gpu_helpers",
+        ":gpu_helpers_no_host_platform_registration",
         "//xla:statusor",
         "//xla:util",
-        "//xla/client:client_library",
+        "//xla/client:client_library_no_host_platform_registration",
         "//xla/pjrt:pjrt_client",
-        "//xla/pjrt:pjrt_stream_executor_client",
-        "//xla/pjrt:tracked_device_buffer",
+        "//xla/pjrt:pjrt_stream_executor_client_no_host_platform_registration",
+        "//xla/pjrt:tracked_device_buffer_no_host_platform_registration",
         "//xla/pjrt/distributed:client",
         "//xla/service:platform_util",
         "//xla/service/gpu:gpu_executable_run_options",
