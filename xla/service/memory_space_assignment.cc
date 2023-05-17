@@ -53,7 +53,8 @@ const float kCrossProgramPrefetchOccupyFreeingLimit = 0.6;
 // this amount multiplied by preferred overlap to async copy ratio.
 const float kEvictionRetryMultiplier = 2.0;
 
-bool LooksLikeAnActivation(const HloInstruction* inst) {
+bool LooksLikeAnActivationOrVerySparse(const HloInstruction* inst) {
+  int64_t access_size = 0;
   for (HloInstruction* user : inst->users()) {
     switch (user->opcode()) {
       case HloOpcode::kConvolution:
@@ -66,11 +67,14 @@ bool LooksLikeAnActivation(const HloInstruction* inst) {
         if (user->operand(1) == inst) {
           return true;
         }
+        if (user->operand(0) == inst) {
+          access_size += ShapeUtil::ArraySize(user->shape());
+        }
         break;
       case HloOpcode::kFusion:
         for (int i = 0; i < user->operand_count(); ++i) {
           if (user->operand(i) == inst &&
-              LooksLikeAnActivation(user->fused_parameter(i))) {
+              LooksLikeAnActivationOrVerySparse(user->fused_parameter(i))) {
             return true;
           }
         }
@@ -78,7 +82,7 @@ bool LooksLikeAnActivation(const HloInstruction* inst) {
       case HloOpcode::kBitcast:
       case HloOpcode::kBroadcast:
       case HloOpcode::kTranspose:
-        if (LooksLikeAnActivation(user)) {
+        if (LooksLikeAnActivationOrVerySparse(user)) {
           return true;
         }
         break;
@@ -88,8 +92,11 @@ bool LooksLikeAnActivation(const HloInstruction* inst) {
                       inst) != user->operands().end()) {
           return true;
         }
-        if (LooksLikeAnActivation(user)) {
-          return true;
+        if (LooksLikeAnActivationOrVerySparse(user)) {
+          access_size +=
+              ShapeUtil::ArraySize(user->opcode() == HloOpcode::kDynamicSlice
+                                       ? user->shape()
+                                       : user->operand(0)->shape());
         }
         break;
       case HloOpcode::kReduce:
@@ -98,7 +105,7 @@ bool LooksLikeAnActivation(const HloInstruction* inst) {
                       user->operands().end(), inst) != user->operands().end()) {
           return true;
         }
-        if (LooksLikeAnActivation(user)) {
+        if (LooksLikeAnActivationOrVerySparse(user)) {
           return true;
         }
         break;
@@ -106,7 +113,9 @@ bool LooksLikeAnActivation(const HloInstruction* inst) {
         return true;
     }
   }
-  return false;
+  // Access at least 1/8th of the tensor to consider prefetching.
+  return inst->shape().IsTuple() ||
+         8 * access_size >= ShapeUtil::ArraySize(inst->shape());
 }
 
 // Filters out buffer uses that cannot use the cross-program prefetch due to
@@ -171,7 +180,7 @@ bool IsCrossProgramPrefetchCandidate(const HloValue& value,
 
            return (inst->opcode() == HloOpcode::kGetTupleElement ||
                    inst->opcode() == HloOpcode::kParameter) &&
-                  !LooksLikeAnActivation(inst);
+                  !LooksLikeAnActivationOrVerySparse(inst);
          });
 }
 
