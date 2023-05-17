@@ -180,17 +180,29 @@ cc_library(
 
 cc_library(
     name = "bfc_allocator",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bfc_allocator_no_metrics_registration",
+        ":metrics",  # registers "/tensorflow/core/bfc_allocator_delay" counter.
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "bfc_allocator_no_metrics_registration",
     srcs = [
         "allocator_retry.cc",
         "allocator_retry.h",
         "bfc_allocator.cc",
     ],
-    hdrs = ["bfc_allocator.h"],
+    hdrs = [
+        "bfc_allocator.h",
+        "metrics.h",
+    ],
     features = ["parse_headers"],
     visibility = ["//visibility:public"],
     deps = [
         ":allocator",
-        ":metrics",
         ":shared_counter",
         "//tsl/lib/core:bits",
         "//tsl/platform:env",

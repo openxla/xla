@@ -117,6 +117,14 @@ cc_library(
 
 cc_library(
     name = "local_client",
+    deps = [
+        ":local_client_no_host_platform_registration",
+        "//xla/stream_executor/host:host_platform_registration",
+    ],
+)
+
+cc_library(
+    name = "local_client_no_host_platform_registration",
     srcs = ["local_client.cc"],
     hdrs = ["local_client.h"],
     deps = [
@@ -140,7 +148,7 @@ cc_library(
         "//xla/service:stream_pool",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor/host:host_platform",
+        "//xla/stream_executor/host:host_platform_no_registration",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:TargetParser",
     ],
@@ -168,11 +176,19 @@ cc_library(
 # a client for it.
 cc_library(
     name = "client_library",
+    deps = [
+        ":client_library_no_host_platform_registration",
+        "//xla/stream_executor/host:host_platform_registration",
+    ],
+)
+
+cc_library(
+    name = "client_library_no_host_platform_registration",
     srcs = ["client_library.cc"],
     hdrs = ["client_library.h"],
     deps = [
         ":compile_only_client",
-        ":local_client",
+        ":local_client_no_host_platform_registration",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:types",
