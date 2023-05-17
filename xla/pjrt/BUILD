@@ -733,7 +733,6 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/service:hlo_proto_cc",
-        "//xla/stream_executor/tpu:tpu_initializer_helper",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@llvm-project//mlir:BytecodeWriter",

@@ -980,6 +980,7 @@ tsl_pybind_extension(
         "//xla/pjrt:interpreter_device",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_api",
+        "//xla/pjrt:pjrt_c_api_client",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:tfrt_cpu_pjrt_client",
@@ -1008,8 +1009,8 @@ tsl_pybind_extension(
         "//conditions:default": [],
     }) + select({
         ":tpu_enabled": [
-            "//xla/pjrt:pjrt_c_api_client",
             "//xla/pjrt:tpu_client",
+            "//xla/stream_executor/tpu:tpu_initializer_helper",
         ],
         "//conditions:default": [],
     }) + select({
