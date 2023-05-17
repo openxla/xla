@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_driver.h"
 #include "xla/stream_executor/cuda/cuda_gpu_executor.h"
+#include "xla/stream_executor/cuda/cuda_graph.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_stream.h"
 #include "xla/stream_executor/cuda/cuda_timer.h"
@@ -179,7 +181,7 @@ class CudnnHandle {
 
 }  // namespace
 
-// Wraps a cuDNN handle and provides access to it through CudnnHandle
+// Wraps cuDNN handles and provides access to them through CudnnHandle
 // instances, which also locks a mutex, acquires the CUDA context, and sets
 // the stream that cuDNN should use to enqueue any work.
 //
@@ -187,7 +189,8 @@ class CudnnHandle {
 class CudnnAccess {
  public:
   // Takes ownership of the handle.
-  explicit CudnnAccess(cudnnHandle_t handle) : handle_(handle) {}
+  CudnnAccess(cudnnHandle_t handle, cudnnHandle_t capture_handle)
+      : handle_(handle), capture_handle_(capture_handle) {}
 
   ~CudnnAccess() {
     absl::MutexLock lock(&mutex_);
@@ -211,6 +214,31 @@ class CudnnAccess {
   // therefore a bad idea (performance wise) to call any cuDNN APIs that
   // enqueue work in the stream.
   CudnnHandle GetHandle(GpuExecutor* executor, Stream* stream) {
+    auto is_capture_stream =
+        stream ? IsStreamCapturing(stream) : absl::StatusOr<bool>(false);
+    return is_capture_stream.ok() && *is_capture_stream
+               ? GetCaptureHandle(executor, stream)
+               : GetComputeHandle(executor, stream);
+  }
+
+  void NotifyStreamDestroyed(Stream* stream) {
+    CUstream cu_stream = AsGpuStreamValue(stream);
+    {  // Clean up regular stream.
+      absl::MutexLock lock(&mutex_);
+      if (current_stream_ && cu_stream == *current_stream_) {
+        current_stream_.reset();
+      }
+    }
+    {  // Clean up capture stream.
+      absl::MutexLock lock(&capture_mutex_);
+      if (current_capture_stream_ && cu_stream == *current_capture_stream_) {
+        current_capture_stream_.reset();
+      }
+    }
+  }
+
+ private:
+  CudnnHandle GetComputeHandle(GpuExecutor* executor, Stream* stream) {
     auto lock = std::make_unique<absl::MutexLock>(&mutex_);
     mutex_.AssertHeld();
     gpu::ScopedActivateExecutorContext context(executor);
@@ -223,15 +251,19 @@ class CudnnAccess {
     return CudnnHandle(std::move(context), std::move(lock), handle_);
   }
 
-  void NotifyStreamDestroyed(Stream* stream) {
+  CudnnHandle GetCaptureHandle(GpuExecutor* executor, Stream* stream) {
+    auto lock = std::make_unique<absl::MutexLock>(&capture_mutex_);
+    capture_mutex_.AssertHeld();
+    gpu::ScopedActivateExecutorContext context(executor);
     CUstream cu_stream = AsGpuStreamValue(stream);
-    absl::MutexLock lock(&mutex_);
-    if (current_stream_ && cu_stream == *current_stream_) {
-      current_stream_.reset();
+    if (!current_capture_stream_ || cu_stream != *current_capture_stream_) {
+      current_capture_stream_ = cu_stream;
+      const auto status = cudnnSetStream(capture_handle_, cu_stream);
+      CHECK_EQ(status, CUDNN_STATUS_SUCCESS) << "Failed to set cuDNN stream.";
     }
+    return CudnnHandle(std::move(context), std::move(lock), capture_handle_);
   }
 
- private:
   // Guards current_stream_ and the enqueueing of cuDNN operations via the
   // handle_ below.
   absl::Mutex mutex_;
@@ -242,6 +274,23 @@ class CudnnAccess {
 
   // cuDNN library handle.
   cudnnHandle_t handle_ ABSL_GUARDED_BY(mutex_);  // Owned.
+
+  // TODO(ezhulenev): We use a separate cuDNN handle for dispatching all cuDNN
+  // activity to CUDA streams in the graph capture mode, to make sure that we do
+  // not accidentally record undesired stream synchronization from a capture
+  // stream to the regular compute stream. This seems to be a limitation of
+  // CUDA 11, and we'll need to check if it is still a problem in CUDA 12.
+
+  // Guards capture_stream_ and the enqueueing of cuDNN operations via the
+  // capture_handle_ below.
+  absl::Mutex capture_mutex_;
+
+  // If set, indicates the stream currently active on capture_handle_, to avoid
+  // the overhead of re-setting the same stream unnecessarily.
+  std::optional<CUstream> current_capture_stream_
+      ABSL_GUARDED_BY(capture_mutex_);
+
+  cudnnHandle_t capture_handle_ ABSL_GUARDED_BY(capture_mutex_);  // Owned.
 };
 
 namespace {
@@ -409,8 +458,13 @@ tsl::Status CudnnSupport::Init() {
   }
 
   cudnnHandle_t cudnn_handle = nullptr;
+  cudnnHandle_t cudnn_capture_handle = nullptr;
+
   const auto status = cudnnCreate(&cudnn_handle);
-  if (status == CUDNN_STATUS_SUCCESS) {
+  const auto capture_status = cudnnCreate(&cudnn_capture_handle);
+
+  if (status == CUDNN_STATUS_SUCCESS &&
+      capture_status == CUDNN_STATUS_SUCCESS) {
     CudnnVersion source_version(CUDNN_MAJOR, CUDNN_MINOR, CUDNN_PATCHLEVEL);
 
     CudnnVersion loaded_version;
@@ -429,13 +483,17 @@ tsl::Status CudnnSupport::Init() {
       return tsl::Status(absl::StatusCode::kInternal, error);
     }
 
-    cudnn_.reset(new CudnnAccess(cudnn_handle));
+    cudnn_ = std::make_unique<CudnnAccess>(cudnn_handle, cudnn_capture_handle);
 
     LOG(INFO) << "Loaded cuDNN version " << cudnnGetVersion();
     return ::tsl::OkStatus();
   }
 
+  // We assume that both handles will have the same underlying error and both of
+  // them will be successfully created or both of them fail.
   CHECK_EQ(cudnn_handle, nullptr);
+  CHECK_EQ(cudnn_capture_handle, nullptr);
+
   LOG(ERROR) << "Could not create cudnn handle: "
              << CudnnStatusToString(status);
   int64_t free, total;
@@ -3574,7 +3632,7 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnTensor(
                     .setDataType(ToCudnnDataType(dtype))
                     .setVectorCountAndDimension(vec_count, vec_dim)
                     .setVirtual(is_virtual)
-// TODO(jlebar): remove guard after JAX no longer supports old cudnn
+  // TODO(jlebar): remove guard after JAX no longer supports old cudnn
 #if CUDNN_VERSION >= 8300
                     .setReorderType(is_reordered_nchw_vect
 
