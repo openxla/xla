@@ -366,6 +366,7 @@ cc_library(
         "//tsl/platform:thread_annotations",
         "//tsl/platform:types",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
     ],
 )
 
