@@ -70,7 +70,11 @@ Status RemoteProfilerSessionManager::Init() {
   VLOG(1) << "SessionManager initializing.";
 
   const absl::Time session_created_ts =
-      absl::FromUnixNanos(options_.session_creation_timestamp_ns());
+      options_.has_profiler_options() &&
+              options_.profiler_options().start_timestamp_ns() != 0
+          ? absl::FromUnixNanos(
+                options_.profiler_options().start_timestamp_ns())
+          : absl::FromUnixNanos(options_.session_creation_timestamp_ns());
   const absl::Time deadline =
       session_created_ts +
       absl::Milliseconds(options_.max_session_duration_ms());
