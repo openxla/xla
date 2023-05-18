@@ -21,6 +21,7 @@ def _download_chromium_clang(
     cds_full_url = "{0}/{1}/{2}".format(cds_url, platform_folder, cds_file)
     repo_ctx.download_and_extract(cds_full_url, output = out_folder, sha256 = sha256)
 
+# TODO(kanglan): remove download_clang
 def download_clang(repo_ctx, out_folder):
     """ Download a fresh clang release and put it into out_folder.
 
