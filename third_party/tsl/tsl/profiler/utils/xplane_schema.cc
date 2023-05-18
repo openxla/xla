@@ -285,7 +285,7 @@ const StatTypeMap& GetStatTypeMap() {
       {"theoretical_occupancy_pct", kTheoreticalOccupancyPct},
       {"occupancy_min_grid_size", kOccupancyMinGridSize},
       {"occupancy_suggested_block_size", kOccupancySuggestedBlockSize},
-      // Aggregrated Stat
+      // Aggregated Stat
       {"self_duration_ps", kSelfDurationPs},
       {"min_duration_ps", kMinDurationPs},
       {"total_profile_duration_ps", kTotalProfileDurationPs},
@@ -301,6 +301,14 @@ const StatTypeMap& GetStatTypeMap() {
       {"duration_us", kDuration},
       {"buffer_size", kBufferSize},
       {"transfers", kTransfers},
+      // Dcn message Stats
+      {"label", kLabel},
+      {"source_slice_id", kSourceSliceId},
+      {"source_per_slice_device_id", kSourcePerSliceDeviceId},
+      {"destination_slice_id", kDestinationSliceId},
+      {"destination_per_slice_device_id", kDestinationPerSliceDeviceId},
+      {"chunk", kChunk},
+      {"loop_index", kLoopIndex},
   });
   DCHECK_EQ(stat_type_map->size(), kNumStatTypes);
   return *stat_type_map;
