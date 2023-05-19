@@ -592,7 +592,7 @@ inline bool AdjustShardingsWithPartialMeshShape(
     const std::vector<int64_t>& mesh_shape, int64_t total_num_devices) {
   auto result = AdjustShardingsWithPartialMeshShape(instructions, mesh_shape,
                                                     total_num_devices, true);
-  CHECK(result.ok());
+  CHECK_OK(result.status());
   return *result;
 }
 

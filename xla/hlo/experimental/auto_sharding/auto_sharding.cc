@@ -123,7 +123,7 @@ std::optional<HloSharding> GetInputSharding(const HloInstruction* ins,
   ins_clone->set_sharding(output_sharding);
   auto operand_clone = operand->Clone();
   auto s = ins_clone->ReplaceOperandWith(op_index, operand_clone.get());
-  CHECK(s.ok());
+  CHECK_OK(s);
   return ShardingPropagation::GetShardingFromUser(*operand_clone, *ins_clone,
                                                   10, true, call_graph);
 }
