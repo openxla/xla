@@ -1934,6 +1934,7 @@ xla_cc_test(
         "//xla/service:algebraic_simplifier",
         "//xla/service:call_inliner",
         "//xla/service:hlo_pass",
+        "//xla/service:hlo_pass_pipeline",
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
         "//xla/service:reshape_mover",
