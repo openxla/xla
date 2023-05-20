@@ -223,6 +223,24 @@ PYBIND11_MODULE(xla_extension, m) {
              }
              return ValueOrThrow(LiteralToPython(std::move(literal)));
            })
+      .def("memory_spaces",
+           [](const ClientAndPtr<PjRtDevice>& device) {
+             std::vector<ClientAndPtr<PjRtMemorySpace>> memory_spaces;
+             auto span = device->memory_spaces();
+             memory_spaces.reserve(span.size());
+             for (PjRtMemorySpace* memory_space : span) {
+               memory_spaces.push_back(
+                   WrapWithClient(device.client(), memory_space));
+             }
+             return memory_spaces;
+           })
+      .def("memory_space",
+           [](const ClientAndPtr<PjRtDevice>& device,
+              std::string memory_space_kind) {
+             auto* memory_space =
+                 ValueOrThrow(device->memory_space(memory_space_kind));
+             return WrapWithClient(device.client(), memory_space);
+           })
       .def("live_buffers", [](const ClientAndPtr<PjRtDevice>& device) {
         PythonDeprecationWarning(
             "Per device live_buffers() is going to be deprecated. Please "
@@ -265,6 +283,26 @@ PYBIND11_MODULE(xla_extension, m) {
   device.attr("__getattr__") =
       py::reinterpret_steal<py::object>(PyDescr_NewMethod(
           reinterpret_cast<PyTypeObject*>(device.ptr()), &get_attr_method));
+
+  py::class_<PjRtMemorySpace, ClientAndPtr<PjRtMemorySpace>> memory_space(
+      m, "MemorySpace");
+  memory_space.def_property_readonly("id", &PjRtMemorySpace::id)
+      .def_property_readonly(
+          "platform",
+          [](const ClientAndPtr<PjRtMemorySpace>& memory_space) {
+            return memory_space.client()->platform_name();
+          })
+      .def_property_readonly("memory_space_kind",
+                             &PjRtMemorySpace::memory_space_kind)
+      .def_property_readonly(
+          "client",
+          [](const ClientAndPtr<PjRtMemorySpace>& memory_space) {
+            return memory_space.client();
+          })
+      .def("__str__", &PjRtMemorySpace::DebugString)
+      .def("devices", [](const ClientAndPtr<PjRtMemorySpace>& memory_space) {
+        return memory_space->devices();
+      });
 
   // Local XLA client methods.
 

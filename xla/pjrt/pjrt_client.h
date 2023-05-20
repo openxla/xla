@@ -175,6 +175,11 @@ class PjRtDevice {
   virtual absl::Span<PjRtMemorySpace* const> memory_spaces() const {
     return {};
   }
+
+  virtual StatusOr<PjRtMemorySpace*> memory_space(
+      absl::string_view name) const {
+    return Unimplemented("memory_space is not supported.");
+  }
 };
 
 // Forward declaration.
