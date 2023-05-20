@@ -450,11 +450,17 @@ struct SortOpPattern : public OpRewritePattern<SortOp> {
     // statically known to be <= kInsertionSortSize, `scratchMemrefs` are unused
     // and will be cleaned up later.
     for (auto input : op.getInputs()) {
-      auto inputType = input.getType().cast<ShapedType>();
+      auto inputType = input.getType().cast<MemRefType>();
       auto memRefType =
           MemRefType::get(inputType.getShape(), inputType.getElementType());
-      scratchMemrefs.emplace_back(
-          b.create<memref::AllocOp>(memRefType, dynamicDims));
+      auto allocOp = b.create<memref::AllocOp>(memRefType, dynamicDims);
+      auto extractStridedMetadataOp =
+          b.create<memref::ExtractStridedMetadataOp>(input);
+
+      scratchMemrefs.emplace_back(b.create<memref::ReinterpretCastOp>(
+          inputType, allocOp, extractStridedMetadataOp.getOffset(),
+          extractStridedMetadataOp.getSizes(),
+          extractStridedMetadataOp.getStrides()));
     }
 
     b.setInsertionPoint(op);

@@ -27,8 +27,12 @@ func.func @sort(%input1: memref<?x?xf32>, %input2: memref<?x?xi32>,
 // CHECK:           %[[SORT_DIM:.*]] = memref.dim %[[INPUT1]], %[[C0]]
 // CHECK:           %[[DYN_DIM0:.*]] = memref.dim %[[INPUT1]], %[[C0]]
 // CHECK:           %[[DYN_DIM1:.*]] = memref.dim %[[INPUT1]], %[[C1]]
-// CHECK:           %[[SCRATCH1:.*]] = memref.alloc(%[[DYN_DIM0]], %[[DYN_DIM1]])
-// CHECK:           %[[SCRATCH2:.*]] = memref.alloc(%[[DYN_DIM0]], %[[DYN_DIM1]])
+// CHECK:           %[[SCRATCH1_ALLOC:.*]] = memref.alloc(%[[DYN_DIM0]], %[[DYN_DIM1]])
+// CHECK:           %[[SCRATCH1:.*]] = memref.reinterpret_cast
+// CHECK-SAME:          %[[SCRATCH1_ALLOC]]
+// CHECK:           %[[SCRATCH2_ALLOC:.*]] = memref.alloc(%[[DYN_DIM0]], %[[DYN_DIM1]])
+// CHECK:           %[[SCRATCH2:.*]] = memref.reinterpret_cast
+// CHECK-SAME:          %[[SCRATCH2_ALLOC]]
 // CHECK:           %[[BATCH_DIM_SIZE:.*]] = memref.dim %[[INPUT1]], %[[C1]]
 // CHECK:           %[[PARITY:.*]] = scf.for
 // CHECK-SAME:          %[[SUBVIEW_INDEX:.*]] = %[[C0]] to %[[BATCH_DIM_SIZE]]
@@ -186,3 +190,20 @@ func.func @sort(%input1: memref<?x?xf32>, %input2: memref<?x?xi32>,
 // CHECK:           }
 // CHECK:           return
 // CHECK:         }
+
+// -----
+
+// CHECK-LABEL: @sort_strided
+func.func @sort_strided(%input: memref<47x1xf32, strided<[7, 1], offset: ?>>,
+                        %init: memref<47x1xf32, strided<[7, 1], offset: ?>>) {
+  thlo.sort
+    ins(%input : memref<47x1xf32, strided<[7, 1], offset: ?>>)
+    outs(%init : memref<47x1xf32, strided<[7, 1], offset: ?>>)
+    dimension = 0
+    is_stable = true
+    (%lhs: f32, %rhs: f32) {
+      %gt = arith.cmpf ogt, %lhs, %rhs: f32
+      thlo.yield %gt : i1
+    }
+  func.return
+}
