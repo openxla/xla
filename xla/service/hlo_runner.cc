@@ -21,6 +21,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/logging.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/layout_util.h"
@@ -30,8 +32,6 @@ limitations under the License.
 #include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/blocking_counter.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -620,7 +620,8 @@ ServiceExecutableRunOptions HloRunner::GetServiceRunOptionsForDevice(
     run_options.set_device_assignment(device_assignment);
   }
   run_options.set_run_id(run_id);
-  return ServiceExecutableRunOptions(run_options, backend().StreamBorrower());
+  return ServiceExecutableRunOptions(run_options, backend().StreamBorrower(),
+                                     backend().StreamBorrowerWithPriority());
 }
 
 Backend& HloRunner::backend() {

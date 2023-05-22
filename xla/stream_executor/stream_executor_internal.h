@@ -32,6 +32,8 @@ limitations under the License.
 
 #include "absl/functional/any_invocable.h"
 #include "absl/types/optional.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "xla/stream_executor/allocator_stats.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
@@ -47,8 +49,6 @@ limitations under the License.
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/trace_listener.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 
@@ -122,6 +122,10 @@ class StreamInterface {
   // Default destructor for the abstract interface.
   virtual ~StreamInterface() {}
 
+  // Sets priority for a stream.
+  virtual void SetPriority(int priority) {}
+  // Gets priority for a stream.
+  virtual int priority() const { return 0; }
   // Returns the GPU stream associated with this platform's stream
   // implementation, or nullptr otherwise.
   virtual void* GpuStreamHack() { return nullptr; }

@@ -25,6 +25,10 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/debug_options_flags.h"
 #include "xla/execution_options_util.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
@@ -58,10 +62,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -440,8 +440,9 @@ Service::ExecuteParallelAndRegisterResult(
       if (i == 0) {
         options.set_execution_profile(profile);
       }
-      ServiceExecutableRunOptions run_options(options,
-                                              backend->StreamBorrower());
+      ServiceExecutableRunOptions run_options(
+          options, backend->StreamBorrower(),
+          backend->StreamBorrowerWithPriority());
 
       // Asynchronously launch the computation.
       TF_ASSIGN_OR_RETURN(ScopedShapedBuffer result,
@@ -534,7 +535,8 @@ StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
         backend->eigen_intra_op_thread_pool_device());
     options.set_device_assignment(&device_assignment);
     options.set_execution_profile(profile);
-    run_options.emplace_back(options, backend->StreamBorrower());
+    run_options.emplace_back(options, backend->StreamBorrower(),
+                             backend->StreamBorrowerWithPriority());
   }
 
   if (options_.number_of_replicas() == 1) {

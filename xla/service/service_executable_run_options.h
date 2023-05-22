@@ -28,14 +28,18 @@ namespace xla {
 class ServiceExecutableRunOptions {
  public:
   using StreamBorrower = std::function<StatusOr<StreamPool::Ptr>(int)>;
+  using StreamBorrowerWithPriority =
+      std::function<StatusOr<StreamPool::Ptr>(int, int)>;
 
   ServiceExecutableRunOptions()
       : ServiceExecutableRunOptions(ExecutableRunOptions()) {}
 
-  explicit ServiceExecutableRunOptions(ExecutableRunOptions run_options,
-                                       StreamBorrower borrow_stream = nullptr)
+  explicit ServiceExecutableRunOptions(
+      ExecutableRunOptions run_options, StreamBorrower borrow_stream = nullptr,
+      StreamBorrowerWithPriority borrow_stream_with_priority = nullptr)
       : run_options_(std::move(run_options)),
-        borrow_stream_(std::move(borrow_stream)) {}
+        borrow_stream_(std::move(borrow_stream)),
+        borrow_stream_with_priority_(std::move(borrow_stream_with_priority)) {}
 
   // Returns reference or pointer to `ExecutableRunOptions` member.
   const ExecutableRunOptions& run_options() const { return run_options_; }
@@ -56,9 +60,17 @@ class ServiceExecutableRunOptions {
                : Status(absl::StatusCode::kUnimplemented, "No stream cache");
   }
 
+  StatusOr<StreamPool::Ptr> BorrowStream(int device_ordinal,
+                                         int priority) const {
+    return borrow_stream_with_priority_
+               ? borrow_stream_with_priority_(device_ordinal, priority)
+               : Status(absl::StatusCode::kUnimplemented, "No stream cache");
+  }
+
  private:
   ExecutableRunOptions run_options_;
   StreamBorrower borrow_stream_;
+  StreamBorrowerWithPriority borrow_stream_with_priority_;
 };
 
 }  // namespace xla

@@ -22,8 +22,34 @@ limitations under the License.
 namespace xla {
 
 StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor) {
+  return BorrowStream(executor, 0);
+}
+StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor,
+                                         int priority) {
   std::unique_ptr<se::Stream> stream;
-  {
+
+  if (priority != 0) {
+    absl::MutexLock lock(&mu_);
+    if (streams_with_pri_.find(priority) == streams_with_pri_.end()) {
+      stream = nullptr;
+    } else {
+      while (!streams_with_pri_[priority].empty() && !stream) {
+        // Re-use an existing stream from the pool.
+        stream = std::move(streams_with_pri_[priority].back());
+        streams_with_pri_[priority].pop_back();
+        if (stream->ok()) {
+          VLOG(1) << stream->DebugStreamPointers()
+                  << " StreamPool reusing existing stream with priority: "
+                  << priority;
+        } else {
+          VLOG(1) << stream->DebugStreamPointers()
+                  << " stream was not ok, StreamPool deleting with priority: "
+                  << priority;
+          stream = nullptr;
+        }
+      }
+    }
+  } else {
     absl::MutexLock lock(&mu_);
     while (!streams_.empty() && !stream) {
       // Re-use an existing stream from the pool.
@@ -43,6 +69,11 @@ StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor) {
   if (!stream) {
     // Create a new stream.
     stream = std::make_unique<se::Stream>(executor);
+    if (priority != 0) {
+      auto stream_impl = stream->implementation();
+      stream_impl->SetPriority(priority);
+      VLOG(1) << "Set stream priority to: " << priority;
+    }
     stream->Init();
     VLOG(1) << stream->DebugStreamPointers()
             << " StreamPool created new stream";
@@ -58,7 +89,12 @@ void StreamPool::ReturnStream(se::Stream* stream) {
     VLOG(1) << stream->DebugStreamPointers()
             << " StreamPool returning ok stream";
     absl::MutexLock lock(&mu_);
-    streams_.emplace_back(stream);
+    int priority = stream->implementation()->priority();
+    if (priority != 0) {
+      streams_with_pri_[priority].emplace_back(stream);
+    } else {
+      streams_.emplace_back(stream);
+    }
   } else {
     // If the stream has encountered any errors, all subsequent operations on it
     // will fail. So just delete the stream, and rely on new streams to be

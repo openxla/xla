@@ -187,12 +187,25 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
                      const ThunkSequence& thunk_sequence,
                      const ServiceExecutableRunOptions* run_options,
                      const BufferAllocations& buffer_allocations,
-                     bool block_host_until_done) {
+                     bool block_host_until_done,
+                     const DebugOptions& debug_options) {
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();
-
+  int high_priority = 0;
+  if (debug_options.xla_gpu_enable_highest_priority_async_stream()) {
+    CUresult res = cuCtxGetStreamPriorityRange(nullptr, &high_priority);
+    if (res != CUDA_SUCCESS) {
+      LOG(ERROR)
+          << "Could not query stream priority range. Setting priority to "
+             "default for async stream.";
+      high_priority = 0;
+    } else {
+      VLOG(1) << "Priority of async collective stream has been set to: "
+              << high_priority;
+    }
+  }
   StatusOr<StreamPool::Ptr> async_comms_stream =
-      run_options->BorrowStream(executor->device_ordinal());
+      run_options->BorrowStream(executor->device_ordinal(), high_priority);
 
   uint64_t start_nanos = tsl::Env::Default()->NowNanos();
 
@@ -551,7 +564,6 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   const bool block_host_until_done =
       !memory_allocator->AllowsAsynchronousDeallocation();
 
-
   // Lock the GPU with a shared lock so that we don't interfere with autotuning
   // that may be running during JIT compilation while allowing multiple XLA
   // computations to use the same GPU simultaneously.
@@ -726,7 +738,8 @@ Status GpuExecutable::ExecuteThunksOrXlaRuntime(
     }
 
     return ExecuteThunks(module_name_, unique_id, *thunks_, run_options,
-                         buffer_allocations, block_host_until_done);
+                         buffer_allocations, block_host_until_done,
+                         module_config().debug_options());
   }
 
   if (gpu_runtime_executable_) {

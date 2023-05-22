@@ -22,6 +22,11 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/threadpool.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/service/compiler.h"
 #include "xla/service/platform_util.h"
@@ -31,11 +36,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla {
 
@@ -116,6 +116,21 @@ StatusOr<StreamPool::Ptr> Backend::BorrowStream(se::StreamExecutor* executor) {
     stream_pools_.emplace(executor, std::make_unique<StreamPool>());
   }
   return stream_pools_.at(executor)->BorrowStream(executor);
+}
+
+StatusOr<StreamPool::Ptr> Backend::BorrowStream(int device_ordinal,
+                                                int priority) {
+  TF_ASSIGN_OR_RETURN(auto executor, stream_executor(device_ordinal));
+  return BorrowStream(executor, priority);
+}
+
+StatusOr<StreamPool::Ptr> Backend::BorrowStream(se::StreamExecutor* executor,
+                                                int priority) {
+  absl::MutexLock l(&mu_);
+  if (!stream_pools_.contains(executor)) {
+    stream_pools_.emplace(executor, std::make_unique<StreamPool>());
+  }
+  return stream_pools_.at(executor)->BorrowStream(executor, priority);
 }
 
 Backend::Backend(se::Platform* platform, Compiler* compiler,

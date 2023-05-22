@@ -23,6 +23,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
+#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "tsl/protobuf/dnn.pb.h"
 #include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
 #include "xla/runtime/executable.h"
 #include "xla/runtime/ffi.h"
@@ -44,7 +46,6 @@ limitations under the License.
 #include "xla/service/gpu/runtime/topk.h"
 #include "xla/service/gpu/runtime/tracing.h"
 #include "xla/service/service_executable_run_options.h"
-#include "tsl/protobuf/dnn.pb.h"
 
 #if GOOGLE_CUDA
 #include "xla/stream_executor/gpu/gpu_stream.h"
@@ -345,8 +346,21 @@ Status GpuRuntimeExecutable::Execute(
   // Get the async communications stream for async collectives.
   se::StreamExecutor* executor = run_options->stream()->parent();
   int device_ordinal = executor->device_ordinal();
+  int high_priority = 0;
+  if (debug_options_.xla_gpu_enable_highest_priority_async_stream()) {
+    CUresult res = cuCtxGetStreamPriorityRange(nullptr, &high_priority);
+    if (res != CUDA_SUCCESS) {
+      LOG(ERROR)
+          << "Could not query stream priority range. Setting priority to "
+             "default for async stream.";
+      high_priority = 0;
+    } else {
+      VLOG(1) << "Priority of async collective stream has been set to: "
+              << high_priority;
+    }
+  }
   StatusOr<StreamPool::Ptr> async_comms_stream =
-      run_options->BorrowStream(device_ordinal);
+      run_options->BorrowStream(executor->device_ordinal(), high_priority);
 
   // Async Collectives support and Send/Recv events instantiated for each Gpu
   // executable run, so that concurrent executions can run independenty using a

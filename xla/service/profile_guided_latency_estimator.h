@@ -40,7 +40,10 @@ class ProfileGuidedLatencyEstimator : public LatencyEstimator {
                              const HloGraphNode& target) const override;
   TimeCost NodeCost(const HloInstruction* instr) const override;
   int CyclesPerMicrosecond() const override {
-    return latency_estimator_->CyclesPerMicrosecond();
+    // TODO find the freq of cpu.
+    // Making it a large number for now to make the floating point comparison more accurate,
+    // since some of the costs could be really small.
+    return 10000;
   }
 
  private:
