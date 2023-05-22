@@ -16,10 +16,13 @@ limitations under the License.
 #include "xla/service/hlo_value_semantics_analysis.h"
 
 #include <string>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/tests/hlo_test_base.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -63,6 +66,33 @@ class HloValueSemanticsAnalysisTest : public HloTestBase {
       HloModule* module, absl::string_view instruction_name) {
     return HasLabel(hlo_value_semantics_analysis, module, instruction_name,
                     HloValueSemanticLabel::kWeightGradient);
+  }
+
+  void AssertActivations(
+      const HloValueSemanticsAnalysis* hlo_value_semantics_analysis,
+      HloModule* module, std::vector<std::string> instructions) {
+    for (const std::string& instruction : instructions) {
+      EXPECT_TRUE(
+          IsActivation(*hlo_value_semantics_analysis, module, instruction));
+    }
+  }
+
+  void AssertActivationGradients(
+      const HloValueSemanticsAnalysis* hlo_value_semantics_analysis,
+      HloModule* module, std::vector<std::string> instructions) {
+    for (const std::string& instruction : instructions) {
+      EXPECT_TRUE(IsActivationGradient(*hlo_value_semantics_analysis, module,
+                                       instruction));
+    }
+  }
+
+  void AssertWeightGradients(
+      const HloValueSemanticsAnalysis* hlo_value_semantics_analysis,
+      HloModule* module, std::vector<std::string> instructions) {
+    for (const std::string& instruction : instructions) {
+      EXPECT_TRUE(
+          IsWeightGradient(*hlo_value_semantics_analysis, module, instruction));
+    }
   }
 };
 
@@ -556,6 +586,68 @@ ENTRY MnistTrainingLoopWithInfeed.140 {
   // classified as a Weight.
   EXPECT_TRUE(IsActivationGradient(*hlo_value_semantics_analysis, module.get(),
                                    "dot.99"));
+}
+
+TEST_F(HloValueSemanticsAnalysisTest, AttentionModel) {
+  std::string path = tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "service",
+                                       "attention_model.hlo");
+  std::string module_str;
+  TF_ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), path, &module_str));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(module_str,
+                                                       /*replica_count=*/1,
+                                                       /*num_partitions=*/1));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloValueSemanticsAnalysis> hlo_value_semantics_analysis,
+      HloValueSemanticsAnalysis::Run(*module));
+  AssertActivations(hlo_value_semantics_analysis.get(), module.get(),
+                    {
+                        "dot.2292",
+                        "dot.2544",
+                        "dot.2671",
+                        "dot.1639",
+                        "dot.2579",
+                        "dot.2583",
+                        "dot.1754",
+                        "dot.2552",
+                        "dot.2540",
+                        "dot.2644",
+                        // TODO(b/282970210): Should be a WeightGradient.
+                        "dot.3083",
+                        "dot.2084",
+                        "dot.2170",
+                        "dot.2592",
+                        "dot.2428",
+                        "dot.2189",
+                        "dot.3022",
+                        "dot.2743",
+                        "dot.2152",
+                    });
+  // TODO(b/282970210): A number of ActivationGradients are misclassified as
+  // WeightGradients.
+  AssertActivationGradients(hlo_value_semantics_analysis.get(), module.get(),
+                            {
+                                "dot.3373",
+                                "dot.2858",
+                                "dot.3109",
+                                "dot.3277",
+                                "dot.2992",
+                                "dot.3080",
+                                "dot.2809",
+                                "dot.3239",
+                            });
+  AssertWeightGradients(
+      hlo_value_semantics_analysis.get(), module.get(),
+      {
+          "dot.3149", "dot.3891", "dot.3828", "dot.4177", "dot.3456",
+          "dot.3388", "dot.3901", "dot.3400", "dot.4187", "dot.2887",
+          "dot.3444", "dot.3934", "dot.4225", "dot.3860", "dot.3402",
+          "dot.4027", "dot.4139", "dot.3795", "dot.3799", "dot.3446",
+          "dot.3784", "dot.4107", "dot.3830", "dot.3384", "dot.3005",
+          "dot.3432", "dot.4097", "dot.4129", "dot.3472", "dot.3889",
+          "dot.4235", "dot.3656", "dot.3602",
+      });
 }
 
 }  // namespace

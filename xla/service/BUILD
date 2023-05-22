@@ -4179,11 +4179,14 @@ cc_library(
 xla_cc_test(
     name = "hlo_value_semantics_analysis_test",
     srcs = ["hlo_value_semantics_analysis_test.cc"],
+    data = [":attention_model.hlo"],
     deps = [
         ":hlo_value_semantics_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:path",
     ],
 )
 
