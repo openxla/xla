@@ -579,6 +579,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                              m::Op(&bias).WithPredicate(is_not_broadcast)))) {
       return FuseMatrixBiasAdd(instr, bias, existing_gemm);
     }
+
     return OkStatus();
   }
 
@@ -1363,7 +1364,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // cublasLt is enabled, check if other internal conditions are met.
     const HloInstruction *lhs = instr.operand(0);
     const HloInstruction *rhs = instr.operand(1);
-
     if (lhs->shape().element_type() == S8 ||
         rhs->shape().element_type() == S8) {
       // TODO(b/241446501) The XLA usage of cublasLt does not yet handle
