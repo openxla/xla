@@ -18,59 +18,16 @@ package_group(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         ":friends",
         ":internal",
     ],
+    licenses = ["notice"],
 )
 
 exports_files([
     "BUILD",
 ])
-
-# TODO(hyeontaek): Move this target out of pjrt_ifrt.
-cc_library(
-    name = "xla_ifrt",
-    srcs = [
-        "xla_compiler.cc",
-    ],
-    hdrs = [
-        "xla_compiler.h",
-    ],
-    deps = [
-        "//xla/python/ifrt",
-        "@llvm-project//llvm:Support",
-    ],
-)
-
-# TODO(hyeontaek): Move this target out of pjrt_ifrt.
-cc_library(
-    name = "xla_executable_impl_test_lib",
-    testonly = 1,
-    srcs = ["xla_executable_impl_test_lib.cc"],
-    deps = [
-        ":xla_ifrt",
-        "//xla/pjrt:mlir_to_hlo",
-        "//xla/python/ifrt",
-        "//xla/python/ifrt:test_util",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:statusor",
-    ],
-    alwayslink = 1,
-)
-
-# TODO(hyeontaek): Move this target out of pjrt_ifrt.
-xla_cc_test(
-    name = "xla_executable_test_no_impl",
-    srcs = [],
-    deps = [
-        ":xla_executable_impl_test_lib",
-        "//xla/python/ifrt:no_impl_test_main",
-        "@com_google_googletest//:gtest",
-    ],
-)
 
 cc_library(
     name = "pjrt_ifrt",
@@ -89,13 +46,13 @@ cc_library(
         "pjrt_tuple.h",
     ],
     deps = [
-        ":xla_ifrt",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_computation",
+        "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:utils",
@@ -153,7 +110,7 @@ xla_cc_test(
     srcs = ["pjrt_executable_impl_test_tfrt_cpu.cc"],
     deps = [
         ":tfrt_cpu_client_test_lib",
-        ":xla_executable_impl_test_lib",
+        "//xla/python/ifrt:executable_impl_test_lib",
         "@com_google_googletest//:gtest",
     ],
 )

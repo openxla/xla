@@ -152,11 +152,11 @@ class PjRtLoadedExecutable final
   // PjRtLoadedExecutable::GetHloModules() must be implemented.
   static StatusOr<std::unique_ptr<LoadedExecutable>> Create(
       PjRtCompatibleClient* client, mlir::ModuleOp module,
-      xla::CompileOptions compile_options);
+      CompileOptions options);
   // TODO(phawkins): remove the XlaComputation overload.
   static StatusOr<std::unique_ptr<LoadedExecutable>> Create(
       PjRtCompatibleClient* client, const XlaComputation& computation,
-      xla::CompileOptions compile_options);
+      CompileOptions options);
 
   // PjRtCompatibleLoadedExecutable implementation.
 

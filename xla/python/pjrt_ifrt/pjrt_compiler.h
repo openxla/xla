@@ -16,26 +16,24 @@ limitations under the License.
 #ifndef XLA_PYTHON_PJRT_IFRT_PJRT_COMPILER_H_
 #define XLA_PYTHON_PJRT_IFRT_PJRT_COMPILER_H_
 
+#include <functional>
 #include <memory>
+#include <optional>
+#include <utility>
 
 #include "llvm/Support/ExtensibleRTTI.h"
+#include "xla/client/xla_computation.h"
 #include "xla/python/ifrt/compiler.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace ifrt {
 
 class PjRtClient;
 
-// Compiler that produces PjRt executables.
-//
-// TODO(hyeontaek): Move executable loading to `PjRtClient` and remove the
-// requirement of `PjRtClient`, which will enable ahead-of-time compilation.
 class PjRtCompiler final : public llvm::RTTIExtends<PjRtCompiler, Compiler> {
  public:
   explicit PjRtCompiler(PjRtClient* client) : client_(client) {}
-
-  // Compiler implementation.
-
   ~PjRtCompiler() override = default;
 
   StatusOr<std::unique_ptr<LoadedExecutable>> Compile(
@@ -44,7 +42,7 @@ class PjRtCompiler final : public llvm::RTTIExtends<PjRtCompiler, Compiler> {
 
   StatusOr<std::unique_ptr<LoadedExecutable>> DeserializeLoadedExecutable(
       absl::string_view serialized,
-      std::unique_ptr<DeserializeOptions> options) override;
+      std::optional<xla::CompileOptions> options) override;
 
   static char ID;  // NOLINT
 

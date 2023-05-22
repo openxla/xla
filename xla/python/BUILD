@@ -363,7 +363,6 @@ cc_library(
         "//xla/pjrt:transpose",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
-        "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",

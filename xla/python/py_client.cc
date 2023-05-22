@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/numbers.h"
 #include "xla/pjrt/host_callback.h"
@@ -32,8 +33,6 @@ limitations under the License.
 #include "xla/python/exceptions.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
-#include "xla/python/ifrt/executable.h"
-#include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/py_array.h"
 #include "xla/python/py_buffer.h"
@@ -41,9 +40,9 @@ limitations under the License.
 #include "xla/python/python_ref_manager.h"
 #include "xla/python/traceback.h"
 #include "xla/python/transfer_guard_lib.h"
+#include "xla/python/types.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/platform_util.h"
-#include "xla/util.h"
 #include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -338,38 +337,21 @@ PyClient::MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
   return result;
 }
 
-namespace {
-
-// Makes IFRT `CompileOptions` from XLA `CompileOptions` and optional host
-// callbacks.
-std::unique_ptr<ifrt::CompileOptions> MakeIfrtCompileOptions(
-    CompileOptions options) {
-  return std::make_unique<ifrt::XlaCompileOptions>(std::move(options));
-}
-
-// Makes IFRT `DeserializeOptions` from XLA `CompileOptions` and optional host
-// callbacks.
-std::unique_ptr<ifrt::DeserializeOptions> MakeIfrtDeserializeOptions(
-    std::optional<CompileOptions> options) {
-  return std::make_unique<ifrt::XlaDeserializeOptions>(std::move(options));
-}
-
-}  // namespace
-
 StatusOr<std::shared_ptr<PyLoadedExecutable>> PyClient::Compile(
     std::string mlir_module, CompileOptions options,
     std::vector<pybind11::capsule> host_callbacks) {
   std::unique_ptr<ifrt::LoadedExecutable> ifrt_loaded_executable;
   std::optional<std::string> fingerprint;
-  auto ifrt_compile_options = MakeIfrtCompileOptions(std::move(options));
   {
     py::gil_scoped_release gil_release;
     mlir::MLIRContext context;
     TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                         ParseMlirModuleString(mlir_module, context));
-    TF_ASSIGN_OR_RETURN(ifrt_loaded_executable,
-                        ifrt_client_->GetDefaultCompiler()->Compile(
-                            module.get(), std::move(ifrt_compile_options)));
+    TF_ASSIGN_OR_RETURN(
+        ifrt_loaded_executable,
+        ifrt_client_->GetDefaultCompiler()->Compile(
+            module.get(),
+            std::make_unique<ifrt::CompileOptions>(std::move(options))));
     TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   }
   auto traceback = Traceback::Get();
@@ -388,14 +370,12 @@ StatusOr<std::shared_ptr<PyLoadedExecutable>> PyClient::DeserializeExecutable(
     std::vector<pybind11::capsule> host_callbacks) {
   std::unique_ptr<ifrt::LoadedExecutable> ifrt_loaded_executable;
   std::optional<std::string> fingerprint;
-  auto ifrt_deserialize_options =
-      MakeIfrtDeserializeOptions(std::move(options));
   {
     py::gil_scoped_release gil_release;
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         ifrt_client_->GetDefaultCompiler()->DeserializeLoadedExecutable(
-            serialized, std::move(ifrt_deserialize_options)));
+            serialized, std::move(options)));
     TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());

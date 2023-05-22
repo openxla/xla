@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_PYTHON_IFRT_IR_COMPILE_OPTIONS_H_
 #define XLA_PYTHON_IFRT_IR_COMPILE_OPTIONS_H_
 
-#include <memory>
 #include <string>
 #include <utility>
 
@@ -36,13 +35,9 @@ struct IfrtIRCompileOptions
   IfrtIRCompileOptions(
       xla::CompileOptions xla_options,
       absl::flat_hash_map<std::string, LoadedExecutable*> loaded_exec_binding)
-      : xla_options(std::move(xla_options)),
+      : llvm::RTTIExtends<IfrtIRCompileOptions, CompileOptions>(
+            std::move(xla_options)),
         loaded_exec_binding(std::move(loaded_exec_binding)) {}
-
-  // Options for the IFRT IR program compilation.
-  // TODO(yuchenzhang,hyeontaek): Define a subset of options essential to
-  // compiling programs.
-  xla::CompileOptions xla_options;
 
   // Map from `getSymName()` of declared LoadedExecutableOp in the `mlir_module`
   // to pre-compiled LoadedExecutable instance. The LoadedExecutables must
@@ -51,10 +46,6 @@ struct IfrtIRCompileOptions
 
   static char ID;  // NOLINT
 };
-
-// Gets `xla::ifrt::IfrtIRCompileOptions` from `xla::ifrt::CompileOptions`.
-StatusOr<std::unique_ptr<IfrtIRCompileOptions>> GetIfrtIRCompileOptions(
-    std::unique_ptr<CompileOptions> options);
 
 }  // namespace ifrt
 }  // namespace xla

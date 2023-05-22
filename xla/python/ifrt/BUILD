@@ -18,11 +18,11 @@ package_group(
 )
 
 package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         ":friends",
         ":internal",
     ],
+    licenses = ["notice"],
 )
 
 exports_files([
@@ -212,6 +212,32 @@ xla_cc_test(
     srcs = [],
     deps = [
         ":client_impl_test_lib",
+        ":no_impl_test_main",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "executable_impl_test_lib",
+    testonly = 1,
+    srcs = ["executable_impl_test_lib.cc"],
+    deps = [
+        ":ifrt",
+        ":test_util",
+        "//xla/pjrt:mlir_to_hlo",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+    alwayslink = 1,
+)
+
+xla_cc_test(
+    name = "executable_test_no_impl",
+    srcs = [],
+    deps = [
+        ":executable_impl_test_lib",
         ":no_impl_test_main",
         "@com_google_googletest//:gtest",
     ],
