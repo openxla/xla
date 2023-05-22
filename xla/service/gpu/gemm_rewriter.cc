@@ -616,8 +616,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       TF_ASSIGN_OR_RETURN(
           bool types_are_supported,
           IsLegacyCublasMatmul(*existing_gemm)
-              ? AreTypesSupportedByLegacyCublas(*existing_gemm, instr)
-              : AreTypesSupportedByCublasLt(*existing_gemm, instr));
+              ? TypesAreSupportedByLegacyCublas(*existing_gemm, instr)
+              : TypesAreSupportedByCublasLt(*existing_gemm, instr));
       if (types_are_supported) {
         return FuseMatrixConvert(existing_gemm, instr);
       }
@@ -1383,7 +1383,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     return absl::string_view(kGemmCallTarget);
   }
 
-  StatusOr<bool> AreTypesSupportedByLegacyCublas(
+  StatusOr<bool> TypesAreSupportedByLegacyCublas(
       const HloInstruction &instr, const HloInstruction *bias = nullptr) const {
     // Figure out the Atype/Btype.
     const PrimitiveType a_dtype = instr.operand(0)->shape().element_type();
@@ -1463,7 +1463,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                         output_dtype));
   }
 
-  StatusOr<bool> AreTypesSupportedByCublasLt(
+  StatusOr<bool> TypesAreSupportedByCublasLt(
       const HloInstruction &instr, const HloInstruction *bias = nullptr) const {
     // Figure out the Atype/Btype.
     const PrimitiveType a_dtype = instr.operand(0)->shape().element_type();
@@ -1617,7 +1617,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     const Shape &output_shape = instr.shape();
 
     TF_ASSIGN_OR_RETURN(bool types_are_supported_by_cublas_lt,
-                        AreTypesSupportedByCublasLt(instr));
+                        TypesAreSupportedByCublasLt(instr));
     if (!types_are_supported_by_cublas_lt) {
       return false;
     }
