@@ -412,6 +412,7 @@ cc_library(
         "//xla/mlir_hlo:all_passes",
         "//xla/mlir_hlo:gml_st_bufferizable_op_interface",
         "//xla/mlir_hlo:mhlo_passes",
+        "//xla/mlir_hlo:thlo_bufferizable_op_interface",
         "//xla/mlir_hlo:transforms_passes",
         "//xla/runtime:compiler",
         "@llvm-project//mlir:ArithTransforms",
