@@ -612,7 +612,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // Attempt to remove convert if mix type is supported:
     // convert(gemm(a, b)) -> gemm(a, b)
     if (Match(instr,
-              m::Convert(GemmOrCublasLtMatmul(&existing_gemm).WithOneUser()))) {
+              m::Convert(GemmOrCublasLtMatmul(&existing_gemm).WithOneUser())) &&
+        existing_gemm->operands().size() == 2) {
       // check if type combination is supported here
       TF_ASSIGN_OR_RETURN(
           bool types_are_supported,
