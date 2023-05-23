@@ -818,6 +818,7 @@ cc_library(
         ":py_client",
         ":status_casters",
         ":types",
+        "//xla:array",
         "//xla:debug_options_flags",
         "//xla:shape_util",
         "//xla:statusor",
