@@ -13,4 +13,7 @@ hlo_test(
             "rand_000072.hlo",
         ],
     ),
+    tags = [
+        "nomac",  # TODO(b/283397471)
+    ],
 )

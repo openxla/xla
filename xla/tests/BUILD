@@ -773,6 +773,9 @@ xla_test(
     name = "array_elementwise_ops_test",
     srcs = ["array_elementwise_ops_test.cc"],
     shard_count = 25,
+    tags = [
+        "nomac",  # TODO(b/283397471)
+    ],
     deps = [
         ":test_macros_header",
         "//xla:array2d",
