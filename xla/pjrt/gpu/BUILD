@@ -45,6 +45,7 @@ cc_library(
         "//xla:util",
         "//xla/client:client_library",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_stream_executor_client",
         "//xla/pjrt:tracked_device_buffer",
         "//xla/pjrt/distributed:client",
