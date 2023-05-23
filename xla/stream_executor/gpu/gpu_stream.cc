@@ -15,12 +15,21 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/gpu_stream.h"
 
+#include "tsl/platform/status.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/stream.h"
-#include "tsl/platform/status.h"
 
 namespace stream_executor {
 namespace gpu {
+
+bool GetStreamPriorityRange(int* lowest, int* highest) {
+  CUresult res = cuCtxGetStreamPriorityRange(lowest, highest);
+  if (res != CUDA_SUCCESS) {
+    LOG(ERROR) << "Could not query stream priority range.";
+    return false;
+  }
+  return true;
+}
 
 bool GpuStream::Init() {
   if (!GpuDriver::CreateStream(parent_->gpu_context(), &gpu_stream_,
@@ -46,6 +55,24 @@ void GpuStream::Destroy() {
 
 bool GpuStream::IsIdle() const {
   return GpuDriver::IsStreamIdle(parent_->gpu_context(), gpu_stream_);
+}
+
+void GpuStream::SetPriority(stream_executor::StreamPriority priority) {
+  int highest, lowest;
+  if (!GetStreamPriorityRange(&lowest, &highest)) {
+    LOG(ERROR) << "Could not query stream priority range. Setting priority to "
+                  "default.";
+    priority_ = 0;
+    stream_priority_ = stream_executor::StreamPriority::Default;
+    return;
+  }
+  if (priority == stream_executor::StreamPriority::Highest) {
+    priority_ = highest;
+  } else if (priority == stream_executor::StreamPriority::Lowest) {
+    priority_ = lowest;
+  }
+  VLOG(1) << "Priority of GPU stream has been set to: " << priority_;
+  stream_priority_ = priority;
 }
 
 GpuStream* AsGpuStream(Stream* stream) {

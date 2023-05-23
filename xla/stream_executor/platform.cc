@@ -16,10 +16,10 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/errors.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
-#include "tsl/platform/errors.h"
 
 namespace stream_executor {
 
@@ -37,6 +37,17 @@ std::string PlatformKindString(PlatformKind kind) {
       return "Mock";
     default:
       return absl::StrCat("InvalidPlatformKind(", static_cast<int>(kind), ")");
+  }
+}
+
+std::string StreamPriorityToString(StreamPriority priority) {
+  switch (priority) {
+    case StreamPriority::Lowest:
+      return "Lowest priority";
+    case StreamPriority::Highest:
+      return "Highest priority";
+    default:
+      return "Default Priority";
   }
 }
 

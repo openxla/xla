@@ -123,9 +123,9 @@ class StreamInterface {
   virtual ~StreamInterface() {}
 
   // Sets priority for a stream.
-  virtual void SetPriority(int priority) {}
+  virtual void SetPriority(StreamPriority priority) {}
   // Gets priority for a stream.
-  virtual int priority() const { return 0; }
+  virtual StreamPriority priority() const { return StreamPriority::Default; }
   // Returns the GPU stream associated with this platform's stream
   // implementation, or nullptr otherwise.
   virtual void* GpuStreamHack() { return nullptr; }

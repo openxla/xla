@@ -126,9 +126,10 @@ class Backend {
   StatusOr<StreamPool::Ptr> BorrowStream(se::StreamExecutor* executor);
 
   // Borrows a stream for use by the caller with a given priority.
-  StatusOr<StreamPool::Ptr> BorrowStream(int device_ordinal, int priority);
-  StatusOr<StreamPool::Ptr> BorrowStream(se::StreamExecutor* executor,
-                                         int priority);
+  StatusOr<StreamPool::Ptr> BorrowStream(
+      int device_ordinal, stream_executor::StreamPriority priority);
+  StatusOr<StreamPool::Ptr> BorrowStream(
+      se::StreamExecutor* executor, stream_executor::StreamPriority priority);
 
   // Returns a function to borrow a stream, as `BorrowStream` above does.
   // Purely for convenience, the caller could rather make this anonymous
@@ -138,11 +139,12 @@ class Backend {
   }
 
   // Returns a function to borrow a stream with a given priority.
-  std::function<StatusOr<StreamPool::Ptr>(int, int)>
+  std::function<StatusOr<StreamPool::Ptr>(int, stream_executor::StreamPriority)>
   StreamBorrowerWithPriority() {
-    return [this](int device_ordinal, int priority) {
-      return BorrowStream(device_ordinal, priority);
-    };
+    return
+        [this](int device_ordinal, stream_executor::StreamPriority priority) {
+          return BorrowStream(device_ordinal, priority);
+        };
   }
 
   // Returns whether the given device ordinal of the backend is supported.

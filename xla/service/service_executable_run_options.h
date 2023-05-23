@@ -28,8 +28,8 @@ namespace xla {
 class ServiceExecutableRunOptions {
  public:
   using StreamBorrower = std::function<StatusOr<StreamPool::Ptr>(int)>;
-  using StreamBorrowerWithPriority =
-      std::function<StatusOr<StreamPool::Ptr>(int, int)>;
+  using StreamBorrowerWithPriority = std::function<StatusOr<StreamPool::Ptr>(
+      int, stream_executor::StreamPriority)>;
 
   ServiceExecutableRunOptions()
       : ServiceExecutableRunOptions(ExecutableRunOptions()) {}
@@ -60,8 +60,8 @@ class ServiceExecutableRunOptions {
                : Status(absl::StatusCode::kUnimplemented, "No stream cache");
   }
 
-  StatusOr<StreamPool::Ptr> BorrowStream(int device_ordinal,
-                                         int priority) const {
+  StatusOr<StreamPool::Ptr> BorrowStream(
+      int device_ordinal, stream_executor::StreamPriority priority) const {
     return borrow_stream_with_priority_
                ? borrow_stream_with_priority_(device_ordinal, priority)
                : Status(absl::StatusCode::kUnimplemented, "No stream cache");

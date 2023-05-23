@@ -48,8 +48,10 @@ class GpuStream : public internal::StreamInterface {
   // Explicitly initialize the CUDA resources associated with this stream, used
   // by StreamExecutor::AllocateStream().
   bool Init();
-  void SetPriority(int priority) override { priority_ = priority; }
-  int priority() const override { return priority_; }
+  void SetPriority(stream_executor::StreamPriority priority) override;
+  stream_executor::StreamPriority priority() const override {
+    return stream_priority_;
+  }
 
   // Explicitly destroy the CUDA resources associated with this stream, used by
   // StreamExecutor::DeallocateStream().
@@ -81,6 +83,7 @@ class GpuStream : public internal::StreamInterface {
   GpuExecutor* parent_;         // Executor that spawned this stream.
   GpuStreamHandle gpu_stream_;  // Wrapped CUDA stream handle.
   int priority_ = 0;
+  stream_executor::StreamPriority stream_priority_;
 
   // Event that indicates this stream has completed.
   GpuEventHandle completed_event_ = nullptr;
@@ -92,6 +95,10 @@ GpuStream* AsGpuStream(Stream* stream);
 
 // Extracts a GpuStreamHandle from a GpuStream-backed Stream object.
 GpuStreamHandle AsGpuStreamValue(Stream* stream);
+
+// Gets the priority range of streams.
+// Returns true if retrieval of range was successful and false otherwise.
+bool GetStreamPriorityRange(int* lowest, int* highest);
 
 }  // namespace gpu
 }  // namespace stream_executor

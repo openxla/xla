@@ -62,6 +62,10 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #endif
 
+#if GOOGLE_CUDA
+#include "xla/stream_executor/gpu/gpu_stream.h"
+#endif  // #if GOOGLE_CUDA
+
 namespace xla {
 namespace gpu {
 
@@ -191,21 +195,16 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
                      const DebugOptions& debug_options) {
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();
-  int high_priority = 0;
+  stream_executor::StreamPriority stream_priority =
+      stream_executor::StreamPriority::Default;
+#if GOOGLE_CUDA
   if (debug_options.xla_gpu_enable_highest_priority_async_stream()) {
-    CUresult res = cuCtxGetStreamPriorityRange(nullptr, &high_priority);
-    if (res != CUDA_SUCCESS) {
-      LOG(ERROR)
-          << "Could not query stream priority range. Setting priority to "
-             "default for async stream.";
-      high_priority = 0;
-    } else {
-      VLOG(1) << "Priority of async collective stream has been set to: "
-              << high_priority;
-    }
+    stream_priority = stream_executor::StreamPriority::Highest;
   }
+#endif  // #if GOOGLE_CUDA
+
   StatusOr<StreamPool::Ptr> async_comms_stream =
-      run_options->BorrowStream(executor->device_ordinal(), high_priority);
+      run_options->BorrowStream(executor->device_ordinal(), stream_priority);
 
   uint64_t start_nanos = tsl::Env::Default()->NowNanos();
 

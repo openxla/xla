@@ -22,13 +22,13 @@ limitations under the License.
 namespace xla {
 
 StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor) {
-  return BorrowStream(executor, 0);
+  return BorrowStream(executor, stream_executor::StreamPriority::Default);
 }
-StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor,
-                                         int priority) {
+StreamPool::Ptr StreamPool::BorrowStream(
+    se::StreamExecutor* executor, stream_executor::StreamPriority priority) {
   std::unique_ptr<se::Stream> stream;
 
-  if (priority != 0) {
+  if (priority != stream_executor::StreamPriority::Default) {
     absl::MutexLock lock(&mu_);
     if (streams_with_pri_.find(priority) == streams_with_pri_.end()) {
       stream = nullptr;
@@ -40,11 +40,11 @@ StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor,
         if (stream->ok()) {
           VLOG(1) << stream->DebugStreamPointers()
                   << " StreamPool reusing existing stream with priority: "
-                  << priority;
+                  << stream_executor::StreamPriorityToString(priority);
         } else {
           VLOG(1) << stream->DebugStreamPointers()
                   << " stream was not ok, StreamPool deleting with priority: "
-                  << priority;
+                  << stream_executor::StreamPriorityToString(priority);
           stream = nullptr;
         }
       }
@@ -69,10 +69,11 @@ StreamPool::Ptr StreamPool::BorrowStream(se::StreamExecutor* executor,
   if (!stream) {
     // Create a new stream.
     stream = std::make_unique<se::Stream>(executor);
-    if (priority != 0) {
+    if (priority != stream_executor::StreamPriority::Default) {
       auto stream_impl = stream->implementation();
       stream_impl->SetPriority(priority);
-      VLOG(1) << "Set stream priority to: " << priority;
+      VLOG(1) << "Set stream priority to: "
+              << stream_executor::StreamPriorityToString(priority);
     }
     stream->Init();
     VLOG(1) << stream->DebugStreamPointers()
@@ -89,8 +90,9 @@ void StreamPool::ReturnStream(se::Stream* stream) {
     VLOG(1) << stream->DebugStreamPointers()
             << " StreamPool returning ok stream";
     absl::MutexLock lock(&mu_);
-    int priority = stream->implementation()->priority();
-    if (priority != 0) {
+    stream_executor::StreamPriority priority =
+        stream->implementation()->priority();
+    if (priority != stream_executor::StreamPriority::Default) {
       streams_with_pri_[priority].emplace_back(stream);
     } else {
       streams_.emplace_back(stream);

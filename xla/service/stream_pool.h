@@ -46,7 +46,8 @@ class StreamPool {
   // This method is thread-safe.
   Ptr BorrowStream(se::StreamExecutor* executor);
 
-  Ptr BorrowStream(se::StreamExecutor* executor, int priority);
+  Ptr BorrowStream(se::StreamExecutor* executor,
+                   stream_executor::StreamPriority priority);
 
  private:
   // Puts a pointer to a stream back into the pool, leaving it free
@@ -59,7 +60,8 @@ class StreamPool {
   absl::Mutex mu_;
   std::vector<std::unique_ptr<se::Stream>> streams_ ABSL_GUARDED_BY(mu_);
   // This stores streams with user-specified priority.
-  std::unordered_map<int, std::vector<std::unique_ptr<se::Stream>>>
+  std::unordered_map<stream_executor::StreamPriority,
+                     std::vector<std::unique_ptr<se::Stream>>>
       streams_with_pri_ ABSL_GUARDED_BY(mu_);
 };
 
