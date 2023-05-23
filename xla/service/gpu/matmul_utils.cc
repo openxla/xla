@@ -738,7 +738,8 @@ StatusOr<se::blas::DataType> AsBlasDataType(PrimitiveType dtype) {
     case C128:
       return se::blas::DataType::kComplexDouble;
     default:
-      return InternalError("AsBlasDataType: unsupported type");
+      return InternalError("AsBlasDataType: unsupported type: %s",
+                           primitive_util::LowercasePrimitiveTypeName(dtype));
   }
 }
 
