@@ -2173,18 +2173,25 @@ LogicalResult ExportXlaOp(RecvOp op, OpLoweringContext ctx) {
   token = xla::internal::XlaBuilderFriend::BuildRecv(
       ctx.builder, token, data_shape,
       Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
-  xla::XlaOp xla_result = xla::internal::XlaBuilderFriend::BuildRecvDone(
-      ctx.builder, token, data_shape,
-      Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  xla::XlaOp xla_result;
+  {
+    xla::XlaScopedShardingAssignment scoped_sharding(ctx.builder, std::nullopt);
+    xla_result = xla::internal::XlaBuilderFriend::BuildRecvDone(
+        ctx.builder, token, data_shape,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  }
 
-  auto data_tuple_element = xla::GetTupleElement(xla_result, 0);
-  if (subshapes.size() == 1) {
-    value_map[op.getResult(0)] = data_tuple_element;
-  } else {
-    for (const auto& item : llvm::enumerate(op.getResults())) {
-      if (item.index() == num_results - 1) break;
-      value_map[item.value()] =
-          xla::GetTupleElement(data_tuple_element, item.index());
+  {
+    xla::XlaScopedShardingAssignment scoped_sharding(ctx.builder, std::nullopt);
+    auto data_tuple_element = xla::GetTupleElement(xla_result, 0);
+    if (subshapes.size() == 1) {
+      value_map[op.getResult(0)] = data_tuple_element;
+    } else {
+      for (const auto& item : llvm::enumerate(op.getResults())) {
+        if (item.index() == num_results - 1) break;
+        value_map[item.value()] =
+            xla::GetTupleElement(data_tuple_element, item.index());
+      }
     }
   }
 
@@ -2416,10 +2423,12 @@ LogicalResult ExportXlaOp(SendOp op, OpLoweringContext ctx) {
   if (failed(GetTuple(op, op.getInputs(), ctx, operands))) return failure();
 
   xla::XlaOp operand;
-  if (operands.size() == 1)
+  if (operands.size() == 1) {
     operand = operands[0];
-  else
+  } else {
+    xla::XlaScopedShardingAssignment scoped_sharding(ctx.builder, std::nullopt);
     operand = Tuple(ctx.builder, operands);
+  }
 
   xla::XlaOp token;
   if (failed(GetXlaOp(op.getToken(), value_map, &token, op))) return failure();
@@ -2427,9 +2436,12 @@ LogicalResult ExportXlaOp(SendOp op, OpLoweringContext ctx) {
   token = xla::internal::XlaBuilderFriend::BuildSend(
       ctx.builder, operand, token,
       Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
-  value_map[op] = xla::internal::XlaBuilderFriend::BuildSendDone(
-      ctx.builder, token, Convert_channel_handle(op.getChannelHandle()),
-      op.getIsHostTransfer());
+  {
+    xla::XlaScopedShardingAssignment scoped_sharding(ctx.builder, std::nullopt);
+    value_map[op] = xla::internal::XlaBuilderFriend::BuildSendDone(
+        ctx.builder, token, Convert_channel_handle(op.getChannelHandle()),
+        op.getIsHostTransfer());
+  }
   return success();
 }
 

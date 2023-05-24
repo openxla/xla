@@ -1970,6 +1970,29 @@ func.func @main(%token: !mhlo.token) -> tuple<tensor<3x4xi32>, !mhlo.token> {
 // CHECK:  [[RECV:%.*]] = (s32[3,4], u32[], token[]) recv(token[] [[TOKEN]]), channel_id=5
 // CHECK:  (s32[3,4], token[]) recv-done((s32[3,4], u32[], token[]) [[RECV]]), channel_id=5
 
+// -----
+
+// CHECK:  HloModule
+func.func @main(%token: !mhlo.token) -> tuple<tensor<3x4xi32>, !mhlo.token> {
+  %0:2 = "mhlo.recv"(%token) {
+    channel_handle = #mhlo.channel_handle<
+      handle = 5,
+      type = 1  // Device to device channel
+    >,
+    is_host_transfer = false,
+    mhlo.sharding = "{{maximal device=0}, {maximal device=0}, {maximal device=0}}"
+  } : (!mhlo.token) -> (tensor<3x4xi32>, !mhlo.token)
+  %1 = "mhlo.tuple"(%0#0, %0#1) : (tensor<3x4xi32>, !mhlo.token) -> tuple<tensor<3x4xi32>, !mhlo.token>
+  func.return %1 : tuple<tensor<3x4xi32>, !mhlo.token>
+}
+
+// CHECK:  ENTRY
+// CHECK:  [[TOKEN:%.*]] = token[] parameter(0)
+// CHECK:  [[RECV:%.*]] = (s32[3,4], u32[], token[]) recv(token[] [[TOKEN]]), channel_id=5
+// CHECK-SAME:  sharding={
+// CHECK-SAME:    {maximal device=0}, {maximal device=0}, {maximal device=0}
+// CHECK-SAME:  }
+// CHECK:  (s32[3,4], token[]) recv-done((s32[3,4], u32[], token[]) [[RECV]]), channel_id=5
 
 // -----
 
@@ -2294,6 +2317,31 @@ func.func @main(%arg: tensor<3x4xi32>, %token: !mhlo.token) -> !mhlo.token {
 // CHECK:  [[ARG:%.*]] = s32[3,4] parameter(0)
 // CHECK:  [[TOKEN:%.*]] = token[] parameter(1)
 // CHECK:  [[SEND:%.*]] = (s32[3,4], u32[], token[]) send(s32[3,4] [[ARG]], token[] [[TOKEN]]), channel_id=5
+// CHECK:  ROOT
+// CHECK-SAME:  token[] send-done((s32[3,4], u32[], token[]) [[SEND]]), channel_id=5
+
+// -----
+
+// CHECK:  HloModule
+func.func @main(%arg: tensor<3x4xi32>, %token: !mhlo.token) -> !mhlo.token {
+  %0 = "mhlo.send"(%arg, %token) {
+    channel_handle = #mhlo.channel_handle<
+      handle = 5,
+      type = 1  // Device to device channel
+    >,
+    is_host_transfer = false,
+    mhlo.sharding = "{{maximal device=0}, {maximal device=0}, {maximal device=0}}"
+  } : (tensor<3x4xi32>, !mhlo.token) -> !mhlo.token
+  func.return %0 : !mhlo.token
+}
+
+// CHECK:  ENTRY
+// CHECK:  [[ARG:%.*]] = s32[3,4] parameter(0)
+// CHECK:  [[TOKEN:%.*]] = token[] parameter(1)
+// CHECK:  [[SEND:%.*]] = (s32[3,4], u32[], token[]) send(s32[3,4] [[ARG]], token[] [[TOKEN]]), channel_id=5
+// CHECK-SAME:  sharding={
+// CHECK-SAME:    {maximal device=0}, {maximal device=0}, {maximal device=0}
+// CHECK-SAME:  }
 // CHECK:  ROOT
 // CHECK-SAME:  token[] send-done((s32[3,4], u32[], token[]) [[SEND]]), channel_id=5
 
