@@ -1389,14 +1389,20 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // Figure out the Atype/Btype.
     const PrimitiveType a_dtype = instr.operand(0)->shape().element_type();
     const PrimitiveType b_dtype = instr.operand(1)->shape().element_type();
+    const PrimitiveType output_type =
+        bias ? bias->shape().element_type() : instr.shape().element_type();
+    const std::array<PrimitiveType, 12> supported_type = {
+        PrimitiveType::S8,  PrimitiveType::F16, PrimitiveType::BF16,
+        PrimitiveType::F32, PrimitiveType::S32, PrimitiveType::F64,
+        PrimitiveType::C64, PrimitiveType::C128};
     // legacy cublas has a defined set of combinations of types that it
     // supports. Figure out the computeType and scaleType.
+    if (!absl::c_linear_search(supported_type, output_type)) return false;
     TF_ASSIGN_OR_RETURN(const se::blas::DataType output_dtype,
-                        AsBlasDataType(bias ? bias->shape().element_type()
-                                            : instr.shape().element_type()));
+                        AsBlasDataType(output_type));
     TF_ASSIGN_OR_RETURN(const se::blas::ComputationType compute_type,
                         GetBlasComputationType(
-                            a_dtype, instr.shape().element_type(),
+                            a_dtype, output_type,
                             stream_executor::blas::kDefaultComputePrecision));
     se::blas::DataType scale_type =
         cublas_lt::GetScaleType(output_dtype, compute_type);
@@ -1469,14 +1475,21 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // Figure out the Atype/Btype.
     const PrimitiveType a_dtype = instr.operand(0)->shape().element_type();
     const PrimitiveType b_dtype = instr.operand(1)->shape().element_type();
+    const PrimitiveType output_type =
+        bias ? bias->shape().element_type() : instr.shape().element_type();
+    const std::array<PrimitiveType, 12> supported_type = {
+        PrimitiveType::F8E5M2, PrimitiveType::F8E4M3FN, PrimitiveType::S8,
+        PrimitiveType::F16,    PrimitiveType::BF16,     PrimitiveType::F32,
+        PrimitiveType::S32,    PrimitiveType::F64,      PrimitiveType::C64,
+        PrimitiveType::C128};
+    if (!absl::c_linear_search(supported_type, output_type)) return false;
     // cublasLt has a defined set of combinations of types that it supports.
     // Figure out the computeType and scaleType.
     TF_ASSIGN_OR_RETURN(const se::blas::DataType output_dtype,
-                        AsBlasDataType(bias ? bias->shape().element_type()
-                                            : instr.shape().element_type()));
+                        AsBlasDataType(output_type));
     TF_ASSIGN_OR_RETURN(const se::blas::ComputationType compute_type,
                         GetBlasComputationType(
-                            a_dtype, instr.shape().element_type(),
+                            a_dtype, output_type,
                             stream_executor::blas::kDefaultComputePrecision));
     se::blas::DataType scale_type =
         cublas_lt::GetScaleType(output_dtype, compute_type);
