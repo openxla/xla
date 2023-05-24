@@ -58,6 +58,7 @@ add_mlir_library(MhloPasses
   mhlo_canonicalize_gather/mhlo_canonicalize_gather.cc
   mhlo_canonicalize_reduction/mhlo_canonicalize_reduction.cc
   mhlo_canonicalize_scatter/mhlo_canonicalize_scatter.cc
+  mhlo_canonicalize_async/mhlo_canonicalize_async.cc
   mhlo_flatten_tuple/mhlo_flatten_tuple.cc
   prepare_for_export/prepare_for_export.cc
   optimize_mhlo/optimize_mhlo.cc

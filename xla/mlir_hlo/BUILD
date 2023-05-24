@@ -741,6 +741,7 @@ cc_library(
         "mhlo/transforms/materialize_broadcasts/materialize_broadcasts.cc",
         "mhlo/transforms/materialize_broadcasts/materialize_broadcasts_pass.cc",
         "mhlo/transforms/merge_assuming_ops/merge_assuming_ops.cc",
+        "mhlo/transforms/mhlo_canonicalize_async/mhlo_canonicalize_async.cc",
         "mhlo/transforms/mhlo_canonicalize_dot/mhlo_canonicalize_dot.cc",
         "mhlo/transforms/mhlo_canonicalize_gather/mhlo_canonicalize_gather.cc",
         "mhlo/transforms/mhlo_canonicalize_reduction/mhlo_canonicalize_reduction.cc",

@@ -54,6 +54,11 @@ def HloCanonicalizeDotPass : Pass<"hlo-canonicalize-dot", "func::FuncOp"> {
   let dependentDialects = ["mhlo::MhloDialect", "tensor::TensorDialect"];
 }
 
+def HloCanonicalizeAsyncPass : Pass<"hlo-canonicalize-async", "ModuleOp"> {
+  let summary = "Strips redundant async-start and async-done.";
+  let constructor = "createHloCanonicalizeAsyncPass()";
+}
+
 def HloLegalizeToLhloPass : Pass<"hlo-legalize-to-lhlo", "ModuleOp"> {
   let summary = "Legalize from HLO dialect to LHLO dialect.";
   let constructor = "createLegalizeToLhloPass()";

@@ -74,6 +74,9 @@ std::unique_ptr<OperationPass<func::FuncOp>> createHloCanonicalizeGatherPass();
 // Rewrites dot operands that contain unit dimension.
 std::unique_ptr<OperationPass<func::FuncOp>> createHloCanonicalizeDotPass();
 
+// Rewrites redundant async-start and async-done ops.
+std::unique_ptr<OperationPass<ModuleOp>> createHloCanonicalizeAsyncPass();
+
 /// Lowers from HLO dialect to LHLO dialect allocating/deallocating temporary
 /// buffers if necessary.
 std::unique_ptr<OperationPass<ModuleOp>> createLegalizeToLhloPass();
