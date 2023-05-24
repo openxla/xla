@@ -557,6 +557,7 @@ cc_library(
         "//xla/service:float_normalization",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_pass",
+        "//xla/service:hlo_verifier",
         "//xla/service/gpu/llvm_gpu_backend",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
