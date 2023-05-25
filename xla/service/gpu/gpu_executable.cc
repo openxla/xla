@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.h"
 
 #include <algorithm>
-#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -27,39 +26,25 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/map_util.h"
 #include "xla/mlir/runtime/ir/rt_ops.h"
 #include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
 #include "xla/mlir/runtime/transforms/type_converter.h"
-#include "xla/runtime/diagnostics.h"
 #include "xla/runtime/executable.h"
-#include "xla/runtime/jit_executable.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_constants.h"
-#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/gpu_types.h"
 #include "xla/service/gpu/non_atomically_upgradeable_rw_lock.h"
-#include "xla/service/gpu/runtime/collectives.h"
-#include "xla/service/gpu/runtime/cublas_lt_matmul.h"
 #include "xla/service/gpu/runtime/executable.h"
-#include "xla/service/gpu/runtime/gemm.h"
-#include "xla/service/gpu/runtime/kernel_launch.h"
-#include "xla/service/gpu/runtime/support.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/hlo_parser.h"
-#include "xla/service/llvm_ir/buffer_assignment_util.h"
-#include "xla/service/logical_buffer.h"
 #include "xla/service/shaped_buffer.h"
-#include "xla/service/transfer_manager.h"
 #include "xla/service/xla_debug_info_manager.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
@@ -69,13 +54,13 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
 #include "xla/util.h"
-#include "tsl/lib/gtl/map_util.h"
-#include "tsl/platform/casts.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
+
+#if TENSORFLOW_USE_ROCM
+#include "tsl/platform/random.h"
+#endif
 
 namespace xla {
 namespace gpu {
