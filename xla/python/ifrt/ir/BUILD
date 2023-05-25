@@ -142,7 +142,6 @@ cc_library(
     hdrs = ["compile_options.h"],
     visibility = ["//xla/python/ifrt:friends"],
     deps = [
-        "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//llvm:Support",
