@@ -528,7 +528,8 @@ tsl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
     blas::AlgorithmType algorithm, blas::ComputePrecision precision,
     blas::ProfileResult *output_profile_result) {
   // ROCM TODO: properly implement the interface
-  return tsl::errors::Internal("Not implemented on ROCm");
+  return tsl::errors::Internal("DoBlasGemmWithAlgorithm ", 
+                               "is not implemented on ROCm yet");
 }
 
 tsl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
@@ -541,7 +542,8 @@ tsl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
     blas::AlgorithmType algorithm, blas::ComputePrecision precision,
     blas::ProfileResult *output_profile_result) {
   // ROCM TODO: properly implement the interface
-  return tsl::errors::Internal("Not implemented on ROCm");
+  return tsl::errors::Internal("DoBlasGemmStridedBatchedWithAlgorithm ", 
+                               "is not implemented on ROCm yet");
 }
 
 bool ROCMBlas::GetBlasGemmAlgorithms(
