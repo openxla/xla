@@ -105,19 +105,6 @@ Backend::CreateDefaultBackend() {
   return CreateBackend(backend_options);
 }
 
-StatusOr<StreamPool::Ptr> Backend::BorrowStream(int device_ordinal) {
-  TF_ASSIGN_OR_RETURN(auto executor, stream_executor(device_ordinal));
-  return BorrowStream(executor);
-}
-
-StatusOr<StreamPool::Ptr> Backend::BorrowStream(se::StreamExecutor* executor) {
-  absl::MutexLock l(&mu_);
-  if (!stream_pools_.contains(executor)) {
-    stream_pools_.emplace(executor, std::make_unique<StreamPool>());
-  }
-  return stream_pools_.at(executor)->BorrowStream(executor);
-}
-
 StatusOr<StreamPool::Ptr> Backend::BorrowStream(
     int device_ordinal, stream_executor::StreamPriority priority) {
   TF_ASSIGN_OR_RETURN(auto executor, stream_executor(device_ordinal));

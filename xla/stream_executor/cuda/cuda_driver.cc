@@ -36,14 +36,14 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
-#include "xla/stream_executor/cuda/cuda_diagnostics.h"
-#include "xla/stream_executor/platform/logging.h"
-#include "xla/stream_executor/platform/port.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/stacktrace.h"
 #include "tsl/platform/static_threadlocal.h"
 #include "tsl/platform/threadpool.h"
+#include "xla/stream_executor/cuda/cuda_diagnostics.h"
+#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/platform/port.h"
 
 bool FLAGS_gpuexec_cuda_driver_inject_init_error = false;
 bool FLAGS_gpuexec_cuda_sync_around_driver_calls = false;
@@ -853,6 +853,23 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
     return false;
   }
   return true;
+}
+
+/* static */ int GpuDriver::GetGpuStreamPriority(
+    GpuContext* context, stream_executor::StreamPriority stream_priority) {
+  ScopedActivateContext activation(context);
+  if (stream_priority == stream_executor::StreamPriority::Default) {
+    return 0;
+  }
+  int lowest, highest;
+  CUresult res = cuCtxGetStreamPriorityRange(&lowest, &highest);
+  if (res != CUDA_SUCCESS) {
+    LOG(ERROR)
+        << "Could not query stream priority range. Returning default priority.";
+    return 0;
+  }
+  return stream_priority == stream_executor::StreamPriority::Highest ? highest
+                                                                     : lowest;
 }
 
 #if CUDA_VERSION >= 10020

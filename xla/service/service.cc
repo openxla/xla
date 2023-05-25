@@ -441,8 +441,7 @@ Service::ExecuteParallelAndRegisterResult(
         options.set_execution_profile(profile);
       }
       ServiceExecutableRunOptions run_options(
-          options, backend->StreamBorrower(),
-          backend->StreamBorrowerWithPriority());
+          options, backend->StreamBorrowerWithPriority());
 
       // Asynchronously launch the computation.
       TF_ASSIGN_OR_RETURN(ScopedShapedBuffer result,
@@ -535,8 +534,7 @@ StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
         backend->eigen_intra_op_thread_pool_device());
     options.set_device_assignment(&device_assignment);
     options.set_execution_profile(profile);
-    run_options.emplace_back(options, backend->StreamBorrower(),
-                             backend->StreamBorrowerWithPriority());
+    run_options.emplace_back(options, backend->StreamBorrowerWithPriority());
   }
 
   if (options_.number_of_replicas() == 1) {

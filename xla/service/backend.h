@@ -119,17 +119,16 @@ class Backend {
     return stream_executors_[0];
   }
 
-  // Borrows a stream for use by the caller, either by grabbing it from an
-  // internal pool, or by constructing/initializating it, and returns the result
-  // to the caller.
-  StatusOr<StreamPool::Ptr> BorrowStream(int device_ordinal);
-  StatusOr<StreamPool::Ptr> BorrowStream(se::StreamExecutor* executor);
-
-  // Borrows a stream for use by the caller with a given priority.
+  // Borrows a stream for use by the caller with a given priority, either by
+  // grabbing it from an internal pool, or by constructing/initializating it,
+  // and returns the result to the caller.
   StatusOr<StreamPool::Ptr> BorrowStream(
-      int device_ordinal, stream_executor::StreamPriority priority);
+      int device_ordinal, stream_executor::StreamPriority priority =
+                              stream_executor::StreamPriority::Default);
   StatusOr<StreamPool::Ptr> BorrowStream(
-      se::StreamExecutor* executor, stream_executor::StreamPriority priority);
+      se::StreamExecutor* executor,
+      stream_executor::StreamPriority priority =
+          stream_executor::StreamPriority::Default);
 
   // Returns a function to borrow a stream, as `BorrowStream` above does.
   // Purely for convenience, the caller could rather make this anonymous

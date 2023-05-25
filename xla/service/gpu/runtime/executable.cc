@@ -23,7 +23,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "tsl/protobuf/dnn.pb.h"
 #include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
 #include "xla/runtime/executable.h"

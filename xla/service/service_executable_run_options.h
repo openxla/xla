@@ -27,19 +27,16 @@ namespace xla {
 // data.
 class ServiceExecutableRunOptions {
  public:
-  using StreamBorrower = std::function<StatusOr<StreamPool::Ptr>(int)>;
-  using StreamBorrowerWithPriority = std::function<StatusOr<StreamPool::Ptr>(
+  using StreamBorrower = std::function<StatusOr<StreamPool::Ptr>(
       int, stream_executor::StreamPriority)>;
 
   ServiceExecutableRunOptions()
       : ServiceExecutableRunOptions(ExecutableRunOptions()) {}
 
-  explicit ServiceExecutableRunOptions(
-      ExecutableRunOptions run_options, StreamBorrower borrow_stream = nullptr,
-      StreamBorrowerWithPriority borrow_stream_with_priority = nullptr)
+  explicit ServiceExecutableRunOptions(ExecutableRunOptions run_options,
+                                       StreamBorrower borrow_stream = nullptr)
       : run_options_(std::move(run_options)),
-        borrow_stream_(std::move(borrow_stream)),
-        borrow_stream_with_priority_(std::move(borrow_stream_with_priority)) {}
+        borrow_stream_(std::move(borrow_stream)) {}
 
   // Returns reference or pointer to `ExecutableRunOptions` member.
   const ExecutableRunOptions& run_options() const { return run_options_; }
@@ -54,23 +51,17 @@ class ServiceExecutableRunOptions {
 
   // Borrows a stream and returns a smart pointer which returns the stream on
   // destruction.
-  StatusOr<StreamPool::Ptr> BorrowStream(int device_ordinal) const {
-    return borrow_stream_
-               ? borrow_stream_(device_ordinal)
-               : Status(absl::StatusCode::kUnimplemented, "No stream cache");
-  }
-
   StatusOr<StreamPool::Ptr> BorrowStream(
-      int device_ordinal, stream_executor::StreamPriority priority) const {
-    return borrow_stream_with_priority_
-               ? borrow_stream_with_priority_(device_ordinal, priority)
+      int device_ordinal, stream_executor::StreamPriority priority =
+                              stream_executor::StreamPriority::Default) const {
+    return borrow_stream_
+               ? borrow_stream_(device_ordinal, priority)
                : Status(absl::StatusCode::kUnimplemented, "No stream cache");
   }
 
  private:
   ExecutableRunOptions run_options_;
   StreamBorrower borrow_stream_;
-  StreamBorrowerWithPriority borrow_stream_with_priority_;
 };
 
 }  // namespace xla
