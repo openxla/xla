@@ -94,7 +94,8 @@ struct GemmConfig : public se::gpu::GemmConfig {
       absl::Span<const int64_t> rhs_batch_dims,
       absl::Span<const int64_t> rhs_contracting_dims, const Shape& output_shape,
       double alpha_real, double alpha_imag, double beta,
-      std::optional<int64_t> algorithm, int64_t compute_precision);
+      std::optional<int64_t> algorithm, int64_t compute_precision,
+      bool grad_x, bool grad_y);
 
   // As above with additional `c_shape` and `bias_shape_ptr` parameter, both
   // which are only necessarily for F8 gemms.
@@ -103,9 +104,9 @@ struct GemmConfig : public se::gpu::GemmConfig {
       absl::Span<const int64_t> lhs_contracting_dims, const Shape& rhs_shape,
       absl::Span<const int64_t> rhs_batch_dims,
       absl::Span<const int64_t> rhs_contracting_dims, const Shape& c_shape,
-      const Shape* bias_shape_ptr, const Shape& output_shape, double alpha_real,
-      double alpha_imag, double beta, std::optional<int64_t> algorithm,
-      int64_t compute_precision);
+      const Shape* bias_shape_ptr, const Shape& output_shape, double alpha_real, 
+      double alpha_imag, double beta, std::optional<int64_t> algorithm, 
+      int64_t compute_precision, bool grad_x, bool grad_y);
 
   template <typename CublasLtMatmulMaybeF8Op,
             typename = std::enable_if<
@@ -140,7 +141,7 @@ struct GemmConfig : public se::gpu::GemmConfig {
         op.getBias() == nullptr ? nullptr : &bias_shape, GetShape(op.getD()),
         op.getAlphaReal().convertToDouble(),
         op.getAlphaImag().convertToDouble(), op.getBeta().convertToDouble(),
-        op.getAlgorithm(), compute_precision);
+        op.getAlgorithm(), compute_precision, /*grad_x=*/false, /*grad_y=*/false);
   }
 };
 
