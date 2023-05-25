@@ -34,12 +34,10 @@ limitations under the License.
 namespace tsl {
 namespace custom_float_internal {
 
-using bfloat16 = Eigen::bfloat16;
-
 template <>
 struct TypeDescriptor<bfloat16>
     : custom_float_internal::CustomFloatTypeDescriptor<bfloat16> {
-  typedef bfloat16 T;
+  using T = bfloat16;
   static constexpr const char* kTypeName = "bfloat16";
   static constexpr const char* kTpDoc = "bfloat16 floating-point values";
   // We must register bfloat16 with a kind other than "f", because numpy
@@ -51,24 +49,6 @@ struct TypeDescriptor<bfloat16>
   // TODO(phawkins): there doesn't seem to be a way of guaranteeing a type
   // character is unique.
   static constexpr char kNpyDescrType = 'E';
-  static constexpr char kNpyDescrByteorder = '=';
-};
-
-template <>
-struct TypeDescriptor<float8_e4m3b11>
-    : CustomFloatTypeDescriptor<float8_e4m3b11> {
-  typedef float8_e4m3b11 T;
-  static constexpr const char* kTypeName = "float8_e4m3b11";
-  static constexpr const char* kTpDoc = "float8_e4m3b11 floating-point values";
-  // We must register float8_e4m3b11 with a kind other than "f", because numpy
-  // considers two types with the same kind and size to be equal, and we
-  // expect multiple 1 byte floating point types.
-  // The downside of this is that NumPy scalar promotion does not work with
-  // float8_e4m3b11 values.
-  static constexpr char kNpyDescrKind = 'V';
-  // TODO(phawkins): there doesn't seem to be a way of guaranteeing a type
-  // character is unique.
-  static constexpr char kNpyDescrType = 'L';
   static constexpr char kNpyDescrByteorder = '=';
 };
 
@@ -93,22 +73,6 @@ bool Initialize() {
   }
 
   if (!custom_float_internal::RegisterNumpyDtype<bfloat16>(numpy.get())) {
-    return false;
-  }
-  bool float8_already_registered;
-  if (!custom_float_internal::RegisterNumpyDtype<float8_e4m3b11>(
-          numpy.get(), &float8_already_registered)) {
-    return false;
-  }
-
-  // Casts between bfloat16 and float8_e4m3b11. Only perform the cast if
-  // float8_e4m3b11 hasn't been previously registered, presumably by a different
-  // library. In this case, we assume the cast has also already been registered,
-  // and registering it again can cause segfaults due to accessing an
-  // uninitialized type descriptor in this library.
-  if (!float8_already_registered &&
-      !custom_float_internal::RegisterCustomFloatCast<float8_e4m3b11,
-                                                      bfloat16>()) {
     return false;
   }
 
@@ -139,15 +103,6 @@ PyObject* Bfloat16Dtype() {
 
 int Bfloat16NumpyType() {
   return custom_float_internal::TypeDescriptor<bfloat16>::Dtype();
-}
-
-PyObject* Float8_E4M3B11Dtype() {
-  return reinterpret_cast<PyObject*>(
-      custom_float_internal::TypeDescriptor<float8_e4m3b11>::type_ptr);
-}
-
-int Float8_E4M3B11NumpyType() {
-  return custom_float_internal::TypeDescriptor<float8_e4m3b11>::Dtype();
 }
 
 }  // namespace tsl

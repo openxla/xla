@@ -37,7 +37,7 @@ namespace custom_float_internal {
 template <>
 struct TypeDescriptor<float8_e4m3fn>
     : custom_float_internal::CustomFloatTypeDescriptor<float8_e4m3fn> {
-  typedef float8_e4m3fn T;
+  using T = float8_e4m3fn;
   static constexpr const char* kTypeName = "float8_e4m3fn";
   static constexpr const char* kTpDoc = "float8_e4m3fn floating-point values";
   // We must register float8_e4m3fn with a unique kind, because numpy
@@ -52,9 +52,26 @@ struct TypeDescriptor<float8_e4m3fn>
 };
 
 template <>
+struct TypeDescriptor<float8_e4m3b11>
+    : custom_float_internal::CustomFloatTypeDescriptor<float8_e4m3b11> {
+  using T = float8_e4m3b11;
+  static constexpr const char* kTypeName = "float8_e4m3b11";
+  static constexpr const char* kTpDoc = "float8_e4m3b11 floating-point values";
+  // We must register float8_e4m3b11 with a unique kind, because numpy
+  // considers two types with the same kind and size to be equal.
+  // The downside of this is that NumPy scalar promotion does not work with
+  // float8 values.
+  static constexpr char kNpyDescrKind = 'V';
+  // TODO(phawkins): there doesn't seem to be a way of guaranteeing a type
+  // character is unique.
+  static constexpr char kNpyDescrType = 'L';
+  static constexpr char kNpyDescrByteorder = '=';
+};
+
+template <>
 struct TypeDescriptor<float8_e5m2>
     : custom_float_internal::CustomFloatTypeDescriptor<float8_e5m2> {
-  typedef float8_e5m2 T;
+  using T = float8_e5m2;
   static constexpr const char* kTypeName = "float8_e5m2";
   static constexpr const char* kTpDoc = "float8_e5m2 floating-point values";
   // Treating e5m2 as the natural "float" type since it is IEEE-754 compliant.
@@ -74,35 +91,24 @@ bool Initialize() {
   tsl::ImportNumpy();
   import_umath1(false);
 
-  tsl::custom_float_internal::Safe_PyObjectPtr numpy_str =
-      tsl::custom_float_internal::make_safe(PyUnicode_FromString("numpy"));
+  custom_float_internal::Safe_PyObjectPtr numpy_str =
+      custom_float_internal::make_safe(PyUnicode_FromString("numpy"));
   if (!numpy_str) {
     return false;
   }
-  tsl::custom_float_internal::Safe_PyObjectPtr numpy =
-      tsl::custom_float_internal::make_safe(PyImport_Import(numpy_str.get()));
+  custom_float_internal::Safe_PyObjectPtr numpy =
+      custom_float_internal::make_safe(PyImport_Import(numpy_str.get()));
   if (!numpy) {
     return false;
   }
 
-  bool float8_already_registered;
-  if (!tsl::custom_float_internal::RegisterNumpyDtype<float8_e4m3fn>(
-          numpy.get(), &float8_already_registered)) {
+  if (!custom_float_internal::RegisterNumpyDtype<float8_e4m3fn>(numpy.get())) {
     return false;
   }
-  if (!tsl::custom_float_internal::RegisterNumpyDtype<float8_e5m2>(
-          numpy.get())) {
+  if (!custom_float_internal::RegisterNumpyDtype<float8_e4m3b11>(numpy.get())) {
     return false;
   }
-
-  // Register casts between float8 types. Only perform the cast if
-  // float8_e4m3b11 hasn't been previously registered, presumably by a different
-  // library. In this case, we assume the cast has also already been registered,
-  // and registering it again can cause segfaults due to accessing an
-  // uninitialized type descriptor in this library.
-  if (!float8_already_registered &&
-      !tsl::custom_float_internal::RegisterCustomFloatCast<float8_e4m3fn,
-                                                           float8_e5m2>()) {
+  if (!custom_float_internal::RegisterNumpyDtype<float8_e5m2>(numpy.get())) {
     return false;
   }
 
@@ -112,7 +118,7 @@ bool Initialize() {
 }  // namespace
 
 bool RegisterNumpyFloat8e4m3fn() {
-  if (tsl::custom_float_internal::TypeDescriptor<float8_e4m3fn>::Dtype() !=
+  if (custom_float_internal::TypeDescriptor<float8_e4m3fn>::Dtype() !=
       NPY_NOTYPE) {
     // Already initialized.
     return true;
@@ -129,15 +135,40 @@ bool RegisterNumpyFloat8e4m3fn() {
 
 PyObject* Float8e4m3fnDtype() {
   return reinterpret_cast<PyObject*>(
-      tsl::custom_float_internal::TypeDescriptor<float8_e4m3fn>::type_ptr);
+      custom_float_internal::TypeDescriptor<float8_e4m3fn>::type_ptr);
 }
 
 int Float8e4m3fnNumpyType() {
-  return tsl::custom_float_internal::TypeDescriptor<float8_e4m3fn>::Dtype();
+  return custom_float_internal::TypeDescriptor<float8_e4m3fn>::Dtype();
+}
+
+bool RegisterNumpyFloat8e4m3b11() {
+  if (custom_float_internal::TypeDescriptor<float8_e4m3b11>::Dtype() !=
+      NPY_NOTYPE) {
+    // Already initialized.
+    return true;
+  }
+  if (!Initialize()) {
+    if (!PyErr_Occurred()) {
+      PyErr_SetString(PyExc_RuntimeError, "cannot load float8_e4m3b11 module.");
+    }
+    PyErr_Print();
+    return false;
+  }
+  return true;
+}
+
+PyObject* Float8e4m3b11Dtype() {
+  return reinterpret_cast<PyObject*>(
+      custom_float_internal::TypeDescriptor<float8_e4m3b11>::type_ptr);
+}
+
+int Float8e4m3b11NumpyType() {
+  return custom_float_internal::TypeDescriptor<float8_e4m3b11>::Dtype();
 }
 
 bool RegisterNumpyFloat8e5m2() {
-  if (tsl::custom_float_internal::TypeDescriptor<float8_e5m2>::Dtype() !=
+  if (custom_float_internal::TypeDescriptor<float8_e5m2>::Dtype() !=
       NPY_NOTYPE) {
     // Already initialized.
     return true;
@@ -154,11 +185,11 @@ bool RegisterNumpyFloat8e5m2() {
 
 PyObject* Float8e5m2Dtype() {
   return reinterpret_cast<PyObject*>(
-      tsl::custom_float_internal::TypeDescriptor<float8_e5m2>::type_ptr);
+      custom_float_internal::TypeDescriptor<float8_e5m2>::type_ptr);
 }
 
 int Float8e5m2NumpyType() {
-  return tsl::custom_float_internal::TypeDescriptor<float8_e5m2>::Dtype();
+  return custom_float_internal::TypeDescriptor<float8_e5m2>::Dtype();
 }
 
 }  // namespace tsl

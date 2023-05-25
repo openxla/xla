@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,22 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_TSL_PYTHON_LIB_CORE_BFLOAT16_H_
-#define TENSORFLOW_TSL_PYTHON_LIB_CORE_BFLOAT16_H_
+#include "pybind11/pybind11.h"  // from @pybind11
+#include "tsl/python/lib/core/float8.h"
 
-#include <Python.h>
+PYBIND11_MODULE(pywrap_float8, m) {
+  tsl::RegisterNumpyFloat8e4m3fn();
+  tsl::RegisterNumpyFloat8e4m3b11();
+  tsl::RegisterNumpyFloat8e5m2();
 
-namespace tsl {
+  m.def("float8_e4m3fn_type",
+        [] { return pybind11::handle(tsl::Float8e4m3fnDtype()); });
 
-// Register the bfloat16 numpy type. Returns true on success.
-bool RegisterNumpyBfloat16();
+  m.def("float8_e4m3b11_type",
+        [] { return pybind11::handle(tsl::Float8e4m3b11Dtype()); });
 
-// Returns a pointer to the bfloat16 dtype object.
-PyObject* Bfloat16Dtype();
-
-// Returns the id number of the bfloat16 numpy type.
-int Bfloat16NumpyType();
-
-}  // namespace tsl
-
-#endif  // TENSORFLOW_TSL_PYTHON_LIB_CORE_BFLOAT16_H_
+  m.def("float8_e5m2_type",
+        [] { return pybind11::handle(tsl::Float8e5m2Dtype()); });
+}

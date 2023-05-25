@@ -3,6 +3,7 @@
 load("//tsl:tsl.bzl", "if_windows")
 load("//tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("//tsl/platform:rules_cc.bzl", "cc_shared_library")
+load("//tensorflow:tensorflow.google.bzl", "tf_python_pybind_extension")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -10,7 +11,7 @@ package(
         "//visibility:public",
     ],
     features = [
-        # For bfloat16.so (see b/259896740)
+        # For bfloat16.so and float8.so (see b/259896740)
         "windows_export_all_symbols",
     ],
     licenses = ["notice"],
@@ -83,6 +84,23 @@ tsl_pybind_extension(
     ],
 )
 
+tf_python_pybind_extension(
+    name = "pywrap_float8",
+    srcs = [
+        "float8_wrapper.cc",
+    ],
+    deps = [
+        ":custom_float",
+        ":float8_hdr",
+        "//tsl/platform:float8",
+        "//tsl/platform:types",
+        "//tsl/python/lib/core:numpy",
+        "@eigen_archive//:eigen3",
+        "@local_config_python//:python_headers",
+        "@pybind11",
+    ],
+)
+
 cc_library(
     name = "custom_float",
     hdrs = [
@@ -103,6 +121,8 @@ cc_library(
         "float8.h",
     ],
     deps = [
+        ":custom_float",
+        "//tsl/platform:float8",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
@@ -117,9 +137,9 @@ cc_library(
     ],
     deps = [
         ":custom_float",
-        ":numpy",
         "//tsl/platform:float8",
         "//tsl/platform:types",
+        "//tsl/python/lib/core:numpy",
         "@eigen_archive//:eigen3",
         "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],

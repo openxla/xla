@@ -35,11 +35,6 @@ template <typename T>
 int GetNumpyType();
 
 template <>
-int GetNumpyType<float8_e4m3b11>() {
-  return Float8_E4M3B11NumpyType();
-}
-
-template <>
 int GetNumpyType<bfloat16>() {
   return Bfloat16NumpyType();
 }
@@ -47,6 +42,11 @@ int GetNumpyType<bfloat16>() {
 template <>
 int GetNumpyType<float8_e4m3fn>() {
   return Float8e4m3fnNumpyType();
+}
+
+template <>
+int GetNumpyType<float8_e4m3b11>() {
+  return Float8e4m3b11NumpyType();
 }
 
 template <>
@@ -90,7 +90,9 @@ bool RegisterCustomCasts() {
   // registered (i.e. float8_e4m3b11)
   success &= RegisterTwoWayCustomCast<float8_e4m3b11, float8_e4m3fn>();
   success &= RegisterTwoWayCustomCast<float8_e4m3b11, float8_e5m2>();
+  success &= RegisterTwoWayCustomCast<float8_e4m3fn, float8_e5m2>();
   success &= RegisterTwoWayCustomCast<bfloat16, float8_e4m3fn>();
+  success &= RegisterTwoWayCustomCast<bfloat16, float8_e4m3b11>();
   success &= RegisterTwoWayCustomCast<bfloat16, float8_e5m2>();
   return success;
 }

@@ -65,10 +65,9 @@ inline bool PyLong_CheckNoOverflow(PyObject* object) {
 }
 
 template <typename T, typename Enable = void>
-struct TypeDescriptor {
-  // typedef ... T;  // Representation type in memory for NumPy values of type
-  // static int Dtype() { return NPY_...; }  // Numpy type number for T.
-};
+struct TypeDescriptor;
+// typedef ... T;  // Representation type in memory for NumPy values of type
+// static int Dtype() { return NPY_...; }  // Numpy type number for T.
 
 template <typename T>
 struct CustomFloatTypeDescriptor {
