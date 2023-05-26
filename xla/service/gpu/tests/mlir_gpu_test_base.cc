@@ -79,7 +79,7 @@ StatusOr<ExecutionOutput> MlirGpuTestBase::RunMlirModule(
   executable_run_options.set_stream(stream);
   executable_run_options.set_allocator(backend_->memory_allocator());
   ServiceExecutableRunOptions run_options(executable_run_options,
-                                          backend_->StreamBorrower());
+                                          backend_->StreamBorrowerWithPriority());
   std::vector<ExecutionInput> execution_inputs;
   execution_inputs.reserve(arguments.size());
 
