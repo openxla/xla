@@ -109,9 +109,6 @@ cc_library(
 
 cc_library(
     name = "float8_lib",
-    srcs = [
-        "float8.cc",
-    ],
     hdrs = [
         "float8.h",
     ],
