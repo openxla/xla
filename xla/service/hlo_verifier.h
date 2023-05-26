@@ -247,7 +247,6 @@ class ShapeVerifier : public DfsHloVisitor {
   Status CheckTernaryShape(const HloInstruction* instruction);
   Status CheckVariadicShape(const HloInstruction* instruction);
 
- private:
   // Helpers that switch on layout_sensitive_.
   bool ShapesSame(const Shape& a, const Shape& b,
                   bool minor_to_major_only = false,
@@ -256,6 +255,27 @@ class ShapeVerifier : public DfsHloVisitor {
       return ShapeUtil::Compatible(a, b);
     }
     Shape::Equal equal;
+    if (ignore_memory_space) {
+      equal.IgnoreMemorySpaceInLayout();
+    }
+    if (minor_to_major_only) {
+      equal.MinorToMajorOnlyInLayout();
+    }
+    if (ignore_tiles) {
+      equal.IgnoreTilesInLayout();
+    }
+    return equal(a, b);
+  }
+
+  bool ShapesSameIgnoringElementType(const Shape& a, const Shape& b,
+                                     bool minor_to_major_only = false,
+                                     bool ignore_memory_space = false,
+                                     bool ignore_tiles = false) {
+    if (!opts_.layout_sensitive) {
+      return ShapeUtil::CompatibleIgnoringElementType(a, b);
+    }
+    Shape::Equal equal;
+    equal.IgnoreElementType();
     if (ignore_memory_space) {
       equal.IgnoreMemorySpaceInLayout();
     }

@@ -58,6 +58,7 @@ tf_proto_library(
     protodeps = [
         "//xla:xla_data_proto",
         "//xla/stream_executor:dnn_proto",
+        "@tsl//tsl/protobuf:autotuning_proto",
     ],
 )
 
@@ -456,6 +457,7 @@ xla_test(
     shard_count = 10,
     tags = ["nomac"],
     deps = [
+        ":backend_configs_cc",
         ":gpu_device_info_for_tests",
         ":ir_emitter_triton",
         ":launch_dimensions",
@@ -586,6 +588,7 @@ xla_test(
     ],
     tags = ["nomac"],
     deps = [
+        ":backend_configs_cc",
         ":gemm_rewriter_triton",
         ":triton_autotuner",
         "//xla:xla_proto_cc",
@@ -1105,6 +1108,8 @@ cc_library(
     srcs = ["gemm_rewriter_triton.cc"],
     hdrs = ["gemm_rewriter_triton.h"],
     deps = [
+        ":backend_configs_cc",
+        ":gpu_types",
         ":ir_emission_utils",
         ":matmul_utils",
         "//xla:literal_util",
@@ -1115,7 +1120,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
-        "//xla/service/gpu:gpu_types",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -2542,6 +2546,19 @@ cc_library(
     hdrs = ["gpu_shape_verifier.h"],
     deps = [
         "//xla/service:hlo_verifier",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_shape_verifier_test",
+    srcs = ["gpu_shape_verifier_test.cc"],
+    deps = [
+        ":gpu_shape_verifier",
+        "//xla/service:hlo_parser",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:test",
     ],
 )
 

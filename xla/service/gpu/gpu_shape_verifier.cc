@@ -18,6 +18,8 @@ limitations under the License.
 namespace xla {
 
 Status GpuShapeVerifier::Preprocess(HloInstruction* hlo) {
+  TF_RETURN_IF_ERROR(ShapeVerifier::Preprocess(hlo));
+
   TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       hlo->shape(), [&](const Shape& shape, const ShapeIndex&) {
         if (shape.has_layout()) {
@@ -32,5 +34,28 @@ Status GpuShapeVerifier::Preprocess(HloInstruction* hlo) {
 
   return ShapeVerifier::Preprocess(hlo);
 }
+
+Status GpuShapeVerifier::HandleFusion(HloInstruction* hlo) {
+  TF_RETURN_IF_ERROR(ShapeVerifier::HandleFusion(hlo));
+
+  // Elements returned by multi-output kLoop fusions must all have the same
+  // shape (ignoring element type).
+  if (hlo->IsLoopFusion() && hlo->shape().IsTuple() &&
+      !ShapeUtil::IsEmptyTuple(hlo->shape())) {
+    const Shape& first_shape = hlo->shape().tuple_shapes(0);
+    if (!absl::c_all_of(hlo->shape().tuple_shapes(), [&](const Shape& shape) {
+          return ShapesSameIgnoringElementType(first_shape, shape);
+        })) {
+      return InternalError(
+          "In a kLoop multi-output fusion, all outputs must have the same "
+          "shape (ignoring element type).  Got %s",
+          StringifyShape(hlo->shape()));
+    }
+  }
+  return OkStatus();
+}
+
+// TODO(jlebar): Add additional checks here.  In particular, add checks for
+// cudnn/cublas custom-calls and Triton fusions.
 
 }  // namespace xla
