@@ -79,6 +79,7 @@ cc_library(
         "pjrt_client.cc",
         "pjrt_compiler.cc",
         "pjrt_executable.cc",
+        "pjrt_host_callback.cc",
         "pjrt_tuple.cc",
     ],
     hdrs = [
@@ -86,6 +87,7 @@ cc_library(
         "pjrt_client.h",
         "pjrt_compiler.h",
         "pjrt_executable.h",
+        "pjrt_host_callback.h",
         "pjrt_tuple.h",
     ],
     deps = [
@@ -96,6 +98,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_computation",
+        "//xla/pjrt:host_callback",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:utils",

@@ -310,6 +310,7 @@ cc_library(
         "py_client.cc",
         "py_compile_only_client.cc",
         "py_executable.cc",
+        "py_host_callback.cc",
         "py_values.cc",
         "sharding.cc",
     ] + if_cuda_or_rocm([
@@ -322,6 +323,7 @@ cc_library(
         "py_client.h",
         "py_compile_only_client.h",
         "py_executable.h",
+        "py_host_callback.h",
         "py_values.h",
         "sharded_device_array.h",
         "sharding.h",
@@ -348,6 +350,7 @@ cc_library(
         ":types",
         ":util",
         "//xla:comparison_util",
+        "//xla:shape_util",
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
