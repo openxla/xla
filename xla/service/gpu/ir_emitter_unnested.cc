@@ -2032,7 +2032,11 @@ Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
       GetOrCreateSubComputationFromRegion(&fusion_op.getRegion(),
                                           /*is_fusion=*/true));
 
-  if (HasAnyUnnestedReductionRoot(fused_computation)) {
+  // If the middle-end sets a reduction fusion kind to kLoop, that means we
+  // shouldn't use the custom reduction emitter and instead should use the naive
+  // loop emitter.
+  if (HasAnyUnnestedReductionRoot(fused_computation) &&
+      backend_config.kind() != "kLoop") {
     return EmitUnnestedReduction(fusion_op, fused_computation);
   }
 
@@ -5075,7 +5079,8 @@ Status IrEmitterUnnested::EmitIRForReduction(
   ExtraOutputGensMap extra_output_gens;
 
   for (const HloInstruction* hlo : instr_index_group) {
-    if (IsReductionFromOrToContiguousDimensions(*hlo)) {
+    if (IsReductionFromOrToContiguousDimensions(*hlo) &&
+        hlo->user_count() <= 1) {
       reductions.push_back(Cast<HloReduceInstruction>(hlo));
     } else {
       extra_output_gens[hlo] = *fused_emitter.GetGenerator(*hlo);
@@ -5200,7 +5205,8 @@ std::vector<std::vector<HloInstruction*>> GroupDisjointReductions(
 
   for (HloInstruction* root : roots) {
     disjoint_sets[root].Get() = root;
-    if (!IsReductionFromOrToContiguousDimensions(*root)) {
+    if (!IsReductionFromOrToContiguousDimensions(*root) ||
+        root->user_count() != 1) {
       if (!first_non_reduction_root) {
         first_non_reduction_root = root;
       } else {
@@ -5216,7 +5222,7 @@ std::vector<std::vector<HloInstruction*>> GroupDisjointReductions(
     bool added_to_reduce = false;
     for (HloInstruction* output : roots) {
       if (IsReductionFromOrToContiguousDimensions(*output) &&
-          (IsBroadcastedConstantOrScalar(*instr))) {
+          output->user_count() <= 1 && IsBroadcastedConstantOrScalar(*instr)) {
         if (added_to_reduce) {
           // Do not group more than one output reduce instructions through
           // broadcasted constants or scalars, as the recomputation should be
@@ -5231,7 +5237,8 @@ std::vector<std::vector<HloInstruction*>> GroupDisjointReductions(
         VLOG(3) << "Reaching " << output->ToString() << " from "
                 << instr->ToString();
         reached_output_ids.push_back(output);
-        if (IsReductionFromOrToContiguousDimensions(*output)) {
+        if (IsReductionFromOrToContiguousDimensions(*output) &&
+            output->user_count() <= 1) {
           added_to_reduce = true;
         }
       }
@@ -5271,7 +5278,9 @@ Status IrEmitterUnnested::EmitUnnestedReduction(
   auto hlo_roots = GetFusionRoots(fused_computation);
   HloInstruction* first_reduce =
       *absl::c_find_if(hlo_roots, [](HloInstruction* instr) {
-        return IsReductionFromOrToContiguousDimensions(*instr);
+        return IsReductionFromOrToContiguousDimensions(*instr) &&
+               // Only used by the `tuple` instruction at the root.
+               instr->user_count() <= 1;
       });
 
   // We always use the first reduce as representative to construct
@@ -5295,7 +5304,8 @@ Status IrEmitterUnnested::EmitUnnestedReduction(
           << launch_dimensions.ToString();
   if (!reduction_codegen_info.IsRaceFree()) {
     for (int i = 0; i < fusion_roots.size(); ++i) {
-      if (IsReductionFromOrToContiguousDimensions(*hlo_roots[i])) {
+      if (IsReductionFromOrToContiguousDimensions(*hlo_roots[i]) &&
+          hlo_roots[i]->user_count() <= 1) {
         TF_RETURN_IF_ERROR(BuildFusedInitializerThunk(fusion, i));
       }
     }

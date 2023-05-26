@@ -32,6 +32,20 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// A reduction may be contained in a kInput fusion or in a kLoop fusion.  In the
+// former case, we use the specialized row- or column-reduction emitter.  In the
+// latter case, it's a "regular" op that happens to consume multiple elements
+// and produce a single element.
+//
+// For the most part, when code in this file is interested in "is X a reduction
+// to or from contiguous dimensions", it means "... *not in a loop fusion".
+static bool IsReductionFromOrToContigDimsNotInLoopFusion(
+    const HloInstruction& instr) {
+  return IsReductionFromOrToContiguousDimensions(instr) &&
+         (!instr.IsFused() ||
+          !instr.parent()->FusionInstruction()->IsLoopFusion());
+}
+
 bool IfFusedReadsElementsMultipleTimes(const HloInstruction& instr) {
   CHECK_NE(instr.opcode(), HloOpcode::kFusion) << "`instr` has to be unfused.";
   // Avoid fusing gather or broadcast if output is larger than the input
@@ -92,19 +106,19 @@ bool IsPhysicallyTransposing(const HloInstruction& instr) {
 }
 
 bool IsReduceInputFusion(const HloInstruction& instr) {
-  return instr.opcode() == HloOpcode::kFusion &&
+  return instr.IsInputFusion() &&
          HasAnyUnnestedReductionRoot(instr.called_computations()[0]);
 }
 
 bool IsInputFusibleReduction(const HloInstruction& instr) {
   return IsReduceInputFusion(instr) ||
-         IsReductionFromOrToContiguousDimensions(instr);
+         IsReductionFromOrToContigDimsNotInLoopFusion(instr);
 }
 
 bool IsNestableVariadicReduction(const HloInstruction& instr) {
   return instr.shape().IsTuple() &&
          ((instr.opcode() == HloOpcode::kReduce &&
-           !IsReductionFromOrToContiguousDimensions(instr)) ||
+           !IsReductionFromOrToContigDimsNotInLoopFusion(instr)) ||
           (instr.opcode() == HloOpcode::kFusion &&
            instr.fusion_kind() == HloInstruction::FusionKind::kLoop &&
            instr.fused_expression_root()->opcode() == HloOpcode::kReduce));
@@ -126,7 +140,7 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   }
   auto fused_expression_root = instr.fused_expression_root();
   if (!instr.IsMultiOutputFusion()) {
-    if (IsReductionFromOrToContiguousDimensions(*fused_expression_root) ||
+    if (IsReductionFromOrToContigDimsNotInLoopFusion(*fused_expression_root) ||
         FindAnyTiledTranspose(*fused_expression_root)) {
       return &FindNonTrivialHero(*fused_expression_root);
     }
@@ -137,7 +151,7 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   // constraints. Note that we cannot have both kinds at the same time, so once
   // we find any, we can immediately return it.
   for (const auto* inst : fused_expression_root->operands()) {
-    if (IsReductionFromOrToContiguousDimensions(*inst) ||
+    if (IsReductionFromOrToContigDimsNotInLoopFusion(*inst) ||
         FindAnyTiledTranspose(*inst)) {
       return &FindNonTrivialHero(*inst);
     }
@@ -149,7 +163,7 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
 // `first_reduce`.
 static bool IsFusedReductionOutputConsistent(
     const HloInstruction* inst, const HloInstruction* first_reduce) {
-  if (IsReductionFromOrToContiguousDimensions(*inst)) {
+  if (IsReductionFromOrToContigDimsNotInLoopFusion(*inst)) {
     // Shapes, layouts and dimensions must be the same for all reduces
     // inside of this fusion.
     return ShapeUtil::EqualIgnoringElementType(first_reduce->shape(),
@@ -171,9 +185,9 @@ FusionDecision ShapesCompatibleForMultiOutputFusion(
   // Multi-output fusion kernels share a common parallel loop. The loop
   // dimensions are determined by instruction shapes.
   auto get_loop_shape = [&](const HloInstruction* element_instr) {
-    // Special-case reduction-to-vector ops: The loop dimensions are determined
-    // by the shape of the first operand.
-    if (IsReductionFromOrToContiguousDimensions(*element_instr) ||
+    // Special-case reduction-to-vector ops, except those in loop fusions: The
+    // loop dimensions are determined by the shape of the first operand.
+    if (IsReductionFromOrToContigDimsNotInLoopFusion(*element_instr) ||
         FindAnyTiledTranspose(*element_instr)) {
       return FindNonTrivialHero(*element_instr).operand(0)->shape();
     }
@@ -188,11 +202,11 @@ FusionDecision ShapesCompatibleForMultiOutputFusion(
   const HloInstruction* hero2 = GetRealHeroForMultiOutputFusion(instr2);
 
   auto hero1_is_unnested_reduce =
-      IsReductionFromOrToContiguousDimensions(*hero1);
+      IsReductionFromOrToContigDimsNotInLoopFusion(*hero1);
   auto tiled_transpose_hero1 = FindAnyTiledTranspose(*hero1);
   bool hero1_is_unnested_transpose = tiled_transpose_hero1.has_value();
   bool hero2_is_unnested_reduce =
-      IsReductionFromOrToContiguousDimensions(*hero2);
+      IsReductionFromOrToContigDimsNotInLoopFusion(*hero2);
   auto tiled_transpose_hero2 = FindAnyTiledTranspose(*hero2);
   bool hero2_is_unnested_transpose = tiled_transpose_hero2.has_value();
 
@@ -284,7 +298,7 @@ bool IsLoopFusibleAsProducer(const HloInstruction& instr) {
            instr.opcode() == HloOpcode::kConstant ||
            // Non-variadic elemental reductions can be fused as producers.
            (instr.opcode() == HloOpcode::kReduce &&
-            !IsReductionFromOrToContiguousDimensions(instr) &&
+            !IsReductionFromOrToContigDimsNotInLoopFusion(instr) &&
             !instr.shape().IsTuple())));
 }
 
@@ -376,7 +390,7 @@ FusionDecision IsProducerConsumerMultiOutputFusible(
 static int64_t SharedMemoryUsageNoCache(const HloInstruction& instr) {
   // For now we are only fusing reductions.
   if (instr.opcode() == HloOpcode::kReduce &&
-      IsReductionFromOrToContiguousDimensions(instr)) {
+      IsReductionFromOrToContigDimsNotInLoopFusion(instr)) {
     ReductionDimensions reduction_info =
         GetReductionKindAndContiguousComponents(instr);
     int64_t primitive_size = ShapeUtil::ByteSizeOfPrimitiveType(
@@ -647,13 +661,74 @@ bool IsFusibleAsMultiOutputFusionRoot(const HloInstruction& instr) {
   // its emitter doesn't support it.
 
   return instr.IsFusible() &&
-         (IsInputFusibleReduction(instr) || IsInputFusibleTranspose(instr) ||
+         ((IsInputFusibleReduction(instr) && !instr.IsLoopFusion()) ||
+          IsInputFusibleTranspose(instr) ||
           instr.IsLoopFusion() ||  // TODO(b/130013493): Use IsLoopFusible here.
           instr.IsElementwise());
 }
 
-HloInstruction::FusionKind ChooseFusionKind(const HloInstruction& /*producer*/,
+HloInstruction::FusionKind ChooseFusionKind(const HloInstruction& producer,
                                             const HloInstruction& consumer) {
+  // Fusions that contain a reduce can have kind kLoop or kInput.  kInput means
+  // we use a specialized reduction emitter, row- or column-reduction.  kLoop
+  // means we emit the code naively: One thread calculates one output element of
+  // the reduction (so it has to read in N input elements).
+  //
+  // Usually the specialized reduction emitter is (much) better than the naive
+  // emitter.  But when the reduction dimension is small (say, every output
+  // element is the sum of two input elements), then the loop emitter may win.
+  //
+  // But crucially, it's not really about the size of the reduction dimension
+  // per se.  It's actually about the amount of memory read vs written by the
+  // kernel.  The specialized emitters optimize for fast memory reads over fast
+  // writes, and so are efficient when much more memory is read than written.
+  //
+  // But we can have a reduction with a large reduction dimension that still
+  // doesn't read much more memory than it writes.  For example, consider this
+  // code, which computes the Cartesian product of two inputs and then reduces.
+  //
+  //   b1 = f32[128,128,1024] broadcast(f32[128,1024] parameter(0)), dims={0,2}
+  //   b2 = f32[128,128,1024] broadcast(f32[128,1024] parameter(1)), dims={1,2}
+  //   product = multiply(b1, b2)
+  //   ROOT root = f32[128,128] reduce(product), dims={2}, to_apply=add
+  //
+  // If we fuse only `root` and `multiply`, then we should use a kInput
+  // reduction.  But once we fuse the broadcasts, we notice that the fusion
+  // reads roughly as many elements as it writes, so it may be faster to use a
+  // kLoop reduction.
+  //
+  // Note, we can't do this if consumer is a multi-output fusion which returns
+  // different output shapes, e.g. (f32[], f32[2]), because it's an invariant
+  // that all outputs of a kLoop multi-output fusion are the same shape.
+  if ((IsReduceInputFusion(consumer) ||
+       consumer.opcode() == HloOpcode::kReduce) &&
+      (!consumer.shape().IsTuple() ||
+       ShapeUtil::IsEmptyTuple(consumer.shape()) ||
+       absl::c_all_of(consumer.shape().tuple_shapes(), [&](const Shape& s) {
+         return ShapeUtil::EqualIgnoringElementType(
+             s, consumer.shape().tuple_shapes()[0]);
+       }))) {
+    int64_t output_elems = ShapeUtil::ElementsInRecursive(consumer.shape());
+    int64_t input_elems = 0;
+    for (HloInstruction* operand : consumer.operands()) {
+      if (operand != &producer) {
+        input_elems += ShapeUtil::ElementsInRecursive(operand->shape());
+      }
+    }
+    for (HloInstruction* operand : producer.operands()) {
+      input_elems += ShapeUtil::ElementsInRecursive(operand->shape());
+    }
+    // The constant here was not chosen carefully.  5 seems like a good number
+    // because you ideally want to read <4 x f32> to get max vectorization, and
+    // then we get an extra 1x as a fudge factor to account for small inputs to
+    // the fusion.  We may be able to go higher, but we also may run into
+    // register pressure on some kernels, so this may require autotuning to
+    // determine when it's profitable (b/283542954).
+    if (5 * output_elems >= input_elems) {
+      return HloInstruction::FusionKind::kLoop;
+    }
+  }
+
   return IsInputFusible(consumer) ? HloInstruction::FusionKind::kInput
                                   : HloInstruction::FusionKind::kLoop;
 }

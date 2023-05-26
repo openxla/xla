@@ -723,8 +723,8 @@ TEST_F(GpuFusibleTest,
     ENTRY reduce {
       p0 = f32[32,32,32]{2,1,0} parameter(0)
       p1 = f32[32,32,32]{2,1,0} parameter(1)
-      reduce_1 = f32[32,32]{1,0} fusion(p0), kind=kLoop, calls=fused_reduce_1
-      reduce_2 = f32[32,32]{1,0} fusion(p1), kind=kLoop, calls=fused_reduce_2
+      reduce_1 = f32[32,32]{1,0} fusion(p0), kind=kInput, calls=fused_reduce_1
+      reduce_2 = f32[32,32]{1,0} fusion(p1), kind=kInput, calls=fused_reduce_2
       ROOT root = (f32[32,32]{1,0}, f32[32,32]{1,0}) tuple(reduce_1, reduce_2)
     })"))
                     .value();

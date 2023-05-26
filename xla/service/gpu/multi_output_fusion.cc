@@ -418,6 +418,21 @@ StatusOr<bool> GpuMultiOutputFusion::DoMultiOutputFusion() {
       CHECK_EQ(0, producer->user_count());
       TF_CHECK_OK(computation_->RemoveInstruction(producer));
     }
+
+    // ChooseFusionKind above might have "downgraded" a kInput fusion to kLoop
+    // as a matter of efficiency.  But kLoop MoFs must have the same shape for
+    // all outputs.  If that's not the case, change it back to kInput.
+    if (input_fusion->fusion_kind() == HloInstruction::FusionKind::kLoop &&
+        input_fusion->shape().IsTuple() &&
+        !ShapeUtil::IsEmptyTuple(input_fusion->shape()) &&
+        !absl::c_all_of(input_fusion->shape().tuple_shapes(),
+                        [&](const Shape& s) {
+                          return ShapeUtil::EqualIgnoringElementType(
+                              s, input_fusion->shape().tuple_shapes()[0]);
+                        })) {
+      input_fusion->set_fusion_kind(HloInstruction::FusionKind::kInput);
+    }
+
     TF_RETURN_IF_ERROR(cost_analysis.RevisitInstruction(input_fusion));
 
     DumpFusionState(

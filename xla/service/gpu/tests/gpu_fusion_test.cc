@@ -93,6 +93,32 @@ TEST_F(GpuFusionTest, FusedBiggerThenThresholdButDoNotChangeTheFusionl) {
   }
 }
 
+TEST_F(GpuFusionTest, ReductionWithSmallInputsUpgradedToLoopFusion) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule module
+
+    add_f32 {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+
+    ENTRY entry {
+      b1 = f32[1024,1024,128] broadcast(f32[1024,128] parameter(0)), dimensions={0,2}
+      b2 = f32[1024,1024,128] broadcast(f32[1024,128] parameter(1)), dimensions={1,2}
+      product = multiply(b1, b2)
+      ROOT root = f32[1024,1024] reduce(product, f32[] constant(0)), dimensions={2}, to_apply=add_f32
+    })")
+                    .value();
+  EXPECT_TRUE(
+      RunHloPass(GpuInstructionFusion(/*may_duplicate=*/false,
+                                      TestGpuDeviceInfo::RTXA6000DeviceInfo()),
+                 module.get())
+          .value());
+  SCOPED_TRACE(module->ToString());
+  EXPECT_TRUE(module->entry_computation()->root_instruction()->IsLoopFusion());
+}
+
 class TransposeFusionTest : public GpuFusionTest {
  public:
   void CheckGpuFusion(absl::string_view hlo,
