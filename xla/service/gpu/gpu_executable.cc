@@ -30,6 +30,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "mlir/Parser/Parser.h"  // from @llvm-project
+#include "tsl/platform/errors.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/map_util.h"
 #include "xla/mlir/runtime/ir/rt_ops.h"
@@ -54,9 +57,6 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 #if TENSORFLOW_USE_ROCM
 #include "tsl/platform/random.h"
@@ -192,13 +192,13 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
                      const ServiceExecutableRunOptions* run_options,
                      const BufferAllocations& buffer_allocations,
                      bool block_host_until_done,
-                     const DebugOptions& debug_options) {
+                     bool use_highest_priority_for_async_stream) {
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();
   stream_executor::StreamPriority stream_priority =
       stream_executor::StreamPriority::Default;
 #if GOOGLE_CUDA
-  if (debug_options.xla_gpu_enable_highest_priority_async_stream()) {
+  if (use_highest_priority_for_async_stream) {
     stream_priority = stream_executor::StreamPriority::Highest;
   }
 #endif  // #if GOOGLE_CUDA
@@ -736,9 +736,14 @@ Status GpuExecutable::ExecuteThunksOrXlaRuntime(
       TF_RETURN_IF_ERROR(thunk->Initialize(*this, executor));
     }
 
-    return ExecuteThunks(module_name_, unique_id, *thunks_, run_options,
-                         buffer_allocations, block_host_until_done,
-                         module_config().debug_options());
+    return ExecuteThunks(
+        module_name_, unique_id, *thunks_, run_options, buffer_allocations,
+        block_host_until_done,
+        /*use_highest_priority_for_async_stream*/
+            has_module() ? module_config()
+                               .debug_options()
+                               .xla_gpu_enable_highest_priority_async_stream()
+                         : false);
   }
 
   if (gpu_runtime_executable_) {
