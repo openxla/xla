@@ -256,6 +256,21 @@ cc_library(
     ],
 )
 
+tsl_cc_test(
+    name = "buffered_file_test",
+    size = "small",
+    srcs = ["buffered_file_test.cc"],
+    deps = [
+        ":buffered_file",
+        "//tsl/lib/core:status_test_util",
+        "//tsl/platform:env",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
+        "//tsl/platform:test_main",
+    ],
+)
+
 cc_library(
     name = "zlib_compression_options",
     srcs = ["zlib_compression_options.cc"],
