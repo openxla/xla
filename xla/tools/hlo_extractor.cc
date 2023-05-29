@@ -145,7 +145,7 @@ std::unique_ptr<HloModule> ExtractModule(HloInstruction* instruction,
     ComputeBoundary(instruction, height, &boundary);
   }
   ExtractionVisitor visitor(*instruction->GetModule(), &boundary);
-  CHECK(instruction->Accept(&visitor).ok());
+  CHECK_OK(instruction->Accept(&visitor));
 
   // The first pass may leave unused parameter instructions. Do another
   // extraction pass to remove unused parameters. This is done because
