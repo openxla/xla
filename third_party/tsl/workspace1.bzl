@@ -13,7 +13,6 @@ def workspace(with_rules_cc = True):
     Args:
       with_rules_cc: whether to load and patch rules_cc repository.
     """
-    native.register_toolchains("@local_config_python//:py_toolchain")
     rules_cuda_dependencies(with_rules_cc)
     rules_pkg_dependencies()
 
