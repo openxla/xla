@@ -15,7 +15,7 @@ load(
     "tf_proto_library",
     "tf_pyclif_proto_library",
 )
-load("@tsl//tsl:tsl.bzl", "if_libtpu")
+load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
@@ -1824,7 +1824,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-    ],
+    ] + if_google(["@com_google_absl//absl/types:source_location"]),
 )
 
 xla_cc_test(
