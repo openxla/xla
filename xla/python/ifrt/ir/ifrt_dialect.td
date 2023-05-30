@@ -67,4 +67,7 @@ def Ifrt_ShardingAttr : AttrDef<Ifrt_Dialect, "IfrtSharding"> {
   let assemblyFormat = "`<` $sharding `>`";
 }
 
+def Ifrt_ShardingAttrArray :
+    TypedArrayAttrBase<Ifrt_ShardingAttr, "sharding attribute array">;
+
 #endif  // XLA_PYTHON_IFRT_IR_IFRT_DIALECT_TD_
