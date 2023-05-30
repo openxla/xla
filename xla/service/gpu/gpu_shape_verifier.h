@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_SHAPE_VERIFIER_H_
 #define XLA_SERVICE_GPU_GPU_SHAPE_VERIFIER_H_
 
-#include <functional>
 #include <memory>
 #include <utility>
 
@@ -31,6 +30,7 @@ class GpuShapeVerifier : public ShapeVerifier {
       : ShapeVerifier(opts) {}
 
   Status Preprocess(HloInstruction* hlo) override;
+  Status HandleFusion(HloInstruction* hlo) override;
 };
 
 // A verifier metadata class that uses the GpuShapeVerifier.

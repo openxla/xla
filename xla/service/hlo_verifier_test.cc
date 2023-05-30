@@ -47,8 +47,6 @@ std::unique_ptr<HloModule> CreateUnverifiedModule() {
   return std::make_unique<HloModule>("module", HloModuleConfig());
 }
 
-// This class cannot be converted to use HloTestBase. It explicitly
-// uses HloTestBase to create and test malformed HLOs.
 class HloVerifierTest : public HloTestBase {
  public:
   HloVerifierTest()

@@ -2545,6 +2545,19 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "gpu_shape_verifier_test",
+    srcs = ["gpu_shape_verifier_test.cc"],
+    deps = [
+        ":gpu_shape_verifier",
+        "//xla/service:hlo_parser",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
 cc_library(
     name = "gpu_layout_assignment",
     srcs = ["gpu_layout_assignment.cc"],
