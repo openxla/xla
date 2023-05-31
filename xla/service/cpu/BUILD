@@ -188,6 +188,7 @@ cc_library(
     hdrs = ["buffer_info_util.h"],
     deps = [
         "//xla:cpu_function_runtime",
+        "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "@com_google_absl//absl/types:span",
     ],
