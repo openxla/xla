@@ -1,0 +1,74 @@
+diff --git a/tests/float8_test.cc b/tests/float8_test.cc
+index 4fcf2b2..fd712ee 100644
+--- a/tests/float8_test.cc
++++ b/tests/float8_test.cc
+@@ -22,6 +22,7 @@ limitations under the License.
+
+ #include <gmock/gmock.h>
+ #include <gtest/gtest.h>
++#include "absl/strings/str_cat.h"
+ #include "unsupported/Eigen/CXX11/Tensor"
+
+ namespace ml_dtypes {
+diff --git a/tests/int4_test.py b/tests/int4_test.py
+index af554f5..4320d39 100644
+--- a/tests/int4_test.py
++++ b/tests/int4_test.py
+@@ -176,7 +176,7 @@ class ArrayTest(parameterized.TestCase):
+     x = np.array([[1, 2, 3]], dtype=scalar_type)
+     self.assertEqual(scalar_type, x.dtype)
+     self.assertEqual("[[1 2 3]]", str(x))
+-    np.testing.assert_array_equal(x, x, strict=True)
++    np.testing.assert_array_equal(x, x)
+     self.assertTrue((x == x).all())  # pylint: disable=comparison-with-itself
+
+   @parameterized.product(
+@@ -186,7 +186,7 @@ class ArrayTest(parameterized.TestCase):
+   def testUnaryPredicateUfunc(self, scalar_type, ufunc):
+     x = np.array(VALUES[scalar_type])
+     y = np.array(VALUES[scalar_type], dtype=scalar_type)
+-    np.testing.assert_array_equal(ufunc(x), ufunc(y), strict=True)
++    np.testing.assert_array_equal(ufunc(x), ufunc(y))
+
+   @parameterized.product(
+       scalar_type=INT4_TYPES,
+@@ -207,8 +207,7 @@ class ArrayTest(parameterized.TestCase):
+     y = np.array(VALUES[scalar_type], dtype=scalar_type)
+     np.testing.assert_array_equal(
+         ufunc(x[:, None], x[None, :]),
+-        ufunc(y[:, None], y[None, :]),
+-        strict=True,
++        ufunc(y[:, None], y[None, :])
+     )
+
+   @parameterized.product(
+@@ -263,6 +263,5 @@ class ArrayTest(parameterized.TestCase):
+     y = np.array(VALUES[scalar_type], dtype=scalar_type)
+     np.testing.assert_array_equal(
+         ufunc(x[:, None], x[None, :]).astype(scalar_type),
+-        ufunc(y[:, None], y[None, :]),
+-        strict=True,
++        ufunc(y[:, None], y[None, :])
+     )
+diff --git a/_src/ufuncs.h b/_src/ufuncs.h
+index 49e6bec..5ea362f 100644
+--- a/_src/ufuncs.h
++++ b/_src/ufuncs.h
+@@ -21,10 +21,16 @@ limitations under the License.
+ #include "_src/numpy.h"
+ // clang-format on
+ 
+-#include <complex>  //NOLINT
++#include <cmath>  // NOLINT
++#include <complex>  // NOLINT
+ 
+ #include "_src/common.h"  // NOLINT
+ 
++// Some versions of MSVC define a "copysign" macro which wreaks havoc.
++#if defined(_MSC_VER) && defined(copysign)
++#undef copysign
++#endif
++
+ namespace ml_dtypes {
+ 
+ template <typename InType, typename OutType, typename Functor>
