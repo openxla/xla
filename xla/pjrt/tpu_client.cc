@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/pjrt/utils.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/tpu_computation_placer.h"
 #include "xla/shape.h"
 #include "xla/status.h"
@@ -79,6 +80,28 @@ Status TpuDeviceState::ThenMemcpyDeviceToDevice(
 }
 
 }  // namespace
+
+PjRtTpuDevice::PjRtTpuDevice(
+    const tensorflow::tpu::TpuCoreLocationExternal core,
+    std::unique_ptr<LocalDeviceState> local_device_state, int process_index,
+    const std::array<int, 3>& coords, std::string device_kind)
+    : PjRtStreamExecutorDevice(core.Id(), std::move(local_device_state),
+                               std::move(device_kind), process_index),
+      core_(core),
+      coords_(coords) {
+  std::vector<int64_t> v_coords(coords_.begin(), coords_.end());
+  int64_t core_index = core_on_chip();
+  description().SetAttributes({
+      {"coords", xla::PjRtDeviceAttribute(v_coords)},
+      {"core_on_chip", xla::PjRtDeviceAttribute(core_index)},
+  });
+  description().SetDebugString(absl::StrFormat(
+      "TPU_%i(process=%i,(%i,%i,%i,%i))", core_.Id(), process_index, coords_[0],
+      coords_[1], coords_[2], core_.index()));
+  description().SetToString(absl::StrFormat(
+      "TpuDevice(id=%i, process_index=%i, coords=(%s), core_on_chip=%i)", id(),
+      process_index, absl::StrJoin(coords_, ","), core_on_chip()));
+}
 
 PjRtTpuClient::PjRtTpuClient(
     LocalClient* client,

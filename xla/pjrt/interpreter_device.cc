@@ -17,7 +17,9 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "xla/client/client_library.h"
+#include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/platform_util.h"
 
 namespace xla {

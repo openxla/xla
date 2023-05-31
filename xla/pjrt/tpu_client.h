@@ -34,24 +34,7 @@ class PjRtTpuDevice : public PjRtStreamExecutorDevice {
   PjRtTpuDevice(const tensorflow::tpu::TpuCoreLocationExternal core,
                 std::unique_ptr<LocalDeviceState> local_device_state,
                 int process_index, const std::array<int, 3>& coords,
-                std::string device_kind)
-      : PjRtStreamExecutorDevice(core.Id(), std::move(local_device_state),
-                                 std::move(device_kind), process_index),
-        core_(core),
-        coords_(coords) {
-    std::vector<int64_t> v_coords(coords_.begin(), coords_.end());
-    int64_t core_index = core_on_chip();
-    description().SetAttributes({
-        {"coords", xla::PjRtDeviceAttribute(v_coords)},
-        {"core_on_chip", xla::PjRtDeviceAttribute(core_index)},
-    });
-    description().SetDebugString(absl::StrFormat(
-        "TPU_%i(process=%i,(%i,%i,%i,%i))", core_.Id(), process_index,
-        coords_[0], coords_[1], coords_[2], core_.index()));
-    description().SetToString(absl::StrFormat(
-        "TpuDevice(id=%i, process_index=%i, coords=(%s), core_on_chip=%i)",
-        id(), process_index, absl::StrJoin(coords_, ","), core_on_chip()));
-  }
+                std::string device_kind);
 
   const std::array<int, 3>& coords() const { return coords_; }
   int core_on_chip() const { return core_.index(); }

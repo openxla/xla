@@ -28,37 +28,29 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
-#include "xla/client/executable_build_options.h"
-#include "xla/client/local_client.h"
-#include "xla/client/xla_computation.h"
-#include "xla/hlo/ir/hlo_module.h"
-#include "xla/layout.h"
-#include "xla/literal.h"
-#include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "xla/pjrt/pjrt_future.h"
-#include "xla/pjrt/tracked_device_buffer.h"
+#include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/transpose.h"
-#include "xla/service/computation_layout.h"
-#include "xla/service/computation_placer.h"
-#include "xla/service/gpu/gpu_executable_run_options.h"
-#include "xla/service/shaped_buffer.h"
-#include "xla/shape.h"
-#include "xla/status.h"
-#include "xla/statusor.h"
-#include "xla/stream_executor/stream.h"
-#include "xla/util.h"
-#include "xla/xla_data.pb.h"
-#include "tsl/framework/allocator.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/status.h"
+#include "xla/service/maybe_owning_device_memory.h"
 
 namespace xla {
+
+class BufferSequencingEvent;
+class ExecutionInput;
+class LocalClient;
+class LocalDeviceState;
+class LocalExecutable;
+class ShapedBuffer;
+class ScopedShapedBuffer;
+class RunId;
+class TrackedDeviceBuffer;
+
+namespace gpu {
+class GpuExecutableRunOptions;
+}  // namespace gpu
 
 class PjRtStreamExecutorDeviceDescription : public PjRtDeviceDescription {
  public:
@@ -107,11 +99,8 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
  public:
   explicit PjRtStreamExecutorDevice(
       int id, std::unique_ptr<LocalDeviceState> local_device_state,
-      std::string device_kind, int process_index = 0)
-      : description_(id, std::move(device_kind), process_index),
-        device_ordinal_(
-            local_device_state ? local_device_state->device_ordinal() : -1),
-        local_device_state_(std::move(local_device_state)) {}
+      std::string device_kind, int process_index = 0);
+
   ~PjRtStreamExecutorDevice() override = default;
 
   // Must set client exactly once.
@@ -291,15 +280,9 @@ class PjRtStreamExecutorClient : public PjRtClient {
       void* device_ptr, const Shape& shape, PjRtDevice* device,
       std::function<void()> on_delete_callback) override;
 
-  StatusOr<ChannelHandle> CreateChannelHandle() override {
-    return client()->CreateChannelHandle();
-  }
-  StatusOr<ChannelHandle> CreateDeviceToHostChannelHandle() override {
-    return client()->CreateDeviceToHostChannelHandle();
-  }
-  StatusOr<ChannelHandle> CreateHostToDeviceChannelHandle() override {
-    return client()->CreateHostToDeviceChannelHandle();
-  }
+  StatusOr<ChannelHandle> CreateChannelHandle() override;
+  StatusOr<ChannelHandle> CreateDeviceToHostChannelHandle() override;
+  StatusOr<ChannelHandle> CreateHostToDeviceChannelHandle() override;
 
   // TODO(zhangqiaorjc): Experimental. Will be removed.
   Status Defragment() override {
@@ -760,36 +743,13 @@ class PjRtStreamExecutorExecutable : public PjRtLoadedExecutable {
 
   absl::string_view name() const override;
 
-  int num_replicas() const override {
-    return executables_[0]->build_options().num_replicas();
-  }
+  int num_replicas() const override;
 
-  int num_partitions() const override {
-    return executables_[0]->build_options().num_partitions();
-  }
+  int num_partitions() const override;
 
-  int64_t SizeOfGeneratedCodeInBytes() const override {
-    int64_t size = 0;
-    for (auto& executable : executables_) {
-      size += executable->executable()->SizeOfGeneratedCodeInBytes();
-    }
-    return size;
-  }
+  int64_t SizeOfGeneratedCodeInBytes() const override;
 
-  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
-    if (executables_.size() != 1) {
-      return Unimplemented(
-          "Retrieving CompiledMemoryStats is not supported for multiple "
-          "executables.");
-    }
-    CompiledMemoryStats memory_stats = CompiledMemoryStats();
-    memory_stats.generated_code_size_in_bytes = SizeOfGeneratedCodeInBytes();
-    const HloProto* proto = executables_[0]->executable()->hlo_proto();
-    if (proto != nullptr) {
-      memory_stats.serialized_hlo_proto = proto->SerializeAsString();
-    }
-    return memory_stats;
-  }
+  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
 
   const DeviceAssignment& device_assignment() const override {
     return *device_assignment_;

@@ -28,6 +28,8 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/ascii.h"
+#include "xla/pjrt/distributed/client.h"
+#include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"

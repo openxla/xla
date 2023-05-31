@@ -22,12 +22,14 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "xla/pjrt/distributed/client.h"
-#include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
-#include "xla/statusor.h"
 
 namespace xla {
+
+class DistributedRuntimeClient;
+
+struct GpuAllocatorConfig;
+
 class GpuTopology {
  public:
   explicit GpuTopology(const std::vector<int>& gpu_device_ids)

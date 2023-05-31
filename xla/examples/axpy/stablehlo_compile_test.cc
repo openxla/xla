@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/platform_util.h"
 #include "xla/tests/literal_test_util.h"
 #include "tsl/lib/core/status_test_util.h"
