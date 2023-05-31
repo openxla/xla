@@ -284,3 +284,89 @@ module attributes {gpu.container_module} {
 
   func.func private @external()
 }
+
+// -----
+// Check that two convs that read the same buffer are moved into a concurrent
+// region.
+
+#map0 = affine_map<(d0, d1, d2, d3) -> (d0 * 3 + d1 + d2 * 9 + d3 * 9)>
+#map1 = affine_map<(d0, d1, d2, d3) -> (d0 * 16384 + d1 * 4 + d2 + d3 * 16)>
+#map2 = affine_map<(d0, d1, d2, d3) -> (d0 * 4096 + d1 * 2 + d2 + d3 * 4)>
+
+module attributes {gpu.container_module} {
+
+  // CHECK: func @xla.gpu.cuda.graph.capture
+  func.func @xla.gpu.cuda.graph.capture(
+                                %input: memref<1x4x4x1024xf16, #map1>,
+                                %filter: memref<3x3x1x1024xf16, #map0>,
+                                %output: memref<1x2x2x1024xf16, #map2>,
+                                %output_0: memref<1x2x2x1024xf16, #map2>,
+                                %scratch: memref<0xui8>,
+                                %scratch_0: memref<0xui8>
+                                ) {
+    %c0 = arith.constant 0 : index
+
+    // CHECK: call @xla.gpu.concurrent_region.begin()
+    // CHECK-NEXT: lmhlo_gpu.conv_forward
+    // CHECK-NEXT: lmhlo_gpu.conv_forward
+    // CHECK-NEXT: call @xla.gpu.concurrent_region.end()
+    // CHECK-NEXT: return
+    lmhlo_gpu.conv_forward(%input, %filter, %output, %scratch)
+      dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f],
+      window = { stride = [1, 1],
+                lhs_dilate = [1, 1],
+                rhs_dilate = [1, 1],
+                reverse = [0, 0]
+              }
+      { backend_config = #lmhlo_gpu.convolution_backend_config<
+          algorithm = 0,
+          is_cudnn_frontend = true,
+          is_cudnn_reordered_int8 = false,
+          knob_ids = [],
+          knob_values = [],
+          operand_0_layout = [2, 1, 3, 0],
+          operand_1_layout = [1, 0, 2, 3],
+          result_layout = [2, 1, 3, 0],
+          tensor_ops_enabled = false,
+          workspace_size = 0
+        >,
+        batch_group_count = 1 : i64,
+        feature_group_count = 1024 : i64,
+        precision_config = [],
+        result_scale = 1.000000e+00 : f64
+      } : (memref<1x4x4x1024xf16, #map1>,
+          memref<3x3x1x1024xf16, #map0>,
+          memref<1x2x2x1024xf16, #map2>,
+          memref<0xui8>) -> ()
+    lmhlo_gpu.conv_forward(%input, %filter, %output_0, %scratch_0)
+      dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f],
+      window = { stride = [1, 1],
+                lhs_dilate = [1, 1],
+                rhs_dilate = [1, 1],
+                reverse = [0, 0]
+              }
+      { backend_config = #lmhlo_gpu.convolution_backend_config<
+          algorithm = 0,
+          is_cudnn_frontend = true,
+          is_cudnn_reordered_int8 = false,
+          knob_ids = [],
+          knob_values = [],
+          operand_0_layout = [2, 1, 3, 0],
+          operand_1_layout = [1, 0, 2, 3],
+          result_layout = [2, 1, 3, 0],
+          tensor_ops_enabled = false,
+          workspace_size = 0
+        >,
+        batch_group_count = 1 : i64,
+        feature_group_count = 1024 : i64,
+        precision_config = [],
+        result_scale = 1.000000e+00 : f64
+      } : (memref<1x4x4x1024xf16, #map1>,
+          memref<3x3x1x1024xf16, #map0>,
+          memref<1x2x2x1024xf16, #map2>,
+          memref<0xui8>) -> ()
+
+    return
+  }
+  func.func private @external()
+}

@@ -201,9 +201,70 @@ llvm::SmallVector<RegionStartAndEnd> GetRegionStartAndEnd(FuncOp capture_func) {
       BufferUse buffer_use_0 = GetBufferUse(gemm.getA(), /*read_only=*/true);
       BufferUse buffer_use_1 = GetBufferUse(gemm.getB(), /*read_only=*/true);
       BufferUse buffer_use_2 = GetBufferUse(gemm.getC(), /*read_only=*/false);
-      operand_buffer_uses.push_back(buffer_use_0);
-      operand_buffer_uses.push_back(buffer_use_1);
-      operand_buffer_uses.push_back(buffer_use_2);
+      operand_buffer_uses.append({buffer_use_0, buffer_use_1, buffer_use_2});
+    } else if (auto conv_forward =
+                   dyn_cast<lmhlo_gpu::ConvForwardOp>(operation)) {
+      BufferUse input =
+          GetBufferUse(conv_forward.getInput(), /*read_only=*/true);
+      BufferUse filter =
+          GetBufferUse(conv_forward.getFilter(), /*read_only=*/true);
+      BufferUse output =
+          GetBufferUse(conv_forward.getOutput(), /*read_only=*/false);
+      BufferUse scratch =
+          GetBufferUse(conv_forward.getScratch(), /*read_only=*/false);
+      operand_buffer_uses.append({input, filter, output, scratch});
+    } else if (auto conv_backward_input =
+                   dyn_cast<lmhlo_gpu::ConvBackwardInputOp>(operation)) {
+      BufferUse d_output =
+          GetBufferUse(conv_backward_input.getDOutput(), /*read_only=*/true);
+      BufferUse filter =
+          GetBufferUse(conv_backward_input.getFilter(), /*read_only=*/true);
+      BufferUse d_input =
+          GetBufferUse(conv_backward_input.getDInput(), /*read_only=*/false);
+      BufferUse scratch =
+          GetBufferUse(conv_backward_input.getScratch(), /*read_only=*/false);
+      operand_buffer_uses.append({d_output, filter, d_input, scratch});
+    } else if (auto conv_backward_filter =
+                   dyn_cast<lmhlo_gpu::ConvBackwardFilterOp>(operation)) {
+      BufferUse input =
+          GetBufferUse(conv_backward_filter.getInput(), /*read_only=*/true);
+      BufferUse d_output =
+          GetBufferUse(conv_backward_filter.getDOutput(), /*read_only=*/true);
+      BufferUse d_filter =
+          GetBufferUse(conv_backward_filter.getDFilter(), /*read_only=*/false);
+      BufferUse scratch =
+          GetBufferUse(conv_backward_filter.getScratch(), /*read_only=*/false);
+      operand_buffer_uses.append({input, d_output, d_filter, scratch});
+    } else if (auto conv_forward_fused =
+                   dyn_cast<lmhlo_gpu::ConvForwardFusedOp>(operation)) {
+      BufferUse input =
+          GetBufferUse(conv_forward_fused.getInput(), /*read_only=*/true);
+      BufferUse filter =
+          GetBufferUse(conv_forward_fused.getFilter(), /*read_only=*/true);
+      BufferUse bias =
+          GetBufferUse(conv_forward_fused.getBias(), /*read_only=*/true);
+      BufferUse output =
+          GetBufferUse(conv_forward_fused.getOutput(), /*read_only=*/false);
+      BufferUse scratch =
+          GetBufferUse(conv_forward_fused.getScratch(), /*read_only=*/false);
+      operand_buffer_uses.append({input, filter, bias, output, scratch});
+    } else if (auto conv_forward_fused_side_input =
+                   dyn_cast<lmhlo_gpu::ConvForwardFusedSideInputOp>(
+                       operation)) {
+      BufferUse input = GetBufferUse(conv_forward_fused_side_input.getInput(),
+                                     /*read_only=*/true);
+      BufferUse filter = GetBufferUse(conv_forward_fused_side_input.getFilter(),
+                                      /*read_only=*/true);
+      BufferUse bias = GetBufferUse(conv_forward_fused_side_input.getBias(),
+                                    /*read_only=*/true);
+      BufferUse side_input = GetBufferUse(
+          conv_forward_fused_side_input.getSideInput(), /*read_only=*/true);
+      BufferUse output = GetBufferUse(conv_forward_fused_side_input.getOutput(),
+                                      /*read_only=*/false);
+      BufferUse scratch = GetBufferUse(
+          conv_forward_fused_side_input.getScratch(), /*read_only=*/false);
+      operand_buffer_uses.append(
+          {input, filter, bias, side_input, output, scratch});
     } else {
       store_region_and_start_new_region();
       continue;
