@@ -315,6 +315,22 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_stream_executor_client_hdrs",
+    hdrs = ["pjrt_stream_executor_client.h"],
+    deps = [
+        ":pjrt_client",
+        ":pjrt_device_description",
+        ":transpose",
+        "//xla/service:maybe_owning_device_memory",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "pjrt_stream_executor_client",
     srcs = ["pjrt_stream_executor_client.cc"],
     hdrs = ["pjrt_stream_executor_client.h"],
@@ -325,6 +341,7 @@ cc_library(
         ":metrics",
         ":mlir_to_hlo",
         ":pjrt_client",
+        ":pjrt_device_description",
         ":pjrt_future",
         ":tracked_device_buffer",
         ":transpose",
@@ -333,14 +350,10 @@ cc_library(
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",
-        "//xla:status",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/client:executable_build_options",
         "//xla/client:local_client",
         "//xla/client:xla_computation",
-        "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/service:computation_layout",
         "//xla/service:computation_placer",
@@ -365,7 +378,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/framework:allocator",
-        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
@@ -381,6 +393,7 @@ xla_cc_test(
     name = "pjrt_stream_executor_client_test",
     srcs = ["pjrt_stream_executor_client_test.cc"],
     deps = [
+        ":local_device_state",
         ":pjrt_client",
         ":pjrt_stream_executor_client",
         "//xla:shape_util",
@@ -390,6 +403,7 @@ xla_cc_test(
         "//xla/client:xla_builder",
         "//xla/service:cpu_plugin",
         "//xla/service:platform_util",
+        "//xla/service/gpu:gpu_executable_run_options",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_googletest//:gtest_main",
     ],
@@ -411,6 +425,7 @@ cc_library(
         "//xla/client:client_library",
         "//xla/service:computation_placer",
         "//xla/service:tpu_computation_placer",
+        "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor/tpu:tpu_executable",
@@ -432,11 +447,13 @@ cc_library(
     srcs = ["interpreter_device.cc"],
     hdrs = ["interpreter_device.h"],
     deps = [
+        ":local_device_state",
         ":pjrt_stream_executor_client",
         "//xla:statusor",
         "//xla/client:client_library",
         "//xla/service:interpreter_plugin",
         "//xla/service:platform_util",
+        "//xla/service/gpu:gpu_executable_run_options",
         "@com_google_absl//absl/strings",
     ],
 )

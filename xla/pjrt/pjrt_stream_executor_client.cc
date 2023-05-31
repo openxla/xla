@@ -85,7 +85,6 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/client/local_client.h"
@@ -106,6 +105,7 @@ limitations under the License.
 #include "xla/service/computation_layout.h"
 #include "xla/service/executable.h"
 #include "xla/service/generic_transfer_manager.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/maybe_owning_device_memory.h"
 #include "xla/service/shaped_buffer.h"
@@ -129,6 +129,14 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
+
+PjRtStreamExecutorDevice::PjRtStreamExecutorDevice(
+    int id, std::unique_ptr<LocalDeviceState> local_device_state,
+    std::string device_kind, int process_index)
+    : description_(id, std::move(device_kind), process_index),
+      device_ordinal_(local_device_state ? local_device_state->device_ordinal()
+                                         : -1),
+      local_device_state_(std::move(local_device_state)) {}
 
 PjRtPlatformId PjRtStreamExecutorDevice::platform_id() const {
   return client_->platform_id();
@@ -197,7 +205,7 @@ class CpuAllocator : public tsl::Allocator {
 PjRtStreamExecutorClient::PjRtStreamExecutorClient(
     std::string platform_name, LocalClient* client,
     std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices,
-    int process_index, std::unique_ptr<se::DeviceMemoryAllocator> allocator,
+    int process_index, std::shared_ptr<se::DeviceMemoryAllocator> allocator,
     std::unique_ptr<tsl::Allocator> host_memory_allocator,
     bool should_stage_host_to_device_transfers,
     std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options)
@@ -1092,6 +1100,20 @@ PjRtStreamExecutorClient::CreateViewOfDeviceBuffer(
       shape, std::move(device_buffer), this, device));
 }
 
+StatusOr<ChannelHandle> PjRtStreamExecutorClient::CreateChannelHandle() {
+  return client()->CreateChannelHandle();
+}
+
+StatusOr<ChannelHandle>
+PjRtStreamExecutorClient::CreateDeviceToHostChannelHandle() {
+  return client()->CreateDeviceToHostChannelHandle();
+}
+
+StatusOr<ChannelHandle>
+PjRtStreamExecutorClient::CreateHostToDeviceChannelHandle() {
+  return client()->CreateHostToDeviceChannelHandle();
+}
+
 // Transfer the given literal to the infeed queue of the given local device.
 Status PjRtStreamExecutorDevice::TransferToInfeed(const LiteralSlice& literal) {
   // Only support infeed to local device.
@@ -1889,6 +1911,38 @@ absl::string_view PjRtStreamExecutorExecutable::name() const {
   } else {
     return "<unknown executable>";
   }
+}
+
+int PjRtStreamExecutorExecutable::num_replicas() const {
+  return executables_[0]->build_options().num_replicas();
+}
+
+int PjRtStreamExecutorExecutable::num_partitions() const {
+  return executables_[0]->build_options().num_partitions();
+}
+
+int64_t PjRtStreamExecutorExecutable::SizeOfGeneratedCodeInBytes() const {
+  int64_t size = 0;
+  for (auto& executable : executables_) {
+    size += executable->executable()->SizeOfGeneratedCodeInBytes();
+  }
+  return size;
+}
+
+StatusOr<CompiledMemoryStats>
+PjRtStreamExecutorExecutable::GetCompiledMemoryStats() const {
+  if (executables_.size() != 1) {
+    return Unimplemented(
+        "Retrieving CompiledMemoryStats is not supported for multiple "
+        "executables.");
+  }
+  CompiledMemoryStats memory_stats = CompiledMemoryStats();
+  memory_stats.generated_code_size_in_bytes = SizeOfGeneratedCodeInBytes();
+  const HloProto* proto = executables_[0]->executable()->hlo_proto();
+  if (proto != nullptr) {
+    memory_stats.serialized_hlo_proto = proto->SerializeAsString();
+  }
+  return memory_stats;
 }
 
 absl::Span<int const> PjRtStreamExecutorExecutable::ParametersThatMustBeDonated(

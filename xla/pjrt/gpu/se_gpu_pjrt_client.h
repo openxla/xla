@@ -16,18 +16,27 @@ limitations under the License.
 #ifndef XLA_PJRT_GPU_SE_GPU_PJRT_CLIENT_H_
 #define XLA_PJRT_GPU_SE_GPU_PJRT_CLIENT_H_
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "xla/pjrt/distributed/client.h"
-#include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
-#include "xla/statusor.h"
+
+namespace stream_executor {
+
+class MultiDeviceAdapter;
+
+}
 
 namespace xla {
+
+class DistributedRuntimeClient;
+
+struct GpuAllocatorConfig;
+
 class GpuTopology {
  public:
   explicit GpuTopology(const std::vector<int>& gpu_device_ids)
@@ -109,6 +118,27 @@ class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
   std::string device_vendor_;
   int slice_index_;
 };
+
+// A custom PjRtClient that overrides the device assignment method.
+class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
+ public:
+  using xla::PjRtStreamExecutorClient::PjRtStreamExecutorClient;
+
+  class AsyncHostToDeviceTransferManager;
+
+  xla::StatusOr<xla::DeviceAssignment> GetDefaultDeviceAssignment(
+      int num_replicas, int num_partitions) const override;
+
+  absl::string_view platform_version() const override;
+
+  StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
+  CreateBuffersForAsyncHostToDevice(absl::Span<const Shape> shapes,
+                                    PjRtDevice* device) override;
+};
+
+std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
+    std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
+    int node_id);
 
 // distributed_client may be nullptr in non-distributed settings.
 // distributed_client should be in the connected state before calling this

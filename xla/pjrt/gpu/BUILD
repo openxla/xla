@@ -34,6 +34,14 @@ cc_library(
 )
 
 cc_library(
+    name = "se_gpu_pjrt_client_hdrs",
+    hdrs = ["se_gpu_pjrt_client.h"],
+    deps = [
+        "//xla/pjrt:pjrt_stream_executor_client_hdrs",
+    ],
+)
+
+cc_library(
     name = "se_gpu_pjrt_client",
     srcs = ["se_gpu_pjrt_client.cc"],
     hdrs = ["se_gpu_pjrt_client.h"],
@@ -63,6 +71,7 @@ cc_library(
         "@tsl//tsl/framework:device_id_impl",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/util:env_var",
     ] + if_cuda([
         ":nccl_id_store_cuda",
@@ -81,6 +90,7 @@ xla_cc_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = ["requires-gpu-nvidia"],
     deps = [
+        ":gpu_helpers",
         ":se_gpu_pjrt_client",
         "//xla:statusor",
         "//xla:test",

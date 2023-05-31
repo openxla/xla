@@ -992,6 +992,7 @@ tsl_pybind_extension(
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
+        "//xla/pjrt/gpu:gpu_helpers",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
         "@com_google_absl//absl/strings",

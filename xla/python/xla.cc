@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/service.h"
+#include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #ifdef XLA_PYTHON_ENABLE_GPU

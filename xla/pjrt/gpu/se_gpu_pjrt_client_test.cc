@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/match.h"
+#include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/statusor.h"
 #include "xla/test.h"

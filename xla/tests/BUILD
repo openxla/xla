@@ -174,6 +174,7 @@ cc_library(
     deps = [
         ":pjrt_client_registry",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
     ],
 )

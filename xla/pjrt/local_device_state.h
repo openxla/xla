@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_PJRT_LOCAL_DEVICE_STATE_H_
 
 #include <memory>
+#include <optional>
 #include <random>
 #include <vector>
 
@@ -26,6 +27,7 @@ limitations under the License.
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/worker_thread.h"
 #include "xla/status.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
@@ -86,12 +88,20 @@ class LocalDeviceState {
     kAsynchronous
   };
 
+  // Options for stream creations.
+  struct StreamOptions {
+    int priority = 0;
+    int num_device_to_host_streams = 1;
+    int num_device_to_device_streams = 1;
+  };
+
   // If asynchronous is false, the host will synchronize to the device after
   // each execution or transfer. This is intended for debugging only.
   LocalDeviceState(se::StreamExecutor* executor, LocalClient* client,
                    AllocationModel allocation_model,
                    int max_inflight_computations, bool allow_event_reuse,
-                   bool use_callback_stream);
+                   bool use_callback_stream,
+                   std::optional<StreamOptions> stream_options = std::nullopt);
   virtual ~LocalDeviceState();
 
   se::StreamExecutor* executor() const { return executor_; }
@@ -116,6 +126,9 @@ class LocalDeviceState {
   // Returns a device to device stream. Allocates streams in a round-robin
   // fashion amongst the available streams.
   se::Stream* GetDeviceToDeviceStream();
+
+  // Returns a vector of device to device streams.
+  std::vector<se::Stream*> GetDeviceToDeviceStreams();
 
   // Returns a stream from a pool. The stream is guaranteed not to have any
   // currently outstanding work at its tail.
@@ -173,10 +186,10 @@ class LocalDeviceState {
 
   se::StreamExecutor* const executor_;
   LocalClient* const client_;
-  std::unique_ptr<se::Stream> compute_stream_;
-  std::unique_ptr<se::Stream> host_to_device_stream_;
-  std::vector<std::unique_ptr<se::Stream>> device_to_host_streams_;
-  std::vector<std::unique_ptr<se::Stream>> device_to_device_streams_;
+  std::shared_ptr<se::Stream> compute_stream_;
+  std::shared_ptr<se::Stream> host_to_device_stream_;
+  std::vector<std::shared_ptr<se::Stream>> device_to_host_streams_;
+  std::vector<std::shared_ptr<se::Stream>> device_to_device_streams_;
 
   // Number of device-to-host and device-to-device streams.
   static constexpr int kNumDeviceToHostStreams = 4;
