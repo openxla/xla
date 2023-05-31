@@ -33,7 +33,6 @@ limitations under the License.
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Triple.h"
-#include "llvm/Transforms/Utils/Cloning.h"
 #include "xla/debug_options_flags.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
