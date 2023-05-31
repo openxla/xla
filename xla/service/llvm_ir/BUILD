@@ -84,7 +84,6 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
-        "@llvm-project//llvm:TransformUtils",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
