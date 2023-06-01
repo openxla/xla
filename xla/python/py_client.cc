@@ -82,6 +82,15 @@ std::vector<ClientAndPtr<PjRtDevice>> PyClient::LocalDevices() {
   return devices;
 }
 
+std::vector<ClientAndPtr<PjRtMemorySpace>> PyClient::MemorySpaces() {
+  std::vector<ClientAndPtr<PjRtMemorySpace>> memory_spaces;
+  memory_spaces.reserve(ifrt_client_->memory_spaces().size());
+  for (ifrt::MemorySpace* memory_space : ifrt_client_->memory_spaces()) {
+    memory_spaces.push_back(WrapWithClient(shared_from_this(), memory_space));
+  }
+  return memory_spaces;
+}
+
 std::vector<py::object> PyClient::LiveBuffers() {
   CHECK(PyGILState_Check());
   std::vector<py::object> buffers;

@@ -126,6 +126,10 @@ class PjRtClient final
     DCHECK(this);
     return pjrt_client_->addressable_devices();
   }
+  absl::Span<MemorySpace* const> memory_spaces() const override {
+    DCHECK(this);
+    return pjrt_client_->memory_spaces();
+  }
   int process_index() const override { return pjrt_client_->process_index(); }
   StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override {

@@ -34,6 +34,7 @@ namespace xla {
 namespace ifrt {
 
 using PlatformId = ::xla::PjRtPlatformId;
+using MemorySpace = ::xla::PjRtMemorySpace;
 
 // TODO(hyeontaek): Generalize DeviceAssignment or hide it from the top-level
 // API.
@@ -122,6 +123,7 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   virtual int addressable_device_count() const = 0;
   virtual absl::Span<Device* const> devices() const = 0;
   virtual absl::Span<Device* const> addressable_devices() const = 0;
+  virtual absl::Span<MemorySpace* const> memory_spaces() const { return {}; }
   virtual int process_index() const = 0;
 
   // TODO(hyeontaek): Consider removing this API. This API is potentially not

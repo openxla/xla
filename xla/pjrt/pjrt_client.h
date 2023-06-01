@@ -88,6 +88,9 @@ class PjRtMemorySpace {
   // Debug string suitable for logging when errors occur. Should be verbose
   // enough to describe the current memory space unambiguously.
   virtual absl::string_view DebugString() const = 0;
+
+  // Debug string suitable for reading by end users, should be reasonably terse.
+  virtual absl::string_view ToString() const = 0;
 };
 
 class PjRtDevice {
@@ -174,6 +177,15 @@ class PjRtDevice {
   // Returns all memory spaces attached to this device.
   virtual absl::Span<PjRtMemorySpace* const> memory_spaces() const {
     return {};
+  }
+
+  // Returns the memory space attached to this device by the given
+  // `memory_space_kind`.
+  virtual StatusOr<PjRtMemorySpace*> memory_space(
+      absl::string_view memory_space_kind) const {
+    return Unimplemented(
+        "memory_space is not supported for devices with type: %s.",
+        device_kind());
   }
 };
 
