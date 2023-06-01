@@ -19,6 +19,7 @@ limitations under the License.
 #include <ostream>
 #include <string>
 
+#include "mlir/IR/Operation.h"  // from @llvm-project
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/shape.h"
 
@@ -136,7 +137,7 @@ int64_t ThreadsPerBlockRowVectorized(const Shape& shape,
 // Calculates the launch dimensions used to invoke `hlo`.
 StatusOr<LaunchDimensions> CalculateLaunchDimensions(
     const Shape& shape, GpuDeviceInfo gpu_device_info,
-    LaunchDimensionsConfig dim_config = {});
+    LaunchDimensionsConfig dim_config = {}, mlir::Operation* op = nullptr);
 
 }  // namespace gpu
 }  // namespace xla
