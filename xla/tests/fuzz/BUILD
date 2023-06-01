@@ -1,5 +1,7 @@
 load("//xla/tests/fuzz:build_defs.bzl", "hlo_test")
 
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
+
 hlo_test(
     name = "rand",
     hlo_files = glob(
