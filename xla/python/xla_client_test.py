@@ -2215,6 +2215,14 @@ def TestFactory(xla_backend,
 
   tests.append(DeviceTest)
 
+  class MemorySpaceTest(ComputationTest):
+
+    def testPlatform(self):
+      for memory_space in self.backend.memory_spaces():
+        self.assertEqual(memory_space.platform, self.backend.platform)
+
+  tests.append(MemorySpaceTest)
+
   class ErrorTest(ComputationTest):
 
     def setUp(self):
