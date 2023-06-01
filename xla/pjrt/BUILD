@@ -268,6 +268,7 @@ cc_library(
         ":pjrt_executable",
         "//xla/client:xla_computation",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//mlir:IR",
