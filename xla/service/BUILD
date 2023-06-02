@@ -1518,6 +1518,8 @@ xla_cc_test(
         ":hlo_memory_scheduler",
         ":hlo_ordering",
         ":hlo_parser",
+        ":hlo_proto_cc",
+        ":hlo_proto_util",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:test",
@@ -1530,6 +1532,7 @@ xla_cc_test(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
