@@ -89,10 +89,10 @@ class HloParser {
   virtual Status Run(HloModule* module) = 0;
   virtual ~HloParser() {}
 
- private:
+  // Useful for unit tests, which are the only things that should be using
+  // HloParser directly anyway!
   static std::unique_ptr<HloParser> CreateHloParserForTests(
       absl::string_view str);
-  friend class VerifiedHloModule;
 };
 
 }  // namespace xla
