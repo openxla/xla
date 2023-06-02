@@ -15,7 +15,11 @@ limitations under the License.
 
 #include "xla/client/lib/sorting.h"
 
+#include <algorithm>
+#include <functional>
 #include <limits>
+#include <random>
+#include <vector>
 
 #include "xla/client/xla_builder.h"
 #include "xla/test.h"

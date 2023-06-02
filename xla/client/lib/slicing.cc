@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/client/lib/slicing.h"
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <vector>
 

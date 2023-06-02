@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/client/lib/self_adjoint_eig.h"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "xla/client/lib/arithmetic.h"

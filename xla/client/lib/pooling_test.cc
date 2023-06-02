@@ -14,6 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/client/lib/pooling.h"
+
+#include <utility>
+#include <vector>
+
 #include "absl/container/inlined_vector.h"
 #include "xla/test.h"
 #include "xla/tests/client_library_test_base.h"

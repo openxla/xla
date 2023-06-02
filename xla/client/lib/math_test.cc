@@ -15,7 +15,14 @@ limitations under the License.
 
 #include "xla/client/lib/math.h"
 
+#include <cmath>
+#include <complex>
+#include <functional>
 #include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "xla/client/lib/constants.h"
 #include "xla/client/xla_builder.h"

@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_CLIENT_LIB_PRNG_H_
 
 #include <array>
+#include <functional>
+#include <utility>
 
 #include "xla/client/xla_builder.h"
 #include "xla/xla_data.pb.h"

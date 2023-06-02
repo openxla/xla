@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/client/lib/testing.h"
 
+#include <memory>
+#include <vector>
+
 #include "absl/strings/str_cat.h"
 #include "xla/client/xla_builder.h"
 #include "xla/execution_options_util.h"

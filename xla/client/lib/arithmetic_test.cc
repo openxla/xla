@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/client/lib/arithmetic.h"
 
+#include <functional>
 #include <initializer_list>
 
 #include "xla/client/xla_builder.h"

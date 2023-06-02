@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_CLIENT_LIB_COMPARATORS_H_
 #define XLA_CLIENT_LIB_COMPARATORS_H_
 
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "xla/client/xla_builder.h"
@@ -49,7 +51,7 @@ XlaComputation CreateScalarComparisonComputation(
     const std::string& name, const std::vector<PrimitiveType>& operand_types,
     const std::vector<
         std::optional<XlaOp (*)(XlaOp, XlaOp, absl::Span<const int64_t>)>>&
-        comparators,
+        generators,
     XlaBuilder* builder);
 
 }  // namespace xla

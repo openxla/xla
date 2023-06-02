@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/client/lib/sorting.h"
 
+#include <vector>
+
 #include "xla/client/lib/comparators.h"
 #include "xla/client/lib/constants.h"
 #include "xla/client/lib/loops.h"

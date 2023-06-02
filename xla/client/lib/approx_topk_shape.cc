@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/client/lib/approx_topk_shape.h"
 
 #include <algorithm>
+#include <cmath>
+#include <utility>
 
 #include "xla/util.h"
 

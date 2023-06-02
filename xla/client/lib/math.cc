@@ -20,6 +20,7 @@ limitations under the License.
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <vector>
 
 #include "xla/client/lib/arithmetic.h"
 #include "xla/client/lib/constants.h"

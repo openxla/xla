@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/client/lib/pooling.h"
 
+#include <numeric>
+#include <utility>
+#include <vector>
+
 #include "xla/client/lib/arithmetic.h"
 #include "xla/client/lib/constants.h"
 #include "xla/client/lib/conv_grad_size_util.h"

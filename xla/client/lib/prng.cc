@@ -15,7 +15,11 @@ limitations under the License.
 
 #include "xla/client/lib/prng.h"
 
+#include <array>
 #include <cmath>
+#include <iterator>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "xla/client/lib/constants.h"
