@@ -5113,7 +5113,10 @@ cc_library(
 cc_library(
     name = "hlo_graph_dumper",
     srcs = ["hlo_graph_dumper.cc"],
-    hdrs = ["hlo_graph_dumper.h"],
+    hdrs = [
+        "hlo_graph_dumper.h",
+        "hlo_graph_dumper_extern.h",
+    ],
     deps = [
         ":pattern_matcher",
         "//xla:literal",
