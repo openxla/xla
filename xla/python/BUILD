@@ -696,6 +696,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":refine_polymorphic_shapes",
         ":status_casters",
         ":types",
         "//xla:status",
@@ -717,6 +718,29 @@ cc_library(
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
         "@tsl//tsl/platform:errors",
+    ],
+)
+
+cc_library(
+    name = "refine_polymorphic_shapes",
+    srcs = ["refine_polymorphic_shapes.cc"],
+    hdrs = ["refine_polymorphic_shapes.h"],
+    deps = [
+        "//xla:status",
+        "//xla/mlir/utils:error_util",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:BytecodeWriter",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:Transforms",
+        "@stablehlo//:chlo_ops",
+        "@stablehlo//:stablehlo_ops",
+        "@stablehlo//:stablehlo_passes",
     ],
 )
 
@@ -969,6 +993,7 @@ tsl_pybind_extension(
         ":py_client",
         ":python_ref_manager",
         ":pytree",
+        ":refine_polymorphic_shapes",
         ":status_casters",
         ":traceback",
         ":transfer_guard_lib",

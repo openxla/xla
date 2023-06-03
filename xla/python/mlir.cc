@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/python/refine_polymorphic_shapes.h"
 #include "xla/python/status_casters.h"
 #include "xla/python/types.h"
 #include "xla/status.h"
@@ -220,6 +221,20 @@ void BuildMlirSubmodule(py::module& m) {
   mlir_module.def("deserialize_portable_artifact",
                   xla::ValueOrThrowWrapper(PyDeserializePortableArtifact),
                   py::arg("mlir_module"));
+  mlir_module.def(
+      "refine_polymorphic_shapes",
+      [](std::string mlir_module) -> py::bytes {
+        std::string buffer;
+        llvm::raw_string_ostream os(buffer);
+        xla::ThrowIfError(RefinePolymorphicShapes(mlir_module, os));
+        return py::bytes(buffer);
+      },
+      py::arg("mlir_module"),
+      R"(Refines the dynamic shapes for a module.
+        The "main" function must have static shapes and all the
+        intermediate dynamic shapes depend only on the input static
+        shapes.
+      )");
 }
 
 }  // namespace xla
