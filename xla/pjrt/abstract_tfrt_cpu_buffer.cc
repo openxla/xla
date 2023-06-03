@@ -140,6 +140,35 @@ StatusOr<Shape> AbstractTfrtCpuBuffer::logical_on_device_shape() {
   return ret_shape;
 }
 
+StatusOr<Shape> AbstractTfrtCpuBuffer::logical_on_device_shape() {
+  if (on_device_shape_.is_static()) {
+    return on_device_shape_;
+  }
+
+  auto usage_event = tfrt::MakeConstructedAsyncValueRef<CpuEvent>();
+  auto* device_buffer = AcquireUsage(usage_event);
+  if (device_buffer == nullptr) {
+    return InvalidArgument(
+        "logical_on_device_shape() called on deleted or donated buffer");
+  }
+  MarkEventReadyOnExit ready_on_exit(std::move(usage_event));
+
+  // Wait for the definition event.
+  const auto& av = device_buffer->definition_event();
+  BlockUntilReady(av.GetAsyncValue());
+  if (auto* error = av.GetErrorIfPresent()) {
+    return InternalError("Error Execute: %s", error->message());
+  }
+
+  ShapedBuffer shaped_buffer =
+      AsShapedBuffer(device()->local_hardware_id(), on_device_shape_,
+                     device_buffer->Buffers());
+  Shape ret_shape = on_device_shape_;
+  TF_RETURN_IF_ERROR(ReadDynamicShapesOnCpu(
+      &shaped_buffer, &ret_shape, cpu::CpuExecutable::ShapeSizeBytes));
+  return ret_shape;
+}
+
 StatusOr<size_t> AbstractTfrtCpuBuffer::GetOnDeviceSizeInBytes() const {
   return ShapeUtil::ByteSizeOf(on_device_shape_);
 }
