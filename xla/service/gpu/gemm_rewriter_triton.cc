@@ -496,10 +496,10 @@ class GemmRewriterTritonVisitor : public DfsHloRewriteVisitor {
     dot_fusion->GetModule()->SetAndUniquifyInstrName(dot_fusion,
                                                      suggested_name);
 
-    TF_ASSIGN_OR_RETURN(auto backend_config,
-                        dot_fusion->backend_config<FusionBackendConfig>());
-    backend_config.set_kind(std::string(kTritonGemmFusionKind));
-    TF_RETURN_IF_ERROR(dot_fusion->set_backend_config(backend_config));
+    TF_RETURN_IF_ERROR(dot_fusion->update_backend_config<FusionBackendConfig>(
+        [](auto& config) {
+          config.set_kind(std::string(kTritonGemmFusionKind));
+        }));
 
     if (dot->IsRoot()) {
       dot->parent()->set_root_instruction(dot_fusion);

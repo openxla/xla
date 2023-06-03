@@ -29,11 +29,10 @@ Status GpuConvertAsyncCollectivesToSync::ConvertAsyncInstructionsToSync(
     absl::Span<const std::pair<HloInstruction*, HloInstruction*>> async_pairs)
     const {
   absl::flat_hash_map<HloInstruction*, HloInstruction*> replaced_ops;
-  CollectiveBackendConfig sync_config;
-  sync_config.set_is_sync(true);
   for (auto& [async_start, async_done] : async_pairs) {
-    // Tag the async start with is_sync = true.
-    TF_RETURN_IF_ERROR(async_start->set_backend_config(sync_config));
+    TF_RETURN_IF_ERROR(
+        async_start->update_backend_config<CollectiveBackendConfig>(
+            [](auto& config) { config.set_is_sync(true); }));
     replaced_ops[async_start] = nullptr;
     replaced_ops[async_done] = async_start;
   }

@@ -547,11 +547,11 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
     HloComputation* entry_computation = new_hlo_module->entry_computation();
     HloInstruction* cloned_dot_fusion = entry_computation->root_instruction();
 
-    TF_ASSIGN_OR_RETURN(
-        auto backend_config,
-        cloned_dot_fusion->backend_config<FusionBackendConfig>());
-    *backend_config.mutable_triton_gemm_config() = autotune_config;
-    TF_RETURN_IF_ERROR(cloned_dot_fusion->set_backend_config(backend_config));
+    TF_RETURN_IF_ERROR(
+        cloned_dot_fusion->update_backend_config<FusionBackendConfig>(
+            [&](auto& config) {
+              *config.mutable_triton_gemm_config() = autotune_config;
+            }));
 
     if (autotune_config.split_k() > 1) {
       if (!MakeDotSplitKBatch(cloned_dot_fusion, autotune_config).ok()) {

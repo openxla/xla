@@ -1800,6 +1800,29 @@ class HloInstruction {
     return std::move(proto);
   }
 
+  // Runs a function over this instruction's backend config, allowing you to
+  // modify it.  Slightly nicer than getting, modifying, and setting the config.
+  // For example:
+  //
+  // TF_RETURN_IF_ERROR(
+  //   instr.update_backend_config<ConfigProto>([](auto& proto) {
+  //     proto.set_foo(true);
+  //   }));
+  //
+  // fn must return either void or a Status.
+  template <typename ConfigProto, typename Fn,
+            EnableIfProto<ConfigProto>* = nullptr>
+  Status update_backend_config(Fn&& fn) const {
+    ConfigProto proto;
+    TF_RETURN_IF_ERROR(GetBackendConfigInternal(&proto));
+    if constexpr (std::is_same_v<decltype(fn(proto)), void>) {
+      fn(proto);
+      return OkStatus();
+    } else {
+      return fn(proto);
+    }
+  }
+
   Status set_backend_config(const tsl::protobuf::Message& proto) {
     backend_config_ = proto;
     return OkStatus();

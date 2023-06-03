@@ -31,9 +31,11 @@ StatusOr<bool> GpuAsyncCollectiveAnnotator::Run(
       if (!hlo_query::IsAsyncCollectiveStartOp(instruction->opcode())) {
         continue;
       }
-      CollectiveBackendConfig config;
-      config.set_is_sync(!is_collective_async_(instruction));
-      TF_RETURN_IF_ERROR(instruction->set_backend_config(config));
+      TF_RETURN_IF_ERROR(
+          instruction->update_backend_config<CollectiveBackendConfig>(
+              [&](auto& config) {
+                config.set_is_sync(!is_collective_async_(instruction));
+              }));
       changed = true;
     }
   }

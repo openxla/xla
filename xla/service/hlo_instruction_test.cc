@@ -2301,5 +2301,26 @@ TEST_F(HloInstructionTest, BackendConfigCanContainNonFiniteFloats) {
   EXPECT_NE(new_config.alpha_imag(), new_config.alpha_imag());
 }
 
+TEST_F(HloInstructionTest, UpdateBackendConfig) {
+  auto instr =
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p0");
+  TF_EXPECT_OK(instr->update_backend_config<gpu::GemmBackendConfig>(
+      [](gpu::GemmBackendConfig& config) { config.set_beta(42); }));
+  TF_ASSERT_OK_AND_ASSIGN(auto config,
+                          instr->backend_config<gpu::GemmBackendConfig>());
+  EXPECT_EQ(config.beta(), 42);
+
+  TF_EXPECT_OK(instr->update_backend_config<gpu::GemmBackendConfig>(
+      [](gpu::GemmBackendConfig& config) {
+        EXPECT_EQ(config.beta(), 42);
+        return OkStatus();
+      }));
+
+  EXPECT_FALSE(instr
+                   ->update_backend_config<gpu::GemmBackendConfig>(
+                       [](auto& config) { return InternalError("error"); })
+                   .ok());
+}
+
 }  // namespace
 }  // namespace xla

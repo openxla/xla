@@ -268,11 +268,8 @@ Status ReorderInt8NchwVect(HloCustomCallInstruction* conv, XlaOp* operands) {
   auto builder = operands->builder();
   ConvolutionDimensionNumbers dnums = conv->convolution_dimension_numbers();
 
-  // Update convolution backend config.
-  TF_ASSIGN_OR_RETURN(auto config,
-                      conv->backend_config<CudnnConvBackendConfig>());
-  config.set_reordered_int8_nchw_vect(true);
-  TF_RETURN_IF_ERROR(conv->set_backend_config(config));
+  TF_RETURN_IF_ERROR(conv->update_backend_config<CudnnConvBackendConfig>(
+      [](auto& config) { config.set_reordered_int8_nchw_vect(true); }));
 
   // Reorder the filter.
   TF_ASSIGN_OR_RETURN(Shape filter_shape, builder->GetShape(operands[1]));

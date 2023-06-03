@@ -29,9 +29,10 @@ StatusOr<bool> WhileLoopTripCountAnnotator::Run(
         continue;
       }
       if (auto trip_count = ComputeWhileLoopTripCount(instr)) {
-        WhileLoopBackendConfig config;
-        config.mutable_known_trip_count()->set_n(*trip_count);
-        TF_RETURN_IF_ERROR(instr->set_backend_config(config));
+        TF_RETURN_IF_ERROR(instr->update_backend_config<WhileLoopBackendConfig>(
+            [&](auto& config) {
+              config.mutable_known_trip_count()->set_n(*trip_count);
+            }));
         changed = true;
       }
     }
