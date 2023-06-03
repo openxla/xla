@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_CLIENT_COMPILE_ONLY_CLIENT_H_
 #define XLA_CLIENT_COMPILE_ONLY_CLIENT_H_
 
+#include <memory>
+#include <vector>
+
 #include "xla/client/client.h"
 #include "xla/client/xla_computation.h"
 #include "xla/service/compile_only_service.h"
@@ -52,7 +55,7 @@ class CompileOnlyClient : public Client {
   // code. |metadata|, if provided, is populated during compilation.
   StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
   CompileAheadOfTime(
-      const absl::Span<const AotXlaComputationInstance> computations,
+      absl::Span<const AotXlaComputationInstance> computations,
       const AotCompilationOptions& options,
       std::unique_ptr<AotCompilationMetadata>* metadata = nullptr);
 

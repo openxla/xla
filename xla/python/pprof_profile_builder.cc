@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/python/pprof_profile_builder.h"
 
 #include <string>
+#include <utility>
 
 #include "xla/python/traceback.h"
 #include "xla/statusor.h"

@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/client/padding.h"
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 #include "xla/util.h"
 #include "tsl/lib/math/math_util.h"

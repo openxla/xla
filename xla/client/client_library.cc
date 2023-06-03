@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/client/client_library.h"
 
 #include <memory>
+#include <optional>
+#include <set>
 #include <utility>
 
 #include "xla/service/backend.h"

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "absl/synchronization/mutex.h"
 #include "xla/client/client_library.h"
