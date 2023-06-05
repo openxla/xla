@@ -214,7 +214,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir/framework/ir:xla_framework",
-        "//xla/mlir/framework/transforms:passes",
         "//xla/mlir/runtime/ir:rt",
         "//xla/mlir/runtime/transforms:calling_convention",
         "//xla/mlir/runtime/transforms:compilation_pipeline_cpu",
@@ -398,7 +397,6 @@ cc_library(
     deps = [
         "//xla:status",
         "//xla/mlir/backends/cpu/transforms:passes",
-        "//xla/mlir/framework/transforms:passes",
         "//xla/mlir/runtime/transforms:compiler",
         "//xla/mlir_hlo:all_passes",
         "//xla/mlir_hlo:gml_st_bufferizable_op_interface",
