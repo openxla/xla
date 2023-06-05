@@ -27,6 +27,9 @@ namespace xla {
 // data.
 class ServiceExecutableRunOptions {
  public:
+  // Defines the interface of the stream borrower function pointer
+  // with the first argument being the device ordinal and second
+  // argument being the priority of the stream.
   using StreamBorrower = std::function<StatusOr<StreamPool::Ptr>(
       int, stream_executor::StreamPriority)>;
 

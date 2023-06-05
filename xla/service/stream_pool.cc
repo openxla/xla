@@ -25,23 +25,25 @@ StreamPool::Ptr StreamPool::BorrowStream(
     se::StreamExecutor* executor, stream_executor::StreamPriority priority) {
   std::unique_ptr<se::Stream> stream;
 
-  if (streams_with_pri_.find(priority) == streams_with_pri_.end()) {
-    stream = nullptr;
-  } else {
+  {
     absl::MutexLock lock(&mu_);
-    while (!streams_with_pri_[priority].empty() && !stream) {
-      // Re-use an existing stream from the pool.
-      stream = std::move(streams_with_pri_[priority].back());
-      streams_with_pri_[priority].pop_back();
-      if (stream->ok()) {
-        VLOG(1) << stream->DebugStreamPointers()
-                << " StreamPool reusing existing stream with priority: "
-                << stream_executor::StreamPriorityToString(priority);
-      } else {
-        VLOG(1) << stream->DebugStreamPointers()
-                << " stream was not ok, StreamPool deleting with priority: "
-                << stream_executor::StreamPriorityToString(priority);
-        stream = nullptr;
+    if (streams_with_pri_.find(priority) == streams_with_pri_.end()) {
+      stream = nullptr;
+    } else {
+      while (!streams_with_pri_[priority].empty() && !stream) {
+        // Re-use an existing stream from the pool.
+        stream = std::move(streams_with_pri_[priority].back());
+        streams_with_pri_[priority].pop_back();
+        if (stream->ok()) {
+          VLOG(1) << stream->DebugStreamPointers()
+                  << " StreamPool reusing existing stream with priority: "
+                  << stream_executor::StreamPriorityToString(priority);
+        } else {
+          VLOG(1) << stream->DebugStreamPointers()
+                  << " stream was not ok, StreamPool deleting with priority: "
+                  << stream_executor::StreamPriorityToString(priority);
+          stream = nullptr;
+        }
       }
     }
   }

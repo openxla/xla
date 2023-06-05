@@ -197,11 +197,9 @@ Status ExecuteThunks(const std::string& module_name, ModuleIdentifier module_id,
   se::StreamExecutor* executor = main_stream->parent();
   stream_executor::StreamPriority stream_priority =
       stream_executor::StreamPriority::Default;
-#if GOOGLE_CUDA
   if (use_highest_priority_for_async_stream) {
     stream_priority = stream_executor::StreamPriority::Highest;
   }
-#endif  // #if GOOGLE_CUDA
 
   StatusOr<StreamPool::Ptr> async_comms_stream =
       run_options->BorrowStream(executor->device_ordinal(), stream_priority);

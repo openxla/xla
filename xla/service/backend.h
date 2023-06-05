@@ -130,14 +130,10 @@ class Backend {
       stream_executor::StreamPriority priority =
           stream_executor::StreamPriority::Default);
 
-  // Returns a function to borrow a stream, as `BorrowStream` above does.
+  // Returns a function to borrow a stream with a given priority,
+  // as `BorrowStream` above does.
   // Purely for convenience, the caller could rather make this anonymous
   // function itself.
-  std::function<StatusOr<StreamPool::Ptr>(int)> StreamBorrower() {
-    return [this](int device_ordinal) { return BorrowStream(device_ordinal); };
-  }
-
-  // Returns a function to borrow a stream with a given priority.
   std::function<StatusOr<StreamPool::Ptr>(int, stream_executor::StreamPriority)>
   StreamBorrowerWithPriority() {
     return

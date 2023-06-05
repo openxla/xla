@@ -347,11 +347,9 @@ Status GpuRuntimeExecutable::Execute(
   int device_ordinal = executor->device_ordinal();
   stream_executor::StreamPriority stream_priority =
       stream_executor::StreamPriority::Default;
-#if GOOGLE_CUDA
   if (debug_options_.xla_gpu_enable_highest_priority_async_stream()) {
     stream_priority = stream_executor::StreamPriority::Highest;
   }
-#endif  // #if GOOGLE_CUDA
 
   StatusOr<StreamPool::Ptr> async_comms_stream =
       run_options->BorrowStream(executor->device_ordinal(), stream_priority);
