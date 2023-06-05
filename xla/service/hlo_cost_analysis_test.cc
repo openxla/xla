@@ -459,10 +459,7 @@ TEST_F(HloCostAnalysisTest, Reduce) {
   ASSERT_IS_OK(
       hlo_module->entry_computation()->root_instruction()->Accept(&analysis));
 
-  // Subtracting the output size from the input size gives the number of
-  // reduction operations performed.
-  EXPECT_EQ(analysis.flop_count(), 10 * 20 - 10);
-
+  EXPECT_EQ(analysis.flop_count(), 10 * 20);
   EXPECT_EQ(analysis.bytes_accessed(), sizeof(float) * (10 * 20 + 1 + 10));
 
   HloInstruction* root = hlo_module->entry_computation()->root_instruction();

@@ -440,19 +440,17 @@ Status HloCostAnalysis::HandleReduce(const HloInstruction* reduce) {
   TF_ASSIGN_OR_RETURN(const Properties sub_properties,
                       ProcessSubcomputation(function));
 
-  // Compute the cost of all elements for this Reduce operation.
-  // This counts the number of times the reduction function is applied, so it
-  // does not need to be multiplied by the number of input tensors - that's
-  // already "priced in" by the sub-computation doing more work.
-  auto arg = reduce->operand(0);
-  auto output_shape = reduce->shape().IsArray()
-                          ? reduce->shape()
-                          : reduce->shape().tuple_shapes(0);
-  int64_t reduction_count =
-      ShapeUtil::ElementsIn(arg->shape()) - ShapeUtil::ElementsIn(output_shape);
+  // Compute the cost of all elements for this Reduce operation. Note that the
+  // reduction sub-computation is called as many times as the number of elements
+  // in the operand shape (when also accounting for the init value).
+  //
+  // For variadic reduce, this does not need to be multiplied by the number of
+  // input tensors - that's already "priced in" by the sub-computation doing
+  // more work.
+  int64_t call_count = ShapeUtil::ElementsIn(reduce->operand(0)->shape());
   sub_properties.ForEach([&](absl::string_view key, float val) {
     if (KeyToCopyFromSubcomputation(key)) {
-      current_properties_[key] = val * reduction_count;
+      current_properties_[key] = val * call_count;
     }
   });
   return OkStatus();
