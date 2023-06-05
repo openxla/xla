@@ -151,3 +151,16 @@ cc_library(
         "//xla/runtime:executable",
     ],
 )
+
+cc_library(
+    name = "rng_ffi",
+    srcs = ["rng_ffi.cc"],
+    hdrs = ["rng_ffi.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":rng",
+        "//xla/runtime:aot_ffi",
+        "//xla/runtime:aot_ffi_execution_context",
+        "//xla/runtime/ffi:ffi_api",
+    ],
+)
