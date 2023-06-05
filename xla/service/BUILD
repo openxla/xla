@@ -480,6 +480,51 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "data_parallel_collective_optimizer",
+    srcs = ["data_parallel_collective_optimizer.cc"],
+    hdrs = ["data_parallel_collective_optimizer.h"],
+    deps = [
+        "//xla:comparison_util",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/evaluator:hlo_evaluator",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:constant_value",
+        "//xla/service:hlo_pass",
+        "//xla/service:value_range",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+xla_cc_test(
+    name = "data_parallel_collective_optimizer_test",
+    srcs = ["data_parallel_collective_optimizer_test.cc"],
+    deps = [
+        ":data_parallel_collective_optimizer",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:hlo_dce",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/tests:hlo_test_base",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "dump",
     srcs = ["dump.cc"],
     hdrs = ["dump.h"],
