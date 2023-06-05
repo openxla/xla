@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PJRT_GPU_SE_GPU_COMPILER_H_
-#define XLA_PJRT_GPU_SE_GPU_COMPILER_H_
+#ifndef XLA_PJRT_GPU_SE_GPU_PJRT_COMPILER_H_
+#define XLA_PJRT_GPU_SE_GPU_PJRT_COMPILER_H_
 
 #include <memory>
 
@@ -36,4 +36,4 @@ class StreamExecutorGpuCompiler : public PjRtCompiler {
       const PjRtTopologyDescription& topology, PjRtClient* client) override;
 };
 }  // namespace xla
-#endif  // XLA_PJRT_GPU_SE_GPU_COMPILER_H_
+#endif  // XLA_PJRT_GPU_SE_GPU_PJRT_COMPILER_H_

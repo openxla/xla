@@ -168,9 +168,9 @@ cc_library(
 )
 
 cc_library(
-    name = "se_gpu_compiler",
-    srcs = ["se_gpu_compiler.cc"],
-    hdrs = ["se_gpu_compiler.h"],
+    name = "se_gpu_pjrt_compiler",
+    srcs = ["se_gpu_pjrt_compiler.cc"],
+    hdrs = ["se_gpu_pjrt_compiler.h"],
     deps = [
         ":se_gpu_pjrt_client",
         "//xla:status_macros",
@@ -182,14 +182,14 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "se_gpu_compiler_test",
-    srcs = if_gpu_is_configured(["se_gpu_compiler_test.cc"]),
+    name = "se_gpu_pjrt_compiler_test",
+    srcs = if_gpu_is_configured(["se_gpu_pjrt_compiler_test.cc"]),
     tags = [
         "requires-gpu-nvidia",
     ],
     deps = [
-        ":se_gpu_compiler",
         ":se_gpu_pjrt_client",
+        ":se_gpu_pjrt_compiler",
         "//xla/client:xla_computation",
         "//xla/mlir_hlo",
         "//xla/service:gpu_plugin",
