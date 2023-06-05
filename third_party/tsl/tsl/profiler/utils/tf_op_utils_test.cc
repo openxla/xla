@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tsl/profiler/utils/tf_op_utils.h"
 
+#include <vector>
+
 #include "absl/strings/string_view.h"
 #include "tsl/platform/test.h"
 
