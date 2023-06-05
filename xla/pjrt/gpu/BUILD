@@ -46,6 +46,7 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla/client:client_library",
+        "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_stream_executor_client",
@@ -59,6 +60,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/framework:bfc_allocator",
         "@tsl//tsl/framework:device_id",
@@ -162,5 +164,42 @@ cc_library(
     hdrs = ["gpu_topology.h"],
     deps = [
         ":gpu_topology_proto_cc",
+    ],
+)
+
+cc_library(
+    name = "se_gpu_compiler",
+    srcs = ["se_gpu_compiler.cc"],
+    hdrs = ["se_gpu_compiler.h"],
+    deps = [
+        ":se_gpu_pjrt_client",
+        "//xla:status_macros",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_executable",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+xla_cc_test(
+    name = "se_gpu_compiler_test",
+    srcs = if_gpu_is_configured(["se_gpu_compiler_test.cc"]),
+    tags = [
+        "requires-gpu-nvidia",
+    ],
+    deps = [
+        ":se_gpu_compiler",
+        ":se_gpu_pjrt_client",
+        "//xla/client:xla_computation",
+        "//xla/mlir_hlo",
+        "//xla/service:gpu_plugin",
+        "//xla/service:hlo_parser",
+        "//xla/stream_executor/cuda:cublas_plugin",
+        "//xla/tests:literal_test_util",
+        "@com_google_absl//absl/status",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:Parser",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test_main",
     ],
 )
