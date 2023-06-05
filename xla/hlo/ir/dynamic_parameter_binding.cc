@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 
+#include <optional>
+#include <ostream>
+#include <string>
+#include <vector>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

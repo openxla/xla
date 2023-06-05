@@ -15,6 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 
+#include <optional>
+#include <ostream>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo.pb.h"
 

@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/shape_tree.h"

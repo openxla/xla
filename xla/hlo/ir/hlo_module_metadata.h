@@ -18,6 +18,8 @@ limitations under the License.
 
 #include <functional>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
