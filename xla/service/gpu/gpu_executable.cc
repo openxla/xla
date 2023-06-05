@@ -62,10 +62,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #endif
 
-#if GOOGLE_CUDA
-#include "xla/stream_executor/gpu/gpu_stream.h"
-#endif  // #if GOOGLE_CUDA
-
 namespace xla {
 namespace gpu {
 
@@ -738,10 +734,10 @@ Status GpuExecutable::ExecuteThunksOrXlaRuntime(
         module_name_, unique_id, *thunks_, run_options, buffer_allocations,
         block_host_until_done,
         /*use_highest_priority_for_async_stream*/
-            has_module() ? module_config()
-                               .debug_options()
-                               .xla_gpu_enable_highest_priority_async_stream()
-                         : false);
+        has_module() ? module_config()
+                           .debug_options()
+                           .xla_gpu_enable_highest_priority_async_stream()
+                     : false);
   }
 
   if (gpu_runtime_executable_) {
