@@ -1,5 +1,9 @@
 load("//xla:xla.bzl", "xla_cc_test")
 
+package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+)
+
 xla_cc_test(
     name = "stablehlo_compile_test",
     srcs = ["stablehlo_compile_test.cc"],
