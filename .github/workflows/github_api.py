@@ -77,6 +77,41 @@ class GitHubAPI:
     endpoint = f"repos/{repo}/commits/{commit_id}"
     return self._make_request("GET", endpoint)
 
+  def get_issue(self, repo: str, issue_number: int) -> requests.Response:
+    """Gets an issue by number.
+
+    https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28#get-an-issue
+
+    Arguments:
+      repo: a string of the form `owner/repo_name`, e.g. openxla/xla.
+      issue_number: the number of the issue to get.
+
+    Returns:
+      a requests.Response object containing the response from the API.
+
+    Raises:
+      requests.exceptions.HTTPError
+    """
+    endpoint = f"repos/{repo}/issues/{issue_number}"
+    return self._make_request("GET", endpoint)
+
+  def get_user(self, username: str) -> requests.Response:
+    """Gets information about a user.
+
+    https://docs.github.com/en/rest/users/users?apiVersion=2022-11-28#get-a-user
+
+    Arguments:
+      username: the username to get information about.
+
+    Returns:
+      a requests.Response object containing the response from the API.
+
+    Raises:
+      requests.exceptions.HTTPError
+    """
+    endpoint = f"users/{username}"
+    return self._make_request("GET", endpoint)
+
   def write_issue_comment(
       self, repo: str, issue_number: int, body: str
   ) -> requests.Response:
@@ -120,3 +155,45 @@ class GitHubAPI:
     """
     endpoint = f"repos/{repo}/issues/{issue_number}"
     return self._make_request("POST", endpoint, status=status)
+
+  def add_issue_assignees(
+      self, repo: str, issue_number: int, assignees: list[str]
+  ) -> requests.Response:
+    """Adds assignees to an issue (or PR).
+
+    https://docs.github.com/en/rest/issues/assignees?apiVersion=2022-11-28#add-assignees-to-an-issue
+
+    Arguments:
+      repo: a string of the form `owner/repo_name`, e.g. openxla/xla
+      issue_number: the issue (or PR) to set the status of
+      assignees: the assignees to add to the issue
+
+    Returns:
+      a requests.Response object containing the response from the API.
+
+    Raises:
+      requests.exceptions.HTTPError
+    """
+    endpoint = f"repos/{repo}/issues/{issue_number}/assignees"
+    return self._make_request("POST", endpoint, assignees=assignees)
+
+  def add_issue_labels(
+      self, repo: str, issue_number: int, labels: list[str]
+  ) -> requests.Response:
+    """Adds labels to an issue (or PR).
+
+    https://docs.github.com/en/actions/managing-issues-and-pull-requests/adding-labels-to-issues
+
+    Arguments:
+      repo: a string of the form `owner/repo_name`, e.g. openxla/xla
+      issue_number: the issue (or PR) to set the status of
+      labels: the labels to add to the issue
+
+    Returns:
+      a requests.Response object containing the response from the API.
+
+    Raises:
+      requests.exceptions.HTTPError
+    """
+    endpoint = f"repos/{repo}/issues/{issue_number}/labels"
+    return self._make_request("POST", endpoint, labels=labels)
