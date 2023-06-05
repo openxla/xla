@@ -134,11 +134,20 @@ cc_library(
     hdrs = ["rng.h"],
     deps = [
         "//xla:executable_run_options",
-        "//xla:xla_data_proto_cc",
+        "//xla/runtime:memref_view",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+cc_library(
+    name = "rng_call",
+    srcs = ["rng_call.cc"],
+    hdrs = ["rng_call.h"],
+    deps = [
+        ":rng",
+        "//xla:executable_run_options",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
-        "@com_google_absl//absl/status",
-        "@llvm-project//mlir:Support",
     ],
 )

@@ -130,7 +130,7 @@ limitations under the License.
 #include "xla/service/cpu/runtime/convolution_call.h"
 #include "xla/service/cpu/runtime/custom_call.h"
 #include "xla/service/cpu/runtime/fft_call.h"
-#include "xla/service/cpu/runtime/rng.h"
+#include "xla/service/cpu/runtime/rng_call.h"
 #include "xla/service/cpu/runtime/xfeed.h"
 #include "xla/service/cpu/simple_orc_jit.h"
 #include "xla/service/cpu/xla_framework.h"

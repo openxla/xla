@@ -15,13 +15,30 @@
 #ifndef XLA_SERVICE_CPU_RUNTIME_RNG_H_
 #define XLA_SERVICE_CPU_RUNTIME_RNG_H_
 
-#include "xla/runtime/custom_call_registry.h"
+#include <cstdint>
+
+#include "absl/status/status.h"
+#include "xla/executable_run_options.h"
+#include "xla/runtime/memref_view.h"
 
 namespace xla {
 namespace cpu {
 
-// Populate custom call implementing XLA CPU RNGs.
-void PopulateXlaCpuRngCall(runtime::DirectCustomCallRegistry& registry);
+struct XlaThreeFry {
+  absl::Status operator()(const ExecutableRunOptions*,
+                          xla::runtime::FlatMemrefView state_buffer,
+                          xla::runtime::FlatMemrefView state_out_buffer,
+                          xla::runtime::FlatMemrefView values_buffer) const;
+  static XlaThreeFry Handler() { return XlaThreeFry(); }
+};
+
+struct XlaPhilox {
+  absl::Status operator()(const ExecutableRunOptions*,
+                          xla::runtime::FlatMemrefView state_buffer,
+                          xla::runtime::FlatMemrefView state_out_buffer,
+                          xla::runtime::FlatMemrefView values_buffer) const;
+  static XlaPhilox Handler() { return XlaPhilox(); }
+};
 
 }  // namespace cpu
 }  // namespace xla

@@ -303,7 +303,7 @@ cc_library(
         "//xla/service/cpu/runtime:custom_call",
         "//xla/service/cpu/runtime:fft_call",
         "//xla/service/cpu/runtime:retain",
-        "//xla/service/cpu/runtime:rng",
+        "//xla/service/cpu/runtime:rng_call",
         "//xla/service/cpu/runtime:xfeed",
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/service/llvm_ir:llvm_util",
