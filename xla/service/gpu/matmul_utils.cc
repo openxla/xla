@@ -661,6 +661,7 @@ Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
 
   TYPED_GEMM(F32, BF16, BF16, BF16)
   TYPED_GEMM(F32, F16, F16, F16)
+  TYPED_GEMM(F32, S8, S8, F32)
   TYPED_GEMM(F32, BF16, BF16, F32)
   TYPED_GEMM(F32, F16, F16, F32)
   TYPED_GEMM(F32, F32, F32, F32)

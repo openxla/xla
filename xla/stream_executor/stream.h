@@ -919,18 +919,18 @@ class Stream {
                            ConstantType beta, DeviceMemory<OutputType> *c,
                            int ldc, blas::ComputePrecision precision) {
     static_assert(
-        detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16, float,
+        detail::is_any_of<InputType, int8_t, Eigen::half, Eigen::bfloat16, float,
                           double, std::complex<float>, std::complex<double>>(),
-        "Input can be half, bf16, float, double, std::complex<float> or "
+        "Input can be int8_t, half, bf16, float, double, std::complex<float> or "
         "std::complex<double>");
     static_assert(!std::is_same_v<InputType, Eigen::half> ||
                       detail::is_any_of<ConstantType, float, Eigen::half>(),
                   "If input is Eigen::half, constant has to be either "
                   "Eigen::half or float");
     static_assert(
-        detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16,
+        detail::is_any_of<InputType, int8_t, Eigen::half, Eigen::bfloat16,
                           ConstantType>(),
-        "If input is not Eigen::half, constant and input types have to match");
+        "If input is not int8_t, Eigen::half, constant and input types have to match");
     blas::BlasSupport *blas = parent()->AsBlas();
     if (!blas) {
       return tsl::errors::Internal(
@@ -1141,12 +1141,12 @@ class Stream {
       int64_t stride_b, ConstantType beta, DeviceMemory<OutputType> *c, int ldc,
       int64_t stride_c, int batch_count, blas::ComputePrecision precision) {
     static_assert(
-        detail::is_any_of<InputType, float, Eigen::half, Eigen::bfloat16,
+        detail::is_any_of<InputType, int8_t, float, Eigen::half, Eigen::bfloat16,
                           double, std::complex<float>, std::complex<double>>(),
         "Unsupported input type");
     static_assert(
         std::is_same_v<ConstantType, InputType> ||
-            (detail::is_any_of<InputType, Eigen::half, Eigen::bfloat16>() &&
+            (detail::is_any_of<InputType, int8_t, Eigen::half, Eigen::bfloat16>() &&
              std::is_same_v<ConstantType, float>),
         "Mismatched input and alpha/beta types");
     blas::BlasSupport *blas = parent()->AsBlas();

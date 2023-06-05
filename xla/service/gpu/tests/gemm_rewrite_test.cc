@@ -1004,8 +1004,7 @@ ENTRY int8gemm {
 
 TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
   std::vector<std::tuple<absl::string_view, absl::string_view, bool>>
-      type_combinations = {{"s8", "s32", true},
-                           {"s8", "s8", true},
+      type_combinations = {{"s8", "s8", true},
                            {"s32", "s32", true},
                            {"bf16", "bf16", true},
                            {"f16", "f16", true},
@@ -1014,6 +1013,8 @@ TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
                            {"c64", "c64", true},
                            {"c128", "c128", true},
                            // add mix type gemm
+                           {"s8", "s32", true},
+                           {"s8", "f32", true},
                            {"f16", "f32", true},
                            {"bf16", "f32", true}};
 
@@ -1024,8 +1025,8 @@ TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
     std::vector<std::tuple<absl::string_view, absl::string_view, bool>>
         more_type_combinations = {
             {"s8", "bf16", false},  {"s8", "f16", false},
-            {"s8", "f32", false},   {"s8", "f64", false},
-            {"s8", "c64", false},   {"s8", "c128", false},
+            {"s8", "f64", false}, {"s8", "c64", false},
+            {"s8", "c128", false},
 
             {"s32", "f32", false},  {"s32", "f64", false},
             {"s32", "c64", false},  {"s32", "c128", false},
