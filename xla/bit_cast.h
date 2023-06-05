@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "Eigen/Core"  // from @eigen_archive
+#include "xla/fake_header.h"
 #include "xla/types.h"
 #include "tsl/platform/bfloat16.h"
 

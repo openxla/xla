@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/bit_cast.h"
 
+#include "xla/fake_header.h"
 #include "xla/test.h"
 
 namespace xla {
