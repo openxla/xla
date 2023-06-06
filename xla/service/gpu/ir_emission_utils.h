@@ -51,7 +51,7 @@ inline constexpr int64_t WarpSize() { return 32; }
 
 // Need at least 1024 threads/block for reasonable tree reduction
 // performance (assuming all data fits).
-inline constexpr int64_t MinThreadsXRowReduction() { return 1024; }
+inline constexpr int64_t MinThreadsXRowReduction() { return 512; }
 
 // When doing batched row reduction, how big the batch dimension could be.
 inline constexpr int64_t BatchedReductionRaceFreeBound() { return 8; }
