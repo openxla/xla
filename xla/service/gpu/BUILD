@@ -2371,6 +2371,18 @@ xla_cc_test(
     ],
 )
 
+xla_cc_test(
+    name = "auto_sharding_gpu_compiler_test",
+    srcs = ["auto_sharding_gpu_compiler_test.cc"],
+    tags = tf_cuda_tests_tags() + ["no_oss"],  # TODO(ckstanton): add bug for debugging autosharding
+    deps = [
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:gpu_plugin",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+    ],
+)
+
 cc_library(
     name = "nvptx_compiler",
     srcs = if_cuda_is_configured([
