@@ -4638,18 +4638,12 @@ xla_cc_test(
         ":hlo_graph_dumper",
         ":hlo_runner",
         ":loop_schedule_linearizer",
-        "//xla:debug_options_flags",
-        "//xla:literal",
-        "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
-        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
     ],
 )
 
