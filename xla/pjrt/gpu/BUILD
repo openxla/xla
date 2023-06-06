@@ -67,6 +67,7 @@ cc_library(
         "@tsl//tsl/framework:device_id_impl",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/util:env_var",
     ] + if_cuda([
         ":nccl_id_store_cuda",
@@ -93,6 +94,7 @@ xla_cc_test(
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test_main",
     ],
 )
