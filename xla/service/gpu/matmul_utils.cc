@@ -440,8 +440,9 @@ StatusOr<se::blas::ComputationType> GetBlasComputationType(
     case C64:
 #if GOOGLE_CUDA
       if (tsl::tensor_float_32_execution_enabled() && compute_precision <= 1 &&
-          lhs_dtype != F8E4M3FN && lhs_dtype != F8E5M2) {
+          lhs_dtype == output_dtype) {
         // CublasLt requires compute type to be F32 for F8 matmul.
+        // TF32 should only be chosen for FP32 or C64 gemm
         return se::blas::ComputationType::kTF32AsF32;
       }
 #endif
