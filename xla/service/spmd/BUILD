@@ -35,6 +35,7 @@ cc_library(
     ],
     deps = [
         "//xla:comparison_util",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:protobuf_util",
         "//xla:shape_util",
