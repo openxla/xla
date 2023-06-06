@@ -103,7 +103,6 @@ cc_library(
         ":custom_call_encoding",
         ":passes",
         "//xla/mlir/backends/cpu/transforms:passes",
-        "//xla/mlir/framework/transforms:passes",
         "//xla/mlir/math/transforms:passes",
         "//xla/mlir/memref/transforms:passes",
         "//xla/mlir_hlo:transforms_passes",
