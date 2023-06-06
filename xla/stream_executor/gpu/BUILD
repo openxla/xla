@@ -83,7 +83,7 @@ cc_library(
     deps = [
         ":gpu_types_header",
         "//xla/stream_executor:device_options",
-        "//xla/stream_executor/platform",
+        "//xla/stream_executor:stream_executor_headers",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ] + if_libtpu(
