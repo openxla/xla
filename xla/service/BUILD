@@ -773,6 +773,7 @@ cc_library(
     name = "pattern_matcher",
     hdrs = ["pattern_matcher.h"],
     deps = [
+        ":hlo_parser",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
@@ -785,6 +786,7 @@ xla_cc_test(
     name = "pattern_matcher_test",
     srcs = ["pattern_matcher_test.cc"],
     deps = [
+        ":hlo_parser",
         ":pattern_matcher",
         "//xla:shape_util",
         "//xla:test",
