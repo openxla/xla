@@ -252,11 +252,7 @@ TEST_F(HloCreationUtilsTest, MakeBitcastConvertToHlo_S32) {
   auto module = CreateModuleWithProgramShape(S32, /*input_shape_dims=*/{2, 2},
                                              /*output_shape_dims=*/{2, 2},
                                              &param, &entry_computation, F32);
-  auto* input = module->entry_computation()->AddInstruction(
-      HloInstruction::CreateConstant(
-          LiteralUtil::CreateR2<int32_t>({{0, 0}, {0, 0}})));
-
-  HloInstruction* output = MakeBitcastConvertToHlo(input, F32);
+  HloInstruction* output = MakeBitcastConvertToHlo(param, F32);
   entry_computation->set_root_instruction(output);
 
   HloEvaluator evaluator;
@@ -266,6 +262,46 @@ TEST_F(HloCreationUtilsTest, MakeBitcastConvertToHlo_S32) {
                          {LiteralUtil::CreateR2<int32_t>({{0, 0}, {0, 0}})}));
   CHECK_EQ(result_literal,
            LiteralUtil::CreateR2<float>({{0.0f, 0.0f}, {0.0f, 0.0f}}));
+}
+
+TEST_F(HloCreationUtilsTest, MakeBitcastConvertToHlo_S64ToS32) {
+  HloInstruction* param;
+  HloComputation* entry_computation;
+
+  auto module = CreateModuleWithProgramShape(S32, /*input_shape_dims=*/{2, 2},
+                                             /*output_shape_dims=*/{2}, &param,
+                                             &entry_computation, S64);
+
+  HloInstruction* output = MakeBitcastConvertToHlo(param, S64);
+  entry_computation->set_root_instruction(output);
+
+  HloEvaluator evaluator;
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal result_literal,
+      evaluator.Evaluate(*module, {LiteralUtil::CreateR2<int32_t>(
+                                      {{0xDEAD, 0xBEEF}, {0xCAFE, 0xDEED}})}));
+  CHECK_EQ(result_literal,
+           LiteralUtil::CreateR1<int64_t>({0xBEEF0000DEAD, 0xDEED0000CAFE}));
+}
+
+TEST_F(HloCreationUtilsTest, MakeBitcastConvertToHlo_S32ToS64) {
+  HloInstruction* param;
+  HloComputation* entry_computation;
+
+  auto module = CreateModuleWithProgramShape(S64, /*input_shape_dims=*/{2},
+                                             /*output_shape_dims=*/{2, 2},
+                                             &param, &entry_computation, S32);
+
+  HloInstruction* output = MakeBitcastConvertToHlo(param, S32);
+  entry_computation->set_root_instruction(output);
+
+  HloEvaluator evaluator;
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal result_literal,
+      evaluator.Evaluate(*module, {LiteralUtil::CreateR1<int64_t>(
+                                      {0xBEEF0000DEAD, 0xDEED0000CAFE})}));
+  CHECK_EQ(result_literal, LiteralUtil::CreateR2<int32_t>(
+                               {{0xDEAD, 0xBEEF}, {0xCAFE, 0xDEED}}));
 }
 
 TEST_F(HloCreationUtilsTest, MakeIotaHlo_I32) {

@@ -1968,6 +1968,7 @@ cc_library(
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:statusor",
         "//xla:util",
         "//xla/client:xla_builder",

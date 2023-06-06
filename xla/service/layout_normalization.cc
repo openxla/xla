@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout_util.h"
 #include "xla/permutation_util.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/shape_inference.h"
@@ -248,6 +249,15 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     auto operand = hlo->mutable_operand(0);
     auto operand_shape = operand->shape();
 
+    // If the two shapes have different rank, drop the innermost of the longer
+    // shape; it is the dimension that gets folded during conversion. If after
+    // dropping the shapes are still the same, it also was the physical
+    // innermost (which is required for a bitcast-covert to work).
+    if (s.rank() > operand_shape.rank()) {
+      ShapeUtil::DeleteDimension(s.rank() - 1, s);
+    } else if (operand_shape.rank() > s.rank()) {
+      ShapeUtil::DeleteDimension(s.rank() - 1, operand_shape);
+    }
     // Precondition: elementwise unary leaves layout intact.
     TF_RET_CHECK(s.layout() == operand_shape.layout())
         << "Unexpected non-layout preserving elementwise unary: "
@@ -264,6 +274,10 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
           MakeReducePrecisionHlo(normalized_input, hlo->exponent_bits(),
                                  hlo->mantissa_bits(), &hlo->metadata());
     } else if (hlo->opcode() == HloOpcode::kBitcastConvert) {
+      // Check that the innermost logical dimension is also the innermost
+      // physical dimension.
+      TF_RET_CHECK(LayoutUtil::Minor(s.layout(), 0) == s.rank() - 1)
+          << "Unexpected layout for bitcast-convert: " << hlo->ToString();
       new_unary = MakeBitcastConvertToHlo(normalized_input, to_element_type,
                                           &hlo->metadata());
     } else {

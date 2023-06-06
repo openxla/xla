@@ -35,8 +35,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shape_inference.h"
+#include "xla/shape_util.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -337,6 +339,16 @@ HloInstruction* MakeBitcastConvertToHlo(HloInstruction* hlo, PrimitiveType type,
     return hlo;
   }
   Shape shape = ShapeUtil::ChangeElementType(hlo->shape(), type);
+  // Compute the new shape by adding/dropping a minor dimension if the
+  // element types have different sizes.
+  auto s_prim_size = primitive_util::BitWidth(hlo->shape().element_type());
+  auto d_prim_size = primitive_util::BitWidth(type);
+  if (s_prim_size < d_prim_size) {
+    shape = ShapeUtil::DeleteDimension(shape.rank() - 1, shape);
+  } else if (s_prim_size > d_prim_size) {
+    int ratio = s_prim_size / d_prim_size;
+    ShapeUtil::AppendMinorDimension(ratio, &shape);
+  }
   // PRED are stored as one byte, PRED have a BitWidth of 1, avoid this problem
   // by using a convert instead of bitcast convert.
   if (type == PRED || hlo->shape().element_type() == PRED) {
