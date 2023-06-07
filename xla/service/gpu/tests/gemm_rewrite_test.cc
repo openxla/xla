@@ -1275,6 +1275,7 @@ class LegacyCublasGemmRewriteTest : public GemmRewriteTest {
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cublaslt(false);
+    debug_options.set_xla_gpu_simplify_all_fp_conversions(true);
     return debug_options;
   }
 };
@@ -1951,6 +1952,7 @@ class CublasLtGemmRewriteTest : public GemmRewriteTest {
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cublaslt(true);
+    debug_options.set_xla_gpu_simplify_all_fp_conversions(true);
     return debug_options;
   }
 };
