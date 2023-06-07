@@ -156,7 +156,6 @@ cc_library(
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor/gpu:gpu_stream",
-        "@com_google_absl//absl/strings",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )

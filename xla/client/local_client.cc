@@ -20,14 +20,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "llvm/TargetParser/Triple.h"
 #include "xla/client/xla_computation.h"
 #include "xla/service/backend.h"
 #include "xla/service/dump.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/source_map_util.h"
 #include "xla/service/stream_pool.h"
-#include "xla/status_macros.h"
 
 using xla::source_map_util::InvalidParameterArgument;
 

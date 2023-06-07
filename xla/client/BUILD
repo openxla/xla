@@ -125,7 +125,6 @@ cc_library(
         ":xla_computation",
         "//xla:executable_run_options",
         "//xla:shape_tree",
-        "//xla:status_macros",
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/service:backend",
@@ -142,7 +141,6 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor/host:host_platform",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:TargetParser",
     ],
 )
 
