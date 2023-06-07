@@ -609,22 +609,26 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   Status HandleConvert(HloInstruction *instr) override {
     HloInstruction *clamp_lower, *clamp_upper, *d_scale, *existing_gemm,
         *binary;
-    // Attempt to remove convert if mix type is supported:
-    // convert(gemm(a, b)) -> gemm(a, b)
-    if (Match(instr,
-              m::Convert(GemmOrCublasLtMatmul(&existing_gemm).WithOneUser())) &&
-        existing_gemm->operands().size() == 2) {
-      // check if type combination is supported here
-      TF_ASSIGN_OR_RETURN(
-          bool types_are_supported,
-          IsLegacyCublasMatmul(*existing_gemm)
-              ? TypesAreSupportedByLegacyCublas(*existing_gemm, instr)
-              : TypesAreSupportedByCublasLt(*existing_gemm, instr));
-      if (types_are_supported) {
-        return FuseMatrixConvert(existing_gemm, instr);
+    if (instr->GetModule()
+             ->config()
+             .debug_options()
+             .xla_gpu_simplify_all_fp_conversions()) {
+      // Attempt to remove convert if mix type is supported:
+      // convert(gemm(a, b)) -> gemm(a, b)
+      if (Match(instr,
+                m::Convert(GemmOrCublasLtMatmul(&existing_gemm).WithOneUser())) &&
+          existing_gemm->operands().size() == 2) {
+        // check if type combination is supported here
+        TF_ASSIGN_OR_RETURN(
+            bool types_are_supported,
+            IsLegacyCublasMatmul(*existing_gemm)
+                ? TypesAreSupportedByLegacyCublas(*existing_gemm, instr)
+                : TypesAreSupportedByCublasLt(*existing_gemm, instr));
+        if (types_are_supported) {
+          return FuseMatrixConvert(existing_gemm, instr);
+        }
       }
     }
-
     // Attempt to elide the scaling and conversion of the result of an FP8
     // GEMM, including the optional calculation of the maximum of the absolute
     // values before scaling, and adapt the Custom Call.
