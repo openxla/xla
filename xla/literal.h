@@ -1222,6 +1222,9 @@ template <typename NativeT>
 absl::Span<const NativeT> LiteralBase::Piece::data() const {
   DCHECK(LayoutUtil::IsDenseArray(subshape()))
       << __func__ << " is only supported for dense arrays: " << subshape();
+  DCHECK(!ShapeUtil::HasCustomElementSizeInBits(subshape()))
+      << __func__
+      << " is not supported for layouts with custom bit size: " << subshape();
   DCHECK_EQ(subshape().element_type(),
             primitive_util::NativeToPrimitiveType<NativeT>())
       << "Attempting to access "
@@ -1236,6 +1239,9 @@ template <typename NativeT>
 absl::Span<NativeT> LiteralBase::Piece::data() {
   DCHECK(LayoutUtil::IsDenseArray(subshape()))
       << __func__ << " is only supported for dense arrays: " << subshape();
+  DCHECK(!ShapeUtil::HasCustomElementSizeInBits(subshape()))
+      << __func__
+      << " is not supported for layouts with custom bit size: " << subshape();
   DCHECK_EQ(subshape().element_type(),
             primitive_util::NativeToPrimitiveType<NativeT>())
       << "Attempting to access "

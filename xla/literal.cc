@@ -541,6 +541,8 @@ void CopyElementsBetween(absl::Span<NativeT> dest,
   DCHECK(LayoutUtil::IsDenseArray(dest_shape));
   DCHECK(LayoutUtil::IsDenseArray(src_shape));
   DCHECK(ShapeUtil::Compatible(dest_shape, src_shape));
+  DCHECK(!ShapeUtil::HasCustomElementSizeInBits(dest_shape));
+  DCHECK(!ShapeUtil::HasCustomElementSizeInBits(src_shape));
   if (ShapeUtil::IsZeroElementArray(dest_shape)) {
     return;
   }
@@ -594,6 +596,12 @@ Status LiteralBase::Piece::CopyFrom(const LiteralBase::Piece& src,
       << __func__ << " is only supported for dense arrays: " << subshape();
   CHECK(LayoutUtil::IsDenseArray(src.subshape()))
       << __func__ << " is only supported for dense arrays: " << src.subshape();
+  CHECK(!ShapeUtil::HasCustomElementSizeInBits(subshape()))
+      << __func__
+      << " is not supported for layouts with custom bit size: " << subshape();
+  CHECK(!ShapeUtil::HasCustomElementSizeInBits(src.subshape()))
+      << __func__ << " is not supported for layouts with custom bit size: "
+      << src.subshape();
   if (!only_dynamic_bound) {
     CHECK(ShapeUtil::Compatible(subshape(), src.subshape()));
   }

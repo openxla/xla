@@ -1138,6 +1138,23 @@ TEST(ShapeUtilTest, Int4ShapeSize) {
   EXPECT_EQ(ShapeUtil::ArraySize(int4_shape2), 9216 * 6144 / 2);
 }
 
+TEST(ShapeUtilTest, HasCustomElementSizeInBits) {
+  Shape shape = ShapeUtil::MakeShape(S4, {64, 128});
+  EXPECT_FALSE(ShapeUtil::HasCustomElementSizeInBits(shape));
+
+  shape = ShapeUtil::MakeShape(S4, {64, 128});
+  shape.mutable_layout()->set_element_size_in_bits(0);
+  EXPECT_FALSE(ShapeUtil::HasCustomElementSizeInBits(shape));
+
+  shape = ShapeUtil::MakeShape(S4, {64, 128});
+  shape.mutable_layout()->set_element_size_in_bits(8);
+  EXPECT_FALSE(ShapeUtil::HasCustomElementSizeInBits(shape));
+
+  shape = ShapeUtil::MakeShape(S4, {64, 128});
+  shape.mutable_layout()->set_element_size_in_bits(4);
+  EXPECT_TRUE(ShapeUtil::HasCustomElementSizeInBits(shape));
+}
+
 TEST(Transpose021Test, NoTranspose) {
   Shape shape = ShapeUtil::MakeShapeWithDenseLayout(F32, {128, 64}, {1, 0});
   Shape transposed =

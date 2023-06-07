@@ -2011,6 +2011,14 @@ Status ShapeUtil::ByteStrides(const Shape& shape, absl::Span<int64_t> strides) {
   return size * ByteSizeOfPrimitiveType(shape.element_type());
 }
 
+/*static*/ bool ShapeUtil::HasCustomElementSizeInBits(const Shape& shape) {
+  CHECK(shape.IsArray());
+
+  return shape.has_layout() && shape.layout().element_size_in_bits() != 0 &&
+         shape.layout().element_size_in_bits() !=
+             ByteSizeOfPrimitiveType(shape.element_type()) * CHAR_BIT;
+}
+
 int64_t ShapeUtil::ForEachState::CalculateNumSteps() const {
   if (IsZeroElementArray()) return 0;
 

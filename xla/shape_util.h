@@ -845,6 +845,9 @@ class ShapeUtil {
   // due to the tiling requirement.
   static int64_t ArrayDataSize(const Shape& shape);
 
+  // Returns if the shape has non-standard element-size in bits.
+  static bool HasCustomElementSizeInBits(const Shape& shape);
+
  private:
   // Fills *shape. Returns true on success.
   // REQUIRES: *shape is empty.
