@@ -641,6 +641,7 @@ xla_cc_test(
         "//xla/service:custom_call_target_registry",
         "//xla/service:hlo_parser",
         "//xla/tests:test_utils",
+        "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
