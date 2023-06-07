@@ -15,23 +15,13 @@ limitations under the License.
 
 #include "xla/service/loop_schedule_linearizer.h"
 
-#include <set>
-
-#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/utils/hlo_matchers.h"
-#include "xla/literal.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/service/hlo_runner.h"
-#include "xla/shape_util.h"
-#include "xla/test.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/xla_data.pb.h"
-#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {
@@ -72,9 +62,10 @@ int64_t CountControlEdges(const HloModule& module) {
 
 class LoopScheduleLinearizerTest : public HloTestBase {
  protected:
-  void InsertCopies(HloModule* module) {
+  void InsertCopies(HloModule* module, bool expect_change) {
     LoopScheduleLinearizer loop_schedule_linearizer;
-    ASSERT_IS_OK(loop_schedule_linearizer.Run(module).status());
+    TF_ASSERT_OK_AND_ASSIGN(bool changed, loop_schedule_linearizer.Run(module));
+    ASSERT_EQ(changed, expect_change);
 
     CopyInsertion copy_insertion;
     ASSERT_IS_OK(copy_insertion.Run(module).status());
@@ -115,7 +106,7 @@ ENTRY entry {
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
-  InsertCopies(module.get());
+  InsertCopies(module.get(), /*expect_change=*/true);
   EXPECT_EQ(CountCopies(
                 *module->entry_computation()->root_instruction()->while_body()),
             0);

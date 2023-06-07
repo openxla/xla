@@ -71,6 +71,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/service:compilation_environments",
         "//xla/service:computation_placer_hdr",
+        "//xla/service:hlo_lexer",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:mapped_ptr_container_sorter",

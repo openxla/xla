@@ -15,9 +15,13 @@ limitations under the License.
 
 #include "xla/pjrt/tracked_device_buffer.h"
 
+#include <algorithm>
 #include <atomic>
+#include <functional>
 #include <iterator>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "absl/synchronization/mutex.h"
 #include "xla/pjrt/local_device_state.h"

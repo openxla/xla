@@ -19,6 +19,7 @@ package_group(
     ],
     packages = [
         "//third_party/australis/...",
+        "//third_party/openxla_pjrt_plugin/...",
         "//third_party/py/jax/...",
     ],
 )
@@ -167,6 +168,8 @@ cc_library(
     hdrs = ["pjrt_client.h"],
     visibility = ["//xla:friends"],
     deps = [
+        ":pjrt_compiler",
+        ":pjrt_device_description",
         ":pjrt_executable",
         ":pjrt_future",
         "//xla:literal",
@@ -249,17 +252,28 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "pjrt_device_description",
+    hdrs = ["pjrt_device_description.h"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+cc_library(
     name = "pjrt_compiler",
     srcs = ["pjrt_compiler.cc"],
     hdrs = ["pjrt_compiler.h"],
     visibility = [":friends"],
     deps = [
-        ":pjrt_client",
+        ":pjrt_device_description",
         ":pjrt_executable",
+        "//xla/client:xla_computation",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:fingerprint",
     ],
 )
 
@@ -520,11 +534,16 @@ cc_library(
         ":pjrt_client",
         ":pjrt_future",
         ":tracked_tfrt_cpu_device_buffer",
+        ":transpose",
+        ":utils",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
         "//xla/runtime:cpu_event",
+        "//xla/service:shaped_buffer",
+        "//xla/service/cpu:cpu_executable",
+        "//xla/service/cpu:cpu_xfeed",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
@@ -558,7 +577,6 @@ cc_library(
         ":transpose",
         ":utils",
         "//xla:array",
-        "//xla:cpu_function_runtime",
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:literal",
@@ -583,8 +601,6 @@ cc_library(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:cpu_executable",
         "//xla/service/cpu:cpu_xfeed",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -625,6 +641,7 @@ xla_cc_test(
         "//xla/service:custom_call_target_registry",
         "//xla/service:hlo_parser",
         "//xla/tests:test_utils",
+        "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
@@ -719,8 +736,6 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/service:hlo_proto_cc",
-        "//xla/stream_executor/tpu:c_api_conversions",  # TODO(b/238999986): Remove this.
-        "//xla/stream_executor/tpu:tpu_initializer_helper",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@llvm-project//mlir:BytecodeWriter",

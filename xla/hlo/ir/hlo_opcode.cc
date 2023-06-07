@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_opcode.h"
 
+#include <optional>
 #include <string>
 
 #include "absl/container/flat_hash_map.h"

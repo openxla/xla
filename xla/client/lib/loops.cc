@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/client/lib/loops.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "xla/client/lib/constants.h"
 #include "xla/client/xla_builder.h"
 #include "xla/shape_util.h"

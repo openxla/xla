@@ -37,21 +37,44 @@ cc_library(
 )
 
 cc_library(
-    name = "convolution_call",
-    srcs = ["convolution_call.cc"],
-    hdrs = ["convolution_call.h"],
+    name = "convolution",
+    srcs = ["convolution.cc"],
+    hdrs = ["convolution.h"],
     deps = [
         "//xla:executable_run_options",
-        "//xla:xla_proto_cc",
-        "//xla/runtime:custom_call",
-        "//xla/runtime:custom_call_registry",
-        "//xla/runtime:executable",
-        "//xla/service:hlo_proto_cc",
+        "//xla/runtime:memref_view",
         "//xla/service/cpu:runtime_conv2d",
         "//xla/service/cpu:runtime_conv3d",
         "//xla/service/cpu:runtime_fft",
         "@com_google_absl//absl/status",
-        "@llvm-project//llvm:Support",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "convolution_ffi",
+    srcs = ["convolution_ffi.cc"],
+    hdrs = ["convolution_ffi.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":convolution",
+        "//xla/runtime:aot_ffi",
+        "//xla/runtime:aot_ffi_execution_context",
+        "//xla/runtime/ffi:ffi_api",
+    ],
+)
+
+cc_library(
+    name = "convolution_call",
+    srcs = ["convolution_call.cc"],
+    hdrs = ["convolution_call.h"],
+    deps = [
+        ":convolution",
+        "//xla:executable_run_options",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -111,11 +134,33 @@ cc_library(
     hdrs = ["rng.h"],
     deps = [
         "//xla:executable_run_options",
-        "//xla:xla_data_proto_cc",
+        "//xla/runtime:memref_view",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+cc_library(
+    name = "rng_call",
+    srcs = ["rng_call.cc"],
+    hdrs = ["rng_call.h"],
+    deps = [
+        ":rng",
+        "//xla:executable_run_options",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
-        "@com_google_absl//absl/status",
-        "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "rng_ffi",
+    srcs = ["rng_ffi.cc"],
+    hdrs = ["rng_ffi.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":rng",
+        "//xla/runtime:aot_ffi",
+        "//xla/runtime:aot_ffi_execution_context",
+        "//xla/runtime/ffi:ffi_api",
     ],
 )

@@ -129,6 +129,7 @@ cc_library(
         "//tsl/platform:status",
         "//tsl/platform:strcat",
         "//tsl/util:env_var",
+        "@com_google_absl//absl/status",
     ] + tsl_grpc_cc_dependencies(),
 )
 

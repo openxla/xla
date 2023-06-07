@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_PYTHON_DLPACK_H_
 #define XLA_PYTHON_DLPACK_H_
 
+#include <memory>
+
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/python/py_buffer.h"
 #include "xla/python/py_client.h"

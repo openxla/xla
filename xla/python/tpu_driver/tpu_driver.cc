@@ -15,6 +15,11 @@
 
 #include "xla/python/tpu_driver/tpu_driver.h"
 
+#include <complex>
+#include <functional>
+#include <memory>
+#include <string>
+
 #include "absl/strings/match.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/util.h"

@@ -78,7 +78,6 @@ xla_cc_test(
     ],
     deps = [
         ":llvm_gpu_backend",
-        "//xla:types",
         "//xla/tests:xla_internal_test_main",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",

@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/client/lib/self_adjoint_eig.h"
 
+#include <algorithm>
+#include <numeric>
+#include <vector>
+
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"

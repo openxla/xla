@@ -82,7 +82,9 @@ cc_library(
     includes = ["include"],
     deps = [
         "//xla:literal",
+        "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:convert_op_folder",
@@ -92,8 +94,6 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SparseTensorDialect",
         "@llvm-project//mlir:SparseTensorEnums",
-        "@tsl//tsl/platform:bfloat16",
-        "@tsl//tsl/platform:float8",
     ],
 )
 
@@ -115,6 +115,11 @@ cc_library(
     name = "mlir_hlo_builder",
     srcs = ["mlir_hlo_builder.cc"],
     hdrs = ["mlir_hlo_builder.h"],
+    # This is going to be deleted, so prevent new usage.
+    visibility = [
+        "//learning/brain/google/xla/mlir:__pkg__",
+        "//tensorflow/compiler/mlir/tf2xla/transforms:__pkg__",
+    ],
     deps = [
         ":attribute_importer",
         ":hlo_module_importer",

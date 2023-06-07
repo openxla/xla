@@ -59,6 +59,7 @@ docker exec xla bazel --bazelrc=$RC_FILE \
         --build_tag_filters=$TAGS_FILTER  \
         --test_tag_filters=$TAGS_FILTER \
         --keep_going \
+        --features=layering_check \
         --profile=/tf/pkg/profile.json.gz \
         --config=nonccl \
         --flaky_test_attempts=3 \

@@ -56,6 +56,7 @@ cc_library(
         "//xla/service:map_inliner",
         "//xla/service:qr_expander",
         "//xla/service:reshape_mover",
+        "//xla/service:topk_rewriter",
         "//xla/service:triangular_solve_expander",
         "//xla/service:while_loop_simplifier",
         "//xla/stream_executor",

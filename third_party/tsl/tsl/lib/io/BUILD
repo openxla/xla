@@ -61,6 +61,7 @@ cc_library(
         ":inputstream_interface",
         ":random_inputstream",
         "//tsl/platform:env",
+        "@com_google_absl//absl/status",
     ],
     alwayslink = True,
 )
@@ -252,6 +253,21 @@ cc_library(
         "//tsl/platform:cord",
         "//tsl/platform:env",
         "//tsl/platform:status",
+    ],
+)
+
+tsl_cc_test(
+    name = "buffered_file_test",
+    size = "small",
+    srcs = ["buffered_file_test.cc"],
+    deps = [
+        ":buffered_file",
+        "//tsl/lib/core:status_test_util",
+        "//tsl/platform:env",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
+        "//tsl/platform:test_main",
     ],
 )
 

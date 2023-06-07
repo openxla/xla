@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/event_pool.h"
 
 #include <memory>
+#include <utility>
 
 #include "absl/synchronization/mutex.h"
 #include "xla/status_macros.h"

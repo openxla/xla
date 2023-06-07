@@ -18,11 +18,11 @@ package_group(
 )
 
 package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         ":friends",
         ":internal",
     ],
-    licenses = ["notice"],
 )
 
 exports_files([
@@ -35,9 +35,11 @@ cc_library(
         "array.cc",
         "client.cc",
         "compiler.cc",
+        "device.cc",
         "dtype.cc",
         "executable.cc",
         "future.cc",
+        "host_callback.cc",
         "index.cc",
         "index_domain.cc",
         "shape.cc",
@@ -53,6 +55,7 @@ cc_library(
         "dtype.h",
         "executable.h",
         "future.h",
+        "host_callback.h",
         "index.h",
         "index_domain.h",
         "shape.h",
@@ -65,6 +68,7 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt/ir",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
@@ -157,7 +161,13 @@ cc_library(
     deps = [
         ":ifrt",
         "//xla:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@tf_runtime//:ref_count",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -211,32 +221,6 @@ xla_cc_test(
     srcs = [],
     deps = [
         ":client_impl_test_lib",
-        ":no_impl_test_main",
-        "@com_google_googletest//:gtest",
-    ],
-)
-
-cc_library(
-    name = "executable_impl_test_lib",
-    testonly = 1,
-    srcs = ["executable_impl_test_lib.cc"],
-    deps = [
-        ":ifrt",
-        ":test_util",
-        "//xla/pjrt:mlir_to_hlo",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-    ],
-    alwayslink = 1,
-)
-
-xla_cc_test(
-    name = "executable_test_no_impl",
-    srcs = [],
-    deps = [
-        ":executable_impl_test_lib",
         ":no_impl_test_main",
         "@com_google_googletest//:gtest",
     ],

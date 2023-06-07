@@ -103,6 +103,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@tsl//tsl/platform:float8",
     ],
 )
 

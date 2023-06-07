@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_CLIENT_LIB_ARITHMETIC_H_
 #define XLA_CLIENT_LIB_ARITHMETIC_H_
 
+#include <functional>
 #include <memory>
+#include <string>
 
 #include "xla/client/xla_builder.h"
 #include "xla/client/xla_computation.h"

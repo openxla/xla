@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/client/lib/lu_decomposition.h"
 
+#include <algorithm>
 #include <vector>
 
 #include "xla/shape_util.h"

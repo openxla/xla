@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/tracked_device_buffer.h"
 
 #include <memory>
+#include <vector>
 
 #include "xla/client/client_library.h"
 #include "xla/literal_util.h"

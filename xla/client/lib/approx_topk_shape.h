@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
 #define XLA_CLIENT_LIB_APPROX_TOPK_SHAPE_H_
 
+#include <utility>
+
 #include "xla/statusor.h"
 
 namespace xla {

@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/python/python_ref_manager.h"
 
+#include <deque>
+#include <memory>
+#include <utility>
+
 #include "absl/container/inlined_vector.h"
 
 namespace xla {

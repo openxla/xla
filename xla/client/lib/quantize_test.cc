@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/client/lib/quantize.h"
 
 #include <limits>
+#include <vector>
 
 #include "xla/client/xla_builder.h"
 #include "xla/test.h"

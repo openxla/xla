@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/client/lib/constants.h"
 
+#include <limits>
+
 #include "xla/client/xla_builder.h"
 #include "xla/test.h"
 #include "xla/tests/client_library_test_base.h"

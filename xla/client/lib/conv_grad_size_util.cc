@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/client/lib/conv_grad_size_util.h"
 
+#include <algorithm>
+
 #include "xla/status_macros.h"
 #include "tsl/platform/errors.h"
 

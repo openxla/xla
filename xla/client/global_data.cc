@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/client/global_data.h"
 
+#include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "xla/types.h"

@@ -15,6 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 
+#include <optional>
+#include <ostream>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo.pb.h"
 
@@ -34,8 +40,6 @@ Status HloInputOutputAliasConfig::SetUpAlias(
       << " which is an invalid index for shape "
       << ShapeUtil::HumanString(alias_.shape());
   TF_RET_CHECK(param_number >= 0) << param_number;
-  TF_RET_CHECK(!OutputHasAlias(output_index))
-      << "Output index " << output_index << " already has an alias setup";
   // Output can't be aliased with multiple parameters.
   TF_RET_CHECK(!alias_.element(output_index)) << absl::StrFormat(
       "Trying to set up output alias for param %lld at %s but failed: output "

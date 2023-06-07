@@ -44,6 +44,8 @@ cc_library(
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "//tsl/profiler/protobuf:profiler_service_proto_cc",
         "//tsl/profiler/protobuf:xplane_proto_cc",
+        "//tsl/profiler/utils:session_manager",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
     ],
@@ -210,6 +212,7 @@ tsl_cc_test(
         "//tsl/profiler/rpc:profiler_server_impl",
         "//tsl/profiler/rpc:profiler_service_impl",
         "//tsl/profiler/utils:time_utils_impl",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
     ] + tf_protos_profiler_service(),
 )

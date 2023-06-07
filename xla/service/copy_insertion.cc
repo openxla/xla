@@ -16,9 +16,7 @@ limitations under the License.
 #include "xla/service/copy_insertion.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <optional>
-#include <sstream>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -26,7 +24,6 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "absl/types/any.h"
 #include "xla/frontend_attributes.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -37,15 +34,11 @@ limitations under the License.
 #include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_dce.h"
-#include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_ordering.h"
-#include "xla/service/logical_buffer.h"
 #include "xla/service/tuple_simplifier.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
-#include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace {

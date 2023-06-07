@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/client/lib/logdet.h"
 
+#include <limits>
+
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/client/lib/matrix.h"

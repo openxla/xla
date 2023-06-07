@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tsl/profiler/utils/buffer_pool.h"
 
+#include <ios>
+
 #include "tsl/platform/logging.h"
 #include "tsl/platform/mem.h"
 #include "tsl/platform/mutex.h"

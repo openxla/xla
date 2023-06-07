@@ -2,6 +2,8 @@ load("//xla:xla.bzl", "xla_cc_binary")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 
+# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
+
 build_test(
     name = "mlir-bisect_build_test",
     targets = [
@@ -19,6 +21,7 @@ xla_cc_binary(
         "//xla/mlir/tools/mlir_bisect/rewrites",
         "//xla/mlir/tools/mlir_replay/public:execution_trace_utils",
         "//xla/mlir_hlo:deallocation",
+        "//xla/mlir_hlo:deallocation_passes",
         "//xla/mlir_hlo:gml_st",
         "//xla/mlir_hlo:gml_st_passes",
         "//xla/mlir_hlo:gml_st_test_passes",

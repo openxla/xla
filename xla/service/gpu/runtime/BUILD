@@ -102,6 +102,11 @@ cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     hdrs = ["custom_call.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
     deps = [
         ":support",
         ":triangular_solve",
@@ -125,6 +130,7 @@ cc_library(
     deps = [
         ":cholesky",
         ":collectives",
+        ":concurrent_region",
         ":conv",
         ":conv_reorder",
         ":cublas_lt_matmul",
@@ -150,7 +156,6 @@ cc_library(
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor/gpu:gpu_stream",
-        "@com_google_absl//absl/strings",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -220,6 +225,7 @@ xla_cc_test(
         ":topk_kernel",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor/gpu:gpu_types_header",
+        "//xla/stream_executor/host:host_platform",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
@@ -325,6 +331,7 @@ cc_library(
     srcs = ["graph_launch.cc"],
     hdrs = ["graph_launch.h"],
     deps = [
+        ":concurrent_region",
         ":conv",
         ":gemm",
         ":kernel_launch",
@@ -338,10 +345,28 @@ cc_library(
         "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor",
         "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/profiler/lib:scoped_annotation_stack",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_graph",
     ]),
+)
+
+cc_library(
+    name = "concurrent_region",
+    srcs = ["concurrent_region.cc"],
+    hdrs = ["concurrent_region.h"],
+    deps = [
+        ":support",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/service:executable",
+        "//xla/service:stream_pool",
+        "//xla/stream_executor",
+        "@tsl//tsl/platform:statusor",
+    ],
 )
 
 cc_library(
@@ -363,6 +388,7 @@ cc_library(
     srcs = ["kernel_launch.cc"],
     hdrs = ["kernel_launch.h"],
     deps = [
+        ":concurrent_region",
         ":support",
         "//xla:types",
         "//xla/runtime:custom_call",
@@ -431,6 +457,7 @@ cc_library(
 
 cc_library(
     name = "support",
+    srcs = ["support.cc"],
     hdrs = ["support.h"],
     deps = [
         "//xla:shape_util",
@@ -439,7 +466,9 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
+        "@tsl//tsl/profiler/lib:scoped_annotation_stack",
     ],
 )
 

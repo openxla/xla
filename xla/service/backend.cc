@@ -17,27 +17,25 @@ limitations under the License.
 
 #include "xla/service/backend.h"
 
-#include <algorithm>
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
 #include <utility>
 
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/service/compiler.h"
 #include "xla/service/platform_util.h"
-#include "xla/status_macros.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/types.h"
 #include "xla/util.h"
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/threadpool.h"
 
 namespace xla {
+namespace se = ::stream_executor;
 
 BackendOptions& BackendOptions::set_platform(se::Platform* platform) {
   platform_ = platform;
@@ -105,17 +103,19 @@ Backend::CreateDefaultBackend() {
   return CreateBackend(backend_options);
 }
 
-StatusOr<StreamPool::Ptr> Backend::BorrowStream(int device_ordinal) {
+StatusOr<StreamPool::Ptr> Backend::BorrowStream(int device_ordinal,
+                                                se::StreamPriority priority) {
   TF_ASSIGN_OR_RETURN(auto executor, stream_executor(device_ordinal));
-  return BorrowStream(executor);
+  return BorrowStream(executor, priority);
 }
 
-StatusOr<StreamPool::Ptr> Backend::BorrowStream(se::StreamExecutor* executor) {
+StatusOr<StreamPool::Ptr> Backend::BorrowStream(se::StreamExecutor* executor,
+                                                se::StreamPriority priority) {
   absl::MutexLock l(&mu_);
   if (!stream_pools_.contains(executor)) {
     stream_pools_.emplace(executor, std::make_unique<StreamPool>());
   }
-  return stream_pools_.at(executor)->BorrowStream(executor);
+  return stream_pools_.at(executor)->BorrowStream(executor, priority);
 }
 
 Backend::Backend(se::Platform* platform, Compiler* compiler,
@@ -142,7 +142,7 @@ Backend::Backend(se::Platform* platform, Compiler* compiler,
   }
 }
 
-Backend::~Backend() {}
+Backend::~Backend() = default;
 
 int Backend::default_device_ordinal() const {
   return default_stream_executor()->device_ordinal();

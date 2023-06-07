@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/client/executable_build_options.h"
 
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/str_format.h"
 #include "xla/debug_options_flags.h"

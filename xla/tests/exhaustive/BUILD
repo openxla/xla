@@ -28,6 +28,8 @@ cc_library(
     tags = ["no_pip"],
     deps = [
         "//xla:bit_cast",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "//xla/client/lib:constants",
         "//xla/client/lib:math",

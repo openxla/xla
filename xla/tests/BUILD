@@ -1676,6 +1676,19 @@ xla_test(
 )
 
 xla_test(
+    name = "topk_test",
+    srcs = ["topk_test.cc"],
+    deps = [
+        ":hlo_test_base",
+        ":test_macros_header",
+        ":test_utils",
+        ":xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_test(
     name = "token_hlo_test",
     srcs = ["token_hlo_test.cc"],
     deps = [
@@ -2112,6 +2125,23 @@ xla_test(
         "//xla/service:hlo_runner",
         "//xla/service/gpu:backend_configs_cc",
         "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_test(
+    name = "data_parallel_collective_optimizer_execution_test",
+    srcs = ["data_parallel_collective_optimizer_execution_test.cc"],
+    deps = [
+        ":hlo_test_base",
+        ":xla_internal_test_main",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:data_parallel_collective_optimizer",
+        "//xla/service:hlo_dce",
+        "//xla/service:hlo_parser",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:pattern_matcher",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

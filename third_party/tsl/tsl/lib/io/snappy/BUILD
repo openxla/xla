@@ -39,6 +39,7 @@ cc_library(
         "//tsl/platform:platform_port",
         "//tsl/platform:status",
         "//tsl/platform:types",
+        "@com_google_absl//absl/status",
     ],
     alwayslink = True,
 )

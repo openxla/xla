@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/client/lib/svd.h"
 
+#include <numeric>
 #include <utility>
+#include <vector>
 
 #include "xla/array2d.h"
 #include "xla/array3d.h"

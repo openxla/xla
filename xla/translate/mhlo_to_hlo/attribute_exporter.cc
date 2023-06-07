@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/service/hlo_parser.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/types.h"
@@ -215,6 +216,14 @@ ConvertOutputOperandAliasing(mlir::ArrayAttr aliasArrayAttr) {
         std::make_pair(alias.getOperandIndex(), operandShapeIndex)));
   }
   return aliasInfo;
+}
+
+std::optional<xla::OpSharding> ConvertSharding(llvm::StringRef sharding) {
+  xla::OpSharding sharding_proto;
+  if (sharding_proto.ParseFromString(sharding.str())) return sharding_proto;
+  StatusOr<xla::HloSharding> sharding_cpp = xla::ParseSharding(sharding.str());
+  if (sharding_cpp.ok()) return sharding_cpp->ToProto();
+  return std::nullopt;
 }
 
 }  // namespace xla
