@@ -7,6 +7,7 @@ package(
 )
 
 glob_lit_tests(
+    name = "all_tests",
     data = [":test_utilities"],
     driver = "//xla:run_lit.sh",
     test_file_exts = ["mlir"],
