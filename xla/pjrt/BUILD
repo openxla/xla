@@ -192,7 +192,6 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:fingerprint",
     ],
 )
 
