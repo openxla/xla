@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tsl/c/tsl_status.h"
 
+#include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "tsl/c/tsl_status_internal.h"

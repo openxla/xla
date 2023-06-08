@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tsl/lib/hash/crc32c.h"
+
+#include <string>
+
 #include "tsl/platform/logging.h"
 #include "tsl/platform/test.h"
 #include "tsl/platform/test_benchmark.h"
