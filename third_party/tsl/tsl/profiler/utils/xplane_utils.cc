@@ -614,5 +614,13 @@ bool IsDevicePlane(const XPlane& plane) {
          IsCustomPlane(plane);
 }
 
+int NumTpuTensorCores(XSpace* space) {
+  int total_tensorcores = 0;
+  for (const XPlane& plane : *space->mutable_planes()) {
+    if (tsl::profiler::IsDevicePlane(plane)) total_tensorcores++;
+  }
+  return total_tensorcores;
+}
+
 }  // namespace profiler
 }  // namespace tsl

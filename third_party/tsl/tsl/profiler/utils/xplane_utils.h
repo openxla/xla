@@ -217,6 +217,9 @@ bool IsHostPlane(const XPlane& plane);
 // Return whether this is a device plan.
 bool IsDevicePlane(const XPlane& plane);
 
+// Return number of tensor cores.
+int NumTpuTensorCores(XSpace* space);
+
 }  // namespace profiler
 }  // namespace tsl
 
