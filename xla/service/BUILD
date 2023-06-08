@@ -1453,12 +1453,10 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:notification",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -6021,6 +6019,7 @@ cc_library(
         ":hlo_memory_scheduler",
         ":hlo_pass",
         ":hlo_pass_pipeline",
+        ":sub_byte_normalization",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
@@ -7043,6 +7042,21 @@ cc_library(
         ":metrics_proto_cc",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+    ],
+)
+
+cc_library(
+    name = "sub_byte_normalization",
+    srcs = ["sub_byte_normalization.cc"],
+    hdrs = ["sub_byte_normalization.h"],
+    deps = [
+        ":hlo_pass",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
     ],
 )
 

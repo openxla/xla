@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/service/defuser.h"
 #include "xla/service/float_normalization.h"
 #include "xla/service/hlo_memory_scheduler.h"
+#include "xla/service/sub_byte_normalization.h"
 
 namespace xla {
 
@@ -31,6 +32,7 @@ Despecializer::Despecializer() : pipeline_("despecializer") {
   pipeline_.AddPass<ControlDepRemover>();
   pipeline_.AddPass<Defuser>();
   pipeline_.AddPass<BFloat16MixedPrecisionRemoval>();
+  pipeline_.AddPass<SubByteNormalization>();
 }
 
 void Despecializer::AddReduceWindowToReduceBroadcastDeconstruct() {
