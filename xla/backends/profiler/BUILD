@@ -1,4 +1,4 @@
-load("@tsl//tsl:tsl.bzl", "if_libtpu", "tsl_gpu_library")
+load("@tsl//tsl:tsl.bzl", "if_with_tpu_support", "tsl_gpu_library")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
@@ -20,8 +20,10 @@ tsl_gpu_library(
     deps = [
         "//xla/backends/profiler/cpu:host_tracer",
         "//xla/backends/profiler/cpu:metadata_collector",
-    ] + if_libtpu([
-        "//xla/backends/profiler/tpu:tpu_tracer",
-    ]),
+    ] + if_with_tpu_support(
+        [
+            "//xla/backends/profiler/tpu:tpu_tracer",
+        ],
+    ),
     alwayslink = True,
 )
