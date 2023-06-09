@@ -120,8 +120,6 @@ xla_cc_test(
     deps = [
         ":bit_cast",
         ":test",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -218,7 +216,6 @@ xla_cc_test(
     deps = [
         ":test",
         ":types",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -230,7 +227,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":status",
-        ":xla_cc_grpc_proto",
         ":xla_data_proto_cc",
         ":xla_proto_cc",
     ],
@@ -262,7 +258,6 @@ xla_cc_test(
         ":test",
         ":test_helpers",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -377,7 +372,6 @@ cc_library(
         ":util",
         "@com_google_absl//absl/hash",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -499,7 +493,6 @@ xla_cc_test(
         ":types",
         ":util",
         ":xla_data_proto_cc",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -587,7 +580,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:float8",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
@@ -656,7 +648,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -879,8 +870,6 @@ xla_cc_test(
         ":types",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -911,8 +900,6 @@ xla_cc_test(
         ":shape_util",
         ":test",
         ":xla_data_proto_cc",
-        "@com_google_absl//absl/memory",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
@@ -996,11 +983,9 @@ xla_cc_test(
         ":literal",
         ":reference_util",
         ":test",
-        ":util",
         ":xla_data_proto_cc",
         "//xla/client:padding",
         "//xla/tests:literal_test_util",
-        "@com_google_absl//absl/memory",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -1080,11 +1065,8 @@ xla_cc_test(
     deps =
         [
             ":xla_proto_cc",
-            "//xla/hlo/ir:hlo",
             "@com_google_absl//absl/container:flat_hash_map",
             "@com_google_absl//absl/strings",
-            "@com_google_absl//absl/strings:str_format",
-            "@tsl//tsl/platform:logging",
             "@tsl//tsl/platform:test",
         ],
 )

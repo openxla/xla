@@ -104,10 +104,8 @@ xla_cc_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",

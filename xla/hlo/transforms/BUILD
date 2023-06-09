@@ -29,7 +29,6 @@ xla_cc_test(
     srcs = ["hlo_constant_splitter_test.cc"],
     deps = [
         ":hlo_constant_splitter",
-        "//xla:shape_util",
         "//xla:test",
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",

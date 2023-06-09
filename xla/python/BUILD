@@ -212,12 +212,10 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "//xla/pjrt:pjrt_client",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
     ],
 )
@@ -494,8 +492,6 @@ cc_library(
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:custom_call_sharding_helper",
         "//xla/service/spmd:spmd_partitioner",
-        "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/synchronization",
         "@pybind11",
     ],
 )
@@ -620,7 +616,6 @@ xla_cc_test(
     srcs = ["outfeed_receiver_test.cc"],
     deps = [
         ":outfeed_receiver",
-        "//xla:statusor",
         "//xla:test",
         "//xla/client:client_library",
         "//xla/client:executable_build_options",
@@ -629,9 +624,7 @@ xla_cc_test(
         "//xla/pjrt:pjrt_stream_executor_client",
         "//xla/pjrt:tfrt_cpu_pjrt_client",
         "//xla/service:platform_util",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -754,7 +747,6 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
@@ -789,7 +781,6 @@ cc_library(
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/rpc:profiler_server_impl",
         "@tsl//tsl/profiler/rpc/client:capture_profile",
-        "@tsl//tsl/profiler/rpc/client:profiler_client",
     ],
 )
 

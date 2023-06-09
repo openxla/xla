@@ -31,7 +31,6 @@ cc_library(
     deps = [
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -44,7 +43,6 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla/stream_executor",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/synchronization",
     ],
 )
@@ -55,7 +53,6 @@ cc_library(
     hdrs = ["semaphore.h"],
     deps = [
         "//xla:types",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
     ],
@@ -69,7 +66,6 @@ xla_cc_test(
         "//xla:test",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -94,7 +90,6 @@ cc_library(
         "//xla/stream_executor:event",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -109,7 +104,6 @@ xla_cc_test(
         "//xla:test",
         "//xla/client:client_library",
         "//xla/service:cpu_plugin",
-        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "@tsl//tsl/platform:test_main",
     ],
@@ -128,7 +122,6 @@ cc_library(
         "//xla/client:local_client",
         "//xla/stream_executor",
         "//xla/stream_executor:event",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
@@ -488,7 +481,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/types:span",
         "@tf_runtime//:hostcontext",
         "@tf_runtime//:support",
     ],
@@ -518,7 +510,6 @@ xla_cc_test(
     deps = [
         ":tracked_tfrt_cpu_device_buffer",
         "@com_google_googletest//:gtest_main",
-        "@tf_runtime//:hostcontext",
     ],
 )
 
@@ -666,7 +657,6 @@ xla_cc_test(
     deps = [
         ":lru_cache",
         "//xla:test",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -761,7 +751,6 @@ xla_cc_test(
     deps = [
         ":tf_pjrt_client",
         ":tfrt_cpu_pjrt_client",
-        "//xla:literal",
         "//xla:literal_util",
         "//xla/service:hlo_parser",
         "@com_google_googletest//:gtest_main",

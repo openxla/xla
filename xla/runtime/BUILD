@@ -19,15 +19,11 @@ cc_library(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         ":async_runtime",
-        ":errors",
         ":types",
         "//xla:shape_util",
-        "//xla/mlir/runtime/transforms:type_converter",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
     ],
 )
@@ -37,9 +33,6 @@ xla_cc_test(
     srcs = ["arguments_test.cc"],
     deps = [
         ":arguments",
-        ":types",
-        "@llvm-project//llvm:Support",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
@@ -52,7 +45,6 @@ cc_library(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@com_google_absl//absl/status",
         "@tf_runtime//:async_value",
         "@tf_runtime//:ref_count",
         "@tsl//tsl/platform:env",
@@ -65,7 +57,6 @@ xla_cc_test(
     srcs = ["async_runtime_test.cc"],
     deps = [
         ":async_runtime",
-        "@com_google_absl//absl/status",
         "@tf_runtime//:async_value",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
@@ -90,7 +81,6 @@ cc_library(
     hdrs = ["constraints.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        ":errors",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
@@ -164,7 +154,6 @@ xla_cc_test(
         ":custom_call",
         ":custom_call_registry",
         ":diagnostics",
-        ":executable",
         ":jit_executable",
         ":module",
         ":state",
@@ -219,7 +208,6 @@ cc_library(
     deps = [
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
-        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -269,7 +257,6 @@ xla_cc_test(
         "//xla/mlir/runtime/transforms/tests:testlib_pipeline",
         "//xla/mlir/runtime/utils:async_runtime_api",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
@@ -333,10 +320,7 @@ xla_cc_test(
     deps = [
         ":arguments",
         ":async_runtime",
-        ":custom_call",
         ":custom_call_registry",
-        ":diagnostics",
-        ":executable",
         ":ffi",
         ":jit_executable",
         ":results",
@@ -346,7 +330,6 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -357,7 +340,6 @@ cc_library(
     hdrs = ["jit_executable.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        ":arguments",
         ":async_values_cache",
         ":constraints",
         ":errors",
@@ -430,7 +412,6 @@ cc_library(
     hdrs = ["module.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
-        ":custom_call",
         ":custom_call_registry",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -579,9 +560,6 @@ cc_library(
     name = "compiler",
     hdrs = ["compiler.h"],
     compatible_with = get_compatible_with_cloud(),
-    deps = [
-        "@llvm-project//llvm:Support",
-    ],
 )
 
 cc_library(
