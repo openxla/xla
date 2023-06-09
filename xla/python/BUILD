@@ -39,7 +39,10 @@ pytype_library(
     pytype_srcs = ["xla_client.pyi"],
     srcs_version = "PY3",
     visibility = ["//visibility:public"],
-    deps = [":xla_extension"],
+    deps = [
+        ":xla_extension",
+        "@ml_dtypes",
+    ],
 )
 
 exports_files(["xla_client.pyi"])

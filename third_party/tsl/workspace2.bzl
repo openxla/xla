@@ -26,7 +26,9 @@ load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/jpeg:workspace.bzl", jpeg = "repo")
 load("//third_party/nasm:workspace.bzl", nasm = "repo")
+load("//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
 load("//third_party/pybind11_abseil:workspace.bzl", pybind11_abseil = "repo")
+load("//third_party/pybind11_bazel:workspace.bzl", pybind11_bazel = "repo")
 load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
 
 # Import external repository rules.
@@ -46,8 +48,10 @@ def _initialize_third_party():
     gemmlowp()
     hwloc()
     jpeg()
+    ml_dtypes()
     nasm()
     pybind11_abseil()
+    pybind11_bazel()
     tensorrt()
 
     # copybara: tsl vendor
