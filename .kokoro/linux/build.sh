@@ -49,6 +49,8 @@ if is_linux_gpu_job ; then
     TAGS_FILTER="$TAGS_FILTER,gpu,requires-gpu,-no_gpu"
     ADDITIONAL_FLAGS="$ADDITIONAL_FLAGS --run_under=//tools/ci_build/gpu_build:parallel_gpu_execute"
     RC_FILE="/usertools/gpu.bazelrc"
+    echo "***NOTE: nvidia-smi lists the highest CUDA version the driver supports, which may be different than the version of CUDA actually used!!***"
+    nvidia-smi
 else
     TAGS_FILTER="$TAGS_FILTER,-gpu,-requires-gpu"
 fi
