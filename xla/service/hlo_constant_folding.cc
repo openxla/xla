@@ -23,8 +23,10 @@ limitations under the License.
 
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout_util.h"
@@ -76,10 +78,7 @@ StatusOr<bool> HloConstantFolding::Run(
   // fast-path lets us e.g. use Eigen for matmuls.
   evaluator->set_use_fast_path(true);
 
-  // We delay deleting dead instructions so that we can print them out if we are
-  // taking too long without use-after-free or other sorts of races.
-  std::vector<HloInstruction*> dead_instructions;
-
+  bool changed = false;
   for (auto* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
@@ -230,17 +229,23 @@ StatusOr<bool> HloConstantFolding::Run(
       }
 
       VLOG(4) << "Constant folded: " << instruction->ToString();
-      dead_instructions.push_back(instruction);
       HloInstruction* new_constant = computation->AddInstruction(
           HloInstruction::CreateConstant(std::move(result)));
       TF_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(new_constant));
+      changed = true;
+
+      // Remove the instruction and the literals from the dead constant operands
+      // early, do not wait for the DCE pass (saves RAM).
+      HloInstruction::InstructionVector operands = instruction->operands();
+      TF_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));
+      for (HloInstruction* operand : operands) {
+        if (operand->IsConstant() && operand->IsDead()) {
+          TF_RETURN_IF_ERROR(computation->RemoveInstruction(operand));
+          auto constant_instr = Cast<HloConstantInstruction>(operand);
+          *constant_instr->mutable_literal() = Literal();
+        }
+      }
     }
-  }
-  const bool changed = !dead_instructions.empty();
-  for (HloInstruction* dead_instruction : dead_instructions) {
-    CHECK(dead_instruction->IsDead());
-    HloComputation* computation = dead_instruction->parent();
-    TF_RETURN_IF_ERROR(computation->RemoveInstruction(dead_instruction));
   }
   return changed;
 }
