@@ -1914,6 +1914,18 @@ static bool AllElementsEqualValue(absl::Span<const NativeT> data,
   return true;
 }
 
+template <typename NativeT>
+static int64_t CountElementsEqualValue(absl::Span<const NativeT> data,
+                                       NativeT value) {
+  int64_t count = 0;
+  for (int64_t i = 0; i < data.size(); ++i) {
+    if (EqualIncludingNan(data[i], value)) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 bool Literal::Piece::IsAll(const Literal& scalar) const {
   CHECK(ShapeUtil::IsScalar(scalar.shape())) << scalar.shape().ToString();
   if (!subshape().IsArray()) {
@@ -1931,6 +1943,27 @@ bool Literal::Piece::IsAll(const Literal& scalar) const {
                                        scalar.GetFirstElement<NativeT>());
         }
         return false;
+      },
+      subshape().element_type());
+}
+
+int64_t Literal::Piece::CountAll(const Literal& scalar) const {
+  CHECK(ShapeUtil::IsScalar(scalar.shape())) << scalar.shape().ToString();
+  if (!subshape().IsArray()) {
+    return 0;
+  }
+
+  CHECK(LayoutUtil::IsDenseArray(subshape()))
+      << __func__ << " is only supported for dense arrays: " << subshape();
+  CHECK_EQ(subshape().element_type(), scalar.shape().element_type());
+  return primitive_util::PrimitiveTypeSwitch<int64_t>(
+      [&](auto primitive_type_constant) -> int64_t {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          using NativeT = NativeTypeOf<primitive_type_constant>;
+          return CountElementsEqualValue(this->data<NativeT>(),
+                                         scalar.GetFirstElement<NativeT>());
+        }
+        return 0;
       },
       subshape().element_type());
 }
@@ -2034,6 +2067,56 @@ bool LiteralBase::IsAllFirst() const {
   absl::InlinedVector<int64_t, 4> end_indices(/*n=*/shape().rank(), 1);
   Literal first = Slice(start_indices, end_indices);
   return IsAll(first.Reshape({}).value());
+}
+
+int64_t LiteralBase::CountEqualFloat(float value) const {
+  if (!shape().IsArray()) {
+    return 0;
+  }
+  PrimitiveType ty = shape().element_type();
+  Literal scalar(ShapeUtil::MakeScalarShape(ty));
+  return primitive_util::PrimitiveTypeSwitch<int64_t>(
+      [&](auto primitive_type_constant) -> int64_t {
+        if constexpr (primitive_util::IsFloatingPointType(
+                          primitive_type_constant)) {
+          using NativeT = NativeTypeOf<primitive_type_constant>;
+          scalar.Set<NativeT>({}, static_cast<NativeT>(value));
+          return root_piece().CountAll(scalar);
+        }
+        return 0;
+      },
+      ty);
+}
+
+int64_t LiteralBase::CountEqualInt(int8_t value) const {
+  if (!shape().IsArray()) {
+    return 0;
+  }
+  PrimitiveType ty = shape().element_type();
+  if (primitive_util::IsFloatingPointType(ty)) {
+    return CountEqualFloat(value);
+  }
+  if (primitive_util::IsUnsignedIntegralType(ty) && value < 0) {
+    return 0;
+  }
+  Literal scalar(ShapeUtil::MakeScalarShape(ty));
+  return primitive_util::PrimitiveTypeSwitch<int64_t>(
+      [&](auto primitive_type_constant) -> int64_t {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          using NativeT = NativeTypeOf<primitive_type_constant>;
+          NativeT converted(value);
+          if constexpr (!primitive_util::IsComplexType(
+                            primitive_type_constant)) {
+            if (static_cast<int8_t>(converted) != value) {
+              return 0;
+            }
+          }
+          scalar.Set<NativeT>({}, converted);
+          return root_piece().CountAll(scalar);
+        }
+        return 0;
+      },
+      ty);
 }
 
 bool LiteralBase::IsR1Iota() const {

@@ -21,6 +21,7 @@ limitations under the License.
 #ifndef XLA_HLO_IR_HLO_INSTRUCTION_H_
 #define XLA_HLO_IR_HLO_INSTRUCTION_H_
 
+#include <cstdint>
 #include <functional>
 #include <iosfwd>
 #include <list>
@@ -1829,6 +1830,27 @@ class HloInstruction {
     return frontend_attributes_;
   }
 
+  void add_single_statistic(Statistic statistic) {
+    *statistics_viz_.add_statistics() = std::move(statistic);
+  }
+
+  void set_stat_index_to_visualize(int64_t index) {
+    statistics_viz_.set_stat_index_to_visualize(index);
+  }
+
+  bool has_statistics() const { return !statistics_viz_.statistics().empty(); }
+
+  const Statistic& statistic_to_visualize() const {
+    return statistics_viz_.statistics().at(
+        statistics_viz_.stat_index_to_visualize());
+  }
+
+  void set_statistics_viz(StatisticsViz statistics_viz) {
+    statistics_viz_ = std::move(statistics_viz);
+  }
+
+  const StatisticsViz& statistics_viz() const { return statistics_viz_; }
+
   // Getter/setter for raw JSON-encoded backend config.  Prefer the
   // functions above that deal in proto Messages where possible.
   const std::string& raw_backend_config_string() const {
@@ -2425,6 +2447,10 @@ class HloInstruction {
   //    z' = const(20), frontend_attributes={?}
   FrontendAttributes frontend_attributes_;
 
+  // Used to render an HLO graph when tracking the propagation desired values
+  // through it.
+  StatisticsViz statistics_viz_;
+
   // String identifier for instruction.
   std::string name_;
 
@@ -2459,6 +2485,7 @@ StatusOr<HloInstruction::FusionKind> StringToFusionKind(
 std::string PaddingConfigToString(const PaddingConfig& padding);
 std::string FrontendAttributesToString(
     const FrontendAttributes& frontend_attributes);
+std::string StatisticsVizToString(const StatisticsViz& statistics_viz);
 std::string RandomAlgorithmToString(const RandomAlgorithm& algorithm);
 std::string RandomDistributionToString(const RandomDistribution& distribution);
 std::string PrecisionToString(const PrecisionConfig::Precision& precision);
