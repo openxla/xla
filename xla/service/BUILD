@@ -4595,6 +4595,7 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service/graphcycles",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
