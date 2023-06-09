@@ -500,19 +500,21 @@ message DeviceAssignmentProto {
 // of the repeated fields is implied by the shape.
 message LiteralProto {
   ShapeProto shape = 1;
-  repeated bool preds = 2;
+  repeated bool preds = 2 [packed = true];
   bytes s4s = 21;
   bytes u4s = 22;
   bytes s8s = 15;
   bytes u8s = 3;
-  repeated int32 s32s = 4;
-  repeated int64 s64s = 5;
-  repeated uint32 u32s = 6;
-  repeated uint64 u64s = 7;
-  repeated float f32s = 8;
-  repeated double f64s = 9;
-  repeated float c64s = 12;    // Stored as interleaved real, imag floats.
-  repeated double c128s = 18;  // Stored as interleaved real, imag doubles.
+  repeated int32 s32s = 4 [packed = true];
+  repeated int64 s64s = 5 [packed = true];
+  repeated uint32 u32s = 6 [packed = true];
+  repeated uint64 u64s = 7 [packed = true];
+  repeated float f32s = 8 [packed = true];
+  repeated double f64s = 9 [packed = true];
+  // Stored as interleaved real, imag floats.
+  repeated float c64s = 12 [packed = true];
+  // Stored as interleaved real, imag doubles.
+  repeated double c128s = 18 [packed = true];
   repeated LiteralProto tuple_literals = 10;
   // The F16s, BF16s, U16s and S16s are encoded in little endian byte order
   bytes f16s = 11;
@@ -522,7 +524,7 @@ message LiteralProto {
   bytes f8e5m2s = 19;
   bytes f8e4m3fns = 20;
   bytes f8e4m3b11fnuzs = 23;
-  repeated int64 sparse_indices = 14;
+  repeated int64 sparse_indices = 14 [packed = true];
   // Next = 24
 }
 
