@@ -343,6 +343,7 @@ cc_library(
     deps = [
         ":exceptions",
         ":pprof_profile_builder",
+        ":py_host_callback_proto_cc",
         ":python_ref_manager",
         ":python_utils",
         ":status_casters",
@@ -367,6 +368,7 @@ cc_library(
         "//xla/pjrt:transpose",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
+        "//xla/python/pjrt_ifrt:xla_host_callback_proto_cc",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
@@ -378,6 +380,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
+        "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
@@ -894,6 +897,12 @@ cc_library(
         "@pybind11",
         "@tsl//tsl/lib/strings:proto_serialization",
     ],
+)
+
+tf_proto_library(
+    name = "py_host_callback_proto",
+    srcs = ["py_host_callback.proto"],
+    cc_api_version = 2,
 )
 
 # TODO(phawkins): the configuration settings here are overly confusing. The right fix is to split
