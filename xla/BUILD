@@ -1143,7 +1143,7 @@ cc_library(
         ":statusor",
         "//xla/service/gpu:gemm_algorithm_picker",
         "//xla/service/gpu:gpu_conv_algorithm_picker",
-    ]),
+    ]) + ["//xla/service/gpu:triton_autotuner"],
 )
 
 cc_library(

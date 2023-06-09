@@ -15,8 +15,10 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_SERIALIZABLE_AUTOTUNER_H_
 #define XLA_SERVICE_GPU_GPU_SERIALIZABLE_AUTOTUNER_H_
 
+#include <algorithm>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <variant>
 
 #include "xla/autotune_results.pb.h"
@@ -24,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
 #include "xla/types.h"
+#include "tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -69,6 +72,12 @@ inline AutotuneCacheKey AutotuneCacheKeyFromInstruction(
   options.set_print_backend_config(true);
   return std::make_tuple(std::string(model_str), instr->ToString(options));
 }
+
+Status SerializeAutotuneResults(const AutotuneCacheMap& autotune_cache,
+                                AutotuneResults* results);
+
+Status LoadAutotuneResults(AutotuneCacheMap& autotune_cache,
+                           const AutotuneResults& results);
 
 }  // namespace gpu
 }  // namespace xla
