@@ -21,9 +21,9 @@ limitations under the License.
 #include <map>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <set>
 #include <string>
-#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -36,9 +36,13 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/heap_simulator.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment.pb.h"
 #include "xla/service/memory_space_assignment_repacking.h"
+#include "xla/shape.h"
+#include "xla/statusor.h"
 
 namespace xla {
 
@@ -783,6 +787,8 @@ class MemorySpaceAssignment {
   // A proposed way to slice a buffer.
   struct SliceProposal {
     std::string ToString() const;
+    friend std::ostream& operator<<(std::ostream& os,
+                                    const SliceProposal& proposal);
     std::tuple<const Shape&,
                const std::vector<MemorySpaceAssignment::SliceParam>&, int64_t>
     ToTuple() const;
@@ -2250,12 +2256,21 @@ class AlternateMemoryBestFitHeap
     return options_.max_size_in_bytes - reserved_in_bytes_;
   }
 
-  // Returns the earliest time in the [start_time, end_time] range that a new
-  // allocation with the given size would fit in the alternate memory. If it
-  // doesn't fit, it returns nullopt.
-  std::optional<int> FindEarliestTimeToSatisfyPeakMemory(int start_time,
-                                                         int end_time,
-                                                         int64_t size) const;
+  // Returns a lower bound on the earliest time in the [start_time, end_time]
+  // range that a new allocation with the specified slice configuration would
+  // fit in the alternate memory. If the sliced configuration doesn't ever fit,
+  // nullopt is returned.
+  //
+  // Finding the exact earliest time in a sliced world involves knowing the
+  // times when we would start each slice. However, such decisions have not yet
+  // been made. Thus, we calculate the lower bound as the earliest time that the
+  // smallest slice would fit.
+  std::optional<int> FindEarliestTimeLowerBoundToSatisfyPeakMemory(
+      int start_time, int end_time,
+      const SlicedBufferInterval& sliced_buffer_interval) const;
+  // TODO(b/275905276): delete this helper wrapper
+  std::optional<int> FindEarliestTimeLowerBoundToSatisfyPeakMemory(
+      int start_time, int end_time, int64_t size) const;
 
   // Creates and returns a RepackAllocationBlock.
   static RepackAllocationBlock MakeRepackAllocationBlock(

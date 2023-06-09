@@ -24,6 +24,7 @@ limitations under the License.
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <set>
 #include <string>
 #include <tuple>
@@ -4812,18 +4813,44 @@ void AlternateMemoryBestFitHeap::AddToPendingChunks(
 }
 
 std::optional<int>
-AlternateMemoryBestFitHeap::FindEarliestTimeToSatisfyPeakMemory(
-    int start_time, int end_time, int64_t size) const {
+AlternateMemoryBestFitHeap::FindEarliestTimeLowerBoundToSatisfyPeakMemory(
+    int start_time, int end_time,
+    const SlicedBufferInterval& sliced_buffer_interval) const {
+  // By end_time, make sure all slices can fit contiguously.
+  if (peak_memory_usage_[end_time] +
+          sliced_buffer_interval.full_buffer_interval().size >
+      options_.max_size_in_bytes) {
+    return std::nullopt;
+  }
+
+  // Find the earliest time that the smallest slice would fit
+  CHECK_GT(sliced_buffer_interval.num_slices(), 0);
+  int64_t size = sliced_buffer_interval.IntervalForMakeFreeChunks(0).size;
   int earliest_time;
   for (earliest_time = end_time;
        earliest_time >= start_time &&
        peak_memory_usage_[earliest_time] + size <= options_.max_size_in_bytes;
        --earliest_time) {
   }
-  if (earliest_time == end_time) {
-    return std::nullopt;
-  }
+
+  // We already confirmed that something larger than size would fit at end_time.
+  CHECK_NE(earliest_time, end_time);
+
   return earliest_time + 1;
+}
+
+// TODO(b/275905276): Remove this temporary hack when it is no longer needed.
+// Note, for this hack we only need the size field of the BufferInterval to be
+// set.
+std::optional<int>
+AlternateMemoryBestFitHeap::FindEarliestTimeLowerBoundToSatisfyPeakMemory(
+    int start_time, int end_time, int64_t size) const {
+  BufferInterval interval;
+  interval.size = size;
+  const SlicedBufferInterval sliced_interval =
+      SlicedBufferInterval::CreateConstInterval(interval);
+  return FindEarliestTimeLowerBoundToSatisfyPeakMemory(start_time, end_time,
+                                                       sliced_interval);
 }
 
 AlternateMemoryBestFitHeap::Result AlternateMemoryBestFitHeap::AllocateSegment(
@@ -5382,8 +5409,8 @@ AlternateMemoryBestFitHeap::Result AlternateMemoryBestFitHeap::Prefetch(
   // As a compile time optimization, use the peak memory usage to filter out
   // allocation times that would push us to OOM.
   std::optional<int> earliest_non_oom_prefetch_time =
-      FindEarliestTimeToSatisfyPeakMemory(earliest_prefetch_time,
-                                          prefetch_end_time, request.size);
+      FindEarliestTimeLowerBoundToSatisfyPeakMemory(
+          earliest_prefetch_time, prefetch_end_time, request.size);
   Result result = Result::kSuccess;
   if (!earliest_non_oom_prefetch_time) {
     VLOG(3) << "Any prefetch in range (" << earliest_prefetch_time << ", "
@@ -5879,6 +5906,12 @@ std::string MemorySpaceAssignment::SliceProposal::ToString() const {
                       absl::StrAppend(out, param.ToString());
                     }),
       " }, slice_size: ", slice_size, " }");
+}
+
+std::ostream& operator<<(std::ostream& os,
+                         const MemorySpaceAssignment::SliceProposal& proposal) {
+  os << proposal.ToString();
+  return os;
 }
 
 std::tuple<const Shape&, const std::vector<MemorySpaceAssignment::SliceParam>&,
