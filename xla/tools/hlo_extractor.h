@@ -40,9 +40,13 @@ using HloSelector = std::function<bool(const HloInstruction*)>;
 // The `hlo_selector` will return true/false for each hlo instruction. If false
 // is returned, the corresponding instruction and its predecessors will not be
 // included in the extracted hlo module
+//
+// If the `const_replacement` is set as true, pruned instructions will be
+// replaced with Const node instead of Parameter node
 std::unique_ptr<HloModule> ExtractModule(HloInstruction* instruction,
                                          int64_t height = -1,
-                                         HloSelector hlo_selector = nullptr);
+                                         HloSelector hlo_selector = nullptr,
+                                         bool const_replacement = false);
 
 }  // namespace xla
 

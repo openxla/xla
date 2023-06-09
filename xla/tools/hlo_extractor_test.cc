@@ -58,6 +58,14 @@ ENTRY %entry {
   }
 
   {
+    auto extracted_module =
+        ExtractModule(FindInstruction(hlo_module.get(), "exp"), /*height=*/0,
+                      /*hlo_selector=*/nullptr, /*const_replacement=*/true);
+    EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
+                op::Exp(op::Constant()));
+  }
+
+  {
     auto extracted_module = ExtractModule(
         FindInstruction(hlo_module.get(), "negate"), /*height=*/0);
     EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
@@ -94,6 +102,7 @@ ENTRY %entry {
     EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
                 op::Add(op::Parameter(0), op::Parameter(1)));
   }
+
   {
     auto extracted_module =
         ExtractModule(FindInstruction(hlo_module.get(), "add"), /*height=*/1);
@@ -101,12 +110,31 @@ ENTRY %entry {
                 op::Add(op::Negate(op::Parameter(0)),
                         op::Exp(op::Negate(op::Parameter(0)))));
   }
+
+  {
+    auto extracted_module =
+        ExtractModule(FindInstruction(hlo_module.get(), "add"), /*height=*/1,
+                      /*hlo_selector=*/nullptr, /*const_replacement=*/true);
+    EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
+                op::Add(op::Negate(op::Constant()),
+                        op::Exp(op::Negate(op::Constant()))));
+  }
+
   {
     auto extracted_module =
         ExtractModule(FindInstruction(hlo_module.get(), "add"), /*height=*/2);
     EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
                 op::Add(op::Negate(op::Tanh(op::Parameter(0))),
                         op::Exp(op::Negate(op::Tanh(op::Parameter(0))))));
+  }
+
+  {
+    auto extracted_module =
+        ExtractModule(FindInstruction(hlo_module.get(), "add"), /*height=*/2,
+                      /*hlo_selector=*/nullptr, /*const_replacement=*/true);
+    EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
+                op::Add(op::Negate(op::Tanh(op::Constant())),
+                        op::Exp(op::Negate(op::Tanh(op::Constant())))));
   }
 }
 
@@ -260,5 +288,37 @@ TEST_F(HloExtractorTest, HloSelector) {
                 op::Subtract(op::Multiply(), op::Parameter()));
   }
 }
+
+TEST_F(HloExtractorTest, ReplaceWithConst) {
+  const std::string& hlo_string = R"(
+HloModule test
+
+ENTRY axpy_computation {
+      p.0 = f32[10] parameter(0)
+      p.1 = f32[10] parameter(1)
+      add.0 = f32[10] add(p.0, p.1)
+      alpha = f32[] constant(1) 
+      broadcast = f32[10] broadcast(alpha), dimensions={}
+      p.2 = f32[10] parameter(2)
+      y = f32[10] multiply(broadcast, p.2)
+      x = f32[10] subtract(y, add.0)
+      p.3 = f32[10] parameter(3)
+      ROOT add = f32[10] add(x, p.3)
+    }
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  {
+    auto extracted_module = ExtractModule(
+        hlo_module->entry_computation()->root_instruction(), /*height=*/1,
+        /*hlo_selector=*/nullptr, /*const_replacement=*/true);
+    EXPECT_THAT(
+        extracted_module->entry_computation()->root_instruction(),
+        op::Add(op::Subtract(op::Constant(), op::Constant()), op::Parameter()));
+  }
+}
+
 }  // namespace
 }  // namespace xla

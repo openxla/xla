@@ -252,8 +252,10 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:compilation_environments",
         "//xla/service:hlo_verifier",
+        "//xla/tests:test_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@tsl//tsl/platform:status",
     ],
 )
 
