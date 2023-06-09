@@ -681,6 +681,16 @@ tf_proto_library(
     visibility = ["//visibility:public"],
 )
 
+# copybara:uncomment_begin(google-only)
+# py_proto_library(
+#     name = "pytree_proto_py_pb2",
+#     has_services = 0,
+#     api_version = 2,
+#     visibility = ["//visibility:public"],
+#     deps = [":pytree_proto"],
+# )
+# copybara:uncomment_end
+
 cc_library(
     name = "pytree",
     srcs = ["pytree.cc"],
