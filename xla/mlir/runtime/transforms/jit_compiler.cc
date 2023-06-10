@@ -396,7 +396,10 @@ MakeOptimizingTransformerForJit(llvm::TargetMachine* targetMachine) {
   engine_options.opt_level = compiler->options().jit_code_opt_level;
   engine_options.target_machine = target_machine->get();
   engine_options.make_optimizing_transformer = MakeOptimizingTransformerForJit;
-  engine_options.section_memory_mapper = memory_mapper.get();
+  // TODO(b/286475799): Custom memory mapper leads to spurious failures at run
+  // time. The only benefit is that it gives a human readable name to the mmaped
+  // memory with XLA runtime executable, we should enable it back!
+  engine_options.section_memory_mapper = nullptr;  // memory_mapper.get()
   engine_options.symbols_binding = std::move(symbols);
 
   // Translate MLIR module to the LLVM module.
