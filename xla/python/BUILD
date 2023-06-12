@@ -788,6 +788,7 @@ cc_library(
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/rpc:profiler_server_impl",
         "@tsl//tsl/profiler/rpc/client:capture_profile",
+        "@tsl//tsl/profiler/rpc/client:profiler_client_impl",
     ],
 )
 
