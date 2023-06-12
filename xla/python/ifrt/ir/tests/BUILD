@@ -28,6 +28,7 @@ cc_binary(
     srcs = ["ifrt-opt.cc"],
     deps = [
         "//xla/python/ifrt/ir",
+        "//xla/python/ifrt/ir/transforms:built_in_spmd_expansions",
         "//xla/python/ifrt/ir/transforms:passes",
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:IR",
@@ -47,6 +48,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:test_util",
         "//xla/python/ifrt/ir",
+        "//xla/python/ifrt/ir/transforms:built_in_spmd_expansions",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",

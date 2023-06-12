@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/ir/sharding_param.h"
+#include "xla/python/ifrt/ir/transforms/built_in_spmd_expansions.h"
 #include "xla/python/ifrt/test_util.h"
 #include "xla/status_macros.h"
 #include "tsl/platform/statusor.h"
@@ -39,6 +40,7 @@ IfrtIrExecutableImplTestBase::IfrtIrExecutableImplTestBase() {
   mlir::registerAllDialects(registry);
   mlir::mhlo::registerAllMhloDialects(registry);
   registry.insert<xla::ifrt::IfrtDialect>();
+  xla::ifrt::AttachBuiltInSpmdExpansions(registry);
   mlir_context_.appendDialectRegistry(registry);
 }
 
