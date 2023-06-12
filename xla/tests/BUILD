@@ -2414,6 +2414,7 @@ xla_cc_test(
         ":local_client_aot_test_computation.o",
     ],
     linkstatic = 1,
+    tags = ["nomsan"],
     deps = [
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -2499,6 +2500,7 @@ xla_cc_test(
     srcs = [
         "hlo_metadata_test.cc",
     ],
+    tags = ["nomsan"],
     deps = [
         ":local_client_test_base",
         "//xla:test_helpers",
@@ -2564,6 +2566,7 @@ xla_test(
 xla_cc_test(
     name = "literal_test_util_test",
     srcs = ["literal_test_util_test.cc"],
+    tags = ["nomsan"],
     deps = [
         ":literal_test_util",
         "//xla:literal",
@@ -2679,6 +2682,7 @@ xla_cc_test(
     name = "multiple_devices_on_host_test",
     srcs = ["multiple_devices_on_host_test.cc"],
     args = ["--xla_force_host_platform_device_count=4"],
+    tags = ["nomsan"],
     deps = [
         ":xla_internal_test_main",  # fixdeps: keep
         "//xla:shape_util",

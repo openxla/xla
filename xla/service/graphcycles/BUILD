@@ -38,6 +38,7 @@ cc_library(
 xla_cc_test(
     name = "graphcycles_test",
     srcs = ["graphcycles_test.cc"],
+    tags = ["nomsan"],
     deps = [
         ":graphcycles",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -51,6 +52,7 @@ xla_cc_test(
 xla_cc_test(
     name = "ordered_set_test",
     srcs = ["ordered_set_test.cc"],
+    tags = ["nomsan"],
     deps = [
         ":ordered_set",
         "@tsl//tsl/platform:logging",

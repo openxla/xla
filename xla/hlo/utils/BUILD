@@ -48,6 +48,7 @@ cc_library(
 xla_cc_test(
     name = "hlo_live_range_test",
     srcs = ["hlo_live_range_test.cc"],
+    tags = ["nomsan"],
     deps = [
         ":hlo_live_range",
         "//xla:literal",
@@ -78,6 +79,7 @@ cc_library(
 xla_cc_test(
     name = "hlo_matchers_test",
     srcs = ["hlo_matchers_test.cc"],
+    tags = ["nomsan"],
     deps = [
         ":hlo_matchers",
         "//xla:literal_util",
@@ -117,6 +119,7 @@ xla_cc_test(
     srcs = [
         "hlo_sharding_util_test.cc",
     ],
+    tags = ["nomsan"],
     deps = [
         ":hlo_sharding_util",
         "//xla:test",

@@ -9,6 +9,7 @@ package(
 glob_lit_tests(
     name = "all_tests",
     data = [":test_utilities"],
+    default_tags = ["nomsan"],
     driver = "//xla:run_lit.sh",
     test_file_exts = ["mlir"],
 )

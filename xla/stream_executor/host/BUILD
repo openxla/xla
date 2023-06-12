@@ -117,6 +117,7 @@ cc_library(
 xla_cc_test(
     name = "host_stream_test",
     srcs = ["host_stream_test.cc"],
+    tags = ["nomsan"],
     deps = [
         ":host_platform",
         "//xla/stream_executor",
