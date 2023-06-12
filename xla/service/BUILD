@@ -6692,6 +6692,7 @@ xla_cc_binary(
         "//xla:statusor",
         "//xla/mlir_hlo",
         "//xla/pjrt:mlir_to_hlo",
+        "//xla/service:cpu_plugin",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:cpu_executable",
         "@llvm-project//mlir:ArithDialect",

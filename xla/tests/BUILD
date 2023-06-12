@@ -222,6 +222,7 @@ xla_cc_binary(
         "//xla/client:client_library",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
+        "//xla/service:cpu_plugin",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/llvm_ir:llvm_util",
         "@llvm-project//llvm:Support",
