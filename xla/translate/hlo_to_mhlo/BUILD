@@ -117,7 +117,6 @@ cc_library(
     hdrs = ["mlir_hlo_builder.h"],
     # This is going to be deleted, so prevent new usage.
     visibility = [
-        "//learning/brain/google/xla/mlir:__pkg__",
         "//tensorflow/compiler/mlir/tf2xla/transforms:__pkg__",
     ],
     deps = [
