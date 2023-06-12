@@ -123,6 +123,7 @@ cc_library(
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ConversionPasses",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:FuncToLLVM",
         "@llvm-project//mlir:GPUTransforms",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",

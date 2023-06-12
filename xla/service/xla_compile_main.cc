@@ -115,6 +115,7 @@ xla::Status XlaCompileMain(const std::string& module_path,
   dialects.insert<mlir::mhlo::MhloDialect>();
   dialects.insert<mlir::func::FuncDialect>();
   mlir::stablehlo::registerAllDialects(dialects);
+  mlir::func::registerAllExtensions(dialects);
 
   // Parse MHLO module.
   auto threading = mlir::MLIRContext::Threading::DISABLED;
