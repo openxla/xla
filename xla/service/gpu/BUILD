@@ -530,6 +530,7 @@ cc_library(
     srcs = if_cuda_is_configured(["triton_autotuner.cc"]),
     hdrs = if_cuda_is_configured(["triton_autotuner.h"]),
     deps = if_cuda_is_configured([
+        ":bitcast_remover",
         ":buffer_comparator",
         ":compile_module_to_llvm_ir",
         ":gemm_rewriter_triton",
@@ -557,13 +558,20 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:ir_headers",
         "//xla:autotune_results_proto_cc",
+        "//xla:permutation_util",
+        "//xla:status_macros",
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:call_inliner",
+        "//xla/service:executable",
         "//xla/service:float_normalization",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_pass",
+        "//xla/service:hlo_runner",
         "//xla/service:hlo_verifier",
+        "//xla/service:platform_util",
+        "//xla/service:shaped_buffer",
         "//xla/service/gpu/llvm_gpu_backend",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
@@ -572,7 +580,9 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_timer_header",
         "//xla/stream_executor/gpu:redzone_allocator",
+        "//xla/tests:test_utils",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:statusor",
@@ -2750,6 +2760,35 @@ xla_cc_test(
         ":gpu_performance_model",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+    ],
+)
+
+cc_library(
+    name = "bitcast_remover",
+    srcs = ["bitcast_remover.cc"],
+    hdrs = ["bitcast_remover.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+    ],
+)
+
+xla_cc_test(
+    name = "bitcast_remover_test",
+    srcs = ["bitcast_remover_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        ":bitcast_remover",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:filecheck",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
