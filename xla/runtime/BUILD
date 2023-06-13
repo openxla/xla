@@ -261,6 +261,8 @@ xla_cc_test(
         "//xla/mlir/runtime/transforms/tests:testlib_pipeline",
         "//xla/mlir/runtime/utils:async_runtime_api",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
