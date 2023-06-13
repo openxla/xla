@@ -82,6 +82,11 @@ cc_library(
     deps = [
         ":http_request",
         "//tsl/platform:env",
+        "//tsl/platform:errors",
+        "//tsl/platform:retrying_utils",
+        "//tsl/platform:status",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
