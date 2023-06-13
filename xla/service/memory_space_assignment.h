@@ -21,9 +21,9 @@ limitations under the License.
 #include <map>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <set>
 #include <string>
-#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -36,9 +36,13 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/heap_simulator.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment.pb.h"
 #include "xla/service/memory_space_assignment_repacking.h"
+#include "xla/shape.h"
+#include "xla/statusor.h"
 
 namespace xla {
 
@@ -783,6 +787,8 @@ class MemorySpaceAssignment {
   // A proposed way to slice a buffer.
   struct SliceProposal {
     std::string ToString() const;
+    friend std::ostream& operator<<(std::ostream& os,
+                                    const SliceProposal& proposal);
     std::tuple<const Shape&,
                const std::vector<MemorySpaceAssignment::SliceParam>&, int64_t>
     ToTuple() const;
