@@ -1,1 +1,73 @@
 Auto generated patch. Do not edit or delete it, even if empty.
+diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
+--- a/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/mlir/BUILD.bazel
+@@ -3661,6 +3661,27 @@
+     ],
+ )
+ 
++cc_library(
++    name = "FuncExtensions",
++    srcs = glob(["lib/Dialect/Func/Extensions/*.cpp"]),
++    hdrs = glob(["include/mlir/Dialect/Func/Extensions/*.h"]),
++    includes = ["include"],
++    deps = [
++        ":ControlFlowDialect",
++        ":FuncDialect",
++        ":IR",
++        ":InferTypeOpInterface",
++    ],
++)
++
++cc_library(
++    name = "AllExtensions",
++    hdrs = ["include/mlir/InitAllExtensions.h"],
++    deps = [
++        ":FuncExtensions",
++    ],
++)
++
+ # TODO(zinenko): remove this after updating users.
+ 
+ gentbl_cc_library(
+@@ -7629,6 +7650,7 @@
+     srcs = ["tools/mlir-opt/mlir-opt.cpp"],
+     local_defines = ["MLIR_INCLUDE_TESTS"],
+     deps = [
++        ":AllExtensions",
+         ":AllPassesAndDialects",
+         ":Analysis",
+         ":IR",
+diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch5/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch5/BUILD.bazel
+--- a/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch5/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch5/BUILD.bazel
+@@ -103,6 +103,7 @@
+         "//mlir:ArithDialect",
+         "//mlir:CastInterfaces",
+         "//mlir:FuncDialect",
++        "//mlir:FuncExtensions",
+         "//mlir:IR",
+         "//mlir:MemRefDialect",
+         "//mlir:Parser",
+diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch6/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch6/BUILD.bazel
+--- a/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch6/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch6/BUILD.bazel
+@@ -111,6 +111,7 @@
+         "//mlir:ExecutionEngine",
+         "//mlir:ExecutionEngineUtils",
+         "//mlir:FuncDialect",
++        "//mlir:FuncExtensions",
+         "//mlir:FuncToLLVM",
+         "//mlir:IR",
+         "//mlir:LLVMCommonConversion",
+diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch7/BUILD.bazel b/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch7/BUILD.bazel
+--- a/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch7/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/mlir/examples/toy/Ch7/BUILD.bazel
+@@ -111,6 +111,7 @@
+         "//mlir:ExecutionEngine",
+         "//mlir:ExecutionEngineUtils",
+         "//mlir:FuncDialect",
++        "//mlir:FuncExtensions",
+         "//mlir:FuncToLLVM",
+         "//mlir:IR",
+         "//mlir:LLVMCommonConversion",
