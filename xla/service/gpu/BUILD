@@ -443,6 +443,7 @@ cc_library(
         "@triton//:TritonTransforms",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "@tsl//tsl/protobuf:autotuning_proto_cc",
     ] + if_cuda_is_configured([
         "@triton//:TritonGPUToLLVM",
@@ -479,6 +480,7 @@ xla_test(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
