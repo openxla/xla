@@ -98,4 +98,126 @@ diff --ruN a/stablehlo/stablehlo/dialect/VhloTypes.td b/stablehlo/stablehlo/dial
      }
    }];
  }
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir b/stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir
+--- stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir
++++ stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir
+@@ -531,6 +531,40 @@
+ 
+ // -----
+ 
++// CHECK-LABEL: func @real_dynamic_slice_to_slice_limit_oob_success_static_result_type
++func.func @real_dynamic_slice_to_slice_limit_oob_success_static_result_type(%arg0: tensor<4xf32>) -> tensor<4xf32> {
++  //  CHECK-NOT: stablehlo.real_dynamic_slice
++  //      CHECK: "stablehlo.slice"(%arg0) {
++  // CHECK-SAME:   limit_indices = dense<4> : tensor<1xi64>,
++  // CHECK-SAME:   start_indices = dense<0> : tensor<1xi64>,
++  // CHECK-SAME:   strides = dense<1> : tensor<1xi64>
++  // CHECK-SAME: } : (tensor<4xf32>) -> tensor<4xf32>
++  %0 = stablehlo.constant dense<1> : tensor<1xi64>
++  %1 = stablehlo.constant dense<5> : tensor<1xi64>
++  %2 = stablehlo.constant dense<1> : tensor<1xi64>
++  %3 = stablehlo.real_dynamic_slice %arg0, %0, %1, %2 : (tensor<4xf32>, tensor<1xi64>, tensor<1xi64>, tensor<1xi64>) -> tensor<4xf32>
++  return %3 : tensor<4xf32>
++}
++
++// -----
++
++// CHECK-LABEL: func @real_dynamic_slice_to_slice_start_oob_success_static_result_type
++func.func @real_dynamic_slice_to_slice_start_oob_success_static_result_type(%arg0: tensor<4xf32>) -> tensor<4xf32> {
++  //  CHECK-NOT: stablehlo.real_dynamic_slice
++  //      CHECK: "stablehlo.slice"(%arg0) {
++  // CHECK-SAME:   limit_indices = dense<4> : tensor<1xi64>,
++  // CHECK-SAME:   start_indices = dense<0> : tensor<1xi64>,
++  // CHECK-SAME:   strides = dense<1> : tensor<1xi64>
++  // CHECK-SAME: } : (tensor<4xf32>) -> tensor<4xf32>
++  %0 = stablehlo.constant dense<-1> : tensor<1xi64>
++  %1 = stablehlo.constant dense<3> : tensor<1xi64>
++  %2 = stablehlo.constant dense<1> : tensor<1xi64>
++  %3 = stablehlo.real_dynamic_slice %arg0, %0, %1, %2 : (tensor<4xf32>, tensor<1xi64>, tensor<1xi64>, tensor<1xi64>) -> tensor<4xf32>
++  return %3 : tensor<4xf32>
++}
++
++// -----
++
+ // CHECK-LABEL: func @real_dynamic_slice_to_slice_success_dynamic_result_type
+ func.func @real_dynamic_slice_to_slice_success_dynamic_result_type(%arg0: tensor<4xf32>) -> tensor<?xf32> {
+   //  CHECK-NOT: stablehlo.real_dynamic_slice
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
+--- stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
++++ stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
+@@ -636,6 +636,32 @@
+ 
+ // -----
+ 
++// CHECK-LABEL: @refine_real_dynamic_slice_limit_oob_using_slice
++func.func @refine_real_dynamic_slice_limit_oob_using_slice(%arg0: tensor<4xf32>) -> tensor<*xf32> {
++  // CHECK: stablehlo.real_dynamic_slice{{.*}} -> tensor<4xf32>
++  %0 = stablehlo.constant dense<[1]> : tensor<1xi64>
++  %1 = stablehlo.constant dense<[5]> : tensor<1xi64>
++  %2 = stablehlo.constant dense<[1]> : tensor<1xi64>
++  %3 = stablehlo.real_dynamic_slice %arg0, %0, %1, %2
++           : (tensor<4xf32>, tensor<1xi64>, tensor<1xi64>, tensor<1xi64>) -> tensor<*xf32>
++  func.return %3 : tensor<*xf32>
++}
++
++// -----
++
++// CHECK-LABEL: @refine_real_dynamic_slice_start_oob_using_slice
++func.func @refine_real_dynamic_slice_start_oob_using_slice(%arg0: tensor<4xf32>) -> tensor<*xf32> {
++  // CHECK: stablehlo.real_dynamic_slice{{.*}} -> tensor<4xf32>
++  %0 = stablehlo.constant dense<[-1]> : tensor<1xi64>
++  %1 = stablehlo.constant dense<[3]> : tensor<1xi64>
++  %2 = stablehlo.constant dense<[1]> : tensor<1xi64>
++  %3 = stablehlo.real_dynamic_slice %arg0, %0, %1, %2
++           : (tensor<4xf32>, tensor<1xi64>, tensor<1xi64>, tensor<1xi64>) -> tensor<*xf32>
++  func.return %3 : tensor<*xf32>
++}
++
++// -----
++
+ // CHECK-LABEL: @refine_reduce_scatter_cross_replica
+ func.func @refine_reduce_scatter_cross_replica(%data: tensor<4x16xf32>) -> tensor<4x?xf32> {
+   // CHECK: "stablehlo.reduce_scatter"{{.*}}
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
+--- stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
++++ stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
+@@ -290,6 +290,17 @@
+       return rewriter.notifyMatchFailure(op, "expected static limit");
+     if (!succeeded(hlo::matchInts(op.getStrides(), strides)))
+       return rewriter.notifyMatchFailure(op, "expected static strides");
++    auto rankedOperandType =
++        op.getOperand().getType().dyn_cast<mlir::RankedTensorType>();
++    // RealDynamicSliceOp clamps the start indices, while SliceOp requires
++    // start and limit to be within bounds.
++    for (auto i = 0; i < startIndices.size(); ++i) {
++      int64_t opDimSize = rankedOperandType.getDimSize(i);
++      int64_t limitMinusStart = limitIndices[i] - startIndices[i];
++      startIndices[i] = std::clamp(startIndices[i],
++                                   0L, opDimSize - limitMinusStart);
++      limitIndices[i] = startIndices[i] + limitMinusStart;
++    }
+     rewriter.replaceOpWithNewOp<SliceOp>(
+         op, op.getType(), op.getOperand(),
+         rewriter.getI64TensorAttr(startIndices),
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+--- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
++++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+@@ -869,6 +869,17 @@
+     if (succeeded(hlo::matchInts(op.getStartIndices(), startIndices)) &&
+         succeeded(hlo::matchInts(op.getLimitIndices(), limitIndices)) &&
+         succeeded(hlo::matchInts(op.getStrides(), strides))) {
++      auto rankedOperandType =
++          op.getOperand().getType().dyn_cast<mlir::RankedTensorType>();
++      // RealDynamicSliceOp clamps the start indices, while SliceOp requires
++      // start and limit to be within bounds.
++      for (auto i = 0; i < startIndices.size(); ++i) {
++        int64_t opDimSize = rankedOperandType.getDimSize(i);
++        int64_t limitMinusStart = limitIndices[i] - startIndices[i];
++        startIndices[i] = std::clamp(startIndices[i],
++                                    0L, opDimSize - limitMinusStart);
++        limitIndices[i] = startIndices[i] + limitMinusStart;
++      }
+       SmallVector<Type> inferredReturnTypes;
+       if (failed(hlo::inferSliceOp(/*location=*/{}, op.getOperand().getType(),
+                                    rewriter.getI64TensorAttr(startIndices),
 
