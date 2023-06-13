@@ -895,3 +895,33 @@ xla_cc_test(
         "//xla/stream_executor:device_memory",
     ]),
 )
+
+xla_cc_test(
+    name = "gpu_fused_mha_test",
+    srcs = ["gpu_fused_mha_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        "//xla:array4d",
+        "//xla:literal",
+        "//xla:reference_util",
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:test_helpers",
+        "//xla:xla_data_proto_cc",
+        "//xla/client:local_client",
+        "//xla/client:xla_builder",
+        "//xla/client:xla_computation",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/tests:client_library_test_base",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:test_macros_header",
+        "//xla/tests:test_utils",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+    ],
+)
