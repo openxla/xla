@@ -113,67 +113,12 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "mlir_hlo_builder",
-    srcs = ["mlir_hlo_builder.cc"],
-    hdrs = ["mlir_hlo_builder.h"],
-    # This is going to be deleted, so prevent new usage.
-    visibility = [
-        "//tensorflow/compiler/mlir/tf2xla/transforms:__pkg__",
-    ],
-    deps = [
-        ":attribute_importer",
-        ":hlo_module_importer",
-        ":hlo_utils",
-        "//xla:comparison_util",
-        "//xla:shape_util",
-        "//xla:types",
-        "//xla:util",
-        "//xla/client:xla_builder",
-        "//xla/hlo/ir:hlo",
-        "//xla/mlir_hlo",
-        "//xla/service:shape_inference",
-        "//xla/service/llvm_ir:llvm_util",
-        "//xla/translate/mhlo_to_hlo:type_to_shape",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:statusor",
-    ],
-)
-
-cc_library(
     name = "location_importer",
     srcs = ["location_importer.cc"],
     hdrs = ["location_importer.h"],
     deps = [
         "//xla/hlo/ir:hlo",
         "@llvm-project//mlir:IR",
-    ],
-)
-
-xla_cc_test(
-    name = "mlir_hlo_builder_test",
-    srcs = ["mlir_hlo_builder_test.cc"],
-    tags = ["nomsan"],
-    deps = [
-        ":hlo_module_importer",
-        ":mlir_hlo_builder",
-        "//xla:shape_util",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/client:xla_computation",
-        "//xla/hlo/ir:hlo",
-        "//xla/mlir_hlo",
-        "//xla/service/llvm_ir:llvm_util",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
