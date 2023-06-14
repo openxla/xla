@@ -868,6 +868,9 @@ const HloInstruction& FindNonTrivialHero(const HloInstruction& instr) {
 }
 
 bool HasAnyTiledTransposeRoot(HloComputation* computation) {
+  if (computation->FusionInstruction()->IsCustomFusion()) {
+    return false;
+  }
   return absl::c_any_of(GetFusionRoots(computation),
                         [&](const HloInstruction* instr) {
                           return FindAnyTiledTranspose(*instr);
