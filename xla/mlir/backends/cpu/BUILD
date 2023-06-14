@@ -29,6 +29,7 @@ xla_cc_binary(
         "//xla/mlir_hlo:thlo",
         "//xla/service/cpu:cpu_compiler",
         "@llvm-project//mlir:BufferizationTransforms",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:LinalgDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",
