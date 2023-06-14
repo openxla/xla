@@ -221,7 +221,10 @@ cc_library(
     hdrs = ["target_util.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
+        "//xla:shape_util",
+        "//xla:status",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/strings",
