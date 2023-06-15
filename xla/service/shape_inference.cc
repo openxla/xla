@@ -2262,20 +2262,22 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
   if (operand_shapes.size() == 1) {
     TF_RETURN_IF_ERROR(ExpectArray(*(operand_shapes[0]),
                                    "operand of collective-permute-start"));
-    shapes = {operand_shapes[0], operand_shapes[0]};
+    shapes = {operand_shapes[0]};
   } else {
     TF_RET_CHECK(operand_shapes.size() == 4);
     shapes = {operand_shapes[0], operand_shapes[1]};
   }
   absl::c_transform(context_shapes, std::back_inserter(shapes),
                     [](const Shape& shape) { return &shape; });
-  return ShapeUtil::MakeTupleShapeWithPtrs(shapes);
+  return shapes.size() == 1 ? *shapes[0]
+                            : ShapeUtil::MakeTupleShapeWithPtrs(shapes);
 }
 
 /* static */ StatusOr<Shape> ShapeInference::InferCollectivePermuteDoneShape(
     const Shape& operand_shape) {
-  TF_RET_CHECK(operand_shape.IsTuple());
-  return ShapeUtil::GetTupleElementShape(operand_shape, 1);
+  return operand_shape.IsTuple()
+             ? ShapeUtil::GetTupleElementShape(operand_shape, 0)
+             : operand_shape;
 }
 
 /* static */ StatusOr<Shape> ShapeInference::InferReduceShape(

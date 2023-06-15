@@ -2100,7 +2100,25 @@ TEST_F(HloVerifierTestLayoutSensitive, CollectivePermuteStartAndDone) {
 
   ENTRY CollectivePermuteStartAndDone {
     p0 = f32[2,3]{1,0:S(1)} parameter(0)
-    collective-permute-start.1 = (f32[2,3]{1,0:S(1)}, f32[2,3]{1,0:S(1)}, u32[], u32[]) collective-permute-start(p0), source_target_pairs={{0,1},{1,0}}, channel_id=1
+    collective-permute-start.1 = (f32[2,3]{1,0:S(1)}, u32[], u32[]) collective-permute-start(p0), source_target_pairs={{0,1},{1,0}}, channel_id=1
+    ROOT collective-permute-done.1 = f32[2,3]{1,0:S(1)} collective-permute-done(collective-permute-start.1)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(kModuleStr));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_TRUE(status.ok());
+}
+
+TEST_F(HloVerifierTestLayoutSensitive,
+       CollectivePermuteStartAndDoneNoContextData) {
+  const char* const kModuleStr = R"(
+  HloModule Module
+
+  ENTRY CollectivePermuteStartAndDone {
+    p0 = f32[2,3]{1,0:S(1)} parameter(0)
+    collective-permute-start.1 = f32[2,3]{1,0:S(1)} collective-permute-start(p0), source_target_pairs={{0,1},{1,0}}, channel_id=1
     ROOT collective-permute-done.1 = f32[2,3]{1,0:S(1)} collective-permute-done(collective-permute-start.1)
   }
   )";
@@ -2117,8 +2135,8 @@ TEST_F(HloVerifierTest, CollectivePermuteStartAndDoneWrongType) {
 
   ENTRY CollectivePermuteStartAndDoneWrongType {
     p0 = f32[2,3]{1,0:S(1)} parameter(0)
-    collective-permute-start.1 = f32[2,3]{1,0:S(1)} collective-permute-start(p0), source_target_pairs={{0,1},{1,0}}, channel_id=1
-    ROOT collective-permute-done.1 = f32[2,3]{1,0:S(1)} collective-permute-done(collective-permute-start.1)
+    collective-permute-start.1 = f64[2,3]{1,0:S(1)} collective-permute-start(p0), source_target_pairs={{0,1},{1,0}}, channel_id=1
+    ROOT collective-permute-done.1 = f64[2,3]{1,0:S(1)} collective-permute-done(collective-permute-start.1)
   }
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
@@ -2128,7 +2146,7 @@ TEST_F(HloVerifierTest, CollectivePermuteStartAndDoneWrongType) {
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
               HasSubstr("Expected instruction to have shape equal to "
-                        "(f32[2,3], f32[2,3])"));
+                        "f32[2,3]"));
 }
 
 TEST_F(HloVerifierTest, CollectivePermuteStartAndMultipleDone) {
