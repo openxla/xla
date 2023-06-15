@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_FUSED_MHA_THUNK_H_
 #define XLA_SERVICE_GPU_FUSED_MHA_THUNK_H_
 
+#include <memory>
 #include <optional>
 
 #include "absl/container/flat_hash_map.h"

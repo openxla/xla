@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_fused_mha_runner.h"
 
+#include <optional>
+#include <string>
+
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/layout_util.h"
