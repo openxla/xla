@@ -1215,8 +1215,6 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:padding",
         "//xla/client:xla_builder",
-        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
-        "@tsl//tsl/platform:tensor_float_32_utils",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -2770,8 +2768,6 @@ xla_test(
         "//xla/client/lib:arithmetic",
         "//xla/client/lib:matrix",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:tensor_float_32_hdr_lib",
-        "@tsl//tsl/platform:tensor_float_32_utils",
     ],
 )
 
