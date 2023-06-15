@@ -359,7 +359,7 @@ class PjRtCApiExecutable : public PjRtExecutable {
 
  private:
   const PJRT_Api* c_api_;
-  std::unique_ptr<PJRT_Executable, pjrt::PJRT_ExecutableDeleter> executable_;
+  std::unique_ptr<PJRT_Executable, ::pjrt::PJRT_ExecutableDeleter> executable_;
 };
 
 class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
@@ -472,7 +472,7 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
       std::optional<PjRtFuture<Status>>& returned_future, bool fill_future);
 
   PjRtCApiClient* client_;
-  std::unique_ptr<PJRT_LoadedExecutable, pjrt::PJRT_LoadedExecutableDeleter>
+  std::unique_ptr<PJRT_LoadedExecutable, ::pjrt::PJRT_LoadedExecutableDeleter>
       loaded_executable_;
   std::unique_ptr<PjRtCApiExecutable> executable_;
   std::vector<PjRtDevice*> addressable_devices_;

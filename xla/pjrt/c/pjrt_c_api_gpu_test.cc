@@ -17,12 +17,16 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_test.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/pjrt_client.h"
 
 namespace xla {
 namespace pjrt {
 namespace {
+
+const bool kUnused =
+    (RegisterTestCApiFactory([]() { return GetPjrtApi(); }), true);
 
 class PjrtCApiGpuTest : public ::testing::Test {
  protected:
