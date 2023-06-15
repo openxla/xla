@@ -253,8 +253,8 @@ cc_library(
     deps = [
         "//xla:status_macros",
         "//xla:util",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
-        "@python//:python_headers",  # buildcleaner: keep
     ],
 )
 
@@ -420,8 +420,8 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@dlpack",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
-        "@python//:python_headers",  # buildcleaner: keep
     ],
 )
 
@@ -459,8 +459,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@local_config_python//:python_headers",  # build_cleaner: keep
         "@pybind11",
-        "@python//:python_headers",  # build_cleaner: keep
         "@tsl//tsl/platform:status",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -1051,8 +1051,8 @@ tsl_pybind_extension(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
-        "@python//:python_headers",  # buildcleaner: keep
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/python/lib/core:numpy",

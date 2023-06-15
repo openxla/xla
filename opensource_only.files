@@ -147,7 +147,6 @@ tools/toolchains/cpus/py/BUILD:
 tools/toolchains/cpus/py3/BUILD:
 tools/toolchains/embedded/arm-linux/BUILD:
 tools/toolchains/java/BUILD:
-tools/toolchains/python/BUILD:
 tools/toolchains/remote/BUILD:
 tools/toolchains/remote_config/BUILD:
 tools/toolchains/win/BUILD:

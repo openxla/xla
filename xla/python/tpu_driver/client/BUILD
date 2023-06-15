@@ -68,8 +68,8 @@ tsl_pybind_extension(
         "//xla/service:computation_placer",
         "//xla/service:hlo_graph_dumper",
         "@llvm-project//mlir:IR",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
-        "@python//:python_headers",  # buildcleaner: keep
         "@tsl//tsl/python/lib/core:bfloat16_lib",
     ],
 )

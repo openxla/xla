@@ -42,7 +42,7 @@ cc_library(
         "//tsl/platform:types",
         "//tsl/python/lib/core:numpy",
         "@eigen_archive//:eigen3",
-        "@python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -65,12 +65,6 @@ cc_shared_library(
         "//third_party/" + "eigen3:__subpackages__",
         "@local_config_python//:__subpackages__",
         "@nsync//:__subpackages__",
-        "@python_x86_64-unknown-linux-gnu//:__subpackages__",
-        "@python_x86_64-pc-windows-msvc//:__subpackages__",
-        "@python_x86_64-apple-darwin//:__subpackages__",
-        "@python_aarch64-unknown-linux-gnu//:__subpackages__",
-        "@python_aarch64-apple-darwin//:__subpackages__",
-        "@pypi_numpy//:__subpackages__",
     ],
 )
 
@@ -81,17 +75,11 @@ tsl_pybind_extension(
     static_deps = [
         "@pybind11//:__subpackages__",
         "@local_config_python//:__subpackages__",
-        "@python_x86_64-unknown-linux-gnu//:__subpackages__",
-        "@python_x86_64-pc-windows-msvc//:__subpackages__",
-        "@python_x86_64-apple-darwin//:__subpackages__",
-        "@python_aarch64-unknown-linux-gnu//:__subpackages__",
-        "@python_aarch64-apple-darwin//:__subpackages__",
-        "@pypi_numpy//:__subpackages__",
     ],
     deps = [
         ":bfloat16_lib",
+        "@local_config_python//:python_headers",
         "@pybind11",
-        "@python//:python_headers",
     ],
 )
 
@@ -105,7 +93,7 @@ cc_library(
         "//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
-        "@python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -115,7 +103,7 @@ cc_library(
         "float8.h",
     ],
     deps = [
-        "@python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -133,7 +121,7 @@ cc_library(
         "//tsl/platform:float8",
         "//tsl/platform:types",
         "@eigen_archive//:eigen3",
-        "@python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -146,7 +134,7 @@ cc_library(
         ":float8_lib",
         "//tsl/platform:types",
         "//tsl/python/lib/core:numpy",
-        "@python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
+        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
     ],
 )
 
@@ -162,8 +150,8 @@ cc_library(
     srcs = ["numpy.cc"],
     hdrs = ["numpy.h"],
     deps = [
-        "@pypi_numpy//:numpy_headers",
-        "@python//:python_headers",
+        "@local_config_python//:numpy_headers",
+        "@local_config_python//:python_headers",
     ],
 )
 
