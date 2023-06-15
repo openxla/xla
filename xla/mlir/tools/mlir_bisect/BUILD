@@ -36,6 +36,7 @@ xla_cc_binary(
         "//xla/service:hlo_proto_cc",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AllPassesAndDialects",
+        "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MlirReduceLib",
         "@llvm-project//mlir:Pass",

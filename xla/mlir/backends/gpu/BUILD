@@ -23,6 +23,7 @@ xla_cc_binary(
         "//xla/mlir_hlo:lhlo_gpu",
         "//xla/stream_executor:stream_executor_impl",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",
