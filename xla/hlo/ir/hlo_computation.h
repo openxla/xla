@@ -646,6 +646,19 @@ class HloComputation {
     is_custom_call_computation_ |= (custom_call_instruction != nullptr);
   }
 
+  // Returns if this computation is either the body or the condition computation
+  // of a while instruction.
+  bool IsWhileComputation() const { return is_while_computation_; }
+
+  // Returns the owning while instruction, or nullptr if this is not a
+  // body nor condition of a while instruction.
+  HloInstruction* WhileInstruction() const { return while_instruction_; }
+  void SetWhileInstruction(HloInstruction* while_instruction) {
+    CHECK(!IsFusionComputation() && !IsAsyncComputation());
+    while_instruction_ = while_instruction;
+    is_while_computation_ |= (while_instruction != nullptr);
+  }
+
   // Returns if this computation is an async computation.
   bool IsAsyncComputation() const { return !async_instructions_.empty(); }
 
@@ -792,6 +805,15 @@ class HloComputation {
 
   // Determines whether this computation is a custom-call computation.
   bool is_custom_call_computation_;
+
+  // If this computation is body or condition computation of a while
+  // instruction, this field points to the corresponding while instruction (if
+  // it is live). Otherwise, this is null.
+  HloInstruction* while_instruction_;
+
+  // Determines whether this computation belongs to a while computation, i.e the
+  // body or the condition computation.
+  bool is_while_computation_;
 
   // If this computation is an async computation, this field points to the
   // corresponding async instructions (if live) that call this computation.

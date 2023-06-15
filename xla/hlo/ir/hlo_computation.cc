@@ -110,6 +110,11 @@ HloComputation::~HloComputation() {
     fusion_instruction_->ClearCalledComputations();
     fusion_instruction_ = nullptr;
   }
+  if (while_instruction_ != nullptr) {
+    CHECK(IsWhileComputation());
+    while_instruction_->ClearCalledComputations();
+    while_instruction_ = nullptr;
+  }
   if (IsAsyncComputation()) {
     for (auto* async_instr : async_instructions_) {
       CHECK(async_instr->async_wrapped_computation() == this);
