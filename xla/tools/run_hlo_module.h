@@ -46,6 +46,7 @@ struct RunHloModuleOptions {
   std::string input_module;
   int iterations{1};
   std::string output_literals_file;
+  bool output_on_forge{false};
   std::string input_literals_file;
   bool random_init_input_literals{true};
   bool force_fake_data{false};
