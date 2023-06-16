@@ -102,6 +102,14 @@ class TfrtCpuDevice final : public PjRtDevice {
 
   PjRtClient* client() const override { return client_; }
 
+  absl::Span<PjRtMemorySpace* const> memory_spaces() const override {
+    return memory_spaces_;
+  }
+
+  UnpinnedHostMemorySpace* host_memory_space() const;
+
+  void AttachMemorySpace(PjRtMemorySpace* memory_space);
+
   bool IsAddressable() const override {
     return process_index() == client()->process_index();
   }
@@ -126,6 +134,7 @@ class TfrtCpuDevice final : public PjRtDevice {
  private:
   PjRtClient* client_ = nullptr;
   TfrtCpuDeviceDescription description_;
+  std::vector<PjRtMemorySpace*> memory_spaces_;
 
   // TODO(zhangqiaorjc): Optimize semaphore related overhead.
   // Semaphore used to limit how many programs can be enqueued by the host
@@ -158,6 +167,10 @@ class TfrtCpuClient final : public PjRtClient {
 
   StatusOr<PjRtDevice*> LookupAddressableDevice(
       int local_hardware_id) const override;
+
+  absl::Span<PjRtMemorySpace* const> memory_spaces() const override {
+    return memory_spaces_;
+  }
 
   PjRtPlatformId platform_id() const override {
     return tsl::Fingerprint64(CpuName());
@@ -204,8 +217,18 @@ class TfrtCpuClient final : public PjRtClient {
       std::function<void()> on_done_with_host_buffer,
       PjRtDevice* device) override;
 
+  StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
+      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+      std::optional<absl::Span<int64_t const>> byte_strides,
+      HostBufferSemantics host_buffer_semantics,
+      std::function<void()> on_done_with_host_buffer,
+      PjRtMemorySpace* memory_space, const Layout* device_layout) override;
+
   StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
       const LiteralSlice& literal, PjRtDevice* device) override;
+
+  StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
+      const LiteralSlice& literal, PjRtMemorySpace* memory_space) override;
 
   StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
@@ -273,6 +296,11 @@ class TfrtCpuClient final : public PjRtClient {
   absl::flat_hash_map<int, TfrtCpuDevice*> id_to_device_;
   // Addressable devices indexed by core_id.
   std::vector<PjRtDevice*> addressable_devices_;
+  // Includes all addressable host memory spaces.
+  std::vector<std::unique_ptr<UnpinnedHostMemorySpace>>
+      host_memory_spaces_storage_;
+  // Pointers to all addressable memory spaces.
+  std::vector<PjRtMemorySpace*> memory_spaces_;
   std::unique_ptr<ComputationPlacer> computation_placer_;
 
   // Thread pool for running PjRtClient tasks.
@@ -309,15 +337,18 @@ class TfrtCpuBuffer final : public AbstractTfrtCpuBuffer {
   TfrtCpuBuffer(
       Shape on_device_shape,
       std::unique_ptr<TrackedTfrtCpuDeviceBuffer> tracked_device_buffer,
-      TfrtCpuClient* client, TfrtCpuDevice* device);
+      UnpinnedHostMemorySpace* memory_space);
 
   TfrtCpuBuffer(const TfrtCpuBuffer&) = delete;
   TfrtCpuBuffer(TfrtCpuBuffer&&) = delete;
   TfrtCpuBuffer& operator=(const TfrtCpuBuffer&) = delete;
   TfrtCpuBuffer& operator=(TfrtCpuBuffer&&) = delete;
 
-  TfrtCpuDevice* device() const override { return device_; }
-  TfrtCpuClient* client() const override { return client_; }
+  ABSL_DEPRECATED(
+      "TfrtCpuBuffer is bound to UnpinnedHostMemorySpace, use memory_space() "
+      "instead when possible.")
+  TfrtCpuDevice* device() const override;
+  TfrtCpuClient* client() const override;
 
   using PjRtBuffer::ToLiteralSync;
   PjRtFuture<Status> ToLiteral(MutableLiteralBase* literal) override;
@@ -327,9 +358,6 @@ class TfrtCpuBuffer final : public AbstractTfrtCpuBuffer {
 
  private:
   absl::string_view buffer_name() const override { return "TfrtCpuBuffer"; }
-
-  TfrtCpuClient* client_;
-  TfrtCpuDevice* const device_;
 };
 
 class TfrtCpuExecutable final : public PjRtLoadedExecutable {

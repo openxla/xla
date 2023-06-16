@@ -115,8 +115,13 @@ class AbstractTfrtCpuBuffer : public PjRtBuffer {
  public:
   AbstractTfrtCpuBuffer(
       Shape on_device_shape,
-      std::unique_ptr<TrackedTfrtCpuDeviceBuffer> tracked_device_buffer);
+      std::unique_ptr<TrackedTfrtCpuDeviceBuffer> tracked_device_buffer,
+      UnpinnedHostMemorySpace* memory_space);
   ~AbstractTfrtCpuBuffer() override;
+
+  UnpinnedHostMemorySpace* memory_space() const override {
+    return memory_space_;
+  }
 
   const Shape& on_device_shape() const override { return on_device_shape_; }
 
@@ -310,6 +315,7 @@ class AbstractTfrtCpuBuffer : public PjRtBuffer {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   const Shape on_device_shape_;
+  UnpinnedHostMemorySpace* const memory_space_;
 
   mutable absl::Mutex mu_;
   std::unique_ptr<TrackedTfrtCpuDeviceBuffer> tracked_device_buffer_

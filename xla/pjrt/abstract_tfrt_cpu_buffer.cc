@@ -105,8 +105,10 @@ UnpinnedHostMemorySpace::UnpinnedHostMemorySpace(int id, PjRtClient* client)
 
 AbstractTfrtCpuBuffer::AbstractTfrtCpuBuffer(
     Shape on_device_shape,
-    std::unique_ptr<TrackedTfrtCpuDeviceBuffer> tracked_device_buffer)
+    std::unique_ptr<TrackedTfrtCpuDeviceBuffer> tracked_device_buffer,
+    UnpinnedHostMemorySpace* memory_space)
     : on_device_shape_(std::move(on_device_shape)),
+      memory_space_(memory_space),
       tracked_device_buffer_(std::move(tracked_device_buffer)) {}
 
 AbstractTfrtCpuBuffer::~AbstractTfrtCpuBuffer() {
