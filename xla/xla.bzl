@@ -2,7 +2,6 @@
 
 load(
     "@tsl//tsl:tsl.bzl",
-    "if_tsl_link_protobuf",
     "tsl_copts",
     _tsl_clean_dep = "clean_dep",
 )
@@ -84,33 +83,30 @@ def xla_cc_test(
     native.cc_test(
         name = name,
         copts = extra_copts,
-        deps = deps + if_tsl_link_protobuf(
-                   [],
-                   [
-                       _tsl_clean_dep("@com_google_protobuf//:protobuf"),
-                       # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
-                       clean_dep("//xla:xla_proto_cc_impl"),
-                       clean_dep("//xla:xla_data_proto_cc_impl"),
-                       clean_dep("//xla/service:hlo_proto_cc_impl"),
-                       clean_dep("//xla/service:memory_space_assignment_proto_cc_impl"),
-                       clean_dep("//xla/service/gpu:backend_configs_cc_impl"),
-                       clean_dep("//xla/stream_executor:dnn_proto_cc_impl"),
-                       clean_dep("//xla/stream_executor:stream_executor_impl"),
-                       clean_dep("//xla/stream_executor:device_id_utils"),
-                       clean_dep("//xla/stream_executor/gpu:gpu_cudamallocasync_allocator"),
-                       clean_dep("//xla/stream_executor/gpu:gpu_init_impl"),
-                       clean_dep("@tsl//tsl/profiler/utils:time_utils_impl"),
-                       clean_dep("@tsl//tsl/profiler/backends/cpu:annotation_stack_impl"),
-                       clean_dep("@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl"),
-                       clean_dep("@tsl//tsl/protobuf:autotuning_proto_cc_impl"),
-                       clean_dep("@tsl//tsl/protobuf:dnn_proto_cc_impl"),
-                       clean_dep("@tsl//tsl/protobuf:protos_all_cc_impl"),
-                       clean_dep("@tsl//tsl/platform:env_impl"),
-                       clean_dep("@tsl//tsl/framework:allocator"),
-                       clean_dep("@tsl//tsl/framework:allocator_registry_impl"),
-                       clean_dep("@tsl//tsl/util:determinism"),
-                   ],
-               ) +
+        deps = deps + [
+                   _tsl_clean_dep("@com_google_protobuf//:protobuf"),
+                   # TODO(zacmustin): remove these in favor of more granular dependencies in each test.
+                   clean_dep("//xla:xla_proto_cc_impl"),
+                   clean_dep("//xla:xla_data_proto_cc_impl"),
+                   clean_dep("//xla/service:hlo_proto_cc_impl"),
+                   clean_dep("//xla/service:memory_space_assignment_proto_cc_impl"),
+                   clean_dep("//xla/service/gpu:backend_configs_cc_impl"),
+                   clean_dep("//xla/stream_executor:dnn_proto_cc_impl"),
+                   clean_dep("//xla/stream_executor:stream_executor_impl"),
+                   clean_dep("//xla/stream_executor:device_id_utils"),
+                   clean_dep("//xla/stream_executor/gpu:gpu_cudamallocasync_allocator"),
+                   clean_dep("//xla/stream_executor/gpu:gpu_init_impl"),
+                   clean_dep("@tsl//tsl/profiler/utils:time_utils_impl"),
+                   clean_dep("@tsl//tsl/profiler/backends/cpu:annotation_stack_impl"),
+                   clean_dep("@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl"),
+                   clean_dep("@tsl//tsl/protobuf:autotuning_proto_cc_impl"),
+                   clean_dep("@tsl//tsl/protobuf:dnn_proto_cc_impl"),
+                   clean_dep("@tsl//tsl/protobuf:protos_all_cc_impl"),
+                   clean_dep("@tsl//tsl/platform:env_impl"),
+                   clean_dep("@tsl//tsl/framework:allocator"),
+                   clean_dep("@tsl//tsl/framework:allocator_registry_impl"),
+                   clean_dep("@tsl//tsl/util:determinism"),
+               ] +
                if_cuda_is_configured([
                    clean_dep("//xla/stream_executor/cuda:cuda_stream"),
                    clean_dep("//xla/stream_executor/cuda:all_runtime"),
