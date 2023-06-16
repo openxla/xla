@@ -34,6 +34,7 @@ package(
     default_visibility = set_external_visibility([
         "//tensorflow/compiler/tf2xla:__subpackages__",
         "//xla:__subpackages__",
+        "//tensorflow/core/kernels:__subpackages__",
         "//xla/pjrt:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
@@ -252,7 +253,11 @@ cc_library(
         ":gpu_stream",
         "//xla/stream_executor:stream_executor_headers",
         "@tsl//tsl/platform:status",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_driver",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor/rocm:rocm_driver",
+    ]),
 )
 
 cc_library(

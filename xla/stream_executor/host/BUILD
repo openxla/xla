@@ -71,21 +71,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "host_timer",
-    srcs = [
-        "host_timer.cc",
-    ],
-    hdrs = [
-        "host_timer.h",
-    ],
-    deps = [
-        "//xla/stream_executor:stream_executor_internal",
-        "//xla/stream_executor:timer",
-        "//xla/stream_executor/platform",
-    ],
-)
-
 # TODO(22689637): Rename this target.
 cc_library(
     name = "host_gpu_executor",
@@ -98,7 +83,6 @@ cc_library(
     deps = [
         ":host_platform_id",
         ":host_stream",
-        ":host_timer",
         "//xla/stream_executor",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:rng",

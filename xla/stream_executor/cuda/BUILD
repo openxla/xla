@@ -279,7 +279,6 @@ cc_library(
         ":cuda_helpers",
         ":cuda_platform_id",
         ":cuda_stream",
-        ":cuda_timer",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -295,7 +294,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/gpu:gpu_helpers_header",
         "//xla/stream_executor/gpu:gpu_stream_header",
-        "//xla/stream_executor/gpu:gpu_timer_header",
+        "//xla/stream_executor/gpu:gpu_timer",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
@@ -388,7 +387,6 @@ cc_library(
         ":cuda_gpu_executor",
         ":cuda_platform_id",
         ":cuda_stream",
-        ":cuda_timer",
         ":cudnn_lib",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
@@ -542,19 +540,6 @@ cc_library(
 )
 
 cc_library(
-    name = "cuda_timer",
-    srcs = [],
-    hdrs = if_cuda_is_configured(["cuda_timer.h"]),
-    deps = if_cuda_is_configured([
-        ":cuda_driver",
-        ":cuda_gpu_executor_header",
-        ":cuda_stream",
-        "//xla/stream_executor:stream_executor_headers",
-        "//xla/stream_executor/gpu:gpu_timer",
-    ]),
-)
-
-cc_library(
     name = "cuda_asm_compiler",
     srcs = if_cuda_is_configured(["cuda_asm_compiler.cc"]),
     copts = tf_additional_gpu_compilation_copts(),
@@ -581,14 +566,13 @@ cc_library(
         ":cuda_kernel",
         ":cuda_platform_id",
         ":cuda_stream",
-        ":cuda_timer",
         ":cuda_asm_compiler",
+        "//xla/stream_executor/gpu:gpu_timer",
         "@com_google_absl//absl/strings",
         "//xla/stream_executor:event",
         "//xla/stream_executor:plugin_registry",
         "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor:stream_executor_pimpl_header",
-        "//xla/stream_executor:timer",
         "//xla/stream_executor/gpu:asm_compiler",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/platform",

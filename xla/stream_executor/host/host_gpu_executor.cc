@@ -30,7 +30,6 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/stream_executor/host/host_stream.h"
-#include "xla/stream_executor/host/host_timer.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "tsl/platform/mem.h"
@@ -255,16 +254,6 @@ Event::Status HostExecutor::PollForEventStatus(Event* event) {
   absl::Notification& notification = *AsHostEvent(event)->notification();
   return notification.HasBeenNotified() ? Event::Status::kComplete
                                         : Event::Status::kPending;
-}
-
-bool HostExecutor::StartTimer(Stream* stream, Timer* timer) {
-  dynamic_cast<HostTimer*>(timer->implementation())->Start(stream);
-  return true;
-}
-
-bool HostExecutor::StopTimer(Stream* stream, Timer* timer) {
-  dynamic_cast<HostTimer*>(timer->implementation())->Stop(stream);
-  return true;
 }
 
 tsl::Status HostExecutor::BlockHostUntilDone(Stream* stream) {
