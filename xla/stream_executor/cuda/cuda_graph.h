@@ -85,9 +85,6 @@ tsl::StatusOr<OwnedCudaGraph> CaptureCudaGraph(
 // Instantiates a captured cuda graph instance into a cuda graph executable.
 tsl::StatusOr<OwnedCudaGraphExec> InstantiateCudaGraph(OwnedCudaGraph graph);
 
-// Returns true if the stream is in graph capture mode
-tsl::StatusOr<bool> IsStreamCapturing(stream_executor ::Stream* stream);
-
 }  // namespace gpu
 }  // namespace stream_executor
 

@@ -30,10 +30,6 @@ limitations under the License.
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/kernel.h"
 
-#if GOOGLE_CUDA
-#include "xla/stream_executor/cuda/cuda_graph.h"
-#endif  // #if GOOGLE_CUDA
-
 namespace xla {
 namespace gpu {
 
@@ -54,6 +50,9 @@ StreamExecutorKernels* GpuExecutableKernels::operator()(
 static absl::Status LaunchImpl(
     const ServiceExecutableRunOptions* run_options, const std::string* ptx,
     const std::vector<uint8_t>* cubin, se::DeviceMemoryBase* temp_buffer,
+#if GOOGLE_CUDA
+    CapturingCudaGraph* capturing_cuda_graph,
+#endif
     State<std::unique_ptr<se::KernelBase>> device_kernel,
     int32_t shared_memory_bytes, int32_t grid_size_x, int32_t grid_size_y,
     int32_t grid_size_z, int32_t block_size_x, int32_t block_size_y,
@@ -79,9 +78,7 @@ static absl::Status LaunchImpl(
   assert((**kernel)->name() == name && "unexpected loaded kernel");
 
 #if GOOGLE_CUDA
-  absl::StatusOr<bool> is_capturing = se::gpu::IsStreamCapturing(stream);
-  if (!is_capturing.ok()) return is_capturing.status();
-  if (is_capturing.value()) {
+  if (capturing_cuda_graph->capturing()) {
     VLOG(3) << "Launching " << (**kernel)->name()
             << "during CUDA graph capture";
   } else {
@@ -127,6 +124,9 @@ XLA_RUNTIME_DEFINE_CUSTOM_CALL(
         .UserData<const std::string*>()
         .UserData<const std::vector<uint8_t>*>()
         .UserData<se::DeviceMemoryBase*>()
+#if GOOGLE_CUDA
+        .UserData<CapturingCudaGraph*>()
+#endif
         .State<std::unique_ptr<se::KernelBase>>("uid")
         .Arg<int32_t>()   // shared_memory_bytes
         .Arg<int32_t>()   // grid_size_x

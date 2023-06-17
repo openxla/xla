@@ -279,11 +279,18 @@ static absl::Status LaunchGraph(
   // Compute the hash of the buffer arguments.
   size_t ptrs_hash = absl::HashOf(RemainingArgsPtrs{fwd_args, temp_buffer});
 
+  CapturingCudaGraph not_capturing(false);
+  CapturingCudaGraph capturing(true);
   // Forwards user data required for launching kernels.
-  auto user_data = [&] {
+  auto user_data_no_capture = [&] {
     return CustomCall::UserData(run_options, debug_options, ptx, cubin,
                                 temp_buffer, kernels, convs, executable,
-                                gemm_config, gpu_lock);
+                                gemm_config, gpu_lock, &not_capturing);
+  };
+  auto user_data_capture = [&] {
+    return CustomCall::UserData(run_options, debug_options, ptx, cubin,
+                                temp_buffer, kernels, convs, executable,
+                                gemm_config, gpu_lock, &capturing);
   };
 
   absl::StatusOr<std::unique_ptr<std::atomic<uint64_t>>*> get_count =
@@ -298,15 +305,16 @@ static absl::Status LaunchGraph(
       debug_options->xla_gpu_cuda_graph_instantiation_threshold();
   if (count < instantiation_threshold) {
     // Run captured graph directly.
-    absl::Status result = RunGraphWithoutCapture(run_options, function_ref,
-                                                 fwd_args, user_data());
+    absl::Status result = RunGraphWithoutCapture(
+        run_options, function_ref, fwd_args, user_data_no_capture());
     if (!result.ok()) return result;
     return absl::OkStatus();
   }
 
   absl::StatusOr<GraphInstance*> instance = instances->GetOrCreate(
       capture.ordinal, [&]() -> absl::StatusOr<GraphInstance> {
-        auto g = CaptureGraph(run_options, function_ref, fwd_args, user_data());
+        auto g = CaptureGraph(run_options, function_ref, fwd_args,
+                              user_data_capture());
         if (!g.ok()) return g.status();
 
         auto e = se::gpu::InstantiateCudaGraph(std::move(*g));
@@ -330,7 +338,8 @@ static absl::Status LaunchGraph(
   VLOG(3) << "Update cached graph instance";
 
   // Capture CUDA graph by running capture function.
-  auto g = CaptureGraph(run_options, function_ref, fwd_args, user_data());
+  auto g =
+      CaptureGraph(run_options, function_ref, fwd_args, user_data_capture());
   if (!g.ok()) return g.status();
 
   // Update captured graph executable.

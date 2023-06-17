@@ -375,9 +375,7 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/synchronization",
-    ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_graph",
-    ]),
+    ],
 )
 
 cc_library(
