@@ -18,12 +18,7 @@ limitations under the License.
 
 #include <stdint.h>
 
-// _Float16 always gets us the correct ABI type, so use that if available.
-// AArch64 GCC defines __FLT16_MANT_DIG__ even when _Float16 is not available.
-#if defined(__FLT16_MANT_DIG__) && \
-    (defined(__clang__) || !(defined(__GNUC__) && defined(__aarch64__)))
-using XlaF16ABIType = _Float16;
-#elif defined(__x86_64__)
+#if defined(__x86_64__)
 // Older versions of Clang don't have _Float16. Since both float and _Float16
 // are passed in the same register we can use the wider type and careful casting
 // to conform to x86_64 psABI. This only works with the assumption that we're
