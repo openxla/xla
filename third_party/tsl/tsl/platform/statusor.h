@@ -68,15 +68,15 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_STATUSOR_H_
 #define TENSORFLOW_TSL_PLATFORM_STATUSOR_H_
 
-#include "absl/base/attributes.h"
 #include "absl/status/statusor.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/macros.h"
 #include "tsl/platform/status.h"
 
 namespace tsl {
 
 using absl::StatusOr;
+
+}  // namespace tsl
 
 #define TF_ASSERT_OK_AND_ASSIGN(lhs, rexpr)                             \
   TF_ASSERT_OK_AND_ASSIGN_IMPL(                                         \
@@ -101,7 +101,5 @@ using absl::StatusOr;
     return statusor.status();                          \
   }                                                    \
   lhs = std::move(statusor).value()
-
-}  // namespace tsl
 
 #endif  // TENSORFLOW_TSL_PLATFORM_STATUSOR_H_
