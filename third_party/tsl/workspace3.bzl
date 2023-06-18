@@ -37,7 +37,7 @@ def workspace():
     )
 
     # Maven dependencies.
-    RULES_JVM_EXTERNAL_TAG = "4.3" // TODO (modify in grpc_version.diff)
+    RULES_JVM_EXTERNAL_TAG = "4.3"
     http_archive(
         name = "rules_jvm_external",
         strip_prefix = "rules_jvm_external-%s" % RULES_JVM_EXTERNAL_TAG,
