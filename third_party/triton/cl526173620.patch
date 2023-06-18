@@ -79,3 +79,82 @@
        rewriter.replaceOpWithNewOp<arith::ConstantOp>(op, newRet);
        return mlir::success();
      }
+
+diff --git a/BUILD b/BUILD
+index b6b2357..18be1fc 100644
+--- a/BUILD
++++ b/BUILD
+@@ -277,6 +277,7 @@ cc_library(
+     srcs = glob(["lib/Dialect/Triton/IR/*.cpp"]),
+     hdrs = glob(["include/triton/Dialect/Triton/IR/*.h"]),
+     copts = ["-Wno-unused-variable"],  # TODO(manany): fix
++    linkopts = ["-lstdc++fs"],
+     includes = ["include"],
+     deps = [
+         ":triton_dialect_inc_gen",
+@@ -329,6 +330,7 @@ cc_library(
+         "include/triton/Dialect/TritonGPU/IR/*.h",
+     ]),
+     copts = ["-Wno-unused-variable"],  # TODO(csigg): fix
++    linkopts = ["-lstdc++fs"],
+     includes = ["include"],
+     deps = [
+         ":TritonDialect",
+@@ -357,6 +359,7 @@ cc_library(
+     ]),
+     hdrs = glob(["include/triton/Dialect/TritonGPU/Transforms/*.h"]),
+     copts = ["-Wno-unused-variable"],  # TODO(csigg): fix
++    linkopts = ["-lstdc++fs"],
+     includes = ["include"],
+     deps = [
+         ":TritonDialect",
+@@ -392,6 +395,7 @@ cc_library(
+         "include/triton/Conversion/TritonGPUToLLVM/*.h",
+     ]),
+     copts = ["-Wno-unused-variable"],  # TODO(csigg): fix
++    linkopts = ["-lstdc++fs"],
+     includes = [
+         "include",
+         "lib/Conversion/TritonGPUToLLVM",
+diff --git a/lib/Target/LLVMIR/LLVMIRTranslation.cpp b/lib/Target/LLVMIR/LLVMIRTranslation.cpp
+index a7ea05a..92bddc5 100644
+--- a/lib/Target/LLVMIR/LLVMIRTranslation.cpp
++++ b/lib/Target/LLVMIR/LLVMIRTranslation.cpp
+@@ -26,7 +26,7 @@
+ #include "llvm/Linker/Linker.h"
+ #include "llvm/Support/SourceMgr.h"
+ #include <dlfcn.h>
+-#include <filesystem>
++#include <experimental/filesystem>
+ #include <iterator>
+ 
+ namespace mlir {
+@@ -152,16 +152,16 @@ static std::map<std::string, std::string> getExternLibs(mlir::ModuleOp module) {
+       externLibs.try_emplace(libdevice, env_path);
+       return externLibs;
+     }
+-    namespace fs = std::filesystem;
++    namespace fs = std::experimental::filesystem;
+     // Search for libdevice relative to its library path if used from Python
+     // Then native code is in `triton/_C/libtriton.so` and libdevice in
+     // `triton/third_party/cuda/lib/libdevice.10.bc`
+     static const auto this_library_path = [] {
+       Dl_info fileinfo;
+       if (dladdr(reinterpret_cast<void *>(&getExternLibs), &fileinfo) == 0) {
+-        return std::filesystem::path();
++        return std::experimental::filesystem::path();
+       }
+-      return std::filesystem::path(fileinfo.dli_fname);
++      return std::experimental::filesystem::path(fileinfo.dli_fname);
+     }();
+     static const auto runtime_path =
+         this_library_path.parent_path().parent_path() / "third_party" / "cuda" /
+@@ -174,7 +174,7 @@ static std::map<std::string, std::string> getExternLibs(mlir::ModuleOp module) {
+       // using its default path:
+       // [triton root dir]/python/triton/language/libdevice.10.bc
+       // TODO(Keren): handle external linkage other than libdevice?
+-      static const auto this_file_path = std::filesystem::path(__FILE__);
++      static const auto this_file_path = std::experimental::filesystem::path(__FILE__);
+       static const auto compiletime_path = this_file_path.parent_path()
+                                                .parent_path()
+                                                .parent_path()

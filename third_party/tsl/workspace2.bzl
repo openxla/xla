@@ -296,14 +296,14 @@ def _tf_repositories():
     tf_http_archive(
         name = "com_google_protobuf",
         patch_file = ["//third_party/protobuf:protobuf.patch"],
-        sha256 = "f66073dee0bc159157b0bd7f502d7d1ee0bc76b3c1eac9836927511bdc4b3fc1",
-        strip_prefix = "protobuf-3.21.9",
+        sha256 = "cfcba2df10feec52a84208693937c17a4b5df7775e1635c1e3baffc487b24c9b",
+        strip_prefix = "protobuf-3.9.2",
         system_build_file = "//third_party/systemlibs:protobuf.BUILD",
         system_link_files = {
             "//third_party/systemlibs:protobuf.bzl": "protobuf.bzl",
             "//third_party/systemlibs:protobuf_deps.bzl": "protobuf_deps.bzl",
         },
-        urls = tf_mirror_urls("https://github.com/protocolbuffers/protobuf/archive/v3.21.9.zip"),
+        urls = tf_mirror_urls("https://github.com/protocolbuffers/protobuf/archive/v3.9.2.zip"),
     )
 
     tf_http_archive(
@@ -324,9 +324,9 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "com_google_fuzztest",
-        sha256 = "c75f224b34c3c62ee901381fb743f6326f7b91caae0ceb8fe62f3fd36f187627",
-        strip_prefix = "fuzztest-58b4e7065924f1a284952b84ea827ce35a87e4dc",
-        urls = tf_mirror_urls("https://github.com/google/fuzztest/archive/58b4e7065924f1a284952b84ea827ce35a87e4dc.zip"),
+        sha256 = "3fe79ede8e860ba7331987b2c1f84d3eeaf5bea00fd76398d6ff0006635586c6",
+        strip_prefix = "fuzztest-6d79ceb1dc2398e02a39efc23ce40d68baa16a42",
+        urls = tf_mirror_urls("https://github.com/google/fuzztest/archive/6d79ceb1dc2398e02a39efc23ce40d68baa16a42.zip"),
     )
 
     tf_http_archive(

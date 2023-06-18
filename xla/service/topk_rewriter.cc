@@ -155,8 +155,8 @@ static bool HasIota(HloSortInstruction* sort, HloInstruction* data) {
   auto match_iota = [](auto dims) {
     return m::Iota().WithShape(m::Shape().WithElementType(S32).WithDims(dims));
   };
-  return Match(sort->operand(1), match_iota(data->shape().dimensions())) ||
-         Match(sort->operand(1), m::Broadcast(match_iota(sort_dims)));
+  return Match(sort->operand(1), match_iota(absl::Span<const int64_t>(data->shape().dimensions().begin(), data->shape().dimensions().size()))) ||
+         Match(sort->operand(1), m::Broadcast(match_iota(absl::Span<const int64_t>(sort_dims.begin(), sort_dims.size()))));
 }
 
 std::optional<int64_t> TopkRewriter::SortIsInTopK(HloInstruction* inst) {

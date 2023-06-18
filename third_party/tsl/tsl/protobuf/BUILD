@@ -35,7 +35,6 @@ tf_proto_library(
 tf_proto_library(
     name = "dnn_proto",
     srcs = ["dnn.proto"],
-    make_default_target_header_only = True,
 )
 
 tf_proto_library(
