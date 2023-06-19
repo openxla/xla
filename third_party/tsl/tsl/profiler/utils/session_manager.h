@@ -20,8 +20,8 @@ limitations under the License.
 #include <variant>
 
 #include "absl/container/flat_hash_map.h"
-#include "tensorflow/tsl/platform/status.h"
-#include "tensorflow/tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/platform/status.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
 
 namespace tsl {
 namespace profiler {

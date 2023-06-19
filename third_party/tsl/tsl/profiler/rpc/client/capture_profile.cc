@@ -38,7 +38,7 @@ limitations under the License.
 #include "tsl/profiler/rpc/client/profiler_client.h"
 #include "tsl/profiler/rpc/client/remote_profiler_session_manager.h"
 #include "tsl/profiler/rpc/client/save_profile.h"
-#include "tensorflow/tsl/profiler/utils/session_manager.h"
+#include "tsl/profiler/utils/session_manager.h"
 
 namespace tsl {
 namespace profiler {
