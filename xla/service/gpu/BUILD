@@ -3733,6 +3733,7 @@ cc_library(
     srcs = ["copy_fusion.cc"],
     hdrs = ["copy_fusion.h"],
     deps = [
+        ":ir_emission_utils",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
