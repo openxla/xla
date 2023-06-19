@@ -451,7 +451,7 @@ cc_library(
     hdrs = ["session_manager.h"],
     deps = [
         "//tsl/platform:errors",
-        "/tsl/platform:status",
+        "//tsl/platform:status",
         "//tsl/profiler/lib:profiler_session",
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
