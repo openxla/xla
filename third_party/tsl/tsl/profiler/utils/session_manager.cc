@@ -13,16 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/tsl/profiler/utils/session_manager.h"
+#include "tsl/profiler/utils/session_manager.h"
 
 #include <algorithm>
 #include <string>
 #include <variant>
 #include <vector>
 
-#include "tensorflow/tsl/platform/errors.h"
-#include "tensorflow/tsl/profiler/lib/profiler_session.h"
-#include "tensorflow/tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
 
 namespace tsl {
 namespace profiler {
