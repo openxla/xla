@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
-#include "xla/stream_executor/timer.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 
@@ -59,13 +58,6 @@ namespace gpu {
 static GpuEvent* AsGpuEvent(Event* event) {
   DCHECK(event != nullptr);
   return static_cast<GpuEvent*>(event->implementation());
-}
-
-// Given a platform-independent timer datatype, returns the internal ROCM
-// platform implementation pointer.
-static GpuTimer* AsGpuTimer(Timer* timer) {
-  DCHECK(timer != nullptr);
-  return static_cast<GpuTimer*>(timer->implementation());
 }
 
 // Given const GPU memory, returns a librocm device pointer datatype, suitable
