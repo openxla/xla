@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_TSL_PLATFORM_STATUSOR_INTERNALS_H_
-#define TENSORFLOW_TSL_PLATFORM_STATUSOR_INTERNALS_H_
+#ifndef TSL_PLATFORM_STATUSOR_INTERNALS_H_
+#define TSL_PLATFORM_STATUSOR_INTERNALS_H_
 
-#include "tensorflow/tsl/platform/macros.h"
-#include "tensorflow/tsl/platform/status.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
 
 namespace tsl {
 namespace internal_statusor {
@@ -250,4 +250,4 @@ struct TraitsBase<false, false> {
 }  // namespace internal_statusor
 }  // namespace tsl
 
-#endif  // TENSORFLOW_TSL_PLATFORM_STATUSOR_INTERNALS_H_
+#endif  // TSL_PLATFORM_STATUSOR_INTERNALS_H_
