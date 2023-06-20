@@ -2924,13 +2924,10 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
-        ":ir_emission_utils",
         ":matmul_utils",
         "//xla:comparison_util",
-        "//xla:literal_util",
         "//xla:permutation_util",
         "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
         "//xla/stream_executor:stream_executor_headers",
