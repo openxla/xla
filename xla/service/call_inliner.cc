@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/call_inliner.h"
 
 #include <deque>
+#include <memory>
 
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -145,6 +146,10 @@ StatusOr<bool> CallInliner::Run(
   bool did_mutate = false;
   TF_RETURN_IF_ERROR(call_graph->VisitNodes([&](const CallGraphNode& node)
                                                 -> Status {
+    if (!HloInstruction::IsThreadIncluded(
+            node.computation()->execution_thread(), execution_threads)) {
+      return OkStatus();
+    }
     VLOG(1) << "Visiting node: " << node.ToString();
     for (HloInstruction* instruction :
          node.computation()->MakeInstructionPostOrder()) {
