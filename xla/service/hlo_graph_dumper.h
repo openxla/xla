@@ -59,6 +59,8 @@ struct HloRenderOptions {
   bool show_fusion_subcomputations = true;
 };
 
+extern const char* kRenderDotJS;
+
 // Renders an HLO module as a human-readable visual graph.
 //
 // Note that this only works well for relatively small graphs (no more than a
