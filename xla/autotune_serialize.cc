@@ -21,10 +21,13 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "xla/autotune_results.pb.h"
-#include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/gpu_conv_algorithm_picker.h"
-#include "xla/service/gpu/triton_autotuner.h"
 #include "tsl/platform/env.h"
+
+#if GOOGLE_CUDA
+#include "xla/service/gpu/gemm_algorithm_picker.h"
+#include "xla/service/gpu/triton_autotuner.h"
+#endif  // GOOGLE_CUDA
 
 namespace xla {
 namespace {
@@ -59,8 +62,10 @@ Status LoadAutotuneResults(absl::string_view data, bool as_textproto) {
   }
 
   TF_RETURN_IF_ERROR(gpu::GpuConvAlgorithmPicker::LoadAutotuneResults(results));
+#if GOOGLE_CUDA
   TF_RETURN_IF_ERROR(gpu::GemmAlgorithmPicker::LoadAutotuneResults(results));
   TF_RETURN_IF_ERROR(gpu::TritonAutotuner::LoadAutotuneResults(results));
+#endif  // GOOGLE_CUDA
   return OkStatus();
 }
 
@@ -70,8 +75,10 @@ StatusOr<std::string> SerializeAutotuneResults(bool as_textproto) {
 
   TF_RETURN_IF_ERROR(
       gpu::GpuConvAlgorithmPicker::WriteAutotuneResults(&results));
+#if GOOGLE_CUDA
   TF_RETURN_IF_ERROR(gpu::GemmAlgorithmPicker::WriteAutotuneResults(&results));
   TF_RETURN_IF_ERROR(gpu::TritonAutotuner::WriteAutotuneResults(&results));
+#endif  // GOOGLE_CUDA
 
   if (as_textproto) {
     std::string textproto;

@@ -539,14 +539,13 @@ message DebugOptions {
 
   // File to write autotune results to. It will be a binary file unless the name
   // ends with .txt or .textproto. Warning: The results are written at every
-  // compilation, possibly multiple times per process. This only works on CUDA.
+  // compilation, possibly multiple times per process.
   string xla_gpu_dump_autotune_results_to = 222;
 
   // File to load autotune results from. It will be considered a binary file
   // unless the name ends with .txt or .textproto. At most one loading will
   // happen during the lifetime of one process, even if the first one is
-  // unsuccessful or different file paths are passed here. This only works on
-  // CUDA.
+  // unsuccessful or different file paths are passed here.
   string xla_gpu_load_autotune_results_from = 223;
 
   // Next id: 224

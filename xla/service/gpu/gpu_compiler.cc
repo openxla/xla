@@ -43,6 +43,7 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
+#include "xla/autotune_serialize.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -197,7 +198,6 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 
 #if GOOGLE_CUDA
-#include "xla/autotune_serialize.h"
 #include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/triton_autotuner.h"
 #elif TENSORFLOW_USE_ROCM
@@ -1035,7 +1035,6 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
-#if GOOGLE_CUDA
   const DebugOptions& debug_options = module->config().debug_options();
 
   // We are doing this before the timer is started.
@@ -1044,7 +1043,6 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
       !file_path.empty()) {
     TF_RETURN_IF_ERROR(LoadAutotuneResultsFromFileOnce(file_path));
   }
-#endif  // GOOGLE_CUDA
 
   // We dump the post-optimization HLO in RunBackend so no need to dump it here.
   XLA_SCOPED_LOGGING_TIMER(
@@ -1067,7 +1065,6 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   // out we have no way of telling how far through the process we got).
   RecordHloPassesDuration(end_usecs - start_usecs);
 
-#if GOOGLE_CUDA
   // We are doing this after the timer is finished.
   if (absl::string_view file_path =
           debug_options.xla_gpu_dump_autotune_results_to();
@@ -1076,7 +1073,6 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     // multiple times per process.
     TF_RETURN_IF_ERROR(SerializeAutotuneResultsToFile(file_path));
   }
-#endif  // GOOGLE_CUDA
 
   return std::move(module);
 }
