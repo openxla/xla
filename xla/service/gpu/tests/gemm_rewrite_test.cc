@@ -3533,6 +3533,11 @@ ENTRY test {
 }
 
 TEST_F(CublasLtGemmRewriteTest, ApproxGeluActivationBF16) {
+  if (!GetCudaComputeCapability().IsAtLeast(
+          se::CudaComputeCapability::AMPERE)) {
+    GTEST_SKIP() << "Padding of GEMM bf16 operands only implemented on "
+                    "architectures with bf16 Tensor Cores.";
+  }
   const char* hlo_text = R"(
 HloModule test
 
