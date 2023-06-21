@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_HLO_COST_ANALYSIS_H_
-#define XLA_SERVICE_HLO_COST_ANALYSIS_H_
+#ifndef XLA_HLO_UTILS_HLO_COST_ANALYSIS_H_
+#define XLA_HLO_UTILS_HLO_COST_ANALYSIS_H_
 
 #include <functional>
 #include <memory>
@@ -635,4 +635,4 @@ class HloCostAnalysis : public ConstDfsHloVisitor {
 
 }  // namespace xla
 
-#endif  // XLA_SERVICE_HLO_COST_ANALYSIS_H_
+#endif  // XLA_HLO_UTILS_HLO_COST_ANALYSIS_H_

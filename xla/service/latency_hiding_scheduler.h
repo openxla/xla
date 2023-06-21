@@ -27,8 +27,8 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/utils/hlo_cost_analysis.h"
 #include "xla/service/hlo_alias_analysis.h"
-#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/xla.pb.h"
 

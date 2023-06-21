@@ -18,8 +18,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/utils/hlo_cost_analysis.h"
 #include "xla/service/cpu/target_machine_features.h"
-#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_pass_interface.h"
 
 namespace xla {
