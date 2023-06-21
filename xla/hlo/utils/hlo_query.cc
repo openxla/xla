@@ -17,7 +17,9 @@ limitations under the License.
 
 #include <algorithm>
 
+#include "absl/algorithm/container.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
@@ -124,6 +126,11 @@ bool MatchBinaryInstructionOperandOpcode(HloOpcode opcode,
 
 bool IsScalarConstant(const HloInstruction* instruction) {
   return instruction->IsConstant() && ShapeUtil::IsScalar(instruction->shape());
+}
+
+bool IsBroadcastOfScalarConstant(const HloInstruction& instr) {
+  return instr.opcode() == HloOpcode::kBroadcast &&
+         IsScalarConstant(instr.operand(0));
 }
 
 HloInstruction* GetFirstInstructionWithOpcode(const HloComputation& computation,
