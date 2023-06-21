@@ -2761,3 +2761,15 @@ xla_test(
         "@tsl//tsl/platform:test_main",
     ],
 )
+
+xla_cc_test(
+    name = "tile_assignment_test",
+    srcs = ["tile_assignment_test.cc"],
+    deps = [
+        ":xla_internal_test_main",
+        "//xla:array3d",
+        "//xla:test",
+        "//xla/hlo/ir:tile_assignment",
+        "@com_google_absl//absl/hash",
+    ],
+)
