@@ -1141,9 +1141,30 @@ cc_library(
     deps = if_cuda_is_configured([
         ":autotune_results_proto_cc",
         ":statusor",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/strings",
         "//xla/service/gpu:gemm_algorithm_picker",
         "//xla/service/gpu:gpu_conv_algorithm_picker",
-    ]) + ["//xla/service/gpu:triton_autotuner"],
+        "//xla/service/gpu:triton_autotuner",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:protobuf",
+    ]),
+)
+
+xla_cc_test(
+    name = "autotune_serialize_test",
+    srcs = if_cuda_is_configured(["autotune_serialize_test.cc"]),
+    deps = if_cuda_is_configured([
+        ":autotune_results_proto_cc",
+        ":autotune_serialize",
+        "//testing/base/public:gunit",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/log:scoped_mock_log",
+        "@com_google_absl//absl/strings",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:protobuf",
+    ]) + ["//xla/tests:xla_internal_test_main"],
 )
 
 cc_library(

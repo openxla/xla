@@ -2371,6 +2371,7 @@ cc_library(
     ] + if_cuda_is_configured([
         ":gemm_algorithm_picker",
         ":triton_autotuner",
+        "//xla:autotune_serialize",
     ]),
 )
 
@@ -2380,10 +2381,17 @@ xla_cc_test(
     tags = tf_cuda_tests_tags(),
     deps = [
         ":horizontal_loop_fusion",
+        "//xla:autotune_results_proto_cc",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:gpu_plugin",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/log:scoped_mock_log",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
