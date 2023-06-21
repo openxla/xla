@@ -861,6 +861,7 @@ xla_cc_test(
     srcs = ["gpu_fused_mha_test.cc"],
     tags = tf_cuda_tests_tags(),
     deps = [
+        ":gpu_codegen_test",
         "//xla:array4d",
         "//xla:literal",
         "//xla:reference_util",

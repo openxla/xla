@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/cudnn_fused_conv_rewriter.h"
 #include "xla/service/gpu/cudnn_fused_mha_rewriter.h"
+#include "xla/service/gpu/cudnn_fused_mha_transpose_fusion.h"
 #include "xla/service/gpu/cudnn_pad_for_convolutions.h"
 #include "xla/service/gpu/cudnn_simplify_padding.h"
 #include "xla/service/gpu/cudnn_vectorize_convolutions.h"
@@ -58,13 +59,16 @@ limitations under the License.
 #include "xla/service/gpu/triangular_solve_rewriter.h"
 #include "xla/service/gpu/triton_autotuner.h"
 #include "xla/service/hlo_constant_folding.h"
+#include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_pass_fix.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/hlo_verifier.h"
+#include "xla/service/layout_normalization.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/reshape_mover.h"
 #include "xla/service/tuple_simplifier.h"
+#include "xla/service/reshape_decomposer.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_description.h"
@@ -200,6 +204,24 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   if (hlo_module->config().debug_options().xla_gpu_enable_cudnn_fmha()) {
     HloPassPipeline mha_fusion_pipeline(
         "nvptx cudnn multi-headed attention fusion");
+    const DebugOptions& debug_options = hlo_module->config().debug_options();
+    // The LayoutAssignment pass may leave behind kCopy instructions which are
+    // duplicate or NOPs, so remove them with algebraic simplification and CSE.
+    AlgebraicSimplifierOptions alg_sim_options;
+    alg_sim_options.set_supports_non_canonical_dots(false);
+    alg_sim_options.set_is_layout_sensitive(true);
+    alg_sim_options.set_enable_conv_operand_swap(false);
+    // "slow" minmax means we propagate nan.
+    alg_sim_options.set_minmax_propagate_nan(
+        !hlo_module->config().debug_options().xla_gpu_enable_fast_min_max());
+    if (debug_options.xla_gpu_normalize_layouts()) {
+      mha_fusion_pipeline.AddPass<ReshapeDecomposer>();
+      mha_fusion_pipeline.AddPass<LayoutNormalization>();
+    }
+    mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
+    mha_fusion_pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(
+        alg_sim_options);
+
     // Rewrite Multi-Headed Attention modules to Fused MHA custom-calls.
     if (stream_exec) {
       mha_fusion_pipeline.AddPass<CudnnFusedMHARewriter>(
@@ -212,9 +234,10 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     algebraic_simplifier_options
         .set_enable_unconditional_reduce_of_concat_replacement(false);
     mha_fusion_pipeline.AddPass<AlgebraicSimplifier>(
-        algebraic_simplifier_options);
+        alg_sim_options);
+    mha_fusion_pipeline.AddPass<CudnnFusedMHATransposeFusion>();
     mha_fusion_pipeline.AddPass<HloDCE>();
-
+    mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
     TF_RETURN_IF_ERROR(mha_fusion_pipeline.Run(hlo_module).status());
   }
 
