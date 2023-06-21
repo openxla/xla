@@ -55,8 +55,8 @@ class GpuDummyCompiler : public GpuCompiler {
 
   Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_executor,
-      const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
-      const AutotuneResults* autotune_results) override {
+      const CompileOptions& options,
+      const GpuTargetConfig& gpu_target_config) override {
     return OkStatus();
   }
 

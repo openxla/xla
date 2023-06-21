@@ -24,7 +24,6 @@ limitations under the License.
 #include <vector>
 
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "xla/autotune_results.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/executable.pb.h"
@@ -130,8 +129,7 @@ class GpuCompiler : public LLVMCompiler {
   // GpuConvAlgorithmPicker can not run.
   StatusOr<std::unique_ptr<HloModule>> RunHloPassesWithoutDevice(
       std::unique_ptr<HloModule> module, const CompileOptions& options,
-      const GpuTargetConfig& gpu_target_config,
-      const AutotuneResults& autotune_results);
+      const GpuTargetConfig& gpu_target_config);
 
   StatusOr<std::unique_ptr<BufferAssignment>> AssignBuffers(
       HloModule* hlo_module, se::StreamExecutor* stream_exec) override;
@@ -179,23 +177,19 @@ class GpuCompiler : public LLVMCompiler {
       const ShapeIndex& user_index);
 
  protected:
-  // During compilation with device, stream_exec != null and autotune_results
-  // == null. During deviceless AOT compilation, stream_exec == null and
-  // autotune_results != null.
+  // During compilation with device, stream_exec != null. During deviceless AOT
+  // compilation, stream_exec == null.
   virtual Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
-      const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
-      const AutotuneResults* autotune_results);
+      const CompileOptions& options, const GpuTargetConfig& gpu_target_config);
 
  private:
-  // During compilation with device, stream_exec != null and autotune_results
-  // == null. During deviceless AOT compilation, stream_exec == null and
-  // autotune_results != null.
+  // During compilation with device, stream_exec != null. During deviceless AOT
+  // compilation, stream_exec == null.
   Status OptimizeHloModule(HloModule* hlo_module,
                            se::StreamExecutor* stream_exec,
                            const CompileOptions& options,
-                           const GpuTargetConfig& gpu_target_config,
-                           const AutotuneResults* autotune_results);
+                           const GpuTargetConfig& gpu_target_config);
 
   virtual Status OptimizeHloConvolutionCanonicalization(
       HloModule* hlo_module, GpuVersion gpu_version,

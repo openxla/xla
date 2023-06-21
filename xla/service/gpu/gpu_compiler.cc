@@ -43,6 +43,7 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
+#include "xla/autotune_serialize.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -197,7 +198,6 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 
 #if GOOGLE_CUDA
-#include "xla/autotune_serialize.h"
 #include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/triton_autotuner.h"
 #elif TENSORFLOW_USE_ROCM
@@ -334,11 +334,9 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 }  // namespace
 
 // Runs optimization passes on the given HLO module.
-Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
-                                      se::StreamExecutor* stream_exec,
-                                      const CompileOptions& options,
-                                      const GpuTargetConfig& gpu_target_config,
-                                      const AutotuneResults* autotune_results) {
+Status GpuCompiler::OptimizeHloModule(
+    HloModule* hlo_module, se::StreamExecutor* stream_exec,
+    const CompileOptions& options, const GpuTargetConfig& gpu_target_config) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
 
   AlgebraicSimplifierOptions layout_insensitive_algsimp_opts({},
@@ -682,7 +680,7 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
 
   // Run target-specific HLO optimization passes after layout assignment.
   TF_RETURN_IF_ERROR(OptimizeHloPostLayoutAssignment(
-      hlo_module, stream_exec, options, gpu_target_config, autotune_results));
+      hlo_module, stream_exec, options, gpu_target_config));
 
   const GpuDeviceInfo& gpu_device_info = gpu_target_config.gpu_device_info;
 
@@ -857,8 +855,7 @@ Status GpuCompiler::PrepareHloModuleForIrEmitting(HloModule* hlo_module) {
 
 Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
-    const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
-    const AutotuneResults* autotune_results) {
+    const CompileOptions& options, const GpuTargetConfig& gpu_target_config) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
 
   {
@@ -957,18 +954,6 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         RequiresCollectiveScheduleLinearizer);
   }
 
-  if (autotune_config.is_offline()) {
-    GpuConvAlgorithmPicker::ClearAutotuneResults();
-    TF_RETURN_IF_ERROR(
-        GpuConvAlgorithmPicker::LoadAutotuneResults(*autotune_results));
-#if GOOGLE_CUDA
-    GemmAlgorithmPicker::ClearAutotuneResults();
-    TF_RETURN_IF_ERROR(
-        GemmAlgorithmPicker::LoadAutotuneResults(*autotune_results));
-    TritonAutotuner::ClearAutotuneResults();
-    TF_RETURN_IF_ERROR(TritonAutotuner::LoadAutotuneResults(*autotune_results));
-#endif  // GOOGLE_CUDA
-  }
   if (GpuConvAlgorithmPicker::IsEnabled(hlo_module)) {
     pipeline.AddPass<GpuConvAlgorithmPicker>(autotune_config);
   }
@@ -1035,7 +1020,6 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
-#if GOOGLE_CUDA
   const DebugOptions& debug_options = module->config().debug_options();
 
   // We are doing this before the timer is started.
@@ -1044,7 +1028,6 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
       !file_path.empty()) {
     TF_RETURN_IF_ERROR(LoadAutotuneResultsFromFileOnce(file_path));
   }
-#endif  // GOOGLE_CUDA
 
   // We dump the post-optimization HLO in RunBackend so no need to dump it here.
   XLA_SCOPED_LOGGING_TIMER(
@@ -1055,9 +1038,8 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
       tsl::profiler::TraceMeLevel::kInfo);
 
   GpuTargetConfig gpu_target_config = GetGpuTargetConfig(stream_exec);
-  TF_RETURN_IF_ERROR(OptimizeHloModule(module.get(), stream_exec, options,
-                                       gpu_target_config,
-                                       /*autotune_results=*/nullptr));
+  TF_RETURN_IF_ERROR(
+      OptimizeHloModule(module.get(), stream_exec, options, gpu_target_config));
 
   TF_RETURN_IF_ERROR(PrepareHloModuleForIrEmitting(module.get()));
 
@@ -1067,7 +1049,6 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   // out we have no way of telling how far through the process we got).
   RecordHloPassesDuration(end_usecs - start_usecs);
 
-#if GOOGLE_CUDA
   // We are doing this after the timer is finished.
   if (absl::string_view file_path =
           debug_options.xla_gpu_dump_autotune_results_to();
@@ -1076,15 +1057,13 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     // multiple times per process.
     TF_RETURN_IF_ERROR(SerializeAutotuneResultsToFile(file_path));
   }
-#endif  // GOOGLE_CUDA
 
   return std::move(module);
 }
 
 StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPassesWithoutDevice(
     std::unique_ptr<HloModule> module, const CompileOptions& options,
-    const GpuTargetConfig& gpu_target_config,
-    const AutotuneResults& autotune_results) {
+    const GpuTargetConfig& gpu_target_config) {
   // We dump the post-optimization HLO in RunBackend so no need to dump it here.
   XLA_SCOPED_LOGGING_TIMER(
       absl::StrCat("GpuCompiler::RunHloPasses for ", module->name()));
@@ -1092,8 +1071,8 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPassesWithoutDevice(
   tsl::profiler::TraceMe activity(
       [&] { return absl::StrCat("HLO Transforms:", module->name()); },
       tsl::profiler::TraceMeLevel::kInfo);
-  TF_RETURN_IF_ERROR(OptimizeHloModule(module.get(), nullptr, options,
-                                       gpu_target_config, &autotune_results));
+  TF_RETURN_IF_ERROR(
+      OptimizeHloModule(module.get(), nullptr, options, gpu_target_config));
 
   TF_RETURN_IF_ERROR(PrepareHloModuleForIrEmitting(module.get()));
 

@@ -34,11 +34,13 @@ limitations under the License.
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/statusor.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/init_main.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/util/command_line_flags.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#include "xla/autotune_serialize.h"
 #include "xla/service/gpu/executable.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #endif
@@ -75,18 +77,17 @@ StatusOr<std::string> AotCompileCpuExecutable(
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 StatusOr<std::string> AotCompileGpuExecutable(
     std::unique_ptr<HloModule> hlo_module,
-    const gpu::GpuTargetConfig& gpu_target_config,
-    const AutotuneResults& autotune_results = AutotuneResults()) {
+    const gpu::GpuTargetConfig& gpu_target_config) {
 #if GOOGLE_CUDA
   auto gpu_compiler = gpu::NVPTXCompiler();
 #elif TENSORFLOW_USE_ROCM
   auto gpu_compiler = gpu::AMDGPUCompiler();
 #endif
   Compiler::CompileOptions compile_options;
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module_after_opt,
-                      gpu_compiler.RunHloPassesWithoutDevice(
-                          std::move(hlo_module), compile_options,
-                          gpu_target_config, autotune_results));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> module_after_opt,
+      gpu_compiler.RunHloPassesWithoutDevice(
+          std::move(hlo_module), compile_options, gpu_target_config));
 
   auto module_group =
       std::make_unique<HloModuleGroup>(std::move(module_after_opt));
@@ -152,25 +153,18 @@ xla::Status XlaCompileMain(const std::string& module_path,
     if (!ok) return FailedPrecondition("Failed to parse GpuTargetConfigProto");
     gpu::GpuTargetConfig gpu_target_config(gpu_target_config_proto);
 
-    if (autotune_results_path.empty()) {
-      TF_ASSIGN_OR_RETURN(result, AotCompileGpuExecutable(std::move(hlo_module),
-                                                          gpu_target_config));
-    } else {
-      // Parse AutotuneResults.
+    if (!autotune_results_path.empty()) {
       std::string autotune_results_string;
       TF_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
                                                autotune_results_path,
                                                &autotune_results_string));
-      AutotuneResults autotune_results;
-      if (!tsl::protobuf::TextFormat::ParseFromString(autotune_results_string,
-                                                      &autotune_results)) {
-        return FailedPrecondition("Failed to parse AutotuneResults");
-      }
-
-      TF_ASSIGN_OR_RETURN(
-          result, AotCompileGpuExecutable(std::move(hlo_module),
-                                          gpu_target_config, autotune_results));
+      TF_RETURN_IF_ERROR(
+          LoadAutotuneResults(autotune_results_string, /*as_textproto=*/true));
     }
+
+    TF_ASSIGN_OR_RETURN(result, AotCompileGpuExecutable(std::move(hlo_module),
+                                                        gpu_target_config));
+
 #endif
   } else {
     return Unimplemented("platform %s not supported", platform);
