@@ -2671,6 +2671,8 @@ cc_library(
         "//xla/service:latency_hiding_scheduler",
         "//xla/service:profile_guided_latency_estimator",
         "@com_google_absl//absl/memory",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -2683,6 +2685,7 @@ xla_cc_test(
     deps = [
         ":gpu_device_info",
         ":gpu_hlo_schedule",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:gpu_plugin",
