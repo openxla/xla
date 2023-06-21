@@ -165,6 +165,7 @@ cc_library(
         ":pjrt_device_description",
         ":pjrt_executable",
         ":pjrt_future",
+        ":utils",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
@@ -219,11 +220,13 @@ cc_library(
     hdrs = ["pjrt_executable.h"],
     visibility = [":friends"],
     deps = [
+        ":pjrt_common",
         "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:statusor",
@@ -247,6 +250,7 @@ cc_library(
     name = "pjrt_device_description",
     hdrs = ["pjrt_device_description.h"],
     deps = [
+        ":pjrt_common",
         "@com_google_absl//absl/container:flat_hash_map",
     ],
 )
@@ -278,6 +282,12 @@ xla_cc_test(
         "//xla/client:xla_computation",
         "@com_google_googletest//:gtest_main",
     ],
+)
+
+cc_library(
+    name = "pjrt_common",
+    hdrs = ["pjrt_common.h"],
+    visibility = [":friends"],
 )
 
 cc_library(
