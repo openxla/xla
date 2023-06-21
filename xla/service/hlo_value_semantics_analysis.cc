@@ -30,10 +30,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/hlo_value.h"
@@ -361,6 +359,19 @@ HloValueSemanticsPropagation::ComputeSemanticsFromActivationAndOther(
     return CopySemanticsWithNewOrigin(other_semantics, instruction);
   }
   if (other_semantics.label() == HloValueSemanticLabel::kActivation) {
+    // The first weight gradient after the loss computation will have two
+    // activation inputs that have a dependency between them. Other Activations
+    // should have a Weight origin input.
+    if (IsActivationOriginDependentOn(other_semantics,
+                                      activation_semantics.origin(),
+                                      /*recursive=*/true) ||
+        IsActivationOriginDependentOn(activation_semantics,
+                                      other_semantics.origin(),
+                                      /*recursive=*/true)) {
+      return HloValueSemantics(HloValueSemanticLabel::kWeightGradient,
+                               {instruction, {}});
+    }
+    // Otherwise still an activation.
     return CopySemanticsWithNewOrigin(other_semantics, instruction);
   }
   if (other_semantics.label() == HloValueSemanticLabel::kActivationGradient) {
