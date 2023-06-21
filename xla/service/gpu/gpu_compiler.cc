@@ -129,6 +129,7 @@ limitations under the License.
 #include "xla/service/gpu/reduction_splitter.h"
 #include "xla/service/gpu/runtime_intrinsics.h"
 #include "xla/service/gpu/scatter_slice_simplifier.h"
+#include "xla/service/gpu/softmax_rewriter_triton.h"
 #include "xla/service/gpu/topk_specializer.h"
 #include "xla/service/gpu/topk_splitter.h"
 #include "xla/service/gpu/tree_reduction_rewriter.h"
@@ -904,6 +905,15 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
     pipeline.AddPass<ReductionDegenerateDimRemover>();
     pipeline.AddPass<ReductionLayoutNormalizer>();
+    // Run Softmax fusion after layout normalization. We expect a default layout
+    // in the softmax codegen pipeline. However we should run before
+    // ReductionDimensionGrouper, as that makes matching the softmax pattern
+    // harder.
+    if (debug_options.xla_gpu_enable_triton_softmax_fusion()) {
+      pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(options);
+      pipeline.AddPass<SoftmaxRewriterTriton>(gpu_target_config.gpu_version);
+    }
+
     pipeline.AddPass<ReductionDimensionGrouper>();
     pipeline.AddPass<HloPassFix<ReductionSplitter>>();
     pipeline.AddPass<HloPassFix<GpuTreeReductionRewriter>>(
