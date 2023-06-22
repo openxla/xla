@@ -874,6 +874,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/hash",
     ],
 )
 

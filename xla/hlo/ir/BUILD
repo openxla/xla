@@ -53,6 +53,7 @@ cc_library(
         "hlo_sharding_metadata.h",
     ],
     deps = [
+        ":tile_assignment",
         "//xla:array",
         "//xla:comparison_util",
         "//xla:literal",
