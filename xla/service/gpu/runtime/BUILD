@@ -69,10 +69,9 @@ cc_library(
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
         "//xla/service:executable",
+        "//xla/service/gpu:autotuner_util",
         "//xla/service/gpu:gpu_asm_opts_util",
-        "//xla/service/gpu:gpu_conv_algorithm_picker",
         "//xla/service/gpu:gpu_conv_runner",
-        "//xla/service/gpu:gpu_serializable_autotuner",
         "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
@@ -81,7 +80,9 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Support",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/service/gpu:gpu_conv_algorithm_picker",
+    ]),
 )
 
 cc_library(
@@ -315,6 +316,7 @@ cc_library(
         "//xla/runtime:state",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
+        "//xla/service/gpu:gpu_asm_opts_util",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor:blas",
