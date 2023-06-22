@@ -30,56 +30,70 @@ limitations under the License.
 namespace xla {
 namespace {
 
-// Intra-Computation forward slicing: Conduct forward slicing inside the given
+// Intra-Computation forward/backward slicing: Conduct slicing inside the given
 // computation. It begins with the relevant instructions in
-// `sliced_comp_insts_map[computation]`, and it adds all the instructions
-// propagated in-place.
+// `sliced_insts_map`, and it adds all the instructions propagated in-place.
 //
-// We assume that the root inst will be propagated (otherwise the given relevant
-// insts are dead code).
-void IntraCompForwardSlicing(
-    HloComputation* computation,
-    absl::flat_hash_map<const HloComputation*,
-                        absl::flat_hash_set<const HloInstruction*>>&
-        sliced_comp_insts_map,
-    bool ignore_control_predecessors) {
-  std::deque<const HloInstruction*> worklist(
-      sliced_comp_insts_map[computation].begin(),
-      sliced_comp_insts_map[computation].end());
+// If a frontier instruction is encountered, it will be added to
+// `frontier_insts`.
+void IntraCompSlicing(
+    absl::flat_hash_set<const HloInstruction*>& sliced_insts,
+    absl::flat_hash_set<const HloInstruction*>& frontier_insts,
+    bool forward_slice, HloSelector hlo_selector,
+    bool ignore_control_dependency) {
+  std::deque<const HloInstruction*> worklist(sliced_insts.begin(),
+                                             sliced_insts.end());
 
   while (!worklist.empty()) {
     const HloInstruction* inst = worklist.back();
 
-    std::vector<HloInstruction*> successors(inst->users().begin(),
-                                            inst->users().end());
-    if (ignore_control_predecessors) {
-      successors.insert(successors.end(), inst->control_successors().begin(),
-                        inst->control_successors().end());
+    // Initialize data-dependent instructions
+    std::vector<HloInstruction*> insts_to_propagate =
+        forward_slice ? std::vector<HloInstruction*>(inst->users().begin(),
+                                                     inst->users().end())
+                      : std::vector<HloInstruction*>(inst->operands().begin(),
+                                                     inst->operands().end());
+
+    // Append control-dependent instructions if necessary
+    if (!ignore_control_dependency) {
+      if (forward_slice) {
+        insts_to_propagate.insert(insts_to_propagate.end(),
+                                  inst->control_successors().begin(),
+                                  inst->control_successors().end());
+      } else {
+        insts_to_propagate.insert(insts_to_propagate.end(),
+                                  inst->control_predecessors().begin(),
+                                  inst->control_predecessors().end());
+      }
     }
 
-    for (auto user_inst : successors) {
-      if (!sliced_comp_insts_map[computation].contains(user_inst)) {
-        worklist.push_front(user_inst);
-        sliced_comp_insts_map[computation].insert(user_inst);
+    for (auto inst : insts_to_propagate) {
+      if (!hlo_selector(inst)) {
+        frontier_insts.insert(inst);
+        sliced_insts.insert(inst);
+        continue;
+      }
+
+      if (!sliced_insts.contains(inst)) {
+        worklist.push_front(inst);
+        sliced_insts.insert(inst);
       }
     }
     worklist.pop_back();
   }
-
-  // The root instruction should be included
-  QCHECK(sliced_comp_insts_map[computation].contains(
-      computation->root_instruction()))
-      << "The root instruction should be included in the sliced computation";
 }
 
 }  // namespace
 
-absl::flat_hash_map<const HloComputation*,
-                    absl::flat_hash_set<const HloInstruction*>>
-SliceModule(const HloModule* hlo_module,
-            std::vector<const HloInstruction*>& relevant_instructions,
-            bool ignore_control_predecessors) {
-  // Initialize `sliced_comp_insts_map`
+SliceOutput SliceModule(
+    const HloModule* hlo_module,
+    std::vector<const HloInstruction*>& relevant_instructions,
+    HloSelector hlo_selector, bool ignore_control_dependency) {
+  // TODO(b/288160117): backward slicing not implemented yet
+  bool forward_slice = true;
+
+  // Initialize `sliced_comp_insts_map`, which keeps track of all the sliced
+  // instructions
   absl::flat_hash_map<const HloComputation*,
                       absl::flat_hash_set<const HloInstruction*>>
       sliced_comp_insts_map;
@@ -87,29 +101,48 @@ SliceModule(const HloModule* hlo_module,
     sliced_comp_insts_map[inst->parent()].insert(inst);
   }
 
+  // Initialize `frontier_comp_insts_map`
+  absl::flat_hash_map<const HloComputation*,
+                      absl::flat_hash_set<const HloInstruction*>>
+      frontier_comp_insts_map;
+
   // Build call graph
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(hlo_module);
 
-  // Traverse computations in the post-order manner, and conduct
-  // inter-computation forward slicing in that order.
-  // `sliced_comp_insts_map` keeps track of all the relevant insts.
-  for (auto computation : hlo_module->MakeComputationPostOrder()) {
+  // Traverse computations in the post-order(forward slicing) or
+  // pre-order(backward slicing) manner, and conduct intra-computation
+  // slicing in that order.
+  std::vector<HloComputation*> computations_to_traverse =
+      forward_slice ? hlo_module->MakeComputationPostOrder()
+                    // TODO(b/288160117): backward slicing not implemented yet
+                    : std::vector<HloComputation*>();
+  for (auto computation : computations_to_traverse) {
     if (sliced_comp_insts_map.contains(computation)) {
-      // Do intra-computation forward slicing
-      IntraCompForwardSlicing(computation, sliced_comp_insts_map,
-                              ignore_control_predecessors);
+      // Do intra-computation slicing
+      IntraCompSlicing(sliced_comp_insts_map[computation],
+                       frontier_comp_insts_map[computation], forward_slice,
+                       hlo_selector, ignore_control_dependency);
 
-      // Track successor of the current computation computations containing the
-      // caller instruction of the current computation.
-      // TODO: Note that, theorectically, we can add only one of
-      // these caller instructions (computations)
-      for (auto caller_inst : call_graph->GetComputationCallers(computation)) {
-        sliced_comp_insts_map[caller_inst->parent()].insert(caller_inst);
+      // Forward slicing: Continue propagating to successors of the current
+      // computation if the ROOT instruction of the current computation is
+      // sliced
+      if (forward_slice && sliced_comp_insts_map[computation].contains(
+                               computation->root_instruction())) {
+        for (auto caller_inst :
+             call_graph->GetComputationCallers(computation)) {
+          sliced_comp_insts_map[caller_inst->parent()].insert(caller_inst);
+        }
+      }
+      // TODO(b/288160117): Backward slice not implemented yet
+      // Backward slicing: propagate to the predecessors of the current
+      // computation that the sliced instructions invoke
+      if (!forward_slice) {
+        QCHECK(false);
       }
     }
   }
 
-  return sliced_comp_insts_map;
+  return SliceOutput{sliced_comp_insts_map, frontier_comp_insts_map};
 }
 
 }  // namespace xla
