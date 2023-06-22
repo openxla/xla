@@ -1296,6 +1296,8 @@ cc_library(
     srcs = if_gpu_is_configured(["autotuner_util.cc"]),
     hdrs = if_gpu_is_configured(["autotuner_util.h"]),
     deps = if_gpu_is_configured([
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/strings",
         ":stream_executor_util",
         "//xla:autotune_results_proto_cc",
         "//xla:types",
@@ -1304,6 +1306,8 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:redzone_allocator",
         "@tsl//tsl/protobuf:autotuning_proto_cc",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:protobuf",
     ]),
 )
 
@@ -2217,7 +2221,6 @@ cc_library(
     deps = [
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
-        ":autotuner_util",
         ":compile_module_to_llvm_ir",
         ":conv_layout_normalization",
         ":copy_fusion",
@@ -2391,7 +2394,7 @@ cc_library(
     ] + if_cuda_is_configured([
         ":gemm_algorithm_picker",
         ":triton_autotuner",
-        "//xla:autotune_serialize",
+        ":autotuner_util",
     ]),
 )
 
@@ -3831,4 +3834,20 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
     ],
+)
+
+xla_cc_test(
+    name = "autotuner_util_test",
+    srcs = if_cuda_is_configured(["autotuner_util_test.cc"]),
+    deps = if_cuda_is_configured([
+        ":autotuner_util",
+        "//xla:autotune_results_proto_cc",
+        "@com_google_googletest//:gtest",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/log:scoped_mock_log",
+        "@com_google_absl//absl/strings",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:protobuf",
+    ]) + ["//xla/tests:xla_internal_test_main"],
 )
