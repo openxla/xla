@@ -16,13 +16,17 @@ limitations under the License.
 #ifndef XLA_PJRT_TRACKED_DEVICE_BUFFER_H_
 #define XLA_PJRT_TRACKED_DEVICE_BUFFER_H_
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <string>
 
 #include "absl/container/flat_hash_set.h"
 #include "xla/pjrt/event_pool.h"
 #include "xla/pjrt/local_device_state.h"
+#include "xla/pjrt/utils.h"
+#include "xla/runtime/async_runtime.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
@@ -59,12 +63,15 @@ namespace xla {
 // same stream causes no additional waiting.
 class BufferSequencingEvent {
  public:
-  BufferSequencingEvent() = default;
+  explicit BufferSequencingEvent(tsl::thread::ThreadPool* thread_pool)
+      : thread_pool_(thread_pool),
+        defined_status_(tsl::MakeUnconstructedAsyncValueRef<Status>()) {}
 
   // Sets the sequencing event to 'event', which is recorded on 'stream'. Must
   // be called at most once. Unblocks any other host threads that are blocked in
   // WaitForEventOnStream.
-  void SetSequencingEvent(EventPool::Handle event, se::Stream* stream);
+  void SetSequencingEvent(EventPool::Handle event, se::Stream* stream,
+                          Status status = OkStatus());
 
   // Adds synchronization events to 'stream' that wait for this event to be
   // defined on 'stream'. Does nothing if the event is already known to have
@@ -97,6 +104,36 @@ class BufferSequencingEvent {
     return !(*this < rhs);
   }
 
+  inline bool operator==(int number) const {
+    return sequence_number() == number;
+  }
+
+  // Executes the `task` if the event is ready; otherwise adds the `task`
+  // callback to `on_ready_tasks_callback_` that can not be executed until the
+  // the event is ready.
+  void ExecuteOrAddToFutureTasks(const std::string& task_name,
+                                 std::function<void()> task);
+
+  // Executes all the callbacks in `on_ready_tasks_callback_`. Those callbacks
+  // can only proceed until the event is ready.
+  void ExecuteFutureTasks();
+
+  bool IsDefined() {
+    absl::MutexLock lock(&mu_);
+    return defined_status_.IsConcrete();
+  }
+
+  void SetDefinedStatus(Status status) {
+    absl::MutexLock lock(&mu_);
+    defined_status_.emplace(status);
+  }
+
+  Status GetDefinedStatus() {
+    absl::MutexLock lock(&mu_);
+    CHECK(defined_status_.IsConcrete());
+    return defined_status_.get();
+  }
+
  private:
   bool EventHasBeenRecorded() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
   uint64_t sequence_number() const;
@@ -117,6 +154,18 @@ class BufferSequencingEvent {
   // A list of all streams for which the buffer's content is known to be defined
   // at the tail of the queue, i.e., for any newly enqueued command.
   absl::InlinedVector<se::Stream*, 2> streams_defined_on_ ABSL_GUARDED_BY(mu_);
+
+  // A map of the task name and callback to execute when the
+  // TrackedDeviceBuffer's `definition_events_` are all recorded and ready to be
+  // consumed by other tasks.
+  absl::flat_hash_map<std::string, std::function<void()>>
+      on_ready_tasks_callback_ ABSL_GUARDED_BY(mu_);
+
+  tsl::thread::ThreadPool* thread_pool_;
+
+  // Indicates if the buffer is in an error status. And error status is used to
+  // propagate the error to the buffer consumers.
+  tsl::AsyncValueRef<Status> defined_status_ ABSL_GUARDED_BY(mu_);
 };
 
 // Class that represents a tuple of device buffers. Like a ScopedShapedBuffer it
@@ -210,7 +259,9 @@ class TrackedDeviceBuffer {
   // any stream and, e.g. AddUsageHold will CHECK fail.
   StreamAndEventContainer LockUseAndTransferUsageEvents();
 
-  TrackedDeviceBuffer() : in_use_(true) {}
+  TrackedDeviceBuffer() : in_use_(true) {
+    LOG(ERROR) << "TrackedDeviceBuffer no-arg constructor.";
+  }
   TrackedDeviceBuffer(se::DeviceMemoryAllocator* allocator, int device_ordinal,
                       absl::Span<se::DeviceMemoryBase const> device_memory,
                       absl::Span<const std::shared_ptr<BufferSequencingEvent>>

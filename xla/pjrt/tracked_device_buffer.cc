@@ -20,11 +20,13 @@ limitations under the License.
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/synchronization/mutex.h"
 #include "xla/pjrt/local_device_state.h"
+#include "xla/pjrt/utils.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
@@ -35,13 +37,18 @@ limitations under the License.
 namespace xla {
 
 void BufferSequencingEvent::SetSequencingEvent(EventPool::Handle event,
-                                               se::Stream* stream) {
-  absl::MutexLock lock(&mu_);
-  CHECK(!event_.event());
-  event_ = std::move(event);
-  CHECK(streams_defined_on_.empty());
-  streams_defined_on_.push_back(stream);
-  sequence_number_.store(event_.sequence_number(), std::memory_order_seq_cst);
+                                               se::Stream* stream,
+                                               Status status) {
+  {
+    absl::MutexLock lock(&mu_);
+    CHECK(!event_.event());
+    event_ = std::move(event);
+    CHECK(streams_defined_on_.empty());
+    streams_defined_on_.push_back(stream);
+    sequence_number_.store(event_.sequence_number(), std::memory_order_seq_cst);
+    defined_status_.emplace(status);
+  }
+  this->ExecuteFutureTasks();
 }
 
 bool BufferSequencingEvent::EventHasBeenRecorded() const {
@@ -50,7 +57,6 @@ bool BufferSequencingEvent::EventHasBeenRecorded() const {
 
 uint64_t BufferSequencingEvent::sequence_number() const {
   uint64_t seq = sequence_number_.load(std::memory_order_seq_cst);
-  CHECK_NE(seq, 0);
   return seq;
 }
 
@@ -99,11 +105,31 @@ bool BufferSequencingEvent::IsComplete() {
   return event_.event()->PollForStatus() == se::Event::Status::kComplete;
 }
 
+void BufferSequencingEvent::ExecuteOrAddToFutureTasks(
+    const std::string& task_name, std::function<void()> task) {
+  absl::MutexLock lock(&mu_);
+  if (defined_status_.IsConcrete()) {
+    thread_pool_->Schedule(std::move(task));
+    return;
+  }
+  on_ready_tasks_callback_[task_name] = std::move(task);
+}
+
+void BufferSequencingEvent::ExecuteFutureTasks() {
+  absl::MutexLock lock(&mu_);
+  for (auto& [task_name, task_callback] : on_ready_tasks_callback_) {
+    thread_pool_->Schedule(std::move(task_callback));
+  }
+  on_ready_tasks_callback_.clear();
+}
+
 /* static */ std::shared_ptr<TrackedDeviceBuffer>
 TrackedDeviceBuffer::FromScopedShapedBuffer(
     ScopedShapedBuffer* shaped_buffer,
     absl::Span<const std::shared_ptr<BufferSequencingEvent>>
         definition_events) {
+  LOG(ERROR) << "FromScopedShapedBuffer "
+             << " definition_events: " << definition_events.size();
   ShapeTree<se::DeviceMemoryBase>::iterator iterator =
       shaped_buffer->buffers().begin();
   std::vector<se::DeviceMemoryBase> buffers;
@@ -177,7 +203,12 @@ TrackedDeviceBuffer::TrackedDeviceBuffer(
       definition_events_(std::make_move_iterator(definition_events.begin()),
                          std::make_move_iterator(definition_events.end())),
       in_use_(true),
-      on_delete_callback_(std::move(on_delete_callback)) {}
+      on_delete_callback_(std::move(on_delete_callback)) {
+  if (definition_events.empty()) {
+    CHECK(0);
+  }
+  LOG(ERROR) << "definiont_events size: " << definition_events.size();
+}
 
 TrackedDeviceBuffer::~TrackedDeviceBuffer() {
   if (allocator_) {
@@ -198,7 +229,17 @@ void TrackedDeviceBuffer::AddUsageEvent(
     bool reference_held) {
   CHECK(in_use_);
 
+  // If the event is 0, it means that the event is not recorded yet
+  // and the task related to this event is deferred, so just add it.
+  if (*event == 0) {
+    usage_events_.push_back({usage_stream, event, reference_held});
+    return;
+  }
+
   for (auto& existing : usage_events_) {
+    // If the existing event is 0, it means that the event is not recorded yet
+    // and the task related to this event is deferred, so don't replace it.
+    if (*existing.event == 0) continue;
     if (existing.stream == usage_stream) {
       if (*existing.event < *event) {
         existing.event = event;
