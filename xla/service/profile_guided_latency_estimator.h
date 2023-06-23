@@ -22,7 +22,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "xla/service/latency_hiding_scheduler.h"
-#include "xla/xla.pb.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 
@@ -34,7 +34,7 @@ class ProfileGuidedLatencyEstimator : public LatencyEstimator {
   ProfileGuidedLatencyEstimator(
       const SchedulerConfig& config,
       std::unique_ptr<LatencyEstimator> latency_estimator,
-      const ProfiledInstructionsProto& proto);
+      const tensorflow::profiler::ProfiledInstructionsProto& proto);
 
   TimeCost GetLatencyBetween(const HloGraphNode& from,
                              const HloGraphNode& target) const override;

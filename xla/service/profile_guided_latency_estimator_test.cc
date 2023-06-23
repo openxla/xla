@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/xla.pb.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 
@@ -127,7 +127,7 @@ ENTRY entry {
       costs { name: "cp2s" cost_us: 80.0 }
     )pb";
   }
-  ProfiledInstructionsProto profiled_instructions_proto;
+  tensorflow::profiler::ProfiledInstructionsProto profiled_instructions_proto;
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       profiled_instructions_text_proto, &profiled_instructions_proto));
 

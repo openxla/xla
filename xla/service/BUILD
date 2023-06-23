@@ -1195,10 +1195,10 @@ cc_library(
     hdrs = ["profile_guided_latency_estimator.h"],
     deps = [
         ":latency_hiding_scheduler",
-        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
     ],
 )
 
@@ -1208,13 +1208,13 @@ xla_cc_test(
     deps = [
         ":latency_hiding_scheduler",
         ":profile_guided_latency_estimator",
-        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
     ],
 )
 

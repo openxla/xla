@@ -2754,6 +2754,7 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
     ],
 )
 
@@ -2766,15 +2767,13 @@ xla_cc_test(
     deps = [
         ":gpu_device_info",
         ":gpu_hlo_schedule",
-        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:gpu_plugin",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
     ],
 )
 
