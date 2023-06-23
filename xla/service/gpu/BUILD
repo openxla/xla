@@ -882,12 +882,6 @@ tsl_gpu_library(
     ]),
 )
 
-# TODO(b/244780257): Remove this config.
-bool_flag(
-    name = "enable_xlir",
-    build_setting_default = if_google(True, False),
-)
-
 cc_library(
     name = "non_atomically_upgradeable_rw_lock",
     srcs = [],
