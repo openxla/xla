@@ -414,41 +414,6 @@ cc_library(
 )
 
 alias(
-    name = "curand_stub",
-    actual = "@tsl//tsl/cuda:curand_stub",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "curand_lib",
-    actual = "@tsl//tsl/cuda:curand_lib",
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
-    name = "curand_plugin",
-    srcs = if_cuda_is_configured(["cuda_rng.cc"]),
-    hdrs = if_cuda_is_configured(["cuda_rng.h"]),
-    deps = if_cuda_is_configured([
-        ":cuda_activation",
-        ":cuda_gpu_executor",
-        ":cuda_platform_id",
-        ":cuda_stream",
-        ":cuda_helpers",
-        ":curand_lib",
-        "@local_config_cuda//cuda:cuda_headers",
-        "//xla/stream_executor:event",
-        "//xla/stream_executor:plugin_registry",
-        "//xla/stream_executor:rng",
-        "//xla/stream_executor/gpu:gpu_helpers_header",
-        "//xla/stream_executor/gpu:gpu_rng_header",
-        "//xla/stream_executor/platform",
-        "//xla/stream_executor/platform:dso_loader",
-    ]),
-    alwayslink = True,
-)
-
-alias(
     name = "cupti_stub",
     actual = "@tsl//tsl/cuda:cupti_stub",
     visibility = ["//visibility:public"],
@@ -599,7 +564,6 @@ cc_library(
         ":cuda_platform",
         ":cudnn_plugin",
         ":cufft_plugin",
-        ":curand_plugin",
     ],
     alwayslink = 1,
 )

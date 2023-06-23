@@ -117,15 +117,6 @@ cuda_header_library(
     deps = [":cuda_headers"],
 )
 
-cuda_header_library(
-    name = "curand_headers",
-    hdrs = [":curand-include"],
-    include_prefix = "third_party/gpus/cuda/include",
-    includes = ["curand/include"],
-    strip_include_prefix = "curand/include",
-    deps = [":cuda_headers"],
-)
-
 cc_library(
     name = "cublas",
     srcs = ["cuda/lib/%{cublas_lib}"],
@@ -171,13 +162,6 @@ cc_library(
 )
 
 cc_library(
-    name = "curand",
-    srcs = ["cuda/lib/%{curand_lib}"],
-    data = ["cuda/lib/%{curand_lib}"],
-    linkstatic = 1,
-)
-
-cc_library(
     name = "cuda",
     deps = [
         ":cublas",
@@ -186,7 +170,6 @@ cc_library(
         ":cudart",
         ":cudnn",
         ":cufft",
-        ":curand",
     ],
 )
 

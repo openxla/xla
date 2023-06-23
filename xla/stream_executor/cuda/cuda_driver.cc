@@ -634,14 +634,6 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
                                                       CUfunction* function) {
   ScopedActivateContext activated{context};
   CHECK(module != nullptr && kernel_name != nullptr);
-  cudaError_t cuda_error = cudaPeekAtLastError();
-  if (cuda_error != cudaSuccess) {
-    return tsl::Status(
-        absl::StatusCode::kInternal,
-        absl::StrCat("There was an error before calling cuModuleGetFunction (",
-                     cuda_error, "): ", cudaGetErrorName(cuda_error), " : ",
-                     cudaGetErrorString(cuda_error)));
-  }
   RETURN_IF_CUDA_RES_ERROR(cuModuleGetFunction(function, module, kernel_name),
                            "Failed to get module function");
   return tsl::OkStatus();

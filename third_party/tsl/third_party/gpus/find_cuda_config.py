@@ -372,36 +372,6 @@ def _find_cusolver_config(base_paths, required_version, cuda_version):
   }
 
 
-def _find_curand_config(base_paths, required_version, cuda_version):
-
-  if _at_least_version(cuda_version, "11.0"):
-
-    def get_header_version(path):
-      version = (
-          _get_header_version(path, name)
-          for name in ("CURAND_VER_MAJOR", "CURAND_VER_MINOR",
-                       "CURAND_VER_PATCH"))
-      return ".".join(version)
-
-    header_path, header_version = _find_header(base_paths, "curand.h",
-                                               required_version,
-                                               get_header_version)
-    curand_version = header_version.split(".")[0]
-
-  else:
-    header_version = cuda_version
-    header_path = _find_file(base_paths, _header_paths(), "curand.h")
-    curand_version = required_version
-
-  library_path = _find_library(base_paths, "curand", curand_version)
-
-  return {
-      "curand_version": header_version,
-      "curand_include_dir": os.path.dirname(header_path),
-      "curand_library_dir": os.path.dirname(library_path),
-  }
-
-
 def _find_cufft_config(base_paths, required_version, cuda_version):
 
   if _at_least_version(cuda_version, "11.0"):
@@ -591,13 +561,6 @@ def find_cuda_config():
     cusolver_version = os.environ.get("TF_CUSOLVER_VERSION", "")
     result.update(
         _find_cusolver_config(cusolver_paths, cusolver_version, cuda_version))
-
-    curand_paths = base_paths
-    if tuple(int(v) for v in cuda_version.split(".")) < (11, 0):
-      curand_paths = cuda_paths
-    curand_version = os.environ.get("TF_CURAND_VERSION", "")
-    result.update(
-        _find_curand_config(curand_paths, curand_version, cuda_version))
 
     cufft_paths = base_paths
     if tuple(int(v) for v in cuda_version.split(".")) < (11, 0):
