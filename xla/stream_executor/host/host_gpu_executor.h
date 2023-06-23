@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/host/host_stream.h"
-#include "xla/stream_executor/rng.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "tsl/platform/errors.h"
@@ -34,7 +33,7 @@ namespace host {
 
 // An implementation of StreamExecutor that does no communication or interaction
 // with a device, but DOES perform memory operations backed by the host.
-// Plugin routines (RNG, BLAS) are also supported and functional.
+// Plugin routines (BLAS) are also supported and functional.
 // Kernel invocations will fail, but host callbacks may be enqueued on this
 // executor and its associated stream, and should follow standard ordering
 // semantics.
@@ -147,9 +146,6 @@ class HostExecutor : public internal::StreamExecutorInterface {
 
   bool SupportsFft() const override;
   fft::FftSupport* CreateFft() override;
-
-  bool SupportsRng() const override;
-  rng::RngSupport* CreateRng() override;
 
   std::unique_ptr<internal::EventInterface> CreateEventImplementation()
       override;

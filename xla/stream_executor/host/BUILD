@@ -85,7 +85,6 @@ cc_library(
         ":host_stream",
         "//xla/stream_executor",
         "//xla/stream_executor:kernel",
-        "//xla/stream_executor:rng",
         "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor:stream_executor_pimpl",  # fixdeps: keep
         "@com_google_absl//absl/functional:any_invocable",
