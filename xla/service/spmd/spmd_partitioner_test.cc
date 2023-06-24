@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/hlo_verifier.h"
+#include "xla/service/spmd/spmd_prepare.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -76,6 +77,7 @@ class SpmdPartitioningTest : public HloTestBase {
     HloPassPipeline pass("spmd-partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
+    pass.AddPass<SpmdPrepare>();
     pass.AddPass<SpmdPartitioner>(num_devices, /*num_replicas=*/1, options,
                                   collective_ops_creator);
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
