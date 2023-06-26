@@ -75,6 +75,14 @@ CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo) {
       return {HloOpcode::kAsyncDone, HloOpcode::kAllGather};
     case HloOpcode::kCollectivePermuteDone:
       return {HloOpcode::kAsyncDone, HloOpcode::kCollectivePermute};
+    case HloOpcode::kSend:
+      return {HloOpcode::kAsyncStart, HloOpcode::kSend};
+    case HloOpcode::kSendDone:
+      return {HloOpcode::kAsyncDone, HloOpcode::kSend};
+    case HloOpcode::kRecv:
+      return {HloOpcode::kAsyncStart, HloOpcode::kRecv};
+    case HloOpcode::kRecvDone:
+      return {HloOpcode::kAsyncDone, HloOpcode::kRecv};
     default:
       return {hlo.opcode(), hlo.opcode()};
   }
@@ -95,7 +103,8 @@ LatencyEstimator::TimeCost ApproximateLatencyEstimator::GetLatencyBetween(
   // fusion/convolution with 1 async op or 5 loop fusions with an async op.
   static constexpr TimeCost kLowLatency = 1.0;
   static constexpr TimeCost kHighLatency = 5000.0;
-  if (IsAsyncPair(from, target)) {
+  if (IsAsyncPair(from, target) &&
+      from.GetInstr().opcode() != HloOpcode::kRecv) {
     return kHighLatency;
   }
   // Every other instruction we consider synchronous, which means the
@@ -118,7 +127,8 @@ LatencyEstimator::TimeCost ApproximateLatencyEstimator::NodeCost(
 // Returns if this is an Async done op that the scheduler supports.
 bool AsyncTracker::IsSupportedAsyncDone(const HloInstruction& hlo) const {
   CanonicalAsyncOp op = GetCanonicalAsyncOp(hlo);
-  if (op.outer == HloOpcode::kSendDone || op.outer == HloOpcode::kRecvDone) {
+  if (op.outer == HloOpcode::kAsyncDone &&
+      (op.inner == HloOpcode::kSend || op.inner == HloOpcode::kRecv)) {
     return config_.schedule_send_recvs;
   }
 
@@ -145,7 +155,8 @@ bool AsyncTracker::IsSupportedAsyncDone(const HloInstruction& hlo) const {
 // Returns if this is an Async op start that the scheduler supports.
 bool AsyncTracker::IsSupportedAsyncStart(const HloInstruction& hlo) const {
   CanonicalAsyncOp op = GetCanonicalAsyncOp(hlo);
-  if (op.outer == HloOpcode::kSend || op.outer == HloOpcode::kRecv) {
+  if (op.outer == HloOpcode::kAsyncStart &&
+      (op.inner == HloOpcode::kSend || op.inner == HloOpcode::kRecv)) {
     return config_.schedule_send_recvs;
   }
 

@@ -145,6 +145,8 @@ StatusOr<bool> RunScheduler(
         shape_size += shape_size_bytes(sub_shape);
       }
       return shape_size;
+    } else if (shape.element_type() == TOKEN) {
+      return 0;
     }
     return ShapeUtil::ByteSizeOfElements(shape);
   };
@@ -2537,9 +2539,9 @@ ENTRY entry {
   cp3d = f32[128,2048,2048]{2,1,0} collective-permute-done(cp3s)
   slice = f32[16,64,256]{2,1,0} slice(f32[512,2048,2048]{2,1,0} cp1d), slice={[0:16], [0:64], [0:256]}
   c0 = f32[16,256,256]{2,1,0} convolution(p0, slice),
-    window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb  
+    window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb
   c1 = f32[16,256,256]{2,1,0} convolution(p0, slice),
-    window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb  
+    window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb
   ROOT tuple.2 = (f32[16,256,256]{2,1,0}, f32[16,256,256]{2,1,0}, f32[128,2048,2048]{2,1,0}, f32[128,2048,2048]{2,1,0}) tuple(c0, c1, cp2d, cp3d)
 }
 )";
@@ -2671,6 +2673,98 @@ TEST_F(LatencyHidingSchedulerTest, AsyncTrackerTestForTargetDefinedResources) {
   CHECK_EQ(async_tracker_for_my_target.GetNumAvailableResources(
                target_resource0_index),
            target_resource0_overlap_limit);
+}
+
+// Checks for the expected schedule of a send/recv pair:
+//
+//  recv
+//  send
+//  recv-done
+//  computation
+//  send-done
+TEST_F(LatencyHidingSchedulerTest, SendRecv) {
+  absl::string_view hlo_string = R"(
+  HloModule test, is_scheduled=true
+  while_cond {
+    param = (u32[], f32[1, 1024, 1024]) parameter(0)
+    count = get-tuple-element(%param), index=0
+    ub = u32[] constant(25)
+    ROOT result = pred[] compare(count, ub), direction=LT
+  }
+
+  while_body {
+    param = (u32[], f32[1, 1024, 1024]) parameter(0)
+    count = get-tuple-element(%param), index=0
+    send-data = get-tuple-element(%param), index=1
+
+    after-all = token[] after-all()
+    recv = (f32[1, 1024, 1024], u32[], token[]) recv(after-all), channel_id=1,
+      frontend_attributes={
+      _xla_send_recv_source_target_pairs="{{0, 1}}"
+    }
+    recv-done = (f32[1, 1024, 1024], token[]) recv-done(recv), channel_id=1
+    send = (f32[1, 1024, 1024], u32[], token[]) send(send-data, after-all),
+      channel_id=1, control-predecessors={recv}, frontend_attributes={
+      _xla_send_recv_source_target_pairs="{{0, 1}}"
+    }
+    send-done = token[] send-done(send), control-predecessors={recv-done}, channel_id=1
+    recv-data = f32[1, 1024, 1024] get-tuple-element(recv-done), index=0
+
+    c1 = u32[] constant(1)
+    new_count = u32[] add(count, c1)
+    replica = u32[] replica-id()
+    c10 = u32[] constant(10)
+    sum = u32[] add(replica, c10)
+    sum2 = u32[] add(sum, count)
+    conv = f32[] convert(sum2)
+    p = f32[1, 1024, 1024] broadcast(conv), dimensions={}
+    b = f32[1, 1024, 1024] add(p, recv-data)
+    c = f32[1, 1024, 1024] multiply(b, b)
+    d = f32[1, 1024, 1024] tan(c)
+    s = f32[1, 1024, 1024] dot(c, d), lhs_batch_dims={0},
+      lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+
+    ROOT result = (u32[], f32[1, 1024, 1024]) tuple(new_count, s)
+  }
+
+  ENTRY test_computation {
+    c0 = u32[] constant(0)
+    f0 = f32[] constant(0.0)
+    init = f32[1, 1024, 1024] broadcast(f0), dimensions={}
+    while_init = (u32[], f32[1, 1024, 1024]) tuple(c0, init)
+    while_result = (u32[], f32[1, 1024, 1024]) while(while_init),
+      body=while_body, condition=while_cond
+    ROOT result = f32[1, 1024, 1024] get-tuple-element(while_result), index=1
+  }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  HloSchedule& module_schedule = hlo_module->schedule();
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  auto schedule_config = GetDefaultSchedConfig();
+  schedule_config.collective_permute_overlap_limit = 1;
+  schedule_config.schedule_send_recvs = true;
+  schedule_config.aggressive_scheduling_policies = true;
+
+  EXPECT_TRUE(RunScheduler(hlo_module.get(), schedule_config).ok());
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  HloComputation* while_body = hlo_module->GetComputationWithName("while_body");
+
+  std::vector<HloInstruction*> new_instruction_sequence =
+      module_schedule.sequence(while_body).instructions();
+  if (VLOG_IS_ON(1)) {
+    for (auto* new_i : new_instruction_sequence) {
+      VLOG(1) << new_i->ToString();
+    }
+  }
+
+  EXPECT_LT(GetIndex(new_instruction_sequence, "recv"),
+            GetIndex(new_instruction_sequence, "send"));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "send"),
+            GetIndex(new_instruction_sequence, "recv-done"));
+  EXPECT_LT(abs(GetIndex(new_instruction_sequence, "send-done") -
+                GetIndex(new_instruction_sequence, "result.1")),
+            2);
 }
 
 TEST_F(LatencyHidingSchedulerTest, AddDeleteOccupierForSharedResource) {
