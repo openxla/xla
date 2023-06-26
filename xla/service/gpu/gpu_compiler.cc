@@ -121,6 +121,7 @@ limitations under the License.
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/move_copy_to_users.h"
 #include "xla/service/gpu/multi_output_fusion.h"
+#include "xla/service/gpu/priority_fusion.h"
 #include "xla/service/gpu/reduction_degenerate_dim_remover.h"
 #include "xla/service/gpu/reduction_dimension_grouper.h"
 #include "xla/service/gpu/reduction_layout_normalizer.h"
@@ -741,9 +742,7 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
         /*debug_only=*/true);
 
     if (debug_options.xla_gpu_enable_priority_fusion()) {
-      fusion.AddPass<GpuInstructionFusion>(/*may_duplicate=*/false,
-                                           gpu_device_info,
-                                           /*priority_fusion=*/true);
+      fusion.AddPass<GpuPriorityFusion>(gpu_device_info);
     } else {
       fusion.AddPass<GpuInstructionFusion>(/*may_duplicate=*/false,
                                            gpu_device_info);

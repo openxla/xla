@@ -1707,17 +1707,18 @@ cc_library(
     deps = [
         ":gpu_device_info",
         ":gpu_fusible",
-        ":ir_emission_utils",
+        "//xla:shape_util",
+        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:fusion_node_indexing_evaluation",
         "//xla/service:fusion_queue",
+        "//xla/service:hlo_pass",
         "//xla/service:instruction_fusion",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1734,6 +1735,26 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
+    ],
+)
+
+cc_library(
+    name = "priority_fusion",
+    srcs = ["priority_fusion.cc"],
+    hdrs = ["priority_fusion.h"],
+    deps = [
+        ":gpu_device_info",
+        ":gpu_fusible",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:fusion_node_indexing_evaluation",
+        "//xla/service:fusion_queue",
+        "//xla/service:instruction_fusion",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -2254,6 +2275,7 @@ cc_library(
         ":metrics",
         ":move_copy_to_users",
         ":multi_output_fusion",
+        ":priority_fusion",
         ":reduction_degenerate_dim_remover",
         ":reduction_dimension_grouper",
         ":reduction_layout_normalizer",
