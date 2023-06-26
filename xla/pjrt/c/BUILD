@@ -44,6 +44,7 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -89,6 +90,7 @@ cc_library(
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -109,9 +111,11 @@ xla_cc_test(
     deps = [
         ":pjrt_c_api_gpu",
         ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt:pjrt_client",
         "//xla/service:gpu_plugin",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -121,7 +125,8 @@ xla_cc_test(
     srcs = ["pjrt_c_api_helpers_test.cc"],
     deps = [
         ":pjrt_c_api_helpers",
-        "//xla/pjrt:pjrt_client",
+        ":pjrt_c_api_wrapper_impl",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
