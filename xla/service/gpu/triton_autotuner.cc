@@ -360,24 +360,58 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
                                              reference_buffer, cache_key));
     }
 
+    const GpuDeviceInfo gpu_device_info = GetGpuDeviceInfo(stream_exec);
+    std::pair<AutotuneResult::TritonGemmKey, absl::Duration> best =
+        std::make_pair(configurations[0], absl::Hours(1));
     for (const AutotuneResult::TritonGemmKey& conf : configurations) {
       VLOG(1) << "Trying triton tiling: " << conf.ShortDebugString();
 
-      AutotuneResult res;
-      *res.mutable_triton() = conf;
+      bool skip = false;
 
-      TF_ASSIGN_OR_RETURN(
-          std::optional<absl::Duration> duration,
-          RunMatmulWithConfig(fusion, conf, stream, inputs, intermediate_buffer,
-                              output_buffer, cache_key));
-
-      if (!duration) {
-        VLOG(1) << "Skipping this tiling.";
-        continue;
+      std::vector<absl::Duration> durations;
+      // Purge the L2 cache before autotuning.
+      {
+        se::DeviceMemoryBase l2_sized_buffer =
+            stream_exec->AllocateArray<uint8_t>(gpu_device_info.l2_cache_size);
+        stream->ThenMemZero(&l2_sized_buffer, l2_sized_buffer.size());
+        stream_exec->Deallocate(&l2_sized_buffer);
       }
 
-      VLOG(1) << "Running the kernel took: " << *duration;
-      *res.mutable_run_time() = tsl::proto_utils::ToDurationProto(*duration);
+      // This value has been empirically picked to ensure the most stable
+      // behavior of the autotuner, without introducing too much overhead to the
+      // compilation time.
+      constexpr unsigned kIterations = 20;
+      for (unsigned i = 0; i < kIterations; ++i) {
+        TF_ASSIGN_OR_RETURN(
+            std::optional<absl::Duration> duration,
+            RunMatmulWithConfig(fusion, conf, stream, inputs,
+                                intermediate_buffer, output_buffer, cache_key));
+
+        if (!duration) {
+          VLOG(1) << "Skipping this tiling.";
+          skip = true;
+          break;
+        }
+
+        durations.push_back(*duration);
+        VLOG(1) << "Running the kernel took: " << *duration;
+      }
+
+      if (skip) continue;
+
+      std::sort(durations.begin(), durations.end());
+      absl::Duration median = durations[durations.size() / 2 + 1];
+
+      // Rounding the duration to a multiple of the unit time steps to further
+      // remove noise.
+      absl::Duration gpu_timer_unit_step = absl::Microseconds(1.024);
+      absl::Duration rounded_duration =
+          gpu_timer_unit_step *
+          round(absl::FDivDuration(median, gpu_timer_unit_step));
+
+      // The GPU timer is imprecise, we should only consider a configuration if
+      // it's faster than current best by at least 1 unit time step.
+      if (rounded_duration > std::get<1>(best) - gpu_timer_unit_step) continue;
 
       if (config_.should_check_correctness()) {
         TF_ASSIGN_OR_RETURN(
@@ -385,10 +419,6 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
             rz_allocator.CheckRedzones());
         if (!rz_check_status.ok()) {
           LOG(ERROR) << "Red zone modified";
-          res.mutable_failure()->set_kind(AutotuneResult::REDZONE_MODIFIED);
-          *res.mutable_failure()->mutable_msg() =
-              rz_check_status.RedzoneFailureMsg();
-          CHECK(!config_.should_crash_on_check_failure());
           continue;
         }
 
@@ -401,21 +431,22 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
           CHECK(!config_.should_crash_on_check_failure());
           // WRONG_RESULT is not taken seriously by PickBestResult(), so
           // use DISQUALIFIED.
-          res.mutable_failure()->set_kind(AutotuneResult::DISQUALIFIED);
+          continue;
         }
       }
-      results.push_back(res);
 
       if (config_.should_reinit_output_buffer()) {
         InitializeBuffer(stream, root->shape().element_type(), &rng_state,
                          output_buffer);
       }
+      best = std::make_pair(conf, rounded_duration);
     }
 
-    TF_ASSIGN_OR_RETURN(
-        AutotuneResult best,
-        PickBestResult(results, root->ToString(), root->GetModule()->config()));
-    return best;
+    AutotuneResult res;
+    *res.mutable_triton() = std::get<0>(best);
+    *res.mutable_run_time() =
+        tsl::proto_utils::ToDurationProto(std::get<1>(best));
+    return res;
   }
 
   // Run a fusion with a given tiling on given buffers.
