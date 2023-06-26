@@ -248,6 +248,7 @@ cc_library(
     srcs = ["hlo_extractor.cc"],
     hdrs = ["hlo_extractor.h"],
     deps = [
+        ":hlo_slicer",
         "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service:compilation_environments",
