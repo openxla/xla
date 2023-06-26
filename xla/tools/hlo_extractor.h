@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -43,6 +44,12 @@ using HloSelector = std::function<bool(const HloInstruction*)>;
 std::unique_ptr<HloModule> ExtractModule(HloInstruction* instruction,
                                          int64_t height = -1,
                                          HloSelector hlo_selector = nullptr);
+
+// Creates a new HLO module that includes all of the specified
+// `relevant_instructions`, with the root as the original root.
+std::unique_ptr<HloModule> ExtractModuleFromRelevantInstructions(
+    const HloModule* hlo_module,
+    std::vector<const HloInstruction*> relevant_instructions);
 
 }  // namespace xla
 

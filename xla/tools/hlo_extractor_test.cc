@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tools/hlo_extractor.h"
 
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -260,5 +261,85 @@ TEST_F(HloExtractorTest, HloSelector) {
                 op::Subtract(op::Multiply(), op::Parameter()));
   }
 }
+
+TEST_F(HloExtractorTest, ExtractModuleFromRelevantInstructions) {
+  const std::string& hlo_string = R"(
+  HloModule axpy_module
+    calculate_alpha {
+      c.1 = f32[] constant(1)
+      c.2 = f32[] constant(2)
+      c.3 = f32[] add(c.1, c.2)
+      c.4 = f32[] constant(4)
+      ROOT ret = f32[] multiply(c.4, c.3)
+    }
+    
+    ENTRY axpy_computation {
+      p.0 = f32[10] parameter(0)
+      p.1 = f32[10] parameter(1)
+      add.0 = f32[10] add(p.0, p.1)
+      alpha = f32[] call(), to_apply=calculate_alpha
+      broadcast = f32[10] broadcast(alpha), dimensions={}
+      p.2 = f32[10] parameter(2)
+      y = f32[10] multiply(broadcast, p.2)
+      x = f32[10] subtract(add.0, y)
+      p.3 = f32[10] parameter(3)
+      ROOT add = f32[10] add(x, p.3)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  auto p0 = FindInstruction(hlo_module.get(), "p.0");
+  EXPECT_THAT(p0, op::Parameter());
+  auto p3 = FindInstruction(hlo_module.get(), "p.3");
+  EXPECT_THAT(p3, op::Parameter());
+  auto add0 = FindInstruction(hlo_module.get(), "add.0");
+  EXPECT_THAT(add0, op::Add());
+  auto broadcast = FindInstruction(hlo_module.get(), "broadcast");
+  EXPECT_THAT(broadcast, op::Broadcast());
+  auto x = FindInstruction(hlo_module.get(), "x");
+  EXPECT_THAT(x, op::Subtract());
+  auto c3 = FindInstruction(hlo_module.get(), "c.3");
+  EXPECT_THAT(c3, op::Add());
+
+  {
+    auto extracted_module = ExtractModuleFromRelevantInstructions(
+        hlo_module.get(), std::vector<const HloInstruction*>({p0}));
+    EXPECT_EQ(extracted_module->computation_count(), 1);
+    EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
+                op::Add(op::Subtract(op::Add(op::Parameter(), op::Parameter()),
+                                     op::Parameter()),
+                        op::Parameter()));
+  }
+
+  {
+    auto extracted_module = ExtractModuleFromRelevantInstructions(
+        hlo_module.get(),
+        std::vector<const HloInstruction*>({add0, broadcast}));
+    EXPECT_EQ(extracted_module->computation_count(), 1);
+    EXPECT_THAT(
+        extracted_module->entry_computation()->root_instruction(),
+        op::Add(op::Subtract(op::Add(op::Parameter(), op::Parameter()),
+                             op::Multiply(op::Broadcast(), op::Parameter())),
+                op::Parameter()));
+  }
+
+  {
+    auto extracted_module = ExtractModuleFromRelevantInstructions(
+        hlo_module.get(), std::vector<const HloInstruction*>({x, p3}));
+    EXPECT_EQ(extracted_module->computation_count(), 1);
+    EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
+                op::Add(op::Subtract(op::Parameter(), op::Parameter()),
+                        op::Parameter()));
+  }
+
+  {
+    auto extracted_module = ExtractModuleFromRelevantInstructions(
+        hlo_module.get(), std::vector<const HloInstruction*>({x, c3}));
+    EXPECT_EQ(extracted_module->computation_count(), 2);
+  }
+}
+
 }  // namespace
 }  // namespace xla

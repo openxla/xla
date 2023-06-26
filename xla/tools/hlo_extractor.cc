@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/service/compilation_environments.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/status.h"
+#include "xla/tools/hlo_slicer.h"
 
 namespace xla {
 namespace {
@@ -167,6 +168,31 @@ std::unique_ptr<HloModule> ExtractModule(HloInstruction* instruction,
                        /*allow_mixed_precision=*/true);
   TF_CHECK_OK(verifier.Run(cleanup_visitor.module()).status());
   return cleanup_visitor.ConsumeModule();
+}
+
+std::unique_ptr<HloModule> ExtractModuleFromRelevantInstructions(
+    const HloModule* hlo_module,
+    std::vector<const HloInstruction*> relevant_instructions) {
+  // Forward program slicing from the `relevant_instructions`
+  auto slicing_selector = [](const HloInstruction* hlo_inst) -> bool {
+    return true;
+  };
+  auto sliced_result =
+      SliceModule(hlo_module, relevant_instructions, slicing_selector);
+
+  // Extract the sliced module
+  auto extracting_selector =
+      [&sliced_result](const HloInstruction* hlo_inst) -> bool {
+    for (const auto& [comp, insts] : sliced_result.sliced_instructions()) {
+      if (insts.contains(hlo_inst)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto root_inst = hlo_module->entry_computation()->root_instruction();
+  return ExtractModule(root_inst,
+                       /*height=*/-1, extracting_selector);
 }
 
 }  // namespace xla

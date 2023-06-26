@@ -251,6 +251,32 @@ class CallGraph {
   std::pair<HloInstruction*, HloInstruction*> NearestAncestorsInSameComputation(
       HloInstruction* a, HloInstruction* b) const;
 
+  // Given a set of instructions, returns nearest common ancestors as an Hlo
+  // instructions (There could be multiple nearest common ancestors in a DAG).
+  // We define the nearest ancestors of a non-root hlo instruction as its users,
+  // and the nearest ancestors of a root hlo instruction as the instructions (in
+  // other computations) that call it (its caller in callgraph). The overall
+  // idea is to conduct BFS from the `instructions`, and keep track of the
+  // visited ancestors of each node. For each BFS step, we check if there is a
+  // common node in all the visited ancestors, and if yes, that common node is
+  // the nearest ancestor we are looking for.
+  //
+  // Unlike the above `NearestAncestorsInSameComputation`, it:
+  //
+  // (1) returns ancestors even when the caller chain of one of
+  // the instruction diverges (has multiple callers). The 'worst' common
+  // ancestor is the ROOT in the ENTRY computation.
+  //
+  // (2) takes in **a set of** Hlo instructions, and find their nearest common
+  // ancestor. Note that this feature cannot be achieved by iteratively calling
+  // `NearestAncestorsInSameComputation` (even if it is extended to support
+  // "diverge") among the instructions in `instructions`, i.e.,
+  // reduce(`NearestAncestorsInSameComputation`, instructions).
+  //
+  // (3) returns a set of hlo instruction as nearest common ancestors.
+  absl::flat_hash_set<const HloInstruction*> NearestCommonAncestors(
+      std::vector<const HloInstruction*> instructions);
+
   // Returns whether the call graph is flattened. A call graph is flattened if
   // every computation called in a sequential context (eg, kWhile or kCall) has
   // zero or one callsite, and no computation is called from both a parallel and

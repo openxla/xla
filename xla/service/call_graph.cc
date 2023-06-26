@@ -15,13 +15,17 @@ limitations under the License.
 
 #include "xla/service/call_graph.h"
 
+#include <deque>
 #include <memory>
 #include <queue>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/map_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
@@ -187,7 +191,6 @@ bool CallGraph::Dominates(const HloComputation* a,
 }
 
 namespace {
-
 // Returns the call context of a computation which is called from contexts 'a'
 // and 'b'.
 CallContext UnionContexts(CallContext a, CallContext b) {
@@ -460,6 +463,101 @@ CallGraph::NearestAncestorsInSameComputation(HloInstruction* a,
     b_ancestor = next_caller(b_ancestor);
   }
   return {nullptr, nullptr};
+}
+
+absl::flat_hash_set<const HloInstruction*> CallGraph::NearestCommonAncestors(
+    std::vector<const HloInstruction*> instructions) {
+  if (instructions.empty()) {
+    return absl::flat_hash_set<const HloInstruction*>();
+  }
+  if (instructions.size() == 1) {
+    return absl::flat_hash_set<const HloInstruction*>({instructions[0]});
+  }
+
+  // There could be multiple nearest common ancestors in a DAG
+  absl::flat_hash_set<const HloInstruction*> nearest_common_ancestors;
+
+  // Initialize `visited_ancestors` for each provided instruction
+  std::vector<absl::flat_hash_set<const HloInstruction*>> visited_ancestors;
+  visited_ancestors.reserve(instructions.size());
+  for (int idx = 0; idx < instructions.size(); ++idx) {
+    visited_ancestors.push_back(
+        absl::flat_hash_set<const HloInstruction*>({instructions[idx]}));
+  }
+
+  // Initialize BFS queue for each provided instruction
+  std::vector<std::deque<const HloInstruction*>> bfs_queues;
+  bfs_queues.reserve(instructions.size());
+  for (int idx = 0; idx < instructions.size(); ++idx) {
+    bfs_queues.push_back(
+        std::deque<const HloInstruction*>({instructions[idx]}));
+  }
+
+  // Lambda to check if the BFS has finished (i.e., all queues in `bfs_queues`
+  // are empty).
+  auto is_bfs_finished = [&bfs_queues]() -> bool {
+    return absl::c_all_of(
+        bfs_queues,
+        [](std::deque<const HloInstruction*> queue) { return queue.empty(); });
+  };
+
+  // Lambda to check if there are common instruction in all the
+  // `visited_ancestors`. Save results in `nearest_common_ancestors`. Return
+  // true if they are found, otherwise return false.
+  auto find_common_instructions = [&visited_ancestors,
+                                   &nearest_common_ancestors]() -> bool {
+    absl::flat_hash_set<const HloInstruction*> common_instructions(
+        visited_ancestors[0]);
+    for (int idx = 1; idx < visited_ancestors.size(); ++idx) {
+      absl::erase_if(common_instructions, [&](auto k) {
+        return !visited_ancestors[idx].contains(k);
+      });
+    }
+    nearest_common_ancestors = common_instructions;
+    return !nearest_common_ancestors.empty();
+  };
+
+  // BFS
+  while (!is_bfs_finished() && !find_common_instructions()) {
+    for (int idx = 0; idx < bfs_queues.size(); ++idx) {
+      auto cur_queue = bfs_queues[idx];
+      std::deque<const HloInstruction*> next_queue;
+      auto& visited_ancestor = visited_ancestors[idx];
+
+      while (!cur_queue.empty()) {
+        const HloInstruction* instruction = cur_queue.back();
+        cur_queue.pop_back();
+
+        // Identify ancestor of `instruction`
+        std::vector<HloInstruction*> ancestors_to_visit;
+        if (instruction->IsRoot()) {
+          for (const auto& caller :
+               GetNode(instruction->parent()).caller_callsites()) {
+            ancestors_to_visit.push_back(caller.instruction());
+          }
+        } else {
+          ancestors_to_visit = instruction->users();
+          ancestors_to_visit.insert(ancestors_to_visit.end(),
+                                    instruction->control_successors().begin(),
+                                    instruction->control_successors().end());
+        }
+
+        for (auto ancestor : ancestors_to_visit) {
+          if (!visited_ancestor.contains(ancestor)) {
+            next_queue.push_back(ancestor);
+            visited_ancestor.insert(ancestor);
+          }
+        }
+      }
+
+      bfs_queues[idx] = next_queue;
+    }
+  }
+
+  QCHECK(!nearest_common_ancestors.empty())
+      << "At least one nearest_common_ancestor (the original ROOT)";
+
+  return nearest_common_ancestors;
 }
 
 std::string CallGraph::ToString() const {
