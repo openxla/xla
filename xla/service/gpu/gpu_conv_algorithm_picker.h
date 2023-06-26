@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/autotune_results.pb.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/service/service_executable_run_options.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "tsl/protobuf/autotuning.pb.h"
 
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
-#include "xla/service/gpu/autotuner_util.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 #endif
 
