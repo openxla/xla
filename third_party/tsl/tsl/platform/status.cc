@@ -268,6 +268,7 @@ std::string MakeString(const Status& status) {
 // individual Status objects in the StatusGroup are not already summarized.
 Status StatusGroup::as_summary_status() const {
   if (ok_) {
+    LOG(INFO) << "Code has OK Status";
     return OkStatus();
   }
 
