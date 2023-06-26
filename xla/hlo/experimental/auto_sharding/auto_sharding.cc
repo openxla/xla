@@ -2224,6 +2224,69 @@ void PrintLargestInstructions(
   }
 }
 
+// Recursively propagates strategy mappings from a "representative" node to any
+// other nodes connected via the adjacency matrix.
+void PropagateRepresentatives(
+    const AutoShardingSolverRequest& request,
+    const std::vector<std::vector<std::pair<int, int>>>& adj, int rep_idx,
+    int node_idx, std::vector<int>& s_rep,
+    std::vector<std::vector<int>>& s_strategy) {
+  for (const auto& [i, alias_idx] : adj[node_idx]) {
+    if (i == rep_idx || s_rep[i] >= 0) continue;  // already processed
+    s_rep[i] = rep_idx;
+    if (alias_idx == -1) {
+      s_strategy[i] = s_strategy[node_idx];  // copy strategies to the follower
+    } else {
+      s_strategy[i].resize(request.s_len[i], -1);
+      const std::pair<int, int>& alias = request.a[alias_idx];
+      const bool forward = alias.second == i;  // whether the order = [me, them]
+      absl::flat_hash_set<int> supported_strategies;
+      for (size_t p = 0; p < request.s_len[alias.first]; ++p) {
+        for (size_t q = 0; q < request.s_len[alias.second]; ++q) {
+          if (request.v[alias_idx][p * request.s_len[alias.second] + q] < 0.5) {
+            int prev = forward ? q : p, next = forward ? p : q;
+            s_strategy[i][prev] = s_strategy[node_idx][next];
+            supported_strategies.insert(s_strategy[node_idx][next]);
+          }
+        }
+      }
+      // Check if the root has strategies that are not supported by this alias.
+      for (size_t j = 0; j < request.s_len[rep_idx]; ++j) {
+        if (!supported_strategies.contains(j)) s_strategy[rep_idx][j] = -1;
+      }
+    }
+    PropagateRepresentatives(request, adj, rep_idx, i, s_rep, s_strategy);
+  }
+}
+
+std::vector<int> FindRepresentatives(
+    const AutoShardingSolverRequest& request,
+    std::vector<std::vector<int>>& s_strategy) {
+  std::vector<int> s_rep(request.num_nodes, -1);
+  s_strategy.resize(request.num_nodes);
+  std::vector<std::vector<std::pair<int, int>>> adj(request.num_nodes);
+  // Add all followers to the adjacency lists.
+  for (size_t i = 0; i < request.num_nodes; ++i) {
+    if (request.s_follow[i] < 0) continue;
+    adj[i].push_back(std::make_pair(request.s_follow[i], -1 /* not an alias*/));
+    adj[request.s_follow[i]].push_back(std::make_pair(i, -1 /* not an alias*/));
+  }
+  // Add all aliases to the adjacency lists.
+  for (size_t i = 0; i < request.a.size(); ++i) {
+    const std::pair<int, int>& alias = request.a[i];
+    adj[alias.first].push_back(std::make_pair(alias.second, i));
+    adj[alias.second].push_back(std::make_pair(alias.first, i));
+  }
+  // Iterate through nodes and determine if each should be skipped, or should
+  // instead be elected as the "representative" for a new subset of nodes.
+  for (size_t i = 0; i < request.num_nodes; ++i) {
+    if (s_rep[i] >= 0 || request.s_follow[i] >= 0) continue;
+    for (size_t j = 0; j < request.s_len[i]; ++j) s_strategy[i].push_back(j);
+    PropagateRepresentatives(request, adj, i, i, s_rep, s_strategy);
+  }
+  return s_rep;
+}
+
 struct AutoShardingSolverResult {
  public:
   AutoShardingSolverResult(
@@ -2282,24 +2345,6 @@ struct AutoShardingSolverResult {
 //        s[i][p] + s[j][q] <= 1 if v[p, q] == 1.0
 // Serialize parameters of the ILP problem as numpy arrays and call the python
 // solver.
-
-struct AutoShardingSolverRequest {
-  int64_t num_nodes;
-  int64_t memory_budget;
-  std::vector<int> s_len;
-  std::vector<int> s_follow;
-  std::vector<std::pair<int, int>> e;
-  std::vector<std::vector<int>> live;
-  std::vector<std::vector<double>> c;
-  std::vector<std::vector<double>> d;
-  std::vector<std::vector<double>> m;
-  std::vector<std::vector<double>> r;
-  std::vector<std::pair<int, int>> a;
-  std::vector<std::vector<double>> v;
-  std::vector<std::string> instruction_names;
-  std::optional<int64_t> solver_timeout_in_seconds;
-  bool crash_at_infinity_costs_check;
-};
 
 AutoShardingSolverResult CallORToolsSolver(
     const AutoShardingSolverRequest& request) {

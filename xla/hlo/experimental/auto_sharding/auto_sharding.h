@@ -19,7 +19,9 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/str_cat.h"
@@ -480,6 +482,30 @@ bool HasReduceScatterOpportunity(
 HloSharding GetReduceScatterOutput(const HloInstruction* ins,
                                    const ShardingStrategy& strategy,
                                    const ClusterEnvironment& cluster_env);
+
+struct AutoShardingSolverRequest {
+  int64_t num_nodes;
+  int64_t memory_budget;
+  std::vector<int> s_len;
+  std::vector<int> s_follow;
+  std::vector<std::pair<int, int>> e;
+  std::vector<std::vector<int>> live;
+  std::vector<std::vector<double>> c;
+  std::vector<std::vector<double>> d;
+  std::vector<std::vector<double>> m;
+  std::vector<std::vector<double>> r;
+  std::vector<std::pair<int, int>> a;
+  std::vector<std::vector<double>> v;
+  std::vector<std::string> instruction_names;
+  std::optional<int64_t> solver_timeout_in_seconds;
+  bool crash_at_infinity_costs_check;
+};
+
+// Determines a representative node for each connected component in the
+// adjacency matrix of alias & follower edges (also returns strategy mappings
+// via 's_strategy').
+std::vector<int> FindRepresentatives(const AutoShardingSolverRequest& request,
+                                     std::vector<std::vector<int>>& s_strategy);
 }  // namespace spmd
 }  // namespace xla
 

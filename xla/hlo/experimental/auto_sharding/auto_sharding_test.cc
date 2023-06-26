@@ -952,6 +952,127 @@ ENTRY %entry {
   EXPECT_GT(pass.GetSolverOptimalObjectiveValue(), 0);
 }
 
+// clang-format off
+
+TEST(FindRepresentativesNodesTest, NoComponents) {
+  AutoShardingSolverRequest request;
+  request.num_nodes = 3;
+  request.s_len = {2, 3, 4};
+  request.s_follow = {-1, -1, -1};
+  std::vector<std::vector<int>> s_strategy;
+  std::vector<int> s_rep = FindRepresentatives(request, s_strategy);
+  std::vector<int> expected_rep = {-1, -1, -1};
+  std::vector<std::vector<int>> expected_strategy = {
+      {0, 1},
+      {0, 1, 2},
+      {0, 1, 2, 3}};
+  EXPECT_THAT(s_rep, expected_rep);
+  EXPECT_THAT(s_strategy, expected_strategy);
+}
+
+TEST(FindRepresentativesNodesTest, WithFollower) {
+  AutoShardingSolverRequest request;
+  request.num_nodes = 4;
+  request.s_len = {2, 3, 4, 4};
+  request.s_follow = {-1, -1, -1, 2};  // <--- 3 follows 2
+  std::vector<std::vector<int>> s_strategy;
+  std::vector<int> s_rep = FindRepresentatives(request, s_strategy);
+  std::vector<int> expected_rep = {-1, -1, -1, 2};  // <--- mirrors s_follow
+  std::vector<std::vector<int>> expected_strategy = {
+      {0, 1},
+      {0, 1, 2},
+      {0, 1, 2, 3},
+      {0, 1, 2, 3}};
+  EXPECT_THAT(s_rep, expected_rep);
+  EXPECT_THAT(s_strategy, expected_strategy);
+}
+
+TEST(FindRepresentativesNodesTest, WithAliases) {
+  AutoShardingSolverRequest request;
+  request.num_nodes = 5;
+  request.s_len = {2, 3, 4, 4, 4};
+  request.s_follow = {-1, -1, -1, -1, -1};
+  request.a = {{3, 2}, {2, 4}};  // <--- 3 aliased to 2, 2 aliased to 4
+  request.v = {
+      {0.0, 1.0, 1.0, 1.0,  // <--- zeroes fall along the diagonal
+       1.0, 0.0, 1.0, 1.0,
+       1.0, 1.0, 0.0, 1.0,
+       1.0, 1.0, 1.0, 0.0},
+      {0.0, 1.0, 1.0, 1.0,
+       1.0, 0.0, 1.0, 1.0,
+       1.0, 1.0, 0.0, 1.0,
+       1.0, 1.0, 1.0, 0.0}};
+  std::vector<std::vector<int>> s_strategy;
+  std::vector<int> s_rep = FindRepresentatives(request, s_strategy);
+  std::vector<int> expected_rep = {-1, -1, -1, 2, 2};  // <--- some reps are 2
+  std::vector<std::vector<int>> expected_strategy = {
+      {0, 1},
+      {0, 1, 2},
+      {0, 1, 2, 3},
+      {0, 1, 2, 3},
+      {0, 1, 2, 3}};
+  EXPECT_THAT(s_rep, expected_rep);
+  EXPECT_THAT(s_strategy, expected_strategy);
+}
+
+TEST(FindRepresentativesNodesTest, ScrambledStrategies) {
+  AutoShardingSolverRequest request;
+  request.num_nodes = 5;
+  request.s_len = {2, 3, 4, 4, 4};
+  request.s_follow = {-1, -1, -1, -1, -1};
+  request.a = {{3, 2}, {2, 4}};  // <--- 3 aliased to 2, 2 aliased to 4
+  request.v = {
+      {1.0, 0.0, 1.0, 1.0,  //  <--- zeroes no longer fall along the diagonal
+       1.0, 1.0, 0.0, 1.0,
+       1.0, 1.0, 1.0, 0.0,
+       0.0, 1.0, 1.0, 1.0},
+      {1.0, 1.0, 0.0, 1.0,
+       1.0, 0.0, 1.0, 1.0,
+       1.0, 1.0, 1.0, 0.0,
+       0.0, 1.0, 1.0, 1.0}};
+  std::vector<std::vector<int>> s_strategy;
+  std::vector<int> s_rep = FindRepresentatives(request, s_strategy);
+  std::vector<int> expected_rep = {-1, -1, -1, 2, 2};
+  std::vector<std::vector<int>> expected_strategy = {
+      {0, 1},
+      {0, 1, 2},
+      {0, 1, 2, 3},
+      {1, 2, 3, 0},   // <--- this row is scrambled
+      {3, 1, 0, 2}};  // <--- this row is scrambled
+  EXPECT_THAT(s_rep, expected_rep);
+  EXPECT_THAT(s_strategy, expected_strategy);
+}
+
+TEST(FindRepresentativesNodesTest, MissingStrategyPairs) {
+  AutoShardingSolverRequest request;
+  request.num_nodes = 5;
+  request.s_len = {2, 3, 4, 4, 4};
+  request.s_follow = {-1, -1, -1, -1, -1};
+  request.a = {{3, 2}, {2, 4}};  // <--- 3 aliased to 2, 2 aliased to 4
+  request.v = {
+      {1.0, 0.0, 1.0, 1.0,
+       1.0, 1.0, 1.0, 1.0,  // <--- no zero in second row
+       1.0, 1.0, 1.0, 0.0,
+       0.0, 1.0, 1.0, 1.0},
+      {1.0, 1.0, 0.0, 1.0,
+       1.0, 0.0, 1.0, 1.0,
+       1.0, 1.0, 1.0, 0.0,
+       0.0, 1.0, 1.0, 1.0}};
+  std::vector<std::vector<int>> s_strategy;
+  std::vector<int> s_rep = FindRepresentatives(request, s_strategy);
+  std::vector<int> expected_rep = {-1, -1, -1, 2, 2};
+  std::vector<std::vector<int>> expected_strategy = {
+      {0, 1},
+      {0, 1, 2},
+      {0, 1, -1, 3},   // <--- strategy at pos 2 not supported by all aliases
+      {1, -1, 3, 0},   // <--- strategy at pos 1 not supported by all aliases
+      {3, 1, 0, -1}};  // <--- strategy at pos 3 not supported by all aliases
+  EXPECT_THAT(s_rep, expected_rep);
+  EXPECT_THAT(s_strategy, expected_strategy);
+}
+
+// clang-format on
+
 }  // namespace
 }  // namespace spmd
 }  // namespace xla
