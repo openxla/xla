@@ -14,13 +14,18 @@ limitations under the License.
 ==============================================================================*/
 
 #include "pybind11/pybind11.h"  // from @pybind11
-#include "tsl/python/lib/core/bfloat16.h"
+#include "tsl/python/lib/core/ml_dtypes.h"
 
-PYBIND11_MODULE(pywrap_bfloat16, m) {
-  tsl::RegisterNumpyBfloat16();
-
-  m.def("bfloat16_type", [] { return pybind11::handle(tsl::Bfloat16Dtype()); });
-
-  m.def("float8_e4m3b11_type",
-        [] { return pybind11::handle(tsl::Float8_E4M3B11Dtype()); });
+PYBIND11_MODULE(pywrap_ml_dtypes, m) {
+  tsl::ml_dtypes::RegisterTypes();
+  m.def("bfloat16",
+        [] { return pybind11::handle(tsl::ml_dtypes::GetBfloat16Dtype()); });
+  m.def("float8_e4m3b11fnuz", [] {
+    return pybind11::handle(tsl::ml_dtypes::GetFloat8E4m3b11fnuzDtype());
+  });
+  m.def("float8_e4m3fn", [] {
+    return pybind11::handle(tsl::ml_dtypes::GetFloat8E4m3fnDtype());
+  });
+  m.def("float8_e5m2",
+        [] { return pybind11::handle(tsl::ml_dtypes::GetFloat8E5m2Dtype()); });
 }

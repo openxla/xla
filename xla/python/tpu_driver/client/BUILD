@@ -70,7 +70,7 @@ tsl_pybind_extension(
         "@llvm-project//mlir:IR",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
-        "@tsl//tsl/python/lib/core:bfloat16_lib",
+        "@tsl//tsl/python/lib/core:ml_dtypes_lib",
     ],
 )
 
