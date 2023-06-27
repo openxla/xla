@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/types/optional.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "tsl/profiler/utils/tpu_xplane_utils.h"
 #include "tsl/profiler/utils/trace_utils.h"
 #include "tsl/profiler/utils/xplane_builder.h"
 #include "tsl/profiler/utils/xplane_schema.h"
@@ -353,7 +354,7 @@ class TpuModuleLineMutatorFactory : public XplaneEventMutatorFactory {
       XPlaneBuilder* xplane) const override {
     std::vector<std::unique_ptr<XplaneEventMutator>> mutators;
     if (absl::StartsWith(xplane->Name(), kTpuPlanePrefix) &&
-        IsTensorCorePlaneName(xplane->Name())) {
+        GetTensorCoreId(xplane->Name()).has_value()) {
       if (auto device_ordinal = ParseDeviceOrdinal(xplane->Name())) {
         XStatMetadata* context_type_metadata = xplane->GetOrCreateStatMetadata(
             GetStatTypeStr(StatType::kConsumerType));
