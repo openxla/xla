@@ -533,7 +533,6 @@ xla_cc_test(
     srcs = ["data_parallel_collective_optimizer_test.cc"],
     deps = [
         ":data_parallel_collective_optimizer",
-        ":hlo_dce",
         ":hlo_pass_pipeline",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
