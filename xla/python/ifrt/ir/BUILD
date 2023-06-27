@@ -136,13 +136,14 @@ cc_library(
 )
 
 cc_library(
-    name = "compile_options",
-    srcs = ["compile_options.cc"],
-    hdrs = ["compile_options.h"],
+    name = "compiler",
+    srcs = ["compiler.cc"],
+    hdrs = ["compiler.h"],
     visibility = ["//xla/python/ifrt:friends"],
     deps = [
         "//xla/python/ifrt",
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
     ],
 )

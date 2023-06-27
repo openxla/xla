@@ -72,7 +72,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:test_util",
         "//xla/python/ifrt/ir",
-        "//xla/python/ifrt/ir:compile_options",
+        "//xla/python/ifrt/ir:compiler",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
