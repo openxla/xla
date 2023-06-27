@@ -51,6 +51,8 @@ limitations under the License.
 
 namespace xla {
 
+using std::optional;
+
 class LiteralUtil {
  public:
   LiteralUtil() = delete;
@@ -544,6 +546,12 @@ template <PrimitiveType type, typename T>
   std::minstd_rand0 engine;
   return CreateRandomLiteral<type>(shape, &engine, mean, stddev);
 }
+
+// Converts the given literal to a scalar int64_t, if possible.
+//
+// Fails if the literal is not an integral type or if the value it contains
+// cannot be represented in an int64_t.
+/* static */ optional<int64_t> LiteralAsScalarInt64(const Literal& l);
 
 }  // namespace xla
 

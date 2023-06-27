@@ -22,6 +22,7 @@ limitations under the License.
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -31,6 +32,7 @@ limitations under the License.
 #include "xla/index_util.h"
 #include "xla/primitive_util.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -42,7 +44,7 @@ namespace xla {
 namespace {
 
 using absl::StrCat;
-
+using std::nullopt;
 // Return a literal with all arrays of type FromNativeT converted to type
 // ToNativeT in the given literal.
 template <typename FromNativeT, typename ToNativeT>
@@ -481,6 +483,40 @@ void SetScalarAtIndexImpl(MutableLiteralBase& literal,
 /* static */ std::string LiteralUtil::MultiIndexAsString(
     absl::Span<const int64_t> multi_index) {
   return StrCat("{", absl::StrJoin(multi_index, ","), "}");
+}
+
+/* static */ optional<int64_t> LiteralAsScalarInt64(const Literal& l) {
+  if (!ShapeUtil::IsEffectiveScalar(l.shape())) {
+    VLOG(2) << "literal is not an effective scalar: " << l.ToString();
+    return nullopt;
+  }
+  switch (l.shape().element_type()) {
+    case S8:
+      return l.GetFirstElement<int8_t>();
+    case S16:
+      return l.GetFirstElement<int16_t>();
+    case S32:
+      return l.GetFirstElement<int32_t>();
+    case S64:
+      return l.GetFirstElement<int64_t>();
+    case U8:
+      return l.GetFirstElement<uint8_t>();
+    case U16:
+      return l.GetFirstElement<uint16_t>();
+    case U32:
+      return l.GetFirstElement<uint32_t>();
+    case U64: {
+      uint64_t v = l.GetFirstElement<uint64_t>();
+      if (v > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        VLOG(2) << "uint64_t literal is out of range for int64_t: " << v;
+        return nullopt;
+      }
+      return v;
+    }
+    default:
+      VLOG(2) << "literal is of non-integral type " << l.shape().ToString();
+      return nullopt;
+  }
 }
 
 }  // namespace xla

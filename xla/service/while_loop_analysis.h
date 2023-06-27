@@ -42,6 +42,16 @@ std::optional<int64_t> ComputeWhileLoopTripCountUpperBound(
 // gte(param0, N)
 std::vector<const HloInstruction *> GetAuxiliaryLoopInductionVars(
     const HloInstruction *while_op);
+
+// Returns the Literal object corresponding to the given instruction, otherwise,
+// returns nullptr. And instruction points to a literal if:
+//   1) is a constant
+//   2) is copy, reshape, or bitcast.
+//   3) is in the form of gte(input), index=N
+//      , and the computation that it resides in comes from a while instruction
+//      such that, input to the while at N is either 1 or 2.
+std::optional<Literal> GetLiteral(const HloInstruction *var);
+
 // Returns the tuple index of the loop induction variable if there is such an
 // induction variable detected. Otherwise returns nullopt.
 std::optional<int64_t> GetLoopInductionVarTupleIdx(

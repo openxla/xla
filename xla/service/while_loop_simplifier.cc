@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -805,6 +806,8 @@ static StatusOr<bool> TryRemoveWhileLoop(HloInstruction* while_op) {
     // Remove while_op (i.e., call ReplaceInstruction rather than
     // ReplaceUsesWithInstruction) so that if the algebraic simplifier is run in
     // a loop without an intervening DCE, we don't try to re-remove the loop.
+    VLOG(2) << "Removing dead while loop with zero trip count: "
+            << while_op->ToShortString();
     TF_RETURN_IF_ERROR(computation->ReplaceInstruction(
         while_op, while_op->mutable_operand(0)));
     return true;
