@@ -65,6 +65,7 @@ cc_library(
         "value.h",
     ],
     deps = [
+        ":serdes",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",

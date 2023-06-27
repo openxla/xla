@@ -40,8 +40,15 @@ cc_library(
         "xla_compiler.h",
     ],
     deps = [
+        ":xla_compiler_proto_cc",
+        "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:serdes",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -50,6 +57,12 @@ tf_proto_library(
     srcs = ["xla_host_callback.proto"],
     cc_api_version = 2,
     protodeps = ["//xla:xla_data_proto"],
+)
+
+tf_proto_library(
+    name = "xla_compiler_proto",
+    srcs = ["xla_compiler.proto"],
+    protodeps = ["//xla/pjrt:compile_options_proto"],
 )
 
 # TODO(hyeontaek): Move this target out of pjrt_ifrt.
