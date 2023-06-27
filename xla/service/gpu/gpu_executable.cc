@@ -51,6 +51,8 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/gpu/gpu_activation.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
 #include "xla/util.h"
@@ -537,6 +539,11 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       "GpuExecutable::ExecuteAsyncOnStreamImpl(", module_name_, ")"));
   se::DeviceMemoryAllocator* const memory_allocator = run_options->allocator();
   se::StreamExecutor* executor = run_options->stream()->parent();
+
+  // GpuExecutable always bound to a single GpuContext during its execution, so
+  // we activate it once to skip expensive context activations later.
+  se::gpu::GpuExecutor* gpu_executor = se::gpu::ExtractGpuExecutor(executor);
+  se::gpu::ScopedActivateExecutorContext activation(gpu_executor);
 
   // If persistent buffers are enabled, the executable cannot execute
   // concurrently, therefore performance can suffer under contention.
