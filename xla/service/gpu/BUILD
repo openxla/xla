@@ -1169,6 +1169,7 @@ cc_library(
         ":ir_emission_utils",
         ":matmul_utils",
         "//xla:literal_util",
+        "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
