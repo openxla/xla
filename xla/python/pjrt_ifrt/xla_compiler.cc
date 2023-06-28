@@ -55,8 +55,7 @@ class XlaCompileOptionsSerDes
   }
 
   absl::StatusOr<std::unique_ptr<Serializable>> Deserialize(
-      const std::string& serialized,
-      std::unique_ptr<DeserializeOptions>) override {
+      const std::string& serialized) override {
     XlaCompileOptionsProto proto;
     if (!proto.ParseFromString(serialized)) {
       return absl::DataLossError(

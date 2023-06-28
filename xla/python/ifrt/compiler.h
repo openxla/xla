@@ -47,7 +47,7 @@ struct CompileOptions : llvm::RTTIExtends<CompileOptions, Serializable> {
 //
 // TODO(hyeontaek): Make an new `LoadOptions` that is specific for loading.
 struct DeserializeExecutableOptions
-    : llvm::RTTIExtends<DeserializeExecutableOptions, DeserializeOptions> {
+    : llvm::RTTIExtends<DeserializeExecutableOptions, llvm::RTTIRoot> {
   static char ID;  // NOLINT
 };
 
