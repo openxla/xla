@@ -350,6 +350,8 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/profiler/lib:scoped_annotation_stack",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_graph",
     ]),
