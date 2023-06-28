@@ -481,6 +481,7 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:compiler",
         "//xla/service:executable",
         "//xla/service:hlo_execution_profile",
         "//xla/service:hlo_profile_printer_data_cc",
