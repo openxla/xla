@@ -539,6 +539,60 @@ class Stream {
         output_descriptor, bias_descriptor, scale, dropout_rate, seed);
   }
 
+  tsl::StatusOr<std::unique_ptr<const dnn::FusedMHASoftmaxBackwardRunner>>
+  FusedMHASoftmaxBackwardRunnerFromDesc(
+      const dnn::AlgorithmDesc &algorithm_desc, dnn::FusedMHAKind kind,
+      const dnn::MatmulTensorDescriptor &bmm1_grad_gemm1_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor &bmm1_grad_gemm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor &bmm2_grad_gemm1_lhs_descriptor,
+      const dnn::MatmulTensorDescriptor &bmm2_grad_gemm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor &d_output_descriptor,
+      const dnn::TensorDescriptor &d_bmm1_lhs_descriptor,
+      const dnn::TensorDescriptor &d_bmm1_rhs_descriptor,
+      const dnn::TensorDescriptor &d_bmm2_rhs_descriptor,
+      const dnn::TensorDescriptor &d_S_descriptor,
+      std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
+      std::optional<double> dropout_rate, std::optional<int64_t> seed) {
+    dnn::DnnSupport *dnn_support = parent_->AsDnn();
+    if (!dnn_support) {
+      return tsl::errors::Unimplemented("DNN library is not found.");
+    }
+    return dnn_support->FusedMHASoftmaxBackwardRunnerFromDesc(
+        this, algorithm_desc, kind, bmm1_grad_gemm1_rhs_descriptor,
+        bmm1_grad_gemm2_rhs_descriptor, bmm2_grad_gemm1_lhs_descriptor,
+        bmm2_grad_gemm2_rhs_descriptor, d_output_descriptor,
+        d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
+        d_S_descriptor, d_bias_descriptor, scale, dropout_rate, seed);
+  }
+
+  tsl::StatusOr<std::unique_ptr<const dnn::FusedMHAMaskBackwardRunner>>
+  FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
+      const dnn::AlgorithmDesc &algorithm_desc, dnn::FusedMHAKind kind,
+      const dnn::MatmulTensorDescriptor &bmm1_grad_gemm1_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor &bmm1_grad_gemm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor &bmm2_grad_gemm1_lhs_descriptor,
+      const dnn::MatmulTensorDescriptor &bmm2_grad_gemm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor &d_output_descriptor,
+      const dnn::TensorDescriptor &d_bmm1_lhs_descriptor,
+      const dnn::TensorDescriptor &d_bmm1_rhs_descriptor,
+      const dnn::TensorDescriptor &d_bmm2_rhs_descriptor,
+      const dnn::TensorDescriptor &d_S_descriptor,
+      const dnn::TensorDescriptor &mask_descriptor,
+      std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
+      std::optional<double> dropout_rate, std::optional<int64_t> seed) {
+    dnn::DnnSupport *dnn_support = parent_->AsDnn();
+    if (!dnn_support) {
+      return tsl::errors::Unimplemented("DNN library is not found.");
+    }
+    return dnn_support->FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
+        this, algorithm_desc, kind, bmm1_grad_gemm1_rhs_descriptor,
+        bmm1_grad_gemm2_rhs_descriptor, bmm2_grad_gemm1_lhs_descriptor,
+        bmm2_grad_gemm2_rhs_descriptor, d_output_descriptor,
+        d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
+        d_S_descriptor, mask_descriptor, d_bias_descriptor, scale, dropout_rate,
+        seed);
+  }
+
   Stream &ThenSeparableConvolve(
       const dnn::BatchDescriptor &input_descriptor,
       const DeviceMemory<float> &input_data,
