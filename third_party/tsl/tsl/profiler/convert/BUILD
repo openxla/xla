@@ -146,3 +146,49 @@ tsl_cc_test(
         "//tsl/profiler/utils:xplane_schema",
     ],
 )
+
+cc_library(
+    name = "xplane_to_profile_instructions",
+    srcs = ["xplane_to_profile_instructions.cc"],
+    hdrs = ["xplane_to_profile_instructions.h"],
+    copts = tf_profiler_copts(),
+    visibility = set_external_visibility([
+        "//tensorflow/compiler/xla/python:__pkg__",
+        "//tensorflow/core/profiler/rpc/client:__pkg__",
+        "//tensorflow/python/profiler/internal:__pkg__",
+    ]),
+    deps = [
+        "//tsl/platform:env",
+        "//tsl/platform:status",
+        "//tsl/platform:types",
+        "//tsl/profiler/protobuf:profiled_instructions_proto_cc",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
+        "//tsl/profiler/utils:file_system_utils",
+        "//tsl/profiler/utils:tf_xplane_visitor",
+        "//tsl/profiler/utils:xplane_schema",
+        "//tsl/profiler/utils:xplane_utils",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+tsl_cc_test(
+    name = "xplane_to_profile_instructions_test",
+    srcs = ["xplane_to_profile_instructions_test.cc"],
+    deps = [
+        ":xplane_to_profile_instructions",
+        "//tsl/platform:env_impl",
+        "//tsl/platform:errors",
+        "//tsl/platform:status",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
+        "//tsl/platform:types",
+        "//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
+        "//tsl/profiler/rpc/client:save_profile",
+        "//tsl/profiler/utils:file_system_utils",
+        "//tsl/profiler/utils:xplane_builder",
+        "//tsl/profiler/utils:xplane_schema",
+    ],
+)
