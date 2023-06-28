@@ -15,6 +15,15 @@ filegroup(
     ],
 )
 
+filegroup(
+    name = "ffi_hdrs",
+    srcs = [
+        "ffi_abi.h",
+        "ffi_api.h",
+        "ffi_c_api.h",
+    ],
+)
+
 cc_library(
     name = "ffi_abi",
     hdrs = ["ffi_abi.h"],
