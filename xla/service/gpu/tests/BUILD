@@ -664,6 +664,7 @@ xla_cc_test(
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:instruction_fusion",
         "//xla/service/gpu:multi_output_fusion",
+        "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",

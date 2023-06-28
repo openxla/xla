@@ -123,7 +123,6 @@ cc_library(
         "//xla:debug_options_flags",
         "//xla:shape_util",
         "//xla/mlir_hlo:lhlo",
-        "//xla/mlir_hlo:lhlo_gpu",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:logging",
     ],
@@ -1823,6 +1822,7 @@ xla_cc_test(
         ":gpu_fusible",
         ":multi_output_fusion",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
@@ -1911,6 +1911,7 @@ xla_cc_test(
         "//xla:test_helpers",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:hlo_parser",
+        "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
@@ -2920,12 +2921,42 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "hlo_fusion_analysis",
+    srcs = ["hlo_fusion_analysis.cc"],
+    hdrs = [
+        "hlo_fusion_analysis.h",
+        "kernel_mapping_scheme.h",
+    ],
+    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]),
+    deps = [
+        ":backend_configs_cc",
+        ":gpu_device_info",
+        ":gpu_fusible",
+        ":ir_emission_utils",
+        ":launch_dimensions",
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:union_find",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service/llvm_ir:loop_emitter",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+cc_library(
     name = "gpu_performance_model",
     srcs = ["gpu_performance_model.cc"],
     hdrs = ["gpu_performance_model.h"],
     deps = [
         ":gpu_device_info",
         ":gpu_hlo_cost_analysis",
+        ":hlo_fusion_analysis",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/time",
     ],

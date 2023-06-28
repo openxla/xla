@@ -21,6 +21,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_fusible.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
 
 namespace xla {
@@ -38,8 +39,10 @@ class FusionMergerTest : public HloTestBase {
   }
 
  public:
-  FusionMerger fusion_merger_{TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-                              ShapeSizeBytesFunction()};
+  FusionMerger fusion_merger_{
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+      se::CudaComputeCapability({se::CudaComputeCapability::AMPERE, 0}),
+      ShapeSizeBytesFunction()};
   FusionMergerTest() : HloTestBase() {}
 };
 
