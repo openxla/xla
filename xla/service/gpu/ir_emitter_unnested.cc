@@ -2125,7 +2125,7 @@ Status IrEmitterUnnested::EmitLoopFusion(mlir::Operation* op) {
   bool use_experimental_block_size =
       hlo_module_config_.debug_options()
           .xla_gpu_enable_experimental_block_size() &&
-      !launch_config.row_vectorized && !launch_config.few_waves;
+      !launch_config.row_vectorized;
   TF_ASSIGN_OR_RETURN(
       LaunchDimensions launch_dimensions,
       CalculateLaunchDimensions(element_shape, gpu_device_info, launch_config,
