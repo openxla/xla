@@ -40,6 +40,7 @@ cc_library(
         "//xla/translate/mhlo_to_hlo:type_to_shape",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:optional",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
