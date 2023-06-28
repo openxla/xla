@@ -1770,6 +1770,26 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "priority_fusion_test",
+    srcs = ["priority_fusion_test.cc"],
+    tags = ["no_pip"],
+    deps = [
+        ":gpu_device_info_for_tests",
+        ":gpu_hlo_cost_analysis",
+        ":priority_fusion",
+        "//xla:shape_util",
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:test_utils",
+        "//xla/tests:verified_hlo_module",
+        "//xla/tests:xla_internal_test_main",
+    ],
+)
+
 cc_library(
     name = "multi_output_fusion",
     srcs = ["multi_output_fusion.cc"],
