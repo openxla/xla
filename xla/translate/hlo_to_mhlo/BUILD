@@ -16,7 +16,6 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
         "//xla/service:hlo_proto_cc",
         "@llvm-project//mlir:IR",
