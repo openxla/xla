@@ -43,6 +43,7 @@ cc_library(
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform:errors",
@@ -63,6 +64,7 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_future",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -124,8 +126,10 @@ xla_cc_test(
     name = "pjrt_c_api_helpers_test",
     srcs = ["pjrt_c_api_helpers_test.cc"],
     deps = [
+        ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
+        "//xla:shape_util",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
