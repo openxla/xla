@@ -1164,7 +1164,6 @@ cc_library(
     hdrs = ["gemm_rewriter_triton.h"],
     deps = [
         ":backend_configs_cc",
-        ":cublas_padding_requirements",
         ":gpu_types",
         ":ir_emission_utils",
         ":matmul_utils",
@@ -1214,7 +1213,6 @@ xla_cc_test(
     name = "gemm_rewriter_triton_test",
     srcs = ["gemm_rewriter_triton_test.cc"],
     deps = [
-        ":cublas_padding_requirements",
         ":gemm_rewriter_triton",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
@@ -2128,21 +2126,8 @@ cc_library(
         "//xla:literal_util",
         "//xla:util",
         "//xla:window_util",
-        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
-        "//xla/stream_executor:device_description",
-    ],
-)
-
-cc_library(
-    name = "cublas_padding_requirements",
-    srcs = ["cublas_padding_requirements.cc"],
-    hdrs = ["cublas_padding_requirements.h"],
-    deps = [
-        "//xla:util",
-        "//xla/hlo/ir:hlo",
-        "//xla/stream_executor:device_description",
     ],
 )
 
@@ -2533,7 +2518,6 @@ cc_library(
     deps = if_cuda_is_configured([
         ":cublas_cudnn",
         ":cublas_pad_for_gemms",
-        ":cublas_padding_requirements",
         ":cudnn_fused_conv_rewriter",
         ":cudnn_fused_mha_rewriter",
         ":cudnn_pad_for_convolutions",
