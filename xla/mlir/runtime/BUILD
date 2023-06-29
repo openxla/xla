@@ -12,8 +12,8 @@ package_group(
         # # TODO(ezhulenev): Clean up dependencies that are leforvers from Autofusion project.
         # "@tf_runtime//...",
         # "//third_party/tf_runtime_google/...",
-        # "//tensorflow/compiler/mlir/tfrt/...",
         # copybara:uncomment_end(google-only)
+        "//tensorflow/compiler/mlir/tfrt/...",
         "//xla/mlir/...",
         "//xla/runtime/...",
         # TODO(ezhulenev): All targets depending on mlir must be under xla/mlir folder
