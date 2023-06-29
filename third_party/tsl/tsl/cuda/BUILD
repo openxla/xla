@@ -177,27 +177,6 @@ cc_library(
 )
 
 cc_library(
-    name = "curand_stub",
-    srcs = if_cuda_is_configured(["curand_stub.cc"]),
-    textual_hdrs = ["curand_10_0.inc"],
-    visibility = ["//visibility:public"],
-    deps = if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",
-        "//tsl/platform:dso_loader",
-        "//tsl/platform:env",
-    ]),
-)
-
-alias(
-    name = "curand_lib",
-    actual = select({
-        "//tsl:oss": ":curand_stub",
-        "//conditions:default": "@local_config_cuda//cuda:curand",
-    }),
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
     name = "cusolver_stub",
     srcs = if_cuda_is_configured(["cusolver_stub.cc"]),
     textual_hdrs = glob(["cusolver_dense_*.inc"]),
