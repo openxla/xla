@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_live_range.h"
 
 #include <algorithm>
+#include <memory>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -33,6 +34,7 @@ namespace xla {
 StatusOr<std::unique_ptr<HloLiveRange>> HloLiveRange::Run(
     const HloSchedule& schedule, const HloAliasAnalysis& alias_analysis,
     const HloComputation* computation, bool module_scoped_analysis) {
+  TF_RET_CHECK(!schedule.empty());
   std::unique_ptr<HloLiveRange> hlo_live_range(
       new HloLiveRange(schedule, alias_analysis, module_scoped_analysis));
   hlo_live_range->FlattenSchedule(*computation);
