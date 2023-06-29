@@ -58,7 +58,7 @@ tf_proto_library(
     protodeps = [
         "//xla:xla_data_proto",
         "//xla/stream_executor:dnn_proto",
-        "@tsl//tsl/protobuf:autotuning_proto",
+        "//xla:autotuning_proto",
     ],
 )
 
@@ -326,6 +326,7 @@ cc_library(
         ":parallel_loop_emitter",
         ":target_util",
         ":thunk",
+        "//xla:autotuning_proto_cc",
         "//xla:literal",
         "//xla:permutation_util",
         "//xla:shape_util",
@@ -400,7 +401,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ] + if_gpu_is_configured([
         ":triangular_solve_thunk",
@@ -422,6 +422,7 @@ cc_library(
         ":launch_dimensions",
         ":matmul_utils",
         ":target_util",
+        "//xla:autotuning_proto_cc",
         "//xla:comparison_util",
         "//xla:shape_util",
         "//xla:statusor",
@@ -463,7 +464,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ] + if_cuda_is_configured([
         "@triton//:TritonGPUToLLVM",
         "@triton//:TritonGPUTransforms",
@@ -489,6 +489,7 @@ xla_test(
         ":ir_emission_utils",
         ":ir_emitter_triton",
         ":launch_dimensions",
+        "//xla:autotuning_proto_cc",
         "//xla:error_spec",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu/tests:gpu_codegen_test",
@@ -501,7 +502,6 @@ xla_test(
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 
@@ -615,7 +615,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
+        "//xla:autotuning_proto_cc",
         "@tsl//tsl/util/proto:proto_utils",
     ]) + ["@com_google_absl//absl/algorithm:container"],
 )
@@ -634,6 +634,7 @@ xla_test(
         ":backend_configs_cc",
         ":gemm_rewriter_triton",
         ":triton_autotuner",
+        "//xla:autotuning_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass_pipeline",
@@ -646,7 +647,6 @@ xla_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 
@@ -1167,6 +1167,7 @@ cc_library(
         ":gpu_types",
         ":ir_emission_utils",
         ":matmul_utils",
+        "//xla:autotuning_proto_cc",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
@@ -1184,7 +1185,6 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 
@@ -1289,7 +1289,7 @@ cc_library(
         "@tsl//tsl/platform:logger",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
+        "//xla:autotuning_proto_cc",
         "@tsl//tsl/util/proto:proto_utils",
     ]),
 )
@@ -1303,12 +1303,12 @@ cc_library(
         "@com_google_absl//absl/strings",
         ":stream_executor_util",
         "//xla:autotune_results_proto_cc",
+        "//xla:autotuning_proto_cc",
         "//xla:types",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:redzone_allocator",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:protobuf",
     ]),
@@ -1491,6 +1491,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "//xla:autotune_results_proto_cc",
+        "//xla:autotuning_proto_cc",
         "//xla:literal_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -1503,7 +1504,6 @@ cc_library(
         "@tsl//tsl/platform:logger",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:numbers",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
         "@tsl//tsl/util/proto:proto_utils",
         ":autotuner_util",
         ":buffer_comparator",
@@ -2871,6 +2871,7 @@ cc_library(
     deps = [
         ":cublas_cudnn",
         ":launch_dimensions",
+        "//xla:autotuning_proto_cc",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:types",
@@ -2888,7 +2889,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:regexp",
         "@tsl//tsl/profiler/lib:traceme",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
         "@tsl//tsl/util:env_var",
         "@tsl//tsl/util/proto:proto_utils",
     ],
@@ -3270,7 +3270,7 @@ tf_proto_library(
     protodeps = [
         "//xla:xla_data_proto",
         "//xla/service:hlo_proto",
-        "@tsl//tsl/protobuf:autotuning_proto",
+        "//xla:autotuning_proto",
     ],
 )
 
@@ -3280,10 +3280,10 @@ cc_library(
     hdrs = ["hlo_algorithm_denylist.h"],
     deps = [
         ":gpu_autotuning_proto_cc",
+        "//xla:autotuning_proto_cc",
         "//xla:debug_options_flags",
         "//xla/stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@tsl//tsl/protobuf:autotuning_proto_cc",
     ],
 )
 

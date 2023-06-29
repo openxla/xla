@@ -20,12 +20,12 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
+#include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "tsl/platform/threadpool.h"
-#include "tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -53,9 +53,9 @@ class TritonAutotuner : public HloModulePass {
 
 // TODO(b/266210099): have a way to generate/load these dynamically.
 // Returns a list of possible tilings for a gemm performed in Triton.
-std::vector<tensorflow::AutotuneResult::TritonGemmKey>
-GetPossibleMatmulAutotuneConfigs(se::CudaComputeCapability compute_capability,
-                                 bool exhaustive_tiling_search = false);
+std::vector<AutotuneResult::TritonGemmKey> GetPossibleMatmulAutotuneConfigs(
+    se::CudaComputeCapability compute_capability,
+    bool exhaustive_tiling_search = false);
 
 // Extracts an HLO instruction into a new HLO module replacing its operands
 // with parameter instructions.

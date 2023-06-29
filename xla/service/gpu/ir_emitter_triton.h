@@ -20,20 +20,16 @@ limitations under the License.
 
 #include "llvm/IR/Module.h"
 #include "mlir/IR/Builders.h"  // from @llvm-project
+#include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/statusor.h"
-#include "tsl/protobuf/autotuning.pb.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla {
 namespace gpu {
 
-using tensorflow::AutotuneResult;
-
-// Generate matrix multiplication in Triton IR inside 'fn' for a fusion
-// computation centered around a dot instruction.
 // Use tiling and execution parameters from 'config'.
 StatusOr<LaunchDimensions> MatMul(mlir::OpBuilder b,
                                   absl::string_view libdevice_path,

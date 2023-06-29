@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "xla/autotune_results.pb.h"
+#include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/autotuner_util.h"
@@ -30,7 +31,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/protobuf/autotuning.pb.h"
 
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
 #include "xla/service/gpu/gpu_conv_runner.h"
@@ -40,8 +40,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-
-using tensorflow::AutotuneResult;
 
 StatusOr<AutotuneResult> GetBestBlasAlgorithm(
     se::Stream* stream, se::RedzoneAllocator& allocator,

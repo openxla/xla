@@ -23,18 +23,16 @@ limitations under the License.
 #include <variant>
 
 #include "xla/autotune_results.pb.h"
+#include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
 #include "xla/types.h"
 #include "xla/xla.pb.h"
-#include "tsl/protobuf/autotuning.pb.h"
 
 namespace xla {
 namespace gpu {
-
-using tensorflow::AutotuneResult;
 
 struct DeviceConfig {
   se::StreamExecutor* stream_exec;  // never null
