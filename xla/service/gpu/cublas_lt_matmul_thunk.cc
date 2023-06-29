@@ -21,7 +21,11 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status.h"
+#if GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"
+#else 
+#include "xla/stream_executor/rocm/hip_blas_lt.h"
+#endif // GOOGLE_CUDA
 #include "xla/stream_executor/device_memory.h"
 #include "tsl/platform/logging.h"
 
@@ -58,8 +62,8 @@ Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
                       GetMatmulPlan(params.stream));
   if (!algorithm_) {
     TF_ASSIGN_OR_RETURN(
-        std::vector<se::cuda::BlasLt::MatmulAlgorithm> algorithms,
-        plan->GetAlgorithms(params.stream));
+        std::vector<se::gpu::BlasLt::MatmulAlgorithm> algorithms,
+        plan_.GetAlgorithms(params.stream));
     TF_RET_CHECK(algorithm_idx_ >= 0 && algorithm_idx_ < algorithms.size());
     algorithm_ = algorithms[algorithm_idx_];
   }
@@ -118,3 +122,4 @@ StatusOr<cublas_lt::MatmulPlan*> CublasLtMatmulThunk::GetMatmulPlan(
 
 }  // namespace gpu
 }  // namespace xla
+

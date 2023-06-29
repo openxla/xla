@@ -5,7 +5,10 @@ load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
-
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
+)
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
@@ -427,8 +430,10 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor/cuda:cublas_lt_header",
-        "@tsl//tsl/platform:status",
-    ],
+        "@tsl//tsl/platform:status",        
+    ] + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",        
+    ]),
 )
 
 cc_library(

@@ -24,8 +24,13 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status.h"
-#include "xla/stream_executor/cuda/cuda_blas_lt.h"
 #include "tsl/platform/statusor.h"
+#if GOOGLE_CUDA
+#include "xla/stream_executor/cuda/cuda_blas_lt.h"
+#else 
+#include "rocm/rocm_config.h"
+#include "xla/stream_executor/rocm/hip_blas_lt.h"
+#endif // GOOGLE_CUDA
 
 namespace xla {
 namespace gpu {
@@ -71,7 +76,7 @@ class CublasLtMatmulThunk : public Thunk {
   BufferAllocation::Slice c_scale_buffer_;
   BufferAllocation::Slice d_scale_buffer_;
   BufferAllocation::Slice d_amax_buffer_;
-  std::optional<se::cuda::BlasLt::MatmulAlgorithm> algorithm_;
+  std::optional<se::gpu::BlasLt::MatmulAlgorithm> algorithm_;
 };
 
 }  // namespace gpu

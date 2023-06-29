@@ -23,8 +23,12 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 
 #if TF_ROCM_VERSION >= 40500
+#if TF_ROCM_VERSION >= 50600
+#include "rocm/include/hipsolver/hipsolver.h"
+#else
 
 #include "rocm/include/hipsolver.h"
+#endif
 #include "xla/stream_executor/platform/dso_loader.h"
 #include "xla/stream_executor/platform/port.h"
 #include "tsl/platform/env.h"

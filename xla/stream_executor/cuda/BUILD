@@ -16,6 +16,10 @@ load(
     "if_cuda_is_configured",
 )
 load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
+)
+load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
     "tf_cuda_tests_tags",
@@ -247,7 +251,16 @@ cc_library(
         "//xla/stream_executor:host_or_device_scalar",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/platform",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
     ]) + ["@tsl//tsl/platform:errors"],
+)
+
+cc_library(
+    name = "cublas_lt_header_for_rocm",
+    hdrs = ["cuda_blas_lt_impl.h",
+            "cuda_blas_lt.h"],
+    visibility = ["//visibility:public"],
 )
 
 alias(
@@ -266,7 +279,7 @@ cc_library(
     name = "cublas_plugin",
     srcs = if_cuda_is_configured([
         "cuda_blas.cc",
-        "cuda_blas_lt.cc",
+        "cuda_blas_lt_impl.h",
     ]),
     hdrs = if_cuda_is_configured([
         "cuda_blas.h",
