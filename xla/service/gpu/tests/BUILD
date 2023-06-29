@@ -80,26 +80,6 @@ xla_cc_test(
     ],
 )
 
-cc_library(
-    name = "mlir_gpu_test_base",
-    testonly = True,
-    srcs = ["mlir_gpu_test_base.cc"],
-    hdrs = ["mlir_gpu_test_base.h"],
-    deps = [
-        "//xla:debug_options_flags",
-        "//xla/service:gpu_plugin",
-        "//xla/service/gpu:gpu_compiler",
-        "//xla/service/gpu:ir_emitter",
-        "//xla/service/gpu:target_constants",
-        "//xla/stream_executor/gpu:gpu_init",
-        "//xla/tests:hlo_test_base",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Parser",
-    ],
-)
-
 xla_cc_test(
     name = "pred_arithmetic_test",
     srcs = ["pred_arithmetic_test.cc"],
@@ -107,60 +87,6 @@ xla_cc_test(
     deps = [
         ":gpu_codegen_test",
         "//xla:literal_util",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
-
-xla_cc_test(
-    name = "mlir_fft_test",
-    srcs = ["mlir_fft_test.cc"],
-    tags = tf_cuda_tests_tags(),
-    deps = [
-        ":mlir_gpu_test_base",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
-
-xla_test(
-    name = "mlir_gemm_test",
-    srcs = ["mlir_gemm_test.cc"],
-    backend_tags = {"gpu": [
-        "requires-gpu-nvidia",
-        "requires-gpu-sm80-only",
-    ]},
-    backends = [
-        "gpu",
-    ],
-    deps = [
-        ":mlir_gpu_test_base",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
-
-xla_cc_test(
-    name = "mlir_sorting_test",
-    srcs = ["mlir_sorting_test.cc"],
-    tags = tf_cuda_tests_tags(),
-    deps = [
-        ":mlir_gpu_test_base",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
-
-xla_cc_test(
-    name = "mlir_gpu_compile_test",
-    srcs = ["mlir_gpu_compile_test.cc"],
-    tags = tf_cuda_tests_tags(),
-    deps = [
-        ":mlir_gpu_test_base",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
