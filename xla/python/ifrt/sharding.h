@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_PYTHON_IFRT_SHARDING_H_
 #define XLA_PYTHON_IFRT_SHARDING_H_
 
-#include <functional>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -83,7 +82,7 @@ class SingleDeviceSharding final
     : public llvm::RTTIExtends<SingleDeviceSharding, Sharding> {
  public:
   // Creates a single-device sharding.
-  static std::shared_ptr<const Sharding> Create(Device* device);
+  static std::unique_ptr<Sharding> Create(Device* device);
 
   // Sharding implementation.
 
@@ -106,32 +105,13 @@ class SingleDeviceSharding final
 };
 
 // Opaque sharding that does not define a fixed semantics for conversion between
-// a logical shape and per-device shapes, and device placements.
-//
-// TODO(hyeontaek): In most cases, we have the same shape on each device. Make
-// an OpaqueEqualSharding to save time to construct a disassemble function.
-// TODO(hyeontaek): Make a separate type to explore non-disassemblable sharding.
-class OpaqueSharding : public llvm::RTTIExtends<OpaqueSharding, Sharding> {
+// a logical shape and per-device shapes, and device placements. This sharding
+// disallows disassembly.
+class OpaqueSharding final
+    : public llvm::RTTIExtends<OpaqueSharding, Sharding> {
  public:
-  using DisassembleFunc = std::function<StatusOr<std::vector<Shape>>(
-      const OpaqueSharding&, const Shape&)>;
-
-  // Creates an opaque sharding. `Disassemble()` will fail.
-  static std::shared_ptr<const Sharding> Create(DeviceList devices);
-
-  // Creates an opaque sharding with a custom shape disassemble function.
-  static std::shared_ptr<const Sharding> Create(
-      DeviceList devices, DisassembleFunc disassemble_func);
-
-  // Creates a `DisassembleFunc` from a list of shapes. The `DisassembleFunc`
-  // would ignore sharding and shape arguments.
-  static DisassembleFunc MakeDisassembleFuncFromShapes(
-      std::vector<Shape> shapes);
-
-  DisassembleFunc disassemble_func() const {
-    DCHECK(this);
-    return disassemble_func_;
-  }
+  // Creates an opaque sharding. `Disassemble()` and `IndexDomains()` will fail.
+  static std::unique_ptr<Sharding> Create(DeviceList devices);
 
   // Sharding implementation.
 
@@ -148,17 +128,61 @@ class OpaqueSharding : public llvm::RTTIExtends<OpaqueSharding, Sharding> {
   static char ID;  // NOLINT
 
  private:
-  explicit OpaqueSharding(DeviceList devices, DisassembleFunc disassemble_func);
+  explicit OpaqueSharding(DeviceList devices);
+};
 
-  DisassembleFunc disassemble_func_;
+// Even sharding defined for a certain concrete shape. It maps each device to a
+// shard of the same shape, while it does not define a semantics on ordering.
+class ConcreteEvenSharding final
+    : public llvm::RTTIExtends<ConcreteEvenSharding, Sharding> {
+ public:
+  // Creates a concrete even sharding. Currently, `IndexDomains()` will fail.
+  // TODO(hyeontaek): Support `IndexDomains()`.
+  static std::unique_ptr<Sharding> Create(DeviceList devices,
+                                          Shape shard_shape);
+
+  // Returns the shard shape. All shards have the same shape.
+  Shape shard_shape() const {
+    DCHECK(this);
+    return shard_shape_;
+  }
+
+  // Sharding implementation.
+
+  ~ConcreteEvenSharding() override = default;
+
+  StatusOr<std::vector<std::pair<Shape, std::shared_ptr<const Sharding>>>>
+  Disassemble(const Shape& shape) const override;
+
+  StatusOr<std::vector<IndexDomain>> IndexDomains(
+      const Shape& shape) const override;
+
+  std::string DebugString() const override;
+
+  static char ID;  // NOLINT
+
+ private:
+  ConcreteEvenSharding(DeviceList devices, Shape shard_shape);
+
+  Shape shard_shape_;
 };
 
 // Sharding derived from an IR ShardingParam.
 class ShardingParamSharding
     : public llvm::RTTIExtends<ShardingParamSharding, Sharding> {
  public:
-  static StatusOr<std::shared_ptr<const Sharding>> Create(
+  // TODO(hyeontaek): Make `devices` come first for consistency with other
+  // Sharding types.
+  static StatusOr<std::unique_ptr<Sharding>> Create(
       ShardingParam sharding_param, DeviceList devices);
+
+  // Returns the shard shape. All shards have the same shape.
+  const ShardingParam& sharding_param() const {
+    DCHECK(this);
+    return sharding_param_;
+  }
+
+  // Sharding implementation.
 
   StatusOr<std::vector<std::pair<Shape, std::shared_ptr<const Sharding>>>>
   Disassemble(const Shape& shape) const override;

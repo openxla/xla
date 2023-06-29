@@ -70,26 +70,33 @@ TEST(SingleDeviceShardingTest, Disassemble) {
   EXPECT_THAT(result_sharding->devices().devices(), ElementsAre(device));
 }
 
-TEST(OpaqueShardingTest, Disassemble) {
+TEST(OpaqueShardingTest, FailedToDisassemble) {
   DeviceList device_list = CreateDummyDevices(2);
 
-  std::vector<Shape> shapes;
-  shapes.reserve(2);
-  shapes.push_back(Shape({10}));
-  shapes.push_back(Shape({20}));
-  OpaqueSharding::DisassembleFunc disassemble_func =
-      OpaqueSharding::MakeDisassembleFuncFromShapes(shapes);
-
   std::shared_ptr<const Sharding> opaque_sharding =
-      OpaqueSharding::Create(device_list, std::move(disassemble_func));
+      OpaqueSharding::Create(device_list);
+
+  EXPECT_THAT(
+      opaque_sharding->Disassemble(Shape({30})),
+      StatusIs(
+          tsl::error::INVALID_ARGUMENT,
+          HasSubstr(
+              "OpaqueSharding does not have per-shard shape information")));
+}
+
+TEST(ConcreteEvenShardingTest, Disassemble) {
+  DeviceList device_list = CreateDummyDevices(2);
+
+  std::shared_ptr<const Sharding> concerete_even_sharding =
+      ConcreteEvenSharding::Create(device_list, Shape({10}));
 
   TF_ASSERT_OK_AND_ASSIGN(auto exploded,
-                          opaque_sharding->Disassemble(Shape({30})));
+                          concerete_even_sharding->Disassemble(Shape({20})));
 
   ASSERT_THAT(exploded, SizeIs(2));
   for (int i = 0; i < 2; ++i) {
     const auto& [shape, sharding] = exploded[i];
-    EXPECT_EQ(shape, shapes[i]);
+    EXPECT_EQ(shape, Shape({10}));
     EXPECT_TRUE(llvm::isa<SingleDeviceSharding>(*sharding));
     EXPECT_THAT(sharding->devices().devices(),
                 ElementsAre(device_list.devices()[i]));

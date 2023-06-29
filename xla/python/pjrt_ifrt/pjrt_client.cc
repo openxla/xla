@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_tuple.h"
+#include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "tsl/platform/statusor.h"
 #include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 
@@ -89,10 +90,15 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
           arrays.size());
     }
     return arrays[0];
-  } else if (!llvm::isa<const OpaqueSharding>(sharding.get()) &&
-             !llvm::isa<const ShardingParamSharding>(sharding.get())) {
+  } else if (!llvm::isa<const xla::ifrt::OpaqueSharding>(sharding.get()) &&
+             !llvm::isa<const xla::ifrt::ConcreteEvenSharding>(
+                 sharding.get()) &&
+             !llvm::isa<const xla::ifrt::ShardingParamSharding>(
+                 sharding.get()) &&
+             !llvm::isa<const xla::ifrt::HloSharding>(sharding.get())) {
     return InvalidArgument(
-        "Only SingleDeviceSharding, OpaqueSharding and ShardingParamSharding "
+        "Only SingleDeviceSharding, OpaqueSharding, ConcreteEvenSharding, "
+        "ShardingParamSharding, and HloSharding "
         "are supported: sharding=%s",
         sharding->DebugString());
   }

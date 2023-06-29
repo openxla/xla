@@ -270,6 +270,7 @@ class PyArrayResultHandler {
 
   pybind11::object dtype_;
   std::vector<int64_t> shape_;
+  std::optional<HloSharding> hlo_sharding_;
 };
 
 }  // namespace xla

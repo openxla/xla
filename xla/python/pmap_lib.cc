@@ -175,10 +175,6 @@ xla::StatusOr<ShardArgResult> ShardArg(
     per_device_arrays.reserve(n_devices);
     xla::ifrt::DeviceList::Devices devices;
     devices.reserve(n_devices);
-    // TODO(hyeontaek): The created array will never be disassembled. We should
-    // omit collecting shapes and make the OpaqueSharding non-disassemblable?
-    std::vector<xla::ifrt::Shape> shapes;
-    shapes.reserve(n_devices);
 
     py::list owning_pylist(n_devices);
     ShardArgResult result;
@@ -202,7 +198,6 @@ xla::StatusOr<ShardArgResult> ShardArg(
 
       per_device_arrays.push_back(std::move(on_device.ifrt_array));
       devices.push_back(per_device_arrays.back()->sharding().devices().front());
-      shapes.push_back(per_device_arrays.back()->shape());
       if (on_device.owning_pybuffer) {
         owning_pylist.append(on_device.owning_pybuffer);
       }
@@ -217,10 +212,9 @@ xla::StatusOr<ShardArgResult> ShardArg(
                 // may want to avoid creating a new Array or specialize Array
                 // to disallow access to the logical shape.
                 per_device_arrays.front()->shape(),
-                xla::ifrt::OpaqueSharding::Create(
+                xla::ifrt::ConcreteEvenSharding::Create(
                     xla::ifrt::DeviceList(std::move(devices)),
-                    xla::ifrt::OpaqueSharding::MakeDisassembleFuncFromShapes(
-                        std::move(shapes))),
+                    per_device_arrays.front()->shape()),
                 absl::MakeSpan(per_device_arrays),
                 xla::ifrt::ArrayCopySemantics::kReuseInput));
     return result;

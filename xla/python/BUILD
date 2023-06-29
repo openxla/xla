@@ -358,6 +358,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "//xla/hlo/ir:hlo",
         "//xla/pjrt:host_callback",
         "//xla/pjrt:lru_cache",
         "//xla/pjrt:mlir_to_hlo",

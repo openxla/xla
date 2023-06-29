@@ -27,10 +27,12 @@ limitations under the License.
 
 #include "llvm/Support/Casting.h"
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/lru_cache.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
+#include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/python/py_buffer.h"
 #include "xla/python/py_values.h"
 #include "xla/python/python_ref_manager.h"
@@ -47,8 +49,39 @@ namespace {
 
 namespace py = pybind11;
 
+// Gets HloSharding from JAX Sharding.
+std::optional<HloSharding> GetHloSharding(const pybind11::object& sharding) {
+  std::optional<HloSharding> hlo_sharding;
+  try {
+    return pybind11::cast<HloSharding>(sharding.attr("_to_xla_hlo_sharding")());
+  } catch (pybind11::error_already_set) {
+    // "_to_xla_hlo_sharding" is missing or unimplemented.
+    return std::nullopt;
+  }
+}
+
+// Creates an IFRT Sharding from a JAX Sharding.
+StatusOr<std::unique_ptr<ifrt::Sharding>> MakeIfrtSharding(
+    ifrt::DeviceList devices, std::optional<HloSharding> hlo_sharding,
+    absl::Span<const tsl::RCReference<ifrt::Array>> per_device_arrays) {
+  if (hlo_sharding.has_value()) {
+    return ifrt::HloSharding::Create(std::move(devices),
+                                     *std::move(hlo_sharding));
+  } else {
+    for (int i = 1; i < per_device_arrays.size(); ++i) {
+      if (per_device_arrays[0]->shape() != per_device_arrays[i]->shape()) {
+        return InvalidArgument(
+            "Arrays with uneven partitioning requires HloSharding");
+      }
+    }
+    return ifrt::ConcreteEvenSharding::Create(
+        std::move(devices), per_device_arrays.front()->shape());
+  }
+}
+
 tsl::RCReference<ifrt::Array> CreateIfRtArrayFromSingleDeviceShardedPyArrays(
     py::object dtype, absl::Span<const int64_t> shape,
+    std::optional<HloSharding> hlo_sharding,
     absl::Span<const PyArray> py_arrays) {
   if (py_arrays.empty()) {
     // TODO(hyeontaek): Return a Status.
@@ -58,14 +91,11 @@ tsl::RCReference<ifrt::Array> CreateIfRtArrayFromSingleDeviceShardedPyArrays(
   ifrt_arrays.reserve(py_arrays.size());
   ifrt::DeviceList::Devices devices;
   devices.reserve(py_arrays.size());
-  std::vector<ifrt::Shape> shapes;
-  shapes.reserve(py_arrays.size());
 
   for (const auto& py_array : py_arrays) {
     DCHECK_EQ(py_array.num_shards(), 1);
     ifrt_arrays.push_back(tsl::FormRef(py_array.ifrt_array()));
     devices.push_back(ifrt_arrays.back()->sharding().devices().front());
-    shapes.push_back(ifrt_arrays.back()->shape());
   }
   ifrt::Client* client = ifrt_arrays.front()->client();
 
@@ -74,12 +104,15 @@ tsl::RCReference<ifrt::Array> CreateIfRtArrayFromSingleDeviceShardedPyArrays(
     // TODO(hyeontaek): Return a Status.
     throw py::value_error(ifrt_dtype.status().ToString());
   }
-  auto ifrt_array = client->AssembleArrayFromSingleDeviceArrays(
-      ifrt::Shape(shape),
-      ifrt::OpaqueSharding::Create(
-          ifrt::DeviceList(std::move(devices)),
-          xla::ifrt::OpaqueSharding::MakeDisassembleFuncFromShapes(
-              std::move(shapes))),
+  StatusOr<tsl::RCReference<ifrt::Array>> ifrt_array;
+  auto ifrt_sharding = MakeIfrtSharding(ifrt::DeviceList(std::move(devices)),
+                                        std::move(hlo_sharding), ifrt_arrays);
+  if (!ifrt_sharding.ok()) {
+    // TODO(hyeontaek): Return a Status.
+    throw py::value_error(ifrt_sharding.status().ToString());
+  }
+  ifrt_array = client->AssembleArrayFromSingleDeviceArrays(
+      ifrt::Shape(shape), *std::move(ifrt_sharding),
       absl::MakeSpan(ifrt_arrays), ifrt::ArrayCopySemantics::kReuseInput);
   if (!ifrt_array.ok()) {
     // TODO(hyeontaek): Return a Status.
@@ -251,8 +284,8 @@ void PyArray::PyInit(py::object self, py::object aval, py::object sharding,
                      bool skip_checks) {
   auto dtype = aval.attr("dtype");
   auto shape = pybind11::cast<std::vector<int64_t>>(aval.attr("shape"));
-  auto ifrt_array =
-      CreateIfRtArrayFromSingleDeviceShardedPyArrays(dtype, shape, py_arrays);
+  auto ifrt_array = CreateIfRtArrayFromSingleDeviceShardedPyArrays(
+      dtype, shape, GetHloSharding(sharding), py_arrays);
   Construct(reinterpret_cast<PyArrayObject*>(self.ptr()), aval,
             pybind11::cast<bool>(aval.attr("weak_type")), std::move(dtype),
             std::move(shape), std::move(sharding), committed,
@@ -318,12 +351,13 @@ PyArrayResultHandler::PyArrayResultHandler(py::object aval, py::object sharding,
   weak_type_ = pybind11::cast<bool>(aval_.attr("weak_type"));
   dtype_ = aval_.attr("dtype");
   shape_ = pybind11::cast<std::vector<int64_t>>(aval_.attr("shape"));
+  hlo_sharding_ = GetHloSharding(sharding_);
 }
 
 PyArray PyArrayResultHandler::Call(absl::Span<const PyArray> py_arrays) const {
   return Call(py_arrays.at(0).py_client(),
-              CreateIfRtArrayFromSingleDeviceShardedPyArrays(dtype_, shape_,
-                                                             py_arrays));
+              CreateIfRtArrayFromSingleDeviceShardedPyArrays(
+                  dtype_, shape_, hlo_sharding_, py_arrays));
 }
 
 PyArray PyArrayResultHandler::Call(
@@ -431,8 +465,6 @@ Status PyArray::set_arrays(py::object obj) {
   ifrt_arrays.reserve(list.size());
   ifrt::DeviceList::Devices devices;
   devices.reserve(list.size());
-  std::vector<ifrt::Shape> shapes;
-  shapes.reserve(list.size());
   for (py::handle obj : list) {
     if (obj.get_type().is(PyArray::type())) {
       auto py_array = py::reinterpret_borrow<PyArray>(obj);
@@ -445,20 +477,19 @@ Status PyArray::set_arrays(py::object obj) {
       }
       ifrt_arrays.push_back(tsl::FormRef(py_array.ifrt_array()));
       devices.push_back(ifrt_arrays.back()->sharding().devices().front());
-      shapes.push_back(ifrt_arrays.back()->shape());
     } else {
       return InvalidArgument("Unsupported arg when setting Array._arrays: %s",
                              py::cast<std::string>(py::str(obj.get_type())));
     }
   }
   TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<ifrt::Sharding> ifrt_sharding,
+      MakeIfrtSharding(ifrt::DeviceList(std::move(devices)),
+                       GetHloSharding(sharding()), ifrt_arrays));
+  TF_ASSIGN_OR_RETURN(
       auto array,
       py_client()->ifrt_client()->AssembleArrayFromSingleDeviceArrays(
-          ifrt::Shape(shape()),
-          ifrt::OpaqueSharding::Create(
-              ifrt::DeviceList(std::move(devices)),
-              xla::ifrt::OpaqueSharding::MakeDisassembleFuncFromShapes(
-                  std::move(shapes))),
+          ifrt::Shape(shape()), std::move(ifrt_sharding),
           absl::MakeSpan(ifrt_arrays), ifrt::ArrayCopySemantics::kReuseInput));
   SetIfrtArray(std::move(array));
   return OkStatus();
@@ -633,25 +664,38 @@ StatusOr<PyArray> PyArray::CopyToDeviceWithSharding(
     GlobalPyRefManager()->CollectGarbage();
     py::gil_scoped_release gil_release;
 
+    std::shared_ptr<const ifrt::Sharding> sharding;
     if (llvm::isa<ifrt::SingleDeviceSharding>(ifrt_array_ptr->sharding())) {
-      TF_ASSIGN_OR_RETURN(out_array,
-                          ifrt_array_ptr->Reshard(
-                              ifrt::SingleDeviceSharding::Create(devices[0]),
-                              ifrt::ArrayCopySemantics::kReuseInput));
-    } else if (llvm::isa<ifrt::OpaqueSharding>(ifrt_array_ptr->sharding())) {
-      auto opaque_sharding = ifrt::OpaqueSharding::Create(
-          std::move(devices),
-          llvm::dyn_cast<ifrt::OpaqueSharding>(&ifrt_array_ptr->sharding())
-              ->disassemble_func());
+      sharding = ifrt::SingleDeviceSharding::Create(devices[0]);
+    } else if (llvm::isa<ifrt::OpaqueSharding>(&ifrt_array_ptr->sharding())) {
+      sharding = ifrt::OpaqueSharding::Create(std::move(devices));
+    } else if (const auto* input_sharding =
+                   llvm::dyn_cast<ifrt::ConcreteEvenSharding>(
+                       &ifrt_array_ptr->sharding());
+               input_sharding != nullptr) {
+      sharding = ifrt::ConcreteEvenSharding::Create(
+          std::move(devices), input_sharding->shard_shape());
+    } else if (const auto* input_sharding =
+                   llvm::dyn_cast<ifrt::ShardingParamSharding>(
+                       &ifrt_array_ptr->sharding());
+               input_sharding != nullptr) {
       TF_ASSIGN_OR_RETURN(
-          out_array,
-          ifrt_array_ptr->Reshard(opaque_sharding,
-                                  ifrt::ArrayCopySemantics::kReuseInput));
+          sharding, ifrt::ShardingParamSharding::Create(
+                        input_sharding->sharding_param(), std::move(devices)));
+    } else if (const auto* input_sharding = llvm::dyn_cast<ifrt::HloSharding>(
+                   &ifrt_array_ptr->sharding());
+               input_sharding != nullptr) {
+      sharding = ifrt::HloSharding::Create(std::move(devices),
+                                           input_sharding->xla_hlo_sharding());
     } else {
       return InvalidArgument(
-          "resharding only supported for ifrt::SingleDeviceSharding and "
-          "ifrt::OpaqueSharding");
+          "resharding only supported for [ifrt::SingleDeviceSharding, "
+          "ifrt::OpaqueSharding, ifrt::ConcreteEvenSharding, "
+          "ifrt::ShardingParamSharding, ifrt::HloSharding]");
     }
+    TF_ASSIGN_OR_RETURN(out_array, ifrt_array_ptr->Reshard(
+                                       std::move(sharding),
+                                       ifrt::ArrayCopySemantics::kReuseInput));
   }
   auto traceback = Traceback::Get();
   absl::Span<const int64_t> shape_span = shape();
@@ -698,8 +742,6 @@ StatusOr<PyArray> PyArray::BatchedDevicePut(
 
   xla::ifrt::DeviceList::Devices devices;
   devices.reserve(n_devices);
-  std::vector<xla::ifrt::Shape> shapes;
-  shapes.reserve(n_devices);
   size_t i = 0;
   for (auto& x : xs) {
     if (PyArray::IsPyArray(x)) {
@@ -714,7 +756,6 @@ StatusOr<PyArray> PyArray::BatchedDevicePut(
                                   dst_devices[i].get(), options));
     ifrt_arrays.push_back(std::move(on_device.ifrt_array));
     devices.push_back(ifrt_arrays.back()->sharding().devices().front());
-    shapes.push_back(ifrt_arrays.back()->shape());
     if (on_device.owning_pybuffer) {
       owning_pylist.append(on_device.owning_pybuffer);
     }
@@ -724,14 +765,13 @@ StatusOr<PyArray> PyArray::BatchedDevicePut(
   auto weak_type = pybind11::cast<bool>(aval.attr("weak_type"));
   auto dtype = aval.attr("dtype");
   auto shape = pybind11::cast<std::vector<int64_t>>(aval.attr("shape"));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<ifrt::Sharding> ifrt_sharding,
+                      MakeIfrtSharding(ifrt::DeviceList(std::move(devices)),
+                                       GetHloSharding(sharding), ifrt_arrays));
   TF_ASSIGN_OR_RETURN(
       auto ifrt_array,
       ifrt_arrays.front()->client()->AssembleArrayFromSingleDeviceArrays(
-          ifrt::Shape(shape),
-          xla::ifrt::OpaqueSharding::Create(
-              xla::ifrt::DeviceList(std::move(devices)),
-              xla::ifrt::OpaqueSharding::MakeDisassembleFuncFromShapes(
-                  std::move(shapes))),
+          ifrt::Shape(shape), std::move(ifrt_sharding),
           absl::MakeSpan(ifrt_arrays),
           xla::ifrt::ArrayCopySemantics::kReuseInput));
 

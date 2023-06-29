@@ -157,19 +157,15 @@ StatusOr<tsl::RCReference<PjRtArray>> PjRtArray::Create(
                       pjrt_buffers.front()->on_device_shape().element_type()));
   DeviceList::Devices devices;
   devices.reserve(pjrt_buffers.size());
-  std::vector<Shape> shapes;
-  shapes.reserve(pjrt_buffers.size());
 
   for (const auto& pjrt_buffer : pjrt_buffers) {
     devices.push_back(pjrt_buffer->device());
-    shapes.push_back(Shape(pjrt_buffer->on_device_shape().dimensions()));
   }
+  ifrt::Shape ifrt_shape(pjrt_buffers.front()->on_device_shape().dimensions());
   return PjRtArray::Create(
       client, dtype, std::move(shape),
-      ifrt::OpaqueSharding::Create(
-          xla::ifrt::DeviceList(std::move(devices)),
-          xla::ifrt::OpaqueSharding::MakeDisassembleFuncFromShapes(
-              std::move(shapes))),
+      ifrt::ConcreteEvenSharding::Create(
+          xla::ifrt::DeviceList(std::move(devices)), std::move(ifrt_shape)),
       std::move(pjrt_buffers));
 }
 

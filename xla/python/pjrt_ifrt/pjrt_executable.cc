@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
+#include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/statusor.h"
@@ -184,21 +185,21 @@ StatusOr<std::unique_ptr<LoadedExecutable>> PjRtLoadedExecutable::Create(
       result_shape = result_shapes.front();
     }
 
-    std::optional<HloSharding> result_hlo_sharding_holder;
+    std::optional<xla::HloSharding> result_hlo_sharding_holder;
     const xla::HloSharding* result_hlo_sharding = nullptr;
     std::optional<std::vector<OpSharding>> output_shardings =
         pjrt_loaded_executable->GetOutputShardings();
     if (output_shardings) {
-      std::vector<HloSharding> hlo_shardings;
+      std::vector<xla::HloSharding> hlo_shardings;
       hlo_shardings.reserve(output_shardings->size());
       for (const auto& sharding : *output_shardings) {
         TF_ASSIGN_OR_RETURN(auto hlo_sharding,
-                            HloSharding::FromProto(sharding));
+                            xla::HloSharding::FromProto(sharding));
         hlo_shardings.push_back(hlo_sharding);
       }
       if (tuple_output) {
         result_hlo_sharding_holder =
-            HloSharding::Tuple(result_shape, hlo_shardings);
+            xla::HloSharding::Tuple(result_shape, hlo_shardings);
       } else {
         result_hlo_sharding_holder = hlo_shardings.front();
       }
@@ -281,31 +282,23 @@ PjRtLoadedExecutable::CreateInternal(
 
   auto append_arg = [&](const xla::Shape& shape,
                         const xla::HloSharding* sharding) -> Status {
+    CHECK(shape.IsArray());
     TF_ASSIGN_OR_RETURN(auto dtype, ToDType(shape.element_type()));
     output_dtypes.push_back(dtype);
     output_shapes.push_back(Shape(shape.dimensions()));
-
-    CHECK(shape.IsArray());
-
-    xla::Shape tile_shape;
-    if (sharding != nullptr) {
-      CHECK(!sharding->IsTuple());
-      tile_shape = sharding->TileShape(shape);
+    if (sharding == nullptr) {
+      output_shardings.push_back(
+          ConcreteEvenSharding::Create(devices, Shape(shape.dimensions())));
     } else {
-      tile_shape = shape;
+      output_shardings.push_back(HloSharding::Create(devices, *sharding));
     }
-    std::vector<Shape> per_device_shapes(
-        /*n=*/pjrt_loaded_executable->addressable_devices().size(),
-        /*v=*/Shape(tile_shape.dimensions()));
-    output_shardings.push_back(OpaqueSharding::Create(
-        devices, OpaqueSharding::MakeDisassembleFuncFromShapes(
-                     std::move(per_device_shapes))));
     return OkStatus();
   };
   auto append_token = [&] {
     output_dtypes.push_back(DType(DType::kToken));
     output_shapes.push_back(Shape({}));
-    output_shardings.push_back(OpaqueSharding::Create(devices));
+    output_shardings.push_back(
+        HloSharding::Create(devices, xla::HloSharding::Replicate()));
   };
 
   if (result_shape.IsArray()) {

@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/python/ifrt/array.h"
-#include "xla/python/ifrt/client.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 
@@ -66,9 +65,9 @@ class PjRtArray final
   static StatusOr<tsl::RCReference<PjRtArray>> Create(
       PjRtCompatibleClient* client, std::shared_ptr<PjRtBuffer> pjrt_buffer);
 
-  // Shorthand for a multi-shard array construction using OpaqueSharding.
+  // Shorthand for a multi-shard array construction using ConcreteEvenSharding.
   // TODO(hyeontaek): Remove this once IFRT Sharding and JAX Sharding is unified
-  // so that OpaqueSharding can be replaced with a real Sharding.
+  // so that ConcreteEvenSharding can be replaced with a real Sharding.
   static StatusOr<tsl::RCReference<PjRtArray>> Create(
       PjRtCompatibleClient* client, Shape shape, PjRtBuffers pjrt_buffers);
 
