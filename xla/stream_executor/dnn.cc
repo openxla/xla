@@ -201,7 +201,7 @@ DnnSupport::FusedMHASoftmaxRunnerFromDesc(
     const dnn::MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
     const dnn::TensorDescriptor& output_descriptor,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "FusedMHASoftmaxRunnerFromDesc not implemented.");
 }
 
@@ -216,7 +216,7 @@ DnnSupport::FusedMHAScaleMaskSoftmaxRunnerFromDesc(
     const dnn::TensorDescriptor& output_descriptor,
     const dnn::TensorDescriptor& mask_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "FusedMHAScaleMaskSoftmaxRunnerFromDesc not implemented.");
 }
 
@@ -232,7 +232,7 @@ DnnSupport::FusedMHAScaleBiasMaskSoftmaxRunnerFromDesc(
     const dnn::TensorDescriptor& mask_descriptor,
     const dnn::TensorDescriptor& bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "FusedMHAScaleBiasMaskSoftmaxRunnerFromDesc not implemented.");
 }
 
@@ -247,7 +247,7 @@ DnnSupport::FusedMHAScaleBiasSoftmaxRunnerFromDesc(
     const dnn::TensorDescriptor& output_descriptor,
     const dnn::TensorDescriptor& bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "FusedMHAScaleBiasSoftmaxRunnerFromDesc not implemented.");
 }
 
@@ -266,7 +266,7 @@ DnnSupport::FusedMHASoftmaxBackwardRunnerFromDesc(
     const TensorDescriptor& d_S_descriptor,
     std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "FusedMHASoftmaxBackwardRunnerFromDesc not implemented.");
 }
 
@@ -286,7 +286,7 @@ DnnSupport::FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
     const TensorDescriptor& mask_descriptor,
     std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc not implemented.");
 }
 

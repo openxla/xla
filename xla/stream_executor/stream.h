@@ -469,7 +469,7 @@ class Stream {
       std::optional<double> dropout_rate, std::optional<int64_t> seed) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
-      return tsl::errors::Unimplemented("DNN library is not found.");
+      return absl::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->FusedMHASoftmaxRunnerFromDesc(
         this, algorithm_desc, kind, bmm1_lhs_descriptor, bmm1_rhs_descriptor,
@@ -489,7 +489,7 @@ class Stream {
       std::optional<double> dropout_rate, std::optional<int64_t> seed) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
-      return tsl::errors::Unimplemented("DNN library is not found.");
+      return absl::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->FusedMHAScaleMaskSoftmaxRunnerFromDesc(
         this, algorithm_desc, kind, bmm1_lhs_descriptor, bmm1_rhs_descriptor,
@@ -510,7 +510,7 @@ class Stream {
       std::optional<double> dropout_rate, std::optional<int64_t> seed) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
-      return tsl::errors::Unimplemented("DNN library is not found.");
+      return absl::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->FusedMHAScaleBiasMaskSoftmaxRunnerFromDesc(
         this, algorithm_desc, kind, bmm1_lhs_descriptor, bmm1_rhs_descriptor,
@@ -531,7 +531,7 @@ class Stream {
       std::optional<double> dropout_rate, std::optional<int64_t> seed) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
-      return tsl::errors::Unimplemented("DNN library is not found.");
+      return absl::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->FusedMHAScaleBiasSoftmaxRunnerFromDesc(
         this, algorithm_desc, kind, bmm1_lhs_descriptor, bmm1_rhs_descriptor,
@@ -555,7 +555,7 @@ class Stream {
       std::optional<double> dropout_rate, std::optional<int64_t> seed) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
-      return tsl::errors::Unimplemented("DNN library is not found.");
+      return absl::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->FusedMHASoftmaxBackwardRunnerFromDesc(
         this, algorithm_desc, kind, bmm1_grad_gemm1_rhs_descriptor,
@@ -582,7 +582,7 @@ class Stream {
       std::optional<double> dropout_rate, std::optional<int64_t> seed) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
-      return tsl::errors::Unimplemented("DNN library is not found.");
+      return absl::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
         this, algorithm_desc, kind, bmm1_grad_gemm1_rhs_descriptor,

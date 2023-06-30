@@ -5490,7 +5490,7 @@ GetCudnnFusedMHABackwardOperationGraph(
                                              intermdiate_ops, p_dims, p_strides,
                                              dtype, tensor_ds_mask));
 #else
-  return tsl::errors::Internal("Bias backward op requires cudnn >= 8.9.1");
+  return absl::InternalError("Bias backward op requires cudnn >= 8.9.1");
 #endif
 
   // calculate dq
@@ -5580,7 +5580,7 @@ static tsl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
     VLOG(4) << "Heuristic has " << engine_configs.size() << " configurations ";
   }
   if (engine_configs.size() == 0) {
-    return tsl::errors::Internal(
+    return absl::InternalError(
         "No engine configurations found for this opGraph and heuristics.");
   }
   auto plan = cudnn_frontend::ExecutionPlanBuilder()
@@ -5590,7 +5590,7 @@ static tsl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
 
   return plan;
 #else
-  return tsl::errors::Unimplemented("Supported only for cuDNN >= 8.8.0");
+  return absl::UnimplementedError("Supported only for cuDNN >= 8.8.0");
 #endif
 }
 
@@ -6234,7 +6234,7 @@ class CudnnExecutionPlanRunner<void(Args...)>
       data_ptrs_vec.push_back((void*)(&rng_seed_));
       data_ptrs_vec.push_back((void*)(&initial_offset_));
 #else
-      return tsl::errors::Unimplemented(
+      return absl::UnimplementedError(
           "Cudnn dropout offset and seed are only supported with Cudnn >= "
           "8.8.");
 #endif  // CUDNN_VERSION >= 8800 && TF_ENABLE_CUDNN_FRONTEND
@@ -7163,7 +7163,7 @@ CudnnSupport::FusedMHASoftmaxRunnerFromDesc(
       std::make_unique<CudnnExecutionPlanRunner<dnn::FusedMHASoftmaxSignature>>(
           std::move(runner))};
 #else
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "Cudnn execution plans are only supported with Cudnn >= 8.8.");
 #endif  // CUDNN_VERSION >= 8800 && TF_ENABLE_CUDNN_FRONTEND
 }
@@ -7227,7 +7227,7 @@ CudnnSupport::FusedMHAScaleMaskSoftmaxRunnerFromDesc(
       std::make_unique<CudnnExecutionPlanRunner<dnn::FusedMHAMaskSignature>>(
           std::move(runner))};
 #else
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "Cudnn execution plans are only supported with Cudnn >= 8.8.");
 #endif  // CUDNN_VERSION >= 8800 && TF_ENABLE_CUDNN_FRONTEND
 }
@@ -7287,7 +7287,7 @@ CudnnSupport::FusedMHAScaleBiasMaskSoftmaxRunnerFromDesc(
       CudnnExecutionPlanRunner<dnn::FusedMHABiasMaskSignature>>(
       std::move(runner))};
 #else
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "Cudnn execution plans are only supported with Cudnn >= 8.8.");
 #endif  // CUDNN_VERSION >= 8800 && TF_ENABLE_CUDNN_FRONTEND
 }
@@ -7350,7 +7350,7 @@ CudnnSupport::FusedMHAScaleBiasSoftmaxRunnerFromDesc(
       std::make_unique<CudnnExecutionPlanRunner<dnn::FusedMHABiasSignature>>(
           std::move(runner))};
 #else
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "Cudnn execution plans are only supported with Cudnn >= 8.8.");
 #endif  // CUDNN_VERSION >= 8800 && TF_ENABLE_CUDNN_FRONTEND
 }
@@ -7385,13 +7385,6 @@ CudnnSupport::FusedMHASoftmaxBackwardRunnerFromDesc(
           kind, dropout_rate, seed, cudnn, scale, use_dropout,
           /*use_mask*/ false,
           /*use_bias*/ d_bias_descriptor != std::nullopt));
-  // The function  GetExecPlanFromHeuristics uses
-  // cudnn_frontend::cudnnException which is currently not recommended for
-  // use by Google. Hence commenting out the call.
-  // TODO - Create a status wrapper to wrap the exception to avoid it being
-  // exposed to the runtime. TF_ASSIGN_OR_RETURN(auto execution_plan,
-  //                       GetExecPlanFromHeuristics(std::move(*op_graph),
-  //                       cudnn));
 
   TF_ASSIGN_OR_RETURN(auto execution_plan,
                       GetExecPlanFromHeuristics(std::move(*op_graph), cudnn));
@@ -7432,7 +7425,7 @@ CudnnSupport::FusedMHASoftmaxBackwardRunnerFromDesc(
       CudnnExecutionPlanRunner<dnn::FusedMHASoftmaxBackwardSignature>>(
       std::move(runner))};
 #else
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "Cudnn execution plans with dbias calculation in bwd are only "
       "supported "
       "with Cudnn >= 8.8.");
@@ -7508,7 +7501,7 @@ CudnnSupport::FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
       CudnnExecutionPlanRunner<dnn::FusedMHAMaskBackwardSignature>>(
       std::move(runner))};
 #else
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "Cudnn execution plans with mask input in bwd are only supported with "
       "Cudnn >= 8.9.1");
 #endif  // CUDNN_VERSION >= 8901 && TF_ENABLE_CUDNN_FRONTEND
