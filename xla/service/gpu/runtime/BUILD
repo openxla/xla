@@ -356,9 +356,8 @@ cc_library(
         "@tsl//tsl/profiler/lib:scoped_annotation_stack",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
-    ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_graph",
-    ]),
+        "//xla/stream_executor/gpu:gpu_graph",
+    ],
 )
 
 cc_library(
@@ -409,9 +408,8 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/synchronization",
-    ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_graph",
-    ]),
+        "//xla/stream_executor/gpu:gpu_graph",
+    ],
 )
 
 cc_library(

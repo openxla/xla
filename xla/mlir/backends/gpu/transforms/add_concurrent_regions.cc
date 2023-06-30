@@ -205,7 +205,7 @@ void AddConcurrentRegionsPass::runOnOperation() {
   FuncOp func_op = getOperation();
 
   if (!absl::StrContains(func_op.getSymNameAttr().str(),
-                         "xla.gpu.cuda.graph.capture")) {
+                         "xla.gpu.graph.capture")) {
     return;
   }
 
