@@ -463,28 +463,6 @@ cc_library(
 )
 
 cc_library(
-    name = "test",
-    testonly = True,
-    srcs = ["test.cc"],
-    hdrs = ["//tsl/platform:test.h"],
-    tags = [
-        "manual",
-        "no_oss",
-        "nobuilder",
-    ],
-    deps = [
-        "//tsl/platform",
-        "//tsl/platform:logging",
-        "//tsl/platform:macros",
-        "//tsl/platform:net",
-        "//tsl/platform:path",
-        "//tsl/platform:strcat",
-        "//tsl/platform:types",
-        "@com_google_googletest//:gtest",
-    ],
-)
-
-cc_library(
     name = "tracing",
     srcs = [
         "tracing.cc",
