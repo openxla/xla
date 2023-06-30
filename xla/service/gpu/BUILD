@@ -1523,7 +1523,7 @@ xla_cc_test(
         "nomsan",
         "requires-gpu-sm70",
     ],
-    deps = [
+    deps = if_gpu_is_configured([
         ":gpu_conv_algorithm_picker",
         ":gpu_conv_rewriter",
         "//xla/service:gpu_plugin",
@@ -1535,7 +1535,7 @@ xla_cc_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-    ],
+    ]),
 )
 
 cc_library(
