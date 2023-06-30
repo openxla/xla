@@ -786,6 +786,7 @@ cc_library(
         "//xla/backends/profiler/cpu:python_tracer",
         "//xla/python/profiler/internal:traceme_wrapper",
         "@pybind11",
+        "@tsl//tsl/profiler/convert:xplane_to_profile_instructions",
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/rpc:profiler_server_impl",
         "@tsl//tsl/profiler/rpc/client:capture_profile",
