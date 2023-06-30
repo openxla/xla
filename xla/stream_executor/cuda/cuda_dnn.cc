@@ -4670,6 +4670,8 @@ GetCudnnFusedMHAOperationGraph(
   TF_ASSIGN_OR_RETURN(auto tensor_k,
                       CreateCudnnTensor(bmm1_rhs_dims, bmm1_rhs_strides, 'k',
                                         bmm1_rhs_descriptor.type(), 1, -1));
+  VLOG(4) << "\nTensor_k: " << tensor_k.describe();
+
   std::shared_ptr<cudnn_frontend::Tensor> bmm2_input_tensor =
       std::make_shared<cudnn_frontend::Tensor>(std::move(tensor_k));
   std::vector<int64_t> intermediate_bmm2_lhs_dims =
@@ -4695,8 +4697,6 @@ GetCudnnFusedMHAOperationGraph(
       auto alpha_scale_out,
       CreateCudnnScaleTensor(intermdiate_ops, bmm1_rhs_dims, bmm1_rhs_strides,
                              bmm1_rhs_descriptor.type(), bmm2_input_tensor));
-  bmm2_input_tensor =
-      std::make_shared<cudnn_frontend::Tensor>(std::move(alpha_scale_out));
   auto bmm1_desc = cudnn_frontend::MatMulDescBuilder()
                        .setComputeType(CUDNN_DATA_FLOAT)
                        .build();
@@ -4708,7 +4708,14 @@ GetCudnnFusedMHAOperationGraph(
                      .setcMatDesc(tensor_s)
                      .setmatmulDesc(bmm1_desc)
                      .build();
+  bmm2_input_tensor =
+      std::make_shared<cudnn_frontend::Tensor>(std::move(alpha_scale_out));
+
   RETURN_MSG_IF_CUDNN_ERROR(bmm1_op);
+
+  VLOG(4) << "\nTensor_s: " << tensor_s.describe()
+          << "\nBMM1_op: " << bmm1_op.describe();
+
   bmm2_input_tensor =
       std::make_shared<cudnn_frontend::Tensor>(std::move(tensor_s));
   intermdiate_ops.push_back(std::move(bmm1_op));
@@ -4800,6 +4807,9 @@ GetCudnnFusedMHAOperationGraph(
                      .setmatmulDesc(bmm2_desc)
                      .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm2_op);
+
+  VLOG(4) << "\nBMM2_op: " << bmm2_op.describe();
+
   // Create an Operation Graph. In this case it is gemm-gemm
   intermdiate_ops.push_back(std::move(bmm2_op));
   ops.reserve(intermdiate_ops.size());
@@ -4814,14 +4824,10 @@ GetCudnnFusedMHAOperationGraph(
   RETURN_MSG_IF_CUDNN_ERROR(op_graph);
 
   VLOG(4) << "\nTensor_q: " << tensor_q.describe()
-          << "\nTensor_k: " << tensor_k.describe()
-          << "\nTensor_s: " << tensor_s.describe()
           << "\nTensor_v: " << tensor_v.describe()
           << "\nTensor_o: " << tensor_o.describe()
           << "\nBMM1: " << bmm1_desc.describe()
-          << "\nBMM1_op: " << bmm1_op.describe()
           << "\nBMM2: " << bmm2_desc.describe()
-          << "\nBMM2_op: " << bmm2_op.describe()
           << "\nOpGraph: " << op_graph.describe();
   return std::make_unique<cudnn_frontend::OperationGraph>(std::move(op_graph));
 }
