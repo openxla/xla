@@ -27,6 +27,7 @@ cc_library(
     ],
     deps = [
         ":auto_sharding_cost_graph",
+        ":auto_sharding_solver",
         ":auto_sharding_solver_option",
         ":auto_sharding_strategy",
         ":auto_sharding_util",
@@ -46,18 +47,28 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_ortools//ortools/linear_solver",
-        "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
     ],
 )
 
 cc_library(
-    name = "auto_sharding_strategy",
-    hdrs = [
-        "auto_sharding_strategy.h",
+    name = "auto_sharding_solver",
+    srcs = ["auto_sharding_solver.cc"],
+    hdrs = ["auto_sharding_solver.h"],
+    deps = [
+        ":auto_sharding_strategy",
+        "//xla:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_ortools//ortools/linear_solver",
+        "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
     ],
+)
+
+cc_library(
+    name = "auto_sharding_strategy",
+    hdrs = ["auto_sharding_strategy.h"],
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_value",
@@ -67,9 +78,7 @@ cc_library(
 
 cc_library(
     name = "auto_sharding_cost_graph",
-    hdrs = [
-        "auto_sharding_cost_graph.h",
-    ],
+    hdrs = ["auto_sharding_cost_graph.h"],
     deps = [
         ":auto_sharding_strategy",
         ":matrix",
@@ -78,9 +87,7 @@ cc_library(
 
 cc_library(
     name = "matrix",
-    hdrs = [
-        "matrix.h",
-    ],
+    hdrs = ["matrix.h"],
     deps = [
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
@@ -111,12 +118,8 @@ cc_library(
 
 cc_library(
     name = "auto_sharding_util",
-    srcs = [
-        "auto_sharding_util.cc",
-    ],
-    hdrs = [
-        "auto_sharding_util.h",
-    ],
+    srcs = ["auto_sharding_util.cc"],
+    hdrs = ["auto_sharding_util.h"],
     deps = [
         ":auto_sharding_strategy",
         "//xla:array",
@@ -171,7 +174,16 @@ xla_cc_test(
         "//xla/service:hlo_parser",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_ortools//ortools/linear_solver",
         "@tsl//tsl/lib/core:status_test_util",
+    ],
+)
+
+xla_cc_test(
+    name = "auto_sharding_solver_test",
+    srcs = ["auto_sharding_solver_test.cc"],
+    deps = [
+        ":auto_sharding_solver",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
     ],
 )
