@@ -265,7 +265,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialec
 diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stablehlo/dialect/ExperimentalOps.cpp
 --- stablehlo/stablehlo/dialect/ExperimentalOps.cpp
 +++ stablehlo/stablehlo/dialect/ExperimentalOps.cpp
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,487 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -287,6 +287,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +
 +#include "llvm/ADT/ArrayRef.h"
 +#include "llvm/ADT/STLExtras.h"
++#include "llvm/Support/Regex.h"
 +#include "mlir/Dialect/Func/IR/FuncOps.h"
 +#include "mlir/IR/BuiltinAttributes.h"
 +#include "mlir/IR/BuiltinOps.h"
@@ -656,12 +657,106 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +  return DynamicRngBitGeneratorOpAdaptor(op);
 +}
 +
++LogicalResult ShapeAssertionOpAdaptor::verify() {
++  if (!(1 <= op_->getNumOperands() &&
++        op_->getNumOperands() <= 1 + maxErrorMessageInputs))
++    return op_.emitError() << "expects 1 <= size(operands) <= "
++                           << (1 + maxErrorMessageInputs);
++  int nrErrorMessageInputs = op_.getNumOperands() - 1;
++  if (op_->getNumResults() != 0)
++    return op_.emitError("expects size(results) = 0");
++  for (const auto& attr : op_->getAttrs()) {
++    if (attr.getName() != "api_version" && attr.getName() != "backend_config" &&
++        attr.getName() != "call_target_name" &&
++        attr.getName() != "error_message" &&
++        attr.getName() != "has_side_effect")
++      return op_.emitError()
++             << attr.getName() << " is not a supported attribute";
++  }
++  if (!op_.getBackendConfig().empty())
++    return op_.emitError() << "expects an empty backend_config";
++  if (op_.getCallTargetName() != "stablehlo.shape_assertion")
++    return op_.emitError() << "expects @stablehlo.shape_assertion";
++  if (!op_.getHasSideEffect())
++    return op_.emitError() << "expects has_side_effect=True";
++
++  // I1
++  auto assertWhatType = op_.getInputs()[0].getType().dyn_cast<ShapedType>();
++  if (!assertWhatType || !assertWhatType.hasRank() ||
++      assertWhatType.getRank() != 0 ||
++      !assertWhatType.getElementType().isSignlessInteger() ||
++      assertWhatType.getElementTypeBitWidth() != 1)
++    return op_.emitError() << "expects assert_what (operand #1) "
++                           << "to be a 0-dimensional tensor of type i1";
++
++  // I2
++  for (int i = 0; i < nrErrorMessageInputs; ++i) {
++    auto errorMessageInputType =
++        op_.getInputs()[i + 1].getType().dyn_cast<ShapedType>();
++    if (!errorMessageInputType || !errorMessageInputType.hasRank() ||
++        errorMessageInputType.getRank() != 0 ||
++        !errorMessageInputType.getElementType().isSignlessInteger() ||
++        (errorMessageInputType.getElementTypeBitWidth() != 32 &&
++         errorMessageInputType.getElementTypeBitWidth() != 64))
++      return op_.emitError()
++             << "expects error_message_input (operand #" << (i + 1) << ") "
++             << "to be a 0-dimensional tensor of type i32 or i64";
++  }
++
++  // I3
++  if (!op_->hasAttr(errorMessageAttrName))
++    return op_.emitError() << "expects an error_message attribute";
++
++  // C1: error_message contains valid format specifiers.
++  std::string errorMessage = getErrorMessage().data();
++  // format specs: "{" index ["," layout] [":" format] "}"
++  llvm::Regex formatSpecifierRE = llvm::Regex("{([0-9]+)[,:}]");
++  do {
++    SmallVector<llvm::StringRef, 3> formatSpec;
++    if (!formatSpecifierRE.match(errorMessage, &formatSpec)) {
++      break;
++    }
++    int index = std::stoi(formatSpec[1].data());
++    if (!(0 <= index && index < nrErrorMessageInputs)) {
++      return op_.emitError()
++             << "expects error_message to contain format specifiers with "
++             << "error_message_input index less than " << nrErrorMessageInputs
++             << ". Found specifier " << formatSpec[0];
++    }
++    errorMessage = formatSpecifierRE.sub("", errorMessage);
++  } while (true);
++
++  return success();
++}
++
++TypedValue<ShapedType> ShapeAssertionOpAdaptor::getAssertWhat() {
++  return op_.getInputs()[0].cast<TypedValue<ShapedType>>();
++}
++
++llvm::StringRef ShapeAssertionOpAdaptor::getErrorMessage() {
++  return op_->getAttr(errorMessageAttrName).cast<StringAttr>().getValue();
++}
++
++SmallVector<TypedValue<ShapedType>>
++ShapeAssertionOpAdaptor::getErrorMessageInputs() {
++  SmallVector<TypedValue<ShapedType>> res;
++  for (int i = 1; i < op_.getNumOperands(); ++i) {
++    res.push_back(op_.getInputs()[i].cast<TypedValue<ShapedType>>());
++  }
++  return res;
++}
++
++std::optional<ShapeAssertionOpAdaptor> getShapeAssertionOp(CustomCallOp op) {
++  if (op.getCallTargetName() != "stablehlo.shape_assertion") return {};
++  return ShapeAssertionOpAdaptor(op);
++}
++
 +}  // namespace stablehlo
 +}  // namespace mlir
 diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.h b/stablehlo/stablehlo/dialect/ExperimentalOps.h
 --- stablehlo/stablehlo/dialect/ExperimentalOps.h
 +++ stablehlo/stablehlo/dialect/ExperimentalOps.h
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,234 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -827,6 +922,70 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.h b/stablehlo/stablehlo
 +// "stablehlo.dynamic_rng_bit_generator".
 +std::optional<DynamicRngBitGeneratorOpAdaptor> getDynamicRngBitGeneratorOp(
 +    CustomCallOp op);
++
++// The ShapeAssertionOp experiment provides assertions that can be evaluated
++// after shape refinement.
++//
++// ShapeAssertionOp is represented via the
++// `stablehlo.custom_call @stablehlo.shape_assertion` custom call, and
++// represents an assertion that the first i1 scalar operand
++// `assert_what` should be true. The custom call has also a variadic number
++// of integer scalar operands that may be used to format the error message, and
++// an `error_message` string attribute. All operands must depend only on
++// dimension sizes and should evaluate to constants after shape refinement.
++// The `error_message` may contain format specifiers `{0}`, `{1}`, ..., that
++// are replaced with the values of the error message inputs.
++// The formatting of the error message is done with the `llvm::formatv` function
++// (https://llvm.org/docs/ProgrammersManual.html#formatting-strings-the-formatv-function).
++//
++// This operation does not have outputs. During shape canonicalization this
++// operation is deleted if the first operand has a non-zero value, and an
++// error is raised if it has the value 0.
++// #### Inputs
++//
++// | Label | Name                   | Type                                     |
++// |-------|------------------------|------------------------------------------|
++// | (I1)  | `assert_what`          | 0-dimensional tensor of type `i1`        |
++// | (I2)  | `error_message_inputs` | variadic number of 0-dimensional tensors |
++// |       |                        | of type `i32` or `i64`.                  |
++// | (I3)  | `error_message`        | constant of type `string`                |
++//
++// #### Outputs
++//
++//   None
++//
++// #### Constraints
++//
++// * (C1) The `error_message` contains substrings `{i}` with
++//        `0 <= i < size(error_message_inputs) <= 4`.
++class ShapeAssertionOpAdaptor {
++ public:
++  ShapeAssertionOpAdaptor(CustomCallOp op) : op_(op) {}
++  operator Operation*() { return op_; }
++  Operation* operator->() { return op_; }
++
++  TypedValue<ShapedType> getAssertWhat();
++  llvm::StringRef getErrorMessage();
++  SmallVector<TypedValue<ShapedType>> getErrorMessageInputs();
++
++  // There is an upper bound for the number of error_message_inputs.
++  static constexpr int maxErrorMessageInputs = 4;
++
++  static constexpr llvm::StringRef errorMessageAttrName = {
++      llvm::StringRef("error_message")};
++
++  // Verifies the constraints documented above.
++  // Emits errors if errors are detected.
++  LogicalResult verify();
++
++ private:
++  CustomCallOp op_;
++};
++
++// Wraps a custom call in a ShapeAssertionOpAdaptor.
++// Fails if the call_target_name of the custom call doesn't match
++// "stablehlo.shape_assertion".
++std::optional<ShapeAssertionOpAdaptor> getShapeAssertionOp(CustomCallOp op);
 +
 +}  // namespace stablehlo
 +}  // namespace mlir
@@ -1111,7 +1270,70 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir b/st
  }
  
  // -----
-diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
+@@ -578,3 +782,63 @@
+   %2 = stablehlo.real_dynamic_slice %arg0, %0, %1, %arg1 : (tensor<4xf32>, tensor<1xi64>, tensor<1xi64>, tensor<1xi64>) -> tensor<1xf32>
+   return %2 : tensor<1xf32>
+ }
++
++// -----
++
++// CHECK-LABEL: func @shape_assertion_success
++func.func @shape_assertion_success() -> () {
++  // CHECK-NEXT:   return
++  // CHECK-NEXT: }
++  %0 = stablehlo.constant dense<true> : tensor<i1>
++  stablehlo.custom_call @stablehlo.shape_assertion(%0) {
++    backend_config = "",
++    error_message = "The error message",
++    has_side_effect = true
++  } : (tensor<i1>) -> ()
++  return
++}
++
++// -----
++
++// CHECK-LABEL: func @shape_assertion_success_message
++func.func @shape_assertion_success_message() -> () {
++  // CHECK-NEXT:   return
++  // CHECK-NEXT: }
++  %0 = stablehlo.constant dense<true> : tensor<i1>
++  %1 = stablehlo.constant dense<-2> : tensor<i32>
++  %2 = stablehlo.constant dense<3> : tensor<i32>
++  stablehlo.custom_call @stablehlo.shape_assertion(%0, %1, %2) {
++    backend_config = "",
++    error_message = "The error message: {0} and {1}",
++    has_side_effect = true
++  } : (tensor<i1>, tensor<i32>, tensor<i32>) -> ()
++  return
++}
++
++// -----
++
++func.func @shape_assertion_failure() -> () {
++  %0 = stablehlo.constant dense<false> : tensor<i1>
++  // expected-error@+1 {{The error message}}
++  stablehlo.custom_call @stablehlo.shape_assertion(%0) {
++    backend_config = "",
++    error_message = "The error message",
++    has_side_effect = true
++  } : (tensor<i1>) -> ()
++  return
++}
++
++// -----
++
++func.func @shape_assertion_failure_message() -> () {
++  %0 = stablehlo.constant dense<0> : tensor<i1>
++  %1 = stablehlo.constant dense<-2> : tensor<i32>
++  %2 = stablehlo.constant dense<3> : tensor<i32>
++  // expected-error@+1 {{Expecting -2 == 3}}
++  stablehlo.custom_call @stablehlo.shape_assertion(%0, %1, %2) {
++    backend_config = "",
++    error_message = "Expecting {0} == {1}",
++    has_side_effect = true
++  } : (tensor<i1>, tensor<i32>, tensor<i32>) -> ()
++  return
++}diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
 --- stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
 +++ stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
 @@ -595,12 +595,45 @@
@@ -1163,7 +1385,15 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/
 diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
 --- stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
 +++ stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
-@@ -24,6 +24,7 @@
+@@ -16,6 +16,7 @@
+ #include "llvm/ADT/DenseSet.h"
+ #include "llvm/ADT/STLExtras.h"
+ #include "llvm/ADT/SmallVector.h"
++#include "llvm/Support/FormatVariadic.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/BuiltinTypes.h"
+@@ -24,6 +25,7 @@
  #include "mlir/Interfaces/InferTypeOpInterface.h"
  #include "mlir/Support/LogicalResult.h"
  #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -1171,7 +1401,7 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/
  #include "stablehlo/dialect/StablehloOps.h"
  #include "stablehlo/transforms/Passes.h"
  
-@@ -198,6 +199,54 @@
+@@ -198,6 +200,54 @@
    }
  };
  
@@ -1226,7 +1456,7 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/
  struct CanonicalizeDynamicReshapeOpPattern
      : public OpRewritePattern<DynamicReshapeOp> {
    using OpRewritePattern::OpRewritePattern;
-@@ -210,6 +259,27 @@
+@@ -210,6 +260,27 @@
      if (!op.getType().hasStaticShape())
        return rewriter.notifyMatchFailure(op, "expected static result type");
      rewriter.replaceOpWithNewOp<ReshapeOp>(op, op.getType(), op.getOperand());
@@ -1254,7 +1484,71 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/
      return success();
    }
  };
-@@ -320,7 +390,9 @@
+@@ -299,6 +370,63 @@
+   }
+ };
+ 
++struct CanonicalizeShapeAssertionOpPattern
++    : public OpRewritePattern<CustomCallOp> {
++  using OpRewritePattern::OpRewritePattern;
++
++  std::string formatErrorMessage(
++      llvm::StringRef errorMessage,
++      const SmallVector<int64_t>& errorMessageInputs) const {
++    int nrErrorMessageInputs = errorMessageInputs.size();
++    auto errorMessageFormat = errorMessage.data();
++    switch (nrErrorMessageInputs) {
++      case 0:
++        return errorMessageFormat;
++      case 1:
++        return llvm::formatv(errorMessageFormat, errorMessageInputs[0]);
++      case 2:
++        return llvm::formatv(errorMessageFormat, errorMessageInputs[0],
++                             errorMessageInputs[1]);
++      case 3:
++        return llvm::formatv(errorMessageFormat, errorMessageInputs[0],
++                             errorMessageInputs[1], errorMessageInputs[2]);
++      case 4:
++        return llvm::formatv(errorMessageFormat, errorMessageInputs[0],
++                             errorMessageInputs[1], errorMessageInputs[2],
++                             errorMessageInputs[3]);
++      default:
++        return errorMessageFormat;
++    }
++  }
++
++  LogicalResult matchAndRewrite(CustomCallOp impl,
++                                PatternRewriter& rewriter) const override {
++    auto op = getShapeAssertionOp(impl);
++    if (!op || failed(op->verify())) return failure();
++
++    SmallVector<int64_t> assertWhat;
++    if (failed(hlo::matchInts(op->getAssertWhat(), assertWhat))) {
++      return rewriter.notifyMatchFailure(impl, "expected static assert_what");
++    }
++    if (assertWhat[0] != 0) {
++      rewriter.eraseOp(impl);
++    } else {
++      llvm::StringRef errorMessage = op->getErrorMessage();
++      SmallVector<int64_t> errorMessageInputs;
++      for (auto inputOp : op->getErrorMessageInputs()) {
++        SmallVector<int64_t> input;
++        if (failed(hlo::matchInts(inputOp, input))) {
++          return rewriter.notifyMatchFailure(
++              impl, "expected static error_message_input");
++        }
++        errorMessageInputs.push_back(input[0]);
++      }
++      impl->emitError(formatErrorMessage(errorMessage, errorMessageInputs));
++    }
++    return success();
++  }
++};
++
+ struct StablehloCanonicalizeDynamismPass
+     : public impl::StablehloCanonicalizeDynamismPassBase<
+           StablehloCanonicalizeDynamismPass> {
+@@ -320,10 +448,13 @@
      patterns.add<CanonicalizeDynamicGatherOpPattern>(&getContext());
      patterns.add<CanonicalizeDynamicIotaOpPattern>(&getContext());
      patterns.add<CanonicalizeDynamicPadOpPattern>(&getContext());
@@ -1264,6 +1558,10 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/
      patterns.add<CanonicalizeRealDynamicSliceOpToDynamicSliceOpPattern>(
          &getContext());
      patterns.add<CanonicalizeRealDynamicSliceOpToSliceOpPattern>(&getContext());
++    patterns.add<CanonicalizeShapeAssertionOpPattern>(&getContext());
+     if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),
+                                             config))) {
+       return signalPassFailure();
 diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
 --- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
 +++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
