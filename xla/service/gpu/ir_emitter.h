@@ -16,13 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_IR_EMITTER_H_
 #define XLA_SERVICE_GPU_IR_EMITTER_H_
 
-#include <functional>
-#include <map>
-#include <memory>
-#include <utility>
 #include <vector>
 
-#include "absl/strings/string_view.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -30,19 +26,14 @@ limitations under the License.
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/elemental_ir_emitter.h"
 #include "xla/service/gpu/hlo_to_ir_bindings.h"
 #include "xla/service/gpu/ir_emitter_context.h"
-#include "xla/service/gpu/thunk.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/ir_builder_mixin.h"
-#include "xla/service/llvm_ir/llvm_loop.h"
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/statusor.h"
-#include "xla/types.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -229,7 +220,8 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   // Map nested computations to emitted IR functions. This serves as a cache so
   // that IrEmitter does not emit multiple functions for the same
   // HloComputation.
-  std::map<const HloComputation*, llvm::Function*> computation_to_ir_function_;
+  absl::flat_hash_map<const HloComputation*, llvm::Function*>
+      computation_to_ir_function_;
 };
 
 }  // namespace gpu
