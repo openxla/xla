@@ -47,6 +47,12 @@ class NVPTXCompiler : public GpuCompiler {
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
       const AutotuneResults* autotune_results) override;
 
+  Status OptimizeHloPostLayoutAssignment(
+      HloModule* hlo_module, se::StreamExecutor* stream_exec,
+      const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
+      const AutotuneResults* autotune_results,
+      tsl::thread::ThreadPool* thread_pool) override;
+
   bool EnableCollectiveScheduleLinearizerForSpmd(
       HloModule* hlo_module, se::StreamExecutor* stream_exec) override;
 
@@ -59,6 +65,13 @@ class NVPTXCompiler : public GpuCompiler {
                              const GpuTargetConfig& gpu_target_config,
                              const AutotuneResults* autotune_results,
                              tsl::thread::ThreadPool* thread_pool) override;
+
+  Status AddHloEmitterAutotuningPasses(
+      HloPassPipeline* pipeline, se::StreamExecutor* stream_exec,
+      const DebugOptions& debug_options, const CompileOptions& options,
+      const GpuTargetConfig& gpu_target_config,
+      const AutotuneResults* autotune_results,
+      tsl::thread::ThreadPool* thread_pool) override;
 
   Status LoadAutotuneResultsFromFile(
       const DebugOptions& debug_options) override;

@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/util.h"
 
@@ -34,6 +35,12 @@ inline constexpr int64_t BatchedReductionRaceFreeBound() { return 8; }
 // Returns true if either the dimensions being reduced or the dimensions being
 // kept are contiguous in the input of the reduce instruction.
 bool IsReductionFromOrToContiguousDimensions(const HloInstruction& reduce);
+
+// Returns the hero reduction of the computation.
+// We always use the first reduce root that triggers unnested reduction emitter
+// as the hero reduction, since all the reductions are required to have the same
+// shape and layout as verified by `IsFusedReductionOutputConsistent()`.
+HloInstruction* FindHeroReduction(absl::Span<HloInstruction*> roots);
 
 struct ReductionDimensions {
   // Indicates whether the reduction is a row reduction or a column reduction.
@@ -57,12 +64,18 @@ ReductionDimensions GetReductionKindAndContiguousComponents(
     const HloInstruction& reduce);
 
 // Get tiling per thread for the given reduction in dimensions [D, H, W].
-Vector3 GetReductionTiling(const ReductionDimensions& reduction_dimensions);
+Vector3 GetReductionTiling(const ReductionDimensions& reduction_dimensions,
+                           std::optional<FusionBackendConfig> backend_config);
 
 // Returns whether the given reduction can be safely generated without atomics :
 // that is, at most one block will write to every output element.
-bool ReductionIsRaceFree(const HloModuleConfig& hlo_module_config,
-                         const ReductionDimensions& reduction_dimensions);
+// This can either be called before (`backend_config` defaulted to
+// `std::nullopt`) or after (`backend_config` containing the information about
+// how to codegen the reduction) reduction autotuning.
+bool ReductionIsRaceFree(
+    const HloModuleConfig& hlo_module_config,
+    const ReductionDimensions& reduction_dimensions,
+    std::optional<FusionBackendConfig> backend_config = std::nullopt);
 
 }  // namespace gpu
 }  // namespace xla

@@ -296,6 +296,18 @@ tsl::StatusOr<mlir::Operation*> LhloDialectEmitter::CreateOpInFusion(
   mlir::lmhlo::FusionOp fusion = builder_.create<mlir::lmhlo::FusionOp>(loc);
   mlir::OpBuilder b(&fusion.getRegion());
 
+  // Propagate backend config for reductions tiling and loop unrolling into the
+  // fusion op containing these operations.
+  TF_ASSIGN_OR_RETURN(auto backend_config,
+                      instr->backend_config<xla::gpu::FusionBackendConfig>());
+
+  if (backend_config.has_row_reduction_config()) {
+    TF_ASSIGN_OR_RETURN(
+        std::string backend_config_str,
+        HloInstruction::BackendConfigToRawString(backend_config));
+    fusion.setBackendConfigAttr(builder_.getStringAttr(backend_config_str));
+  }
+
   llvm::SmallVector<mlir::Value, 4> loads;
   for (Value arg : arguments) {
     auto load = b.create<mlir::bufferization::ToTensorOp>(loc, arg);

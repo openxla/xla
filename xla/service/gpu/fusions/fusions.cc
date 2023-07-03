@@ -47,7 +47,7 @@ bool IsSingleInstructionFusion(mlir::lmhlo::FusionOp fusion) {
 std::optional<std::unique_ptr<FusionInterface>> GetFusionEmitter(
     HloFusionAnalysis& analysis, IrEmitterContext& ir_emitter_context,
     ElementalIrEmitter& elemental_emitter, mlir::lmhlo::FusionOp fusion_op,
-    const HloFusionInstruction& fusion) {
+    const HloFusionInstruction& fusion, FusionBackendConfig backend_config) {
   switch (analysis.GetEmitterFusionKind()) {
     case HloFusionAnalysis::EmitterFusionKind::kLoop: {
       bool is_single = IsSingleInstructionFusion(fusion_op);

@@ -82,6 +82,10 @@ message AutotuneResult {
     int64 num_warps = 6;
   }
 
+  message RowReductionKey {
+    int64 tile_x = 1;
+  }
+
   int64 scratch_bytes = 8;
   google.protobuf.Duration run_time = 9;
 
@@ -91,11 +95,12 @@ message AutotuneResult {
     ConvKey conv = 5;
     GemmKey gemm = 6;
     TritonGemmKey triton = 17;
+    RowReductionKey row_reduction = 18;
     CudaConvPlanKey cuda_conv_plan = 15;
     stream_executor.dnn.AlgorithmProto algorithm = 16;
   }
 
-  // Next ID: 17
+  // Next ID: 19
 }
 
 message AutotuningLog {

@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/metrics.h"
+#include "xla/service/gpu/row_reduction_autotuner.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/service/gpu/triangular_solve_rewriter.h"
 #include "xla/service/gpu/triton_autotuner.h"
@@ -110,6 +111,25 @@ class ConvBfloat16Support : public FloatSupport {
  private:
   bool is_conv_bf16_supported_;
 };
+
+StatusOr<AutotuneConfig> GetAutotuneConfig(
+    se::StreamExecutor* stream_exec, const DebugOptions& debug_options,
+    const NVPTXCompiler::CompileOptions& options,
+    const GpuTargetConfig& gpu_target_config,
+    const AutotuneResults* autotune_results) {
+  AutotuneConfig autotune_config =
+      stream_exec
+          ? AutotuneConfig{DeviceConfig{stream_exec, options.device_allocator},
+                           debug_options}
+          : AutotuneConfig{
+                DevicelessConfig{gpu_target_config.device_description_str},
+                debug_options};
+  if (autotune_config.IsDeviceless()) {
+    AutotunerUtil::ClearAutotuneResults();
+    TF_RETURN_IF_ERROR(AutotunerUtil::LoadAutotuneResults(*autotune_results));
+  }
+  return autotune_config;
+}
 
 }  // namespace
 
@@ -190,6 +210,16 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
     const AutotuneResults* autotune_results) {
+  return NVPTXCompiler::OptimizeHloPostLayoutAssignment(
+      hlo_module, stream_exec, options, gpu_target_config, autotune_results,
+      /*thread_pool=*/nullptr);
+}
+
+Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
+    HloModule* hlo_module, se::StreamExecutor* stream_exec,
+    const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
+    const AutotuneResults* autotune_results,
+    tsl::thread::ThreadPool* thread_pool) {
   HloPassPipeline pre_pipeline("nvptx post-layout_assignment part 1");
 
   // This needs to run before GemmRewriter, which is part of
@@ -271,23 +301,28 @@ Status NVPTXCompiler::AddAutotuningPasses(
     const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
     const AutotuneResults* autotune_results,
     tsl::thread::ThreadPool* thread_pool) {
-  AutotuneConfig autotune_config =
-      stream_exec
-          ? AutotuneConfig{DeviceConfig{stream_exec, options.device_allocator},
-                           debug_options}
-          : AutotuneConfig{
-                DevicelessConfig{gpu_target_config.device_description_str},
-                debug_options};
-  if (autotune_config.IsDeviceless()) {
-    AutotunerUtil::ClearAutotuneResults();
-    TF_RETURN_IF_ERROR(AutotunerUtil::LoadAutotuneResults(*autotune_results));
-  }
+  TF_ASSIGN_OR_RETURN(AutotuneConfig autotune_config,
+                      GetAutotuneConfig(stream_exec, debug_options, options,
+                                        gpu_target_config, autotune_results));
   if (GpuConvAlgorithmPicker::IsEnabled(hlo_module)) {
     pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
   }
   pipeline->AddPass<GemmAlgorithmPicker>(autotune_config);
 
   pipeline->AddPass<TritonAutotuner>(autotune_config, thread_pool);
+  return OkStatus();
+}
+
+Status NVPTXCompiler::AddHloEmitterAutotuningPasses(
+    HloPassPipeline* pipeline, se::StreamExecutor* stream_exec,
+    const DebugOptions& debug_options, const CompileOptions& options,
+    const GpuTargetConfig& gpu_target_config,
+    const AutotuneResults* autotune_results,
+    tsl::thread::ThreadPool* thread_pool) {
+  TF_ASSIGN_OR_RETURN(AutotuneConfig autotune_config,
+                      GetAutotuneConfig(stream_exec, debug_options, options,
+                                        gpu_target_config, autotune_results));
+  pipeline->AddPass<RowReductionAutotuner>(autotune_config, thread_pool);
   return OkStatus();
 }
 

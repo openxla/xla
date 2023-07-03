@@ -391,7 +391,8 @@ class IrEmitterUnnested : public IrEmitter {
   // instructions. In other words, a block_id_y is assigned to a group and so
   // different groups can be run in parallel.
   Status EmitUnnestedReduction(mlir::lmhlo::FusionOp fusion,
-                               HloFusionAnalysis& fusion_analysis);
+                               HloFusionAnalysis& fusion_analysis,
+                               FusionBackendConfig backend_config);
 
   // Emits a kernel for the given hlo instruction using a tiled 0-2-1 transpose
   // algorithm to improve the memory access patterns for the input parameters

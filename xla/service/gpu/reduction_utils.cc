@@ -20,12 +20,12 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
+#include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/layout_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
 
 #ifdef GOOGLE_CUDA
 #include "xla/service/gpu/gpu_asm_opts_util.h"
@@ -85,11 +85,20 @@ int64_t MinThreadsXRowReduction(const HloModuleConfig& hlo_module_config) {
   return 1024;
 }
 
-Vector3 GetReductionTiling(const ReductionDimensions& reduction_dimensions) {
+Vector3 GetReductionTiling(const ReductionDimensions& reduction_dimensions,
+                           std::optional<FusionBackendConfig> backend_config) {
   if (reduction_dimensions.is_row_reduction) {
     int64_t tile_z = std::min(reduction_dimensions.dimensions[0],
                               BatchedReductionRaceFreeBound());
-    return {tile_z, 1, 16};
+    // This is for all calls to `GetReductionTiling` before row reduction
+    // autotuning (e.g. TreeReductionRewriter or FusionMerger), which are
+    // supposed to use the default tiling config anyway.
+    if (!backend_config.has_value() ||
+        !backend_config->has_row_reduction_config()) {
+      VLOG(2) << "Using fallback reduction tiling config";
+      return {tile_z, 1, 16};
+    }
+    return {tile_z, 1, backend_config->row_reduction_config().tile_x()};
   }
 
   // Column reduction.
@@ -151,10 +160,22 @@ bool IsReductionFromOrToContiguousDimensions(const HloInstruction& reduce) {
              GetReductionKindAndContiguousComponents(reduce));
 }
 
+HloInstruction* FindHeroReduction(absl::Span<HloInstruction*> roots) {
+  auto it = absl::c_find_if(roots, [](HloInstruction* instr) {
+    return IsReductionFromOrToContiguousDimensions(*instr);
+  });
+  if (it == roots.end()) {
+    return nullptr;
+  }
+  return *it;
+}
+
 bool ReductionIsRaceFree(const HloModuleConfig& hlo_module_config,
-                         const ReductionDimensions& reduction_dimensions) {
+                         const ReductionDimensions& reduction_dimensions,
+                         std::optional<FusionBackendConfig> backend_config) {
   const int kWarpSize = 32;
-  Vector3 reduction_tiling = GetReductionTiling(reduction_dimensions);
+  Vector3 reduction_tiling =
+      GetReductionTiling(reduction_dimensions, backend_config);
   if (reduction_dimensions.is_row_reduction) {
     return reduction_dimensions.dimensions[2] <=
                MinThreadsXRowReduction(hlo_module_config) *

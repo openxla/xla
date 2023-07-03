@@ -2015,8 +2015,9 @@ Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
                           &fusion, &device_info,
                           ir_emitter_context_->cuda_compute_capability()));
 
-  auto emitter = GetFusionEmitter(fusion_analysis, *ir_emitter_context_,
-                                  elemental_emitter_, fusion_op, fusion);
+  auto emitter =
+      GetFusionEmitter(fusion_analysis, *ir_emitter_context_,
+                       elemental_emitter_, fusion_op, fusion, backend_config);
   if (emitter != std::nullopt) {
     TF_ASSIGN_OR_RETURN(auto emission_result,
                         (*emitter)->Emit(kernel_reuse_cache_, &b_));
@@ -2055,7 +2056,7 @@ Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
       LOG(FATAL) << "Unsupported fusion kind: " << backend_config.kind();
     }
     case HloFusionAnalysis::EmitterFusionKind::kReduction:
-      return EmitUnnestedReduction(fusion_op, fusion_analysis);
+      return EmitUnnestedReduction(fusion_op, fusion_analysis, backend_config);
     case HloFusionAnalysis::EmitterFusionKind::kTranspose:
       return EmitUnnestedTranspose(fusion_op, fusion_analysis);
     case HloFusionAnalysis::EmitterFusionKind::kInputSlices:
@@ -2064,7 +2065,7 @@ Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
       return EmitScatter(fusion_op, fused_computation, fusion_analysis);
     case HloFusionAnalysis::EmitterFusionKind::kLoop:
       return FailedPrecondition(
-          "Loop fusion should have been handled by GetFusionEmitter.");
+          "Fusion should have been handled by GetFusionEmitter.");
   }
 }
 
@@ -4265,13 +4266,16 @@ Status IrEmitterUnnested::EmitIRForReduction(
 }
 
 Status IrEmitterUnnested::EmitUnnestedReduction(
-    mlir::lmhlo::FusionOp fusion, HloFusionAnalysis& fusion_analysis) {
-  auto* reduction_codegen_info = fusion_analysis.GetReductionCodegenInfo();
+    mlir::lmhlo::FusionOp fusion, HloFusionAnalysis& fusion_analysis,
+    FusionBackendConfig backend_config) {
+  auto* reduction_codegen_info =
+      fusion_analysis.GetReductionCodegenInfo(backend_config);
   // Set flag to false as Reduction has it's own custom logic of choosing a
   // block size.
-  TF_ASSIGN_OR_RETURN(auto launch_dimensions,
-                      fusion_analysis.GetLaunchDimensions(
-                          /*use_experimental_block_size=*/false));
+  TF_ASSIGN_OR_RETURN(
+      auto launch_dimensions,
+      fusion_analysis.GetLaunchDimensions(
+          /*use_experimental_block_size=*/false, backend_config));
 
   VLOG(3) << "Launch dimensions of "
           << mlir::mhlo::GetDebugNameFromLocation(fusion.getLoc()) << ": "
@@ -4288,7 +4292,9 @@ Status IrEmitterUnnested::EmitUnnestedReduction(
 
   TF_ASSIGN_OR_RETURN(
       std::optional<std::vector<llvm_ir::IrArray>> opt_ir_arrays,
-      BuildKernelThunkForFusion(fusion, launch_dimensions));
+      BuildKernelThunkForFusion(
+          fusion, launch_dimensions,
+          reduction_codegen_info->GetTilingScheme().ToString()));
   if (!opt_ir_arrays.has_value()) {
     // The kernel was reused, no need to emit code.
     return OkStatus();

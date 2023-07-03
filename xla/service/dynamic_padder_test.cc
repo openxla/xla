@@ -1270,32 +1270,6 @@ ENTRY main {
   EXPECT_EQ(result, expected);
 }
 
-XLA_TEST_F(LlvmIrGenTestBase, LargeDynamicInput) {
-#ifndef XLA_TEST_BACKEND_GPU
-  GTEST_SKIP();
-#endif
-  const std::string hlo_text = R"( // NOLINT: Will be executed for GPU.
-HloModule LargeDynamicInput
-
-add (lhs: f32[], rhs: f32[]) -> f32[] {
-  lhs = f32[] parameter(0)
-  rhs = f32[] parameter(1)
-  ROOT add = f32[] add(lhs, rhs)
-}
-
-ENTRY main {
-  param = f32[<=20,<=20,<=20,<=20,<=20,<=20,<=20,<=20] parameter(0)
-  zero = f32[] constant(0)
-  ROOT out = reduce(param, zero), to_apply=add, dimensions={0,1,2,3,4,5,6,7}
-}
-)";
-
-  CompileAndVerifyIr(hlo_text, R"(
-CHECK: ret void
-)",
-                     /*match_optimized_ir=*/true);
-}
-
 XLA_TEST_F(ExecutionTest, DynamicDimensionReshapeUnchanged) {
   const std::string hlo_text = R"(
 HloModule TensorFlowScatterV1

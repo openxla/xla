@@ -72,7 +72,7 @@ static auto& autotune_cache ABSL_GUARDED_BY(autotune_cache_mu) =
   autotune_cache.clear();
 }
 
-/* static*/ StatusOr<se::DeviceMemoryBase> AutotunerUtil::CreateBuffer(
+/*static*/ StatusOr<se::DeviceMemoryBase> AutotunerUtil::CreateBuffer(
     se::RedzoneAllocator& allocator, const Shape& shape,
     const AutotuneConfig& config, int64_t& rng_state) {
   TF_ASSIGN_OR_RETURN(se::DeviceMemoryBase buffer,
@@ -127,6 +127,8 @@ static AutotuneResult* TryFindInCache(const AutotuneCacheKey& key) {
 
   TF_ASSIGN_OR_RETURN(AutotuneResult autotune_result, autotune_fn());
 
+  std::cerr << "TUTI KEY " << key.ToString() << '\n';
+  std::cerr << "TUTI RES " << autotune_result.ShortDebugString() << '\n';
   absl::MutexLock lock(&autotune_cache_mu);
   auto [it, inserted] = autotune_cache.emplace(key, autotune_result);
   return it->second;

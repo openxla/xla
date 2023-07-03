@@ -132,6 +132,10 @@ message FusionBackendConfig {
 
   // Cost model prediction.
   ReificationCost reification_cost = 3;
+
+  // Backend config for reduction, containing the tiling configuration
+  // selected by RowReductionAutotuner.
+  AutotuneResult.RowReductionKey row_reduction_config = 4;
 }
 
 // Backend config for a fused Multi-Headed Attention (fMHA) that runs through

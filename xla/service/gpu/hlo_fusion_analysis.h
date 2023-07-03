@@ -80,12 +80,17 @@ class HloFusionAnalysis {
 
   // Determines the launch dimensions for the fusion. The fusion kind must not
   // be `kTriton`.
+  // This can either be called before (`backend_config` defaulted to
+  // `std::nullopt`) or after (`backend_config` containing the information about
+  // how to codegen the reduction) reduction autotuning.
   StatusOr<LaunchDimensions> GetLaunchDimensions(
-      bool use_experimental_block_size);
+      bool use_experimental_block_size,
+      std::optional<FusionBackendConfig> backend_config = std::nullopt);
 
   // Calculates the reduction information. Returns `nullptr` if the fusion is
   // not a reduction.
-  const ReductionCodegenInfo* GetReductionCodegenInfo();
+  const ReductionCodegenInfo* GetReductionCodegenInfo(
+      std::optional<FusionBackendConfig> backend_config);
 
   // Calculates the transpose tiling information. Returns `nullptr` if the
   // fusion is not a transpose.
@@ -125,7 +130,8 @@ class HloFusionAnalysis {
   int CalculateVirtualThreadScalingFactorForReduction(
       const ReductionDimensions& reduction_dimensions) const;
   ReductionCodegenInfo ComputeReductionCodegenInfo(
-      HloInstruction* hero_reduction) const;
+      HloInstruction* hero_reduction,
+      std::optional<FusionBackendConfig> backend_config) const;
   bool HasConsistentTransposeHeros() const;
 
   const HloFusionInstruction* fusion_;

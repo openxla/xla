@@ -184,6 +184,12 @@ class GpuCompiler : public LLVMCompiler {
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
       const AutotuneResults* autotune_results);
 
+  virtual Status OptimizeHloPostLayoutAssignment(
+      HloModule* hlo_module, se::StreamExecutor* stream_exec,
+      const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
+      const AutotuneResults* autotune_results,
+      tsl::thread::ThreadPool* thread_pool);
+
   // Linearize collective schedule under SPMD partitioning if online autotuning
   // of convolutions is enabled.
   virtual bool EnableCollectiveScheduleLinearizerForSpmd(
@@ -214,6 +220,16 @@ class GpuCompiler : public LLVMCompiler {
                                      const GpuTargetConfig& gpu_target_config,
                                      const AutotuneResults* autotune_results,
                                      tsl::thread::ThreadPool* thread_pool) {
+    return OkStatus();
+  }
+
+  // Add autotuning passes for reductions and loop fusions.
+  virtual Status AddHloEmitterAutotuningPasses(
+      HloPassPipeline* pipeline, se::StreamExecutor* stream_exec,
+      const DebugOptions& debug_options, const CompileOptions& options,
+      const GpuTargetConfig& gpu_target_config,
+      const AutotuneResults* autotune_results,
+      tsl::thread::ThreadPool* thread_pool) {
     return OkStatus();
   }
 

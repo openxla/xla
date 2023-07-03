@@ -534,6 +534,8 @@ static Status ExecuteXlaRuntime(const std::string& module_name,
   auto executed = gpu_runtime_executable.Execute(
       run_options, asm_text, binary, buffer_allocations, gpu_lock, temp_buffer);
   if (!executed.ok()) return executed;
+  uint64_t end_nanos = tsl::Env::Default()->NowNanos();
+  std::cerr << "TUTI E2E RUNTIME " << end_nanos - start_nanos << "\n";
 
   return MaybeSyncAndProfile(
       run_options, start_nanos,

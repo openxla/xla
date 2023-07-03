@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/kernel_mapping_scheme.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/reduction_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/statusor.h"
@@ -296,7 +297,8 @@ HloFusionAnalysis::EmitterFusionKind HloFusionAnalysis::GetEmitterFusionKind()
 }
 
 StatusOr<LaunchDimensions> HloFusionAnalysis::GetLaunchDimensions(
-    bool use_experimental_block_size) {
+    bool use_experimental_block_size,
+    std::optional<FusionBackendConfig> backend_config) {
   auto emitter_fusion_kind = GetEmitterFusionKind();
   switch (emitter_fusion_kind) {
     case EmitterFusionKind::kLoop: {
@@ -309,7 +311,7 @@ StatusOr<LaunchDimensions> HloFusionAnalysis::GetLaunchDimensions(
                                        *loop_fusion_config);
     }
     case EmitterFusionKind::kReduction: {
-      auto* reduction_codegen_info = GetReductionCodegenInfo();
+      auto* reduction_codegen_info = GetReductionCodegenInfo(backend_config);
       const TilingScheme& tiling_scheme =
           reduction_codegen_info->GetTilingScheme();
       size_t blocks_y = reduction_codegen_info->GetIndexGroups().size();
@@ -357,23 +359,8 @@ StatusOr<LaunchDimensions> HloFusionAnalysis::GetLaunchDimensions(
   }
 }
 
-namespace {
-// Returns the hero reduction of the computation.
-// We always use the first reduce root that triggers unnested reduction emitter
-// as the hero reduction, since all the reductions are required to have the same
-// shape and layout as verified by `IsFusedReductionOutputConsistent()`.
-HloInstruction* FindHeroReduction(absl::Span<HloInstruction*> roots) {
-  auto it = absl::c_find_if(roots, [](HloInstruction* instr) {
-    return IsReductionFromOrToContiguousDimensions(*instr);
-  });
-  if (it == roots.end()) {
-    return nullptr;
-  }
-  return *it;
-}
-}  // namespace
-
-const ReductionCodegenInfo* HloFusionAnalysis::GetReductionCodegenInfo() {
+const ReductionCodegenInfo* HloFusionAnalysis::GetReductionCodegenInfo(
+    std::optional<FusionBackendConfig> backend_config) {
   if (reduction_codegen_info_.has_value()) {
     return &reduction_codegen_info_.value();
   }
@@ -382,7 +369,8 @@ const ReductionCodegenInfo* HloFusionAnalysis::GetReductionCodegenInfo() {
       FindHeroReduction(absl::Span<HloInstruction*>(fusion_roots_));
   CHECK_NE(hero_reduction, nullptr);
 
-  auto reduction_codegen_info = ComputeReductionCodegenInfo(hero_reduction);
+  auto reduction_codegen_info =
+      ComputeReductionCodegenInfo(hero_reduction, backend_config);
   reduction_codegen_info_.emplace(std::move(reduction_codegen_info));
   return &reduction_codegen_info_.value();
 }
@@ -708,7 +696,8 @@ int HloFusionAnalysis::CalculateVirtualThreadScalingFactorForReduction(
 }
 
 ReductionCodegenInfo HloFusionAnalysis::ComputeReductionCodegenInfo(
-    HloInstruction* hero_reduction) const {
+    HloInstruction* hero_reduction,
+    std::optional<FusionBackendConfig> backend_config) const {
   Shape input_shape = hero_reduction->operand(0)->shape();
   ReductionDimensions reduction_dimensions =
       GetReductionKindAndContiguousComponents(*hero_reduction);
@@ -716,7 +705,8 @@ ReductionCodegenInfo HloFusionAnalysis::ComputeReductionCodegenInfo(
            << " " << reduction_dimensions.dimensions[0] << " "
            << reduction_dimensions.dimensions[1] << " "
            << reduction_dimensions.dimensions[2];
-  Vector3 reduction_tiling = GetReductionTiling(reduction_dimensions);
+  Vector3 reduction_tiling =
+      GetReductionTiling(reduction_dimensions, backend_config);
 
   int64_t fan_out = fusion_roots_.size();
   int64_t num_threads_y =
@@ -747,8 +737,9 @@ ReductionCodegenInfo HloFusionAnalysis::ComputeReductionCodegenInfo(
   int64_t shmem_usage =
       ProjectedShmemUsageBytes(reduction_dimensions, instr_index_groups);
   const int64_t shmem_budget = device_info_->shared_memory_per_block;
-  bool reduction_is_race_free = ReductionIsRaceFree(
-      hero_reduction->GetModule()->config(), reduction_dimensions);
+  bool reduction_is_race_free =
+      ReductionIsRaceFree(hero_reduction->GetModule()->config(),
+                          reduction_dimensions, backend_config);
   bool vectorize =
       // Vectorization might cause us to run out of budget.
       (shmem_usage * 2 <= shmem_budget) &&

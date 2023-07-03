@@ -27,6 +27,7 @@ limitations under the License.
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Verifier.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
