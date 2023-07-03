@@ -24,6 +24,8 @@ limitations under the License.
 
 #include "absl/strings/str_join.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/cost_model.pb.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/gpu_performance_model.h"
@@ -277,6 +279,15 @@ FusionDecision FusionInstructionMerger::ShouldFuse(HloInstruction* producer) {
   GpuPerformanceModel::RunTimes t = GpuPerformanceModel::EstimateRunTimes(
       producer, &*cost_analysis_, gpu_device_info_, compute_capability_,
       producer->users(), /*multi_output=*/false);
+
+  // TODO(tjoerg): Confirm that runtime cost will be recomputed after fusion,
+  // such that no fusion ends up w/o cost in the backend_config.
+  double unfused_cycles = absl::ToDoubleNanoseconds(t.time_unfused) *
+                          gpu_device_info_.clock_rate_ghz;
+  producer->backend_config<FusionBackendConfig>()
+      ->mutable_reification_cost()
+      ->set_end_to_end_cycles(unfused_cycles);
+
   if (t.time_fused > t.time_unfused) {
     ++num_fail_slower_if_fused_;
     return "will execute slower if fused";

@@ -51,11 +51,19 @@ filegroup(
 )
 
 tf_proto_library(
+    name = "cost_model",
+    srcs = ["cost_model.proto"],
+    cc_api_version = 2,
+    make_default_target_header_only = True,
+)
+
+tf_proto_library(
     name = "backend_configs",
     srcs = ["backend_configs.proto"],
     cc_api_version = 2,
     make_default_target_header_only = True,
     protodeps = [
+        ":cost_model",
         "//xla:xla_data_proto",
         "//xla/stream_executor:dnn_proto",
         "//xla:autotuning_proto",
@@ -1749,6 +1757,8 @@ cc_library(
     srcs = ["priority_fusion.cc"],
     hdrs = ["priority_fusion.h"],
     deps = [
+        ":backend_configs_cc",
+        ":cost_model_cc",
         ":gpu_device_info",
         ":gpu_fusible",
         ":gpu_hlo_cost_analysis",
@@ -1799,6 +1809,8 @@ cc_library(
     srcs = ["multi_output_fusion.cc"],
     hdrs = ["multi_output_fusion.h"],
     deps = [
+        ":backend_configs_cc",
+        ":cost_model_cc",
         ":gpu_device_info",
         ":gpu_fusible",
         ":gpu_hlo_cost_analysis",
@@ -1890,6 +1902,8 @@ cc_library(
     srcs = ["fusion_merger.cc"],
     hdrs = ["fusion_merger.h"],
     deps = [
+        ":backend_configs_cc",
+        ":cost_model_cc",
         ":gpu_device_info",
         ":gpu_fusible",
         ":gpu_hlo_cost_analysis",

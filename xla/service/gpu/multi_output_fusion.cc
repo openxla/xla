@@ -25,6 +25,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_reachability.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/cost_model.pb.h"
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/gpu_hlo_cost_analysis.h"
@@ -175,6 +177,15 @@ std::vector<HloInstruction*> GetProducerConsumerMultiOutputFusionCandidates(
     GpuPerformanceModel::RunTimes t = GpuPerformanceModel::EstimateRunTimes(
         producer, cost_analysis, device_info, cc, {consumer},
         /*multi_output=*/true);
+
+    // TODO(tjoerg): Confirm that runtime cost will be recomputed after fusion,
+    // such that no fusion ends up w/o cost in the backend_config.
+    double unfused_cycles =
+        absl::ToDoubleNanoseconds(t.time_unfused) * device_info.clock_rate_ghz;
+    producer->backend_config<FusionBackendConfig>()
+        ->mutable_reification_cost()
+        ->set_end_to_end_cycles(unfused_cycles);
+
     if (t.time_fused > t.time_unfused) {
       dump_negative_explanation(FusionDecision{}
                                 << "will execute slower if fused");

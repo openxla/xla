@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package xla.gpu;
+
+// TODO(tjoerg): Refer to public version of David's DD.
+// https://docs.google.com/document/d/1nQIQbb8YHsawSI2C7xi4RnbPFmXh41WdF5jKbWmnqwQ/edit
+message ReificationCost {
+  double end_to_end_cycles = 1;  // Total execution time of the reified op.
+}

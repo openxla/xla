@@ -35,6 +35,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/fusion_node_indexing_evaluation.h"
 #include "xla/service/fusion_queue.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/cost_model.pb.h"
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/gpu_hlo_cost_analysis.h"
@@ -212,6 +214,14 @@ class GpuPriorityFusionQueue : public FusionQueue {
     GpuPerformanceModel::RunTimes t = GpuPerformanceModel::EstimateRunTimes(
         producer, &cost_analysis_, gpu_device_info_, std::nullopt,
         fusible_users, /*multi_output=*/false);
+
+    // TODO(tjoerg): Confirm that runtime cost will be recomputed after fusion,
+    // such that no fusion ends up w/o cost in the backend_config.
+    double unfused_cycles = absl::ToDoubleNanoseconds(t.time_unfused) *
+                            gpu_device_info_.clock_rate_ghz;
+    producer->backend_config<FusionBackendConfig>()
+        ->mutable_reification_cost()
+        ->set_end_to_end_cycles(unfused_cycles);
 
     return absl::ToInt64Nanoseconds(t.time_unfused - t.time_fused);
   }
