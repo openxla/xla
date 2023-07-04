@@ -1199,6 +1199,7 @@ cc_library(
     hdrs = ["softmax_rewriter_triton.h"],
     deps = [
         ":backend_configs_cc",
+        ":gemm_rewriter_triton",
         ":gpu_types",
         ":ir_emission_utils",
         "//xla:shape_util",
@@ -1206,7 +1207,7 @@ cc_library(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
-        "//xla/service:pattern_matcher",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
