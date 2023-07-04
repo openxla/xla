@@ -558,10 +558,11 @@ cc_library(
     srcs = if_cuda_is_configured(["triton_autotuner.cc"]),
     hdrs = if_cuda_is_configured(["triton_autotuner.h"]),
     deps = if_cuda_is_configured([
-        ":bitcast_remover",
         ":buffer_comparator",
         ":compile_module_to_llvm_ir",
+        ":gemm_algorithm_picker",
         ":gemm_rewriter_triton",
+        ":gemm_rewriter",
         ":gpu_asm_opts_util",
         ":gpu_device_info",
         ":gpu_executable",
@@ -617,7 +618,9 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "//xla:autotuning_proto_cc",
         "@tsl//tsl/util/proto:proto_utils",
-    ]) + ["@com_google_absl//absl/algorithm:container"],
+        "@com_google_absl//absl/algorithm:container",
+        "//xla/service:hlo_pass_pipeline",
+    ]),
 )
 
 xla_test(
@@ -2984,35 +2987,6 @@ xla_cc_test(
         ":gpu_performance_model",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-    ],
-)
-
-cc_library(
-    name = "bitcast_remover",
-    srcs = ["bitcast_remover.cc"],
-    hdrs = ["bitcast_remover.h"],
-    deps = [
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:statusor",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_pass",
-    ],
-)
-
-xla_cc_test(
-    name = "bitcast_remover_test",
-    srcs = ["bitcast_remover_test.cc"],
-    tags = tf_cuda_tests_tags(),
-    deps = [
-        ":bitcast_remover",
-        "//xla/hlo/ir:hlo",
-        "//xla/tests:filecheck",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
