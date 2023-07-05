@@ -756,6 +756,21 @@ message FrontendAttributes {
   map<string, string> map = 1;
 }
 
+// Represents a single statistic to track. For now, this is a single percentage,
+// used to keep track of the frequency of some value.
+message Statistic {
+  string value_being_tracked = 1;
+  double percentage = 2;
+}
+
+// Represents the information needed to visualize propagation statistics when
+// rendering an HLO graph. This includes an array of statistics as well as the
+// index of the statistic to render.
+message StatisticsViz {
+  int64 stat_index_to_visualize = 1;
+  repeated Statistic statistics = 2;
+}
+
 // LINT.IfChange
 message OpSharding {
   enum Type {
