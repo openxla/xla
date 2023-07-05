@@ -1486,7 +1486,8 @@ cc_library(
     name = "gpu_conv_algorithm_picker",
     srcs = if_gpu_is_configured(["gpu_conv_algorithm_picker.cc"]),
     hdrs = if_gpu_is_configured(["gpu_conv_algorithm_picker.h"]),
-    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]),
+    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) +
+            if_rocm_is_configured(["-DTENSORFLOW_USE_ROCM=1"]),
     deps = if_gpu_is_configured([
         ":backend_configs_cc",
         ":gpu_asm_opts_util",
@@ -2650,6 +2651,7 @@ cc_library(
         "amdgpu_compiler.h",
     ]),
     deps = if_rocm_is_configured([
+        ":autotuner_util",
         ":cusolver_rewriter",
         ":gemm_rewriter",
         ":gpu_compiler",
@@ -2664,6 +2666,7 @@ cc_library(
         ":tree_reduction_rewriter",
         ":triangular_solve_rewriter",
         "//xla:statusor",
+        "//xla:xla_proto_cc",
         "//xla/service:algebraic_simplifier",
         "//xla/service:call_inliner",
         "//xla/hlo/ir:hlo",
