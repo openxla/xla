@@ -23,15 +23,15 @@ limitations under the License.
 
 #include "absl/types/optional.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"               // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"             // from @llvm-project
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace mlir {
 
@@ -84,7 +84,8 @@ class LhloDialectEmitter : public xla::ConstDfsHloVisitorWithDefault {
       const xla::HloCustomCallInstruction* custom_call);
   xla::StatusOr<Operation*> EmitDnnfMHA(
       const xla::HloCustomCallInstruction* custom_call);
-
+  xla::StatusOr<Operation*> EmitDnnfMHABackward(
+      const xla::HloCustomCallInstruction* custom_call);
   tsl::StatusOr<memref::GetGlobalOp> EmitConstant(
       const xla::HloInstruction* instr);
 
