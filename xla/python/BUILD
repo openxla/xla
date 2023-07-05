@@ -749,7 +749,8 @@ cc_library(
     srcs = ["refine_polymorphic_shapes.cc"],
     hdrs = ["refine_polymorphic_shapes.h"],
     deps = [
-        "//xla:status",
+        "//tensorflow/compiler/mlir/tensorflow:dump_mlir_util",
+        "//tensorflow/compiler/mlir/tensorflow:error_util",
         "//xla/mlir/utils:error_util",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
