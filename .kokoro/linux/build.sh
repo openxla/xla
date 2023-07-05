@@ -53,6 +53,7 @@ if is_linux_gpu_job ; then
     nvidia-smi
 else
     TAGS_FILTER="$TAGS_FILTER,-gpu,-requires-gpu-nvidia"
+    ADDITIONAL_FLAGS="$ADDITIONAL_FLAGS --config=nonccl"
 fi
 
 # Build & test XLA
@@ -63,7 +64,6 @@ docker exec xla bazel --bazelrc=$RC_FILE \
         --keep_going \
         --features=layering_check \
         --profile=/tf/pkg/profile.json.gz \
-        --config=nonccl \
         --flaky_test_attempts=3 \
         --config=rbe \
         --jobs=150 \
@@ -78,7 +78,6 @@ docker exec xla bazel --bazelrc=$RC_FILE \
         --build_tag_filters=$TAGS_FILTER  \
         --keep_going \
         --profile=/tf/pkg/profile.json.gz \
-        --config=nonccl \
         --config=rbe \
         --jobs=150 \
         $ADDITIONAL_FLAGS \
