@@ -21,6 +21,7 @@ package(
         "//tensorflow/core/common_runtime/next_pluggable_device:__subpackages__",
         "//tensorflow/core/tpu:__subpackages__",
         "//tensorflow/dtensor:__subpackages__",
+        "//platforms/xla:__subpackages__",
     ]),
     licenses = ["notice"],
 )
@@ -53,6 +54,7 @@ cc_library(
     hdrs = ["c_api_conversions.h"],
     deps = [
         ":c_api_decl",
+        ":host_command_handler",
         ":tpu_api",
         ":tpu_executor_c_api_hdrs",
         ":tpu_platform_interface",
@@ -76,6 +78,7 @@ xla_cc_test(
     deps = [
         ":c_api_conversions",
         ":c_api_decl",
+        ":host_command_handler",
         "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:statusor",
@@ -85,6 +88,7 @@ xla_cc_test(
         "//xla/service:hlo_parser",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:protobuf",
@@ -378,6 +382,8 @@ cc_library(
     hdrs = ["tpu_op_executable.h"],
     deps = [
         ":c_api_conversions",
+        ":c_api_decl",
+        ":host_command_handler",
         ":proto_helper",
         ":status_helper",
         ":tpu_api",
@@ -385,16 +391,12 @@ cc_library(
         ":tpu_executor_base",
         ":tpu_ops_c_api_hdrs",
         ":tpu_platform_interface",
-        "//xla:shape_util",
         "//xla:status",
-        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "//xla/stream_executor",
-        "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -552,4 +554,9 @@ cc_library(
         ":tpu_api",
         "@tsl//tsl/platform:types",
     ],
+)
+
+cc_library(
+    name = "host_command_handler",
+    hdrs = ["host_command_handler.h"],
 )

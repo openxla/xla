@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/c_api_defn.h"
+#include "xla/stream_executor/tpu/host_command_handler.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
@@ -577,6 +578,48 @@ void Destroy(XLA_HloModuleConfig* c_config) {
 void Destroy(FloatList* float_list) {
   if (float_list->size > TPU_C_API_MAX_INLINED) {
     delete[] float_list->heap;
+  }
+}
+
+// TPU HostCommandHandler
+void ToC(tensorflow::tpu::HostCommandHandler handler,
+         SE_TpuHostCommandHandler* c_handler) {
+  if (handler == nullptr) {
+    c_handler->context = nullptr;
+    c_handler->handler_func = nullptr;
+    return;
+  }
+  void* context = new tensorflow::tpu::HostCommandHandler(handler);
+  c_handler->context = context;
+  c_handler->handler_func = [](void* context, uint32_t command,
+                               int64_t program_stack_byte_offset) -> void {
+    auto* hch = reinterpret_cast<tensorflow::tpu::HostCommandHandler*>(context);
+    (*hch)(command, program_stack_byte_offset);
+  };
+}
+
+std::unique_ptr<tensorflow::tpu::HostCommandHandler> FromC(
+    SE_TpuHostCommandHandler* c_handler) {
+  if (c_handler == nullptr) {
+    return nullptr;
+  }
+  SE_TpuHostCommandHandler_Function handler_func = c_handler->handler_func;
+  void* context = c_handler->context;
+  auto the_lambda = [handler_func, context](uint32_t command,
+                                            int64_t program_stack_byte_offset) {
+    handler_func(context, command, program_stack_byte_offset);
+  };
+  return std::make_unique<tensorflow::tpu::HostCommandHandler>(the_lambda);
+}
+
+void Destroy(SE_TpuHostCommandHandler* handler) {
+  if (handler == nullptr) {
+    return;
+  }
+  if (handler->context != nullptr) {
+    auto cpp_handler = reinterpret_cast<tensorflow::tpu::HostCommandHandler*>(
+        handler->context);
+    delete cpp_handler;
   }
 }
 

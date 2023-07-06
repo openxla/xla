@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/host_command_handler.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 
 // APIs for converting between internal and external versions of
@@ -137,6 +138,13 @@ void Destroy(XLA_HloModule* c_module);
 XLA_HloModuleConfig ToC(const xla::HloModuleConfig& config);
 xla::HloModuleConfig FromC(const XLA_HloModuleConfig& c_config);
 void Destroy(XLA_HloModuleConfig* c_config);
+
+// TPU HostCommandHandler
+void ToC(tensorflow::tpu::HostCommandHandler handler,
+         SE_TpuHostCommandHandler* c_handler);
+std::unique_ptr<tensorflow::tpu::HostCommandHandler> FromC(
+    SE_TpuHostCommandHandler* handler);
+void Destroy(SE_TpuHostCommandHandler* handler);
 
 // Helper for managing stack based C -> C++ conversions.
 template <class CType>
