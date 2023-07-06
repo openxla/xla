@@ -81,8 +81,10 @@ cc_library(
     deps = [
         ":event_pool",
         ":local_device_state",
+        ":utils",
         "//xla:shape_util",
         "//xla:types",
+        "//xla/runtime:async_runtime",
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
         "//xla/stream_executor:device_memory",
