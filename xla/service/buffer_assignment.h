@@ -480,7 +480,8 @@ class BufferAssignment {
   static StatusOr<std::unique_ptr<BufferAssignment>> FromProto(
       const BufferAssignmentProto& proto, const HloModule* module,
       BufferValue::SizeFunction buffer_size,
-      HloDataflowAnalysis::CanShareBuffer can_share_buffer);
+      HloDataflowAnalysis::CanShareBuffer can_share_buffer,
+      LogicalBuffer::AlignmentFunction color_alignment = nullptr);
 
   // Statistics for the assignment.  Values initialized to -1 are not always
   // collected; fragmentation is only collected for instructions that have a

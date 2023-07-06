@@ -105,13 +105,15 @@ class BufferAssignmentTest : public HloTestBase {
   }
 
   StatusOr<std::unique_ptr<BufferAssignment>> ConvertToProtoAndBack(
-      const BufferAssignment* buffers, const HloModule* module) {
+      const BufferAssignment* buffers, const HloModule* module,
+      int64_t alignment = 1) {
     // Dump proto for buffer assignments.
     auto proto = buffers->ToProto();
     // Recreate buffer assignment from proto.
     return BufferAssignment::FromProto(
         proto, module, backend().compiler()->BufferSizeBytesFunction(),
-        /*can_share_buffer=*/nullptr);
+        /*can_share_buffer=*/nullptr,
+        [alignment](LogicalBuffer::Color) { return alignment; });
   }
 
   std::unique_ptr<BufferAssignment> RunBufferAssignmentWithSequentialOrdering(
@@ -1946,9 +1948,12 @@ TEST_F(BufferAssignmentTest, OneTempAllocation) {
 
   // Re-run buffer assignment with alignment=64.
   assignment = RunBufferAssignment(module.get(), /*alignment=*/64);
-  EXPECT_EQ(5, assignment->Allocations().size());
-  slice_ab = assignment->GetUniqueTopLevelSlice(dot_ab).value();
-  slice_bc = assignment->GetUniqueTopLevelSlice(dot_bc).value();
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto new_assignment,
+      ConvertToProtoAndBack(assignment.get(), module.get(), /*alignment=*/64));
+  EXPECT_EQ(5, new_assignment->Allocations().size());
+  slice_ab = new_assignment->GetUniqueTopLevelSlice(dot_ab).value();
+  slice_bc = new_assignment->GetUniqueTopLevelSlice(dot_bc).value();
   EXPECT_EQ(slice_ab.allocation(), slice_bc.allocation());
   EXPECT_NE(slice_ab, slice_bc);
   EXPECT_EQ(32, slice_ab.size());

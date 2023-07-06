@@ -992,7 +992,8 @@ BufferAssignmentProto BufferAssignment::ToProto() const {
 StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
     const BufferAssignmentProto& proto, const HloModule* module,
     BufferValue::SizeFunction buffer_size,
-    HloDataflowAnalysis::CanShareBuffer can_share_buffer) {
+    HloDataflowAnalysis::CanShareBuffer can_share_buffer,
+    LogicalBuffer::AlignmentFunction color_alignment) {
   // Create alias and dataflow analysis.
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer));
@@ -1010,7 +1011,7 @@ StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
   std::unique_ptr<BufferAssignment> buffer_assignment =
       absl::WrapUnique(new BufferAssignment(
           module, /*hlo_ordering=*/nullptr, std::move(buffer_size),
-          /*color_alignment=*/nullptr, std::move(alias_analysis),
+          std::move(color_alignment), std::move(alias_analysis),
           /*hlo_live_range=*/nullptr));
 
   // Process each buffer allocation entry in the proto to create a new
