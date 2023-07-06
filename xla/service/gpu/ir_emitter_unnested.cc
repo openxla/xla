@@ -5238,7 +5238,7 @@ StatusOr<ReductionCodegenInfo> IrEmitterUnnested::ComputeReductionCodegenInfo(
       // register pressure when multiple outputs are computed by each thread.
       int64_t fan_out = fusion.getFusionRoots().size();
       int64_t max_block_size =
-          std::max(MinThreadsXRowReduction(),
+          std::max(MinThreadsXRowReduction(hlo_module_config_),
                    static_cast<int64_t>(512LL / NearestPowerOfTwo(fan_out)));
       return std::min(max_block_size,
                       RoundUpTo(CeilOfRatio(reduction_dimensions.dimensions[2],
@@ -5257,7 +5257,8 @@ StatusOr<ReductionCodegenInfo> IrEmitterUnnested::ComputeReductionCodegenInfo(
       ProjectedShmemUsageBytes(reduction_dimensions, instr_index_groups);
   const int64_t shmem_budget =
       ir_emitter_context_->gpu_device_info().shared_memory_per_block;
-  bool reduction_is_race_free = ReductionIsRaceFree(reduction_dimensions);
+  bool reduction_is_race_free = ReductionIsRaceFree(hlo_module_config_,
+                                                    reduction_dimensions);
   bool vectorize =
       // Vectorization might cause us to run out of budget.
       (shmem_usage * 2 <= shmem_budget) &&
