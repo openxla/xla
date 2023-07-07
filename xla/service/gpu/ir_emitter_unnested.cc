@@ -2294,17 +2294,7 @@ Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
 
 #if GOOGLE_CUDA
   if (backend_config.kind() == kTritonGemmFusionKind) {
-    if (!backend_config.has_triton_gemm_config()) {
-      LOG(WARNING) << "Using fallback triton GEMM config for op "
-                   << GetIrNameFromLoc(op->getLoc());
-      auto& triton_config = *backend_config.mutable_triton_gemm_config();
-      triton_config.set_block_m(64);
-      triton_config.set_block_k(64);
-      triton_config.set_block_n(64);
-      triton_config.set_split_k(1);
-      triton_config.set_num_stages(1);
-      triton_config.set_num_warps(2);
-    }
+    TF_RET_CHECK(backend_config.has_triton_gemm_config());
     return EmitTritonFusion(fusion_op, backend_config.triton_gemm_config());
   } else if (backend_config.kind() == kTritonSoftmaxFusionKind) {
     auto& triton_config = *backend_config.mutable_triton_gemm_config();
