@@ -571,6 +571,7 @@ cc_library(
         ":gpu_float_support",
         ":gpu_fusible",
         ":autotuner_util",
+        ":autotuner_compile_util",
         ":instruction_fusion",
         ":ir_emission_utils",
         ":ir_emitter_triton",
@@ -1322,6 +1323,43 @@ cc_library(
         "//xla/stream_executor/gpu:redzone_allocator",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:protobuf",
+    ]),
+)
+
+# We need a separate target, as runtime executable cannot depend on compilation
+# pipeline.
+cc_library(
+    name = "autotuner_compile_util",
+    srcs = if_gpu_is_configured(["autotuner_compile_util.cc"]),
+    hdrs = if_gpu_is_configured(["autotuner_compile_util.h"]),
+    deps = if_gpu_is_configured([
+        ":autotuner_util",
+        ":gpu_executable_run_options",
+        ":ir_emission_utils",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "//xla:autotune_results_proto_cc",
+        "//xla:autotuning_proto_cc",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:hlo_module_config",
+        "//xla/service:platform_util",
+        "//xla/service:shaped_buffer",
+        "//xla/stream_executor",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:gpu_timer_header",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ]),
 )
 
