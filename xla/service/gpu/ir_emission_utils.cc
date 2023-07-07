@@ -147,8 +147,9 @@ int64_t MinThreadsXRowReduction(const HloModuleConfig& hlo_module_config) {
       PtxOptsFromDebugOptions(hlo_module_config.debug_options());
   auto ptxas_version_tuple =
       se::GetAsmCompilerVersion(ptxas_config.preferred_cuda_dir);
-  // ptxas versions prior to 12.2 have a bug when register spilling occurs, so
-  // use less threads to reduce register pressure.
+  // ptxas versions prior to 12.2 have a very rare bug when very high register
+  // spilling occurs with some order of instructions, so use less threads to
+  // reduce register pressure.
   if (!ptxas_version_tuple.ok() ||
       ptxas_version_tuple.value() < std::array<int64_t, 3>{12, 2, 0}) {
     return 512;
