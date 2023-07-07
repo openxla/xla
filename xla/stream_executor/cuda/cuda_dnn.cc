@@ -4638,7 +4638,7 @@ GetCudnnFusedMHAOperationGraph(
   PreloadCudnnSubLibsHelper(dnn::ConvolutionKind::FORWARD);
 
   std::vector<cudnn_frontend::Operation const*> ops;
-  std::vector<cudnn_frontend::Operation> intermdiate_ops;
+  std::vector<cudnn_frontend::Operation> intermediate_ops;
 
   // Batched Matmul: bmm1_lhs: tensor_q, bmm1_rhs:tensor_k; output: tensor_s
   // (virtual)
@@ -4695,7 +4695,7 @@ GetCudnnFusedMHAOperationGraph(
   // Create scale op and tensor
   TF_ASSIGN_OR_RETURN(
       auto alpha_scale_out,
-      CreateCudnnScaleTensor(intermdiate_ops, bmm1_rhs_dims, bmm1_rhs_strides,
+      CreateCudnnScaleTensor(intermediate_ops, bmm1_rhs_dims, bmm1_rhs_strides,
                              bmm1_rhs_descriptor.type(), bmm2_input_tensor));
   auto bmm1_desc = cudnn_frontend::MatMulDescBuilder()
                        .setComputeType(CUDNN_DATA_FLOAT)
@@ -4718,7 +4718,7 @@ GetCudnnFusedMHAOperationGraph(
 
   bmm2_input_tensor =
       std::make_shared<cudnn_frontend::Tensor>(std::move(tensor_s));
-  intermdiate_ops.push_back(std::move(bmm1_op));
+  intermediate_ops.push_back(std::move(bmm1_op));
 
   if (use_dropout || use_mask || kind == dnn::FusedMHAKind::BMM1_OUTPUT_FLOAT ||
       use_bias) {
@@ -4726,7 +4726,7 @@ GetCudnnFusedMHAOperationGraph(
       // Create bias op and tensor
       TF_ASSIGN_OR_RETURN(
           auto bias_out,
-          CreateCudnnBiasTensor(intermdiate_ops, intermediate_bmm2_lhs_dims,
+          CreateCudnnBiasTensor(intermediate_ops, intermediate_bmm2_lhs_dims,
                                 intermediate_bmm2_lhs_strides,
                                 bias_descriptor.type(), bmm2_input_tensor,
                                 use_mask));
@@ -4737,7 +4737,7 @@ GetCudnnFusedMHAOperationGraph(
       // Create mask op and tensor
       TF_ASSIGN_OR_RETURN(
           auto mask_out,
-          CreateCudnnMaskTensor(intermdiate_ops, intermediate_bmm2_lhs_dims,
+          CreateCudnnMaskTensor(intermediate_ops, intermediate_bmm2_lhs_dims,
                                 intermediate_bmm2_lhs_strides,
                                 intermediate_bmm2_lhs_descriptor.type(),
                                 bmm2_input_tensor));
@@ -4750,7 +4750,7 @@ GetCudnnFusedMHAOperationGraph(
       // The output is always a virtual for inference mode.
       TF_ASSIGN_OR_RETURN(auto softmax_fwd_out,
                           CreateCudnnSoftmaxFwdTensor(
-                              intermdiate_ops, intermediate_bmm2_lhs_dims,
+                              intermediate_ops, intermediate_bmm2_lhs_dims,
                               intermediate_bmm2_lhs_strides,
                               intermediate_bmm2_lhs_descriptor.type(),
                               /*input_tensor*/ bmm2_input_tensor,
@@ -4763,7 +4763,7 @@ GetCudnnFusedMHAOperationGraph(
       // Create dropout tensor
       TF_ASSIGN_OR_RETURN(
           auto dropout_out,
-          CreateCudnnDropoutTensor(intermdiate_ops, intermediate_bmm2_lhs_dims,
+          CreateCudnnDropoutTensor(intermediate_ops, intermediate_bmm2_lhs_dims,
                                    intermediate_bmm2_lhs_strides,
                                    intermediate_bmm2_lhs_descriptor.type(),
                                    /*input_tensor*/ bmm2_input_tensor,
@@ -4811,10 +4811,10 @@ GetCudnnFusedMHAOperationGraph(
   VLOG(4) << "\nBMM2_op: " << bmm2_op.describe();
 
   // Create an Operation Graph. In this case it is gemm-gemm
-  intermdiate_ops.push_back(std::move(bmm2_op));
-  ops.reserve(intermdiate_ops.size());
-  for (auto& intermediate_op : intermdiate_ops) {
-    ops.push_back(&intermediate_op);
+  intermediate_ops.push_back(std::move(bmm2_op));
+  ops.reserve(intermediate_ops.size());
+  for (auto& intermediate_op : intermediate_ops) {
+    ops.emplace_back(&intermediate_op);
   }
 
   auto op_graph = cudnn_frontend::OperationGraphBuilder()
@@ -5219,7 +5219,7 @@ GetCudnnFusedMHABackwardOperationGraph(
     const dnn::MatmulTensorDescriptor& bmm2_grad_gemm2_rhs_descriptor,
     const dnn::MatmulTensorDescriptor& d_output_descriptor,
     const dnn::TensorDescriptor& mask_descriptor,
-    const dnn::TensorDescriptor& d_S_descriptor,
+    const dnn::TensorDescriptor& d_s_descriptor,
     const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
     const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
     const dnn::TensorDescriptor& d_bmm2_rhs_descriptor, dnn::FusedMHAKind kind,
@@ -5245,7 +5245,7 @@ GetCudnnFusedMHABackwardOperationGraph(
   PreloadCudnnSubLibsHelper(dnn::ConvolutionKind::FORWARD);
 
   std::vector<cudnn_frontend::Operation const*> ops;
-  std::vector<cudnn_frontend::Operation> intermdiate_ops;
+  std::vector<cudnn_frontend::Operation> intermediate_ops;
 
   // fp16 or bf16 is required
   auto dtype = bmm1_grad_gemm1_rhs_descriptor.type();
@@ -5419,9 +5419,9 @@ GetCudnnFusedMHABackwardOperationGraph(
                       CreateUnaryPwOp(tensor_p_transpose_scale,
                                       tensor_p_transpose_scale_abs, abs_desc));
 
-  intermdiate_ops.push_back(std::move(reshape_op));
-  intermdiate_ops.push_back(std::move(scale_op));
-  intermdiate_ops.push_back(std::move(abs_op));
+  intermediate_ops.push_back(std::move(reshape_op));
+  intermediate_ops.push_back(std::move(scale_op));
+  intermediate_ops.push_back(std::move(abs_op));
 
   // matmul to calculate dv
   auto bmm2_grad_gemm1_desc = cudnn_frontend::MatMulDescBuilder()
@@ -5436,7 +5436,10 @@ GetCudnnFusedMHABackwardOperationGraph(
                                 .setmatmulDesc(bmm2_grad_gemm1_desc)
                                 .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm2_grad_gemm1_op);
-  intermdiate_ops.push_back(std::move(bmm2_grad_gemm1_op));
+  VLOG(4) << "\nBMM2_grad_gemm1: " << bmm2_grad_gemm1_desc.describe()
+          << "\nBMM2_grad_gemm1_op: " << bmm2_grad_gemm1_op.describe();
+
+  intermediate_ops.push_back(std::move(bmm2_grad_gemm1_op));
 
   // matmul to calculate dp
   TF_ASSIGN_OR_RETURN(
@@ -5458,7 +5461,10 @@ GetCudnnFusedMHABackwardOperationGraph(
                                 .setmatmulDesc(bmm2_grad_gemm2_desc)
                                 .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm2_grad_gemm2_op);
-  intermdiate_ops.push_back(std::move(bmm2_grad_gemm2_op));
+  VLOG(4) << "\nBMM2_grad_gemm2: " << bmm2_grad_gemm2_desc.describe()
+          << "\nBMM2_grad_gemm2_op: " << bmm2_grad_gemm2_op.describe();
+
+  intermediate_ops.push_back(std::move(bmm2_grad_gemm2_op));
 
   // mask out the sign bit here
   TF_ASSIGN_OR_RETURN(
@@ -5471,30 +5477,30 @@ GetCudnnFusedMHABackwardOperationGraph(
 
   TF_ASSIGN_OR_RETURN(auto p_abs_op,
                       CreateUnaryPwOp(tensor_p, tensor_p_abs, p_abs_desc));
-  intermdiate_ops.push_back(std::move(p_abs_op));
+  intermediate_ops.push_back(std::move(p_abs_op));
 
   // dropout backward
   TF_ASSIGN_OR_RETURN(
       auto tensor_dp_scale_dropout,
-      CreateCudnnDropoutBwdTensor(intermdiate_ops, p_dims, p_strides, dtype,
+      CreateCudnnDropoutBwdTensor(intermediate_ops, p_dims, p_strides, dtype,
                                   tensor_dropout_scale, tensor_p, tensor_p_abs,
                                   tensor_dp));
   // softmax backward
   TF_ASSIGN_OR_RETURN(
       auto tensor_ds,
-      CreateCudnnSoftmaxBwdTensor(intermdiate_ops, p_dims, p_strides, dtype,
+      CreateCudnnSoftmaxBwdTensor(intermediate_ops, p_dims, p_strides, dtype,
                                   tensor_p_abs, tensor_dp_scale_dropout));
   // mask backward
   TF_ASSIGN_OR_RETURN(
       auto tensor_ds_mask,
-      CreateCudnnMaskBwdTensor(intermdiate_ops, p_dims, p_strides, dtype,
+      CreateCudnnMaskBwdTensor(intermediate_ops, p_dims, p_strides, dtype,
                                tensor_ds, use_mask));
 
 #if (CUDNN_VERSION >= 8901 && TF_ENABLE_CUDNN_FRONTEND)
   // bias backward
   TF_ASSIGN_OR_RETURN(auto tensor_dbias, CreateCudnnBiasBwdTensor(
-                                             intermdiate_ops, p_dims, p_strides,
-                                             dtype, tensor_ds_mask));
+                                             intermediate_ops, p_dims,
+                                             p_strides, dtype, tensor_ds_mask));
 #else
   return absl::InternalError("Bias backward op requires cudnn >= 8.9.1");
 #endif
@@ -5512,7 +5518,10 @@ GetCudnnFusedMHABackwardOperationGraph(
                                 .setmatmulDesc(bmm1_grad_gemm2_desc)
                                 .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm1_grad_gemm2_op);
-  intermdiate_ops.push_back(std::move(bmm1_grad_gemm2_op));
+  VLOG(4) << "\nBMM1_grad_gemm2: " << bmm1_grad_gemm2_desc.describe()
+          << "\nBMM1_grad_gemm2_op: " << bmm1_grad_gemm2_op.describe();
+
+  intermediate_ops.push_back(std::move(bmm1_grad_gemm2_op));
 
   // calculate dk
   TF_ASSIGN_OR_RETURN(auto tensor_ds_mask_reshape,
@@ -5526,7 +5535,7 @@ GetCudnnFusedMHABackwardOperationGraph(
                           .setyDesc(tensor_ds_mask_reshape)
                           .build();
 
-  intermdiate_ops.push_back(std::move(reshape_2_op));
+  intermediate_ops.push_back(std::move(reshape_2_op));
   auto bmm1_grad_gemm1_desc = cudnn_frontend::MatMulDescBuilder()
                                   .setComputeType(CUDNN_DATA_FLOAT)
                                   .build();
@@ -5539,10 +5548,14 @@ GetCudnnFusedMHABackwardOperationGraph(
                                 .setmatmulDesc(bmm1_grad_gemm1_desc)
                                 .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm1_grad_gemm1_op);
-  intermdiate_ops.push_back(std::move(bmm1_grad_gemm1_op));
+  VLOG(4) << "\nBMM1_grad_gemm1: " << bmm1_grad_gemm1_desc.describe()
+          << "\nBMM1_grad_gemm1_op: " << bmm1_grad_gemm1_op.describe();
 
-  for (auto& intermediate_op : intermdiate_ops) {
-    ops.push_back(&intermediate_op);
+  intermediate_ops.push_back(std::move(bmm1_grad_gemm1_op));
+  ops.reserve(intermediate_ops.size());
+
+  for (auto& intermediate_op : intermediate_ops) {
+    ops.emplace_back(&intermediate_op);
   }
 
   auto op_graph = cudnn_frontend::OperationGraphBuilder()
@@ -5559,17 +5572,8 @@ GetCudnnFusedMHABackwardOperationGraph(
           << "\nTensor_dq: " << tensor_dq.describe()
           << "\nTensor_dk: " << tensor_dk.describe()
           << "\nTensor_dv: " << tensor_dv.describe()
-          << "\nBMM2_grad_gemm1: " << bmm2_grad_gemm1_desc.describe()
-          << "\nBMM2_grad_gemm1_op: " << bmm2_grad_gemm1_op.describe()
-          << "\nBMM2_grad_gemm2: " << bmm2_grad_gemm2_desc.describe()
-          << "\nBMM2_grad_gemm2_op: " << bmm2_grad_gemm2_op.describe()
-          << "\nBMM1_grad_gemm1: " << bmm1_grad_gemm1_desc.describe()
-          << "\nBMM1_grad_gemm1_op: " << bmm1_grad_gemm1_op.describe()
-          << "\nBMM1_grad_gemm2: " << bmm1_grad_gemm2_desc.describe()
-          << "\nBMM1_grad_gemm2_op: " << bmm1_grad_gemm2_op.describe()
           << "\nOpGraph: " << op_graph.describe();
-  return std::unique_ptr<cudnn_frontend::OperationGraph>(
-      new cudnn_frontend::OperationGraph(std::move(op_graph)));
+  return std::make_unique<cudnn_frontend::OperationGraph>(std::move(op_graph));
 }
 
 #endif  // CUDNN_VERSION >= 8800 && TF_ENABLE_CUDNN_FRONTEND
@@ -5585,7 +5589,7 @@ static tsl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "Heuristic has " << engine_configs.size() << " configurations ";
   }
-  if (engine_configs.size() == 0) {
+  if (engine_configs.empty()) {
     return absl::InternalError(
         "No engine configurations found for this opGraph and heuristics.");
   }
@@ -7372,7 +7376,7 @@ CudnnSupport::FusedMHASoftmaxBackwardRunnerFromDesc(
     const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
     const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
     const dnn::TensorDescriptor& d_bmm2_rhs_descriptor,
-    const dnn::TensorDescriptor& d_S_descriptor,
+    const dnn::TensorDescriptor& d_s_descriptor,
     std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
 #if (CUDNN_VERSION >= 8901 && TF_ENABLE_CUDNN_FRONTEND)
@@ -7386,7 +7390,7 @@ CudnnSupport::FusedMHASoftmaxBackwardRunnerFromDesc(
       GetCudnnFusedMHABackwardOperationGraph(
           bmm1_grad_gemm1_rhs_descriptor, bmm1_grad_gemm2_rhs_descriptor,
           bmm2_grad_gemm1_lhs_descriptor, bmm2_grad_gemm2_rhs_descriptor,
-          d_output_descriptor, empty_mask_desc, d_S_descriptor,
+          d_output_descriptor, empty_mask_desc, d_s_descriptor,
           d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
           kind, dropout_rate, seed, cudnn, scale, use_dropout,
           /*use_mask*/ false,
@@ -7450,7 +7454,7 @@ CudnnSupport::FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
     const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
     const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
     const dnn::TensorDescriptor& d_bmm2_rhs_descriptor,
-    const dnn::TensorDescriptor& d_S_descriptor,
+    const dnn::TensorDescriptor& d_s_descriptor,
     const dnn::TensorDescriptor& mask_descriptor,
     std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
@@ -7463,7 +7467,7 @@ CudnnSupport::FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
       GetCudnnFusedMHABackwardOperationGraph(
           bmm1_grad_gemm1_rhs_descriptor, bmm1_grad_gemm2_rhs_descriptor,
           bmm2_grad_gemm1_lhs_descriptor, bmm2_grad_gemm2_rhs_descriptor,
-          d_output_descriptor, mask_descriptor, d_S_descriptor,
+          d_output_descriptor, mask_descriptor, d_s_descriptor,
           d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
           kind, dropout_rate, seed, cudnn, scale, use_dropout,
           /*use_mask*/ true,

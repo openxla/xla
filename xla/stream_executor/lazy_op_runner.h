@@ -325,7 +325,7 @@ struct FusedMHASoftmaxBackwardOp {
     const TensorDescriptor& d_bmm1_lhs_descriptor;
     const TensorDescriptor& d_bmm1_rhs_descriptor;
     const TensorDescriptor& d_bmm2_rhs_descriptor;
-    const TensorDescriptor& d_S_descriptor;
+    const TensorDescriptor& d_s_descriptor;
     std::optional<TensorDescriptor> d_bias_descriptor;
     std::optional<double> dropout_rate;
     std::optional<int64_t> seed;
@@ -341,7 +341,7 @@ struct FusedMHASoftmaxBackwardOp {
         config.bmm2_grad_gemm1_lhs_descriptor,
         config.bmm2_grad_gemm2_rhs_descriptor, config.d_output_descriptor,
         config.d_bmm1_lhs_descriptor, config.d_bmm1_rhs_descriptor,
-        config.d_bmm2_rhs_descriptor, config.d_S_descriptor,
+        config.d_bmm2_rhs_descriptor, config.d_s_descriptor,
         config.d_bias_descriptor, config.scale, config.dropout_rate,
         config.seed);
   }
@@ -361,7 +361,7 @@ struct FusedMHAScaleMaskSoftmaxBackwardOp {
     const TensorDescriptor& d_bmm1_lhs_descriptor;
     const TensorDescriptor& d_bmm1_rhs_descriptor;
     const TensorDescriptor& d_bmm2_rhs_descriptor;
-    const TensorDescriptor& d_S_descriptor;
+    const TensorDescriptor& d_s_descriptor;
     const TensorDescriptor& mask_descriptor;
     std::optional<TensorDescriptor> d_bias_descriptor;
     std::optional<double> dropout_rate;
@@ -378,7 +378,7 @@ struct FusedMHAScaleMaskSoftmaxBackwardOp {
         config.bmm2_grad_gemm1_lhs_descriptor,
         config.bmm2_grad_gemm2_rhs_descriptor, config.d_output_descriptor,
         config.d_bmm1_lhs_descriptor, config.d_bmm1_rhs_descriptor,
-        config.d_bmm2_rhs_descriptor, config.d_S_descriptor,
+        config.d_bmm2_rhs_descriptor, config.d_s_descriptor,
         config.mask_descriptor, config.d_bias_descriptor, config.scale,
         config.dropout_rate, config.seed);
   }

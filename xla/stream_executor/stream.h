@@ -550,7 +550,7 @@ class Stream {
       const dnn::TensorDescriptor &d_bmm1_lhs_descriptor,
       const dnn::TensorDescriptor &d_bmm1_rhs_descriptor,
       const dnn::TensorDescriptor &d_bmm2_rhs_descriptor,
-      const dnn::TensorDescriptor &d_S_descriptor,
+      const dnn::TensorDescriptor &d_s_descriptor,
       std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
@@ -562,7 +562,7 @@ class Stream {
         bmm1_grad_gemm2_rhs_descriptor, bmm2_grad_gemm1_lhs_descriptor,
         bmm2_grad_gemm2_rhs_descriptor, d_output_descriptor,
         d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
-        d_S_descriptor, d_bias_descriptor, scale, dropout_rate, seed);
+        d_s_descriptor, d_bias_descriptor, scale, dropout_rate, seed);
   }
 
   tsl::StatusOr<std::unique_ptr<const dnn::FusedMHAMaskBackwardRunner>>
@@ -576,7 +576,7 @@ class Stream {
       const dnn::TensorDescriptor &d_bmm1_lhs_descriptor,
       const dnn::TensorDescriptor &d_bmm1_rhs_descriptor,
       const dnn::TensorDescriptor &d_bmm2_rhs_descriptor,
-      const dnn::TensorDescriptor &d_S_descriptor,
+      const dnn::TensorDescriptor &d_s_descriptor,
       const dnn::TensorDescriptor &mask_descriptor,
       std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed) {
@@ -589,7 +589,7 @@ class Stream {
         bmm1_grad_gemm2_rhs_descriptor, bmm2_grad_gemm1_lhs_descriptor,
         bmm2_grad_gemm2_rhs_descriptor, d_output_descriptor,
         d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
-        d_S_descriptor, mask_descriptor, d_bias_descriptor, scale, dropout_rate,
+        d_s_descriptor, mask_descriptor, d_bias_descriptor, scale, dropout_rate,
         seed);
   }
 

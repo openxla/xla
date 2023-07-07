@@ -34,9 +34,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/wrappers.pb.h"
 #include "absl/types/optional.h"
 #include "absl/types/span.h"
+#include "google/protobuf/wrappers.pb.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "xla/stream_executor/data_type.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -45,8 +47,6 @@ limitations under the License.
 #include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace Eigen {
 struct half;
@@ -1707,7 +1707,7 @@ class DnnSupport {
       const dnn::TensorDescriptor& bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed);
 
- virtual tsl::StatusOr<
+  virtual tsl::StatusOr<
       std::unique_ptr<const dnn::FusedMHASoftmaxBackwardRunner>>
   FusedMHASoftmaxBackwardRunnerFromDesc(
       Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
@@ -1720,7 +1720,7 @@ class DnnSupport {
       const TensorDescriptor& d_bmm1_lhs_descriptor,
       const TensorDescriptor& d_bmm1_rhs_descriptor,
       const TensorDescriptor& d_bmm2_rhs_descriptor,
-      const TensorDescriptor& d_S_descriptor,
+      const TensorDescriptor& d_s_descriptor,
       std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed);
 
@@ -1736,7 +1736,7 @@ class DnnSupport {
       const TensorDescriptor& d_bmm1_lhs_descriptor,
       const TensorDescriptor& d_bmm1_rhs_descriptor,
       const TensorDescriptor& d_bmm2_rhs_descriptor,
-      const TensorDescriptor& d_S_descriptor,
+      const TensorDescriptor& d_s_descriptor,
       const TensorDescriptor& mask_descriptor,
       std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed);

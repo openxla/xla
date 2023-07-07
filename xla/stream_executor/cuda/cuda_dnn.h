@@ -336,9 +336,9 @@ class CudnnSupport : public dnn::DnnSupport {
       const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
       const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
       const dnn::TensorDescriptor& d_bmm2_rhs_descriptor,
-      const dnn::TensorDescriptor& d_S_descriptor,
+      const dnn::TensorDescriptor& d_s_descriptor,
       std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
-      std::optional<double> dropout_rate, std::optional<int64_t> seed);
+      std::optional<double> dropout_rate, std::optional<int64_t> seed) override;
 
   tsl::StatusOr<std::unique_ptr<const dnn::FusedMHAMaskBackwardRunner>>
   FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
@@ -352,10 +352,10 @@ class CudnnSupport : public dnn::DnnSupport {
       const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
       const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
       const dnn::TensorDescriptor& d_bmm2_rhs_descriptor,
-      const dnn::TensorDescriptor& d_S_descriptor,
+      const dnn::TensorDescriptor& d_s_descriptor,
       const dnn::TensorDescriptor& mask_descriptor,
       std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
-      std::optional<double> dropout_rate, std::optional<int64_t> seed);
+      std::optional<double> dropout_rate, std::optional<int64_t> seed) override;
   bool GetRnnAlgorithms(
       std::vector<dnn::AlgorithmDesc>* out_algorithms) override;
 

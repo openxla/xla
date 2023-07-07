@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "xla/stream_executor/numeric_options.h"
 #include "tsl/lib/strings/proto_serialization.h"
 #include "tsl/protobuf/dnn.pb.h"
+#include "xla/stream_executor/numeric_options.h"
 
 namespace stream_executor {
 namespace dnn {
@@ -263,7 +263,7 @@ DnnSupport::FusedMHASoftmaxBackwardRunnerFromDesc(
     const TensorDescriptor& d_bmm1_lhs_descriptor,
     const TensorDescriptor& d_bmm1_rhs_descriptor,
     const TensorDescriptor& d_bmm2_rhs_descriptor,
-    const TensorDescriptor& d_S_descriptor,
+    const TensorDescriptor& d_s_descriptor,
     std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
   return absl::UnimplementedError(
@@ -282,7 +282,7 @@ DnnSupport::FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
     const TensorDescriptor& d_bmm1_lhs_descriptor,
     const TensorDescriptor& d_bmm1_rhs_descriptor,
     const TensorDescriptor& d_bmm2_rhs_descriptor,
-    const TensorDescriptor& d_S_descriptor,
+    const TensorDescriptor& d_s_descriptor,
     const TensorDescriptor& mask_descriptor,
     std::optional<dnn::TensorDescriptor> d_bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed) {
