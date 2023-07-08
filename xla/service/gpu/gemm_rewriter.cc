@@ -20,7 +20,6 @@ limitations under the License.
 #include <cmath>
 #include <limits>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -34,7 +33,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/literal_comparison.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -638,34 +637,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   Status HandleConvert(HloInstruction *instr) override {
     HloInstruction *clamp_lower, *clamp_upper, *d_scale, *existing_gemm,
         *binary;
-    if (instr->GetModule()
-            ->config()
-            .debug_options()
-            .xla_gpu_simplify_all_fp_conversions()) {
-      // Attempt to remove convert if mix type is supported:
-      //   convert(gemm(a, b)) -> gemm(a, b)
-      // Only do this on Volta and above, since on Pascal mixed type matmuls
-      // results have very low precision in some cases.
-      if (Match(
-              instr,
-              m::Convert(GemmOrCublasLtMatmul(&existing_gemm).WithOneUser())) &&
-          existing_gemm->operands().size() == 2) {
-        TF_ASSIGN_OR_RETURN(GemmBackendConfig gemm_backend_config,
-                            existing_gemm->backend_config<GemmBackendConfig>());
-
-        // check if type combination is supported here
-        TF_ASSIGN_OR_RETURN(
-            bool types_are_supported,
-            IsLegacyCublasMatmul(*existing_gemm)
-                ? TypesAreSupportedByLegacyCublas(*existing_gemm,
-                                                  gemm_backend_config, instr)
-                : TypesAreSupportedByCublasLt(*existing_gemm,
-                                              gemm_backend_config, instr));
-        if (types_are_supported) {
-          return FuseMatrixConvert(existing_gemm, instr);
-        }
-      }
-    }
     // Attempt to elide the scaling and conversion of the result of an FP8
     // GEMM, including the optional calculation of the maximum of the absolute
     // values before scaling, and adapt the Custom Call.

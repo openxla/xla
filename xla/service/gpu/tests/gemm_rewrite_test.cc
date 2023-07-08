@@ -23,18 +23,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/gemm_rewriter.h"
 #include "xla/service/gpu/gpu_executable.h"
-#include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_parser.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/statusor.h"
 #include "xla/tests/filecheck.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/xla.pb.h"
 #include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {
@@ -1014,7 +1010,7 @@ TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
   if (GetCudaComputeCapability().IsAtLeast(se::CudaComputeCapability::VOLTA)) {
     // For compute capabilities before volta, we always do upcasting, so it
     // would be impossible for this test to fail. That is why we only add these
-    // cases when the compute capabilit is at least Volta.
+    // cases when the compute capability is at least Volta.
     std::vector<std::tuple<absl::string_view, absl::string_view, bool>>
         more_type_combinations = {
             {"s8", "bf16", false},  {"s8", "f16", false},
@@ -1175,7 +1171,7 @@ ENTRY test {
               GmockMatch(m::CustomCall({"__cublas$gemm"})));
 }
 
-TEST_P(ParameterizedGemmRewriteTest, SupportedMixTypeGemm) {
+TEST_P(ParameterizedGemmRewriteTest, DoNotUpconvertOutput) {
   const char* hlo_text = R"(
 HloModule test
 
@@ -1199,7 +1195,7 @@ ENTRY main {
   // input fp16 and output fp32 combination is supported by legacy cublas and
   // cublasLt, expect GemmRewriter to fuse the convert into gemm.
   EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::CustomCall({CustomCallTarget()})));
+              GmockMatch(m::Convert(m::CustomCall({CustomCallTarget()}))));
 }
 
 TEST_P(ParameterizedGemmRewriteTest, UnsupportedMixTypeGemm) {
@@ -1713,40 +1709,18 @@ ENTRY test {
 }
 
 )";
-  const char* matched_text_template = R"(
-; CHECK-LABEL: ENTRY %test (x: <<ABType>>[16,32], y: <<ABType>>[32,16], z: <<DType>>[16,16]) -> <<DType>>[16,16] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = <<ABType>>[16,32]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = <<ABType>>[32,16]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = <<DType>>[16,16]{1,0} parameter(2)
-; CHECK-NEXT:    [[N1:%[^ ]+]] = <<DType>>[16,16]{1,0} negate([[P2]])
-; CHECK-NEXT:    ROOT [[OUT:%[^ ]+]] = <<DType>>[16,16]{1,0} custom-call([[P0]], [[P1]], [[N1]]),
-; CHECK:           custom_call_target="__cublas$gemm",
-; CHECK:           output_to_operand_aliasing={{{{}: \(2, {}\)}}},
-; CHECK:           backend_config={
-; CHECK-DAG:         "alpha_real":1
-; CHECK-DAG:         "alpha_imag":0
-; CHECK-DAG:         "beta":1
-; CHECK-DAG:         "dot_dimension_numbers":{
-; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
-; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
-; CHECK-DAG:           "lhs_batch_dimensions":[]
-; CHECK-DAG:           "rhs_batch_dimensions":[]
-; CHECK-DAG:         }
-; CHECK-DAG:         "precision_config":{
-; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
-; CHECK-DAG:         }
-; CHECK-DAG:         "epilogue":"DEFAULT"
-; CHECK:           }
-      )";
   for (const auto& type_combination : type_combinations) {
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
     replacements["<<ABType>>"] = std::get<0>(type_combination);
     replacements["<<DType>>"] = std::get<1>(type_combination);
     const auto hlo_text = absl::StrReplaceAll(hlo_text_template, replacements);
-    const auto matched_text =
-        absl::StrReplaceAll(matched_text_template, replacements);
     EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-    MatchOptimizedHlo(hlo_text, matched_text);
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                            GetOptimizedModule(hlo_text));
+    EXPECT_THAT(
+        optimized_module->entry_computation()->root_instruction(),
+        GmockMatch(m::Fusion(m::Parameter(2),
+                             m::CustomCall(m::Parameter(0), m::Parameter(1)))));
   }
 }
 
@@ -1769,43 +1743,20 @@ ENTRY test {
   bias = <<DType>>[4,16,16] negate(z)
   convert = <<DType>>[4,16,16] convert(dot_a)
   ROOT out = <<DType>>[4,16,16] add(convert, bias)
-}
-
-)";
-  const char* matched_text_template = R"(
-; CHECK-LABEL: ENTRY %test (x: <<ABType>>[4,16,32], y: <<ABType>>[4,32,16], z: <<DType>>[4,16,16]) -> <<DType>>[4,16,16] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = <<ABType>>[4,16,32]{2,1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = <<ABType>>[4,32,16]{2,1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = <<DType>>[4,16,16]{2,1,0} parameter(2)
-; CHECK-NEXT:    [[N1:%[^ ]+]] = <<DType>>[4,16,16]{2,1,0} negate([[P2]])
-; CHECK-NEXT:    ROOT [[OUT:%[^ ]+]] = <<DType>>[4,16,16]{2,1,0} custom-call([[P0]], [[P1]], [[N1]]),
-; CHECK:           custom_call_target="__cublas$gemm",
-; CHECK:           output_to_operand_aliasing={{{{}: \(2, {}\)}}},
-; CHECK:           backend_config={
-; CHECK-DAG:         "alpha_real":1
-; CHECK-DAG:         "alpha_imag":0
-; CHECK-DAG:         "beta":1
-; CHECK-DAG:         "dot_dimension_numbers":{
-; CHECK-DAG:           "lhs_contracting_dimensions":["2"]
-; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
-; CHECK-DAG:           "lhs_batch_dimensions":["0"]
-; CHECK-DAG:           "rhs_batch_dimensions":["0"]
-; CHECK-DAG:         }
-; CHECK-DAG:         "precision_config":{
-; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
-; CHECK-DAG:         }
-; CHECK-DAG:         "epilogue":"DEFAULT"
-; CHECK:           }
-      )";
+})";
   for (const auto& type_combination : type_combinations) {
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
     replacements["<<ABType>>"] = std::get<0>(type_combination);
     replacements["<<DType>>"] = std::get<1>(type_combination);
     const auto hlo_text = absl::StrReplaceAll(hlo_text_template, replacements);
-    const auto matched_text =
-        absl::StrReplaceAll(matched_text_template, replacements);
     EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-    MatchOptimizedHlo(hlo_text, matched_text);
+
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                            GetOptimizedModule(hlo_text));
+    EXPECT_THAT(
+        optimized_module->entry_computation()->root_instruction(),
+        GmockMatch(m::Fusion(m::Parameter(2),
+                             m::CustomCall(m::Parameter(0), m::Parameter(1)))));
   }
 }
 
@@ -4562,42 +4513,19 @@ ENTRY test {
   dot_a = <<ABType>>[16,16] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
   convert = <<DType>>[16,16] convert(dot_a)
   ROOT out = <<DType>>[16,16] add(convert, z)
-}
-
-)";
-  const char* matched_text_template = R"(
-
-; CHECK-LABEL: ENTRY %test (x: <<ABType>>[16,32], y: <<ABType>>[32,16], z: <<DType>>[16,16]) -> <<DType>>[16,16] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = <<ABType>>[16,32]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = <<ABType>>[32,16]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = <<DType>>[16,16]{1,0} parameter(2)
-; CHECK-NEXT:    ROOT [[OUT:%[^ ]+]] = <<DType>>[16,16]{1,0} custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
-; CHECK:           backend_config={
-; CHECK-DAG:         "alpha_real":1
-; CHECK-DAG:         "alpha_imag":0
-; CHECK-DAG:         "beta":1
-; CHECK-DAG:         "dot_dimension_numbers":{
-; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
-; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
-; CHECK-DAG:           "lhs_batch_dimensions":[]
-; CHECK-DAG:           "rhs_batch_dimensions":[]
-; CHECK-DAG:         }
-; CHECK-DAG:         "precision_config":{
-; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
-; CHECK-DAG:         }
-; CHECK-DAG:         "epilogue":"DEFAULT"
-; CHECK:           }
-      )";
+})";
   for (const auto& type_combination : type_combinations) {
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
     replacements["<<ABType>>"] = std::get<0>(type_combination);
     replacements["<<DType>>"] = std::get<1>(type_combination);
     const auto hlo_text = absl::StrReplaceAll(hlo_text_template, replacements);
-    const auto matched_text =
-        absl::StrReplaceAll(matched_text_template, replacements);
     EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-    MatchOptimizedHlo(hlo_text, matched_text);
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                            GetOptimizedModule(hlo_text));
+    EXPECT_THAT(
+        optimized_module->entry_computation()->root_instruction(),
+        GmockMatch(m::Fusion(m::Parameter(2),
+                             m::CustomCall(m::Parameter(0), m::Parameter(1)))));
   }
 }
 
@@ -4620,42 +4548,19 @@ ENTRY test {
   dot_a = <<ABType>>[4,16,16] dot(x, y), lhs_contracting_dims={2}, rhs_contracting_dims={1}, lhs_batch_dims={0}, rhs_batch_dims={0}
   convert = <<DType>>[4,16,16] convert(dot_a)
   ROOT out = <<DType>>[4,16,16] add(convert, z)
-}
-
-)";
-  const char* matched_text_template = R"(
-
-; CHECK-LABEL: ENTRY %test (x: <<ABType>>[4,16,32], y: <<ABType>>[4,32,16], z: <<DType>>[4,16,16]) -> <<DType>>[4,16,16] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = <<ABType>>[4,16,32]{2,1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = <<ABType>>[4,32,16]{2,1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = <<DType>>[4,16,16]{2,1,0} parameter(2)
-; CHECK-NEXT:    ROOT [[OUT:%[^ ]+]] = <<DType>>[4,16,16]{2,1,0} custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
-; CHECK:           backend_config={
-; CHECK-DAG:         "alpha_real":1
-; CHECK-DAG:         "alpha_imag":0
-; CHECK-DAG:         "beta":1
-; CHECK-DAG:         "dot_dimension_numbers":{
-; CHECK-DAG:           "lhs_contracting_dimensions":["2"]
-; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
-; CHECK-DAG:           "lhs_batch_dimensions":["0"]
-; CHECK-DAG:           "rhs_batch_dimensions":["0"]
-; CHECK-DAG:         }
-; CHECK-DAG:         "precision_config":{
-; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
-; CHECK-DAG:         }
-; CHECK-DAG:         "epilogue":"DEFAULT"
-; CHECK:           }
-      )";
+})";
   for (const auto& type_combination : type_combinations) {
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
     replacements["<<ABType>>"] = std::get<0>(type_combination);
     replacements["<<DType>>"] = std::get<1>(type_combination);
     const auto hlo_text = absl::StrReplaceAll(hlo_text_template, replacements);
-    const auto matched_text =
-        absl::StrReplaceAll(matched_text_template, replacements);
     EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-    MatchOptimizedHlo(hlo_text, matched_text);
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                            GetOptimizedModule(hlo_text));
+    EXPECT_THAT(
+        optimized_module->entry_computation()->root_instruction(),
+        GmockMatch(m::Fusion(m::Parameter(2),
+                             m::CustomCall(m::Parameter(0), m::Parameter(1)))));
   }
 }
 
@@ -4677,44 +4582,20 @@ ENTRY test {
   bias = <<DType>>[16,16] negate(z)
   convert = <<DType>>[16,16] convert(dot_a)
   ROOT out = <<DType>>[16,16] add(convert, bias)
-}
+})";
 
-)";
-  const char* matched_text_template = R"(
-
-; CHECK-LABEL: ENTRY %test (x: <<ABType>>[16,32], y: <<ABType>>[32,16], z: <<DType>>[16,16]) -> <<DType>>[16,16] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = <<ABType>>[16,32]{1,0} parameter(0)
-; CHECK-NEXT:    [[P1:%[^ ]+]] = <<ABType>>[32,16]{1,0} parameter(1)
-; CHECK-NEXT:    [[P2:%[^ ]+]] = <<DType>>[16,16]{1,0} parameter(2)
-; CHECK-NEXT:    [[N1:%[^ ]+]] = <<DType>>[16,16]{1,0} negate([[P2]])
-; CHECK-NEXT:    ROOT [[OUT:%[^ ]+]] = <<DType>>[16,16]{1,0} custom-call([[P0]], [[P1]], [[N1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
-; CHECK:           output_to_operand_aliasing={{{{}: \(2, {}\)}}},
-; CHECK:           backend_config={
-; CHECK-DAG:         "alpha_real":1
-; CHECK-DAG:         "alpha_imag":0
-; CHECK-DAG:         "beta":1
-; CHECK-DAG:         "dot_dimension_numbers":{
-; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
-; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
-; CHECK-DAG:           "lhs_batch_dimensions":[]
-; CHECK-DAG:           "rhs_batch_dimensions":[]
-; CHECK-DAG:         }
-; CHECK-DAG:         "precision_config":{
-; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
-; CHECK-DAG:         }
-; CHECK-DAG:         "epilogue":"DEFAULT"
-; CHECK:           }
-      )";
   for (const auto& type_combination : type_combinations) {
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
     replacements["<<ABType>>"] = std::get<0>(type_combination);
     replacements["<<DType>>"] = std::get<1>(type_combination);
     const auto hlo_text = absl::StrReplaceAll(hlo_text_template, replacements);
-    const auto matched_text =
-        absl::StrReplaceAll(matched_text_template, replacements);
     EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-    MatchOptimizedHlo(hlo_text, matched_text);
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                            GetOptimizedModule(hlo_text));
+    EXPECT_THAT(
+        optimized_module->entry_computation()->root_instruction(),
+        GmockMatch(m::Fusion(m::Parameter(2),
+                             m::CustomCall(m::Parameter(0), m::Parameter(1)))));
   }
 }
 
