@@ -16,6 +16,10 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_C_API_CONVERSIONS_H_
 #define XLA_STREAM_EXECUTOR_TPU_C_API_CONVERSIONS_H_
 
+#include <array>
+#include <memory>
+#include <vector>
+
 #include "absl/container/inlined_vector.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -26,10 +30,12 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/statusor.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
+#include "third_party/tensorflow/core/tpu/host_command_handler.h"
 
 // APIs for converting between internal and external versions of
 // XLA/StreamExecutor data structures.
@@ -42,8 +48,13 @@ void Destroy(FloatList* float_list);
 absl::Span<const int64_t> MakeSpan(const Int64List& src_list);
 void CreateVector(const absl::Span<const int64_t> src, Int64List* dst);
 
+absl::Span<const int> MakeSpan(const IntList& src_list);
+void CreateVector(const absl::Span<const int> src, IntList* dst);
+
 absl::Span<const bool> MakeSpan(const BoolList& src_list);
 void CreateVector(const absl::Span<const bool> src, BoolList* dst);
+
+void CreateVector(const absl::Span<const xla::DimLevelType> src, IntList* dst);
 
 // se::DeviceMemoryBase
 SE_DeviceMemoryBase ToC(const stream_executor::DeviceMemoryBase& base);
@@ -52,20 +63,20 @@ void ToC(const stream_executor::DeviceMemoryBase& base,
 stream_executor::DeviceMemoryBase FromC(const SE_DeviceMemoryBase& se_base);
 void Destroy(SE_DeviceMemoryBase*);
 
-// xla::Shape
-xla::Shape FromC(const XLA_Shape* c_shape);
-void ToC(const xla::Shape& xla_shape, XLA_Shape* c_shape);
-void Destroy(XLA_Shape* c_shape);
+// xla::Tile
+xla::Tile FromC(const XLA_Tile* c_tile);
+void ToC(const xla::Tile& xla_tile, XLA_Tile* c_tile);
+void Destroy(XLA_Tile* c_tile);
 
 // xla::Layout
 xla::Layout FromC(const XLA_Layout* c_layout);
 void ToC(const xla::Layout& xla_layout, XLA_Layout* c_layout);
 void Destroy(XLA_Layout* c_layout);
 
-// xla::Tile
-xla::Tile FromC(const XLA_Tile* c_tile);
-void ToC(const xla::Tile& xla_tile, XLA_Tile* c_tile);
-void Destroy(XLA_Tile* c_tile);
+// xla::Shape
+xla::Shape FromC(const XLA_Shape* c_shape);
+void ToC(const xla::Shape& xla_shape, XLA_Shape* c_shape);
+void Destroy(XLA_Shape* c_shape);
 
 // xla::ShapeIndex
 XLA_ShapeIndex ToC(const xla::ShapeIndex& xla_shape);
@@ -130,6 +141,13 @@ void Destroy(XLA_HloModule* c_module);
 XLA_HloModuleConfig ToC(const xla::HloModuleConfig& config);
 xla::HloModuleConfig FromC(const XLA_HloModuleConfig& c_config);
 void Destroy(XLA_HloModuleConfig* c_config);
+
+// TPU HostCommandHandler
+void ToC(tensorflow::tpu::HostCommandHandler handler,
+         SE_TpuHostCommandHandler* c_handler);
+std::unique_ptr<tensorflow::tpu::HostCommandHandler> FromC(
+    SE_TpuHostCommandHandler* handler);
+void Destroy(SE_TpuHostCommandHandler* handler);
 
 // Helper for managing stack based C -> C++ conversions.
 template <class CType>
