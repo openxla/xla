@@ -15,16 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_computation.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <list>
 #include <memory>
 #include <optional>
 #include <queue>
-#include <set>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,25 +28,20 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
-#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/layout_util.h"
 #include "xla/map_util.h"
 #include "xla/printer.h"
 #include "xla/service/mapped_ptr_container_sorter.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/types.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/status.h"
 
 namespace xla {
