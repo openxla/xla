@@ -500,6 +500,8 @@ xla_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
