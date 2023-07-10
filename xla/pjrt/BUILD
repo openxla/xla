@@ -222,6 +222,7 @@ cc_library(
     hdrs = ["pjrt_executable.h"],
     visibility = [":friends"],
     deps = [
+        ":execute_options_proto_cc",
         ":pjrt_common",
         "//xla:statusor",
         "//xla:util",
@@ -230,6 +231,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:statusor",
     ],
@@ -245,6 +247,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/client:executable_build_options",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
     ],
 )
 
@@ -795,3 +798,9 @@ tf_proto_library(
 #     deps = [":compile_options_proto"],
 # )
 # copybara:uncomment_end
+
+tf_proto_library(
+    name = "execute_options_proto",
+    srcs = ["execute_options.proto"],
+    visibility = ["//visibility:public"],
+)
