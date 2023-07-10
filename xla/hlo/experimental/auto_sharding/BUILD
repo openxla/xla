@@ -63,6 +63,8 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_ortools//ortools/linear_solver",
         "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
+        "@tsl//tsl/platform:hash",
+        "@tsl//tsl/platform:types",
     ],
 )
 
