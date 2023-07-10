@@ -91,6 +91,7 @@ limitations under the License.
 #include "xla/service/gpu/all_reduce_blueconnect.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
+#include "xla/service/gpu/copy_fusion.h"
 #include "xla/service/gpu/dot_dimension_sorter.h"
 #include "xla/service/gpu/fusion_merger.h"
 #include "xla/service/gpu/gemm_broadcast_folding_rewriter.h"
@@ -872,6 +873,7 @@ Status GpuCompiler::PrepareHloModuleForIrEmitting(HloModule* hlo_module) {
   auto& sub_pipeline =
       pipeline.AddPass<HloPassPipeline>("horizontal-loop-fusion-for-copy");
   // To fuse the copy.
+  sub_pipeline.AddPass<CopyFusion>();
   sub_pipeline.AddPass<GpuHorizontalLoopFusion>("copy_");
   sub_pipeline.AddPass<HloDCE>();
   pipeline.AddPass<GpuSanitizeConstantNames>();
