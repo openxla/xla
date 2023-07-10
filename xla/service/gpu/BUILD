@@ -459,7 +459,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@llvm-project//mlir:Transforms",
-        "@triton//:TritonDialect",
+        "@triton//:TritonDialects",
         "@triton//:TritonTransforms",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
