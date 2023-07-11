@@ -14,6 +14,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/tests/hlo_test_base.h"
 
