@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/literal.h"
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -682,6 +683,41 @@ TEST_F(LiteralUtilTest, IsAllFirst) {
   complex64 c7_9 = {7, 9};
   EXPECT_TRUE(LiteralUtil::CreateR2<complex64>({{c8_9}, {c8_9}}).IsAllFirst());
   EXPECT_FALSE(LiteralUtil::CreateR2<complex64>({{c7_9}, {c8_9}}).IsAllFirst());
+}
+
+TEST_F(LiteralUtilTest, CountEqualInt) {
+  EXPECT_EQ(LiteralUtil::CreateR1<int8_t>({}).CountEqualInt(1), 0);
+  EXPECT_EQ(
+      LiteralUtil::CreateR1<int8_t>({1, 2, 3, 4, 5, 100}).CountEqualInt(2), 1);
+  EXPECT_EQ(
+      LiteralUtil::CreateR1<int8_t>({0, 3, 6, 0, 9, 18, 0}).CountEqualInt(0),
+      3);
+}
+
+TEST_F(LiteralUtilTest, CountEqualFloat) {
+  EXPECT_EQ(LiteralUtil::CreateR1<float>({}).CountEqualFloat(0), 0);
+  EXPECT_EQ(LiteralUtil::CreateR1<float>({1.1, 2.2, 3.3, 4.4, 5.5, 100.6})
+                .CountEqualFloat(3.3),
+            1);
+  EXPECT_EQ(LiteralUtil::CreateR1<float>({7.62, 3, 7.75, 7.62, 7.3, 2, 7.62})
+                .CountEqualFloat(7.62),
+            3);
+  EXPECT_EQ(LiteralUtil::CreateR1<float>(
+                {NAN, 0, 6.8, NAN, NAN, NAN, 63.12, 24.6, NAN})
+                .CountEqualFloat(NAN),
+            5);
+
+  // Must return 0 for non float
+  EXPECT_EQ(LiteralUtil::CreateR1<bool>({false, true}).CountEqualFloat(false),
+            0);
+  EXPECT_EQ(LiteralUtil::CreateR1<int8_t>({1, 1, 2}).CountEqualFloat(1), 0);
+  EXPECT_EQ(LiteralUtil::CreateR1<int8_t>({5, 5, 5, 5}).CountEqualFloat(5), 0);
+  EXPECT_EQ(LiteralUtil::CreateR1<uint8_t>({1, 1, 2}).CountEqualFloat(1), 0);
+  EXPECT_EQ(LiteralUtil::CreateR1<int32_t>({5, 5, 5, 5}).CountEqualFloat(5), 0);
+  EXPECT_EQ(LiteralUtil::CreateR1<int32_t>({1, 1, 2}).CountEqualFloat(1), 0);
+  EXPECT_EQ(LiteralUtil::CreateR1<uint32_t>({5, 5, 5, 5}).CountEqualFloat(5),
+            0);
+  EXPECT_EQ(LiteralUtil::CreateR1<uint32_t>({1, 1, 2}).CountEqualFloat(1), 0);
 }
 
 TEST_F(LiteralUtilTest, IsZero) {

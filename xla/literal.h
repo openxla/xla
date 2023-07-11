@@ -276,6 +276,16 @@ class LiteralBase {
   // Returns false if this literal is not an array.
   bool IsAllFirst() const;
 
+  // Returns the number of elements that have value equal to the given int.
+  // Returns 0 if value does not fit in this literal's type or if the literal
+  // is not an array.
+  int64_t CountEqualInt(int8_t value) const;
+
+  // Returns the number of elements that have value equal to the given float.
+  // NaNs can be passed and counted.
+  // Returns 0 when the literal is not floating-point or not an array.
+  int64_t CountEqualFloat(float value) const;
+
   // Literal consists entirely of an iota.
   bool IsR1Iota() const;
 
@@ -641,6 +651,10 @@ class LiteralBase {
     //  - `scalar` is a scalar.
     //  - `scalar`'s type matches that of `this`.
     bool IsAll(const Literal& scalar) const;
+
+    // Returns the number of elements with equal value to the given literal.
+    // Returns 0 if this Piece is not an array.
+    int64_t CountAll(const Literal& scalar) const;
 
     // Returns true if this piece and 'other' contain the same data. This piece
     // and 'other' must be array-shaped and compatible. If a literal has dynamic
