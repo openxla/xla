@@ -120,11 +120,7 @@ cc_library(
     compatible_with = get_compatible_with_cloud(),
     deps = [
         ":gpu_device_info",
-        "//xla:debug_options_flags",
         "//xla:shape_util",
-        "//xla/mlir_hlo:lhlo",
-        "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
