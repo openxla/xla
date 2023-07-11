@@ -15,17 +15,29 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_op_executable.h"
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "xla/status.h"
 #include "xla/stream_executor/tpu/c_api_conversions.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/host_command_handler.h"
 #include "xla/stream_executor/tpu/proto_helper.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
+
+static tensorflow::tpu::HostCommandHandler HandlerOrNullptr(
+    SE_TpuHostCommandHandler* handler) {
+  auto handler_ptr = ApiConverter::FromC(handler);
+  if (handler_ptr != nullptr) {
+    return std::move(*handler_ptr);
+  }
+  return nullptr;
+}
 
 namespace tensorflow {
 
@@ -35,6 +47,13 @@ TpuOpExecutable::TpuOpExecutable(const XLA_TpuProgram* core_program,
     : TpuExecutableInterface(std::move(hlo_module)),
       core_program_(core_program),
       host_command_handler_(std::move(host_command_handler)) {}
+
+TpuOpExecutable::TpuOpExecutable(const XLA_TpuProgram* core_program,
+                                 std::unique_ptr<xla::HloModule> hlo_module,
+                                 SE_TpuHostCommandHandler* se_handler)
+    : TpuExecutableInterface(std::move(hlo_module)),
+      core_program_(core_program),
+      host_command_handler_(HandlerOrNullptr(se_handler)) {}
 
 xla::Status TpuOpExecutable::LoadProgramAndEnqueueToStream(
     const xla::ServiceExecutableRunOptions& run_options,
@@ -98,12 +117,17 @@ xla::Status TpuOpExecutable::LoadProgramAndEnqueueToStream(
   params.stream = stream;
   params.status = status.c_status;
 
+  SE_TpuHostCommandHandler c_handler;
+  ApiConverter::ToC(host_command_handler_, &c_handler);
+  params.host_command_handler = &c_handler;
+
   stream_executor::tpu::OpsApiFn()
       ->TpuExecutable_LoadProgramAndEnqueueToStreamFn(&params);
 
   if (dev_assign != nullptr) {
     stream_executor::tpu::SerializedProto_Free(dev_assign_serialized);
   }
+  ApiConverter::Destroy(&c_handler);
   return status.status();
 }
 
