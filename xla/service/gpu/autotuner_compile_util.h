@@ -16,19 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_AUTOTUNER_COMPILE_UTIL_H_
 #define XLA_SERVICE_GPU_AUTOTUNER_COMPILE_UTIL_H_
 
-#include <stdint.h>
-
-#include <algorithm>
-#include <array>
-#include <cstdint>
-#include <iterator>
-#include <limits>
 #include <memory>
 #include <optional>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <variant>
 #include <vector>
 
 #include "xla/autotune_results.pb.h"
@@ -40,6 +29,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/autotuner_util.h"
+#include "xla/service/shaped_buffer.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -70,7 +60,7 @@ class AutotunerCompileUtil {
       const HloComputation& hlo_computation, const AutotuneResult& config,
       const AutotuneCacheKey& cache_key, se::Stream* stream,
       absl::Span<se::DeviceMemoryBase const> input_buffers,
-      se::DeviceMemoryBase output_buffer, ExtractModuleFn extractor);
+      ShapedBuffer output_buffer, ExtractModuleFn extractor);
 
   // Generic method to compile a given computation in isolation using a given
   // pipeline, cached on AutotuneResult and AutotuneCacheKey.

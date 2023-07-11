@@ -282,9 +282,11 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
 
     std::vector<se::DeviceMemoryBase> used_buffers;
     absl::c_copy(input_buffers, std::back_inserter(used_buffers));
+    ShapedBuffer output(hlo_computation.root_instruction()->shape(), 0);
+    output.set_buffer(output_buffer, ShapeIndex{});
     return autotuner_compile_util_->GenerateAndProfileExecutable(
-        hlo_computation, config, cache_key, stream, used_buffers, output_buffer,
-        [&] {
+        hlo_computation, config, cache_key, stream, used_buffers,
+        std::move(output), [&] {
           return TritonGemmAutotuneExtractor(
               autotune_config, GetGpuDeviceInfo(config_.GetExecutor()),
               hlo_computation.FusionInstruction());
@@ -349,10 +351,12 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
     gemm.set_algorithm(0);
     *res.mutable_gemm() = gemm;
 
+    ShapedBuffer output(original_computation.root_instruction()->shape(), 0);
+    output.set_buffer(output_buffer, ShapeIndex{});
     TF_ASSIGN_OR_RETURN(std::optional<absl::Duration> duration,
                         autotuner_compile_util_->GenerateAndProfileExecutable(
                             original_computation, res, cache_key, stream,
-                            input_buffers, output_buffer, [&] {
+                            input_buffers, std::move(output), [&] {
                               return CublasGemmAutotuneExtractor(
                                   GetGpuDeviceInfo(config_.GetExecutor()),
                                   &original_computation);

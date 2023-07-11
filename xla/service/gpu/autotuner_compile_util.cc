@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/platform_util.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
@@ -108,7 +107,7 @@ AutotunerCompileUtil::GenerateAndProfileExecutable(
     const HloComputation& hlo_computation, const AutotuneResult& config,
     const AutotuneCacheKey& cache_key, se::Stream* stream,
     absl::Span<se::DeviceMemoryBase const> input_buffers,
-    se::DeviceMemoryBase output_buffer, ExtractModuleFn extractor) {
+    ShapedBuffer output_buffer, ExtractModuleFn extractor) {
   TF_ASSIGN_OR_RETURN(
       Executable * executable,
       Compile(hlo_computation, config, cache_key, std::move(extractor)));
@@ -134,10 +133,11 @@ AutotunerCompileUtil::GenerateAndProfileExecutable(
   TF_ASSIGN_OR_RETURN(absl::Duration timer_duration,
                       timer.GetElapsedDuration());
   ScopedShapedBuffer result = execution_output.ConsumeResult();
-  TF_RET_CHECK(output_buffer.size() == result.root_buffer().size());
+  se::DeviceMemoryBase output_root_buffer = output_buffer.root_buffer();
+  TF_RET_CHECK(output_root_buffer.size() == result.root_buffer().size());
   // TODO(cheshire): Copying should not be required. Instead, we can add a new
   // aliased parameter.
-  stream->ThenMemcpy(&output_buffer, result.root_buffer(),
+  stream->ThenMemcpy(&output_root_buffer, result.root_buffer(),
                      result.root_buffer().size());
   return std::make_optional(timer_duration);
 }
