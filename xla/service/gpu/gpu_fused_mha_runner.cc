@@ -56,10 +56,14 @@ Status RunFusedMHABmmBmm(GpufMHAParams params, se::Stream *stream,
   TF_ASSIGN_OR_RETURN(se::dnn::FusedMHAKind kind,
                       GetDNNFusedMHAKindFromCudnnfMHAKind(params.config->kind));
   std::optional<double> dropout_rate;
-  if (params.config->dropout_rate) dropout_rate = *params.config->dropout_rate;
+  if (params.config->dropout_rate) {
+    dropout_rate = *params.config->dropout_rate;
+  }
 
   std::optional<int64_t> seed;
-  if (params.config->seed) seed = *params.config->seed;
+  if (params.config->seed) {
+    seed = *params.config->seed;
+  }
 
   se::dnn::FusedMHASoftmaxOp::Config config{
       kind,
@@ -76,7 +80,6 @@ Status RunFusedMHABmmBmm(GpufMHAParams params, se::Stream *stream,
   return (*runner)(stream, options.profile_result, scratch_memory,
                    lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer,
                    output_buffer, activation_output);
-  return OkStatus();
 }
 
 template <typename ElementType, typename OutputType>
@@ -100,13 +103,19 @@ Status RunFusedMHAScaleMaskSoftmax(GpufMHAParams params, se::Stream *stream,
   TF_ASSIGN_OR_RETURN(se::dnn::FusedMHAKind kind,
                       GetDNNFusedMHAKindFromCudnnfMHAKind(params.config->kind));
   std::optional<double> dropout_rate;
-  if (params.config->dropout_rate) dropout_rate = *params.config->dropout_rate;
+  if (params.config->dropout_rate) {
+    dropout_rate = *params.config->dropout_rate;
+  }
 
   double scale = 1.0;
-  if (params.config->fmha_scale) scale = *params.config->fmha_scale;
+  if (params.config->fmha_scale) {
+    scale = *params.config->fmha_scale;
+  }
 
   std::optional<int64_t> seed;
-  if (params.config->seed) seed = *params.config->seed;
+  if (params.config->seed) {
+    seed = *params.config->seed;
+  }
 
   se::dnn::FusedMHAScaleMaskSoftmaxOp::Config config{
       kind,
@@ -125,7 +134,6 @@ Status RunFusedMHAScaleMaskSoftmax(GpufMHAParams params, se::Stream *stream,
   return (*runner)(stream, options.profile_result, scratch_memory,
                    lhs_bmm1_buffer, rhs_bmm1_buffer, mask_buffer,
                    rhs_bmm2_buffer, output_buffer, activation_output);
-  return OkStatus();
 }
 
 template <typename ElementType, typename BiasType, typename OutputType>
@@ -148,13 +156,19 @@ Status RunFusedMHAScaleBiasMaskSoftmax(
   TF_ASSIGN_OR_RETURN(se::dnn::FusedMHAKind kind,
                       GetDNNFusedMHAKindFromCudnnfMHAKind(params.config->kind));
   std::optional<double> dropout_rate;
-  if (params.config->dropout_rate) dropout_rate = *params.config->dropout_rate;
+  if (params.config->dropout_rate) {
+    dropout_rate = *params.config->dropout_rate;
+  }
 
   double scale = 1.0;
-  if (params.config->fmha_scale) scale = *params.config->fmha_scale;
+  if (params.config->fmha_scale) {
+    scale = *params.config->fmha_scale;
+  }
 
   std::optional<int64_t> seed;
-  if (params.config->seed) seed = *params.config->seed;
+  if (params.config->seed) {
+    seed = *params.config->seed;
+  }
 
   se::dnn::FusedMHAScaleBiasMaskSoftmaxOp::Config config{
       kind,
@@ -197,13 +211,19 @@ Status RunFusedMHAScaleBiasSoftmax(GpufMHAParams params, se::Stream *stream,
   TF_ASSIGN_OR_RETURN(se::dnn::FusedMHAKind kind,
                       GetDNNFusedMHAKindFromCudnnfMHAKind(params.config->kind));
   std::optional<double> dropout_rate;
-  if (params.config->dropout_rate) dropout_rate = *params.config->dropout_rate;
+  if (params.config->dropout_rate) {
+    dropout_rate = *params.config->dropout_rate;
+  }
 
   double scale = 1.0;
-  if (params.config->fmha_scale) scale = *params.config->fmha_scale;
+  if (params.config->fmha_scale) {
+    scale = *params.config->fmha_scale;
+  }
 
   std::optional<int64_t> seed;
-  if (params.config->seed) seed = *params.config->seed;
+  if (params.config->seed) {
+    seed = *params.config->seed;
+  }
 
   se::dnn::FusedMHAScaleBiasSoftmaxOp::Config config{
       kind,
@@ -432,13 +452,19 @@ Status RunFusedMHABmmBmmBackward(
   TF_ASSIGN_OR_RETURN(se::dnn::FusedMHAKind kind,
                       GetDNNFusedMHAKindFromCudnnfMHAKind(params.config->kind));
   std::optional<double> dropout_rate;
-  if (params.config->dropout_rate) dropout_rate = *params.config->dropout_rate;
+  if (params.config->dropout_rate) {
+    dropout_rate = *params.config->dropout_rate;
+  }
 
   double scale = 1.0;
-  if (params.config->fmha_scale) scale = *params.config->fmha_scale;
+  if (params.config->fmha_scale) {
+    scale = *params.config->fmha_scale;
+  }
 
   std::optional<int64_t> seed;
-  if (params.config->seed) seed = *params.config->seed;
+  if (params.config->seed) {
+    seed = *params.config->seed;
+  }
 
   se::dnn::FusedMHASoftmaxBackwardOp::Config config{
       kind,
@@ -462,7 +488,6 @@ Status RunFusedMHABmmBmmBackward(
                    bmm2_grad_gemm1_lhs_buffer, bmm2_grad_gemm2_rhs_buffer,
                    d_output_buffer, d_bmm1_lhs_buffer, d_bmm1_rhs_buffer,
                    d_bmm2_rhs_buffer, d_S_buffer, d_bias_buffer);
-  return OkStatus();
 }
 
 template <typename ElementType, typename OutputType>
@@ -491,13 +516,19 @@ Status RunFusedMHAScaleMaskSoftmaxBackward(
   TF_ASSIGN_OR_RETURN(se::dnn::FusedMHAKind kind,
                       GetDNNFusedMHAKindFromCudnnfMHAKind(params.config->kind));
   std::optional<double> dropout_rate;
-  if (params.config->dropout_rate) dropout_rate = *params.config->dropout_rate;
+  if (params.config->dropout_rate) {
+    dropout_rate = *params.config->dropout_rate;
+  }
 
   double scale = 1.0;
-  if (params.config->fmha_scale) scale = *params.config->fmha_scale;
+  if (params.config->fmha_scale) {
+    scale = *params.config->fmha_scale;
+  }
 
   std::optional<int64_t> seed;
-  if (params.config->seed) seed = *params.config->seed;
+  if (params.config->seed) {
+    seed = *params.config->seed;
+  }
 
   se::dnn::FusedMHAScaleMaskSoftmaxBackwardOp::Config config{
       kind,
@@ -522,7 +553,6 @@ Status RunFusedMHAScaleMaskSoftmaxBackward(
                    bmm2_grad_gemm1_lhs_buffer, bmm2_grad_gemm2_rhs_buffer,
                    d_output_buffer, d_bmm1_lhs_buffer, d_bmm1_rhs_buffer,
                    d_bmm2_rhs_buffer, d_S_buffer, mask_buffer, d_bias_buffer);
-  return OkStatus();
 }
 
 template <typename ElementType, typename BiasType, typename OutputType>
@@ -795,7 +825,6 @@ Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
   config.kind = desc.kind;
   const CudnnfMHABackendConfig &backend_config = desc.backend_config;
   config.algorithm = se::dnn::AlgorithmDesc(backend_config.algorithm());
-
   auto check_and_assign_mask = [&]() -> Status {
     if (desc.mask_shape) {
       const Shape &mask_shape = *desc.mask_shape;
@@ -813,21 +842,15 @@ Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
   };
 
   auto assign_scale = [&]() {
-    config.fmha_scale.emplace();
-    double &fmha_scale = *config.fmha_scale;
-    fmha_scale = backend_config.fmha_scale();
+    config.fmha_scale.emplace(backend_config.fmha_scale());
   };
 
   auto assign_dropout_rate = [&]() {
-    config.dropout_rate.emplace();
-    double &dropout_rate = *config.dropout_rate;
-    dropout_rate = backend_config.dropout_rate();
+    config.dropout_rate.emplace(backend_config.dropout_rate());
   };
 
   auto assign_seed = [&]() {
-    config.seed.emplace();
-    int64_t &seed = *config.seed;
-    seed = backend_config.seed();
+    config.seed.emplace(backend_config.seed());
   };
 
   switch (config.kind) {
@@ -980,7 +1003,8 @@ Status RunGpuFMHA(
     se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
     se::DeviceMemoryBase output_buffer, se::DeviceMemoryBase scratch_buffer,
     se::DeviceMemoryBase mask_buffer, se::DeviceMemoryBase bias_buffer,
-    se::DeviceMemoryBase activation_buffer, se::Stream *stream, RunFusedMHAOptions options) {
+    se::DeviceMemoryBase activation_buffer, se::Stream *stream,
+    RunFusedMHAOptions options) {
   TF_ASSIGN_OR_RETURN(
       GpufMHAParams params,
       GpufMHAParams::For(fmha_config, lhs_bmm1_buffer, rhs_bmm1_buffer,

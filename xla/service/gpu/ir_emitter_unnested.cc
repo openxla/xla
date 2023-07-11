@@ -533,15 +533,12 @@ StatusOr<xla::gpu::CudnnfMHAKind> AsCudnnBackwardfMHAKind(
     case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
         BackwardScaleBiasSoftmaxDropout:
       return xla::gpu::CudnnfMHAKind::kBackwardScaleBiasSoftmaxDropout;
-      break;
     case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
         BackwardScaleBiasMaskSoftmax:
       return xla::gpu::CudnnfMHAKind::kBackwardScaleBiasMaskSoftmax;
-      break;
     case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
         BackwardScaleBiasMaskSoftmaxDropout:
       return xla::gpu::CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout;
-      break;
     default:
       return xla::InternalError("Unsupported fused_mha_backward_dag_signature");
   }
