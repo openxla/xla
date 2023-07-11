@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
@@ -39,6 +40,10 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/xla_data.pb.h"
+
+#ifdef GOOGLE_CUDA
+#include "xla/stream_executor/gpu/asm_compiler.h"
+#endif  // GOOGLE_CUDA
 
 namespace xla {
 namespace gpu {
@@ -134,6 +139,23 @@ bool IsMatrixMultiplication(const HloInstruction& dot) {
            rhs_shape.dimensions(dim_numbers.rhs_contracting_dimensions(0)));
 
   return true;
+}
+
+int64_t MinThreadsXRowReduction(const HloModuleConfig& hlo_module_config) {
+#ifdef GOOGLE_CUDA
+  auto ptxas_config =
+      PtxOptsFromDebugOptions(hlo_module_config.debug_options());
+  auto ptxas_version_tuple =
+      se::GetAsmCompilerVersion(ptxas_config.preferred_cuda_dir);
+  // ptxas versions prior to 12.2 have a very rare bug when very high register
+  // spilling occurs with some order of instructions, so use less threads to
+  // reduce register pressure.
+  if (!ptxas_version_tuple.ok() ||
+      ptxas_version_tuple.value() < std::array<int64_t, 3>{12, 2, 0}) {
+    return 512;
+  }
+#endif  // GOOGLE_CUDA
+  return 1024;
 }
 
 Vector3 GetReductionTiling(const ReductionDimensions& reduction_dimensions) {
@@ -777,11 +799,13 @@ Shape GetShape(mlir::Value value) {
   return {};
 }
 
-bool ReductionIsRaceFree(const ReductionDimensions& reduction_dimensions) {
+bool ReductionIsRaceFree(const HloModuleConfig& hlo_module_config,
+                         const ReductionDimensions& reduction_dimensions) {
   Vector3 reduction_tiling = GetReductionTiling(reduction_dimensions);
   return (reduction_dimensions.is_row_reduction &&
           reduction_dimensions.dimensions[2] <=
-              MinThreadsXRowReduction() * reduction_tiling[2] &&
+              MinThreadsXRowReduction(hlo_module_config) *
+                  reduction_tiling[2] &&
           reduction_dimensions.dimensions[0] <=
               BatchedReductionRaceFreeBound()) ||
          (!reduction_dimensions.is_row_reduction &&

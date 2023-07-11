@@ -989,6 +989,7 @@ cc_library(
     hdrs = ["ir_emission_utils.h"],
     compatible_with = get_compatible_with_cloud(),
     deps = [
+        ":gpu_asm_opts_util",
         ":target_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -999,6 +1000,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor",
+        "//xla/stream_executor/gpu:asm_compiler",
         "//xla/translate/mhlo_to_hlo:type_to_shape",
         "@com_google_absl//absl/container:flat_hash_set",
         "@llvm-project//llvm:Core",
