@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_CPU_RUNTIME_SINGLE_THREADED_MATMUL_H_
 
 #include <complex>
+#include <cstdint>
 
 #include "Eigen/Core"  // from @eigen_archive
 
