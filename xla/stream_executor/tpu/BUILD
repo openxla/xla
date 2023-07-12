@@ -2,6 +2,7 @@
 
 load("@tsl//tsl:tsl.bzl", "set_external_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -58,15 +59,35 @@ cc_library(
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
-        "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "//xla/service:maybe_owning_device_memory",
         "//xla/service:shaped_buffer",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
-        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "c_api_conversions_test",
+    srcs = ["c_api_conversions_test.cc"],
+    deps = [
+        ":c_api_conversions",
+        ":c_api_decl",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_parser",
+        "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
