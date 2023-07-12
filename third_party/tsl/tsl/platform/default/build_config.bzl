@@ -842,6 +842,9 @@ def tf_platform_alias(name, platform_dir = "//tsl/platform/"):
 def tf_logging_deps():
     return [clean_dep("//tsl/platform/default:logging")]
 
+def tf_error_logging_deps():
+    return [clean_dep("//tsl/platform/default:error_logging")]
+
 def tf_resource_deps():
     return [clean_dep("//tsl/platform/default:resource")]
 
