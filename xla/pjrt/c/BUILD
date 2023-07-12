@@ -160,6 +160,8 @@ cc_library(
     deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
+        "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/client:xla_builder",
@@ -168,6 +170,7 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_proto_cc",
+        "//xla/tests:literal_test_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
