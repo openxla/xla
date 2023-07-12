@@ -25,9 +25,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/hlo_dce.h"
 #include "xla/literal_util.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/tuple_util.h"
 
 namespace xla {

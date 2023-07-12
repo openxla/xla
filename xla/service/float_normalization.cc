@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/hlo_dce.h"
+#include "xla/hlo/transforms/hlo_dce.h"
 #include "xla/service/tuple_simplifier.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"

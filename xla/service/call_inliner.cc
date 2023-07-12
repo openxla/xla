@@ -21,8 +21,8 @@ limitations under the License.
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/hlo/transforms/hlo_dce.h"
 #include "xla/service/call_graph.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_domain_isolator.h"
 #include "tsl/platform/errors.h"
 

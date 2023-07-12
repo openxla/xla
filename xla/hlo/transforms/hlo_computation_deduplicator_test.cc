@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/hlo_computation_deduplicator.h"
+#include "xla/hlo/transforms/hlo_computation_deduplicator.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -181,7 +181,7 @@ TEST_F(HloComputationDeduplicatorTest, RemoveRegionsWithSameSubcomp) {
     rd1 = s32[] call(Arg_0, Arg_1), to_apply=main.15
     rd2 = s32[] call(Arg_0, Arg_1), to_apply=main.16
     ROOT ret = add(rd1, rd2)
-  } 
+  }
   )";
 
   auto computation_names = RunDeduplicatePass(text, /*expect_true=*/true);

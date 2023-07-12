@@ -478,9 +478,9 @@ cc_library(
     deps = [
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms:hlo_dce",
         "//xla/service:call_graph",
         "//xla/service:collective_ops_utils",
-        "//xla/service:hlo_dce",
         "//xla/service:hlo_pass",
         "//xla/service:tuple_util",
         "@com_google_absl//absl/container:flat_hash_set",
