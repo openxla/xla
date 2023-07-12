@@ -145,6 +145,34 @@ StatusOr<LaunchDimensions> CalculateLaunchDimensionsImpl(
           ? CeilOfRatio(static_cast<int64_t>(128),
                         threads_per_block_row_vectorized)
           : 1;
+
+  // Improve the occupancy of the kernel, i.e. make sure we keep as many threads
+  // busy as possible. For example, A100 has 1536 threads per SM, so launching
+  // with blocks of 1024 threads only achieves 2/3 occupancy.
+  int64_t threads_per_block = threads_per_block_x * threads_per_block_y;
+  if (gpu_device_info.core_count > 0 &&
+      gpu_device_info.threads_per_core_limit > 0 &&
+      gpu_device_info.threads_per_core_limit % threads_per_block != 0) {
+    auto calc_waves = [&](int block_size) {
+      int blocks_per_sm = gpu_device_info.threads_per_core_limit / block_size;
+      int64_t blocks_per_wave = gpu_device_info.core_count * blocks_per_sm;
+      return CeilOfRatio(num_elements, blocks_per_wave * block_size);
+    };
+    int min_waves = calc_waves(threads_per_block);
+    for (int i = 2; i <= 10; ++i) {
+      int num_warps = (gpu_device_info.threads_per_core_limit / i) / 32;
+      int num_threads = num_warps * 32;
+      if (num_threads % threads_per_block_y == 0) {
+        int num_waves = calc_waves(num_threads);
+        if (num_waves < min_waves) {
+          VLOG(3) << "Adjusting number of threads per block to " << num_threads
+                  << " (initially " << threads_per_block << ")";
+          threads_per_block_x = num_threads / threads_per_block_y;
+          min_waves = num_waves;
+        }
+      }
+    }
+  }
   VLOG(2) << "Set # of threads per block to (.x=" << threads_per_block_x
           << ", .y=" << threads_per_block_y << ")";
 
