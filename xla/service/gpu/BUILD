@@ -2954,7 +2954,6 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
-        ":ir_emission_utils",
         "//xla/hlo/ir:hlo",
         "//xla/service:elemental_ir_emitter",
         "//xla/service:hlo_cost_analysis",

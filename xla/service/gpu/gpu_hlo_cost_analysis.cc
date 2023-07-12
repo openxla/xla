@@ -23,7 +23,6 @@ limitations under the License.
 #include "xla/service/elemental_ir_emitter.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
-#include "xla/service/gpu/ir_emission_utils.h"
 
 namespace xla {
 namespace gpu {
