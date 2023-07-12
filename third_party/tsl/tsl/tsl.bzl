@@ -35,6 +35,7 @@ load(
     "if_enable_acl",
 )
 load("@bazel_skylib//lib:new_sets.bzl", "sets")
+load("//third_party/bazel_rules/rules_python/python:defs.bzl", "py_library")
 
 two_gpu_tags = ["requires-gpu-nvidia:2", "notap", "manual", "no_pip"]
 
@@ -717,7 +718,7 @@ def tsl_pybind_extension_opensource(
         testonly = testonly,
     )
 
-    native.py_library(
+    py_library(
         name = name,
         data = select({
             clean_dep("//tsl:windows"): [pyd_file],

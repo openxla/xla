@@ -1,3 +1,4 @@
+load("//third_party/bazel_rules/rules_python/python:proto.bzl", "py_proto_library")
 load(
     "//tsl:tsl.bzl",
     "if_google",

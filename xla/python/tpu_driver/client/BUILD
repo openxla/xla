@@ -1,3 +1,4 @@
+load("//third_party/bazel_rules/rules_python/python:defs.bzl", "py_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
 

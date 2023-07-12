@@ -468,6 +468,7 @@ bzl_library(
     srcs = ["tsl.bzl"],
     visibility = ["//visibility:public"],
     deps = [
+        "//third_party/bazel_rules/rules_python/python:defs_bzl",
         "//third_party/compute_library:build_defs_bzl",
         "//third_party/mkl:build_defs_bzl",
         "//third_party/mkl_dnn:build_defs_bzl",

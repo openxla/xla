@@ -1,3 +1,4 @@
+load("//third_party/bazel_rules/rules_python/python:defs.bzl", "py_library", "py_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
