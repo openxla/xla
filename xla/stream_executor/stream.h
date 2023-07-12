@@ -184,7 +184,8 @@ class Stream {
   // argument number and types that were mismatched.
   template <typename... Params, typename... Args>
   tsl::Status ThenLaunch(ThreadDim thread_dims, BlockDim block_dims,
-                         const TypedKernel<Params...> &kernel, Args... args);
+                         const TypedKernel<Params...> &kernel,
+                         const Args &...args);
 
   // TODO(leary) If work is added to the stream that is being depended upon,
   //              then what? Have to describe what happens.
@@ -1738,7 +1739,7 @@ template <typename... Params, typename... Args>
 inline tsl::Status Stream::ThenLaunch(ThreadDim thread_dims,
                                       BlockDim block_dims,
                                       const TypedKernel<Params...> &kernel,
-                                      Args... args) {
+                                      const Args &...args) {
   KernelInvocationChecker<std::tuple<Params...>,
                           std::tuple<Args...>>::CheckAllStaticAssert();
 

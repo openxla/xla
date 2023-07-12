@@ -613,35 +613,13 @@ struct KernelInvocationChecker {
   static constexpr int kTupleLength =
       static_cast<int>(std::tuple_size<ArgTuple>::value);
 
-  // Helper trait to say whether the parameter wants a DeviceMemory-reference
-  // compatible type. This is for inexact type matches, so that it doesn't have
-  // to be precisely a const DeviceMemory<T>&, but can also be a value that
-  // represents the same.
-  template <typename ParamType, typename ArgType>
-  struct IsCompatibleDeviceMemoryRef {
-    static constexpr bool value = false;
-  };
-
-  // See type trait definition above.
-  template <typename U>
-  struct IsCompatibleDeviceMemoryRef<const DeviceMemory<U> &, DeviceMemory<U>> {
-    static constexpr bool value = true;
-  };
-
-  // See type trait definition above.
-  template <typename U>
-  struct IsCompatibleDeviceMemoryRef<const SharedDeviceMemory<U> &,
-                                     SharedDeviceMemory<U>> {
-    static constexpr bool value = true;
-  };
-
   // Returns whether ParamT and ArgT are compatible for data parallel kernel
   // parameter packing without any assert functionality.
   template <typename ParamT, typename ArgT>
   static constexpr bool CompatibleNoAssert() {
-    return std::is_same<typename std::remove_const<ParamT>::type,
-                        ArgT>::value ||
-           IsCompatibleDeviceMemoryRef<ParamT, ArgT>::value;
+    return std::is_same<typename std::remove_const_t<ParamT>,
+                        typename std::remove_const_t<
+                            typename std::remove_reference_t<ArgT>>>::value;
   }
 
   // Checks whether ParamT and ArgT are compatible for data parallel kernel
