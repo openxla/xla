@@ -714,6 +714,7 @@ bool LayoutUtil::ValidateDimLevel(DimLevelType dim_level_type, bool dim_unique,
     case DIM_COMPRESSED:
     case DIM_SINGLETON:
     case DIM_COMPRESSED_WITH_HI:
+    case DIM_TWO_OUT_OF_FOUR:
       return true;
     default:
       return false;

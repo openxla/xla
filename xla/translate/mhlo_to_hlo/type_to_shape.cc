@@ -98,6 +98,9 @@ std::optional<std::tuple<DimLevelType, bool, bool>> ConvertDimLevelType(
     case mlir::sparse_tensor::LevelFormat::CompressedWithHi:
       return std::make_tuple(DimLevelType::DIM_COMPRESSED_WITH_HI, unique,
                              ordered);
+    case mlir::sparse_tensor::LevelFormat::TwoOutOfFour:
+      return std::make_tuple(DimLevelType::DIM_TWO_OUT_OF_FOUR, unique,
+                             ordered);
     default:
       return std::nullopt;
   }

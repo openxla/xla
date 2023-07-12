@@ -204,6 +204,8 @@ absl::string_view DimLevelTypeAbbrev(DimLevelType dim_level_type) {
       return "S";
     case xla::DIM_COMPRESSED_WITH_HI:
       return "H";
+    case xla::DIM_TWO_OUT_OF_FOUR:
+      return "T";
     default:
       LOG(FATAL) << "Invalid DimLevelType value: " << dim_level_type;
   }
