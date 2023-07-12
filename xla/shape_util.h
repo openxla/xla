@@ -19,14 +19,12 @@ limitations under the License.
 #ifndef XLA_SHAPE_UTIL_H_
 #define XLA_SHAPE_UTIL_H_
 
-#include <algorithm>
 #include <functional>
 #include <initializer_list>
 #include <numeric>
 #include <optional>
 #include <ostream>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
