@@ -38,7 +38,7 @@ limitations under the License.
 
 #if GOOGLE_CUDA
 #include "xla/service/gpu/autotuner_util.h"
-#include "xla/service/gpu/gpu_conv_algorithm_picker.h"
+#include "xla/service/gpu/conv_algorithm_picker.h"
 #endif
 
 namespace xla {

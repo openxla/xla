@@ -20,9 +20,9 @@ limitations under the License.
 
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/call_inliner.h"
+#include "xla/service/gpu/conv_algorithm_picker.h"
 #include "xla/service/gpu/cusolver_rewriter.h"
 #include "xla/service/gpu/gemm_rewriter.h"
-#include "xla/service/gpu/gpu_conv_algorithm_picker.h"
 #include "xla/service/gpu/gpu_conv_padding_legalization.h"
 #include "xla/service/gpu/gpu_conv_rewriter.h"
 #include "xla/service/gpu/gpu_layout_assignment.h"
