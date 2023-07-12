@@ -99,13 +99,9 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
-        "//xla/service:hlo_parser",
-        "//xla/service:hlo_pass_pipeline",
-        "//xla/service:hlo_verifier",
         "//xla/service/gpu:gpu_reduce_scatter_creator",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
     ],
 )
