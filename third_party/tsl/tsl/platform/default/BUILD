@@ -546,6 +546,22 @@ cc_library(
     visibility = set_external_visibility(["//tensorflow:__subpackages__"]),
 )
 
+cc_library(
+    name = "statusor",
+    tags = [
+        "manual",
+        "no_oss",
+        "nobuilder",
+    ],
+    textual_hdrs = ["statusor.h"],
+    visibility = set_external_visibility(["//tensorflow:__subpackages__"]),
+    deps = [
+        "//tsl/platform:macros",
+        "//tsl/platform:status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
 bzl_library(
     name = "cuda_build_defs_bzl",
     srcs = ["cuda_build_defs.bzl"],
@@ -577,6 +593,7 @@ filegroup(
         "posix_file_system.h",
         "stacktrace.h",
         "status.h",
+        "statusor.h",
         "tracing_impl.h",
         "//tsl/platform/profile_utils:cpu_utils.h",
         "//tsl/platform/profile_utils:i_cpu_utils_helper.h",
