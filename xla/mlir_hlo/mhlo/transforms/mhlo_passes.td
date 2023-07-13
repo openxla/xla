@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 include "mlir/Pass/PassBase.td"
+include "mlir/Dialect/Quant/QuantOpsBase.td"
 
 def ChloLegalizeToHloPass : Pass<"chlo-legalize-to-hlo", "func::FuncOp"> {
   let summary = "Legalize CHLO to HLO.";
@@ -380,4 +381,18 @@ def ShapeLegalizeToHloPass : Pass<"shape-legalize-to-hlo", "func::FuncOp"> {
     compilation pipelines that use HLO operations to model dynamism.
   }];
   let dependentDialects = ["mhlo::MhloDialect"];
+}
+
+def StablehloComposeUniformQuantizationPass
+    : Pass<"stablehlo-compose-uniform-quantization", "ModuleOp"> {
+  let summary = "Compose uniform quantized types in StableHLO.";
+  let constructor = "createStablehloComposeUniformQuantizationPass()";
+  let description = [{
+    Identifies uniform quantization patterns and composes them to uniform
+    quantized types.
+  }];
+  let dependentDialects = [
+    "stablehlo::StablehloDialect",
+    "quant::QuantizationDialect",
+  ];
 }
