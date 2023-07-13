@@ -315,7 +315,8 @@ cc_library(
         "ir_emitter_unnested.h",
         "kernel_mapping_scheme.h",
     ],
-    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]),
+    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) + 
+            if_rocm_hipblaslt(["-DTF_HIPBLASLT=1"]),
     deps = [
         ":backend_configs_cc",
         ":buffer_allocations",
@@ -1260,9 +1261,9 @@ cc_library(
 cc_library(
     name = "cublas_lt_matmul_thunk",
     srcs = if_cuda_is_configured(["cublas_lt_matmul_thunk.cc"])
-        + if_rocm_hipblaslt(["cublas_lt_matmul_thunk.cc"]),
+        + if_rocm_is_configured(["cublas_lt_matmul_thunk.cc"]),
     hdrs = if_cuda_is_configured(["cublas_lt_matmul_thunk.h"])
-        + if_rocm_hipblaslt(["cublas_lt_matmul_thunk.h"]),
+        + if_rocm_is_configured(["cublas_lt_matmul_thunk.h"]),
     deps = if_gpu_is_configured([
         ":matmul_utils",
         ":thunk",
@@ -1275,7 +1276,7 @@ cc_library(
         ]) + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cublas_lt_header",
         "//xla/stream_executor/cuda:cublas_plugin",
-        ]) + if_rocm_hipblaslt([
+        ]) + if_rocm_is_configured([
         "//xla/stream_executor/rocm:hipblas_lt_header",
         ]),   
 )
