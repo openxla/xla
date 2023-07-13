@@ -5,7 +5,6 @@ load(
     "tsl_copts",
     "tsl_gpu_library",
 )
-load("@tsl//tsl:tsl.default.bzl", "tsl_gpu_cc_test")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_additional_device_tracer_srcs",
@@ -22,6 +21,10 @@ load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+)
+load(
+    "//xla:xla.bzl",
+    "xla_cc_test",
 )
 
 package(
@@ -107,10 +110,11 @@ tsl_gpu_library(
     ],
 )
 
-tsl_gpu_cc_test(
+xla_cc_test(
     name = "cupti_error_manager_test",
     size = "small",
     srcs = ["cupti_error_manager_test.cc"],
+    copts = tf_profiler_copts() + tsl_copts(),
     tags = tf_cuda_tests_tags() + [
         "gpu_cupti",
         "nomac",
@@ -125,9 +129,7 @@ tsl_gpu_cc_test(
         ":cupti_wrapper",
         ":mock_cupti",
         "@com_google_absl//absl/memory",
-        "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/profiler/utils:time_utils",
-        "@tsl//tsl/profiler/backends/cpu:annotation_stack_impl",
     ]),
 )
 

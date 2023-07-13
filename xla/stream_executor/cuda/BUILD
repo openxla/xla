@@ -2,7 +2,6 @@
 #   CUDA-platform specific StreamExecutor support code.
 
 load("@tsl//tsl:tsl.bzl", "if_google", "set_external_visibility", "tsl_copts")
-load("@tsl//tsl:tsl.default.bzl", "tsl_gpu_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
@@ -24,6 +23,10 @@ load(
 load(
     "@tsl//tsl/platform:rules_cc.bzl",
     "cc_library",
+)
+load(
+    "//xla:xla.bzl",
+    "xla_cc_test",
 )
 
 package(
@@ -127,24 +130,25 @@ cc_library(
     ],
 )
 
-tsl_gpu_cc_test(
+xla_cc_test(
     name = "stream_search_test",
     size = "small",
     srcs = ["stream_search_test.cc"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = tf_cuda_tests_tags(),
     deps = [
+        ":cuda_platform",
         "//xla/stream_executor",
-        "//xla/stream_executor:stream_executor_impl",
         "//xla/stream_executor/host:host_platform",
-        "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
 
-tsl_gpu_cc_test(
+xla_cc_test(
     name = "cuda_driver_test",
     srcs = ["cuda_driver_test.cc"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = tf_cuda_tests_tags() + [
         "no_cuda_asan",  # TODO(b/171512140): re-enable.
         "no_rocm",
@@ -152,24 +156,23 @@ tsl_gpu_cc_test(
     deps = [
         ":cuda_driver",
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
 
-tsl_gpu_cc_test(
+xla_cc_test(
     name = "memcpy_test",
     srcs = ["memcpy_test.cc"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = tf_cuda_tests_tags() + [
         "no_cuda_asan",  # TODO(b/171512140): re-enable.
     ],
     deps = [
+        ":cuda_platform",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:multi_platform_manager",
-        "//xla/stream_executor:stream_executor_impl",
-        "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -606,30 +609,24 @@ cc_library(
     ),
 )
 
-tsl_gpu_cc_test(
+xla_cc_test(
     name = "redzone_allocator_test",
     srcs = ["redzone_allocator_test.cc"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = tf_cuda_tests_tags() + [
         "no_cuda_asan",  # TODO(b/171512140): re-enable.
     ],
     deps = [
         ":cuda_activation",
         ":cuda_gpu_executor",
-        ":stream_executor_cuda",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:event",
         "//xla/stream_executor:kernel",
-        "//xla/stream_executor:stream_executor_impl",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "//xla/stream_executor/gpu:redzone_allocator",
-        "@tsl//tsl/framework:allocator",
-        "@tsl//tsl/framework:allocator_registry_impl",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/profiler/backends/cpu:traceme_recorder_impl",
-        "@tsl//tsl/profiler/utils:time_utils_impl",
     ],
 )
