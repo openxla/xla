@@ -14,7 +14,7 @@ limitations under the License.
 
 #if TF_HIPBLASLT
 #include "xla/stream_executor/rocm/hip_blas_lt.h"
-#include "../cuda/cuda_blas_lt_impl.h"
+#include "xla/stream_executor/cuda/cuda_blas_lt_impl.h"
 
 namespace stream_executor {
 hipblasDatatype_t AsHipblasDataType(blas::DataType type) {

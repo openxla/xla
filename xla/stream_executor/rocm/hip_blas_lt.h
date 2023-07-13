@@ -72,7 +72,7 @@ limitations under the License.
 #define SE_CUBLAS_RETURN_IF_ERROR SE_HIPBLAS_RETURN_IF_ERROR
 #define CUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
 
-#include "../cuda/cuda_blas_lt.h"
+#include "xla/stream_executor/cuda/cuda_blas_lt.h"
 
 namespace stream_executor {
 namespace rocm {
