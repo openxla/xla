@@ -6786,6 +6786,8 @@ xla_cc_binary(
     ]),
 )
 
+exports_files(["xla_aot_compile_test_gpu_target_config.prototxt"])
+
 # A simple test of xla_aot_compile which generates an output file from an mhlo file.
 xla_aot_compile_cpu(
     name = "xla_aot_compile_test_cpu_executable",
@@ -6924,4 +6926,13 @@ tf_proto_library(
     srcs = ["memory_space_assignment.proto"],
     cc_api_version = 2,
     make_default_target_header_only = True,
+)
+
+cc_library(
+    name = "export_hlo",
+    hdrs = ["export_hlo.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description_proto_cc",
+    ],
 )

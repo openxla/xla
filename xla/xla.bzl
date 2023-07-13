@@ -124,6 +124,9 @@ def xla_cc_test(
         **kwargs
     )
 
+def xla_export_hlo_deps():
+    return []
+
 register_extension_info(
     extension = xla_cc_test,
     label_regex_for_dep = "{extension_name}",

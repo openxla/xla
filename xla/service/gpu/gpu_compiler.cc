@@ -79,6 +79,7 @@ limitations under the License.
 #include "xla/service/dynamic_index_splitter.h"
 #include "xla/service/dynamic_padder.h"
 #include "xla/service/eigh_expander.h"
+#include "xla/service/export_hlo.h"
 #include "xla/service/flatten_call_graph.h"
 #include "xla/service/float_normalization.h"
 #include "xla/service/gather_expander.h"
@@ -1047,6 +1048,9 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   const DebugOptions& debug_options = module->config().debug_options();
   TF_RETURN_IF_ERROR(LoadAutotuneResultsFromFile(debug_options));
 
+  MaybeUploadUnoptimizedGpuSymbolsToXSymbol(
+      module.get(), GetGpuTargetConfig(stream_exec).ToProto());
+
   // We dump the post-optimization HLO in RunBackend so no need to dump it here.
   XLA_SCOPED_LOGGING_TIMER(
       absl::StrCat("GpuCompiler::RunHloPasses for ", module->name()));
@@ -1077,6 +1081,8 @@ StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPassesWithoutDevice(
     std::unique_ptr<HloModule> module, const CompileOptions& options,
     const GpuTargetConfig& gpu_target_config,
     const AutotuneResults& autotune_results) {
+  MaybeUploadUnoptimizedGpuSymbolsToXSymbol(module.get(),
+                                            gpu_target_config.ToProto());
   // We dump the post-optimization HLO in RunBackend so no need to dump it here.
   XLA_SCOPED_LOGGING_TIMER(
       absl::StrCat("GpuCompiler::RunHloPasses for ", module->name()));

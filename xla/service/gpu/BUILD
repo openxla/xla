@@ -16,7 +16,7 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.bzl", "xla_cc_test", "xla_export_hlo_deps")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -2428,6 +2428,7 @@ cc_library(
         "//xla/service:dynamic_padder",
         "//xla/service:eigh_expander",
         "//xla/service:executable",
+        "//xla/service:export_hlo",
         "//xla/service:flatten_call_graph",
         "//xla/service:float_normalization",
         "//xla/service:gather_expander",
@@ -2496,7 +2497,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-    ]),
+    ]) + xla_export_hlo_deps(),
 )
 
 xla_cc_test(
