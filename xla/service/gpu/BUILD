@@ -1155,6 +1155,7 @@ cc_library(
         ":matmul_utils",
         "//xla:autotuning_proto_cc",
         "//xla:literal_util",
+        "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
