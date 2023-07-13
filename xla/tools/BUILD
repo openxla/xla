@@ -418,6 +418,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_runner",
+        "//xla/service:hlo_verifier",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:path",
