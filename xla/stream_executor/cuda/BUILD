@@ -279,11 +279,12 @@ cc_library(
     name = "cublas_plugin",
     srcs = if_cuda_is_configured([
         "cuda_blas.cc",
-        "cuda_blas_lt_impl.h",
+        "cuda_blas_lt.cc",
     ]),
     hdrs = if_cuda_is_configured([
         "cuda_blas.h",
         "cuda_blas_lt.h",
+        "cuda_blas_lt_impl.h",
     ]),
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
