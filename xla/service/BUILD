@@ -6799,6 +6799,8 @@ xla_cc_binary(
     ]),
 )
 
+exports_files(["xla_aot_compile_test_gpu_target_config.prototxt"])
+
 # A simple test of xla_aot_compile which generates an output file from an mhlo file.
 xla_aot_compile_cpu(
     name = "xla_aot_compile_test_cpu_executable",
