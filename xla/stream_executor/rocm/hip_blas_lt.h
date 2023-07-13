@@ -76,14 +76,13 @@ limitations under the License.
 
 namespace stream_executor {
 namespace rocm {
-inline std::string ToHipblasString(hipblasStatus_t status) {
-  return "HipblasLt error " + std::to_string(static_cast<int>(status));
-}
 
 inline tsl::Status ToStatus(hipblasStatus_t status, const char* prefix) {
   if (status != HIPBLAS_STATUS_SUCCESS) {
     return tsl::errors::Internal(
-                        absl::StrCat(prefix, ": ", ToHipblasString(status)));
+                          absl::StrCat(prefix, ": ", "HipblasLt error " + 
+                          std::to_string(static_cast<int>(status))
+                          ));
   }
   return tsl::OkStatus();
 }
