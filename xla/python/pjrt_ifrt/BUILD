@@ -36,6 +36,7 @@ cc_library(
     srcs = [
         "xla_compiler.cc",
         "xla_sharding.cc",
+        "xla_sharding_serdes.cc",
     ],
     hdrs = [
         "xla_compiler.h",
@@ -43,7 +44,9 @@ cc_library(
     ],
     deps = [
         ":xla_compiler_proto_cc",
+        ":xla_sharding_proto_cc",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
@@ -107,6 +110,27 @@ xla_cc_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+    ],
+)
+
+tf_proto_library(
+    name = "xla_sharding_proto",
+    srcs = ["xla_sharding.proto"],
+    protodeps = [
+        "//xla:xla_data_proto",
+        "//xla/python/ifrt:types_proto",
+    ],
+)
+
+xla_cc_test(
+    name = "xla_sharding_serdes_test",
+    srcs = ["xla_sharding_serdes_test.cc"],
+    deps = [
+        ":xla_ifrt",
+        "//xla/hlo/ir:hlo",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:mock",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
