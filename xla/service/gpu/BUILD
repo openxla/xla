@@ -1247,6 +1247,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/cuda:cublas_lt_header",
         "//xla/stream_executor/cuda:cublas_plugin",
+        "@tsl//tsl/platform:statusor",
     ]) + ["@tsl//tsl/platform:logging"],
 )
 
