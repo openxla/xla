@@ -66,6 +66,8 @@ cc_library(
     ],
     deps = [
         ":serdes",
+        ":sharding_proto_cc",
+        ":types_proto_cc",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
@@ -82,6 +84,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tf_runtime//:ref_count",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -308,4 +311,43 @@ xla_cc_test(
 tf_proto_library(
     name = "serdes_proto",
     srcs = ["serdes.proto"],
+)
+
+cc_library(
+    name = "sharding_serdes",
+    srcs = ["sharding_serdes.cc"],
+    hdrs = ["sharding_serdes.h"],
+    deps = [
+        ":ifrt",
+        ":serdes",
+        ":sharding_proto_cc",
+        "//xla:statusor",
+        "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:statusor",
+    ],
+    alwayslink = 1,
+)
+
+xla_cc_test(
+    name = "sharding_serdes_test",
+    srcs = ["sharding_serdes_test.cc"],
+    deps = [
+        ":ifrt",
+        ":mock",
+        ":serdes",
+        ":sharding_serdes",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+tf_proto_library(
+    name = "types_proto",
+    srcs = ["types.proto"],
+)
+
+tf_proto_library(
+    name = "sharding_proto",
+    srcs = ["sharding.proto"],
+    protodeps = [":types_proto"],
 )
