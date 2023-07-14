@@ -16,19 +16,15 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_MEMORY_SCHEDULER_H_
 #define XLA_SERVICE_HLO_MEMORY_SCHEDULER_H_
 
-#include <vector>
-
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/hlo_alias_analysis.h"
-#include "xla/service/hlo_ordering.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/tuple_points_to_analysis.h"
 #include "xla/statusor.h"
-#include "xla/types.h"
 
 namespace xla {
 
@@ -142,8 +138,8 @@ class HloMemoryScheduler : public HloModulePass {
   // size_function is the function returning the number of bytes required for a
   // LogicalBuffer. algorithm is the memory scheduling algorithm to use. If not
   // specified, then DefaultMemoryScheduler is used.
-  HloMemoryScheduler(const LogicalBuffer::SizeFunction& size_function,
-                     const ModuleSchedulerAlgorithm& algorithm = {});
+  explicit HloMemoryScheduler(const LogicalBuffer::SizeFunction& size_function,
+                              const ModuleSchedulerAlgorithm& algorithm = {});
 
   ~HloMemoryScheduler() override = default;
 

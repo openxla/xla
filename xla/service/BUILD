@@ -1803,7 +1803,6 @@ cc_library(
     deps = [
         ":heap_simulator",
         ":hlo_alias_analysis",
-        ":hlo_ordering",
         ":hlo_pass",
         ":logical_buffer",
         ":tuple_points_to_analysis",
@@ -4605,18 +4604,16 @@ cc_library(
     srcs = ["hlo_rematerialization.cc"],
     hdrs = ["hlo_rematerialization.h"],
     deps = [
-        ":buffer_value",
         ":call_graph",
-        ":flatten_call_graph",
+        ":hlo_dataflow_analysis",
         ":hlo_dce",
-        ":hlo_memory_scheduler",
         ":hlo_ordering",
+        ":hlo_pass",
         ":logical_buffer",
         ":tuple_points_to_analysis",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:statusor",
-        "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
@@ -4627,7 +4624,6 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -4636,16 +4632,11 @@ cc_library(
     testonly = 1,
     hdrs = ["hlo_rematerialization_test_utils.h"],
     deps = [
-        ":hlo_ordering",
-        ":hlo_rematerialization",
         "//xla:shape_util",
-        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/lib/core:status_test_util",
     ],
 )
 
@@ -4653,16 +4644,10 @@ xla_cc_test(
     name = "hlo_rematerialization_test_utils_test",
     srcs = ["hlo_rematerialization_test_utils_test.cc"],
     deps = [
-        ":hlo_ordering",
         ":hlo_rematerialization_test_utils",
-        "//xla:shape_util",
-        "//xla:types",
-        "//xla:util",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/lib/core:status_test_util",
     ],
 )
 
@@ -4670,6 +4655,7 @@ xla_cc_test(
     name = "hlo_rematerialization_test",
     srcs = ["hlo_rematerialization_test.cc"],
     deps = [
+        ":hlo_memory_scheduler",
         ":hlo_ordering",
         ":hlo_rematerialization",
         ":hlo_rematerialization_test_utils",

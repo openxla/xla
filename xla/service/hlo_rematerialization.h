@@ -25,7 +25,7 @@
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/call_graph.h"
-#include "xla/service/hlo_memory_scheduler.h"
+#include "xla/service/hlo_pass_interface.h"
 #include "xla/service/tuple_points_to_analysis.h"
 #include "xla/shape.h"
 #include "xla/statusor.h"
