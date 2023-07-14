@@ -16,19 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_AUTOTUNER_COMPILE_UTIL_H_
 #define XLA_SERVICE_GPU_AUTOTUNER_COMPILE_UTIL_H_
 
-#include <stdint.h>
-
-#include <algorithm>
-#include <array>
-#include <cstdint>
-#include <iterator>
-#include <limits>
 #include <memory>
 #include <optional>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <variant>
 #include <vector>
 
 #include "xla/autotune_results.pb.h"

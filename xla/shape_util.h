@@ -19,19 +19,16 @@ limitations under the License.
 #ifndef XLA_SHAPE_UTIL_H_
 #define XLA_SHAPE_UTIL_H_
 
-#include <algorithm>
 #include <functional>
 #include <initializer_list>
 #include <numeric>
 #include <optional>
 #include <ostream>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
 
-#include "absl/base/macros.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/types/span.h"
@@ -40,9 +37,6 @@ limitations under the License.
 #include "xla/printer.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla {
 

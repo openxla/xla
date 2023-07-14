@@ -500,6 +500,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tf_runtime//:hostcontext",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:platform_port",
     ],
 )

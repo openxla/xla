@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstring>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -40,6 +39,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

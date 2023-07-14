@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 

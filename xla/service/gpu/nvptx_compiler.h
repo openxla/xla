@@ -16,8 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_NVPTX_COMPILER_H_
 #define XLA_SERVICE_GPU_NVPTX_COMPILER_H_
 
-#include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>

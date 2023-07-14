@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "absl/strings/str_format.h"
 #include "xla/literal_comparison.h"
+#include "tsl/platform/env.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/test.h"
 

@@ -22,7 +22,6 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -38,6 +37,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "tsl/platform/cpu_info.h"
 #include "tsl/platform/threadpool.h"
 
 namespace xla {
