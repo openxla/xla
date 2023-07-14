@@ -229,6 +229,7 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
     return result;
   }
   void Clear() {
+    absl::MutexLock lock(&mu_);
     total_queries_ = misses_ = 0;
     entries_.clear();
   }
@@ -238,7 +239,7 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
   Cache::LRUList lru_list_;
   absl::node_hash_map<WeakrefCacheEntry, std::shared_ptr<Cache>, WeakrefKeyHash,
                       WeakrefKeyEq>
-      entries_;
+      entries_ ABSL_GUARDED_BY(mu_);
   int64_t misses_ = 0;
   int64_t total_queries_ = 0;
   absl::Mutex mu_;
