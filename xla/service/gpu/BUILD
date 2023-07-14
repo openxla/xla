@@ -2514,6 +2514,7 @@ xla_cc_test(
         "//xla:autotune_results_proto_cc",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:gpu_plugin",
+        "//xla/service:xla_debug_info_manager",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/base:log_severity",
