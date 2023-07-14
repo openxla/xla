@@ -73,11 +73,12 @@ limitations under the License.
 #define CUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
 
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"
+#include "xla/status.h"
 
 namespace stream_executor {
 namespace rocm {
 
-inline tsl::Status ToStatus(hipblasStatus_t status, const char* prefix) {
+inline xla::Status ToStatus(hipblasStatus_t status, const char* prefix) {
   if (status != HIPBLAS_STATUS_SUCCESS) {
     return tsl::errors::Internal(
                           absl::StrCat(prefix, ": ", "HipblasLt error " + 
