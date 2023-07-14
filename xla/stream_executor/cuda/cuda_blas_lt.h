@@ -34,7 +34,8 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_blas_utils.h"
 #else
 #include "rocm/rocm_config.h"
-#include "../rocm/hipblaslt_wrapper.h"
+#include "xla/stream_executor/rocm/hipblaslt_wrapper.h"
+
 namespace stream_executor {
   hipblasDatatype_t AsHipblasDataType(blas::DataType type);
   hipblasLtComputeType_t AsHipblasComputeType(blas::ComputationType type);
