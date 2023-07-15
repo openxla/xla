@@ -185,18 +185,32 @@ StatusOr<std::vector<tsl::RCReference<Array>>>
 PjRtArray::DisassembleIntoSingleDeviceArrays(ArrayCopySemantics semantics) {
   DCHECK(this);
   std::vector<tsl::RCReference<Array>> result;
-  result.reserve(sharding_->devices().size());
   TF_ASSIGN_OR_RETURN(auto shape_and_shardings, sharding_->Disassemble(shape_));
-  for (int i = 0; i < sharding_->devices().size(); ++i) {
+
+  if (sharding_->addressable_devices().size() != pjrt_buffers_.size()) {
+    return FailedPrecondition(
+        "IFRT PjRtArray has %d PjRtBuffers, but IFRT Sharding has %d "
+        "addressable devices out of %d total devices",
+        pjrt_buffers_.size(), sharding_->addressable_devices().size(),
+        sharding_->devices().size());
+  }
+
+  int i = 0;
+  result.reserve(sharding_->addressable_devices().size());
+  for (auto& shape_and_sharding : shape_and_shardings) {
+    if (!shape_and_sharding.second->devices().front()->IsAddressable()) {
+      continue;
+    }
     PjRtBuffers buffers;
     buffers.reserve(1);
     buffers.push_back(GetPjRtBuffer(semantics, i));
     TF_ASSIGN_OR_RETURN(
-        auto array, PjRtArray::Create(client_, dtype_,
-                                      std::move(shape_and_shardings[i].first),
-                                      std::move(shape_and_shardings[i].second),
-                                      std::move(buffers)));
+        auto array,
+        PjRtArray::Create(client_, dtype_, std::move(shape_and_sharding.first),
+                          std::move(shape_and_sharding.second),
+                          std::move(buffers)));
     result.push_back(std::move(array));
+    ++i;
   }
   return result;
 }

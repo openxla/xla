@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -38,6 +37,19 @@ namespace xla {
 namespace ifrt {
 
 namespace {
+
+// Finds all addressable devices in `devices`.
+DeviceList GetAddressableDevices(const DeviceList& devices) {
+  DeviceList::Devices addressable_devices;
+  // Reserve memory conservatively.
+  addressable_devices.reserve(devices.size());
+  for (Device* device : devices) {
+    if (device->IsAddressable()) {
+      addressable_devices.push_back(device);
+    }
+  }
+  return DeviceList(std::move(addressable_devices));
+}
 
 // Iterates the major-to-minor Cartesian product of a Span of containers of the
 // same type.
@@ -158,6 +170,10 @@ char ShardingParamSharding::ID = 0;
 std::ostream& operator<<(std::ostream& os, const Sharding& sharding) {
   return os << sharding.DebugString();
 }
+
+Sharding::Sharding(DeviceList devices)
+    : devices_(std::move(devices)),
+      addressable_devices_(GetAddressableDevices(devices_)) {}
 
 std::unique_ptr<SingleDeviceSharding> SingleDeviceSharding::Create(
     Device* device) {

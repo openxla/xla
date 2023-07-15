@@ -126,7 +126,6 @@ cc_library(
         ":xla_ifrt",
         ":xla_sharding_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:sharding_serdes",
     ],
@@ -142,6 +141,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/python/ifrt:sharding_serdes",
         "//xla/python/ifrt:sharding_test_util",
+        "@com_google_absl//absl/functional:bind_front",
         "@com_google_googletest//:gtest_main",
     ],
 )

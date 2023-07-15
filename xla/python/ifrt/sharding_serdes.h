@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 
 #include "llvm/Support/ExtensibleRTTI.h"
+#include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/statusor.h"
 
@@ -30,12 +31,14 @@ class Client;
 // Options for deserializing shardings.
 struct DeserializeShardingOptions
     : llvm::RTTIExtends<DeserializeShardingOptions, DeserializeOptions> {
-  explicit DeserializeShardingOptions(Client* client) : client(client) {}
+  explicit DeserializeShardingOptions(
+      DeviceList::LookupDeviceFunc lookup_device)
+      : lookup_device(lookup_device) {}
 
   static char ID;  // NOLINT
 
-  // The client whose devices will be used by deserialized shardings.
-  Client* client;
+  // Function that converts device ids to devices.
+  DeviceList::LookupDeviceFunc lookup_device;
 };
 
 // Casts `DeserializeOptions` into `DeserializeShardingOptions`.

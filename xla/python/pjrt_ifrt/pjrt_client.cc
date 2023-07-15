@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_tuple.h"
+#include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "tsl/platform/statusor.h"
 #include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 
@@ -98,11 +99,11 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
         "sharding=%s",
         sharding->DebugString());
   }
-  if (sharding->devices().size() != arrays.size()) {
+  if (sharding->addressable_devices().size() != arrays.size()) {
     return InvalidArgument(
-        "Number of output shards must match the number of single-shard arrays: "
-        "%d vs. %d",
-        sharding->devices().size(), arrays.size());
+        "Number of addressable output shards must match the number of "
+        "single-shard arrays: %d vs. %d",
+        sharding->addressable_devices().size(), arrays.size());
   }
   PjRtArray::PjRtBuffers buffers;
   buffers.reserve(arrays.size());

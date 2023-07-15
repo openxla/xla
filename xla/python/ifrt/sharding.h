@@ -47,6 +47,9 @@ class Sharding : public llvm::RTTIExtends<Sharding, Serializable> {
   // All devices in this sharding. Devices may appear more than once.
   const DeviceList& devices() const { return devices_; }
 
+  // Addressable devices in this sharding. Devices may appear more than once.
+  const DeviceList& addressable_devices() const { return addressable_devices_; }
+
   // Breaks a shape up into per-device shapes and shardings. See
   // Array::DisassembleIntoSingleDeviceArrays(). It may return an error if
   // disassembly is unsupported.
@@ -67,9 +70,10 @@ class Sharding : public llvm::RTTIExtends<Sharding, Serializable> {
   static char ID;  // NOLINT
 
  protected:
-  explicit Sharding(DeviceList devices) : devices_(devices) {}
+  explicit Sharding(DeviceList devices);
 
   DeviceList devices_;
+  DeviceList addressable_devices_;
 };
 
 std::ostream& operator<<(std::ostream& os, const Sharding& sharding);

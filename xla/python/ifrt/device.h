@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PYTHON_IFRT_DEVICE_H_
 #define XLA_PYTHON_IFRT_DEVICE_H_
 
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -43,11 +44,15 @@ class DeviceList {
   // better performance.
   using Devices = absl::InlinedVector<Device*, kInlineDeviceSize>;
 
+  // Function that matches the semantics of `Client::LookupDevice()`.
+  using LookupDeviceFunc = std::function<StatusOr<Device*>(int)>;
+
   explicit DeviceList(Devices devices) : devices_(std::move(devices)) {}
 
-  // Constructs `DeviceList` from `DeviceListProto`. Device ids in the proto
-  // must be consistent with the devices owned by `client'.
-  static StatusOr<DeviceList> FromProto(Client* client,
+  // Constructs `DeviceList` from `DeviceListProto`. Devices are looked up using
+  // `lookup_device`. Device ids in the proto must be consistent with the
+  // devices returned by `lookup_device`.
+  static StatusOr<DeviceList> FromProto(const LookupDeviceFunc& lookup_device,
                                         const DeviceListProto& proto);
 
   // Returns a `DeviceListProto` representation.

@@ -66,7 +66,6 @@ cc_library(
     ],
     deps = [
         ":serdes",
-        ":sharding_proto_cc",
         ":types_proto_cc",
         "//xla:status",
         "//xla:statusor",
@@ -84,7 +83,6 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tf_runtime//:ref_count",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -350,6 +348,7 @@ xla_cc_test(
         ":serdes",
         ":sharding_serdes",
         ":sharding_test_util",
+        "@com_google_absl//absl/functional:bind_front",
         "@com_google_googletest//:gtest_main",
     ],
 )
