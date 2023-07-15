@@ -772,7 +772,10 @@ cc_library(
     srcs = ["host_callback.cc"],
     hdrs = ["host_callback.h"],
     visibility = [":friends"],
-    deps = [":pjrt_client"],
+    deps = [
+        ":pjrt_client",
+        "@tf_runtime//:async_value",
+    ],
 )
 
 xla_cc_test(

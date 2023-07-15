@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "xla/pjrt/pjrt_client.h"
+#include "tfrt/concurrency/async_value_ref.h"  // from @tf_runtime
 
 // The following provides an API for implementing host callbacks on top of
 // PjRT's send/recv interface (see xla::SendCallback and xla::RecvCallback).
@@ -40,18 +41,26 @@ class ThreadSafePjRtChunkQueue {
   // Push a PjRtChunk into the queue.
   void Push(PjRtChunk chunk) {
     absl::MutexLock lock(&mu_);
-    queue_.push_back(std::move(chunk));
+    if (requests_.empty()) {
+      queue_.push_back(std::move(chunk));
+      return;
+    }
+    auto request = requests_.front();
+    request.emplace(std::move(chunk));
+    requests_.pop_front();
   }
 
-  // Pop a PjRtChunk from the queue. This method blocks if the queue is empty.
-  PjRtChunk Pop() {
+  // Pop a PjRtChunk future from the queue.
+  tsl::AsyncValueRef<PjRtChunk> Pop() {
     absl::MutexLock lock(&mu_);
-    auto cond = [this]() {
-      mu_.AssertHeld();
-      return !queue_.empty();
-    };
-    mu_.Await(absl::Condition(&cond));
-    auto chunk = std::move(queue_.front());
+    if (queue_.empty()) {
+      auto deque_request = tsl::MakeConstructedAsyncValueRef<PjRtChunk>();
+      requests_.push_back(deque_request);
+      return deque_request;
+    }
+
+    auto chunk =
+        tsl::MakeAvailableAsyncValueRef<PjRtChunk>(std::move(queue_.front()));
     queue_.pop_front();
     return chunk;
   }
@@ -59,6 +68,8 @@ class ThreadSafePjRtChunkQueue {
  private:
   absl::Mutex mu_;
   std::deque<PjRtChunk> queue_ ABSL_GUARDED_BY(mu_);
+  // Contains unfulfilled pop requests.
+  std::deque<tsl::AsyncValueRef<PjRtChunk>> requests_ ABSL_GUARDED_BY(mu_);
 };
 
 struct HostCallbackArgInfo {
@@ -108,7 +119,7 @@ class HostCallbackContext {
                 PjRtChunk data);
 
   void Receive(int res_num, const PjRtTransferMetadata& metadata,
-               CopyToDeviceStream& stream);
+               std::unique_ptr<CopyToDeviceStream> stream);
 
   const HostCallback& host_callback() const { return host_callback_; }
 
