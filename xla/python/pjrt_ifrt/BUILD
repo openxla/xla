@@ -140,8 +140,8 @@ xla_cc_test(
         ":xla_ifrt",
         ":xla_sharding_serdes",
         "//xla/hlo/ir:hlo",
-        "//xla/python/ifrt:mock",
         "//xla/python/ifrt:sharding_serdes",
+        "//xla/python/ifrt:sharding_test_util",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -182,6 +182,8 @@ xla_cc_test(
     deps = [
         ":tfrt_cpu_client_test_lib",
         ":xla_ifrt",
+        "//xla:xla_data_proto_cc",
+        "//xla/python/ifrt:sharding_test_util",
         "//xla/python/ifrt:tuple_impl_test_lib",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:errors",

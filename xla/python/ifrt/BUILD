@@ -149,6 +149,7 @@ xla_cc_test(
     srcs = ["sharding_test.cc"],
     deps = [
         ":ifrt",
+        ":sharding_test_util",
         "//xla/python/ifrt/ir",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
@@ -172,6 +173,19 @@ cc_library(
         "@tf_runtime//:ref_count",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
+    name = "sharding_test_util",
+    testonly = True,
+    srcs = ["sharding_test_util.cc"],
+    hdrs = ["sharding_test_util.h"],
+    deps = [
+        ":ifrt",
+        ":mock",
+        ":test_util",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -333,10 +347,9 @@ xla_cc_test(
     srcs = ["sharding_serdes_test.cc"],
     deps = [
         ":ifrt",
-        ":mock",
         ":serdes",
         ":sharding_serdes",
-        "@com_google_absl//absl/container:flat_hash_map",
+        ":sharding_test_util",
         "@com_google_googletest//:gtest_main",
     ],
 )

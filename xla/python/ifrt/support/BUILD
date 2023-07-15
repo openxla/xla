@@ -29,6 +29,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:sharding_test_util",
         "//xla/python/ifrt/ir",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
