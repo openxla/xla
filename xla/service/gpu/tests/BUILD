@@ -27,6 +27,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
     licenses = ["notice"],
+    features = ["amdgpu"],
 )
 
 package_group(
@@ -718,7 +719,8 @@ xla_cc_binary(
     name = "hlo_to_llvm_ir",
     testonly = True,
     srcs = ["hlo_to_llvm_ir.cc"],
-    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]),
+    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) +
+            if_rocm_is_configured(["-DTENSORFLOW_USE_ROCM=1"]),
     deps = [
         "//xla:status",
         "//xla/hlo/ir:hlo",
@@ -731,7 +733,6 @@ xla_cc_binary(
         "//xla/stream_executor:device_description_proto_cc_impl",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:stream_executor_impl",
-        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform",
         "//xla/tools:hlo_module_loader",
         "@llvm-project//llvm:Target",
@@ -739,13 +740,15 @@ xla_cc_binary(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/util:command_line_flags",
     ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/stream_executor/cuda:cublas_plugin",
     ]) + if_rocm_is_configured([
-        "@tsl//tsl/platform:rocm_rocdl_path",
-        "//xla/service/gpu:amdgpu_compiler_impl",
+        "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/stream_executor/rocm:rocblas_plugin",
         "//xla/stream_executor/rocm:rocm_helpers",
+        "//xla/service/gpu:amdgpu_compiler_impl",
+        "@tsl//tsl/platform:rocm_rocdl_path",
     ]),
 )
 
@@ -759,8 +762,22 @@ glob_lit_tests(
     tags_override = {
         "reduction_vectorization_sm_all.hlo": ["no_rocm"],
         "element_wise_row_vectorization.hlo": ["no_rocm"],
+        "single_instruction.hlo": ["no_rocm"],
+        "reduce_unnested.hlo": ["no_rocm"],
     },
     test_file_exts = ["hlo"],
+    features = if_cuda_is_configured(["--param=PTX=PTX",
+                                      "--param=SUBST_TIDX=@llvm.nvvm.read.ptx.sreg.tid.x",
+                                      "--param=SUBST_CTAIDX=@llvm.nvvm.read.ptx.sreg.ctaid.x",
+                                      "--param=SUBST_BARRIER=@llvm.nvvm.barrier0",
+                                      "--param=SUBST_KERNEL_ANNOTATION=''",
+                                      "--param=SUBST_ADDRSPACE_ANNOTATION=''"]) +
+               if_rocm_is_configured(["--param=PTX=GCN",
+                                      "--param=SUBST_TIDX=@llvm.amdgcn.workitem.id.x",
+                                      "--param=SUBST_CTAIDX=@llvm.amdgcn.workgroup.id.x",
+                                      "--param=SUBST_BARRIER=@llvm.amdgcn.s.barrier",
+                                      "--param=SUBST_KERNEL_ANNOTATION=amdgpu_kernel[SPACE]",
+                                      "--param=SUBST_ADDRSPACE_ANNOTATION='addrspace(5)[SPACE]'"]),
 )
 
 # Bundle together all of the test utilities that are used by tests.
