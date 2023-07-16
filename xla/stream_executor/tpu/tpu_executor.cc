@@ -27,8 +27,6 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_stream.h"
 #include "tsl/c/tsl_status.h"
 
-using stream_executor::DeviceMemoryBase;
-
 namespace stream_executor {
 namespace tpu {
 
