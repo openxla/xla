@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "xla/backends/interpreter/executable.h"
+#include "xla/hlo/transforms/hlo_dce.h"
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/cholesky_expander.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/service/flatten_call_graph.h"
 #include "xla/service/hlo_constant_folding.h"
 #include "xla/service/hlo_cse.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_pass_fix.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/layout_assignment.h"

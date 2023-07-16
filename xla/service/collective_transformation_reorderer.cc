@@ -22,7 +22,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/hlo_dce.h"
+#include "xla/hlo/transforms/hlo_dce.h"
 
 namespace xla {
 

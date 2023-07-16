@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <string>
 
-#include "xla/service/hlo_dce.h"
+#include "xla/hlo/transforms/hlo_dce.h"
 #include "xla/tests/hlo_test_base.h"
 
 namespace xla {

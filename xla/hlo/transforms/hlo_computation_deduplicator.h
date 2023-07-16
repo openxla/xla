@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_HLO_COMPUTATION_DEDUPLICATOR_H_
-#define XLA_SERVICE_HLO_COMPUTATION_DEDUPLICATOR_H_
+#ifndef XLA_HLO_TRANSFORMS_HLO_COMPUTATION_DEDUPLICATOR_H_
+#define XLA_HLO_TRANSFORMS_HLO_COMPUTATION_DEDUPLICATOR_H_
 
 #include "xla/service/hlo_pass_interface.h"
 
@@ -44,4 +44,4 @@ class HloComputationDeduplicator : public HloModulePass {
 
 }  // namespace xla
 
-#endif  // XLA_SERVICE_HLO_COMPUTATION_DEDUPLICATOR_H_
+#endif  // XLA_HLO_TRANSFORMS_HLO_COMPUTATION_DEDUPLICATOR_H_

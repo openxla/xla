@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/hlo_computation_deduplicator.h"
+#include "xla/hlo/transforms/hlo_computation_deduplicator.h"
 
 #include <algorithm>
 #include <string>
