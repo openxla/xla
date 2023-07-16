@@ -1208,6 +1208,7 @@ xla_cc_test(
         ":gemm_rewriter_triton",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
