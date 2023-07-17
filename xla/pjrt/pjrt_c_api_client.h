@@ -273,11 +273,24 @@ class PjRtCApiBuffer : public PjRtBuffer {
   // PJRT C API doesn't support tuple buffers.
   bool IsTuple() const override { return false; }
 
-  const Shape& on_device_shape() const override;
+  const Shape& on_device_shape() const override {
+    LOG(FATAL) << "PjRtBuffer::on_device_shape() not implemented in PJRT C API";
+  }
+
+  bool has_dynamic_dimensions() const override;
+
+  absl::Span<const bool> dynamic_dimensions() const override {
+    LOG(FATAL) << "PjRtCApiBuffer::dynamic_dimensions() not implemented. "
+               << "Considering using has_dynamic_dimensions() or "
+                  "logical_dimensions() if applicable.";
+  }
 
   StatusOr<std::vector<int64_t>> logical_dimensions() override;
 
-  StatusOr<Shape> logical_on_device_shape() override;
+  StatusOr<Shape> logical_on_device_shape() override {
+    LOG(FATAL) << "PjRtBuffer::on_logical_device_shape() not implemented in "
+                  "PJRT C API";
+  }
 
   PjRtDevice* device() const override;
 

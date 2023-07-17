@@ -83,6 +83,15 @@ std::optional<std::vector<int64_t>> ByteStridesOrDefaultForShapeInt64(
   return ifrt_array->sharding().devices().front();
 }
 
+/* static */ xla::Shape IfrtHelpers::xla_shape(ifrt::Array* ifrt_array) {
+  auto* pjrt_buffer = IfrtHelpers::pjrt_buffer(ifrt_array);
+
+  Shape shape = ShapeUtil::MakeShape(pjrt_buffer->element_type(),
+                                     pjrt_buffer->dimensions());
+  *shape.mutable_layout() = pjrt_buffer->layout();
+  return shape;
+}
+
 /* static */ StatusOr<const Shape*> IfrtHelpers::xla_dynamic_shape(
     ifrt::Array* ifrt_array, std::optional<Shape>& scratch) {
   auto* pjrt_buffer = IfrtHelpers::pjrt_buffer(ifrt_array);
@@ -143,7 +152,7 @@ pybind11::dtype IfrtHelpers::python_dtype(ifrt::Array* ifrt_array) {
   auto* arr = llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
   if (arr != nullptr) {
     auto* pjrt_buffer = arr->pjrt_buffers().front().get();
-    TF_RET_CHECK(pjrt_buffer->on_device_shape().IsArray());
+    TF_RET_CHECK(!pjrt_buffer->IsTuple());
     // On CPU, we can return the value in a zero-copy way.
     if (pjrt_buffer->IsOnCpu()) {
       TF_ASSIGN_OR_RETURN(
@@ -175,8 +184,7 @@ pybind11::dtype IfrtHelpers::python_dtype(ifrt::Array* ifrt_array) {
     }
   }
 
-  TF_RETURN_IF_ERROR(
-      CopyToHostAsync(host_value, dynamic_shape_holder, ifrt_array));
+  TF_RETURN_IF_ERROR(CopyToHostAsync(host_value, ifrt_array));
   if (!host_value->ready.HasBeenNotified()) {
     py::gil_scoped_release gil;
     host_value->ready.WaitForNotification();
@@ -188,8 +196,7 @@ pybind11::dtype IfrtHelpers::python_dtype(ifrt::Array* ifrt_array) {
 }
 
 /* static */ Status PyHostValue::CopyToHostAsync(
-    std::shared_ptr<PyHostValue>& host_value,
-    std::optional<Shape>& dynamic_shape_holder, ifrt::Array* ifrt_array) {
+    std::shared_ptr<PyHostValue>& host_value, ifrt::Array* ifrt_array) {
   if (host_value) {
     return OkStatus();
   }
@@ -213,25 +220,19 @@ pybind11::dtype IfrtHelpers::python_dtype(ifrt::Array* ifrt_array) {
 
   auto host_value_copy = std::make_shared<PyHostValue>();
   host_value = host_value_copy;
-  // TODO(b/182461453): This is a blocking call. If we further implemented
-  // populating dynamic shape metadata while fetching the literal, we wouldn't
-  // need this static approach.
-  const xla::Shape* dynamic_shape;
-  std::optional<xla::Shape> shape_holder;
+
+  xla::Shape array_shape;
   if (llvm::isa<ifrt::PjRtCompatibleArray>(ifrt_array)) {
-    TF_ASSIGN_OR_RETURN(dynamic_shape, IfrtHelpers::xla_dynamic_shape(
-                                           ifrt_array, dynamic_shape_holder));
+    array_shape = IfrtHelpers::xla_shape(ifrt_array);
   } else {
-    // Skip querying the dynamic shape for a non-PjRt Array.
     TF_ASSIGN_OR_RETURN(xla::PrimitiveType type,
                         ifrt::ToPrimitiveType(ifrt_array->dtype()));
-    shape_holder = ShapeUtil::MakeShapeWithDescendingLayout(
+    array_shape = ShapeUtil::MakeShapeWithDescendingLayout(
         type, ifrt_array->shape().dims());
-    dynamic_shape = &*shape_holder;
   }
 
   py::gil_scoped_release gil;
-  xla::Shape host_shape = ShapeUtil::DeviceShapeToHostShape(*dynamic_shape);
+  xla::Shape host_shape = ShapeUtil::DeviceShapeToHostShape(array_shape);
   // TODO(hyeontaek): Several PjRt runtimes assume that the host buffer uses
   // the same transposition as the device buffer. This is different from
   // PjRtBuffer::ToLiteral()'s semantics that the runtime respects the layout
@@ -259,44 +260,42 @@ StatusOr<pybind11::dict> IfrtHelpers::CudaArrayInterface(
     return InvalidArgument(
         "__cuda_array_interface__ is only defined for NVidia GPU buffers.");
   }
-  if (!pjrt_buffer->on_device_shape().IsArray()) {
+  if (pjrt_buffer->IsTuple()) {
     return InvalidArgument(
         "__cuda_array_interface__ is only defined for array buffers.");
   }
-  if (pjrt_buffer->on_device_shape().element_type() == BF16) {
+  if (pjrt_buffer->element_type() == BF16) {
     return InvalidArgument(
         "__cuda_array_interface__ is not supported for bfloat16 buffers.");
   }
-  if (pjrt_buffer->on_device_shape().element_type() == F8E4M3FN) {
+  if (pjrt_buffer->element_type() == F8E4M3FN) {
     return InvalidArgument(
         "__cuda_array_interface__ is not supported for F8E4M3FN buffers.");
   }
-  if (pjrt_buffer->on_device_shape().element_type() == F8E4M3B11FNUZ) {
+  if (pjrt_buffer->element_type() == F8E4M3B11FNUZ) {
     return InvalidArgument(
         "__cuda_array_interface__ is not supported for F8E4M3B11FNUZ buffers.");
   }
-  if (pjrt_buffer->on_device_shape().element_type() == F8E5M2) {
+  if (pjrt_buffer->element_type() == F8E5M2) {
     return InvalidArgument(
         "__cuda_array_interface__ is not supported for F8E5M2 buffers.");
   }
-  if (pjrt_buffer->on_device_shape().element_type() == F8E4M3FNUZ) {
+  if (pjrt_buffer->element_type() == F8E4M3FNUZ) {
     return InvalidArgument(
         "__cuda_array_interface__ is not supported for F8E4M3FNUZ buffers.");
   }
-  if (pjrt_buffer->on_device_shape().element_type() == F8E5M2FNUZ) {
+  if (pjrt_buffer->element_type() == F8E5M2FNUZ) {
     return InvalidArgument(
         "__cuda_array_interface__ is not supported for F8E5M2FNUZ buffers.");
   }
-  TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(
-      pjrt_buffer->on_device_shape().layout()));
+  TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(pjrt_buffer->layout()));
 
   py::dict result;
   TF_ASSIGN_OR_RETURN(const auto* dynamic_shape,
                       IfrtHelpers::xla_dynamic_shape(ifrt_array, scratch));
   result["shape"] = SpanToTuple(dynamic_shape->dimensions());
-  TF_ASSIGN_OR_RETURN(py::str typestr,
-                      TypeDescriptorForPrimitiveType(
-                          pjrt_buffer->on_device_shape().element_type()));
+  TF_ASSIGN_OR_RETURN(py::str typestr, TypeDescriptorForPrimitiveType(
+                                           pjrt_buffer->element_type()));
   result["typestr"] = std::move(typestr);
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<PjRtBuffer::ExternalReference> external_reference_hold,

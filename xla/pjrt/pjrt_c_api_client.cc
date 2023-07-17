@@ -1343,6 +1343,16 @@ const Layout& PjRtCApiBuffer::layout() const {
   return *layout_;
 }
 
+bool PjRtCApiBuffer::has_dynamic_dimensions() const {
+  PJRT_Buffer_DynamicDimensionIndices_Args args;
+  args.struct_size = PJRT_Buffer_DynamicDimensionIndices_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.buffer = buffer_.get();
+  pjrt::LogFatalIfPjrtError(
+      pjrt_c_api()->PJRT_Buffer_DynamicDimensionIndices(&args), pjrt_c_api());
+  return args.num_dynamic_dims > 0;
+}
+
 StatusOr<std::vector<int64_t>> PjRtCApiBuffer::logical_dimensions() {
   PJRT_Buffer_UnpaddedDimensions_Args args;
   args.struct_size = PJRT_Buffer_UnpaddedDimensions_Args_STRUCT_SIZE;
@@ -1352,12 +1362,6 @@ StatusOr<std::vector<int64_t>> PjRtCApiBuffer::logical_dimensions() {
                          pjrt_c_api());
   return std::vector<int64_t>(args.unpadded_dims,
                               args.unpadded_dims + args.num_dims);
-}
-
-const Shape& PjRtCApiBuffer::on_device_shape() const {
-  CHECK(shape_.has_value())
-      << "Shape should be initialized in PjRtCApiBuffer constructor.";
-  return shape_.value();
 }
 
 namespace {
@@ -1479,11 +1483,6 @@ static Shape GetDeviceShape(PJRT_Buffer* c_buffer, const PJRT_Api* api,
 void PjRtCApiBuffer::set_shape() {
   shape_ = GetDeviceShape(buffer_.get(), client_->pjrt_c_api(),
                           /*is_logical_on_device_shape=*/false);
-}
-
-StatusOr<Shape> PjRtCApiBuffer::logical_on_device_shape() {
-  return GetDeviceShape(buffer_.get(), client_->pjrt_c_api(),
-                        /*is_logical_on_device_shape=*/true);
 }
 
 PjRtFuture<Status> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {

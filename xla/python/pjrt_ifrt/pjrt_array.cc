@@ -120,9 +120,8 @@ StatusOr<tsl::RCReference<PjRtArray>> PjRtArray::Create(
 
 StatusOr<tsl::RCReference<PjRtArray>> PjRtArray::Create(
     PjRtCompatibleClient* client, std::shared_ptr<PjRtBuffer> pjrt_buffer) {
-  TF_ASSIGN_OR_RETURN(auto dtype,
-                      ToDType(pjrt_buffer->on_device_shape().element_type()));
-  Shape shape(pjrt_buffer->on_device_shape().dimensions());
+  TF_ASSIGN_OR_RETURN(auto dtype, ToDType(pjrt_buffer->element_type()));
+  Shape shape(pjrt_buffer->dimensions());
   auto sharding = SingleDeviceSharding::Create(pjrt_buffer->device());
   return tsl::MakeRef<PjRtArray>(client, dtype, std::move(shape),
                                  std::move(sharding),
@@ -152,9 +151,8 @@ std::shared_ptr<PjRtBuffer> PjRtArray::GetPjRtBuffer(
 
 StatusOr<tsl::RCReference<PjRtArray>> PjRtArray::Create(
     PjRtCompatibleClient* client, Shape shape, PjRtBuffers pjrt_buffers) {
-  TF_ASSIGN_OR_RETURN(
-      auto dtype, xla::ifrt::ToDType(
-                      pjrt_buffers.front()->on_device_shape().element_type()));
+  TF_ASSIGN_OR_RETURN(auto dtype,
+                      xla::ifrt::ToDType(pjrt_buffers.front()->element_type()));
   DeviceList::Devices devices;
   devices.reserve(pjrt_buffers.size());
   std::vector<Shape> shapes;
@@ -162,7 +160,7 @@ StatusOr<tsl::RCReference<PjRtArray>> PjRtArray::Create(
 
   for (const auto& pjrt_buffer : pjrt_buffers) {
     devices.push_back(pjrt_buffer->device());
-    shapes.push_back(Shape(pjrt_buffer->on_device_shape().dimensions()));
+    shapes.push_back(Shape(pjrt_buffer->dimensions()));
   }
   auto sharding =
       ifrt::ConcreteSharding::Create(xla::ifrt::DeviceList(std::move(devices)),
@@ -217,23 +215,7 @@ Future<Status> PjRtArray::CopyToHostBuffer(
   }
 
   PjRtBuffer* pjrt_buffer = pjrt_buffers_.front().get();
-  absl::Span<const int64_t> dims;
-  StatusOr<xla::Shape> dynamic_shape;
-  if (pjrt_buffer->on_device_shape().is_static()) {
-    dims = shape_.dims();
-  } else {
-    // TODO(b/182461453): This is a blocking call. If we further implemented
-    // populating dynamic shape metadata while fetching the literal, we wouldn't
-    // need this static approach.
-    // TODO(hyeontaek): Clean up this dynamic shape access once we formalize
-    // dynamic shape support in IFRT.
-    dynamic_shape = pjrt_buffer->logical_on_device_shape();
-    if (!dynamic_shape.ok()) {
-      return Future<Status>(std::move(dynamic_shape).status());
-    }
-    dims = dynamic_shape->dimensions();
-  }
-
+  absl::Span<const int64_t> dims = pjrt_buffer->dimensions();
   std::unique_ptr<xla::MutableBorrowingLiteral> literal;
   if (byte_strides.has_value()) {
     auto xla_shape =

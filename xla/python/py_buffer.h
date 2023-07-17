@@ -38,7 +38,6 @@ namespace xla {
 // TODO(parkers): Move everything in this file to a better home.
 struct PyHostValue {
   static Status CopyToHostAsync(std::shared_ptr<PyHostValue>& host_value,
-                                std::optional<Shape>& dynamic_shape_holder,
                                 ifrt::Array* ifrt_array);
 
   static StatusOr<pybind11::object> AsNumPyArray(
@@ -52,6 +51,7 @@ struct PyHostValue {
 };
 
 struct IfrtHelpers {
+  static Shape xla_shape(ifrt::Array* ifrt_array);
   static StatusOr<const Shape*> xla_dynamic_shape(
       ifrt::Array* ifrt_array, std::optional<Shape>& scratch);
   static StatusOr<tsl::RCReference<ifrt::Array>> CopyToDevice(
