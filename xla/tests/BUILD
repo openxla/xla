@@ -2019,14 +2019,14 @@ xla_test(
 )
 
 xla_test(
-    name = "data_parallel_collective_optimizer_execution_test",
-    srcs = ["data_parallel_collective_optimizer_execution_test.cc"],
+    name = "collective_pipeliner_execution_test",
+    srcs = ["collective_pipeliner_execution_test.cc"],
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
-        "//xla/service:data_parallel_collective_optimizer",
+        "//xla/service:collective_pipeliner",
         "//xla/service:hlo_dce",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_pass_pipeline",

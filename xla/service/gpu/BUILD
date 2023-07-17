@@ -2422,7 +2422,7 @@ cc_library(
         "//xla/service:convolution_4d_expander",
         "//xla/service:convolution_pred_expander",
         "//xla/service:copy_insertion",
-        "//xla/service:data_parallel_collective_optimizer",
+        "//xla/service:collective_pipeliner",
         "//xla/service:dot_decomposer",
         "//xla/service:dot_dimension_merger",
         "//xla/service:dot_merger",
