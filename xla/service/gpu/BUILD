@@ -317,6 +317,8 @@ cc_library(
         ":hlo_fusion_analysis",
         ":hlo_to_ir_bindings",
         ":ir_emission_utils",
+        ":kernel_arguments",
+        ":kernel_reuse_cache",
         ":launch_dimensions",
         ":matmul_utils",
         ":nccl_collective_thunks",
@@ -3936,6 +3938,38 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/container:flat_hash_set",
+    ],
+)
+
+cc_library(
+    name = "kernel_reuse_cache",
+    srcs = ["kernel_reuse_cache.cc"],
+    hdrs = ["kernel_reuse_cache.h"],
+    deps = [
+        ":kernel_arguments",
+        ":launch_dimensions",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "kernel_arguments",
+    srcs = ["kernel_arguments.cc"],
+    hdrs = ["kernel_arguments.h"],
+    deps = [
+        ":gpu_constants",
+        ":ir_emission_utils",
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla/mlir_hlo:lhlo",
+        "//xla/mlir_hlo:transforms_gpu_passes",
+        "//xla/service:buffer_assignment",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:IR",
     ],
 )
 
