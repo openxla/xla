@@ -1535,6 +1535,7 @@ xla_test_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test",
     ],
+    alwayslink = 1,
 )
 
 xla_test(
