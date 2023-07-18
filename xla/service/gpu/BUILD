@@ -2582,7 +2582,6 @@ cc_library(
         ":triangular_solve_rewriter",
         ":triton_autotuner",
         "@com_google_absl//absl/base",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:IRReader",
