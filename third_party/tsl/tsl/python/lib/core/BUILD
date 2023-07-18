@@ -112,8 +112,8 @@ cc_library(
     srcs = ["numpy.cc"],
     hdrs = ["numpy.h"],
     deps = [
-        "@local_config_python//:numpy_headers",
         "@local_config_python//:python_headers",
+        "@pypi_numpy//:numpy_headers",
     ],
 )
 
