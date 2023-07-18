@@ -22,7 +22,7 @@ namespace stream_executor {
 namespace rocm {
 
 
-inline xla::Status ToStatus(hipblasStatus_t status, const char* prefix) {
+tsl::Status ToStatus(hipblasStatus_t status, const char* prefix) {
   if (status != HIPBLAS_STATUS_SUCCESS) {
     return tsl::errors::Internal(
                           absl::StrCat(prefix, ": ", "HipblasLt error " + 

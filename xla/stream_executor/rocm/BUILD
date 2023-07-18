@@ -435,12 +435,14 @@ cc_library(
     srcs = if_rocm_is_configured(["hip_blas_lt.cc"]),
     hdrs = if_rocm_is_configured([
                         "hip_blas_lt.h", 
-                        "hipblaslt_wrapper.h"
+                        "hipblaslt_wrapper.h",
+                        "hip_blas_utils.h",
                     ]),
     deps = if_rocm_is_configured([
             ":rocm_gpu_executor",
             ":rocm_platform_id",
             ":rocblas_plugin",
+            ":hip_blas_utils",
             ":hipblas_lt_header",
             "@local_config_rocm//rocm:rocm_headers",
             "@tsl//tsl/platform:status",
@@ -484,8 +486,10 @@ cc_library(
         ":rocblas_plugin",
         "@com_google_absl//absl/strings",
         "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:errors",
         "//xla/stream_executor:stream_executor_headers",
-    ]) + ["//tsl/platform:errors"],
+    ]),
 )
 
 cc_library(
