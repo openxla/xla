@@ -97,7 +97,7 @@ class ROCMBlas : public blas::BlasSupport {
 
   TENSORFLOW_STREAM_EXECUTOR_GPU_BLAS_SUPPORT_OVERRIDES
 #if TF_HIPBLASLT
-  BlasLt &blas_lt() { return blas_lt_; }
+  rocm::BlasLt &blas_lt() { return blas_lt_; }
 #endif
 
  private:
@@ -198,7 +198,7 @@ class ROCMBlas : public blas::BlasSupport {
   rocblas_handle blas_ ABSL_GUARDED_BY(mu_);
 
 #if TF_HIPBLASLT
-  BlasLt blas_lt_;
+  rocm::BlasLt blas_lt_;
 #endif
 
   SE_DISALLOW_COPY_AND_ASSIGN(ROCMBlas);

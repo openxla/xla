@@ -22,37 +22,21 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "xla/stream_executor/blas.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/host_or_device_scalar.h"
-#include "tsl/platform/status.h"
-
-#ifndef TENSORFLOW_USE_ROCM
 #include "third_party/gpus/cuda/include/cublasLt.h"
 #include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/cuda/cuda_blas_utils.h"
-#else
-#include "rocm/rocm_config.h"
-#include "xla/stream_executor/rocm/hipblaslt_wrapper.h"
-
-namespace stream_executor {
-  hipblasDatatype_t AsHipblasDataType(blas::DataType type);
-  hipblasLtComputeType_t AsHipblasComputeType(blas::ComputationType type);
-  hipblasOperation_t AsHipblasOperation(blas::Transpose trans);
-};
-#endif   // TENSORFLOW_USE_ROCM
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/host_or_device_scalar.h"
+#include "tsl/platform/status.h"
 
 namespace stream_executor {
 namespace gpu {
 class GpuExecutor;
 }  // namespace gpu
 
-#ifndef TENSORFLOW_USE_ROCM
 namespace cuda {
-#else
-namespace rocm {
-#endif // TENSORFLOW_USE_ROCM
 
 class BlasLt {
   template <typename T>
@@ -256,15 +240,10 @@ BlasLt* GetBlasLt(Stream* stream);
 
 }  // namespace cuda
 
-namespace gpu {
-#ifndef TENSORFLOW_USE_ROCM
+namespace gpu{
   using BlasLt = ::stream_executor::cuda::BlasLt;
   inline BlasLt* GetBlasLt(Stream* stream) { return cuda::GetBlasLt(stream); }
-#else
-  using BlasLt = ::stream_executor::rocm::BlasLt;
-  inline BlasLt* GetBlasLt(Stream* stream) { return rocm::GetBlasLt(stream); }
-#endif // TENSORFLOW_USE_ROCM
-};
+} // namespace gpu
 
 }  // namespace stream_executor
 

@@ -34,7 +34,7 @@ namespace gpu {
 
 CublasLtMatmulThunk::CublasLtMatmulThunk(
     ThunkInfo thunk_info, GemmConfig gemm_config,
-    se::cuda::BlasLt::Epilogue epilogue, int64_t algorithm_idx,
+    se::gpu::BlasLt::Epilogue epilogue, int64_t algorithm_idx,
     BufferAllocation::Slice a_buffer, BufferAllocation::Slice b_buffer,
     BufferAllocation::Slice c_buffer, BufferAllocation::Slice d_buffer,
     BufferAllocation::Slice bias_buffer, BufferAllocation::Slice aux_buffer,

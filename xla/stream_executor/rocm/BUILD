@@ -461,7 +461,8 @@ cc_library(
     name = "hipblas_lt_header",
     hdrs = if_rocm_is_configured([
             "hip_blas_lt.h", 
-            "hipblaslt_wrapper.h"
+            "hipblaslt_wrapper.h",
+            "hip_blas_utils.h",
         ]),
         visibility = ["//visibility:public"],
         deps = if_rocm_is_configured([
@@ -472,9 +473,20 @@ cc_library(
             "//xla/stream_executor:host_or_device_scalar",
             "//xla/stream_executor:stream_executor_headers",
             "//xla/stream_executor/platform",
-            "//xla/stream_executor/cuda:cublas_lt_header_for_rocm",
         ]),
-    )    
+)
+
+cc_library(
+    name = "hip_blas_utils",
+    srcs = if_rocm_is_configured(["hip_blas_utils.cc"]),
+    hdrs = if_rocm_is_configured(["hip_blas_utils.h"]),
+    deps = if_rocm_is_configured([
+        ":rocblas_plugin",
+        "@com_google_absl//absl/strings",
+        "@local_config_rocm//rocm:rocm_headers",
+        "//xla/stream_executor:stream_executor_headers",
+    ]) + ["//tsl/platform:errors"],
+)
 
 cc_library(
     name = "roctracer_if_static",
