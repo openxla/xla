@@ -1512,6 +1512,17 @@ typedef PJRT_Error* PJRT_Buffer_UnsafePointer(
 
 // ---------------------------- CopyToDeviceStream -----------------------------
 
+struct PJRT_CopyToDeviceStream_Destroy_Args {
+  size_t struct_size;
+  void* priv;
+  PJRT_CopyToDeviceStream* stream;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_CopyToDeviceStream_Destroy_Args, stream);
+
+// Frees `stream`. `stream` can be nullptr.
+typedef PJRT_Error* PJRT_CopyToDeviceStream_Destroy(
+    PJRT_CopyToDeviceStream_Destroy_Args* args);
+
 struct PJRT_CopyToDeviceStream_AddChunk_Args {
   size_t struct_size;
   void* priv;
@@ -1763,6 +1774,7 @@ typedef struct {
   _PJRT_API_STRUCT_FIELD(PJRT_Buffer_ReadyEvent);
   _PJRT_API_STRUCT_FIELD(PJRT_Buffer_UnsafePointer);
 
+  _PJRT_API_STRUCT_FIELD(PJRT_CopyToDeviceStream_Destroy);
   _PJRT_API_STRUCT_FIELD(PJRT_CopyToDeviceStream_AddChunk);
   _PJRT_API_STRUCT_FIELD(PJRT_CopyToDeviceStream_TotalBytes);
   _PJRT_API_STRUCT_FIELD(PJRT_CopyToDeviceStream_GranuleSize);
