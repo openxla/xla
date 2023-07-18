@@ -31,7 +31,7 @@ class CodegenTestBase : public HloTestBase {
   // Compiles hlo_module with the JIT compiler.
   StatusOr<std::unique_ptr<Executable>> CompileToExecutable(
       std::unique_ptr<HloModule> hlo_module,
-      bool run_optimization_passes = true);
+      bool run_optimization_passes = true, bool autotune_emitter = true);
 
   // Compiles hlo_module with the AOT compiler.
   StatusOr<std::unique_ptr<AotCompilationResult>> CompileToAotCompilationResult(

@@ -30,7 +30,6 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_group.h"
@@ -42,7 +41,6 @@ limitations under the License.
 #include "xla/service/metrics_hook_interface.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/protobuf.h"
 #include "tsl/platform/threadpool.h"
 
 namespace xla {
@@ -246,6 +244,8 @@ class Compiler {
         layout_canonicalization_callback = {};
 
     bool is_autotuning_compilation = false;
+
+    bool enable_emitter_autotuning = true;
   };
 
   virtual ~Compiler() = default;
@@ -260,9 +260,13 @@ class Compiler {
       const CompileOptions& options) = 0;
   StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
       std::unique_ptr<HloModule> module, se::StreamExecutor* executor,
-      se::DeviceMemoryAllocator* device_allocator) {
-    return RunHloPasses(std::move(module), executor,
-                        CompileOptions{device_allocator});
+      se::DeviceMemoryAllocator* device_allocator,
+      bool autotune_emitter = true) {
+    return RunHloPasses(
+        std::move(module), executor,
+        CompileOptions{device_allocator, /*thread_pool*/ nullptr,
+                       /*layout_canonicalization_callback*/ {},
+                       /*is_autotuning_compilation*/ false, autotune_emitter});
   }
 
   // Performs scheduling and buffer assignment and returns the buffer

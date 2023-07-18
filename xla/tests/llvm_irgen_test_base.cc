@@ -21,7 +21,6 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/tests/filecheck.h"
 #include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 
@@ -48,11 +47,12 @@ void LlvmIrGenTestBase::ResetIrHook() {
 
 void LlvmIrGenTestBase::CompileAndVerifyIr(
     std::unique_ptr<HloModule> hlo_module, const std::string& pattern,
-    bool match_optimized_ir, bool run_optimization_passes) {
+    bool match_optimized_ir, bool run_optimization_passes,
+    bool autotune_emitter) {
   SetIrHook(match_optimized_ir);
-  Status status =
-      CompileToExecutable(std::move(hlo_module), run_optimization_passes)
-          .status();
+  Status status = CompileToExecutable(std::move(hlo_module),
+                                      run_optimization_passes, autotune_emitter)
+                      .status();
   ResetIrHook();
   TF_ASSERT_OK(status);
 
@@ -64,13 +64,14 @@ void LlvmIrGenTestBase::CompileAndVerifyIr(
 void LlvmIrGenTestBase::CompileAndVerifyIr(const std::string& hlo_text,
                                            const std::string& expected_llvm_ir,
                                            bool match_optimized_ir,
-                                           bool run_optimization_passes) {
+                                           bool run_optimization_passes,
+                                           bool autotune_emitter) {
   HloModuleConfig config;
   config.set_debug_options(GetDebugOptionsForTest());
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
   CompileAndVerifyIr(std::move(module), expected_llvm_ir, match_optimized_ir,
-                     run_optimization_passes);
+                     run_optimization_passes, autotune_emitter);
 }
 
 void LlvmIrGenTestBase::CompileAheadOfTimeAndVerifyIr(

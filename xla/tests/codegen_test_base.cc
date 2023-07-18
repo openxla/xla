@@ -20,12 +20,14 @@ limitations under the License.
 namespace xla {
 
 StatusOr<std::unique_ptr<Executable>> CodegenTestBase::CompileToExecutable(
-    std::unique_ptr<HloModule> hlo_module, bool run_optimization_passes) {
+    std::unique_ptr<HloModule> hlo_module, bool run_optimization_passes,
+    bool autotune_emitter) {
   if (run_optimization_passes) {
-    TF_ASSIGN_OR_RETURN(hlo_module, backend().compiler()->RunHloPasses(
-                                        std::move(hlo_module),
-                                        backend().default_stream_executor(),
-                                        /*device_allocator=*/nullptr));
+    TF_ASSIGN_OR_RETURN(
+        hlo_module,
+        backend().compiler()->RunHloPasses(
+            std::move(hlo_module), backend().default_stream_executor(),
+            /*device_allocator=*/nullptr, autotune_emitter));
   }
   return backend().compiler()->RunBackend(std::move(hlo_module),
                                           backend().default_stream_executor(),
