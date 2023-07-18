@@ -226,7 +226,7 @@ StatusOr<Shape> DecodeSelfDescribingShapeConstant(const void* shape_ptr,
                                                   int32_t size_bytes) {
   ShapeProto shape_proto;
   if (!shape_proto.ParseFromArray(shape_ptr, size_bytes)) {
-    return tsl::errors::Internal("Failed parsing the shape proto");
+    return absl::InternalError("Failed parsing the shape proto");
   }
   Shape shape(shape_proto);
   auto status = ShapeUtil::ValidateShape(shape);

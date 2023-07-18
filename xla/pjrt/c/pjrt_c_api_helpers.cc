@@ -427,8 +427,8 @@ static xla::StatusOr<PJRT_NamedValue> ConvertToPjRtNamedValue(
     c_value.float_value = std::get<float>(value);
     c_value.value_size = 1;
   } else {
-    return tsl::errors::InvalidArgument("Unexpected PjRtValueType: '",
-                                        value.index(), " with name: ", name);
+    return absl::InvalidArgumentError("Unexpected PjRtValueType: '",
+                                      value.index(), " with name: ", name);
   }
 
   return c_value;
@@ -497,8 +497,8 @@ static xla::StatusOr<PJRT_NamedValue_Type> GetPjrtNamedValueType(
   if (std::holds_alternative<float>(cpp_value)) {
     return PJRT_NamedValue_Type::PJRT_NamedValue_kFloat;
   }
-  return tsl::errors::InvalidArgument("Unexpected PjRtValueType with index",
-                                      cpp_value.index());
+  return absl::InvalidArgumentError("Unexpected PjRtValueType with index",
+                                    cpp_value.index());
 }
 
 xla::Status ValidateCreateOptions(
@@ -508,13 +508,13 @@ xla::Status ValidateCreateOptions(
   for (const auto& [name, value] : value_map) {
     auto it = expected_name_and_types.find(name);
     if (it == expected_name_and_types.end()) {
-      return tsl::errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Unexpected option name passed to PJRT_Client_Create: ", name);
     }
     TF_ASSIGN_OR_RETURN(PJRT_NamedValue_Type type,
                         GetPjrtNamedValueType(value));
     if (type != it->second) {
-      return tsl::errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Option passed to PJRT_Client_Create with name ", name,
           " has type index ", value.index(), " but expected type index is ",
           it->second);
@@ -547,7 +547,7 @@ static std::string StructSizeErrorMsg(absl::string_view struct_name,
 xla::Status CheckMatchingStructSizes(absl::string_view struct_name,
                                      size_t expected_size, size_t actual_size) {
   if (expected_size != actual_size) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         StructSizeErrorMsg(struct_name, expected_size, actual_size));
   }
   return tsl::OkStatus();

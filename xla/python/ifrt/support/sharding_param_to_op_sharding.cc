@@ -57,7 +57,7 @@ StatusOr<OpSharding> ToOpSharding(const ShardingParam& sharding_param,
   tile_assignment_devices->Reserve(devices.size());
   for (const int device : devices) {
     if (device < 0 || device >= device_mapping.size()) {
-      return tsl::errors::OutOfRange("Can't map device ", device);
+      return absl::OutOfRangeError("Can't map device ", device);
     }
     tile_assignment_devices->Add(device_mapping[device]);
   }

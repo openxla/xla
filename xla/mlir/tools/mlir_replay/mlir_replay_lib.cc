@@ -165,7 +165,7 @@ tsl::StatusOr<SmallVector<InterpreterValue>> Run(
   mlir::OwningOpRef<mlir::Operation*> module =
       mlir::parseSourceFileForTool(sourceMgr, &context, false);
   if (!module) {
-    return tsl::errors::InvalidArgument("failed to parse MLIR");
+    return absl::InvalidArgumentError("failed to parse MLIR");
   }
 
   SymbolTable symbols(*module);
@@ -178,7 +178,7 @@ tsl::StatusOr<SmallVector<InterpreterValue>> Run(
   }
 
   if (!main) {
-    return tsl::errors::InvalidArgument("failed to find entry point");
+    return absl::InvalidArgumentError("failed to find entry point");
   }
 
   if (trace) {
@@ -194,7 +194,7 @@ tsl::StatusOr<SmallVector<InterpreterValue>> Run(
   if (!llvm::all_of(function_args, [&](Value arg) {
         return arg.getType().isa<ShapedType>() || arg.getType() == buffer_type;
       })) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "expected all function arguments to be shaped types");
   }
 
@@ -219,7 +219,7 @@ tsl::StatusOr<SmallVector<InterpreterValue>> Run(
     if (ty == buffer_type) {
       // Buffers are used exactly once, in a buffer_to_mem op.
       if (!arg.hasOneUse()) {
-        return tsl::errors::InvalidArgument(
+        return absl::InvalidArgumentError(
             "expected buffer argument to be used eactly once");
       }
       ty = arg.getUsers().begin()->getResultTypes().front();
@@ -236,7 +236,7 @@ tsl::StatusOr<SmallVector<InterpreterValue>> Run(
 
     auto arg_or = MakeRandomInput(bitgen, ty);
     if (!succeeded(arg_or)) {
-      return tsl::errors::InvalidArgument("failed to create input");
+      return absl::InvalidArgumentError("failed to create input");
     }
     out_buffers.push_back(*arg_or);
     args.push_back(*arg_or);
@@ -250,7 +250,7 @@ tsl::StatusOr<SmallVector<InterpreterValue>> Run(
   }
   auto results_or = runInterpreter(symbols, main, args, options);
   if (!succeeded(results_or)) {
-    return tsl::errors::Internal("interpreter failed");
+    return absl::InternalError("interpreter failed");
   }
 
   if (results_or->empty()) {

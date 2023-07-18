@@ -203,80 +203,79 @@ template <typename... Args>
 Status InvalidArgument(const absl::FormatSpec<Args...>& format,
                        const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::InvalidArgument(absl::StrFormat(format, args...)));
+      absl::InvalidArgument(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status Unimplemented(const absl::FormatSpec<Args...>& format,
                      const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::Unimplemented(absl::StrFormat(format, args...)));
+      absl::Unimplemented(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status InternalError(const absl::FormatSpec<Args...>& format,
                      const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::Internal(absl::StrFormat(format, args...)));
+      absl::Internal(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status FailedPrecondition(const absl::FormatSpec<Args...>& format,
                           const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::FailedPrecondition(absl::StrFormat(format, args...)));
+      absl::FailedPrecondition(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status Cancelled(const absl::FormatSpec<Args...>& format, const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::Cancelled(absl::StrFormat(format, args...)));
+      absl::Cancelled(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status ResourceExhausted(const absl::FormatSpec<Args...>& format,
                          const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::ResourceExhausted(absl::StrFormat(format, args...)));
+      absl::ResourceExhausted(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status NotFound(const absl::FormatSpec<Args...>& format, const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::NotFound(absl::StrFormat(format, args...)));
+      absl::NotFound(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status Unavailable(const absl::FormatSpec<Args...>& format,
                    const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::Unavailable(absl::StrFormat(format, args...)));
+      absl::Unavailable(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status Unknown(const absl::FormatSpec<Args...>& format, const Args&... args) {
-  return WithLogBacktrace(
-      tsl::errors::Unknown(absl::StrFormat(format, args...)));
+  return WithLogBacktrace(absl::Unknown(absl::StrFormatError(format, args...)));
 }
 template <typename... Args>
 Status Internal(const absl::FormatSpec<Args...>& format, const Args&... args) {
   return WithLogBacktrace(
-      tsl::errors::Internal(absl::StrFormat(format, args...)));
+      absl::Internal(absl::StrFormatError(format, args...)));
 }
 
 template <typename... Args>
 Status InvalidArgumentStrCat(Args&&... concat) {
   return WithLogBacktrace(
-      tsl::errors::InvalidArgument(std::forward<Args>(concat)...));
+      absl::InvalidArgument(std::forward<Args> Error(concat)...));
 }
 
 template <typename... Args>
 Status UnimplementedStrCat(Args&&... concat) {
   return WithLogBacktrace(
-      tsl::errors::Unimplemented(std::forward<Args>(concat)...));
+      absl::Unimplemented(std::forward<Args> Error(concat)...));
 }
 
 template <typename... Args>
 Status InternalErrorStrCat(Args&&... concat) {
-  return WithLogBacktrace(tsl::errors::Internal(std::forward<Args>(concat)...));
+  return WithLogBacktrace(absl::Internal(std::forward<Args> Error(concat)...));
 }
 
 template <typename... Args>
 Status ResourceExhaustedStrCat(Args&&... concat) {
   return WithLogBacktrace(
-      tsl::errors::ResourceExhausted(std::forward<Args>(concat)...));
+      absl::ResourceExhausted(std::forward<Args> Error(concat)...));
 }
 
 // Splits the lines of the original, replaces leading whitespace with the prefix

@@ -139,7 +139,7 @@ Status CheckImplementable(OpT op, Thunk::Kind reduction_op) {
   if (!NcclAllReduceReduceScatterThunkBase::MatchAllReduceComputation(
            op.getComputation())
            .has_value()) {
-    return tsl::errors::Unimplemented("Unrecognized reduction computation");
+    return absl::UnimplementedError("Unrecognized reduction computation");
   }
   return OkStatus();
 }

@@ -78,7 +78,7 @@ class GpuTracer : public tsl::profiler::ProfilerInterface {
 
 Status GpuTracer::DoStart() {
   if (!cupti_tracer_->IsAvailable()) {
-    return tsl::errors::Unavailable("Another profile session running.");
+    return absl::UnavailableError("Another profile session running.");
   }
 
   options_.cbids_selected = {
@@ -195,7 +195,7 @@ Status GpuTracer::CollectData(XSpace* space) {
       VLOG(1) << "No trace data collected, session wasn't started";
       return OkStatus();
     case State::kStartedOk:
-      return tsl::errors::FailedPrecondition(
+      return absl::FailedPreconditionError(
           "Cannot collect trace before stopping");
     case State::kStartedError:
       LOG(ERROR) << "Cannot collect, profiler failed to start";
@@ -219,7 +219,7 @@ Status GpuTracer::CollectData(XSpace* space) {
       return OkStatus();
     }
   }
-  return tsl::errors::Internal("Invalid profiling state: ", profiling_state_);
+  return absl::InternalError("Invalid profiling state: ", profiling_state_);
 }
 
 // Not in anonymous namespace for testing purposes.

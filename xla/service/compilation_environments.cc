@@ -135,7 +135,7 @@ CompilationEnvironments::CreateFromProto(
     std::string fullname;
     if (!google::protobuf::Any::ParseAnyTypeUrl(env_proto.type_url(),
                                                 &fullname)) {
-      return tsl::errors::DataLoss(
+      return absl::DataLossError(
           "Invalid CompilationEnvironment message type url: %s",
           env_proto.type_url());
     }
@@ -143,7 +143,7 @@ CompilationEnvironments::CreateFromProto(
     const tsl::protobuf::Descriptor* const descriptor =
         pool->FindMessageTypeByName(fullname);
     if (descriptor == nullptr) {
-      return tsl::errors::DataLoss(
+      return absl::DataLossError(
           "Unknown CompilationEnvironment message type: %s", fullname);
     }
 
@@ -151,13 +151,13 @@ CompilationEnvironments::CreateFromProto(
         tsl::protobuf::MessageFactory::generated_factory()->GetPrototype(
             descriptor);
     if (prototype == nullptr) {
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Unsupported CompilationEnvironment message type: %s", fullname);
     }
 
     std::unique_ptr<tsl::protobuf::Message> env(prototype->New());
     if (!env_proto.UnpackTo(env.get())) {
-      return tsl::errors::DataLoss(
+      return absl::DataLossError(
           "Unable to unpack CompilationEnvironment message of type '%s'",
           fullname);
     }
@@ -187,7 +187,7 @@ void CompilationEnvironments::RegisterProcessNewEnvFn(
 Status CompilationEnvironments::AddEnv(
     std::unique_ptr<tsl::protobuf::Message> env) {
   if (!env) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Can not add a null compilation environment.");
   }
   const tsl::protobuf::Descriptor& descriptor = *env->GetDescriptor();
@@ -243,14 +243,14 @@ Status CompilationEnvironments::AddEnvImpl(
     std::unique_ptr<tsl::protobuf::Message> env) {
   // Check if we already have an environment of env's type
   if (environments_.contains(&descriptor)) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Replacing CompilationEnvironment of type %s.", descriptor.full_name());
   }
 
   // Process env
   ProcessNewEnvFn process_new_env = GetProcessNewEnvFn(descriptor);
   if (!process_new_env) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Unknown compilation environment type: %s", descriptor.full_name());
   }
   std::unique_ptr<tsl::protobuf::Message> processed_env =

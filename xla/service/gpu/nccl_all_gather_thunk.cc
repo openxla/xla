@@ -46,7 +46,7 @@ Status CheckImplementable(AllGatherStartOp op) {
     Shape shape = GetShape(operand);
     if (!ShapeUtil::IsEffectivelyMostMajorDimension(
             shape, op.getAllGatherDimension())) {
-      return tsl::errors::Unimplemented(absl::StrFormat(
+      return absl::Unimplemented(absl::StrFormatError(
           "all-gather dim %u is not the most major in input shape %s",
           op.getAllGatherDimension(), shape.ToString(/*print_layout=*/true)));
     }

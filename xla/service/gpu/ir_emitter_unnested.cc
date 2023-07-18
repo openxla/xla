@@ -196,11 +196,11 @@ class UnreachableThunk : public Thunk {
 
   Status Initialize(const GpuExecutable& executable,
                     se::StreamExecutor* executor) final {
-    return tsl::errors::Internal(error_message_);
+    return absl::InternalError(error_message_);
   }
 
   Status ExecuteOnStream(const ExecuteParams& params) final {
-    return tsl::errors::Internal(error_message_);
+    return absl::InternalError(error_message_);
   }
 
  private:

@@ -146,7 +146,7 @@ StatusOr<mlir::Operation*> HloFunctionImporter::ImportOldStyleAsyncStart(
     std::string func_name, std::function<Status(sync_op)> mutate_op) {
   auto result_types = result_type.cast<mlir::TupleType>().getTypes();
   if (result_types.size() < 2) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "async_bundle must contain at least two values");
   }
   auto func_type = mlir::FunctionType::get(context_, Untuple(result_types[0]),

@@ -1057,7 +1057,7 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
 
 Status GpuTracer::DoStart() {
   if (!rocm_tracer_->IsAvailable()) {
-    return tsl::errors::Unavailable("Another profile session running.");
+    return absl::UnavailableError("Another profile session running.");
   }
 
   AnnotationStack::Enable(true);
@@ -1106,7 +1106,7 @@ Status GpuTracer::CollectData(XSpace* space) {
       VLOG(3) << "No trace data collected, session wasn't started";
       return OkStatus();
     case State::kStartedOk:
-      return tsl::errors::FailedPrecondition(
+      return absl::FailedPreconditionError(
           "Cannot collect trace before stopping");
     case State::kStartedError:
       LOG(ERROR) << "Cannot collect, roctracer failed to start";
@@ -1119,7 +1119,7 @@ Status GpuTracer::CollectData(XSpace* space) {
       return OkStatus();
     }
   }
-  return tsl::errors::Internal("Invalid profiling state: ", profiling_state_);
+  return absl::InternalError("Invalid profiling state: ", profiling_state_);
 }
 
 // Not in anonymous namespace for testing purposes.

@@ -623,7 +623,7 @@ Status WaitForExecuteEvent(tpu_driver::Event* event) {
   }
 
   if (!opt_status.has_value()) {
-    return tsl::errors::DeadlineExceeded(
+    return absl::DeadlineExceededError(
         absl::StrFormat("TPU program took more than %d seconds to complete.",
                         absl::ToInt64Seconds(kMaxExecutionDelay)));
   }

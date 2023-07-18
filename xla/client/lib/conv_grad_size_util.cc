@@ -28,11 +28,11 @@ StatusOr<SpatialDimensionOutputSizeAndPadding> GetWindowedOutputSize(
     int64_t input_size, int64_t filter_size, int64_t dilation_rate,
     int64_t stride, Padding padding_type) {
   if (stride <= 0) {
-    return tsl::errors::InvalidArgument("Stride must be > 0, but got ", stride);
+    return absl::InvalidArgumentError("Stride must be > 0, but got ", stride);
   }
   if (dilation_rate < 1) {
-    return tsl::errors::InvalidArgument("Dilation rate must be >= 1, but got ",
-                                        dilation_rate);
+    return absl::InvalidArgumentError("Dilation rate must be >= 1, but got ",
+                                      dilation_rate);
   }
 
   int64_t effective_filter_size = (filter_size - 1) * dilation_rate + 1;
@@ -54,7 +54,7 @@ StatusOr<SpatialDimensionOutputSizeAndPadding> GetWindowedOutputSize(
       break;
   }
   if (dim.output_size < 0) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Computed output size would be negative: ", dim.output_size,
         " [input_size: ", input_size,
         ", effective_filter_size: ", effective_filter_size,
@@ -73,7 +73,7 @@ ConvGradExtractAndVerifyDimension(int64_t input_size, int64_t filter_size,
                       GetWindowedOutputSize(input_size, filter_size, dilation,
                                             stride, padding));
   if (output_size != output_dim.output_size) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Size of out_backprop doesn't match computed: ", "actual = ",
         output_size, ", computed = ", output_dim.output_size,
         " input: ", input_size, " filter: ", filter_size,

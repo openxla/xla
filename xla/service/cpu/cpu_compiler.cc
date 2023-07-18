@@ -1113,7 +1113,7 @@ Status LowerMLIRModule(HloModule* module, mlir::ModuleOp mlir_module,
 
   if (pm.run(mlir_module).failed()) {
     mlir_module->dump();
-    return tsl::errors::Internal("Failed to compile through MLIR pipeline");
+    return absl::InternalError("Failed to compile through MLIR pipeline");
   }
   return OkStatus();
 }
@@ -1133,7 +1133,7 @@ StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> createMLIRModule(
                        mlir::PassManager::Nesting::Implicit);
   pm.addPass(mlir::mhlo::createExpandHloTuplesPass("main"));
   if (failed(pm.run(mlir_module.getOperation()))) {
-    return tsl::errors::Internal("Failed to flatten tuples");
+    return absl::InternalError("Failed to flatten tuples");
   }
 
   // Add buffer mappings. The first attribute is the index of the slice, the

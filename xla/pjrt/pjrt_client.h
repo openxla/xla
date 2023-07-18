@@ -714,7 +714,7 @@ class PjRtClient {
       HostBufferSemantics host_buffer_semantics,
       std::function<void()> on_done_with_host_buffer, PjRtDevice* device,
       const Layout* device_layout) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "BufferFromHostBuffer with an optional device layout is not "
         "implemented on platform: ",
         platform_name());
@@ -728,7 +728,7 @@ class PjRtClient {
       HostBufferSemantics host_buffer_semantics,
       std::function<void()> on_done_with_host_buffer,
       PjRtMemorySpace* memory_space, const Layout* device_layout) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "BufferFromHostBuffer with PjRtMemorySpace is not implemented on "
         "platform: ",
         platform_name());
@@ -744,7 +744,7 @@ class PjRtClient {
   // migration is done.
   virtual StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
       const LiteralSlice& literal, PjRtMemorySpace* memory_space) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "BufferFromHostLiteral with PjRtMemorySpace is not implemented on "
         "platform: ",
         platform_name());

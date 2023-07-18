@@ -51,7 +51,7 @@ Status CheckImplementable(AllToAllStartOp op) {
     Shape shape = GetShape(operand);
     if (split_dim &&
         !ShapeUtil::IsEffectivelyMostMajorDimension(shape, *split_dim)) {
-      return tsl::errors::Unimplemented(
+      return absl::UnimplementedError(
           "all-to-all split dim %u is not the most major in input shape %s",
           *split_dim, shape.ToString(/*print_layout=*/true));
     }

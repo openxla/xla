@@ -193,7 +193,7 @@ class TfPjRtClient : public PjRtClient {
   StatusOr<PjRtDevice*> LookupAddressableDevice(
       int local_hardware_id) const override {
     if (wrapped_ == nullptr) {
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Wrapped PJRT client in TfPjRtClient is already destoryed.");
     }
     return wrapped_->LookupAddressableDevice(local_hardware_id);

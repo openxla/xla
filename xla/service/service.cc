@@ -237,7 +237,7 @@ Service::ResolveAndValidateArguments(
   for (size_t i = 0; i < arguments.size(); ++i) {
     auto buffer_status = allocation_tracker_.Resolve(*arguments[i]);
     if (!buffer_status.ok()) {
-      return tsl::errors::CreateWithUpdatedMessage(
+      return absl::CreateWithUpdatedMessageError(
           buffer_status.status(),
           StrCat(buffer_status.status().message(), ", ",
                  "failed to resolve allocation for parameter ", i));

@@ -654,7 +654,7 @@ int64_t HloSharding::GetUniqueDevice() const {
 Status HloSharding::ValidateTuple(const Shape& shape,
                                   std::optional<int64_t> num_devices) const {
   if (!shape.IsTuple()) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Sharding is tuple-shaped but validation shape is not.");
   }
   TF_RETURN_IF_ERROR(CheckLeafCount(shape));
@@ -670,7 +670,7 @@ Status HloSharding::ValidateTuple(const Shape& shape,
     Status status = index_to_sharding.second.ValidateNonTuple(
         ShapeUtil::GetSubshape(shape, index_to_sharding.first), num_devices);
     if (!status.ok()) {
-      tsl::errors::AppendToMessage(
+      absl::AppendToMessageError(
           &status, StrCat("Note: While validating sharding tuple element ",
                           index_to_sharding.first.ToString(), " which is ",
                           index_to_sharding.second.ToString()));
@@ -688,7 +688,7 @@ Status HloSharding::Validate(const Shape& shape,
   Status status = IsTuple() ? ValidateTuple(shape, num_devices)
                             : ValidateNonTuple(shape, num_devices);
   if (!status.ok()) {
-    tsl::errors::AppendToMessage(
+    absl::AppendToMessageError(
         &status, StrCat("Note: While validating sharding ", ToString(),
                         " against shape ", ShapeUtil::HumanString(shape)));
   }
@@ -738,7 +738,7 @@ Status HloSharding::ValidateNonTuple(const Shape& shape,
 
   // The tile assignment tensor must have the same rank as the tiled data rank.
   if (shape.rank() != TiledDataRank()) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Number of tile assignment dimensions (excluding subgroups) is "
         "different than the input rank. "
         "sharding=",
@@ -747,13 +747,13 @@ Status HloSharding::ValidateNonTuple(const Shape& shape,
 
   // All devices should be seen in the tile assignment.
   if (!all_devices_seen) {
-    return tsl::errors::InvalidArgument("tile_assignment should have ",
-                                        *num_devices, " devices");
+    return absl::InvalidArgumentError("tile_assignment should have ",
+                                      *num_devices, " devices");
   }
 
   // The correct constructor has to be used to create tile maximal shardings.
   if (tile_assignment_.num_elements() == 1) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Tile assignment only contains a single device. If a replicated "
         "sharding was intended, use HloSharding::Replicated(). If a device "
         "placement was intended, use HloSharding::AssignDevice()");

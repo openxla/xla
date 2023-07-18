@@ -33,8 +33,8 @@ StatusOr<MessageType> ParseTextProto(const std::string& text_proto) {
   tsl::protobuf::io::ArrayInputStream input_stream(text_proto.data(),
                                                    text_proto.size());
   if (!parser.Parse(&input_stream, &parsed_proto)) {
-    return tsl::errors::InvalidArgument("Could not parse text proto: ",
-                                        text_proto);
+    return absl::InvalidArgumentError("Could not parse text proto: ",
+                                      text_proto);
   }
   return parsed_proto;
 }

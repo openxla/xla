@@ -76,7 +76,7 @@ StatusOr<ExecutionOutput> InterpreterExecutableBase::ExecuteAsyncOnStream(
 
   const HloComputation* computation = module().entry_computation();
   if (computation->num_parameters() != arguments.size()) {
-    return tsl::errors::Internal(
+    return absl::InternalError(
         "Mismatch between argument count and graph parameter count.");
   }
 

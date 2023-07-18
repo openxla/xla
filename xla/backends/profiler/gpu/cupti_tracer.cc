@@ -82,7 +82,7 @@ Status ToStatus(CUptiResult result) {
   }
   const char *str = nullptr;
   cuptiGetResultString(result, &str);
-  return tsl::errors::Unavailable("CUPTI error: ", str ? str : "<unknown>");
+  return absl::UnavailableError("CUPTI error: ", str ? str : "<unknown>");
 }
 
 Status ToStatus(CUresult result) {
@@ -91,7 +91,7 @@ Status ToStatus(CUresult result) {
   }
   const char *str = nullptr;
   cuGetErrorName(result, &str);
-  return tsl::errors::Unavailable("CUDA error: ", str ? str : "<unknown>");
+  return absl::UnavailableError("CUDA error: ", str ? str : "<unknown>");
 }
 
 inline void LogIfError(const Status &status) {
@@ -154,9 +154,9 @@ const char *getActivityUnifiedMemoryKindString(
       cupti_interface_->GetResultString(status, &errstr);                   \
       LOG(ERROR) << "function " << #expr << "failed with error " << errstr; \
       if (status == CUPTI_ERROR_INSUFFICIENT_PRIVILEGES) {                  \
-        return tsl::errors::PermissionDenied("CUPTI need root access!");    \
+        return absl::PermissionDeniedError("CUPTI need root access!");      \
       } else {                                                              \
-        return tsl::errors::Internal("CUPTI call error", errstr);           \
+        return absl::InternalError("CUPTI call error", errstr);             \
       }                                                                     \
     }                                                                       \
   } while (false)
@@ -1345,7 +1345,7 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
           ScopedCudaContext scoped_cuda_context(stream);
           auto dev_id = scoped_cuda_context.GetDeviceOrdinal();
           auto context = scoped_cuda_context.GetContext();
-          if (!dev_id) return tsl::errors::Internal("Invalid CUDA stream");
+          if (!dev_id) return absl::InternalError("Invalid CUDA stream");
           // Because annotation are per device, therefore we need to populate
           // annotation for each device involved.
           collector_->annotation_map()->Add(*dev_id, cbdata->correlationId,
@@ -1430,12 +1430,12 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
             static_cast<const cuLaunchCooperativeKernelMultiDevice_params *>(
                 cbdata->functionParams);
         if (record_indices.size() != params->numDevices)
-          return tsl::errors::Internal("Invalid correlation data");
+          return absl::InternalError("Invalid correlation data");
         for (int i = 0; i < params->numDevices; ++i) {
           CUstream stream = params->launchParamsList[i].hStream;
           ScopedCudaContext scoped_cuda_context(stream);
           auto dev_id = scoped_cuda_context.GetDeviceOrdinal();
-          if (!dev_id) return tsl::errors::Internal("Invalid CUDA stream");
+          if (!dev_id) return absl::InternalError("Invalid CUDA stream");
           start_tsc =
               cuda_event_recorders_[*dev_id]->StopKernel(record_indices[i]);
         }
@@ -1882,7 +1882,7 @@ Status CuptiTracer::HandleCallback(CUpti_CallbackDomain domain,
     // API callback is called before any CUDA context is created.
     // This is expected to be rare, and we ignore this case.
     VLOG(3) << "API callback received before creation of CUDA context\n";
-    return tsl::errors::Internal("cutpi callback without context");
+    return absl::InternalError("cutpi callback without context");
   }
 
   // Grab a correct device ID.
@@ -1890,7 +1890,7 @@ Status CuptiTracer::HandleCallback(CUpti_CallbackDomain domain,
   RETURN_IF_CUPTI_ERROR(
       cupti_interface_->GetDeviceId(cbdata->context, &device_id));
   if (device_id >= num_gpus_) {
-    return tsl::errors::Internal("Invalid device id:", device_id);
+    return absl::InternalError("Invalid device id:", device_id);
   }
 
   if (cbdata->callbackSite == CUPTI_API_ENTER) {
@@ -1975,7 +1975,7 @@ Status CuptiTracer::ProcessActivityBuffer(CUcontext context, uint32_t stream_id,
     LOG(WARNING) << "CUPTI activity buffer is reclaimed after flush.";
     return OkStatus();
   }
-  if (cupti_interface_->Disabled()) return tsl::errors::Internal("Disabled.");
+  if (cupti_interface_->Disabled()) return absl::InternalError("Disabled.");
 
   CUpti_Activity *record = nullptr;
   while (true) {
@@ -2025,7 +2025,7 @@ Status CuptiTracer::ProcessActivityBuffer(CUcontext context, uint32_t stream_id,
     } else if (status == CUPTI_ERROR_MAX_LIMIT_REACHED) {
       break;
     } else {
-      return tsl::errors::Internal("Parse cupti activity buffer error.");
+      return absl::InternalError("Parse cupti activity buffer error.");
     }
   }
 

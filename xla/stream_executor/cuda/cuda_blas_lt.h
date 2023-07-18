@@ -166,34 +166,34 @@ class BlasLt {
                        blas::ProfileResult* profile_result = nullptr) {
     if (AsCudaDataType(blas::ToDataType<Scale>::value) !=
         plan.op_desc.scale_type()) {
-      return tsl::errors::InvalidArgument("mismatched scale types");
+      return absl::InvalidArgumentError("mismatched scale types");
     }
 
     bool expect_scale_factor_on_device =
         (plan.op_desc.pointer_mode() == CUBLASLT_POINTER_MODE_DEVICE);
 
     if (alpha.on_device() != expect_scale_factor_on_device) {
-      return tsl::errors::InvalidArgument("wrong location for alpha");
+      return absl::InvalidArgumentError("wrong location for alpha");
     }
 
     if (beta.on_device() != expect_scale_factor_on_device) {
-      return tsl::errors::InvalidArgument("wrong location for beta");
+      return absl::InvalidArgumentError("wrong location for beta");
     }
 
     if (AsCudaDataType(blas::ToDataType<A>::value) != plan.a_desc.type()) {
-      return tsl::errors::InvalidArgument("mismatched A matrix types");
+      return absl::InvalidArgumentError("mismatched A matrix types");
     }
 
     if (AsCudaDataType(blas::ToDataType<B>::value) != plan.b_desc.type()) {
-      return tsl::errors::InvalidArgument("mismatched B matrix types");
+      return absl::InvalidArgumentError("mismatched B matrix types");
     }
 
     if (AsCudaDataType(blas::ToDataType<C>::value) != plan.c_desc.type()) {
-      return tsl::errors::InvalidArgument("mismatched C matrix types");
+      return absl::InvalidArgumentError("mismatched C matrix types");
     }
 
     if (AsCudaDataType(blas::ToDataType<D>::value) != plan.d_desc.type()) {
-      return tsl::errors::InvalidArgument("mismatched D matrix types");
+      return absl::InvalidArgumentError("mismatched D matrix types");
     }
 
     return DoMatmul(stream, plan, alpha.opaque(), a, b, beta.opaque(), c, d,

@@ -44,7 +44,7 @@ ExecutionInput::~ExecutionInput() {
 Status ExecutionInput::SetDynamicShape(Shape dynamic_shape) {
   const Shape& input_shape = shape();
   if (!ShapeUtil::DynamicShapeIsCompatible(input_shape, dynamic_shape)) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Cannot set dynamic shape: ", input_shape.DebugString(), " vs. ",
         dynamic_shape.DebugString());
   }
@@ -67,9 +67,9 @@ StatusOr<ShapedBuffer> ExecutionInput::ToShapedBuffer(
         index_buffer.second.AsOwningDeviceMemory();
     if (mem != nullptr && (mem->allocator() != allocator ||
                            mem->device_ordinal() != device_ordinal)) {
-      return tsl::errors::InvalidArgument("Device buffer at index ",
-                                          index_buffer.first.ToString(),
-                                          " has mismatching allocator/device");
+      return absl::InvalidArgumentError("Device buffer at index ",
+                                        index_buffer.first.ToString(),
+                                        " has mismatching allocator/device");
     }
     shaped_buffer.set_buffer(index_buffer.second.AsDeviceMemoryBase(),
                              index_buffer.first);

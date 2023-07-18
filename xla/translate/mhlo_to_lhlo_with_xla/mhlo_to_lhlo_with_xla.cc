@@ -135,7 +135,7 @@ tsl::Status OptimizeAndConvertHloToLmhlo(std::unique_ptr<HloModule> hlo_module,
         });
     llvm::interleaveComma(available_platforms, os);
     os << ")";
-    return tsl::errors::InvalidArgument("%s", os.str().c_str());
+    return absl::InvalidArgument("%s", os.str().c_strError());
   }
 
   xla::BackendOptions backend_options;
@@ -206,7 +206,7 @@ class XlaHloToLhloPass
     auto status = [&module, this]() -> tsl::Status {
       SymbolTable symbol_table(module);
       if (!symbol_table.lookup("main")) {
-        return tsl::errors::InvalidArgument(
+        return absl::InvalidArgumentError(
             "conversion to HLO module failed: missing main()");
       }
       HloProto hlo_proto;
@@ -251,8 +251,7 @@ tsl::Status LhloDialectEmitter::CreateOperands(
     TokenLoweringMode token_mode, llvm::SmallVectorImpl<Value>& operands,
     size_t& num_arguments, size_t& num_results) {
   if (num_operands.value_or(0) > instr->operand_count())
-    return tsl::errors::InvalidArgument(
-        "num_operands must be <= operand count");
+    return absl::InvalidArgumentError("num_operands must be <= operand count");
   for (int64_t i = 0; i < num_operands.value_or(instr->operand_count()); ++i) {
     TF_RETURN_IF_ERROR(GetOrCreateView(instr->operand(i), &operands,
                                        /*result_subset=*/{}, token_mode));
@@ -473,7 +472,7 @@ tsl::StatusOr<mlir::Operation*> LhloDialectEmitter::EmitOp(
       return CreateOpInFusion(instr);
     default:
       llvm::errs() << instr->ToString();
-      return tsl::errors::Internal(
+      return absl::InternalError(
           absl::StrCat("LHLO opcode ", xla::HloOpcodeString(instr->opcode()),
                        " is not supported."));
   }
@@ -692,7 +691,7 @@ LhloDialectEmitter::EmitSelectAndScatterOp(const HloInstruction* instr) {
   const xla::Window& window = select_and_scatter_instr->window();
 
   if (xla::window_util::HasDilation(window)) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "Dilation for SelectAndScatter is not supported");
   }
 
@@ -1651,7 +1650,7 @@ tsl::StatusOr<mlir::Operation*> LhloDialectEmitter::EmitAsyncStartOp(
     case xla::HloOpcode::kAllToAll:
       return EmitAllToAllStartOp(instr);
     default:
-      return tsl::errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Unexpected instruction %s wrapped in %s",
           xla::HloOpcodeString(async->async_wrapped_opcode()),
           HloOpcodeString(instr->opcode()));
@@ -1668,7 +1667,7 @@ tsl::StatusOr<mlir::Operation*> LhloDialectEmitter::EmitAsyncDoneOp(
     case xla::HloOpcode::kAllToAll:
       return EmitAllToAllDoneOp(instr);
     default:
-      return tsl::errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Unexpected instruction %s wrapped in %s",
           xla::HloOpcodeString(async->async_wrapped_opcode()),
           HloOpcodeString(instr->opcode()));
@@ -1833,7 +1832,7 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitBitcast(
                       assignment_.GetUniqueSlice(instr->operand(0), top_index));
 
   if (input_slice != result_slice) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Bitcast input and result slice should be same");
   }
   return nullptr;
@@ -1855,7 +1854,7 @@ tsl::Status LhloDialectEmitter::ImportAsLmhloRegion(
   builder_ = OpBuilder(region);
   xla::HloModule* hlo_module = computation->parent();
   if (!hlo_module->has_schedule()) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "Missing sequential order for the computation");
   }
   const xla::HloInstructionSequence* schedule =
@@ -2066,11 +2065,11 @@ tsl::StatusOr<Value> LhloDialectEmitter::GetOrCreateArrayView(
     SmallVector<int64_t, 4> out_strides;
     auto out_memref_type = out_type.dyn_cast<MemRefType>();
     if (!out_memref_type)
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Expected memref type when creating a view for leaf type of a "
           "tuple.");
     if (failed(getStridesAndOffset(out_memref_type, out_strides, out_offset)))
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Failed to get strides and offset from the output type.");
     result = builder_.create<memref::ReinterpretCastOp>(
         loc, out_memref_type, result, out_offset, out_memref_type.getShape(),
@@ -2103,7 +2102,7 @@ tsl::Status LhloDialectEmitter::GetOrCreateViewImpl(
   if (current_shape.IsToken()) {
     switch (token_mode) {
       case TokenLoweringMode::kFailToLower:
-        return tsl::errors::Internal(
+        return absl::InternalError(
             "Unexpected token kind for %s and shape index %s",
             instr->ToString(), current_shape_index->ToString());
 
@@ -2112,9 +2111,9 @@ tsl::Status LhloDialectEmitter::GetOrCreateViewImpl(
         return ::tsl::OkStatus();
     }
   }
-  return tsl::errors::Internal(
-      "Unexpected shape kind for %s and shape index %s", instr->ToString(),
-      current_shape_index->ToString());
+  return absl::InternalError("Unexpected shape kind for %s and shape index %s",
+                             instr->ToString(),
+                             current_shape_index->ToString());
 }
 
 // Returns a view for the result of an instruction.
@@ -2318,7 +2317,7 @@ tsl::Status HloToLhloModule(const BufferAssignment& assignment,
   const xla::HloInstructionSequence* schedule =
       assignment.hlo_ordering().SequentialOrder(*computation);
   if (!schedule) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "Missing sequential order for the computation");
   }
   BaseScopedDiagnosticHandler status_handler(module.getContext());

@@ -44,7 +44,7 @@ tsl::StatusOr<OwningDeviceMemory> TfAllocatorAdapter::Allocate(
     data =
         wrapped_->AllocateRaw(tsl::Allocator::kAllocatorAlignment, size, attrs);
     if (data == nullptr) {
-      return tsl::errors::ResourceExhausted(
+      return absl::ResourceExhaustedError(
           "Out of memory while trying to allocate ", size, " bytes.");
     }
   }

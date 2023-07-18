@@ -135,7 +135,7 @@ tsl::Status DnnSupport::GetConvolveRunners(
     bool /*use_fallback*/, ScratchAllocator* /*scratch_allocator*/,
     const NumericOptions& /*numeric_options*/,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* /*exec_plans*/) {
-  return tsl::errors::Unimplemented("GetConvolveRunners not implemented.");
+  return absl::UnimplementedError("GetConvolveRunners not implemented.");
 }
 
 tsl::StatusOr<std::unique_ptr<const dnn::ConvRunner>>
@@ -146,7 +146,7 @@ DnnSupport::ConvolveRunnerFromDesc(
     const dnn::FilterDescriptor& filter_descriptor,
     const dnn::BatchDescriptor& output_descriptor,
     const dnn::ConvolutionDescriptor& convolution_descriptor) {
-  return tsl::errors::Unimplemented("ConvolveRunnerFromDesc not implemented.");
+  return absl::UnimplementedError("ConvolveRunnerFromDesc not implemented.");
 }
 
 tsl::Status DnnSupport::GetFusedConvolveRunners(
@@ -161,7 +161,7 @@ tsl::Status DnnSupport::GetFusedConvolveRunners(
     const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
     dnn::ActivationMode activation_mode, const NumericOptions& numeric_options,
     std::vector<std::unique_ptr<const dnn::FusedConvRunner>>* out_exec_plans) {
-  return tsl::errors::Unimplemented("GetFusedConvolveRunners not implemented.");
+  return absl::UnimplementedError("GetFusedConvolveRunners not implemented.");
 }
 
 tsl::Status DnnSupport::GetFusedMatmulRunners(
@@ -172,7 +172,7 @@ tsl::Status DnnSupport::GetFusedMatmulRunners(
     bool use_fallback, const NumericOptions& numeric_options,
     std::vector<std::unique_ptr<const dnn::FusedMatmulRunner>>*
         out_exec_plans) {
-  return tsl::errors::Unimplemented("GetFusedMatmulRunners not implemented.");
+  return absl::UnimplementedError("GetFusedMatmulRunners not implemented.");
 }
 
 tsl::StatusOr<std::unique_ptr<const dnn::FusedConvRunner>>
@@ -187,7 +187,7 @@ DnnSupport::FusedConvolveRunnerFromDesc(
     const dnn::BatchDescriptor& output_descriptor,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::ActivationMode activation_mode) {
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "FusedConvolveRunnerFromDesc not implemented.");
 }
 
@@ -615,8 +615,7 @@ TensorDescriptor::GetPhysicalDimensionsMajorToMinor() const {
     logical_to_physical[logical] = physical;
   }
   if (dimensions_.size() != minor_to_major_.size())
-    return tsl::errors::Internal(
-        "Dimensions size should match the layout size.");
+    return absl::InternalError("Dimensions size should match the layout size.");
 
   std::vector<int64_t> physical_dims(dimensions_.size());
   for (int64_t i = 0; i < physical_dims.size(); ++i) {
@@ -673,7 +672,7 @@ MatmulTensorDescriptor::GetNonContractingDims() const {
     bool is_batch = absl::c_count(batch_dimension_numbers_, dim) != 0;
     bool is_contracting = absl::c_count(contracting_dim_, dim) != 0;
     if (is_batch && is_contracting)
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "A dimension cannot be both a batch dimension and a contracting "
           "dimension.");
     if (!(is_batch || is_contracting)) non_contracting_dims.push_back(dim);
@@ -682,7 +681,7 @@ MatmulTensorDescriptor::GetNonContractingDims() const {
   if (batch_dimension_numbers_.size() + contracting_dim_.size() +
           non_contracting_dims.size() !=
       tensor_.dimensions().size())
-    return tsl::errors::Internal(
+    return absl::InternalError(
         "Batch_dimension_numbers, contracting_dim and non_contracting_dims "
         "should sum up to the total number of dimensions.");
   return non_contracting_dims;
@@ -700,7 +699,7 @@ tsl::StatusOr<std::vector<int64_t>> MatmulTensorDescriptor::MakeCudnnCompatible(
   if (batch_dimension_numbers_.size() + contracting_dim_.size() +
           non_contracting_dims.size() !=
       vec.size())
-    return tsl::errors::Internal(
+    return absl::InternalError(
         "Batch_dimension_numbers, contracting_dim and non_contracting_dims "
         "should sum up to the total number of dimensions.");
   if (is_lhs) /* lhs -> {b0, b1,....bk, m, k} */ {
@@ -1187,7 +1186,7 @@ tsl::Status DnnSupport::DoCtcLoss(
     absl::Span<const int> input_lengths_data, DeviceMemoryBase costs_data,
     const RnnStateTensorDescriptor& grads_desc, DeviceMemoryBase grads_data,
     DeviceMemory<uint8_t> scratch_memory, int ctc_loss_algo_id) {
-  return tsl::errors::Unimplemented("CtcLoss not implemented");
+  return absl::UnimplementedError("CtcLoss not implemented");
 }
 
 }  // namespace dnn

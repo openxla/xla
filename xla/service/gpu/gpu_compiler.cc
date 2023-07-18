@@ -660,7 +660,7 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
     gpu_version = GetGpuVersion(stream_exec);
     se::dnn::DnnSupport* dnn = stream_exec->AsDnn();
     if (dnn == nullptr) {
-      return tsl::errors::FailedPrecondition(
+      return absl::FailedPreconditionError(
           "DNN library initialization failed."
           " Look at the errors above for more details.");
     }

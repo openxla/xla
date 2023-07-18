@@ -148,7 +148,7 @@ NcclCollectiveThunk::NcclCollectiveThunk(Kind kind, ThunkInfo thunk_info,
 
 /* static */ Status NcclCollectiveThunk::CheckImplementable() {
   if (!NcclIsEnabled()) {
-    return tsl::errors::Unimplemented("NCCL is not enabled");
+    return absl::UnimplementedError("NCCL is not enabled");
   }
   return OkStatus();
 }
@@ -317,12 +317,12 @@ Status NcclCollectiveDoneThunk::ExecuteOnStream(const ExecuteParams& params) {
 Status IsValidOperand(mlir::Value operand, Thunk::Kind reduction_op) {
   Shape shape = GetShape(operand);
   if (!LayoutUtil::IsDenseArray(shape)) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         absl::StrFormat("input is not a dense array: %s",
                         shape.ToString(/*print_layout=*/true)));
   }
   if (!IsTypeSupportedByNccl(shape.element_type(), reduction_op)) {
-    return tsl::errors::Unimplemented(absl::StrFormat(
+    return absl::Unimplemented(absl::StrFormatError(
         "element type %s not suppored by NCCL",
         primitive_util::LowercasePrimitiveTypeName(shape.element_type())));
   }

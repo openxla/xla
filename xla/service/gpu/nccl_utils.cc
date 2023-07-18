@@ -48,7 +48,7 @@ Status ToStatus(ncclResult_t s, const char* file, int64_t line,
   if (s == ncclSuccess) {
     return OkStatus();
   }
-  return tsl::errors::Internal(
+  return absl::InternalError(
       absl::StrFormat("%s:%d: NCCL operation %s failed: %s", file, line, expr,
                       ncclGetErrorString(s)));
 }
@@ -99,7 +99,7 @@ StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType element_type,
       if (reduction_op == Thunk::kNcclAllReduce ||
           reduction_op == Thunk::kNcclAllReduceStart ||
           reduction_op == Thunk::kNcclReduceScatter) {
-        return tsl::errors::InvalidArgument(absl::StrFormat(
+        return absl::InvalidArgument(absl::StrFormatError(
             "Unsupported data type: %s", PrimitiveType_Name(element_type)));
       }
       // For collectives that just move data around, we can use ncclFloat16 for
@@ -110,7 +110,7 @@ StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType element_type,
       return ncclBfloat16;
 #endif
     default:
-      return tsl::errors::InvalidArgument(absl::StrFormat(
+      return absl::InvalidArgument(absl::StrFormatError(
           "Unsupported data type: %s", PrimitiveType_Name(element_type)));
   }
 }

@@ -62,7 +62,7 @@ TEST(StatusMacros, RetCheckSucceeding) {
 StatusOr<int> CreateIntSuccessfully() { return 42; }
 
 StatusOr<int> CreateIntUnsuccessfully() {
-  return tsl::errors::Internal("foobar");
+  return absl::InternalError("foobar");
 }
 
 TEST(StatusMacros, AssignOrAssertOnOK) {
@@ -72,7 +72,7 @@ TEST(StatusMacros, AssignOrAssertOnOK) {
 
 Status ReturnStatusOK() { return OkStatus(); }
 
-Status ReturnStatusError() { return (tsl::errors::Internal("foobar")); }
+Status ReturnStatusError() { return (absl::InternalError("foobar")); }
 
 using StatusReturningFunction = std::function<Status()>;
 

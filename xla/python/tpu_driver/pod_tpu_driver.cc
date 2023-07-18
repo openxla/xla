@@ -948,8 +948,8 @@ class PodTpuDriver : public TpuDriver {
     if (container.count(target_op_id) == 0) {
       return std::make_shared<ErrorEvent>(
           this, operation_id,
-          tsl::errors::InvalidArgument("Handle ", target_op_id,
-                                       " does not exist."));
+          absl::InvalidArgumentError("Handle ", target_op_id,
+                                     " does not exist."));
     }
     return nullptr;
   }

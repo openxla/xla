@@ -117,7 +117,7 @@ tsl::StatusOr<int64_t> FindLibtpuProcess() {
   DIR* proc = opendir("/proc");
 
   if (proc == nullptr) {
-    return tsl::errors::Unavailable("was not able to open /proc");
+    return absl::UnavailableError("was not able to open /proc");
   }
   std::unique_ptr<DIR, int (*)(DIR*)> proc_dir(proc, closedir);
   struct dirent* ent;
@@ -130,7 +130,7 @@ tsl::StatusOr<int64_t> FindLibtpuProcess() {
       return pid;
     }
   }
-  return tsl::errors::NotFound("did not find which pid uses the libtpu.so");
+  return absl::NotFoundError("did not find which pid uses the libtpu.so");
 }
 
 tsl::Status TryAcquireTpuLock() {
@@ -148,7 +148,7 @@ tsl::Status TryAcquireTpuLock() {
   if (load_library_override == "1") {
     return ::tsl::OkStatus();
   } else if (load_library_override == "0") {
-    return tsl::errors::FailedPrecondition(
+    return absl::FailedPreconditionError(
         "TPU_LOAD_LIBRARY=0, not loading libtpu");
   }
 
@@ -176,11 +176,11 @@ tsl::Status TryAcquireTpuLock() {
     if (lockf(fd, F_TLOCK, 0) != 0) {
       auto pid = FindLibtpuProcess();
       if (pid.ok()) {
-        return tsl::errors::Aborted(absl::StrCat(
+        return absl::Aborted(absl::StrCatError(
             "The TPU is already in use by process with pid ", pid.value(),
             ". Not attempting to load libtpu.so in this process."));
       } else {
-        return tsl::errors::Aborted(
+        return absl::AbortedError(
             "The TPU is already in use by another process probably owned by "
             "another user. Run \"$ sudo lsof -w /dev/accel0\" to figure out "
             "which process is using the TPU. If you still get this message, "
@@ -307,8 +307,7 @@ tsl::Status FindAndLoadTpuLibrary() {
 
 #else   // PLATFORM_GOOGLE
 tsl::Status InitializeTpuLibrary(void* library_handle) {
-  return tsl::errors::Unimplemented(
-      "You must statically link in a TPU library.");
+  return absl::UnimplementedError("You must statically link in a TPU library.");
 }
 #endif  // PLATFORM_GOOGLE
 std::pair<std::vector<std::string>, std::vector<const char*>>

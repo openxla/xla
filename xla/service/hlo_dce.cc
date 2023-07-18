@@ -103,7 +103,7 @@ Status HloDCE::RecursivelyRemoveDeadComputation(
     for (HloComputation* subcomp : instruction->called_computations()) {
       auto iter = live_call_counts.find(subcomp);
       if (iter == live_call_counts.end()) {
-        return tsl::errors::Internal(
+        return absl::InternalError(
             "called computation not found in live_call_counts table during "
             "HloDCE");
       }

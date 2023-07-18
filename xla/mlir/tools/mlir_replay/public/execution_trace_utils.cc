@@ -241,7 +241,7 @@ tsl::StatusOr<InterpreterValue> LiteralToValue(const xla::Literal& literal) {
   }
 
   if (literal.shape().IsToken()) {
-    return tsl::errors::Unimplemented("token arguments are not implemented");
+    return absl::UnimplementedError("token arguments are not implemented");
   }
 
   if (literal.shape().IsArray()) {
@@ -265,23 +265,23 @@ tsl::StatusOr<InterpreterValue> LiteralToValue(const xla::Literal& literal) {
       case xla::U64:
         return {{ArrayLiteralToTensor<uint64_t>(literal)}};
       case xla::F16:
-        return tsl::errors::Unimplemented("F16 not implemented");
+        return absl::UnimplementedError("F16 not implemented");
       case xla::F32:
         return {{ArrayLiteralToTensor<float>(literal)}};
       case xla::BF16:
-        return tsl::errors::Unimplemented("BF16 not implemented");
+        return absl::UnimplementedError("BF16 not implemented");
       case xla::F64:
         return {{ArrayLiteralToTensor<double>(literal)}};
       case xla::F8E5M2:
-        return tsl::errors::Unimplemented("F8E5M2 not implemented");
+        return absl::UnimplementedError("F8E5M2 not implemented");
       case xla::F8E4M3FN:
-        return tsl::errors::Unimplemented("F8E4M3FN not implemented");
+        return absl::UnimplementedError("F8E4M3FN not implemented");
       case xla::F8E4M3B11FNUZ:
-        return tsl::errors::Unimplemented("F8E4M3B11FNUZ not implemented");
+        return absl::UnimplementedError("F8E4M3B11FNUZ not implemented");
       case xla::F8E5M2FNUZ:
-        return tsl::errors::Unimplemented("F8E5M2FNUZ not implemented");
+        return absl::UnimplementedError("F8E5M2FNUZ not implemented");
       case xla::F8E4M3FNUZ:
-        return tsl::errors::Unimplemented("F8E4M3FNUZ not implemented");
+        return absl::UnimplementedError("F8E4M3FNUZ not implemented");
       case xla::C64:
         return {{ArrayLiteralToTensor<std::complex<float>>(literal)}};
       case xla::C128:
@@ -292,7 +292,7 @@ tsl::StatusOr<InterpreterValue> LiteralToValue(const xla::Literal& literal) {
     }
   }
 
-  return tsl::errors::InvalidArgument("unexpected literal type");
+  return absl::InvalidArgumentError("unexpected literal type");
 }
 
 tsl::StatusOr<InterpreterValue> LiteralToValue(
@@ -401,8 +401,8 @@ tsl::StatusOr<InterpreterValue> TracedValueToValue(
       }
       return {{std::move(result)}};
   }
-  return tsl::errors::InvalidArgument("unexpected type: " +
-                                      traced_value.DebugString());
+  return absl::InvalidArgumentError("unexpected type: " +
+                                    traced_value.DebugString());
 }
 
 llvm::SmallVector<const InstructionTrace*> FindOpExecutionsInTrace(

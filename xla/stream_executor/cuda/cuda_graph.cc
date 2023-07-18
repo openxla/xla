@@ -29,7 +29,7 @@ namespace gpu {
 template <typename... Args>
 static tsl::Status InternalError(const absl::FormatSpec<Args...>& format,
                                  const Args&... args) {
-  return tsl::errors::Internal(absl::StrFormat(format, args...));
+  return absl::Internal(absl::StrFormatError(format, args...));
 }
 
 //===----------------------------------------------------------------------===//

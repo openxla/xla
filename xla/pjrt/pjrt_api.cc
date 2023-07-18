@@ -41,8 +41,8 @@ xla::StatusOr<const PJRT_Api*> PjrtApi(absl::string_view device_type) {
   std::string canonicalize_device_type = CanonicalizeDeviceType(device_type);
   auto iter = pjrt_apis->find(canonicalize_device_type);
   if (iter == pjrt_apis->end()) {
-    return tsl::errors::NotFound("PJRT_Api not found for device type ",
-                                 canonicalize_device_type);
+    return absl::NotFoundError("PJRT_Api not found for device type ",
+                               canonicalize_device_type);
   }
   return iter->second;
 }
@@ -51,8 +51,8 @@ xla::Status SetPjrtApi(absl::string_view device_type, const PJRT_Api* api) {
   std::string canonicalize_device_type = CanonicalizeDeviceType(device_type);
   if (auto iter = pjrt_apis->find(canonicalize_device_type);
       iter != pjrt_apis->end()) {
-    return tsl::errors::AlreadyExists(
-        "PJRT_Api already exists for device type ", canonicalize_device_type);
+    return absl::AlreadyExistsError("PJRT_Api already exists for device type ",
+                                    canonicalize_device_type);
   }
   (*pjrt_apis)[canonicalize_device_type] = api;
   LOG(INFO) << "PJRT_Api is set for device type " << canonicalize_device_type;
@@ -70,18 +70,18 @@ xla::Status InitPjrtPlugin(PjrtApiInitFn init_fn,
 xla::Status LoadPjrtPlugin(absl::string_view device_type,
                            absl::string_view library_path) {
 #ifdef PLATFORM_WINDOWS
-  return tsl::errors::Unimplemented(
+  return absl::UnimplementedError(
       "LoadPjrtPlugin is not implemented on windows yet.");
 #else
   void* library = dlopen(library_path.data(), RTLD_LAZY);
   if (library == nullptr) {
-    return tsl::errors::Internal("Failed to open ", library_path, ": ",
-                                 dlerror());
+    return absl::InternalError("Failed to open ", library_path, ": ",
+                               dlerror());
   }
   PjrtApiInitFn init_fn;
   *reinterpret_cast<void**>(&init_fn) = dlsym(library, "GetPjrtApi");
   if (init_fn == nullptr) {
-    return tsl::errors::NotFound("GetPjrtApi not found in ", library_path);
+    return absl::NotFoundError("GetPjrtApi not found in ", library_path);
   }
   LOG(INFO) << "GetPjrtApi was found for " << device_type << " at "
             << library_path;

@@ -33,7 +33,7 @@ StatusOr<bool> RunFileCheck(const std::string& input,
   std::string pattern_path;
   auto env = tsl::Env::Default();
   if (!env->LocalTempFilename(&pattern_path)) {
-    return tsl::errors::Internal("couldn't get a pattern file name");
+    return absl::InternalError("couldn't get a pattern file name");
   }
   TF_RETURN_IF_ERROR(tsl::WriteStringToFile(env, pattern_path, pattern));
 
@@ -53,7 +53,7 @@ StatusOr<bool> RunFileCheckWithPatternFile(const std::string& input,
   file_check_process.SetChannelAction(tsl::CHAN_STDIN, tsl::ACTION_PIPE);
   file_check_process.SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
   if (!file_check_process.Start()) {
-    return tsl::errors::Internal("couldn't start FileCheck");
+    return absl::InternalError("couldn't start FileCheck");
   }
 
   std::string standard_error;

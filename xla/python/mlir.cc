@@ -114,7 +114,7 @@ StatusOr<std::string> PyXlaComputationToMlirModule(
     pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
   }
   if (!mlir::succeeded(pm.run(*module))) {
-    return tsl::errors::InvalidArgument("MHLO => StableHLO failed");
+    return absl::InvalidArgumentError("MHLO => StableHLO failed");
   }
   return PrintModule(*module);
 }
@@ -147,7 +147,7 @@ StatusOr<std::string> PyMhloToStablehlo(std::string mlir_module) {
   if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
   pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
   if (!mlir::succeeded(pm.run(*module))) {
-    return tsl::errors::InvalidArgument("MHLO => StableHLO failed");
+    return absl::InvalidArgumentError("MHLO => StableHLO failed");
   }
   return PrintModule(*module);
 }
@@ -164,7 +164,7 @@ StatusOr<std::string> PyStablehloToMhlo(std::string mlir_module) {
   if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
   pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
   if (!mlir::succeeded(pm.run(*module))) {
-    return tsl::errors::InvalidArgument("StableHLO => MHLO failed");
+    return absl::InvalidArgumentError("StableHLO => MHLO failed");
   }
   return PrintModule(*module);
 }
@@ -186,7 +186,7 @@ StatusOr<py::bytes> PySerializePortableArtifact(std::string mlir_module,
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
   pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
   if (!mlir::succeeded(pm.run(*module))) {
-    return tsl::errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "CHLO => [MHLO+Shape] => StableHLO failed");
   }
 
@@ -194,7 +194,7 @@ StatusOr<py::bytes> PySerializePortableArtifact(std::string mlir_module,
   std::string buffer;
   llvm::raw_string_ostream os(buffer);
   if (failed(mlir::stablehlo::serializePortableArtifact(*module, target, os)))
-    return tsl::errors::InvalidArgument("Failed to serialize StableHLO");
+    return absl::InvalidArgumentError("Failed to serialize StableHLO");
   return py::bytes(buffer);
 }
 
@@ -203,7 +203,7 @@ StatusOr<std::string> PyDeserializePortableArtifact(std::string bytecode_str) {
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::stablehlo::deserializePortableArtifact(bytecode_str, &context);
   if (!module)
-    return tsl::errors::InvalidArgument("Failed to deserialize StableHLO");
+    return absl::InvalidArgumentError("Failed to deserialize StableHLO");
   return PrintModule(*module);
 }
 

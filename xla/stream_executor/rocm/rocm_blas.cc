@@ -518,8 +518,8 @@ tsl::Status ROCMBlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
           cb_beta, static_cast<rocblas_double_complex *>(c->opaque()), ldc);
     }
     default:
-      return tsl::errors::Internal("Unsupported datatype for GEMM: ",
-                                   blas::DataTypeString(dtype));
+      return absl::InternalError("Unsupported datatype for GEMM: ",
+                                 blas::DataTypeString(dtype));
   }
 }
 
@@ -532,8 +532,8 @@ tsl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
     blas::AlgorithmType algorithm, const NumericOptions &numeric_options,
     blas::ProfileResult *output_profile_result) {
   // ROCM TODO: properly implement the interface
-  return tsl::errors::Internal("DoBlasGemmWithAlgorithm ",
-                               "is not implemented on ROCm yet");
+  return absl::InternalError("DoBlasGemmWithAlgorithm ",
+                             "is not implemented on ROCm yet");
 }
 
 tsl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
@@ -546,8 +546,8 @@ tsl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
     blas::AlgorithmType algorithm, const NumericOptions &numeric_options,
     blas::ProfileResult *output_profile_result) {
   // ROCM TODO: properly implement the interface
-  return tsl::errors::Internal("DoBlasGemmStridedBatchedWithAlgorithm ",
-                               "is not implemented on ROCm yet");
+  return absl::InternalError("DoBlasGemmStridedBatchedWithAlgorithm ",
+                             "is not implemented on ROCm yet");
 }
 
 bool ROCMBlas::GetBlasGemmAlgorithms(
@@ -1160,13 +1160,13 @@ tsl::Status ROCMBlas::DoBlasGemmStridedBatched(
           batch_count);
     }
     default:
-      return tsl::errors::Internal(absl::StrCat(
-          "Unsupported datatype for GEMM: ", blas::DataTypeString(dtype)));
+      return absl::Internal(absl::StrCatError("Unsupported datatype for GEMM: ",
+                                              blas::DataTypeString(dtype)));
   }
 }
 
 tsl::Status ROCMBlas::GetVersion(string *version) {
-  return tsl::errors::Unimplemented("");
+  return absl::UnimplementedError("");
 }
 
 }  // namespace gpu

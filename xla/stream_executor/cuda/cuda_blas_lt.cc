@@ -115,7 +115,7 @@ tsl::StatusOr<cublasLtEpilogue_t> AsCublasLtEpilogue(
     case BlasLt::Epilogue::kGELUWithAux:
     case BlasLt::Epilogue::kBiasThenGELU:
     case BlasLt::Epilogue::kBiasThenGELUWithAux:
-      return tsl::errors::Internal("GELU epilogues require cublasLt >= 11.4");
+      return absl::InternalError("GELU epilogues require cublasLt >= 11.4");
 #endif
   }
 }
@@ -307,7 +307,7 @@ tsl::Status BlasLt::DoMatmul(Stream* stream, const BlasLt::MatmulPlan& plan,
 #else
     if (a_scale != nullptr || b_scale != nullptr || c_scale != nullptr ||
         d_scale != nullptr || d_amax != nullptr) {
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "A/B/C/D scales and amax require cublasLt >= 11.8");
     }
 #endif
@@ -337,7 +337,7 @@ tsl::Status BlasLt::DoMatmul(Stream* stream, const BlasLt::MatmulPlan& plan,
                                  CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_BATCH_STRIDE,
                                  output_batch_stride));
 #else
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Auxiliary inputs / outputs require cublasLt >= 11.4");
 #endif
     }

@@ -374,7 +374,7 @@ class Stream {
                              convolution_descriptor, algorithm_desc,
                              scratch_memory, output_profile_result);
     }
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
 
   template <typename InputT, typename ScaleT, typename SideInputT,
@@ -402,7 +402,7 @@ class Stream {
           bias_descriptor, biases, activation_mode, output_descriptor, *output,
           scratch_allocator, algorithm_config, output_profile_result);
     }
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
 
   tsl::Status CudnnReorderConvolutionFilterAndBias(
@@ -416,7 +416,7 @@ class Stream {
           this, filter_descriptor, filter_input, filter_output,
           std::move(bias_input), std::move(bias_output));
     }
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
 
   tsl::StatusOr<std::unique_ptr<const dnn::ConvRunner>> ConvolveRunnerFromDesc(
@@ -428,7 +428,7 @@ class Stream {
       const dnn::ConvolutionDescriptor &convolution_descriptor) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
-      return tsl::errors::Unimplemented("DNN library is not found.");
+      return absl::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->ConvolveRunnerFromDesc(
         this, algorithm_desc, kind, element_type, output_type, input_descriptor,
@@ -449,7 +449,7 @@ class Stream {
       dnn::ActivationMode activation_mode) {
     dnn::DnnSupport *dnn_support = parent_->AsDnn();
     if (!dnn_support) {
-      return tsl::errors::Unimplemented("DNN library is not found.");
+      return absl::UnimplementedError("DNN library is not found.");
     }
     return dnn_support->FusedConvolveRunnerFromDesc(
         this, algorithm_desc, kind, element_type, bias_type, output_type,
@@ -641,7 +641,7 @@ class Stream {
                                 input_data, output_dimensions, *output_data,
                                 workspace_allocator);
     }
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
 
   template <typename ElementType>
@@ -658,7 +658,7 @@ class Stream {
                                 input_dimensions, input_data, output_dimensions,
                                 *output_data, workspace_allocator);
     }
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
 
   template <typename ElementType>
@@ -677,7 +677,7 @@ class Stream {
           input_dimensions, input_data, output_dimensions, output_data,
           input_diff_data, *output_diff_data, workspace_allocator);
     }
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
 
   template <typename ElementType>
@@ -697,7 +697,7 @@ class Stream {
           numeric_options, input_dimensions, input_data, output_dimensions,
           output_data, input_diff_data, *output_diff_data, workspace_allocator);
     }
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
 
   Stream &ThenNormalizeWithDimensions(
@@ -971,7 +971,7 @@ class Stream {
                   "types have to match");
     blas::BlasSupport *blas = parent()->AsBlas();
     if (!blas) {
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Attempting to perform BLAS operation using "
           "StreamExecutor without BLAS support");
     }
@@ -1029,7 +1029,7 @@ class Stream {
 
     blas::BlasSupport *blas = parent()->AsBlas();
     if (!blas) {
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Attempting to perform BLAS operation using "
           "StreamExecutor without BLAS support");
     }
@@ -1068,7 +1068,7 @@ class Stream {
 
     blas::BlasSupport *blas = parent()->AsBlas();
     if (!blas) {
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Attempting to perform BLAS operation using "
           "StreamExecutor without BLAS support");
     }
@@ -1198,7 +1198,7 @@ class Stream {
                   "Mismatched input and alpha/beta types");
     blas::BlasSupport *blas = parent()->AsBlas();
     if (!blas) {
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Attempting to perform BLAS operation using "
           "StreamExecutor without BLAS support");
     }
@@ -1638,7 +1638,7 @@ class Stream {
     }();
 
     if (!valid_computation_type) {
-      return tsl::errors::Internal(
+      return absl::InternalError(
           "Invalid computation type ",
           blas::ComputationTypeString(computation_type), " for output type: ",
           blas::DataTypeString(blas::ToDataType<CType>::value));

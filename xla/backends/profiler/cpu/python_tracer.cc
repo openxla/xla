@@ -54,7 +54,7 @@ PythonTracer::~PythonTracer() { Stop().IgnoreError(); }  // NOLINT
 
 tsl::Status PythonTracer::Start() {  // TENSORFLOW_STATUS_OK
   if (recording_) {
-    return tsl::errors::Internal("PythonTracer already started");
+    return absl::InternalError("PythonTracer already started");
   }
   VLOG(1) << __FUNCTION__;
   recording_ = true;
@@ -64,7 +64,7 @@ tsl::Status PythonTracer::Start() {  // TENSORFLOW_STATUS_OK
 
 tsl::Status PythonTracer::Stop() {  // TENSORFLOW_STATUS_OK
   if (!recording_) {
-    return tsl::errors::Internal("PythonTracer not started");
+    return absl::InternalError("PythonTracer not started");
   }
   VLOG(1) << __FUNCTION__;
   context_ = PythonHooks::GetSingleton()->Stop();

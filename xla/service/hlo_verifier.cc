@@ -1973,8 +1973,8 @@ Status ShapeVerifier::CheckShape(const HloInstruction* instruction,
                                  const StatusOr<Shape>& inferred_shape_status) {
   if (!inferred_shape_status.ok()) {
     Status s = inferred_shape_status.status();
-    tsl::errors::AppendToMessage(&s, ", for instruction ",
-                                 instruction->ToString());
+    absl::AppendToMessageError(&s, ", for instruction ",
+                               instruction->ToString());
     return s;
   }
   return CheckShape(instruction, inferred_shape_status.value());

@@ -135,7 +135,7 @@ Status HloPassPipeline::RunInvariantCheckers(
     if (!changed_status.ok()) {
       VLOG(2) << "Failed invariant check:";
       XLA_VLOG_LINES(2, hlo->ToString());
-      return tsl::errors::CreateWithUpdatedMessage(
+      return absl::CreateWithUpdatedMessageError(
           changed_status.status(),
           absl::StrCat(changed_status.status().message(), "\n\nFailed after ",
                        after_pass_name));

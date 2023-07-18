@@ -139,11 +139,11 @@ StatusOr<std::vector<std::unique_ptr<Executable>>> InterpreterCompiler::Compile(
     return std::vector<std::unique_ptr<Executable>>();
   }
   if (module_group->size() > 1) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "Compilation of multiple HLO modules is not supported on Interpreter.");
   }
   if (stream_exec.size() != 1 || stream_exec[0].size() != 1) {
-    return tsl::errors::Unimplemented("Unexpected number of StreamExecutor's.");
+    return absl::UnimplementedError("Unexpected number of StreamExecutor's.");
   }
   auto hlo_modules = module_group->ConsumeModules();
   TF_ASSIGN_OR_RETURN(auto module, RunHloPasses(std::move(hlo_modules[0]),
@@ -159,7 +159,7 @@ StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
 InterpreterCompiler::CompileAheadOfTime(
     std::unique_ptr<HloModuleGroup> module_group,
     const AotCompilationOptions& aot_options) {
-  return tsl::errors::InvalidArgument(
+  return absl::InvalidArgumentError(
       "AOT compilation not supported on Interpreter");
 }
 

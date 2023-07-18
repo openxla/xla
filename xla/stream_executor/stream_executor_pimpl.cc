@@ -277,7 +277,7 @@ tsl::Status StreamExecutor::GetConvolveRunners(
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_exec_plans) {
   dnn::DnnSupport* dnn_support = AsDnn();
   if (!dnn_support) {
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
   return dnn_support->GetConvolveRunners(
       use_cudnn_frontend, kind, input_type, output_type, stream,
@@ -300,7 +300,7 @@ tsl::Status StreamExecutor::GetFusedConvolveRunners(
     std::vector<std::unique_ptr<const dnn::FusedConvRunner>>* out_exec_plans) {
   dnn::DnnSupport* dnn_support = AsDnn();
   if (!dnn_support) {
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
   return dnn_support->GetFusedConvolveRunners(
       use_cudnn_frontend, kind, input_type, bias_type, output_type,
@@ -320,7 +320,7 @@ tsl::Status StreamExecutor::GetFusedMatmulRunners(
         out_exec_plans) {
   dnn::DnnSupport* dnn_support = AsDnn();
   if (!dnn_support) {
-    return tsl::errors::Unimplemented("DNN library is not found.");
+    return absl::UnimplementedError("DNN library is not found.");
   }
 
   return dnn_support->GetFusedMatmulRunners(
@@ -879,7 +879,7 @@ tsl::StatusOr<OwningDeviceMemory> StreamExecutorMemoryAllocator::Allocate(
   DeviceMemoryBase result =
       executor->AllocateArray<uint8_t>(size, memory_space);
   if (size > 0 && result == nullptr) {
-    return tsl::errors::ResourceExhausted(absl::StrFormat(
+    return absl::ResourceExhausted(absl::StrFormatError(
         "Failed to allocate request for %s (%uB) on device ordinal %d",
         tsl::strings::HumanReadableNumBytes(size), size, device_ordinal));
   }
@@ -904,7 +904,7 @@ tsl::Status StreamExecutorMemoryAllocator::Deallocate(int device_ordinal,
 tsl::StatusOr<StreamExecutor*> StreamExecutorMemoryAllocator::GetStreamExecutor(
     int device_ordinal) const {
   if (device_ordinal < 0) {
-    return tsl::errors::InvalidArgument(absl::StrFormat(
+    return absl::InvalidArgument(absl::StrFormatError(
         "device ordinal value (%d) must be non-negative", device_ordinal));
   }
   for (StreamExecutor* se : stream_executors_) {
@@ -912,7 +912,7 @@ tsl::StatusOr<StreamExecutor*> StreamExecutorMemoryAllocator::GetStreamExecutor(
       return se;
     }
   }
-  return tsl::errors::NotFound(
+  return absl::NotFoundError(
       absl::StrFormat("Device %s:%d present but not supported",
                       platform()->Name(), device_ordinal));
 }

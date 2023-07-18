@@ -705,8 +705,7 @@ StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromProto(
     const HloModuleProto& module, const DebugOptions& debug_options,
     const ExecutionOptions* execution_options) {
   if (!module.has_host_program_shape()) {
-    return tsl::errors::FailedPrecondition(
-        "No program shape found in the proto");
+    return absl::FailedPreconditionError("No program shape found in the proto");
   }
   ProgramShape program_shape(module.host_program_shape());
   TF_ASSIGN_OR_RETURN(HloModuleConfig config,

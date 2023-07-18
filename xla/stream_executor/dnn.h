@@ -1292,7 +1292,7 @@ class DnnSupport {
 
   // Gets the version of the backing library, as a VersionInfo object.
   virtual tsl::StatusOr<VersionInfo> GetVersion() {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "DnnSupport::GetVersion not implemented on this platform.");
   }
 
@@ -1519,7 +1519,7 @@ class DnnSupport {
       DeviceMemoryBase output_data, ScratchAllocator* scratch_allocator,
       const dnn::AlgorithmConfig& algorithm_config,
       dnn::ProfileResult* output_profile_result) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "DnnSupport::DoFusedConvolve not implemented on this platform.");
   }
 
@@ -1551,7 +1551,7 @@ class DnnSupport {
       DeviceMemory<int8_t>* filter_output,
       std::optional<const DeviceMemory<float>> bias_input,
       std::optional<DeviceMemory<float>> bias_output) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "DnnSupport::CudnnReorderConvolutionFilterAndBias is specific to CUDA "
         "convolution implementation.");
   }

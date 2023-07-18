@@ -60,7 +60,7 @@ class LazyOpRunner {
   static tsl::StatusOr<std::unique_ptr<LazyOpRunner>> FromOpRunner(
       std::unique_ptr<const OpRunner<typename Op::Signature>> runner) {
     if (!runner) {
-      return tsl::errors::Internal("Null runner argument to FromOpRunner");
+      return absl::InternalError("Null runner argument to FromOpRunner");
     }
     TF_ASSIGN_OR_RETURN(auto desc, runner->ToAlgorithmDesc());
     // Private constructor cannot be called by make_unique :(
@@ -104,7 +104,7 @@ class LazyOpRunner {
     if (auto* runner = runner_ptr_.load(std::memory_order_acquire)) {
       return runner;
     }
-    return tsl::errors::Internal("LazyOpRunner::GetRunner: not initialized");
+    return absl::InternalError("LazyOpRunner::GetRunner: not initialized");
   }
 
   bool operator==(const LazyOpRunner& other) const {
@@ -199,7 +199,7 @@ struct FusedMatmulOp {
   static tsl::StatusOr<std::unique_ptr<const OpRunner<Signature>>>
   RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
                           Stream* stream) {
-    return tsl::errors::Unimplemented("Unimplemented");
+    return absl::UnimplementedError("Unimplemented");
   }
 };
 

@@ -78,8 +78,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
 
 PJRT_Error* PJRT_GpuDeviceTopology_Create(
     PJRT_TopologyDescription_Create_Args* args) {
-  return new PJRT_Error{tsl::errors::Unimplemented(
-      "Topology not supported for GPU compilation.")};
+  return new PJRT_Error{
+      absl::UnimplementedError("Topology not supported for GPU compilation.")};
 }
 
 constexpr PJRT_Api pjrt_api =

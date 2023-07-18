@@ -225,7 +225,7 @@ xla::Status DistributedRuntimeClientImpl::Connect() {
     LOG(ERROR) << "Connect() failed after " << attempt << " retries in "
                << options_.init_timeout
                << "; most recent failure status: " << FromGrpcStatus(status);
-    return tsl::errors::DeadlineExceeded(
+    return absl::DeadlineExceededError(
         absl::StrFormat("Connect() timed out after %s with %d attempts. Most "
                         "recent failure was: %s",
                         absl::FormatDuration(options_.init_timeout), attempt,
@@ -532,7 +532,7 @@ xla::Status DistributedRuntimeCoordinationServiceClient::EnumerateDevices(
   // Server responds with GlobalTopologyProto (refer to service.cc for details).
   tensorflow::DeviceInfo global_devices = coord_agent_->GetClusterDeviceInfo();
   if (global_devices.device_size() != 1) {
-    return tsl::errors::Internal(
+    return absl::InternalError(
         "Unexpected cluster device response from EnumerateDevices().");
   }
   global_devices.device().Get(0).UnpackTo(global_topology);

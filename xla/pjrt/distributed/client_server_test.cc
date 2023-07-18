@@ -406,8 +406,8 @@ TEST_P(ClientServerTest, ClientsTerminateShutdownIfAnyClientGoesAway) {
       // 1. Internal: node turns into ERROR state during the shutdown call.
       // 2. Failed Precondition: node is already in ERROR state before the
       // shutdown call (note: agent will still stop sending heartbeats).
-      EXPECT_TRUE(tsl::errors::IsInternal(statuses[i]) ||
-                  tsl::errors::IsFailedPrecondition(statuses[i]));
+      EXPECT_TRUE(absl::IsInternalError(statuses[i]) ||
+                  absl::IsFailedPreconditionError(statuses[i]));
     } else {
       EXPECT_EQ(statuses[i].code(), tsl::error::ABORTED);
     }

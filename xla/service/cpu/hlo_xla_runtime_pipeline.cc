@@ -234,7 +234,7 @@ static Status CreateHloXlaPipeline(
   // replaces these linalg.generics with scalar ops.
   auto detensorize = mlir::createLinalgDetensorizePass();
   if (detensorize->initializeOptions("aggressive-mode=true").failed()) {
-    return tsl::errors::Internal("Failed to set up detensorize pass.");
+    return absl::InternalError("Failed to set up detensorize pass.");
   }
   pm.addNestedPass<mlir::func::FuncOp>(std::move(detensorize));
   pm.addNestedPass<mlir::func::FuncOp>(mlir::gml_st::createScalarizationPass());
