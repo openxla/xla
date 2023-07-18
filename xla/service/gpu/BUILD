@@ -287,16 +287,29 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "ir_emitter_context",
+    srcs = ["ir_emitter_context.cc"],
+    hdrs = ["ir_emitter_context.h"],
+    deps = [
+        ":gpu_constants",
+        ":gpu_device_info",
+        ":gpu_executable",
+        "//xla/service:buffer_assignment",
+        "//xla/service:name_uniquer",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
     name = "ir_emitter",
     srcs = [
         "ir_emitter.cc",
-        "ir_emitter_context.cc",
         "ir_emitter_nested.cc",
         "ir_emitter_unnested.cc",
     ],
     hdrs = [
         "ir_emitter.h",
-        "ir_emitter_context.h",
         "ir_emitter_nested.h",
         "ir_emitter_unnested.h",
         "kernel_mapping_scheme.h",
@@ -317,6 +330,7 @@ cc_library(
         ":hlo_fusion_analysis",
         ":hlo_to_ir_bindings",
         ":ir_emission_utils",
+        ":ir_emitter_context",
         ":kernel_arguments",
         ":kernel_reuse_cache",
         ":launch_dimensions",
@@ -352,6 +366,7 @@ cc_library(
         "//xla/service:pattern_matcher",
         "//xla/service:shape_inference",
         "//xla/service:while_loop_analysis",
+        "//xla/service/gpu/fusions",
         "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
         "//xla/service/llvm_ir:fused_ir_emitter",
@@ -997,9 +1012,11 @@ cc_library(
         "//xla/mlir_hlo:lhlo",
         "//xla/service:buffer_assignment",
         "//xla/service:hlo_parser",
+        "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor",
+        "//xla/translate/mhlo_to_hlo:location_exporter",
         "//xla/translate/mhlo_to_hlo:type_to_shape",
         "@com_google_absl//absl/container:flat_hash_set",
         "@llvm-project//llvm:Core",
@@ -2283,6 +2300,7 @@ cc_library(
         ":gpu_float_support",
         ":gpu_hlo_schedule",
         ":ir_emitter",
+        ":ir_emitter_context",
         ":metrics",
         ":runtime_intrinsics",
         "//xla:status_macros",
