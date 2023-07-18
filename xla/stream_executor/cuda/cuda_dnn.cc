@@ -7459,14 +7459,18 @@ CudnnSupport::FusedMHASoftmaxBackwardRunnerFromDesc(
   scalar_values.push_back(dropout_scale);
   int64_t dropout_rng_seed = seed == std::nullopt ? 0 : *seed;
 
+  std::vector<int64_t> uids = {
+      CudnnfMHAUid::Q_ID,  CudnnfMHAUid::K_ID,  CudnnfMHAUid::P_ID,
+      CudnnfMHAUid::V_ID,  CudnnfMHAUid::dO_ID, CudnnfMHAUid::dQ_ID,
+      CudnnfMHAUid::dK_ID, CudnnfMHAUid::dV_ID, CudnnfMHAUid::dS_ID};
+  if (d_bias_descriptor != std::nullopt) {
+    uids.push_back(CudnnfMHAUid::dBIAS_ID);
+  }
+
   TF_ASSIGN_OR_RETURN(
       auto runner,
       CudnnExecutionPlanRunner<dnn::FusedMHASoftmaxBackwardSignature>::Create(
-          parent_, cudnn_.get(), std::move(execution_plan),
-          {CudnnfMHAUid::Q_ID, CudnnfMHAUid::K_ID, CudnnfMHAUid::P_ID,
-           CudnnfMHAUid::V_ID, CudnnfMHAUid::dO_ID, CudnnfMHAUid::dQ_ID,
-           CudnnfMHAUid::dK_ID, CudnnfMHAUid::dV_ID, CudnnfMHAUid::dS_ID,
-           CudnnfMHAUid::dBIAS_ID},
+          parent_, cudnn_.get(), std::move(execution_plan), uids,
           /*need_side_input*/ true, /*has_activation_output*/ false,
           scalar_uids, scalar_values, dropout_rng_seed,
           /*dropout_rng_offset*/ 0));
@@ -7536,14 +7540,19 @@ CudnnSupport::FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
   scalar_values.push_back(dropout_scale);
   int64_t dropout_rng_seed = seed == std::nullopt ? 0 : *seed;
 
+  std::vector<int64_t> uids = {CudnnfMHAUid::Q_ID,  CudnnfMHAUid::K_ID,
+                               CudnnfMHAUid::P_ID,  CudnnfMHAUid::V_ID,
+                               CudnnfMHAUid::dO_ID, CudnnfMHAUid::dQ_ID,
+                               CudnnfMHAUid::dK_ID, CudnnfMHAUid::dV_ID,
+                               CudnnfMHAUid::dS_ID, CudnnfMHAUid::MASK_ID};
+  if (d_bias_descriptor != std::nullopt) {
+    uids.push_back(CudnnfMHAUid::dBIAS_ID);
+  }
+
   TF_ASSIGN_OR_RETURN(
       auto runner,
       CudnnExecutionPlanRunner<dnn::FusedMHAMaskBackwardSignature>::Create(
-          parent_, cudnn_.get(), std::move(execution_plan),
-          {CudnnfMHAUid::Q_ID, CudnnfMHAUid::K_ID, CudnnfMHAUid::P_ID,
-           CudnnfMHAUid::V_ID, CudnnfMHAUid::dO_ID, CudnnfMHAUid::dQ_ID,
-           CudnnfMHAUid::dK_ID, CudnnfMHAUid::dV_ID, CudnnfMHAUid::dS_ID,
-           CudnnfMHAUid::MASK_ID, CudnnfMHAUid::dBIAS_ID},
+          parent_, cudnn_.get(), std::move(execution_plan), uids,
           /*need_side_input*/ false, /*has_activation_output*/ false,
           scalar_uids, scalar_values, dropout_rng_seed,
           /*dropout_rng_offset*/ 0));
