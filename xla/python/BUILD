@@ -780,12 +780,12 @@ cc_library(
     deps = [
         ":status_casters",
         ":types",
+        ":xplane_to_profile_instructions",
         "//xla:status",
         "//xla/backends/profiler:profiler_backends",
         "//xla/backends/profiler/cpu:python_tracer",
         "//xla/python/profiler/internal:traceme_wrapper",
         "@pybind11",
-        "@tsl//tsl/profiler/convert:xplane_to_profile_instructions",
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/rpc:profiler_server_impl",
         "@tsl//tsl/profiler/rpc/client:capture_profile",
@@ -1058,4 +1058,48 @@ tsl_pybind_extension(
         ],
         "//conditions:default": [],
     }),
+)
+
+cc_library(
+    name = "xplane_to_profile_instructions",
+    srcs = ["xplane_to_profile_instructions.cc"],
+    hdrs = ["xplane_to_profile_instructions.h"],
+    deps = [
+        "//xla:status",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:optional",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:types",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/profiler/utils:file_system_utils",
+        "@tsl//tsl/profiler/utils:tf_xplane_visitor",
+        "@tsl//tsl/profiler/utils:xplane_schema",
+        "@tsl//tsl/profiler/utils:xplane_utils",
+        "@tsl//tsl/profiler/utils:xplane_visitor",
+    ],
+)
+
+xla_cc_test(
+    name = "xplane_to_profile_instructions_test",
+    srcs = ["xplane_to_profile_instructions_test.cc"],
+    deps = [
+        ":xplane_to_profile_instructions",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tests:verified_hlo_module",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+        "@tsl//tsl/profiler/convert:xla_op_utils",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/profiler/rpc/client:save_profile",
+        "@tsl//tsl/profiler/utils:file_system_utils",
+        "@tsl//tsl/profiler/utils:xplane_builder",
+        "@tsl//tsl/profiler/utils:xplane_schema",
+    ],
 )
