@@ -16,9 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_DOMAIN_ISOLATOR_H_
 #define XLA_SERVICE_HLO_DOMAIN_ISOLATOR_H_
 
-#include <memory>
-#include <vector>
-
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"

@@ -884,7 +884,6 @@ cc_library(
     srcs = ["call_graph.cc"],
     hdrs = ["call_graph.h"],
     deps = [
-        "//xla:status_macros",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
@@ -895,7 +894,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -904,11 +902,8 @@ xla_cc_test(
     srcs = ["call_graph_test.cc"],
     deps = [
         ":call_graph",
-        "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:test",
-        "//xla:test_helpers",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -4901,10 +4896,7 @@ cc_library(
     hdrs = ["hlo_domain_isolator.h"],
     deps = [
         ":hlo_domain_remover",
-        ":hlo_graph_dumper",
         ":hlo_pass",
-        "//xla:types",
-        "//xla:util",
         "//xla/hlo/ir:hlo",
         "@tsl//tsl/platform:statusor",
     ],

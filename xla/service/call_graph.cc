@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 
 #include <deque>
-#include <iterator>
 #include <memory>
 #include <queue>
 #include <vector>
@@ -30,10 +29,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/map_util.h"
-#include "xla/status_macros.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 

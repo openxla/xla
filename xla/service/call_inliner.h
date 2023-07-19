@@ -16,8 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_CALL_INLINER_H_
 #define XLA_SERVICE_CALL_INLINER_H_
 
-#include <deque>
-
 #include "absl/container/flat_hash_map.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/statusor.h"
