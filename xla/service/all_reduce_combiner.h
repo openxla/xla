@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_ALL_REDUCE_COMBINER_H_
 #define XLA_SERVICE_ALL_REDUCE_COMBINER_H_
 
+#include <cstdint>
+
 #include "absl/strings/string_view.h"
 #include "xla/array2d.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -32,7 +34,7 @@ namespace xla {
 class AllReduceCombiner : public HloModulePass {
  public:
   AllReduceCombiner(int64_t combine_threshold_in_bytes,
-                    int64_t combine_threshold_count);
+                    int64_t combine_threshold_count, bool is_async = false);
 
   absl::string_view name() const override { return "all-reduce-combiner"; }
 
@@ -47,6 +49,22 @@ class AllReduceCombiner : public HloModulePass {
 
   // Combine all reduce ops up to this threshold (number of operands).
   int64_t combine_threshold_count_;
+
+  // Whether to operate on Async pairs. Only works post-scheduling.
+  bool is_async_;
+};
+
+class AsyncAllReduceCombiner : public AllReduceCombiner {
+ public:
+  AsyncAllReduceCombiner()
+      : AllReduceCombiner(
+            /*combine_threshold_in_bytes=*/INT64_MAX,
+            /*combine_threshold_count=*/INT64_MAX,
+            /*is_async=*/true) {}
+
+  absl::string_view name() const override {
+    return "async-all-reduce-combiner";
+  }
 };
 
 }  // namespace xla
