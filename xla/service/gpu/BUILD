@@ -367,6 +367,7 @@ cc_library(
         "//xla/service:shape_inference",
         "//xla/service:while_loop_analysis",
         "//xla/service/gpu/fusions",
+        "//xla/service/gpu/fusions:tiling_util",
         "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
         "//xla/service/llvm_ir:fused_ir_emitter",

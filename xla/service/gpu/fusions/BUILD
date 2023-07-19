@@ -86,3 +86,18 @@ cc_library(
         "@llvm-project//llvm:ir_headers",
     ],
 )
+
+cc_library(
+    name = "tiling_util",
+    srcs = ["tiling_util.cc"],
+    hdrs = ["tiling_util.h"],
+    visibility = ["//xla/service/gpu:__subpackages__"],
+    deps = [
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu:target_util",
+        "//xla/service/llvm_ir:ir_array",
+        "//xla/service/llvm_ir:kernel_support_library",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
