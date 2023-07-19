@@ -53,6 +53,7 @@ cc_library(
         "//xla/service:global_device_id",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:nccl_collective_thunks",
+        "//xla/service/gpu:thunk",
         "//xla/stream_executor:event",
         "//xla/stream_executor:executor_cache",
         "@com_google_absl//absl/container:flat_hash_map",

@@ -47,6 +47,9 @@ class NcclRecvThunk : public NcclCollectiveThunk {
   const NcclCollectiveConfig& config() const override { return config_.config; }
   Status RunNcclCollective(const ExecuteParams& params, se::Stream& stream,
                            ncclComm_t comm) override;
+  AsyncStreamKind GetAsyncStreamKind() const override {
+    return kAsyncP2PStream;
+  }
 
  private:
   const NcclP2PConfig config_;
