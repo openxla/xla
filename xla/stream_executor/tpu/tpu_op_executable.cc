@@ -15,17 +15,20 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_op_executable.h"
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "xla/status.h"
-#include "xla/stream_executor/tpu/c_api_conversions.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/host_command_handler.h"
 #include "xla/stream_executor/tpu/proto_helper.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
+#include "third_party/tensorflow/core/tpu/c/c_api_conversions.h"
 
 namespace tensorflow {
 
@@ -96,6 +99,7 @@ xla::Status TpuOpExecutable::LoadProgramAndEnqueueToStream(
   params.rng_seed = rng_seed;
   params.device_assignment = &c_dev_assign;
   params.stream = stream;
+  params.host_command_handler = ToC(host_command_handler_);
   params.status = status.c_status;
 
   stream_executor::tpu::OpsApiFn()
@@ -104,6 +108,7 @@ xla::Status TpuOpExecutable::LoadProgramAndEnqueueToStream(
   if (dev_assign != nullptr) {
     stream_executor::tpu::SerializedProto_Free(dev_assign_serialized);
   }
+  Destroy(params.host_command_handler);
   return status.status();
 }
 

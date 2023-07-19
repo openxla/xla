@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/host_command_handler.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 
 // APIs for converting between internal and external versions of

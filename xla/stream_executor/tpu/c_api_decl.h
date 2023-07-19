@@ -352,6 +352,8 @@ typedef struct SE_TpuTopology SE_TpuTopology;
 typedef struct SE_TpuTopology_Core SE_TpuTopology_Core;
 typedef struct SE_TpuTopology_Core SE_TpuTopology_Host;
 
+typedef struct SE_TpuHostCommandHandler SE_TpuHostCommandHandler;
+
 #ifdef __cplusplus
 }
 #endif
