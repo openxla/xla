@@ -23,7 +23,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/blas.h"
 
-#include "xla/stream_executor/rocm/rocm_blas.h"
 #include "xla/stream_executor/rocm/hip_blas_utils.h"
 
 #if TF_HIPBLASLT
