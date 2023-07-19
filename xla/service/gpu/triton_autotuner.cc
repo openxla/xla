@@ -132,6 +132,12 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
   // device type. Passing it to avoid recalculating it everywhere it's needed.
   StatusOr<AutotuneResult> AutotuneMatmulNoCache(
       const HloInstruction* instr, const AutotuneCacheKey& cache_key) {
+    if (!autotuner_compile_util_.has_value()) {
+      CHECK(config_.IsDeviceless());
+      return InternalError(
+          "Expect autotune result cache hit for deviceless compilation.");
+    }
+
     const HloComputation& fusion = *instr->called_computations()[0];
     se::StreamExecutor* stream_exec = config_.GetExecutor();
     if (!stream_exec->SynchronizeAllActivity()) {
