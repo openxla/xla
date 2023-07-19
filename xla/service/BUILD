@@ -1485,17 +1485,10 @@ cc_library(
     srcs = ["channel_tracker.cc"],
     hdrs = ["channel_tracker.h"],
     deps = [
-        "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
-        "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
