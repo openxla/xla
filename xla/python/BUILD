@@ -1047,6 +1047,7 @@ tsl_pybind_extension(
     ] + select({
         ":gpu_enabled": [
             "//xla/pjrt/gpu:se_gpu_pjrt_client",
+            "@tsl//tsl/platform/cloud:gcs_file_system",
         ],
         "//conditions:default": [],
     }) + select({
