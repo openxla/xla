@@ -7,7 +7,12 @@ load(
     "stream_executor_friends",
 )
 load("@tsl//tsl:tsl.bzl", "set_external_visibility", "tsl_copts")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_hipblaslt",
+    "if_rocm_is_configured",
+    "rocm_copts",
+)
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 
 package(
@@ -199,6 +204,7 @@ cc_library(
     deps = if_rocm_is_configured([
         ":rocblas_if_static",
         ":rocblas_wrapper",
+        ":hipblas_lt_header",
         ":rocm_gpu_executor",
         ":rocm_platform_id",
         "@eigen_archive//:eigen3",
@@ -419,6 +425,75 @@ cc_library(
 )
 
 cc_library(
+    name = "hipblaslt_if_static",
+    deps = if_rocm_hipblaslt([
+        "@local_config_rocm//rocm:hipblaslt",
+    ]),
+)
+
+cc_library(
+    name = "hipblaslt_plugin",
+    srcs = if_rocm_is_configured(["hip_blas_lt.cc"]),
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+        "hipblaslt_wrapper.h",
+        "hip_blas_utils.h",
+    ]),
+    deps = if_rocm_is_configured([
+        ":rocm_gpu_executor",
+        ":rocm_platform_id",
+        ":rocblas_plugin",
+        ":hip_blas_utils",
+        ":hipblas_lt_header",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:errors",
+        "//xla:status",
+        "//xla/stream_executor/platform",
+        "//xla/stream_executor/platform:dso_loader",
+        "//xla/stream_executor:scratch_allocator",
+        "//xla/stream_executor/gpu:gpu_helpers_header",
+        "//xla:util",
+    ]) + if_static([
+        ":hipblaslt_if_static",
+    ]),
+    alwayslink = True,
+)
+
+cc_library(
+    name = "hipblas_lt_header",
+    hdrs = if_rocm_is_configured([
+        "hip_blas_lt.h",
+        "hipblaslt_wrapper.h",
+        "hip_blas_utils.h",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:errors",
+        "//xla:status",
+        "//xla/stream_executor:host_or_device_scalar",
+        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor/platform",
+    ]),
+)
+
+cc_library(
+    name = "hip_blas_utils",
+    srcs = if_rocm_is_configured(["hip_blas_utils.cc"]),
+    hdrs = if_rocm_is_configured(["hip_blas_utils.h"]),
+    deps = if_rocm_is_configured([
+        ":rocblas_plugin",
+        "@com_google_absl//absl/strings",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:errors",
+        "//xla/stream_executor:stream_executor_headers",
+    ]),
+)
+
+cc_library(
     name = "roctracer_if_static",
     deps = if_static([
         ":roctracer_if_rocm_configured",
@@ -469,6 +544,7 @@ cc_library(
         ":rocm_driver",
         ":rocm_platform",
         ":rocm_helpers",
+        ":hipblaslt_plugin",
     ]),
     alwayslink = 1,
 )

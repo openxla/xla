@@ -14,6 +14,7 @@ load(
 load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_hipblaslt",
     "if_rocm_is_configured",
 )
 load("//xla:xla.bzl", "xla_cc_test")
@@ -299,7 +300,9 @@ cc_library(
     name = "ir_emitter_unnested",
     srcs = ["ir_emitter_unnested.cc"],
     hdrs = ["ir_emitter_unnested.h"],
-    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]),
+    copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]) + if_rocm_hipblaslt([
+        "-DTF_HIPBLASLT=1",
+    ]),
     deps = [
         ":backend_configs_cc",
         ":custom_call_thunk",
@@ -380,7 +383,6 @@ cc_library(
     ] + if_gpu_is_configured([
         ":triangular_solve_thunk",
         ":cholesky_thunk",
-    ]) + if_cuda_is_configured([
         ":cublas_lt_matmul_thunk",
         ":ir_emitter_triton",
     ]),
@@ -434,8 +436,10 @@ cc_library(
 
 cc_library(
     name = "ir_emitter_triton",
-    srcs = if_cuda_is_configured(["ir_emitter_triton.cc"]),
-    hdrs = if_cuda_is_configured(["ir_emitter_triton.h"]),
+    srcs = if_cuda_is_configured(["ir_emitter_triton.cc"]) + if_rocm_hipblaslt([
+        "ir_emitter_triton.cc",
+    ]),
+    hdrs = if_gpu_is_configured(["ir_emitter_triton.h"]),
     deps = [
         ":gemm_rewriter_triton",
         ":gpu_device_info",
@@ -1231,19 +1235,27 @@ cc_library(
 
 cc_library(
     name = "cublas_lt_matmul_thunk",
-    srcs = if_cuda_is_configured(["cublas_lt_matmul_thunk.cc"]),
-    hdrs = if_cuda_is_configured(["cublas_lt_matmul_thunk.h"]),
-    deps = if_cuda_is_configured([
+    srcs = if_cuda_is_configured(["cublas_lt_matmul_thunk.cc"]) + if_rocm_is_configured([
+        "cublas_lt_matmul_thunk.cc",
+    ]),
+    hdrs = if_cuda_is_configured(["cublas_lt_matmul_thunk.h"]) + if_rocm_is_configured([
+        "cublas_lt_matmul_thunk.h",
+    ]),
+    deps = if_gpu_is_configured([
         ":matmul_utils",
         ":thunk",
         "//xla/service:buffer_assignment",
         "//xla:status",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_headers",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ]) + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cublas_lt_header",
         "//xla/stream_executor/cuda:cublas_plugin",
-        "@tsl//tsl/platform:statusor",
-    ]) + ["@tsl//tsl/platform:logging"],
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor/rocm:hipblas_lt_header",
+    ]),
 )
 
 cc_library(
@@ -1368,7 +1380,9 @@ cc_library(
     srcs = ["matmul_utils.cc"],
     hdrs = ["matmul_utils.h"],
     compatible_with = get_compatible_with_portable(),
-    defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
     deps = [
         ":backend_configs_cc",
         ":ir_emission_utils",
@@ -1391,6 +1405,12 @@ cc_library(
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "//xla/stream_executor:host_or_device_scalar",
         "//xla/stream_executor:scratch_allocator",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor/rocm:hipblas_lt_header",
+        "//xla/stream_executor/rocm:hipblaslt_plugin",
+        "//xla/stream_executor:host_or_device_scalar",
+        "//xla/stream_executor:scratch_allocator",
+        "//xla/stream_executor/platform:dso_loader",
     ]) + if_static([
         "@tsl//tsl/platform:tensor_float_32_utils",
     ]),
