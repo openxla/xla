@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/service/all_gather_combiner.h"
 
 #include <memory>
+#include <string>
 
+#include "absl/strings/substitute.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -47,12 +49,20 @@ int64_t AllGatherCount(const HloModule& module) {
   return count;
 }
 
-using AllGatherCombinerTest = HloTestBase;
+class AllGatherCombinerTest : public HloTestBase,
+                              public ::testing::WithParamInterface<bool> {
+ protected:
+  bool HasSchedule() const { return GetParam(); }
+};
+
+INSTANTIATE_TEST_SUITE_P(ParamTests, AllGatherCombinerTest,
+                         ::testing::Values(false, true));
 
 // Tests combination of several AllGather instructions.
-TEST_F(AllGatherCombinerTest, CombineAllGathers) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, CombineAllGathers) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param0 = f32[32] parameter(0)
@@ -61,7 +71,8 @@ ENTRY entry {
   allgather1 = f32[128] all-gather(param1), replica_groups={}, dimensions={0}
   ROOT tuple = (f32[128], f32[128]) tuple(allgather0, allgather1)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -79,9 +90,10 @@ ENTRY entry {
 
 // Tests combination of several cross replica gather instructions with
 // different gather dimensions.
-TEST_F(AllGatherCombinerTest, CombineAllGathersByAllGatherDimension) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, CombineAllGathersByAllGatherDimension) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param0 = f32[2,2] parameter(0)
@@ -97,7 +109,8 @@ ENTRY entry {
   ROOT tuple = (f32[8,2], f32[8,2], f32[2,8], f32[2,8], f32[8,2])
     tuple(allgather0, allgather1, allgather2, allgather3, allgather4)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -119,9 +132,10 @@ ENTRY entry {
 }
 
 // Tests that the combination threshold is respected.
-TEST_F(AllGatherCombinerTest, DoNotCombineOverThreshold) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, DoNotCombineOverThreshold) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param0 = f32[8] parameter(0)
@@ -130,7 +144,8 @@ ENTRY entry {
   allgather1 = f32[32] all-gather(param1), replica_groups={}, dimensions={0}
   ROOT tuple = (f32[32], f32[32]) tuple(allgather0, allgather1)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -145,9 +160,10 @@ ENTRY entry {
 }
 
 // Tests that the combination threshold is respected.
-TEST_F(AllGatherCombinerTest, CombineUpToThreshold) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, CombineUpToThreshold) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param0 = f32[8] parameter(0)
@@ -156,7 +172,8 @@ ENTRY entry {
   allgather1 = f32[32] all-gather(param1), replica_groups={}, dimensions={0}
   ROOT tuple = (f32[32], f32[32]) tuple(allgather0, allgather1)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -170,16 +187,18 @@ ENTRY entry {
 }
 
 // Tests that dependent all gathers are not combined.
-TEST_F(AllGatherCombinerTest, NoDependentCombination) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, NoDependentCombination) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param = f32[1] parameter(0)
   allgather0 = f32[2] all-gather(param), replica_groups={}, dimensions={0}
   ROOT allgather1 = f32[4] all-gather(allgather0), replica_groups={}, dimensions={0}
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -191,9 +210,10 @@ ENTRY entry {
 }
 
 // Tests that AllGather ops with different groups are not combined.
-TEST_F(AllGatherCombinerTest, NoDifferentReplicaGroupsCombination) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, NoDifferentReplicaGroupsCombination) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param0 = f32[32] parameter(0)
@@ -204,7 +224,8 @@ ENTRY entry {
     dimensions={0}
   ROOT tuple = (f32[64], f32[64]) tuple(allgather0, allgather1)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -215,9 +236,10 @@ ENTRY entry {
   EXPECT_FALSE(changed);
 }
 
-TEST_F(AllGatherCombinerTest, DomainPreventsCombining) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, DomainPreventsCombining) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param0 = f32[32] parameter(0), sharding={maximal device=0}
@@ -235,7 +257,8 @@ ENTRY entry {
   ROOT tuple = (f32[128], f32[128]) tuple(domain0, domain1),
     sharding={{maximal device=0}, {maximal device=1}}
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -248,9 +271,10 @@ ENTRY entry {
 
 // This test checks that two AllGather instructions that are in separate domains
 // but with the same domain metadata can be combined.
-TEST_F(AllGatherCombinerTest, CombineFromTwoDomainsWithSameMetadata) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, CombineFromTwoDomainsWithSameMetadata) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param0 = f32[32] parameter(0), sharding={maximal device=0}
@@ -275,7 +299,8 @@ ENTRY entry {
   domain2),
     sharding={{maximal device=0}, {maximal device=1}, {maximal device=0}}
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -295,9 +320,10 @@ ENTRY entry {
                                "{{maximal device=0}, {maximal device=0}}"));
 }
 
-TEST_F(AllGatherCombinerTest, DoNotCombineCrossShardAndCrossReplicaInSPMD) {
-  const char* const hlo_string = R"(
-HloModule Module
+TEST_P(AllGatherCombinerTest, DoNotCombineCrossShardAndCrossReplicaInSPMD) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
 
 ENTRY entry {
   param0 = f32[32] parameter(0), sharding={maximal device=0}
@@ -308,7 +334,8 @@ ENTRY entry {
     replica_groups={{0}}, dimensions={0}, sharding={maximal device=1}
   ROOT tuple = (f32[128], f32[128]) tuple(cross_shard_ag, cross_replica_ag)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
@@ -317,6 +344,55 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
   EXPECT_EQ(AllGatherCount(*module), 2);
   EXPECT_FALSE(changed);
+}
+
+TEST_P(AllGatherCombinerTest, CombineContiguousGroups) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule Module$0
+
+ENTRY entry {
+  param0 = u32[32] parameter(0)
+  param1 = u32[32] parameter(1)
+  param2 = u32[32] parameter(2)
+  param3 = u32[32] parameter(3)
+  ag0 = u32[64] all-gather(param0), replica_groups={}, dimensions={0}
+  ag1 = u32[64] all-gather(param1), replica_groups={}, dimensions={0}
+  foo = u32[64] add(ag0, ag1)
+  ag2 = u32[64] all-gather(param2), replica_groups={}, dimensions={0}
+  ag3 = u32[64] all-gather(param3), replica_groups={}, dimensions={0}
+
+  ROOT tuple = (u32[64], u32[64], u32[64], u32[64]) tuple(ag0, ag1, ag2, ag3)
+}
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AllGatherCombiner combine(1024 * 1024, kMaxCombineCount);
+  ASSERT_EQ(AllGatherCount(*module), 4);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  if (HasSchedule()) {
+    Matcher<const HloInstruction*> combined0 =
+        op::AllGather(op::Parameter(0), op::Parameter(1));
+    Matcher<const HloInstruction*> combined1 =
+        op::AllGather(op::Parameter(2), op::Parameter(3));
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                op::Tuple(op::GetTupleElement(combined0, 0),
+                          op::GetTupleElement(combined0, 1),
+                          op::GetTupleElement(combined1, 0),
+                          op::GetTupleElement(combined1, 1)));
+  } else {
+    Matcher<const HloInstruction*> combined = op::AllGather(
+        op::Parameter(0), op::Parameter(1), op::Parameter(2), op::Parameter(3));
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                op::Tuple(op::GetTupleElement(combined, 0),
+                          op::GetTupleElement(combined, 1),
+                          op::GetTupleElement(combined, 2),
+                          op::GetTupleElement(combined, 3)));
+  }
 }
 
 }  // namespace

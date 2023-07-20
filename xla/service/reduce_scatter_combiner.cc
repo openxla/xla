@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "xla/service/hlo_domain_map.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -49,12 +51,15 @@ using ReduceScatterKey =
 // Combines the elements of to_combine into a single ReduceScatter op. All
 // entries in to_combine must be ReduceScatter ops with exactly one operand
 // and the same reduction operation.
-Status CombineReduceScatters(absl::Span<HloInstruction* const> to_combine) {
+Status CombineReduceScatters(
+    absl::Span<HloInstruction* const> to_combine,
+    absl::Span<HloInstruction* const> to_combine_ends) {
   if (to_combine.size() < 2) {
     return OkStatus();
   }
   VLOG(1) << "Combined " << to_combine.size() << " reduce-scatter ops";
 
+  bool is_async = !to_combine_ends.empty();
   HloComputation& computation = *to_combine.back()->parent();
   HloComputation* reduction = to_combine[0]->to_apply();
   std::optional<ReductionKind> first_reduction_kind =
@@ -69,6 +74,7 @@ Status CombineReduceScatters(absl::Span<HloInstruction* const> to_combine) {
   for (HloInstruction* hlo : to_combine) {
     VLOG(1) << "Set element: " << hlo->ToString();
     TF_RET_CHECK(hlo->opcode() == HloOpcode::kReduceScatter);
+    // XXX.
     TF_RET_CHECK(hlo->operands().size() == 1);
     std::optional<ReductionKind> reduction_kind =
         MatchReductionComputation(hlo->to_apply());
@@ -84,11 +90,14 @@ Status CombineReduceScatters(absl::Span<HloInstruction* const> to_combine) {
   HloInstruction* combined;
   // AllReduce ops with more than one operand produce a tuple.
   TF_RET_CHECK(operands.size() >= 2);
-  combined = computation.AddInstruction(HloInstruction::CreateReduceScatter(
-      ShapeUtil::MakeTupleShapeWithPtrs(output_shapes), operands, reduction,
-      to_combine.front()->replica_groups(),
-      /*constrain_layout=*/false, to_combine.front()->channel_id(),
-      rs->use_global_device_ids(), rs->scatter_dimension()));
+  auto create = [&](auto& f) {
+    return computation.AddInstruction(
+        f(ShapeUtil::MakeTupleShapeWithPtrs(output_shapes), operands, reduction,
+          to_combine.front()->replica_groups(),
+          /*constrain_layout=*/false, to_combine.front()->channel_id(),
+          rs->use_global_device_ids(), rs->scatter_dimension()));
+  };
+  combined = create(HloInstruction::CreateReduceScatter);  // XXX.
 
   // We have to propagate the sharding manually because Domain instructions are
   // not guaranteed to preserve it for side effecting instructions.
@@ -97,14 +106,28 @@ Status CombineReduceScatters(absl::Span<HloInstruction* const> to_combine) {
   }
   VLOG(1) << "Replacing with : " << combined->ToString();
 
+  HloInstruction* combined_end = nullptr;  // XXX.
+
+  absl::flat_hash_map<HloInstruction*, HloInstruction*> replacements;
+
   // Replace all the smaller ReduceScatters with elements of the tuple output
   // of the single bigger ReduceScatter.
   for (int64_t i = 0; i < to_combine.size(); ++i) {
+    auto replaced = is_async ? to_combine_ends[i] : to_combine[i];
     auto replace_with = HloInstruction::CreateGetTupleElement(
-        to_combine[i]->shape(), combined, i);
+        to_combine[i]->shape(), is_async ? combined_end : combined, i);
+    replacements[replaced] = replace_with.get();
     TF_RETURN_IF_ERROR(computation.ReplaceWithNewInstruction(
-        to_combine[i], std::move(replace_with)));
+        replaced, std::move(replace_with)));
+    if (is_async) {
+      replacements[to_combine[i]] = nullptr;
+      TF_CHECK_OK(computation.RemoveInstruction(to_combine[i]));
+    }
   }
+
+  //  MaybeUpdateSchedulePostCombining(&computation, combined, combined_end,
+  //                                   to_combine, to_combine_ends,
+  //                                   replacements);
   return OkStatus();
 }
 }  // namespace

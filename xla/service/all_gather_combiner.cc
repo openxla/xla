@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/service/collective_combiner_utils.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -45,12 +47,14 @@ namespace {
 // Combines the elements of to_combine into a single AllGather op. All entries
 // in to_combine must be AllGather ops with exactly one operand and the same
 // all_gather_dimension.
-Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
+Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine,
+                         absl::Span<HloInstruction* const> to_combine_ends) {
   if (to_combine.size() < 2) {
     return OkStatus();
   }
   VLOG(1) << "Combined " << to_combine.size() << " AllGather ops";
 
+  bool is_async = !to_combine_ends.empty();
   HloComputation& computation = *to_combine.back()->parent();
   int64_t all_gather_dimension =
       Cast<HloAllGatherInstruction>(to_combine.front())->all_gather_dimension();
@@ -61,7 +65,8 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
   VLOG(1) << "Combining set";
   for (HloInstruction* hlo : to_combine) {
     VLOG(1) << "Set element: " << hlo->ToString();
-    TF_RET_CHECK(hlo->opcode() == HloOpcode::kAllGather);
+    TF_RET_CHECK(hlo->opcode() == (is_async ? HloOpcode::kAllGatherStart
+                                            : HloOpcode::kAllGather));
     TF_RET_CHECK(hlo->operands().size() == 1);
     TF_RET_CHECK(Cast<HloAllGatherInstruction>(hlo)->all_gather_dimension() ==
                  all_gather_dimension);
@@ -75,12 +80,16 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
   HloInstruction* combined;
   // AllGather ops with more than one operand produce a tuple.
   TF_RET_CHECK(operands.size() >= 2);
-  combined = computation.AddInstruction(HloInstruction::CreateAllGather(
-      ShapeUtil::MakeTupleShapeWithPtrs(output_shapes), operands,
-      all_gather_dimension, to_combine.front()->replica_groups(),
-      /*constrain_layout=*/false, to_combine.front()->channel_id(),
-      Cast<HloAllGatherInstruction>(to_combine.front())
-          ->use_global_device_ids()));
+  auto create = [&](auto& f) {
+    return computation.AddInstruction(
+        f(ShapeUtil::MakeTupleShapeWithPtrs(output_shapes), operands,
+          all_gather_dimension, to_combine.front()->replica_groups(),
+          /*constrain_layout=*/false, to_combine.front()->channel_id(),
+          Cast<HloAllGatherInstruction>(to_combine.front())
+              ->use_global_device_ids()));
+  };
+  combined = is_async ? create(HloInstruction::CreateAllGatherStart)
+                      : create(HloInstruction::CreateAllGather);
 
   // We have to propagate the sharding manually because Domain instructions are
   // not guaranteed to preserve it for side effecting instructions.
@@ -88,15 +97,13 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
       hlo_sharding_util::CreateTupleSharding(combined->shape(), to_combine));
   VLOG(1) << "Replacing with : " << combined->ToString();
 
-  // Replace all the smaller AllGathers with elements of the tuple output
-  // of the single bigger AllGather.
-  for (int64_t i = 0; i < to_combine.size(); ++i) {
-    auto replace_with = HloInstruction::CreateGetTupleElement(
-        to_combine[i]->shape(), combined, i);
-    TF_RETURN_IF_ERROR(computation.ReplaceWithNewInstruction(
-        to_combine[i], std::move(replace_with)));
-  }
-  return OkStatus();
+  HloInstruction* combined_end =
+      is_async ? computation.AddInstruction(HloInstruction::CreateUnary(
+                     combined->shape(), HloOpcode::kAllGatherDone, combined))
+               : nullptr;
+
+  return CombineCollectives(&computation, combined, combined_end, to_combine,
+                            to_combine_ends, is_async);
 }
 
 // The group key encapsulates all of the properties which must match for it to

@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/service/reduce_scatter_combiner.h"
 
+#include <string>
 #include <utility>
 
+#include "absl/strings/substitute.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_matchers.h"
@@ -28,7 +30,8 @@ namespace {
 constexpr int64_t kMaxCombineCount = 256;
 constexpr int64_t kMaxByteCount = 10 * 1024 * 1024;
 
-class ReduceScatterCombinerTest : public HloTestBase {
+class ReduceScatterCombinerTest : public HloTestBase,
+                                  public ::testing::WithParamInterface<bool> {
  public:
   StatusOr<std::unique_ptr<HloModule>> RunPass(
       absl::string_view hlo_module, bool expect_change,
@@ -48,11 +51,18 @@ class ReduceScatterCombinerTest : public HloTestBase {
     return absl::c_count_if(module->entry_computation()->instructions(),
                             HloPredicateIsOp<HloOpcode::kReduceScatter>);
   }
+
+ protected:
+  bool HasSchedule() const { return GetParam(); }
 };
 
-TEST_F(ReduceScatterCombinerTest, Simple) {
-  absl::string_view hlo_string = R"(
-HloModule m
+INSTANTIATE_TEST_SUITE_P(Paramtests, ReduceScatterCombinerTest,
+                         ::testing::Values(false, true));
+
+TEST_P(ReduceScatterCombinerTest, Simple) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule m$0
 
 sum {
   a = f32[] parameter(0)
@@ -67,15 +77,17 @@ ENTRY main {
   rs1 = f32[4] reduce-scatter(p1), replica_groups={{0,1}}, dimensions={0}, to_apply=sum
   ROOT t = (f32[4], f32[4]) tuple(rs0, rs1)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           RunPass(hlo_string, /*expect_change=*/true));
   EXPECT_EQ(ReduceScatterCount(module), 1);
 }
 
-TEST_F(ReduceScatterCombinerTest, SimpleMultipleGroups) {
-  absl::string_view hlo_string = R"(
-HloModule m
+TEST_P(ReduceScatterCombinerTest, SimpleMultipleGroups) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule m$0
 
 sum {
   a = f32[] parameter(0)
@@ -92,16 +104,18 @@ ENTRY main {
   rs3 = f32[8, 4] reduce-scatter(p1), replica_groups={{0,1}}, dimensions={1}, to_apply=sum
   ROOT t = (f32[4, 8], f32[4, 8], f32[8, 4], f32[8, 4]) tuple(rs0, rs1, rs2, rs3)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           RunPass(hlo_string, /*expect_change=*/true));
   EXPECT_EQ(ReduceScatterCount(module), 2);
 }
 
 // Test that dependent reduce-scatter do not get combined.
-TEST_F(ReduceScatterCombinerTest, DependentReduceScatter) {
-  absl::string_view hlo_string = R"(
-HloModule m
+TEST_P(ReduceScatterCombinerTest, DependentReduceScatter) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule m$0
 
 sum {
   a = f32[] parameter(0)
@@ -115,14 +129,16 @@ ENTRY main {
   rs1 = f32[2, 8] reduce-scatter(rs0), replica_groups={{0,1}}, dimensions={0}, to_apply=sum
   ROOT t = (f32[4, 8], f32[2, 8]) tuple(rs0, rs1)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           RunPass(hlo_string, /*expect_change=*/false));
 }
 
-TEST_F(ReduceScatterCombinerTest, DoNotCombineMismatched) {
-  absl::string_view hlo_string = R"(
-HloModule m
+TEST_P(ReduceScatterCombinerTest, DoNotCombineMismatched) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule m$0
 
 sum {
   a = f32[] parameter(0)
@@ -137,14 +153,16 @@ ENTRY main {
   rs1 = f32[4] reduce-scatter(p1), replica_groups={{1,0}}, dimensions={0}, to_apply=sum
   ROOT t = (f32[4], f32[4]) tuple(rs0, rs1)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           RunPass(hlo_string, /*expect_change=*/false));
 }
 
-TEST_F(ReduceScatterCombinerTest, DoNotCombineWithoutReductionKind) {
-  absl::string_view hlo_string = R"(
-HloModule TestModule
+TEST_P(ReduceScatterCombinerTest, DoNotCombineWithoutReductionKind) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule TestModule$0
 
 region_0 {
   Arg_1 = bf16[] parameter(1)
@@ -171,7 +189,8 @@ ENTRY entry{
  reduce-scatter.1 = bf16[512,256]{1,0} reduce-scatter(param1), replica_groups={{0}}, dimensions={0}, to_apply=region_1
  ROOT add.0 = tuple(reduce-scatter.0, reduce-scatter.1)
 }
-)";
+)",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           RunPass(hlo_string, /*expect_change=*/false));
 }
