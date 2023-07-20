@@ -3252,6 +3252,7 @@ cc_library(
         ":matmul_utils",
         "//xla:permutation_util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
         "//xla/stream_executor:stream_executor_headers",

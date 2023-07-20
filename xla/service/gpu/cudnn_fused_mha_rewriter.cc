@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,25 +15,25 @@ limitations under the License.
 
 #include "xla/service/gpu/cudnn_fused_mha_rewriter.h"
 
-#include <numeric>
-#include <optional>
+#include <functional>
 #include <queue>
 #include <string>
-#include <utility>
-#include <vector>
 
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal_util.h"
 #include "xla/permutation_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
+#include "xla/stream_executor/dnn.pb.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -43,24 +43,25 @@ namespace m = match;
 template <typename Pattern>
 auto OptionalReshape(Pattern pattern) {
   auto shared = m::SharedSubpattern(pattern);
-  return m::AnyOf<HloInstruction>(m::Reshape(shared), shared);
+  return m::AnyOf<HloInstruction>(m::Reshape(pattern), std::move(pattern));
 }
 
 template <typename Pattern>
 auto OptionalConvert(Pattern pattern) {
   auto shared = m::SharedSubpattern(pattern);
-  return m::AnyOf<HloInstruction>(m::Convert(shared), shared);
+  return m::AnyOf<HloInstruction>(m::Convert(pattern), std::move(pattern));
 }
 
 template <typename Pattern>
 auto OptionalBitcast(Pattern pattern) {
+  auto shared = m::SharedSubpattern(pattern);
   return m::AnyOf<HloInstruction>(m::Bitcast(pattern), std::move(pattern));
 }
 
 template <typename Pattern>
 auto OptionalBroadcast(Pattern pattern) {
   auto shared = m::SharedSubpattern(pattern);
-  return m::AnyOf<HloInstruction>(m::Broadcast(shared), shared);
+  return m::AnyOf<HloInstruction>(m::Broadcast(pattern), std::move(pattern));
 }
 
 bool IsBatchedMatmul(const HloInstruction* instr) {
@@ -74,16 +75,6 @@ bool IsBatchedMatmul(const HloInstruction* instr) {
 // We need to check if current gemm is sharing a parent node with a forward
 // fMHA call. We check this by doing a BFS of all operands to see if there's
 // any user that is a forward fMHA custom call.
-// In general, a matching case would have this type of structure:
-//                         mha_input_tensor(q, k, v)
-//                            /               \
-//            shape_ops(bitcast, etc.)      shape_ops(bitcast, etc.)
-//                          /                   \
-//                   forward_mha_call           backward_gemm
-// We start at the backward_gemm and add each operand to visit list,
-// if the operand is a shape op, we add it to the visit list.
-// For each instruction in the visit list, we go through its users to
-// see if any of them is a forward_mha_call.
 bool IsSharingOperandWithFwdMha(HloInstruction* gemm) {
   for (int64_t i = 0; i < gemm->operands().size(); i++) {
     std::queue<HloInstruction*> visit_list;
@@ -114,11 +105,13 @@ bool IsSharingOperandWithFwdMha(HloInstruction* gemm) {
   }
   return false;
 }
-
 bool IsFirstFwdMatmul(HloInstruction* gemm) {
-  return (IsBatchedMatmul(gemm) && !IsFwdCustomCallTofMHA(*gemm->operand(0)) &&
-          !IsFwdCustomCallTofMHA(*gemm->operand(1)) &&
-          !IsSharingOperandWithFwdMha(gemm));
+  if (!IsBatchedMatmul(gemm) || IsFwdCustomCallTofMHA(*gemm->operand(0)) ||
+      IsFwdCustomCallTofMHA(*gemm->operand(1)) ||
+      IsSharingOperandWithFwdMha(gemm)) {
+    return false;
+  }
+  return true;
 }
 
 bool IsScalar(const HloInstruction* instr) {
@@ -154,22 +147,21 @@ auto GetUnfusedReduceMaxSumSoftmaxPattern(
     HloInstruction** softmax_reduce_sum_bcast = nullptr) {
   // The reduce-max part of the softmax
   auto unfused_softmax_max_subpattern = m::SharedSubpattern(m::Subtract(
-      m::Op(),
-      m::Broadcast(OptionalConvert(OptionalConvert(
-          m::Op()
-              .WithPredicate(IsReduceMax)
-              .WithOperand(0, OptionalConvert(m::Op(softmax_input))))))));
-
+      m::Op(), m::Broadcast(OptionalConvert(OptionalConvert(
+                   m::Op()
+                       .WithPredicate(IsReduceMax)
+                       .WithOperand(0, OptionalBitcast(OptionalConvert(
+                                           m::Op(softmax_input)))))))));
   // The reduce-add part of the softmax
   auto unfused_softmax_sum_subpattern = m::SharedSubpattern(m::Divide(
-      m::Exp(unfused_softmax_max_subpattern),
-      m::Broadcast(OptionalConvert(OptionalConvert(
-                       m::Op()
-                           .WithOperand(0, OptionalConvert(m::Exp(
-                                               unfused_softmax_max_subpattern)))
-                           .WithPredicate(IsReduceSum)
-                           .WithOneUse())))
-          .WithOneUse()));
+      OptionalBitcast(m::Exp(unfused_softmax_max_subpattern)),
+      m::Broadcast(
+          softmax_reduce_sum_bcast,
+          OptionalConvert(OptionalConvert(
+              m::Op(softmax_reduce_sum)
+                  .WithOperand(0, OptionalBitcast(OptionalConvert(
+                                      m::Exp(unfused_softmax_max_subpattern))))
+                  .WithPredicate(IsReduceSum))))));
   return unfused_softmax_sum_subpattern;
 }
 
@@ -208,7 +200,6 @@ bool IsComputeCapabilityAndCudnnSupported(
     stream_executor::dnn::VersionInfo cudnn_version,
     stream_executor::StreamExecutor* stream_exec,
     stream_executor::dnn::VersionInfo supported_cudnn_version) {
-  // return true;
   se::dnn::VersionInfo real_cudnn_version;
   if (stream_exec) {
     stream_executor::dnn::DnnSupport* dnn = stream_exec->AsDnn();
@@ -219,7 +210,6 @@ bool IsComputeCapabilityAndCudnnSupported(
   } else {
     real_cudnn_version = cudnn_version;
   }
-
   if (!((cc.IsAtLeast(se::CudaComputeCapability::AMPERE) && cc.minor == 0) &&
         (real_cudnn_version >= supported_cudnn_version))) {
     VLOG(2) << absl::StrFormat(
@@ -234,7 +224,7 @@ bool IsComputeCapabilityAndCudnnSupported(
 }
 
 bool IsSupportedPrimitiveType(const HloInstruction* bmm) {
-  PrimitiveType dtype = bmm->shape().element_type();
+  auto dtype = bmm->shape().element_type();
   return dtype == BF16 || dtype == F16;
 }
 
@@ -249,16 +239,6 @@ bool IsNonContractingDimSupported(
                         [](int64_t dim) { return dim <= 512; });
 }
 
-bool IsRankSupported(const HloInstruction* bmm) {
-  return bmm->operand(0)->shape().dimensions().size() == 4 &&
-         bmm->operand(1)->shape().dimensions().size() == 4;
-}
-
-bool IsBatchDimSizeSupported(const DotDimensionNumbers& dot_dims) {
-  return dot_dims.lhs_batch_dimensions().size() == 2 &&
-         dot_dims.rhs_batch_dimensions().size() == 2;
-}
-
 std::vector<int64_t> GetDimensionVector(absl::Span<const int64_t> dimensions,
                                         absl::Span<const int64_t> dim_nums) {
   std::vector<int64_t> vec(dim_nums.size());
@@ -269,9 +249,7 @@ std::vector<int64_t> GetDimensionVector(absl::Span<const int64_t> dimensions,
 }
 
 StatusOr<bool> IsSupportedBMM1(const HloInstruction* bmm_1) {
-  if (!IsRankSupported(bmm_1)) return false;
   const DotDimensionNumbers& dot_dims_bmm1 = bmm_1->dot_dimension_numbers();
-  if (!IsBatchDimSizeSupported(dot_dims_bmm1)) return false;
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> lhs_non_contracting_dim_nums_bmm1,
       GetNonContractingDims(bmm_1->operand(0)->shape(),
@@ -327,9 +305,7 @@ StatusOr<bool> IsSupportedBMM1(const HloInstruction* bmm_1) {
 
 StatusOr<bool> IsSupportedBMM2(const HloInstruction* bmm_2,
                                bool need_canonicalization) {
-  if (!IsRankSupported(bmm_2)) return false;
   const DotDimensionNumbers& dot_dims_bmm2 = bmm_2->dot_dimension_numbers();
-  if (!IsBatchDimSizeSupported(dot_dims_bmm2)) return false;
   // need swap lhs and rhs for bmm2 if canonicalization is needed
   int operand_index = need_canonicalization ? 0 : 1;
   auto batch_dim = need_canonicalization ? dot_dims_bmm2.lhs_batch_dimensions()
@@ -450,18 +426,28 @@ bool MatchBmm1UnfusedBiasSoftmaxBmm2(HloInstruction* softmax_input,
                                      HloInstruction* dropout,
                                      double& dropout_rate,
                                      std::string& custom_call_name) {
-  auto first_bmm_pattern = m::SharedSubpattern(
-      m::Op(bmm_1).WithPredicate(IsBatchedMatmul).WithOneUse());
+  auto first_bmm_pattern =
+      m::SharedSubpattern(m::Op(bmm_1).WithPredicate(IsBatchedMatmul));
   auto unfused_scaled_bmm_subpattern = m::MultiplyAnyOrder(
       OptionalConvert(first_bmm_pattern),
       OptionalConvert(
           m::Broadcast(m::Constant(scale).WithPredicate(IsScalar))));
-  auto pattern =
-      m::AddAnyOrder(OptionalConvert(m::AnyOf<HloInstruction>(
-                         unfused_scaled_bmm_subpattern, first_bmm_pattern)),
-                     m::Op(bias));
 
-  if (Match(softmax_input, pattern)) {
+  if (Match(softmax_input,
+            OptionalConvert(OptionalBitcast(first_bmm_pattern)))) {
+    custom_call_name = has_dropout ? kCudnnfMHASoftmaxDropoutCallTarget
+                                   : kCudnnfMHASoftmaxCallTarget;
+    if (has_dropout) {
+      dropout_rate = GetDropoutRateFromHlo(dropout);
+    }
+    return true;
+  }
+
+  if (Match(softmax_input,
+            OptionalBitcast(m::AddAnyOrder(
+                OptionalConvert(OptionalBitcast(m::AnyOf<HloInstruction>(
+                    unfused_scaled_bmm_subpattern, first_bmm_pattern))),
+                m::Op(bias))))) {
     custom_call_name = has_dropout ? kCudnnfMHAScaleBiasSoftmaxDropoutCallTarget
                                    : kCudnnfMHAScaleBiasSoftmaxCallTarget;
     if (has_dropout) {
@@ -482,27 +468,29 @@ bool MatchBmm1ScaleBiasMaskSoftmaxDropoutBmm2(
   auto unfused_scaled_bmm_subpattern = m::SharedSubpattern(m::MultiplyAnyOrder(
       OptionalConvert(m::Op(bmm_1).WithPredicate(IsBatchedMatmul).WithOneUse()),
       m::Broadcast(m::Constant(scale).WithPredicate(IsScalar))));
-  auto pattern = OptionalConvert(m::Select(
-      m::Op(mask).WithPredicate([](const HloInstruction* instr) {
-        return instr->shape().element_type() == PRED;
-      }),
-      // Match bmm1-scale-bias-mask
-      m::AnyOf<HloInstruction>(
-          // Scale and bias might or might not be fused with gemm
-          m::Op(bmm_1).WithPredicate(IsBatchedMatmul).WithOneUse(),
-          OptionalConvert(m::AnyOf<HloInstruction>(
-              // Try to match unfused bias
-              m::AddAnyOrder(
-                  m::Op(bias),
-                  m::AnyOf<HloInstruction>(
-                      OptionalConvert(m::Op(bmm_1)
-                                          .WithPredicate(IsBatchedMatmul)
-                                          .WithOneUse()),
-                      unfused_scaled_bmm_subpattern)),
-              unfused_scaled_bmm_subpattern))),
-      m::Op()));
 
-  if (Match(softmax_input, pattern)) {
+  if (Match(
+          softmax_input,
+          OptionalConvert(m::Select(
+              m::Op(mask).WithPredicate([](const HloInstruction* instr) {
+                return instr->shape().element_type() == PRED;
+              }),
+              // Match bmm1-scale-bias-mask
+              m::AnyOf<HloInstruction>(
+                  // Scale and bias might or might not be fused
+                  // with gemm
+                  m::Op(bmm_1).WithPredicate(IsBatchedMatmul).WithOneUse(),
+                  OptionalConvert(m::AnyOf<HloInstruction>(
+                      // Try to match unfused bias
+                      m::AddAnyOrder(m::Op(bias),
+                                     m::AnyOf<HloInstruction>(
+                                         OptionalConvert(
+                                             m::Op(bmm_1)
+                                                 .WithPredicate(IsBatchedMatmul)
+                                                 .WithOneUse()),
+                                         unfused_scaled_bmm_subpattern)),
+                      unfused_scaled_bmm_subpattern))),
+              m::Op())))) {
     if (!IsSupportedPrimitiveType((*bmm_1))) {
       return false;
     }
@@ -524,7 +512,7 @@ bool MatchBmm1ScaleBiasMaskSoftmaxDropoutBmm2(
   return false;
 }
 
-// We will try to match all forward patterns below:
+// We will try to match all the patterns below:
 // BMM1 - Scale - Bias - Mask - Softmax - Dropout - BMM2
 // BMM1 - Scale - Mask - Softmax - Dropout - BMM2
 // BMM1 - Scale - Bias - Mask - Softmax - BMM2
@@ -544,7 +532,7 @@ bool MatchFwdMHAPatternsForCanonicalization(
   // to determine if we need to canonicalize bmm2.
   // So we go through both of bmm2's operands and see which one matches our
   // desired patterns, if operand 1 consumes them, then we need to canonicalize.
-  for (int bmm2_operand_pos : {0, 1}) {
+  for (auto bmm2_operand_pos : {0, 1}) {
     if (bmm2_operand_pos == 1) {
       need_canonicalization = true;
     }
@@ -714,22 +702,26 @@ bool MatchBwdBmmSoftmaxDropoutBmm(HloInstruction* fwd_fmha_call,
   bool has_mask = false;
   // Backward dropout pattern
   // select(mask, bmm2_grad2, broadcast())
-  auto bwd_dropout_pattern_form_1 =
+  auto bwd_dropout_pattern_form_1 = m::SharedSubpattern(
       OptionalBitcast(OptionalReshape(OptionalConvert(m::Select(
           m::Op(), m::Op().WithPredicate([&](const HloInstruction* instr) {
             return instr == bmm_2_grad_2;
           }),
           m::Broadcast(
-              OptionalConvert(m::Constant().WithPredicate(IsScalar)))))));
+              OptionalConvert(m::Constant().WithPredicate(IsScalar))))))));
 
   // multiply(bmm2_grad2, broadcast(select(mask, broadcast(), op())))
-  auto bwd_dropout_pattern_form_2 = OptionalBitcast(m::MultiplyAnyOrder(
-      OptionalConvert(m::Op().WithPredicate(
-          [&](const HloInstruction* instr) { return instr == bmm_2_grad_2; })),
-      m::Broadcast(OptionalConvert(OptionalBitcast(OptionalReshape(m::Select(
-          m::Op(),
-          m::Broadcast(OptionalConvert(m::Constant().WithPredicate(IsScalar))),
-          m::Op())))))));
+  auto bwd_dropout_pattern_form_2 =
+      m::SharedSubpattern(OptionalBitcast(m::MultiplyAnyOrder(
+          OptionalConvert(
+              m::Op().WithPredicate([&](const HloInstruction* instr) {
+                return instr == bmm_2_grad_2;
+              })),
+          m::Broadcast(OptionalConvert(OptionalBitcast(OptionalReshape(
+              m::Select(m::Op(),
+                        m::Broadcast(OptionalConvert(
+                            m::Constant().WithPredicate(IsScalar))),
+                        m::Op()))))))));
   auto bwd_dropout_pattern = m::AnyOf<HloInstruction>(
       bwd_dropout_pattern_form_1, bwd_dropout_pattern_form_2);
   // Backward softmax pattern
@@ -1183,7 +1175,6 @@ StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
           call_shape, operands, absl::string_view(custom_call_name)));
   TF_RETURN_IF_ERROR(fmha_call->set_backend_config(fmha_config));
   TF_RETURN_IF_ERROR(SetFMHAInstructionName(bmm_1->GetModule(), fmha_call));
-  fmha_call->set_metadata(bmm_1->metadata());
 
   TF_RETURN_IF_ERROR(comp->ReplaceWithNewInstruction(
       bmm_2,
@@ -1354,12 +1345,9 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // d_intermediate_tensor, d_bias_tensor
   std::vector<Shape> output_shapes = {
       bmm_1_grad_2->shape(), bmm_1_grad_1->shape(), bmm_2_grad_1->shape()};
-  if (d_intermediate) {
-    output_shapes.push_back(lhs_bmm2_grad_gemm1->shape());
-  } else {
-    output_shapes.push_back(
-        ShapeUtil::MakeShape(bmm_1_grad_1->shape().element_type(), {0}));
-  }
+  // d_intermediate is required to be output
+  output_shapes.push_back(lhs_bmm2_grad_gemm1->shape());
+
   // Reserved placeholder for workspace
   output_shapes.push_back(ShapeUtil::MakeShape(U8, {0}));
 
@@ -1368,9 +1356,6 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
       IsDbiasOnlyUserBesidesGradGemm(d_intermediate, bmm_1_grad_1, bmm_1_grad_2,
                                      &dbias)) {
     output_shapes.push_back(dbias->shape());
-  } else {
-    output_shapes.push_back(
-        ShapeUtil::MakeShape(bmm_1_grad_1->shape().element_type(), {0}));
   }
 
   Shape call_shape = ShapeUtil::MakeTupleShape(output_shapes);
@@ -1449,15 +1434,6 @@ StatusOr<bool> CudnnFusedMHARewriter::Run(
                             CanonicalizeBatchedGemmForcuDNNFMHA(bmm_2, comp));
       }
       bool changed = false;
-      // if fwd uses mask input, then bwd needs cudnn 8.9.1 to take in a mask
-      // input if cudnn version < 8.9.1 we won't lower the bwd pass
-      if (is_training && mask != nullptr &&
-          !IsComputeCapabilityAndCudnnSupported(
-              compute_capability_, cudnn_version_, stream_executor_,
-              stream_executor::dnn::VersionInfo(8, 9, 1))) {
-        continue;
-      }
-
       // Fuse the bmms and intermediate nodes into fMHA call, the fused call
       // will replace bmm_2.
       TF_ASSIGN_OR_RETURN(
@@ -1469,6 +1445,14 @@ StatusOr<bool> CudnnFusedMHARewriter::Run(
       any_changed |= changed;
 
       if (is_training) {
+        // if fwd uses mask input, then bwd needs cudnn 8.9.1 to take in a mask
+        // input if cudnn version < 8.9.1 we won't lower the bwd pass
+        if (mask != nullptr &&
+            !IsComputeCapabilityAndCudnnSupported(
+                compute_capability_, cudnn_version_, stream_executor_,
+                stream_executor::dnn::VersionInfo(8, 9, 1))) {
+          continue;
+        }
         // Continue to match for backward patterns
         HloInstruction* bmm_1_grad_1 = nullptr;
         HloInstruction* bmm_1_grad_2 = nullptr;

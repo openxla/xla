@@ -29,13 +29,17 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "Eigen/Core"  // from @eigen_archive
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "Eigen/Core"  // from @eigen_archive
+#include "tsl/cuda/cudnn_version.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/tensor_float_32_utils.h"
+#include "tsl/util/env_var.h"
 #include "xla/stream_executor/cuda/cuda_activation.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_driver.h"
@@ -52,10 +56,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
-#include "tsl/cuda/cudnn_version.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/tensor_float_32_utils.h"
-#include "tsl/util/env_var.h"
 
 // clang-format off
 #include "third_party/gpus/cudnn/cudnn.h"
@@ -5842,9 +5842,13 @@ GetCudnnFusedMHABackwardOperationGraph(
 
 #if (CUDNN_VERSION >= 8901 && TF_ENABLE_CUDNN_FRONTEND)
   // bias backward
-  TF_ASSIGN_OR_RETURN(auto tensor_dbias, CreateCudnnBiasBwdTensor(
-                                             intermediate_ops, p_dims,
-                                             p_strides, dtype, tensor_ds_mask));
+  if (use_bias) {
+    // bias backward
+    TF_ASSIGN_OR_RETURN(
+        auto tensor_dbias,
+        CreateCudnnBiasBwdTensor(intermediate_ops, p_dims, p_strides, dtype,
+                                 tensor_ds_mask));
+  }
 #else
   return absl::InternalError("Bias backward op requires cudnn >= 8.9.1");
 #endif
@@ -7952,7 +7956,7 @@ CudnnSupport::FusedMHAScaleMaskSoftmaxBackwardRunnerFromDesc(
       auto runner,
       CudnnExecutionPlanRunner<dnn::FusedMHAMaskBackwardSignature>::Create(
           parent_, cudnn_.get(), std::move(execution_plan), uids,
-          /*need_side_input*/ false, /*has_activation_output*/ false,
+          /*need_side_input*/ true, /*has_activation_output*/ false,
           scalar_uids, scalar_values, dropout_rng_seed,
           /*dropout_rng_offset*/ 0));
   return {std::make_unique<
