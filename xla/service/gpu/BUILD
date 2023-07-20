@@ -304,11 +304,13 @@ cc_library(
 cc_library(
     name = "ir_emitter",
     srcs = [
+        "elemental_ir_emitter.cc",
         "ir_emitter.cc",
         "ir_emitter_nested.cc",
         "ir_emitter_unnested.cc",
     ],
     hdrs = [
+        "elemental_ir_emitter.h",
         "ir_emitter.h",
         "ir_emitter_nested.h",
         "ir_emitter_unnested.h",
@@ -318,7 +320,6 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":buffer_allocations",
-        ":elemental_ir_emitter",
         ":fft_thunk",
         ":gpu_asm_opts_util",
         ":gpu_constants",
@@ -379,6 +380,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
+        "//xla/service/llvm_ir:math_ops",
         "//xla/service/llvm_ir:sort_util",
         "//xla/service/llvm_ir:tuple_ops",
         "//xla/translate/hlo_to_mhlo:hlo_module_importer",
@@ -665,37 +667,6 @@ cc_library(
         "//xla/service/llvm_ir:loop_emitter",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-    ],
-)
-
-cc_library(
-    name = "elemental_ir_emitter",
-    srcs = ["elemental_ir_emitter.cc"],
-    hdrs = ["elemental_ir_emitter.h"],
-    deps = [
-        ":backend_configs_cc",
-        ":target_util",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:statusor",
-        "//xla:types",
-        "//xla:util",
-        "//xla:window_util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:elemental_ir_emitter",
-        "//xla/service:hlo_module_config",
-        "//xla/service/llvm_ir:ir_array",
-        "//xla/service/llvm_ir:llvm_loop",
-        "//xla/service/llvm_ir:llvm_util",
-        "//xla/service/llvm_ir:loop_emitter",
-        "//xla/service/llvm_ir:math_ops",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:logging",
     ],
 )
