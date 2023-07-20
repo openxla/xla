@@ -362,6 +362,7 @@ cc_library(
         "//xla/service:custom_call_target_registry",
         "//xla/service:elemental_ir_emitter",
         "//xla/service:hlo_execution_profile",
+        "//xla/service:hlo_module_config",
         "//xla/service:name_uniquer",
         "//xla/service:pattern_matcher",
         "//xla/service:shape_inference",
