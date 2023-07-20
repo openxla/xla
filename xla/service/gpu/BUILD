@@ -603,6 +603,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:dump",
         "//xla/service:executable",
         "//xla/service:float_normalization",
         "//xla/service:hlo_module_config",
