@@ -85,11 +85,14 @@ limitations under the License.
 #include "xla/service/gather_simplifier.h"
 #include "xla/service/gpu/alias_passthrough_params.h"
 #include "xla/service/gpu/all_reduce_blueconnect.h"
+#include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
+#include "xla/service/gpu/conv_algorithm_picker.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
 #include "xla/service/gpu/copy_fusion.h"
 #include "xla/service/gpu/dot_dimension_sorter.h"
 #include "xla/service/gpu/fusion_merger.h"
+#include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/gemm_broadcast_folding_rewriter.h"
 #include "xla/service/gpu/gemm_rewriter.h"
 #include "xla/service/gpu/gemm_rewriter_triton.h"
@@ -126,6 +129,7 @@ limitations under the License.
 #include "xla/service/gpu/topk_specializer.h"
 #include "xla/service/gpu/topk_splitter.h"
 #include "xla/service/gpu/tree_reduction_rewriter.h"
+#include "xla/service/gpu/triton_autotuner.h"
 #include "xla/service/gpu/variadic_op_splitter.h"
 #include "xla/service/hlo_computation_deduplicator.h"
 #include "xla/service/hlo_constant_folding.h"
@@ -198,6 +202,94 @@ namespace {
 bool ConvIsLowerable(HloInstruction* conv) {
   return GpuConvRewriter::ConvIsLowerable(conv);
 }
+
+// Linearize collective schedule under SPMD partitioning if online autotuning of
+// convolutions is enabled.
+bool EnableCollectiveScheduleLinearizerForSpmd(
+    HloModule* hlo_module, se::StreamExecutor* stream_exec) {
+  return hlo_module->config().use_spmd_partitioning() &&
+         stream_exec != nullptr &&
+         GpuConvAlgorithmPicker::IsEnabled(hlo_module);
+}
+
+// CollectivesScheduleLinearizer enforces a total ordering between collectives
+// to work around (1) divergence in initial HLOs across executables that are
+// communicating with each other using HLO collectives, and (2) divergence in
+// executables introduced due to auto tuning, specifically the use of extra
+// scratch space for convolutions.
+// We always apply this pass when not using SPMD (where initial HLO divergence
+// may be possible). This function decided whether to apply this pass when using
+// SPMD partitioning. When using SPMD, if convolutions are present in the code
+// and we are using "online" autotuning (i.e., not AOT) we need to use the pass,
+// else we do not need to enable the pass.
+bool RequiresCollectiveScheduleLinearizer(const HloModule* module) {
+  for (const HloComputation* comp : module->MakeNonfusionComputations()) {
+    for (const HloInstruction* inst : comp->instructions()) {
+      if (GpuConvAlgorithmPicker::IsCandidate(inst)) {
+        return true;
+      }
+    }
+  }
+  // No convolution auto-tuning candidates found in the module.
+  return false;
+}
+
+// Add autotuning passes for convolution, gemm and triton.
+Status AddAutotuningPasses(HloPassPipeline* pipeline, HloModule* hlo_module,
+                           se::StreamExecutor* stream_exec,
+                           const DebugOptions& debug_options,
+                           const GpuCompiler::CompileOptions& options,
+                           const GpuTargetConfig& gpu_target_config,
+                           const AutotuneResults* autotune_results,
+                           tsl::thread::ThreadPool* thread_pool) {
+  AutotuneConfig autotune_config =
+      stream_exec
+          ? AutotuneConfig{DeviceConfig{stream_exec, options.device_allocator},
+                           debug_options}
+          : AutotuneConfig{
+                DevicelessConfig{gpu_target_config.device_description_str},
+                debug_options};
+  if (autotune_config.IsDeviceless()) {
+    AutotunerUtil::ClearAutotuneResults();
+    TF_RETURN_IF_ERROR(AutotunerUtil::LoadAutotuneResults(*autotune_results));
+  }
+  if (GpuConvAlgorithmPicker::IsEnabled(hlo_module)) {
+    pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
+  }
+  pipeline->AddPass<GemmAlgorithmPicker>(autotune_config);
+
+  pipeline->AddPass<TritonAutotuner>(autotune_config, thread_pool);
+  return OkStatus();
+}
+
+Status LoadAutotuneResultsFromFile(const DebugOptions& debug_options) {
+  // We are doing this before the timer is started.
+  if (absl::string_view file_path =
+          debug_options.xla_gpu_load_autotune_results_from();
+      !file_path.empty()) {
+    static absl::once_flag once;
+    Status status = OkStatus();
+    absl::call_once(once, [&file_path, &status] {
+      status = AutotunerUtil::LoadAutotuneResultsFromFile(file_path);
+    });
+    TF_RETURN_IF_ERROR(status);
+  }
+  return OkStatus();
+}
+
+Status SerializeAutotuneResultsToFile(const DebugOptions& debug_options) {
+  // We are doing this after the timer is finished.
+  if (absl::string_view file_path =
+          debug_options.xla_gpu_dump_autotune_results_to();
+      !file_path.empty()) {
+    // Warning: This writes the autotune results at every compilation, possibly
+    // multiple times per process.
+    TF_RETURN_IF_ERROR(
+        AutotunerUtil::SerializeAutotuneResultsToFile(file_path));
+  }
+  return OkStatus();
+}
+
 }  // end anonymous namespace
 
 StatusOr<std::unique_ptr<Executable>>

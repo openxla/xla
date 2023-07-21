@@ -25,7 +25,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -46,25 +45,6 @@ class NVPTXCompiler : public GpuCompiler {
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
       const AutotuneResults* autotune_results) override;
-
-  bool EnableCollectiveScheduleLinearizerForSpmd(
-      HloModule* hlo_module, se::StreamExecutor* stream_exec) override;
-
-  bool RequiresCollectiveScheduleLinearizer(const HloModule* module) override;
-
-  Status AddAutotuningPasses(HloPassPipeline* pipeline, HloModule* hlo_module,
-                             se::StreamExecutor* stream_exec,
-                             const DebugOptions& debug_options,
-                             const CompileOptions& options,
-                             const GpuTargetConfig& gpu_target_config,
-                             const AutotuneResults* autotune_results,
-                             tsl::thread::ThreadPool* thread_pool) override;
-
-  Status LoadAutotuneResultsFromFile(
-      const DebugOptions& debug_options) override;
-
-  Status SerializeAutotuneResultsToFile(
-      const DebugOptions& debug_options) override;
 
   HloDataflowAnalysis::CanShareBuffer GetCanShareBuffer() override;
 
