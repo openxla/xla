@@ -953,7 +953,6 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:random",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
@@ -3648,8 +3647,9 @@ cc_library(
         "//xla/stream_executor/gpu:asm_compiler",
         "//xla/stream_executor/gpu:gpu_asm_opts",
     ]) + if_rocm_is_configured([
+        "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/rocm:rocm_helpers",
-    ]) + ["//xla/stream_executor/gpu:gpu_stream_header"],
+    ]),
 )
 
 cc_library(
