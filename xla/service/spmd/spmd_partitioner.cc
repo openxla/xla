@@ -1770,8 +1770,7 @@ namespace {
 // Matching a pattern like [..,X,..,Y] -> [..,X*Y,..,1] or [..,X,..,Y] ->
 // [..,1,..,X*Y].
 // Output tuple:
-// - HloSharding: The original sharding with an extra dimension dimension added
-//                of size 1.
+// - HloSharding: The original sharding with an extra dimension added of size 1.
 // - HloSharding: The sharding with the dimension we want to merge moved in
 //                place of the dimension of size 1 we added.
 // - int: Dimension in the input that is going to be merged with another
@@ -1789,8 +1788,8 @@ PatternMatchMergeSharding(const Shape& shape, const HloSharding& source,
   }
   if ((source.HasPartialReplication() ^ target.HasPartialReplication()) ||
       (source.HasPartialReplication() &&
-       source.tile_assignment().dimensions()[source.TiledDataRank()] !=
-           target.tile_assignment().dimensions()[target.TiledDataRank()])) {
+       source.tile_assignment().dim(source.TiledDataRank() - 1) !=
+           target.tile_assignment().dim(target.TiledDataRank() - 1))) {
     return std::nullopt;
   }
   for (int i = 0; i < target.TiledDataRank(); ++i) {
@@ -1885,8 +1884,8 @@ PatternMatchUnmergeSharding(const Shape& shape, const Shape& base_shape,
   }
   if ((source.HasPartialReplication() ^ target.HasPartialReplication()) ||
       (source.HasPartialReplication() &&
-       source.tile_assignment().dimensions()[source.TiledDataRank()] !=
-           target.tile_assignment().dimensions()[target.TiledDataRank()])) {
+       source.tile_assignment().dim(source.TiledDataRank() - 1) !=
+           target.tile_assignment().dim(target.TiledDataRank() - 1))) {
     return std::nullopt;
   }
   for (int i = 0; i < target.TiledDataRank(); ++i) {
