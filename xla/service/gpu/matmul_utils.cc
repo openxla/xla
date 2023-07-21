@@ -768,7 +768,7 @@ StatusOr<se::blas::DataType> AsBlasDataType(PrimitiveType dtype) {
   }
 }
 
-#if GOOGLE_CUDA || TF_HIPBLASLT
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace {
 
@@ -785,7 +785,7 @@ StatusOr<se::gpu::BlasLt::MatrixLayout> AsBlasLtMatrixLayout(
       layout.leading_dim_stride, layout.batch_stride);
 }
 
-#if TF_HIPBLASLT
+#if TENSORFLOW_USE_ROCM
 using cudaDataType_t = hipblasDatatype_t;
 #define CUDA_R_16BF HIPBLAS_R_16B
 #define CUDA_R_16F HIPBLAS_R_16F
@@ -1052,7 +1052,7 @@ MatmulPlan::GetAlgorithms(se::Stream* stream) const {
 
 }  // namespace cublas_lt
 
-#endif  // GOOGLE_CUDA || TF_HIPBLASLT
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 }  // namespace gpu
 }  // namespace xla

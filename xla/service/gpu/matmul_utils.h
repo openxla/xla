@@ -38,10 +38,8 @@ limitations under the License.
 
 #elif TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
-#if TF_HIPBLASLT
 #include "xla/stream_executor/rocm/hip_blas_lt.h"
 #include "xla/stream_executor/scratch_allocator.h"
-#endif  // TF_HIPBLASLT
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace xla {
@@ -196,7 +194,7 @@ StatusOr<bool> EpilogueHasAuxiliaryOutput(GemmBackendConfig_Epilogue epilogue);
 
 StatusOr<se::blas::DataType> AsBlasDataType(PrimitiveType dtype);
 
-#if GOOGLE_CUDA || TF_HIPBLASLT
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace cublas_lt {
 
@@ -254,7 +252,7 @@ class MatmulPlan {
 
 }  // namespace cublas_lt
 
-#endif  // GOOGLE_CUDA || TF_HIPBLASLT
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 }  // namespace gpu
 }  // namespace xla

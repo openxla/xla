@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/host_or_device_scalar.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
 
 #if TF_HIPBLASLT
@@ -242,6 +243,93 @@ inline BlasLt* GetBlasLt(Stream* stream) { return rocm::GetBlasLt(stream); }
 
 }  // namespace stream_executor
 
-#endif
+#else  // not TF_HIPBLASLT
+
+// Add missing declarations to avoid compile errors.
+// TODO(i-chaochen): Refactor this into a common GPU base class shared with
+// CUDA.
+namespace stream_executor {
+namespace gpu {
+class BlasLt {
+ public:
+  enum class Epilogue {
+    kDefault = 1,                   // No special postprocessing
+    kReLU = 2,                      // Apply point-wise ReLU function
+    kBias = 4,                      // Add broadcasted bias vector
+    kBiasThenReLU = kBias | kReLU,  // Apply bias and then ReLU transform
+    kGELU = 32,                // Apply GELU point-wise transform to the results
+    kGELUWithAux = 32 | 1024,  // Apply GELU with auxiliary output.
+    kBiasThenGELU = kBias | kGELU,  // Apply bias and then approximate GELU.
+    kBiasThenGELUWithAux = kBiasThenGELU | 1024,
+  };
+  struct MatmulAlgorithm {
+    struct {
+      uint64_t data[8];
+    } algo;
+    size_t workspace_size;
+  };
+  class MatrixLayout {
+   public:
+    enum class Order { kRowMajor, kColumnMajor };
+
+    // If `leading_dim_stride` is not specified, it defaults to:
+    //  - `num_cols` if `order == kRowMajor`,
+    //  - `num_rows` if `order == kColumnMajor`.
+    // If `batch_stride` is not specified, it defaults to `num_rows * num_cols`
+    // if `batch_size > 1`, otherwise `0`.
+    static tsl::StatusOr<MatrixLayout> Create(
+        blas::DataType type, size_t num_rows, size_t num_cols, Order order,
+        size_t batch_size = 1,
+        std::optional<int64_t> leading_dim_stride = std::nullopt,
+        std::optional<int64_t> batch_stride = std::nullopt) {
+      return tsl::errors::Unimplemented("HipblasLt not available");
+    }
+  };
+  class MatmulDesc {
+   public:
+    static tsl::StatusOr<MatmulDesc> Create(
+        blas::ComputationType compute_type, blas::DataType scale_type,
+        blas::Transpose trans_a = blas::Transpose::kNoTranspose,
+        blas::Transpose trans_b = blas::Transpose::kNoTranspose,
+        Epilogue epilogue = Epilogue::kDefault) {
+      return tsl::errors::Unimplemented("HipblasLt not available");
+    }
+  };
+  struct MatmulPlan {
+    MatmulDesc op_desc;
+    MatrixLayout a_desc;
+    MatrixLayout b_desc;
+    MatrixLayout c_desc;
+    MatrixLayout d_desc;
+  };
+  tsl::StatusOr<std::vector<MatmulAlgorithm>> GetMatmulAlgorithms(
+      const MatmulPlan& plan, const MatmulPreference& preference,
+      size_t max_algorithm_count = 128) {
+    return tsl::errors::Unimplemented("HipblasLt not available");
+  }
+  template <typename A, typename B, typename C, typename D, typename Scale>
+  tsl::Status DoMatmul(Stream* stream, const MatmulPlan& plan,
+                       const HostOrDeviceScalar<Scale>& alpha,
+                       const DeviceMemory<A>& a, const DeviceMemory<B>& b,
+                       const HostOrDeviceScalar<Scale>& beta,
+                       const DeviceMemory<C>& c, DeviceMemory<D>& d,
+                       const MatmulAlgorithm& algorithm,
+                       ScratchAllocator& scratch_allocator,
+                       const DeviceMemory<C>& bias = {},
+                       const DeviceMemoryBase& aux = DeviceMemory<uint8_t>{},
+                       const DeviceMemory<Scale>& a_scale = {},
+                       const DeviceMemory<Scale>& b_scale = {},
+                       const DeviceMemory<Scale>& c_scale = {},
+                       const DeviceMemory<Scale>& d_scale = {},
+                       const DeviceMemory<Scale>& d_amax = {},
+                       blas::ProfileResult* profile_result = nullptr) {
+    return tsl::errors::Unimplemented("HipblasLt not available");
+  }
+};
+inline BlasLt* GetBlasLt(Stream* stream) { return nullptr; }
+}  // namespace gpu
+}  // namespace stream_executor
+
+#endif  // TF_HIPBLASLT
 
 #endif  // XLA_STREAM_EXECUTOR_ROCM_HIP_BLAS_LT_H_

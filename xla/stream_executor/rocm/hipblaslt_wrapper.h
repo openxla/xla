@@ -17,6 +17,8 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_ROCM_HIPBLASLT_WRAPPER_H_
 #define XLA_STREAM_EXECUTOR_ROCM_HIPBLASLT_WRAPPER_H_
 
+#if TF_HIPBLASLT
+
 #include "rocm/rocm_config.h"
 #if TF_ROCM_VERSION >= 50500
 #include "rocm/include/hipblaslt/hipblaslt.h"
@@ -92,5 +94,7 @@ FOREACH_HIPBLASLT_API(HIPBLASLT_API_WRAPPER)
 
 }  // namespace wrap
 }  // namespace stream_executor
+
+#endif
 
 #endif  // XLA_STREAM_EXECUTOR_ROCM_HIPBLASLT_WRAPPER_H_
