@@ -91,14 +91,20 @@ Status CombineAllReduces(absl::Span<HloInstruction* const> to_combine) {
       hlo_sharding_util::CreateTupleSharding(combined->shape(), to_combine));
   VLOG(1) << "Replacing with : " << combined->ToString();
 
+  absl::flat_hash_map<HloInstruction*, HloInstruction*> replacements;
+
   // Replace all the smaller AllReduces with elements of the tuple output
   // of the single bigger AllReduce.
   for (int64_t i = 0; i < to_combine.size(); ++i) {
     auto replace_with = HloInstruction::CreateGetTupleElement(
         to_combine[i]->shape(), combined, i);
+    replacements[to_combine[i]] = replace_with.get();
     TF_RETURN_IF_ERROR(computation.ReplaceWithNewInstruction(
         to_combine[i], std::move(replace_with)));
   }
+
+  MaybeUpdateSchedulePostCombining(&computation, combined, to_combine,
+                                   replacements);
   return OkStatus();
 }
 }  // namespace

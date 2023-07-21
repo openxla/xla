@@ -28,12 +28,38 @@ limitations under the License.
 namespace xla {
 namespace {
 
+void MaybeUpdateSchedule(HloComputation* computation,
+                         HloAllReduceInstruction* all_reduce,
+                         const std::vector<HloInstruction*>& new_ops) {
+  HloModule* module = computation->parent();
+  if (!module->has_schedule()) return;
+
+  const auto& sequence = module->schedule().sequence(computation);
+  std::vector<HloInstruction*> new_sequence;
+  new_sequence.reserve(sequence.size() + new_ops.size() - 1);
+
+  for (HloInstruction* instr : sequence.instructions()) {
+    if (instr != all_reduce) {
+      new_sequence.push_back(instr);
+      continue;
+    }
+    new_sequence.insert(new_sequence.end(), new_ops.begin(), new_ops.end());
+  }
+  module->schedule().set_sequence(computation, new_sequence);
+}
+
 Status ReplaceWithContiguousAllReduce(HloAllReduceInstruction* all_reduce) {
   TF_RET_CHECK(all_reduce);
   TF_RET_CHECK(!all_reduce->has_sharding());
 
   HloComputation& computation = *all_reduce->parent();  // never null
   PrimitiveType element_type = all_reduce->operand(0)->shape().element_type();
+
+  std::vector<HloInstruction*> new_ops;
+  // For each all_reduce arg, 3 additional ops: bitcast (before all-reduce),
+  // slice + bitcast (after).
+  // Plus 3 ops: concatenate + the new all-reduce op + tuple.
+  new_ops.reserve(all_reduce->operand_count() * 3 + 3);
 
   // Bitcast operands to 1D so that they may be concatenated together.
   std::vector<HloInstruction*> flat_operands;
@@ -43,8 +69,10 @@ Status ReplaceWithContiguousAllReduce(HloAllReduceInstruction* all_reduce) {
     TF_RET_CHECK(operand->shape().IsArray());
     int64_t num_elements = ShapeUtil::ElementsIn(operand->shape());
     Shape flat_shape = ShapeUtil::MakeShape(element_type, {num_elements});
-    flat_operands.push_back(computation.AddInstruction(
-        HloInstruction::CreateBitcast(flat_shape, operand)));
+    HloInstruction* bitcast = computation.AddInstruction(
+        HloInstruction::CreateBitcast(flat_shape, operand));
+    flat_operands.push_back(bitcast);
+    new_ops.push_back(bitcast);
     total_size += num_elements;
   }
 
@@ -52,6 +80,7 @@ Status ReplaceWithContiguousAllReduce(HloAllReduceInstruction* all_reduce) {
   HloInstruction* concatenated =
       computation.AddInstruction(HloInstruction::CreateConcatenate(
           concat_shape, flat_operands, /*dimension=*/0));
+  new_ops.push_back(concatenated);
 
   HloInstruction* new_all_reduce =
       computation.AddInstruction(HloInstruction::CreateAllReduce(
@@ -59,6 +88,7 @@ Status ReplaceWithContiguousAllReduce(HloAllReduceInstruction* all_reduce) {
           all_reduce->replica_groups(),
           /*constrain_layout=*/false, all_reduce->channel_id(),
           all_reduce->use_global_device_ids()));
+  new_ops.push_back(new_all_reduce);
 
   // Slice from all-reduce result and bitcast back to the original shapes.
   std::vector<HloInstruction*> outputs;
@@ -72,13 +102,20 @@ Status ReplaceWithContiguousAllReduce(HloAllReduceInstruction* all_reduce) {
                                     /*start_indices=*/{offset},
                                     /*limit_indices=*/{end},
                                     /*strides=*/{1}));
-    outputs.push_back(computation.AddInstruction(HloInstruction::CreateBitcast(
-        all_reduce->operand(i)->shape(), sliced)));
+    new_ops.push_back(sliced);
+    HloInstruction* bitcast = computation.AddInstruction(
+        HloInstruction::CreateBitcast(all_reduce->operand(i)->shape(), sliced));
+    outputs.push_back(bitcast);
+    new_ops.push_back(bitcast);
     offset = end;
   }
   // Replace original all-reduce with tuple of slices from new all-reduce.
-  TF_RETURN_IF_ERROR(computation.ReplaceWithNewInstruction(
-      all_reduce, HloInstruction::CreateTuple(outputs)));
+  std::unique_ptr<HloInstruction> tuple = HloInstruction::CreateTuple(outputs);
+  new_ops.push_back(tuple.get());
+  TF_RETURN_IF_ERROR(
+      computation.ReplaceWithNewInstruction(all_reduce, std::move(tuple)));
+
+  MaybeUpdateSchedule(&computation, all_reduce, new_ops);
   return OkStatus();
 }
 }  // namespace

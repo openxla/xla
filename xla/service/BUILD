@@ -2498,6 +2498,7 @@ xla_cc_test(
 
 cc_library(
     name = "collective_combiner_utils",
+    srcs = ["collective_combiner_utils.cc"],
     hdrs = ["collective_combiner_utils.h"],
     deps = [
         ":hlo_domain_map",
@@ -2509,6 +2510,8 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -2624,6 +2627,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -2691,6 +2695,7 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -2727,6 +2732,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test_main",
     ],
 )

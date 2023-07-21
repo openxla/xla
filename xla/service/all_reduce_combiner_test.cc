@@ -37,6 +37,20 @@ using ::testing::AllOf;
 namespace op = xla::testing::opcode_matchers;
 int64_t kMaxCombineCount = 256;
 
+// Creates and returns a schedule created using the order of the instructions in
+// the HloComputation::instructions() vectors in the module.
+HloSchedule ScheduleFromInstructionOrder(HloModule* module) {
+  HloSchedule schedule(module);
+  for (HloComputation* computation : module->computations()) {
+    if (!computation->IsFusionComputation()) {
+      for (HloInstruction* instruction : computation->instructions()) {
+        schedule.GetOrCreateSequence(computation).push_back(instruction);
+      }
+    }
+  }
+  return schedule;
+}
+
 int64_t AllReduceCount(const HloModule& module) {
   int64_t count = 0;
   for (HloComputation* computation : module.computations()) {
@@ -104,10 +118,17 @@ std::vector<ReplicaGroup> CreateReplicaGroups(
   return replica_groups;
 }
 
-using AllReduceCombinerTest = HloTestBase;
+class AllReduceCombinerTest : public HloTestBase,
+                              public ::testing::WithParamInterface<bool> {
+ protected:
+  bool HasSchedule() const { return GetParam(); }
+};
+
+INSTANTIATE_TEST_SUITE_P(ParamTests, AllReduceCombinerTest,
+                         ::testing::Values(false, true));
 
 // Tests combination of several AllReduce instructions.
-TEST_F(AllReduceCombinerTest, CombineAllReduces) {
+TEST_P(AllReduceCombinerTest, CombineAllReduces) {
   auto module = CreateNewVerifiedModule();
   HloComputation* sum = MakeReduction(HloOpcode::kAdd, module.get());
 
@@ -117,10 +138,15 @@ TEST_F(AllReduceCombinerTest, CombineAllReduces) {
       {1, 2, 10, 7, 6}, {sum, sum, sum, sum, sum}, &inputs, &b);
   auto computation = module->AddEntryComputation(b.Build());
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   // Run the AllReduce combiner optimization pass.
   AllReduceCombiner combine(10 * 1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllReduceCount(*module), inputs.size());
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+
   ASSERT_EQ(AllReduceCount(*module), 1);
   EXPECT_TRUE(changed);
 
@@ -151,7 +177,7 @@ TEST_F(AllReduceCombinerTest, CombineAllReduces) {
 
 // Tests combination of several cross replica reduction instructions in
 // different types.k
-TEST_F(AllReduceCombinerTest, CombineCrossReplicaReductionsInGroups) {
+TEST_P(AllReduceCombinerTest, CombineCrossReplicaReductionsInGroups) {
   auto module = CreateNewVerifiedModule();
   HloComputation* sum = MakeReduction(HloOpcode::kAdd, module.get());
   HloComputation* min = MakeReduction(HloOpcode::kMinimum, module.get());
@@ -165,17 +191,22 @@ TEST_F(AllReduceCombinerTest, CombineCrossReplicaReductionsInGroups) {
       {sum, sum_2, min, min, min, max, max, max, sum, sum_2}, &inputs, &b);
   module->AddEntryComputation(b.Build());
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   // Run the AllReduce combiner optimization pass.
   AllReduceCombiner combine(10 * 1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllReduceCount(*module), inputs.size());
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+
   ASSERT_EQ(AllReduceCount(*module), 3)
       << "expects 3 groups for 3 reduction types.";
   EXPECT_TRUE(changed);
 }
 
 // Tests that the combination threshold is respected.
-TEST_F(AllReduceCombinerTest, RespectThreshold) {
+TEST_P(AllReduceCombinerTest, RespectThreshold) {
   auto module = CreateNewVerifiedModule();
   HloComputation* sum = MakeReduction(HloOpcode::kAdd, module.get());
 
@@ -183,6 +214,10 @@ TEST_F(AllReduceCombinerTest, RespectThreshold) {
   std::vector<HloInstruction*> inputs;
   MakeCrossReplicaReductions({8, 4}, {sum, sum}, &inputs, &b);
   module->AddEntryComputation(b.Build());
+
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
 
   // Run the AllReduce combiner optimization pass with threshold less than
   // the combined size of the all reduce ops so that the combination
@@ -207,7 +242,7 @@ TEST_F(AllReduceCombinerTest, RespectThreshold) {
 }
 
 // Tests that dependent all reduces are not combined.
-TEST_F(AllReduceCombinerTest, NoDependentCombination) {
+TEST_P(AllReduceCombinerTest, NoDependentCombination) {
   auto module = CreateNewVerifiedModule();
   HloComputation* reduction = MakeReduction(HloOpcode::kAdd, module.get());
 
@@ -225,6 +260,10 @@ TEST_F(AllReduceCombinerTest, NoDependentCombination) {
 
   module->AddEntryComputation(b.Build());
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllReduceCount(*module), 2);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
@@ -233,7 +272,7 @@ TEST_F(AllReduceCombinerTest, NoDependentCombination) {
 }
 
 // Tests that AllReduce ops with different groups are not combined.
-TEST_F(AllReduceCombinerTest, GroupAllReduce) {
+TEST_P(AllReduceCombinerTest, GroupAllReduce) {
   auto module = CreateNewVerifiedModule(TestName(), /*replica_count=*/4);
   HloComputation::Builder b(TestName());
   HloComputation* reduction = MakeReduction(HloOpcode::kAdd, module.get());
@@ -254,6 +293,10 @@ TEST_F(AllReduceCombinerTest, GroupAllReduce) {
 
   module->AddEntryComputation(b.Build());
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllReduceCount(*module), 2);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
@@ -261,7 +304,7 @@ TEST_F(AllReduceCombinerTest, GroupAllReduce) {
   EXPECT_FALSE(changed);
 }
 
-TEST_F(AllReduceCombinerTest, DomainPreventsCombining) {
+TEST_P(AllReduceCombinerTest, DomainPreventsCombining) {
   const char* const hlo_string = R"(
 HloModule Module
 
@@ -290,6 +333,10 @@ ENTRY entry {
                           ParseAndReturnVerifiedModule(hlo_string));
   LOG(INFO) << "Original module:\n" << module->ToString();
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllReduceCount(*module), 2);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
@@ -299,7 +346,7 @@ ENTRY entry {
 
 // This test checks that two CRS instructions that are in separate domains
 // but with the same domain metadata can be combined.
-TEST_F(AllReduceCombinerTest, CombineFromTwoDomainsWithSameMetadata) {
+TEST_P(AllReduceCombinerTest, CombineFromTwoDomainsWithSameMetadata) {
   const char* const hlo_string = R"(
 HloModule Module
 
@@ -335,6 +382,10 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllReduceCount(*module), 3);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
@@ -351,7 +402,7 @@ ENTRY entry {
                                "{{maximal device=0}, {maximal device=0}}"));
 }
 
-TEST_F(AllReduceCombinerTest, DoNotCombineCrossShardAndCrossReplicaInSPMD) {
+TEST_P(AllReduceCombinerTest, DoNotCombineCrossShardAndCrossReplicaInSPMD) {
   const char* const hlo_string = R"(
 HloModule Module
 
@@ -374,6 +425,10 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllReduceCount(*module), 2);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
@@ -381,7 +436,7 @@ ENTRY entry {
   EXPECT_FALSE(changed);
 }
 
-TEST_F(AllReduceCombinerTest, CrossCoreAllReduce) {
+TEST_P(AllReduceCombinerTest, CrossCoreAllReduce) {
   const char* const hlo_string = R"(
 HloModule Module
 
@@ -414,8 +469,13 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllReduceCount(*module), 4);
+
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
   EXPECT_EQ(AllReduceCount(*module), 2);
   EXPECT_TRUE(changed);
@@ -429,7 +489,7 @@ ENTRY entry {
                           op::Shape("(f32[128], f32[128])")))));
 }
 
-TEST_F(AllReduceCombinerTest, CrossCombineGroupCycle) {
+TEST_P(AllReduceCombinerTest, CrossCombineGroupCycle) {
   const char* const hlo_string = R"(
 HloModule module
 
@@ -462,19 +522,41 @@ ENTRY %comp {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
+  if (HasSchedule()) {
+    ASSERT_OK(module->set_schedule(ScheduleFromInstructionOrder(module.get())));
+  }
+
   AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
+
   ASSERT_EQ(AllReduceCount(*module), 6);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+
   EXPECT_EQ(AllReduceCount(*module), 4);
   EXPECT_TRUE(changed);
 
-  auto crs0 = op::AllReduce(op::Parameter(0), op::AllReduce(op::Parameter(1)));
-  auto add = op::Add(op::AllReduce(op::GetTupleElement(crs0, 0)),
-                     op::GetTupleElement(crs0, 1));
-  auto crs1 = op::AllReduce(add, op::GetTupleElement(crs0));
-  EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      op::Tuple(op::GetTupleElement(crs1, 0), op::GetTupleElement(crs1, 1)));
+  if (HasSchedule()) {
+    // Given the instruction order schedule, crs00 and crs11 cannot be combined
+    // because crs10 is between them and crs11 depends on it. crs10 and crs11,
+    // however, are combined.
+    auto crs00 = op::AllReduce(op::Parameter(0));
+    auto comb_max = op::AllReduce(op::Parameter(1), crs00);
+    auto crs11 = op::AllReduce(op::GetTupleElement(comb_max, 0));
+    auto add0 = op::Add(op::GetTupleElement(comb_max, 1), crs11);
+    // The last two all-reduce's, crs02 and crs12, are combined as well.
+    auto comb_add = op::AllReduce(add0, crs11);
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                op::Tuple(op::GetTupleElement(comb_add, 0),
+                          op::GetTupleElement(comb_add, 1)));
+  } else {
+    auto crs0 =
+        op::AllReduce(op::Parameter(0), op::AllReduce(op::Parameter(1)));
+    auto add = op::Add(op::AllReduce(op::GetTupleElement(crs0, 0)),
+                       op::GetTupleElement(crs0, 1));
+    auto crs1 = op::AllReduce(add, op::GetTupleElement(crs0, 1));
+    EXPECT_THAT(
+        module->entry_computation()->root_instruction(),
+        op::Tuple(op::GetTupleElement(crs1, 0), op::GetTupleElement(crs1, 1)));
+  }
 }
 
 }  // namespace

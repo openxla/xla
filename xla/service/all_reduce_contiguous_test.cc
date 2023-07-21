@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/strings/substitute.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -30,11 +31,19 @@ namespace {
 using ::testing::AllOf;
 namespace op = xla::testing::opcode_matchers;
 
-using AllReduceContiguousTest = HloTestBase;
+class AllReduceContiguousTest : public HloTestBase,
+                                public ::testing::WithParamInterface<bool> {
+ protected:
+  bool HasSchedule() const { return GetParam(); }
+};
 
-TEST_F(AllReduceContiguousTest, Simple) {
-  const absl::string_view hlo_string = R"(
-HloModule module
+INSTANTIATE_TEST_SUITE_P(ParamTests, AllReduceContiguousTest,
+                         ::testing::Values(false, true));
+
+TEST_P(AllReduceContiguousTest, Simple) {
+  std::string hlo_string =
+      absl::Substitute(R"(
+HloModule module$0
 
 %add {
   lhs = f32[] parameter(0)
@@ -46,7 +55,8 @@ ENTRY %comp {
   p0 = f32[128] parameter(0)
   p1 = f32[4,4] parameter(1)
   ROOT crs = (f32[128], f32[4,4]) all-reduce(p0, p1), to_apply=add
-})";
+})",
+                       HasSchedule() ? ", is_scheduled=true" : "");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
 
