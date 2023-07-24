@@ -228,7 +228,7 @@ bool IsSupportedF8Pattern(HloInstruction *instr, HloInstruction *&x,
                m::AnyOf<HloInstruction>(
                    m::Bitcast().WithPredicate(preserves_element_type),
                    m::Broadcast(), m::Copy(), m::Pad(), m::Reshape(),
-                   m::Slice()))) {
+                   m::Slice(), m::AllGather()))) {
       VLOG(1) << "Possible intended FP8 GEMM operating on "
               << instr->ToShortString()
               << " not rewritten into FP8 Custom Call.";
