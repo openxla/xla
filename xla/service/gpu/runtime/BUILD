@@ -350,15 +350,14 @@ cc_library(
         "//xla/service:executable",
         "//xla/service/gpu:non_atomically_upgradeable_rw_lock",
         "//xla/stream_executor",
+        "//xla/stream_executor/gpu:gpu_graph",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/profiler/lib:scoped_annotation_stack",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
-    ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_graph",
-    ]),
+    ],
 )
 
 cc_library(
@@ -407,11 +406,10 @@ cc_library(
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor",
+        "//xla/stream_executor/gpu:gpu_graph",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/synchronization",
-    ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_graph",
-    ]),
+    ],
 )
 
 cc_library(
