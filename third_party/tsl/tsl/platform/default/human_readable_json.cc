@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tsl/platform/human_readable_json.h"
 
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/strcat.h"
@@ -34,7 +36,7 @@ Status ProtoToHumanReadableJson(const protobuf::Message& proto, string* result,
     // Convert error_msg google::protobuf::StringPiece to
     // tsl::StringPiece.
     auto error_msg = status.message();
-    return errors::Internal(
+    return absl::InternalError(
         strings::StrCat("Could not convert proto to JSON string: ",
                         StringPiece(error_msg.data(), error_msg.length())));
   }
@@ -54,7 +56,7 @@ Status HumanReadableJsonToProto(const string& str, protobuf::Message* proto) {
     // Convert error_msg google::protobuf::StringPiece to
     // tsl::StringPiece.
     auto error_msg = status.message();
-    return errors::Internal(
+    return absl::InternalError(
         strings::StrCat("Could not convert JSON string to proto: ",
                         StringPiece(error_msg.data(), error_msg.length())));
   }
@@ -63,7 +65,7 @@ Status HumanReadableJsonToProto(const string& str, protobuf::Message* proto) {
 
 Status HumanReadableJsonToProto(const string& str,
                                 protobuf::MessageLite* proto) {
-  return errors::Internal("Cannot parse JSON protos on Android");
+  return absl::InternalError("Cannot parse JSON protos on Android");
 }
 
 }  // namespace tsl

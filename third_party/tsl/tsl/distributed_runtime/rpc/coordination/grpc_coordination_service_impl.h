@@ -21,6 +21,7 @@ limitations under the License.
 #include "grpcpp/alarm.h"
 #include "grpcpp/completion_queue.h"
 #include "grpcpp/server_builder.h"
+#include "absl/status/status.h"
 #include "tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "tsl/distributed_runtime/coordination/coordination_service_rpc_handler.h"
 #include "tsl/distributed_runtime/rpc/async_service_interface.h"
@@ -62,7 +63,7 @@ class GrpcCoordinationServiceImpl : public AsyncServiceInterface {
     tf_shared_lock l(shutdown_mu_);                                           \
     if (shutdown_) {                                                          \
       call->SendResponse(ToGrpcStatus(                                        \
-          errors::Internal("Coordination service has been shut down.")));     \
+          absl::InternalError("Coordination service has been shut down.")));  \
       return;                                                                 \
     }                                                                         \
     compute_pool_.Schedule([this, call]() {                                   \

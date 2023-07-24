@@ -22,6 +22,8 @@ limitations under the License.
 #include "grpcpp/server_builder.h"
 #include "grpcpp/support/channel_arguments.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "tsl/distributed_runtime/coordination/coordination_client.h"
@@ -53,7 +55,7 @@ class FakePreemptionNotifier : public PreemptionNotifier {
 
   ~FakePreemptionNotifier() override {
     NotifyRegisteredListeners(
-        errors::Cancelled("~FakePreemptionNotifier() was called."));
+        absl::CancelledError("~FakePreemptionNotifier() was called."));
   }
 
   void AnnounceDeath(absl::Time death_time) {
@@ -114,8 +116,8 @@ class PreemptionSyncManagerTest : public ::testing::Test {
     CoordinatedTask task2;
     task2.set_job_name(kJobName);
     task2.set_task_id(1);
-    TF_CHECK_OK(
-        coord_service_->ReportTaskError(task2, errors::Internal("test_error")));
+    TF_CHECK_OK(coord_service_->ReportTaskError(
+        task2, absl::InternalError("test_error")));
   }
 
   // Allow access to objects under test.

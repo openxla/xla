@@ -138,6 +138,8 @@ cc_library(
         "//tsl/platform:macros",
         "//tsl/platform:statusor",
         "//tsl/util:env_var",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 

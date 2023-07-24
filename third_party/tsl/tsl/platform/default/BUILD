@@ -168,6 +168,7 @@ cc_library(
         "//tsl/platform:types",
         "//tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:optional",
         "@eigen_archive//:eigen3",
@@ -238,6 +239,8 @@ cc_library(
         "//tsl/platform:protobuf",
         "//tsl/platform:status",
         "//tsl/platform:strcat",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
