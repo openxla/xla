@@ -213,55 +213,31 @@ template <typename... Args>
 
 // InvalidArgument
 template <typename... Args>
-::tsl::Status InvalidArgument(Args... args) {
-  return ::tsl::Status(absl::StatusCode::kInvalidArgument,
-                       ::tsl::strings::StrCat(
-                           ::tsl::errors::internal::PrepareForStrCat(args)...));
-}
+struct InvalidArgument {
+#if defined(PLATFORM_GOOGLE)
+  explicit InvalidArgument(Args&&... args, absl::SourceLocation loc =
+                                               absl::SourceLocation::current())
+      : status(absl::StatusCode::kInvalidArgument,
+               ::tsl::strings::StrCat(
+                   ::tsl::errors::internal::PrepareForStrCat(args)...),
+               loc) {}
+#else
+  explicit InvalidArgument(Args&&... args)
+      : status(absl::StatusCode::kInvalidArgument,
+               ::tsl::strings::StrCat(
+                   ::tsl::errors::internal::PrepareForStrCat(args)...)) {}
+#endif
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  operator absl::Status() const { return status; }
+
+ private:
+  const absl::Status status;
+};
+
+template <typename... Args>
+InvalidArgument(Args&&...) -> InvalidArgument<Args...>;
 
 #if defined(PLATFORM_GOOGLE)
-// Specialized overloads to capture source location for up to three arguments.
-template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-::absl::Status InvalidArgument(
-    Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4,
-    absl::SourceLocation loc = absl::SourceLocation::current()) {
-  return ::tsl::Status(
-      absl::StatusCode::kInvalidArgument,
-      ::tsl::strings::StrCat(::tsl::errors::internal::PrepareForStrCat(arg1),
-                             ::tsl::errors::internal::PrepareForStrCat(arg2),
-                             ::tsl::errors::internal::PrepareForStrCat(arg3),
-                             ::tsl::errors::internal::PrepareForStrCat(arg4)),
-      loc);
-}
-template <typename Arg1, typename Arg2, typename Arg3>
-::absl::Status InvalidArgument(
-    Arg1 arg1, Arg2 arg2, Arg3 arg3,
-    absl::SourceLocation loc = absl::SourceLocation::current()) {
-  return ::tsl::Status(
-      absl::StatusCode::kInvalidArgument,
-      ::tsl::strings::StrCat(::tsl::errors::internal::PrepareForStrCat(arg1),
-                             ::tsl::errors::internal::PrepareForStrCat(arg2),
-                             ::tsl::errors::internal::PrepareForStrCat(arg3)),
-      loc);
-}
-template <typename Arg1, typename Arg2>
-::absl::Status InvalidArgument(
-    Arg1 arg1, Arg2 arg2,
-    absl::SourceLocation loc = absl::SourceLocation::current()) {
-  return ::tsl::Status(
-      absl::StatusCode::kInvalidArgument,
-      ::tsl::strings::StrCat(::tsl::errors::internal::PrepareForStrCat(arg1),
-                             ::tsl::errors::internal::PrepareForStrCat(arg2)),
-      loc);
-}
-template <typename Arg1>
-::absl::Status InvalidArgument(
-    Arg1 arg1, absl::SourceLocation loc = absl::SourceLocation::current()) {
-  return ::tsl::Status(
-      absl::StatusCode::kInvalidArgument,
-      ::tsl::strings::StrCat(::tsl::errors::internal::PrepareForStrCat(arg1)),
-      loc);
-}
 template <typename... Args>
 ::absl::Status InvalidArgumentWithPayloads(
     const ::tsl::StringPiece& message,
@@ -271,27 +247,6 @@ template <typename... Args>
                         loc);
 }
 #else
-template <typename Arg1, typename Arg2, typename Arg3>
-::absl::Status InvalidArgument(Arg1 arg1, Arg2 arg2, Arg3 arg3) {
-  return ::absl::Status(
-      absl::StatusCode::kInvalidArgument,
-      ::tsl::strings::StrCat(::tsl::errors::internal::PrepareForStrCat(arg1),
-                             ::tsl::errors::internal::PrepareForStrCat(arg2),
-                             ::tsl::errors::internal::PrepareForStrCat(arg3)));
-}
-template <typename Arg1, typename Arg2>
-::absl::Status InvalidArgument(Arg1 arg1, Arg2 arg2) {
-  return ::absl::Status(
-      absl::StatusCode::kInvalidArgument,
-      ::tsl::strings::StrCat(::tsl::errors::internal::PrepareForStrCat(arg1),
-                             ::tsl::errors::internal::PrepareForStrCat(arg2)));
-}
-template <typename Arg1>
-::absl::Status InvalidArgument(Arg1 arg1) {
-  return ::absl::Status(
-      absl::StatusCode::kInvalidArgument,
-      ::tsl::strings::StrCat(::tsl::errors::internal::PrepareForStrCat(arg1)));
-}
 template <typename... Args>
 ::absl::Status InvalidArgumentWithPayloads(
     const ::tsl::StringPiece& message,
