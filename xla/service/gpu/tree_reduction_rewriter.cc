@@ -29,7 +29,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/reduction_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/statusor.h"

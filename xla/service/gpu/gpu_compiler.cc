@@ -120,6 +120,7 @@ limitations under the License.
 #include "xla/service/gpu/reduction_dimension_grouper.h"
 #include "xla/service/gpu/reduction_layout_normalizer.h"
 #include "xla/service/gpu/reduction_splitter.h"
+#include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/gpu/runtime_intrinsics.h"
 #include "xla/service/gpu/scatter_slice_simplifier.h"
 #include "xla/service/gpu/softmax_rewriter_triton.h"
