@@ -62,7 +62,6 @@ cc_library(
         ":in_place_dynamic_update_slice",
         ":input_slices",
         ":loop",
-        ":reduction",
         ":transpose",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:lhlo",
@@ -102,51 +101,6 @@ cc_library(
         "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:kernel_support_library",
         "@llvm-project//llvm:ir_headers",
-    ],
-)
-
-cc_library(
-    name = "reduction",
-    srcs = ["reduction.cc"],
-    hdrs = ["reduction.h"],
-    deps = [
-        ":fusion_emitter",
-        ":thunk_util",
-        ":tiling_util",
-        "//xla/hlo/ir:hlo",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:hlo_fusion_analysis",
-        "//xla/service/gpu:ir_emission_utils",
-        "//xla/service/gpu:ir_emitter",
-        "//xla/service/gpu:ir_emitter_context",
-        "//xla/service/gpu:kernel_reuse_cache",
-        "//xla/service/gpu:parallel_loop_emitter",
-        "//xla/service/gpu:target_util",
-        "//xla/service/llvm_ir:fused_ir_emitter",
-        "//xla/service/llvm_ir:ir_array",
-        "//xla/service/llvm_ir:kernel_support_library",
-        "//xla/service/llvm_ir:llvm_util",
-        "//xla/translate/mhlo_to_hlo:location_exporter",
-        "@llvm-project//llvm:ir_headers",
-    ],
-)
-
-cc_library(
-    name = "thunk_util",
-    srcs = ["thunk_util.cc"],
-    hdrs = ["thunk_util.h"],
-    visibility = ["//xla/service/gpu:__subpackages__"],
-    deps = [
-        "//xla:shape_util",
-        "//xla:statusor",
-        "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:ir_emission_utils",
-        "//xla/service/gpu:ir_emitter_context",
-        "//xla/service/gpu:thunk",
-        "//xla/translate/hlo_to_mhlo:hlo_utils",
-        "@com_google_absl//absl/types:span",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:MemRefDialect",
     ],
 )
 

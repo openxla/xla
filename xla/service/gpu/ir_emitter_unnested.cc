@@ -88,7 +88,6 @@ limitations under the License.
 #include "xla/service/gpu/for_thunk.h"
 #include "xla/service/gpu/fused_mha_thunk.h"
 #include "xla/service/gpu/fusions/fusions.h"
-#include "xla/service/gpu/fusions/thunk_util.h"
 #include "xla/service/gpu/gemm_thunk.h"
 #include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
@@ -1959,11 +1958,12 @@ Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
 #endif
       LOG(FATAL) << "Unsupported fusion kind: " << backend_config.kind();
     }
+    case HloFusionAnalysis::EmitterFusionKind::kReduction:
+      return EmitUnnestedReduction(fusion_op, fusion_analysis);
     case HloFusionAnalysis::EmitterFusionKind::kScatter:
       return EmitScatter(fusion_op, fused_computation, fusion_analysis);
     case HloFusionAnalysis::EmitterFusionKind::kInputSlices:
     case HloFusionAnalysis::EmitterFusionKind::kLoop:
-    case HloFusionAnalysis::EmitterFusionKind::kReduction:
     case HloFusionAnalysis::EmitterFusionKind::kTranspose:
       return FailedPrecondition(
           "Loop fusion should have been handled by GetFusionEmitter.");
@@ -3079,6 +3079,86 @@ IrEmitterUnnested::BuildKernelThunkForNonFusionOp(
                                         launch_dimensions);
 }
 
+std::unique_ptr<Thunk> IrEmitterUnnested::BuildConstantInitializerThunk(
+    mlir::Operation* op, absl::Span<const uint8_t> init_value, mlir::Value dest,
+    const BufferAllocation::Slice& dest_slice, const Shape& output_shape) {
+  int64_t num_bytes = init_value.size();
+  if (absl::c_all_of(init_value, [](uint8_t byte) { return byte == 0; })) {
+    return std::make_unique<MemzeroThunk>(Thunk::ThunkInfo(op), dest_slice,
+                                          dest);
+  }
+
+  // If the literal is 8 or 16 bits wide, we can emit a 32-bit memset by
+  // repeating the literal 4 or 2 times, so long as the destination buffer is
+  // an even multiple of 32 bits long.
+  if ((num_bytes == 1 || num_bytes == 2) &&
+      ShapeUtil::ByteSizeOf(output_shape) % 4 == 0) {
+    uint16_t pattern16;
+    if (num_bytes == 1) {
+      uint8_t b = init_value.front();
+      pattern16 = uint16_t{b} | (uint16_t{b} << 8);
+    } else {
+      memcpy(&pattern16, init_value.data(), sizeof(pattern16));
+    }
+    uint32_t pattern32 = uint32_t{pattern16} | (uint32_t{pattern16} << 16);
+    return std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(op),
+                                                   pattern32, dest_slice, dest);
+  }
+
+  // If the literal is an even multiple of 32 bits wide, we can emit a 32-bit
+  // memset so long as all 32-bit words of the scalar are equal to each other.
+  if (num_bytes >= 4 && num_bytes % 4 == 0 &&
+      memcmp(init_value.data(), init_value.data() + 4, init_value.size() - 4) ==
+          0) {
+    uint32_t word;
+    memcpy(&word, init_value.data(), sizeof(word));
+    return std::make_unique<Memset32BitValueThunk>(Thunk::ThunkInfo(op), word,
+                                                   dest_slice, dest);
+  }
+
+  return nullptr;
+}
+
+StatusOr<std::unique_ptr<Thunk>>
+IrEmitterUnnested::TryBuildConstantInitializerThunk(mlir::Operation* op,
+                                                    mlir::Value init_value,
+                                                    mlir::Value dest) {
+  mlir::DenseElementsAttr const_init;
+  if (auto get_global_memref =
+          mlir::dyn_cast_or_null<mlir::memref::GetGlobalOp>(
+              init_value.getDefiningOp())) {
+    auto global_memref =
+        mlir::SymbolTable::lookupNearestSymbolFrom<mlir::memref::GlobalOp>(
+            get_global_memref, get_global_memref.getNameAttr());
+    if (global_memref.getConstant() && global_memref.getInitialValue()) {
+      // If the initial value happens to be a constant, generate a specialized
+      // thunk.
+      const_init = global_memref.getInitialValue()
+                       .value()
+                       .cast<mlir::DenseElementsAttr>();
+    }
+  } else if (auto constant = mlir::dyn_cast_or_null<mlir::mhlo::ConstantOp>(
+                 init_value.getDefiningOp())) {
+    const_init = constant.getValue().dyn_cast<mlir::DenseElementsAttr>();
+  }
+
+  if (const_init) {
+    std::vector<uint8_t> literal_bytes;
+    TF_RETURN_IF_ERROR(
+        CopyDenseElementsDataToXlaFormat(const_init, &literal_bytes));
+
+    TF_ASSIGN_OR_RETURN(auto dest_slice, GetAllocationSlice(dest));
+
+    const Shape dest_shape = GetShape(dest);
+    auto thunk = BuildConstantInitializerThunk(op, literal_bytes, dest,
+                                               dest_slice, dest_shape);
+    if (thunk) {
+      return {std::move(thunk)};
+    }
+  }
+  return std::unique_ptr<Thunk>();
+}
+
 Status IrEmitterUnnested::BuildInitializerThunk(mlir::Operation* op,
                                                 mlir::Value init_value,
                                                 mlir::Value dest) {
@@ -3086,11 +3166,10 @@ Status IrEmitterUnnested::BuildInitializerThunk(mlir::Operation* op,
   auto init_type = init_value.getType().dyn_cast<mlir::MemRefType>();
   TF_RET_CHECK(init_type.getRank() == 0);
 
-  TF_ASSIGN_OR_RETURN(std::optional<std::unique_ptr<Thunk>> constant_init_thunk,
-                      BuildConstantInitializerThunk(*ir_emitter_context_, op,
-                                                    init_value, dest));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> constant_init_thunk,
+                      TryBuildConstantInitializerThunk(op, init_value, dest));
   if (constant_init_thunk) {
-    AddThunkToThunkSequence(*std::move(constant_init_thunk));
+    AddThunkToThunkSequence(std::move(constant_init_thunk));
     return OkStatus();
   }
 
@@ -3119,6 +3198,77 @@ Status IrEmitterUnnested::BuildInitializerThunk(mlir::Operation* op,
                          },
                          {dest_array}, launch_dimensions, &b_)
                          .EmitLoop(GetIrNameFromLoc(op->getLoc())));
+  return OkStatus();
+}
+
+Status IrEmitterUnnested::BuildFusedInitializerThunk(
+    mlir::lmhlo::FusionOp fusion, int output_index) {
+  auto reduce = mlir::dyn_cast_or_null<mlir::mhlo::ReduceOp>(
+      fusion.getFusionRoots()[output_index]);
+
+  TF_RET_CHECK(reduce);
+  TF_RET_CHECK(reduce.getNumResults() == 1);
+
+  mlir::Value init_value = reduce.getInitValues()[0];
+  mlir::Value dest = fusion.getOutputBuffers()[output_index];
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<Thunk> constant_init_thunk,
+      TryBuildConstantInitializerThunk(fusion, init_value, dest));
+  if (constant_init_thunk) {
+    AddThunkToThunkSequence(std::move(constant_init_thunk));
+    return OkStatus();
+  }
+
+  auto input_buffers = fusion.getInputBuffers();
+
+  const Shape dest_shape = GetShape(dest);
+  bool use_experimental_block_size =
+      ir_emitter_context_->debug_options()
+          .xla_gpu_enable_experimental_block_size();
+
+  TF_ASSIGN_OR_RETURN(LaunchDimensions launch_dimensions,
+                      CalculateLaunchDimensions(
+                          dest_shape, ir_emitter_context_->gpu_device_info(),
+                          use_experimental_block_size));
+
+  TF_ASSIGN_OR_RETURN(
+      std::optional<std::vector<llvm_ir::IrArray>> opt_ir_arrays,
+      BuildKernelThunkForFusion(
+          fusion, launch_dimensions,
+          /*discriminator=*/absl::StrCat("init_", output_index)));
+  if (!opt_ir_arrays.has_value()) {
+    // The kernel was reused, no need to emit code.
+    return OkStatus();
+  }
+  std::vector<llvm_ir::IrArray>& ir_arrays = opt_ir_arrays.value();
+
+  const llvm_ir::IrArray dest_array =
+      ir_arrays[input_buffers.size() + output_index];
+
+  const HloComputation* fused_computation =
+      *GetOrCreateSubComputationFromRegion(&fusion.getRegion(),
+                                           /*is_fusion=*/true);
+
+  FusedIrEmitter fused_emitter(elemental_emitter_);
+  for (int i = 0; i < fused_computation->num_parameters(); i++) {
+    fused_emitter.BindGenerator(
+        *fused_computation->parameter_instruction(i),
+        [this, &ir_arrays, i](llvm_ir::IrArray::Index index) {
+          return ir_arrays[i].EmitReadArrayElement(index, &b_);
+        });
+  }
+  HloInstruction* instr = fused_computation->root_instruction();
+  if (instr->opcode() != HloOpcode::kTuple) {
+    CHECK_EQ(0, output_index);
+  } else {
+    instr = instr->mutable_operand(output_index);
+  }
+  TF_RET_CHECK(instr->shape().IsArray());
+  TF_ASSIGN_OR_RETURN(auto generator,
+                      fused_emitter.GetGenerator(*instr->operand(1)));
+  TF_RETURN_IF_ERROR(
+      ParallelLoopEmitter(generator, {dest_array}, launch_dimensions, &b_)
+          .EmitLoop(GetIrNameFromLoc(fusion.getLoc())));
   return OkStatus();
 }
 
