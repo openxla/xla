@@ -222,8 +222,8 @@ bool IsSupportedF8Pattern(HloInstruction *instr, HloInstruction *&x,
   };
   for (int i = 3; i < subgraph->size(); ++i) {
     // The remaining instructions must be commutative with dequantization.
-    // Bitcast, broadcast, copy, pad, reshape and slice instructions are
-    // supported.
+    // Bitcast, broadcast, copy, pad, reshape, slice and all-gather instructions
+    // are supported.
     if (!Match((*subgraph)[i],
                m::AnyOf<HloInstruction>(
                    m::Bitcast().WithPredicate(preserves_element_type),

@@ -6153,7 +6153,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 
 TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllGatherF8) {
 #if CUDA_VERSION < 12000
-  GTEST_SKIP() << "A matrix bias on a matmul is only supported in CUDA 12";
+  GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
 #endif
   const char* hlo_text = R"(
     HloModule test
