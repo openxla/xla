@@ -22,6 +22,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/log/log.h"
+#include "absl/strings/numbers.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/pjrt/execute_options.pb.h"
 #include "xla/util.h"
@@ -289,31 +291,31 @@ Status CompileOptions::ApplyOption(const std::string& key,
       return InvalidArgument(
           "No reflection object associated with xla::DebugOptions.");
     }
-    if (xla_field->type() == tsl::protobuf::FieldDescriptor::TYPE_BOOL &&
-        std::holds_alternative<bool>(value)) {
+    LOG(INFO) << "Got reflection: " << key;
+    if (std::holds_alternative<bool>(value)) {
+      LOG(INFO) << "Applying bool: " << key;
       reflection->SetBool(&debug_options, xla_field, std::get<bool>(value));
       return OkStatus();
-    } else if (xla_field->type() ==
-                   tsl::protobuf::FieldDescriptor::TYPE_STRING &&
-               std::holds_alternative<std::string>(value)) {
-      reflection->SetString(&debug_options, xla_field,
-                            std::get<std::string>(value));
+    } else if (std::holds_alternative<std::string>(value)) {
+      LOG(INFO) << "Applying string: " << std::get<std::string>(value);
+      TF_RETURN_IF_ERROR(
+          ApplyOptionFromString(xla_field, std::get<std::string>(value)));
       return OkStatus();
-    } else if (xla_field->type() ==
-                   tsl::protobuf::FieldDescriptor::TYPE_INT32 &&
-               std::holds_alternative<int64_t>(value)) {
+    } else if (std::holds_alternative<int64_t>(value)) {
+      LOG(INFO) << "Applying int32: " << key;
       reflection->SetInt32(&debug_options, xla_field, std::get<int64_t>(value));
       return OkStatus();
-    } else if (xla_field->type() ==
-                   tsl::protobuf::FieldDescriptor::TYPE_INT64 &&
-               std::holds_alternative<int64_t>(value)) {
+    } else if (std::holds_alternative<int64_t>(value)) {
+      LOG(INFO) << "Applying int64 : " << key;
       reflection->SetInt64(&debug_options, xla_field, std::get<int64_t>(value));
       return OkStatus();
     } else {
-      return InvalidArgument(
-          "While setting option %s, '%s' is not a valid %s value.", key,
-          std::visit([](auto&& arg) { return absl::StrCat(arg); }, value),
-          xla_field->type_name());
+      LOG(INFO) << "Applying nothing : " << key;
+      LOG(INFO) << "While setting option " << key
+                << std::visit([](auto&& arg) { return absl::StrCat(arg); },
+                              value)
+                << "is not a valid value." << xla_field->type_name();
+      return OkStatus();
     }
   } else {
     return InvalidArgument("No such compile option: '%s'", key);
@@ -322,9 +324,48 @@ Status CompileOptions::ApplyOption(const std::string& key,
 
 Status CompileOptions::ApplyAllOptionOverrides() {
   for (auto& option : env_option_overrides) {
+    LOG(INFO) << "Applying option: " << option.first;
     TF_RETURN_IF_ERROR(ApplyOption(option.first, option.second));
   }
   return OkStatus();
+}
+
+Status CompileOptions::ApplyOptionFromString(
+    const tsl::protobuf::FieldDescriptor* field, const std::string& value) {
+  xla::DebugOptions& debug_options =
+      *executable_build_options.mutable_debug_options();
+  const tsl::protobuf::Reflection* reflection = debug_options.GetReflection();
+  if (field->type() == tsl::protobuf::FieldDescriptor::TYPE_STRING) {
+    reflection->SetString(&debug_options, field, value);
+    return OkStatus();
+  } else if (field->type() == tsl::protobuf::FieldDescriptor::TYPE_INT32) {
+    int int_value;
+    if (absl::SimpleAtoi(value, &int_value)) {
+      reflection->SetInt32(&debug_options, field, int_value);
+      return OkStatus();
+    }
+  } else if (field->type() == tsl::protobuf::FieldDescriptor::TYPE_INT64) {
+    int int_value;
+    if (absl::SimpleAtoi(value, &int_value)) {
+      reflection->SetInt64(&debug_options, field, int_value);
+      return OkStatus();
+    }
+  } else if (field->type() == tsl::protobuf::FieldDescriptor::TYPE_FLOAT) {
+    float float_value;
+    if (absl::SimpleAtof(value, &float_value)) {
+      reflection->SetFloat(&debug_options, field, float_value);
+      return OkStatus();
+    }
+  } else if (field->type() == tsl::protobuf::FieldDescriptor::TYPE_BOOL) {
+    bool bvalue = value == "True";
+    if (value == "True" || value == "False") {
+      reflection->SetBool(&debug_options, field, bvalue);
+      return OkStatus();
+    }
+  }
+  return InvalidArgument(
+      "While setting option %s, '%s' is not a valid %s value.", field->name(),
+      value, field->type_name());
 }
 
 }  // namespace xla
