@@ -147,8 +147,19 @@ bool IsSharingOperandWithFwdMha(HloInstruction* gemm) {
   }
   return false;
 }
-// Checks if the gemm is a bacthed matmul or
-// if it's sharing the same parent with another forward fmha call
+// When we reach a gemm instruction, it could be one of the 3 cases:
+//   1. one of the 2 gemms in forward fmha call
+//   2. one of the 4 gemms in backward fmha call
+//   3. gemms of other un-related layers
+// 3 can be easily ruled out by the pattern matcher.
+// However, 1 and 2 have very similar bmm-bmm structures.
+// We need to determine that we exactly match case 1 for forward gemms
+// which have below properties:
+//    - A batched matmul
+//    - None of the operands is a forward fmha call, in which case would make it
+//      a backward gemm.
+//    - It's not directly or indirectly sharing an operand with any other fmha
+//      call, in which case would make it a backward gemm
 bool IsFirstFwdMatmul(HloInstruction* gemm) {
   return IsBatchedMatmul(gemm) && !IsFwdCustomCallTofMHA(*gemm->operand(0)) &&
          !IsFwdCustomCallTofMHA(*gemm->operand(1)) &&
@@ -265,7 +276,7 @@ bool IsComputeCapabilityAndCudnnSupported(
 }
 
 bool IsSupportedPrimitiveType(const HloInstruction* bmm) {
-  auto dtype = bmm->shape().element_type();
+  PrimitiveType dtype = bmm->shape().element_type();
   return dtype == BF16 || dtype == F16;
 }
 
@@ -396,6 +407,12 @@ MatchFwdResult MatchDefaultFwdBmmBmm(MatchFwdResult previous_result,
   if (Match(instr, default_bmm_bmm_pattern) && IsFirstFwdMatmul(bmm_1)) {
     match_result.matched_bmm_1 = bmm_1;
     match_result.matched_bmm_2 = bmm_2;
+    // In training mode, the forward fmha call needs to output an activation
+    // to backward graph. In the case of bmm-bmm pattern, if the first bmm
+    // has 2 users namely:
+    //    1. the second forward bmm
+    //    2. one of the backward bmms(activation)
+    // then we know this is a training graph, otherwise it's an inference graph.
     match_result.is_training = bmm_1->user_count() == 2;
     match_result.has_match = true;
     match_result.matched_custom_call_name = kCudnnfMHABmmBmmCallTarget;
