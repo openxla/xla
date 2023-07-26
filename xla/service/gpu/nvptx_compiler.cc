@@ -69,6 +69,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/util.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/status.h"

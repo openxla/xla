@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <string>
 
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gemm_rewriter.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
