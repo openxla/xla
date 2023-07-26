@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/reduction_utils.h"
 
 namespace xla {
 namespace gpu {

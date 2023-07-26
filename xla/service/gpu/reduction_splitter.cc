@@ -16,10 +16,13 @@ limitations under the License.
 #include "xla/service/gpu/reduction_splitter.h"
 
 #include <algorithm>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/reduction_utils.h"
 #include "xla/shape_util.h"
 
 namespace xla {
