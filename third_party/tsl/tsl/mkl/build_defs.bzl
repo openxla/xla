@@ -102,9 +102,22 @@ def mkl_deps():
     """
     return select({
         "@tsl//tsl/mkl:build_with_mkl_aarch64": ["@mkl_dnn_acl_compatible//:mkl_dnn_acl"],
-        "@tsl//tsl:linux_x86_64_with_onednn_v2": ["@mkl_dnn_v1//:mkl_dnn"],
-        "@tsl//tsl:linux_x86_64_with_onednn_v3": ["@onednn_v3//:mkl_dnn"],
-        "@tsl//tsl:windows": ["@mkl_dnn_v1//:mkl_dnn"],
+        "@tsl//tsl:linux_x86_64": ["@onednn//:mkl_dnn"],
+        "@tsl//tsl:windows": ["@onednn//:mkl_dnn"],
+        "//conditions:default": [],
+    })
+
+def onednn_v3_define():
+    """Returns a define to build with oneDNN v3.x if it is enabled. 
+
+    Returns:
+      A define to build with oneDNN v3.x for Linux x86 and Windows x86 builds.
+      An empty list of all other cases (include ARM builds).
+    """
+    return select({
+        "@tsl//tsl/mkl:build_with_mkl_aarch64": [],
+        "@tsl//tsl:linux_x86_64": ["-DENABLE_ONEDNN_V3"],
+        "@tsl//tsl:windows": ["-DENABLE_ONEDNN_V3"],
         "//conditions:default": [],
     })
 
