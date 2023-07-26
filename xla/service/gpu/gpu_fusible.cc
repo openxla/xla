@@ -329,10 +329,42 @@ bool IsLoopFusibleAsProducer(const HloInstruction& instr) {
          (IsUniversallyLoopFusible(instr) ||
           (instr.opcode() == HloOpcode::kIota ||
            instr.opcode() == HloOpcode::kConstant ||
-           // Non-variadic elemental reductions can be fused as producers.
-           (instr.opcode() == HloOpcode::kReduce &&
-            !IsReductionFromOrToContiguousDimensions(instr) &&
-            !instr.shape().IsTuple())));
+           // Non-variadic reductions can be fused as producers.
+           (instr.opcode() == HloOpcode::kReduce && !instr.shape().IsTuple())));
+}
+
+static bool AllSatisfy(const HloInstruction& instr,
+                       const HloPredicate& predicate) {
+  if (instr.opcode() != HloOpcode::kFusion) {
+    return predicate(&instr);
+  }
+
+  return absl::c_all_of(
+      instr.fused_instructions(), [&](const HloInstruction* i) {
+        return i->opcode() == HloOpcode::kParameter || predicate(i);
+      });
+}
+
+bool IsReduceIntermediate(const HloInstruction* instr) {
+  if (instr->operand_count() > 1 || instr->user_count() > 1) {
+    return false;
+  }
+
+  // Only support elementwise ops that don't introduce additional compute.
+  // More benchmarking and better cost model are needed to enable this for
+  // more compute ops.
+  switch (instr->opcode()) {
+    case HloOpcode::kBitcast:
+    case HloOpcode::kBitcastConvert:
+    case HloOpcode::kConvert:
+    case HloOpcode::kCopy:
+      return true;
+    case HloOpcode::kReshape:
+      return ShapeUtil::ReshapeIsBitcast(instr->operand(0)->shape(),
+                                         instr->shape());
+    default:
+      return false;
+  }
 }
 
 FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
@@ -341,6 +373,16 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
       !(FindAnyTiledTranspose(producer) &&
         &FindNonTrivialHero(consumer) == &producer)) {
     return "the producer is not loop-fusible";
+  }
+
+  if (IsReductionFromOrToContiguousDimensions(producer)) {
+    if (!AllSatisfy(consumer, &IsReduceIntermediate)) {
+      return "Reductions from/to continuous dims epilogue not fusible";
+    }
+
+    if (producer.user_count() > 1) {
+      return "reduction output fusion only works for single user";
+    }
   }
 
   if (!IsInputFusible(consumer) && !IsLoopFusibleAsConsumer(consumer)) {
