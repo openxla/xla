@@ -6151,6 +6151,68 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
       )");
 }
 
+TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllGatherF8) {
+#if CUDA_VERSION < 12000
+  GTEST_SKIP() << "A matrix bias on a matmul is only supported in CUDA 12";
+#endif
+  const char* hlo_text = R"(
+    HloModule test
+    ENTRY test {
+      x = f8e4m3fn[16,16] parameter(0)
+      y = f8e4m3fn[32,16] parameter(1)
+      b = f16[16] parameter(2)
+      b_bcast = f16[16,16] broadcast(b), dimensions={1}
+      x_f16 = f16[16,16] convert(x)
+      y_f16 = f16[32,16] convert(y)
+      x_scale = f16[] parameter(3)
+      y_scale = f16[] parameter(4)
+      x_scale_bcast = f16[16,16] broadcast(x_scale), dimensions={}
+      y_scale_bcast = f16[32,16] broadcast(y_scale), dimensions={}
+      x_unscaled = f16[16,16] multiply(x_f16, x_scale_bcast)
+      y_unscaled = f16[32,16] multiply(y_f16, y_scale_bcast)
+      c = f16[] constant(0)
+      c_bcast = f16[16,16] broadcast(c), dimensions={}
+      all_gather = f16[16,32] all-gather(x_unscaled), channel_id=1, replica_groups={{0,1},{2,3}}, dimensions={1}
+      dot_a = f16[16,16] dot(all_gather, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT out = f16[16,16] add(dot_a, b_bcast)
+          }
+)";
+
+  RunAndFilecheckHloRewrite(hlo_text,
+                            GemmRewriter(se::CudaComputeCapability{
+                                se::CudaComputeCapability::HOPPER, 0}),
+                            R"(
+; CHECK-LABEL: ENTRY %test (x: f8e4m3fn[16,16], y: f8e4m3fn[32,16], b: f16[16], x_scale: f16[], y_scale: f16[]) -> f16[16,16] {
+; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,16]{1,0} parameter(0)
+; CHECK:         [[P3:%[^ ]+]] = f16[] parameter(3)
+; CHECK:         [[AG:%[^ ]+]] = f8e4m3fn[16,32]{1,0} all-gather([[P0]]), {{[^ ]+}}
+; CHECK:         [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
+; CHECK:         [[P1_TRANSPOSE:%[^ ]+]] = f8e4m3fn[16,32]{1,0} transpose([[P1]]), dimensions={1,0}
+; CHECK:         [[CV:%[^ ]+]] = f32[] convert([[P3]])
+; CHECK:         [[P4:%[^ ]+]] = f16[] parameter(4)
+; CHECK:         [[CV1:%[^ ]+]] = f32[] convert([[P4]])
+; CHECK:         [[C:%[^ ]+]] = f32[] constant(1)
+; CHECK:         [[B:%[^ ]+]] = f16[16]{0} parameter(2)
+; CHECK:         ROOT [[GEMM:%[^ ]+]] = f16[16,16]{1,0} custom-call([[AG]], [[P1_TRANSPOSE]], [[CV]], [[CV1]], [[C]], /*index=5*/[[C]], [[B]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"BIAS"
+; CHECK:           }
+      )");
+}
+
 TEST_P(ParameterizedFp8GemmRewriteTest,
        ScaledABUnscaledDMatrixBiasThenVectorBiasF8) {
 #if CUDA_VERSION < 12000
