@@ -357,7 +357,6 @@ bool IsReduceIntermediate(const HloInstruction* instr) {
     case HloOpcode::kBitcast:
     case HloOpcode::kBitcastConvert:
     case HloOpcode::kConvert:
-    case HloOpcode::kCopy:
       return true;
     case HloOpcode::kReshape:
       return ShapeUtil::ReshapeIsBitcast(instr->operand(0)->shape(),
