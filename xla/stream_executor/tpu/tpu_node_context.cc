@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 
+#include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
 
 namespace tensorflow {

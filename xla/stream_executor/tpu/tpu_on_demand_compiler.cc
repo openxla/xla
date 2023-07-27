@@ -15,15 +15,11 @@ limitations under the License.
 #include <memory>
 
 #include "absl/cleanup/cleanup.h"
-#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/shaped_buffer.h"
-#include "xla/shape_util.h"
-#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/tpu/c_api_conversions.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/proto_helper.h"
@@ -31,10 +27,8 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_executable.h"
 #include "xla/stream_executor/tpu/tpu_executor.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
-#include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_id.h"
 #include "xla/util.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 

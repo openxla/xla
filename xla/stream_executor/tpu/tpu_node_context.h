@@ -16,14 +16,12 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_TPU_NODE_CONTEXT_H_
 #define XLA_STREAM_EXECUTOR_TPU_TPU_NODE_CONTEXT_H_
 
-#include <string>
+#include <memory>
 
-#include "absl/memory/memory.h"
 #include "xla/service/backend.h"
 #include "xla/service/stream_pool.h"
-#include "xla/service/transfer_manager.h"
 #include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/tpu/status_helper.h"
+#include "xla/stream_executor/tpu/tpu_ops_c_api.h"
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
 #include "tsl/platform/macros.h"
 #include "tsl/platform/status.h"
