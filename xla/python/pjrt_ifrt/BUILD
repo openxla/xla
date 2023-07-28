@@ -126,6 +126,7 @@ cc_library(
         ":xla_ifrt",
         ":xla_sharding_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:sharding_serdes",
     ],
