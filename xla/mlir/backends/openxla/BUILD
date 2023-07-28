@@ -33,6 +33,7 @@ config_setting(
 #         "@llvm-project//mlir:FuncDialect",
 #         "@llvm-project//mlir:MemRefDialect",
 #         "@llvm-project//mlir:MlirOptLib",
+#         "@llvm-project//mlir:Transforms",
 #     ],
 # )
 #

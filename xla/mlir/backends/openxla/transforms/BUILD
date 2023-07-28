@@ -39,8 +39,10 @@ package(
 #     deps = [
 #         ":passes_inc_gen",
 #         "//xla/mlir/backends/openxla/conversion:convert_compiled_ops",
+#         "//xla/mlir/backends/openxla/conversion:convert_library_ops",
 #         "//xla/mlir/backends/openxla/conversion:convert_memref_ops",
 #         "//xla/mlir/backends/openxla/conversion:convert_while_op",
+#         "//xla/mlir/backends/openxla/ir:xla_gpu",
 #         "//xla/mlir_hlo:lhlo",
 #         "@llvm-project//llvm:Support",
 #         "@llvm-project//mlir:ArithDialect",

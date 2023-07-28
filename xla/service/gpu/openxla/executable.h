@@ -66,7 +66,7 @@ struct OpenXlaRuntimeExecutable {
 #include <string>
 #include <utility>
 
-#include "third_party/iree/runtime/src/iree/vm/api.h"
+#include "third_party/iree/runtime/src/iree/vm/api.h"  // IWYU pragma: keep
 #include "mlir/IR/OwningOpRef.h"  // from @llvm-project
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/openxla/compiler.h"
