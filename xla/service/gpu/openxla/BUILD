@@ -1,6 +1,6 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/platform:build_config.bzl", "tf_platform_deps")
-load("//xla/service/gpu/openxla:build_config.bzl", "if_not_openxla", "if_openxla")
+load("//xla/mlir/backends/openxla:build_config.bzl", "if_not_openxla", "if_openxla")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -11,15 +11,6 @@ package(
 package_group(
     name = "friends",
     includes = ["//xla:friends"],
-)
-
-# Add `--define=xla_gpu_with_openxla_runtime=1` to build command to enable experimental OpenXLA/IREE
-# backend for XLA:GPU executables.
-config_setting(
-    name = "with_openxla_runtime",
-    values = {
-        "define": "xla_gpu_with_openxla_runtime=1",
-    },
 )
 
 # copybara:uncomment_begin(not supported in OSS build)
