@@ -55,6 +55,7 @@ package(
 #         ":de_bufferization",
 #         "//xla/mlir/backends/openxla/ir:xla_gpu",
 #         "//xla/mlir_hlo:lhlo_gpu",
+#         "//xla/translate/mhlo_to_hlo:location_exporter",
 #         "@llvm-project//llvm:Support",
 #         "@llvm-project//mlir:ArithDialect",
 #         "@llvm-project//mlir:FuncDialect",
