@@ -1845,7 +1845,13 @@ class HloInstruction {
     statistics_viz_.set_stat_index_to_visualize(index);
   }
 
+  // Whether this specific instruction has statistics
   bool has_statistics() const { return !statistics_viz_.statistics().empty(); }
+
+  // Whether any instruction within the same HLO module as this has statistics
+  bool module_has_statistics() const {
+    return statistics_viz_.stat_index_to_visualize() == -1;
+  }
 
   const Statistic& statistic_to_visualize() const {
     return statistics_viz_.statistics().at(
@@ -1853,7 +1859,12 @@ class HloInstruction {
   }
 
   void set_statistics_viz(StatisticsViz statistics_viz) {
-    statistics_viz_ = std::move(statistics_viz);
+    if (statistics_viz.statistics().empty()) {
+      // mark instruction with -1 index, to know to render it with gray color
+      statistics_viz_.set_stat_index_to_visualize(-1);
+    } else {
+      statistics_viz_ = std::move(statistics_viz);
+    }
   }
 
   const StatisticsViz& statistics_viz() const { return statistics_viz_; }
