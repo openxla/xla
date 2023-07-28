@@ -3178,6 +3178,7 @@ cc_library(
     name = "cudnn_fused_conv_rewriter",
     srcs = ["cudnn_fused_conv_rewriter.cc"],
     hdrs = ["cudnn_fused_conv_rewriter.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
@@ -3190,50 +3191,16 @@ cc_library(
         "//xla/stream_executor",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
-    ],
-)
-
-cc_library(
-    name = "cudnn_fused_mha_rewriter",
-    srcs = ["cudnn_fused_mha_rewriter.cc"],
-    hdrs = ["cudnn_fused_mha_rewriter.h"],
-    deps = [
-        ":backend_configs_cc",
-        ":cublas_cudnn",
-        ":matmul_utils",
-        "//xla:permutation_util",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_pass",
-        "//xla/service:pattern_matcher",
-        "//xla/stream_executor:stream_executor_headers",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
-    ],
-)
-
-xla_cc_test(
-    name = "cudnn_fused_mha_rewriter_test",
-    srcs = ["cudnn_fused_mha_rewriter_test.cc"],
-    tags = tf_cuda_tests_tags(),
-    deps = [
-        ":backend_configs_cc",
-        ":cublas_cudnn",
-        ":cudnn_fused_mha_rewriter",
-        "//xla:status_macros",
-        "//xla:util",
-        "//xla/service:hlo_parser",
-        "//xla/service:pattern_matcher",
-        "//xla/service:pattern_matcher_gmock",
-        "//xla/tests:hlo_test_base",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test_main",
-    ],
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cudnn_header",
+    ]),
 )
 
 xla_cc_test(
     name = "cudnn_fused_conv_rewriter_test",
     srcs = ["cudnn_fused_conv_rewriter_test.cc"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     shard_count = 10,
     tags = [
         "gpu",
@@ -3260,6 +3227,50 @@ xla_cc_test(
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test_main",
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cudnn_header",
+    ]),
+)
+
+cc_library(
+    name = "cudnn_fused_mha_rewriter",
+    srcs = ["cudnn_fused_mha_rewriter.cc"],
+    hdrs = ["cudnn_fused_mha_rewriter.h"],
+    deps = [
+        ":backend_configs_cc",
+        ":cublas_cudnn",
+        ":matmul_utils",
+        "//xla:permutation_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+        "//xla/stream_executor:stream_executor_headers",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cudnn_header",
+    ]),
+)
+
+xla_cc_test(
+    name = "cudnn_fused_mha_rewriter_test",
+    srcs = ["cudnn_fused_mha_rewriter_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        ":backend_configs_cc",
+        ":cublas_cudnn",
+        ":cudnn_fused_mha_rewriter",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla/service:hlo_parser",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/tests:hlo_test_base",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test_main",
