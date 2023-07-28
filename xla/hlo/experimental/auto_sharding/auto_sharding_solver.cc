@@ -232,7 +232,7 @@ AutoShardingSolverResult CallORToolsSolver(
       double accumulated_coefficient =
           solver->Objective().GetCoefficient(s[i][j]);
       double coefficient = request.c[i][j] + request.d[i][j];
-      AddSalt(absl::StrCat(i, "S", j), request.saltiplier, &coefficient);
+      AddSalt(absl::StrCat(i, "<s>", j), request.saltiplier, &coefficient);
       solver->MutableObjective()->SetCoefficient(
           s[i][j], accumulated_coefficient + coefficient);
     }
@@ -243,7 +243,7 @@ AutoShardingSolverResult CallORToolsSolver(
       double accumulated_coefficient =
           solver->Objective().GetCoefficient(e[i][j]);
       double coefficient = request.r[i][j];
-      AddSalt(absl::StrCat(i, "E", j), request.saltiplier, &coefficient);
+      AddSalt(absl::StrCat(i, "<e>", j), request.saltiplier, &coefficient);
       solver->MutableObjective()->SetCoefficient(
           e[i][j], accumulated_coefficient + coefficient);
     }
@@ -443,7 +443,6 @@ AutoShardingSolverResult CallORToolsSolver(
   auto status = solver->Solve();
 
   if (status == operations_research::MPSolver::INFEASIBLE) {
-    LOG(ERROR) << "MPSolver could not find any feasible solution.";
 #ifdef PLATFORM_GOOGLE
     if (request.compute_iis) {
       operations_research::MPModelRequest model_request;
@@ -476,12 +475,8 @@ AutoShardingSolverResult CallORToolsSolver(
         absl::InternalError("MPSolver could not find any feasible solution."),
         false);
   } else if (status != operations_research::MPSolver::OPTIMAL) {
-    auto err_msg = "Solver timed out. Will proceed without auto sharding.";
-    LOG(WARNING) << err_msg;
-
-    // The solver timed out. We now rely on heuristic-based sharding propagation
-    // to degrade gracefully.
-    return AutoShardingSolverResult(absl::InternalError(err_msg), true);
+    return AutoShardingSolverResult(absl::InternalError("Solver timed out."),
+                                    true);
   }
 
   LOG(INFO) << "Solver Status: " << status
