@@ -43,8 +43,7 @@ Status ComputeEngineZoneProvider::GetZone(string* zone) {
     cached_zone = elems.back();
     *zone = cached_zone;
   } else {
-    LOG(ERROR) << "Failed to parse the zone name from location: "
-               << string(location);
+    LOG(ERROR) << "Failed to parse the zone name from location: " << location;
   }
 
   return OkStatus();

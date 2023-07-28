@@ -185,9 +185,9 @@ Status GoogleAuthProvider::GetToken(string* t) {
         << "All attempts to get a Google authentication bearer token failed, "
         << "returning an empty token. Retrieving token from files failed with "
            "\""
-        << token_from_files_status.ToString() << "\"."
-        << " Retrieving token from GCE failed with \""
-        << token_from_gce_status.ToString() << "\".";
+        << token_from_files_status << "\"."
+        << " Retrieving token from GCE failed with \"" << token_from_gce_status
+        << "\".";
   }
 
   // Public objects can still be accessed with an empty bearer token,
