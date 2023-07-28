@@ -245,6 +245,71 @@ typedef struct TpuExecutable_LoadProgramAndEnqueueToStream_Params {
 TFTPU_CAPI_EXPORT void TpuExecutable_LoadProgramAndEnqueueToStream(
     TpuExecutable_LoadProgramAndEnqueueToStream_Params* params);
 
+typedef int64_t TpuOp_CancellationToken;
+
+typedef struct TpuOp_CancellationResult {
+  TpuOp_CancellationToken token;
+  bool already_cancelled;
+} TpuOp_CancellationResult;
+
+typedef struct TFE_CancelCallback TpuOp_CancelCallback;
+typedef struct TFE_CancellationManager TpuOp_CancellationManager;
+typedef struct TF_OpKernelContext TF_OpKernelContext;
+
+typedef struct TpuOp_RegisterCancellation_Params {
+  int32_t struct_size;
+  void* priv;
+
+  TpuOp_CancellationManager* cancellation_manager;
+  int device_ordinal;
+
+  TpuOp_CancellationResult* result;  // out
+  TF_Status* status;                 // out
+} TpuOp_RegisterCancellation_Params;
+
+#define TpuOp_RegisterCancellation_Params_SIZE \
+  (sizeof(struct TpuOp_RegisterCancellation_Params))
+
+TFTPU_CAPI_EXPORT void TpuOp_RegisterCancellation(
+    TpuOp_RegisterCancellation_Params* params);
+
+typedef struct OpaqueTransferManagerImpl TpuOp_OpaqueTransferManagerImpl;
+
+typedef struct TpuOp_UnregisterCancellation_Params {
+  int32_t struct_size;
+  void* priv;
+
+  TF_OpKernelContext* op_kernel_context;
+  TpuOp_CancellationManager* cancellation_manager;
+  SE_Stream* stream;
+  int device_ordinal;
+  TpuOp_CancellationToken token;
+  TpuOp_OpaqueTransferManagerImpl* host_transfer_manager;
+
+  TF_Status* status;  // out
+} TpuOp_UnregisterCancellation_Params;
+
+#define TpuOp_UnregisterCancellation_Params_SIZE \
+  (sizeof(struct TpuOp_UnregisterCancellation_Params))
+
+TFTPU_CAPI_EXPORT void TpuOp_UnregisterCancellation(
+    TpuOp_UnregisterCancellation_Params* params);
+
+TFTPU_CAPI_EXPORT bool TpuOp_CancellationManagerIsCancelled(
+    TpuOp_CancellationManager* cancellation_manager);
+
+TFTPU_CAPI_EXPORT bool TpuOp_CancellationManagerIsCancelling(
+    TpuOp_CancellationManager* cancellation_manager);
+
+TFTPU_CAPI_EXPORT TpuOp_CancellationManager*
+OutsideCompilation_GetCancellationManager(SE_OutsideCompilationParams* params);
+
+TFTPU_CAPI_EXPORT TF_OpKernelContext* OutsideCompilation_GetOpKernelContext(
+    SE_OutsideCompilationParams* params);
+
+TFTPU_CAPI_EXPORT TpuOp_OpaqueTransferManagerImpl*
+OutsideCompilation_GetTransferManager(SE_OutsideCompilationParams* params);
+
 TFTPU_CAPI_EXPORT void HardwareLayout_HostShapeToDeviceShape(
     XLA_Shape* host_shape, XLA_Shape* device_shape);
 TFTPU_CAPI_EXPORT int64_t HardwareLayout_ShapeSize(XLA_Shape* shape);
@@ -759,6 +824,14 @@ struct TfTpu_OpsApiFn {
   TFTPU_ADD_FN_IN_STRUCT(TpuProfiler_CollectData);
 
   TFTPU_ADD_FN_IN_STRUCT(TpuExecutable_LoadProgramAndEnqueueToStream);
+  TFTPU_ADD_FN_IN_STRUCT(TpuOp_RegisterCancellation);
+  TFTPU_ADD_FN_IN_STRUCT(TpuOp_UnregisterCancellation);
+  TFTPU_ADD_FN_IN_STRUCT(TpuOp_CancellationManagerIsCancelled);
+  TFTPU_ADD_FN_IN_STRUCT(TpuOp_CancellationManagerIsCancelling);
+  TFTPU_ADD_FN_IN_STRUCT(OutsideCompilation_GetOpKernelContext);
+  TFTPU_ADD_FN_IN_STRUCT(OutsideCompilation_GetCancellationManager);
+  TFTPU_ADD_FN_IN_STRUCT(OutsideCompilation_GetTransferManager);
+
   TFTPU_ADD_FN_IN_STRUCT(HardwareLayout_HostShapeToDeviceShape);
   TFTPU_ADD_FN_IN_STRUCT(HardwareLayout_ShapeSize);
   TFTPU_ADD_FN_IN_STRUCT(HardwareLayout_ShapeSizeCompact);

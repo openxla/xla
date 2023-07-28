@@ -17,11 +17,9 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
-#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/executable_run_options.h"
@@ -35,7 +33,6 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace ApiConverter {
 

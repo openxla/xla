@@ -37,6 +37,14 @@ tsl::Status SetTpuOpsStructFns(void* library_handle) {  // TENSORFLOW_STATUS_OK
   TFTPU_SET_FN(ops_api_fn, TpuCompile_XrtCompileAndBuild);
 
   TFTPU_SET_FN(ops_api_fn, TpuExecutable_LoadProgramAndEnqueueToStream);
+  TFTPU_SET_FN(ops_api_fn, TpuOp_RegisterCancellation);
+  TFTPU_SET_FN(ops_api_fn, TpuOp_UnregisterCancellation);
+  TFTPU_SET_FN(ops_api_fn, TpuOp_CancellationManagerIsCancelled);
+  TFTPU_SET_FN(ops_api_fn, TpuOp_CancellationManagerIsCancelling);
+  TFTPU_SET_FN(ops_api_fn, OutsideCompilation_GetOpKernelContext);
+  TFTPU_SET_FN(ops_api_fn, OutsideCompilation_GetCancellationManager);
+  TFTPU_SET_FN(ops_api_fn, OutsideCompilation_GetTransferManager);
+
   TFTPU_SET_FN(ops_api_fn, HardwareLayout_HostShapeToDeviceShape);
   TFTPU_SET_FN(ops_api_fn, HardwareLayout_ShapeSize);
   TFTPU_SET_FN(ops_api_fn, HardwareLayout_ShapeSizeCompact);

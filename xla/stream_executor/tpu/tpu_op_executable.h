@@ -23,11 +23,13 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/service_executable_run_options.h"
-#include "xla/status.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/tpu_executable_interface.h"
 #include "xla/stream_executor/tpu/tpu_ops_c_api.h"
+#include "tsl/framework/cancellation.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 
@@ -47,14 +49,26 @@ class TpuOpExecutable : public xla::TpuExecutableInterface {
 
   absl::string_view fingerprint() const override;
 
+  tsl::StatusOr<xla::ExecutionOutput> ExecuteAsyncOnStream(
+      const xla::ServiceExecutableRunOptions* run_options,
+      std::vector<xla::ExecutionInput> arguments,
+      xla::HloExecutionProfile* hlo_execution_profile) override;
+
  private:
-  xla::Status LoadProgramAndEnqueueToStream(
+  tsl::Status LoadProgramAndEnqueueToStream(
       const xla::ServiceExecutableRunOptions& run_options,
       absl::Span<const stream_executor::DeviceMemoryBase> arguments,
       stream_executor::DeviceMemoryBase result,
       const std::vector<stream_executor::DeviceMemoryBase>&
           cross_program_prefetch_addrs,
       const std::vector<uint32_t>& cross_program_prefetch_offsets) override;
+
+  tsl::StatusOr<tsl::CancellationToken> RegisterCancellation(
+      int device_ordinal);
+
+  tsl::Status UnregisterCancellation(const tsl::Status& status,
+                                     tsl::CancellationToken cancel_token,
+                                     int device_ordinal, SE_Stream* c_stream);
 
   const XLA_TpuProgram* const core_program_;
 
