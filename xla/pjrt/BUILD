@@ -511,6 +511,7 @@ xla_cc_test(
     deps = [
         ":tracked_tfrt_cpu_device_buffer",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:env",
     ],
 )
 
