@@ -30,6 +30,7 @@ config_setting(
 #         "//xla/mlir/backends/openxla/transforms:passes",
 #         "//xla/mlir_hlo:lhlo",
 #         "//xla/mlir_hlo:lhlo_gpu",
+#         "@tsl//tsl/platform:platform_port",
 #         "@llvm-project//mlir:FuncDialect",
 #         "@llvm-project//mlir:MemRefDialect",
 #         "@llvm-project//mlir:MlirOptLib",

@@ -28,6 +28,7 @@ package(
 #     compatible_with = [],
 #     deps = [
 #         ":de_bufferization",
+#         "//xla/mlir/backends/openxla/ir:xla_gpu",
 #         "//xla/mlir_hlo:lhlo",
 #         "//xla/service/gpu:gpu_executable",
 #         "//xla/service/gpu:launch_dimensions",
