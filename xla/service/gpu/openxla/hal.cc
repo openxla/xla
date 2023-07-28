@@ -65,8 +65,7 @@ StatusOr<se::DeviceMemoryBase> GetDeviceMemory(
 
   auto* data = reinterpret_cast<std::byte*>(
       external_buffer.handle.device_allocation.ptr);
-  return se::DeviceMemoryBase(data + iree_hal_buffer_byte_offset(buffer),
-                              iree_hal_buffer_allocation_size(buffer));
+  return se::DeviceMemoryBase(data + iree_hal_buffer_byte_offset(buffer));
 }
 
 StatusOr<se::DeviceMemoryBase> GetDeviceMemory(

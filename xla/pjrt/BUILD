@@ -82,6 +82,7 @@ cc_library(
         ":event_pool",
         ":local_device_state",
         ":utils",
+        "//base:examine_stack",
         "//xla:shape_util",
         "//xla:types",
         "//xla/runtime:async_runtime",

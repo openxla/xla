@@ -122,6 +122,8 @@ class PjRtDevice {
   // which GPU when interacting with non-JAX code. In general, not guaranteed to
   // be dense, and -1 if undefined.
   virtual int local_hardware_id() const = 0;
+  int logical_device_ordinal() const { return local_hardware_id(); }
+  virtual int physical_device_ordinal() const { return local_hardware_id(); }
 
   // A vendor-dependent string that uniquely identifies the kind of device,
   // e.g., "Tesla V100-SXM2-16GB". May be used to determine whether two GPUs are

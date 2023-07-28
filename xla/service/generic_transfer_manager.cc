@@ -123,8 +123,14 @@ Status GenericTransferManager::TransferLiteralToDeviceAsync(
 
   TF_RET_CHECK(
       ShapeUtil::Compatible(literal.shape(), device_buffer.on_device_shape()));
+#if 1
+  LOG(ERROR) << "[clin] stream->parent()->device_ordinal() = "
+             << stream->parent()->device_ordinal()
+             << "; device_buffer.device_ordinal() = "
+             << device_buffer.device_ordinal();
   TF_RET_CHECK(stream->parent()->device_ordinal() ==
                device_buffer.device_ordinal());
+#endif
 
   TF_RETURN_IF_ERROR(WriteTupleIndexTablesAsync(stream, device_buffer));
 

@@ -48,6 +48,7 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
                               std::numeric_limits<int>::max()) {
   device_ordinal_ =
       device_ordinal != -1 ? device_ordinal : executor->device_ordinal();
+  physical_device_ordinal_ = executor->device_ordinal();
 
   int num_device_to_host_streams =
       stream_options.has_value() ? stream_options->num_device_to_host_streams

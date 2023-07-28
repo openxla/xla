@@ -109,6 +109,7 @@ class LocalDeviceState {
   se::StreamExecutor* executor() const { return executor_; }
 
   int device_ordinal() const { return device_ordinal_; }
+  int physical_device_ordinal() const { return physical_device_ordinal_; }
 
   LocalClient* client() const { return client_; }
 
@@ -187,6 +188,7 @@ class LocalDeviceState {
   Semaphore compute_semaphore_;
 
   int device_ordinal_;
+  int physical_device_ordinal_;
   se::StreamExecutor* const executor_;
   LocalClient* const client_;
   std::unique_ptr<se::Stream> compute_stream_;

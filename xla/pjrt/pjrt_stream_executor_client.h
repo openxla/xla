@@ -111,6 +111,9 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
       : description_(id, std::move(device_kind), process_index),
         device_ordinal_(
             local_device_state ? local_device_state->device_ordinal() : -1),
+        physical_device_ordinal_(
+            local_device_state ? local_device_state->physical_device_ordinal()
+                               : -1),
         local_device_state_(std::move(local_device_state)) {}
   ~PjRtStreamExecutorDevice() override = default;
 
@@ -140,6 +143,9 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   bool IsAddressable() const override { return device_ordinal_ != -1; }
 
   int local_hardware_id() const override { return device_ordinal_; }
+  int physical_device_ordinal() const override {
+    return physical_device_ordinal_;
+  }
 
   // If this is a device local to this host, returns a LocalDeviceState object
   // that can be used to manipulate the device. Returns nullptr if the device is
@@ -167,6 +173,7 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
  private:
   PjRtStreamExecutorDeviceDescription description_;
   const int device_ordinal_;  // -1 means not local.
+  const int physical_device_ordinal_;  // -1 means not local.
   const std::unique_ptr<LocalDeviceState> local_device_state_;
   PjRtClient* client_ = nullptr;
 };

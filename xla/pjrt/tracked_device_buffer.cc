@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "base/examine_stack.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/utils.h"
@@ -140,15 +141,27 @@ TrackedDeviceBuffer::FromScopedShapedBuffer(
         ++iterator;
       });
   CHECK(iterator == shaped_buffer->buffers().end());
+  LOG(ERROR) << "[clin-1] shaped_buffer ordinal is "
+             << shaped_buffer->device_ordinal();
   return std::make_shared<TrackedDeviceBuffer>(
-      shaped_buffer->memory_allocator(), shaped_buffer->device_ordinal(),
+      shaped_buffer->memory_allocator(), /*logical_device_id=*/-1,
+      shaped_buffer->device_ordinal(),
       absl::Span<se::DeviceMemoryBase>(buffers), definition_events,
       /*on_delete_callback=*/nullptr);
 }
 
 ShapedBuffer TrackedDeviceBuffer::AsShapedBuffer(
     const Shape& on_device_shape) const {
-  ShapedBuffer shaped_buffer(on_device_shape, device_ordinal_);
+#if 0
+  std::string trace;
+  DumpStackTrace(1, DebugWriteToString, &trace);
+  LOG(ERROR) << "[clin] TRACE:\n" << trace;
+#endif
+
+  LOG(ERROR) << "[clin] AsShapedBuffer physical_device_ordinal = "
+             << physical_device_ordinal()
+             << "; logical_device_ordinal = " << device_ordinal();
+  ShapedBuffer shaped_buffer(on_device_shape, physical_device_ordinal());
   ShapeTree<se::DeviceMemoryBase>::iterator iterator =
       shaped_buffer.buffers().begin();
   for (const se::DeviceMemoryBase& buf : device_memory_) {
@@ -183,7 +196,7 @@ void TrackedDeviceBuffer::AddToInputAsDonated(
     CHECK(*iterator != end);
     // Set buffers to be case (2) in the comment on ExecutionInput.
     (*iterator)->second = MaybeOwningDeviceMemory(
-        se::OwningDeviceMemory(buf, device_ordinal_, allocator));
+        se::OwningDeviceMemory(buf, physical_device_ordinal(), allocator));
     execution_input->SetUnownedIndex((*iterator)->first);
     ++(*iterator);
   }
@@ -191,11 +204,13 @@ void TrackedDeviceBuffer::AddToInputAsDonated(
 
 TrackedDeviceBuffer::TrackedDeviceBuffer(
     se::DeviceMemoryAllocator* allocator, int device_ordinal,
+    int physical_device_ordinal,
     absl::Span<se::DeviceMemoryBase const> device_memory,
     absl::Span<const std::shared_ptr<BufferSequencingEvent>> definition_events,
     std::function<void()> on_delete_callback)
     : allocator_(allocator),
       device_ordinal_(device_ordinal),
+      physical_device_ordinal_(physical_device_ordinal),
       device_memory_(device_memory.begin(), device_memory.end()),
       definition_events_(std::make_move_iterator(definition_events.begin()),
                          std::make_move_iterator(definition_events.end())),
@@ -205,7 +220,7 @@ TrackedDeviceBuffer::TrackedDeviceBuffer(
 TrackedDeviceBuffer::~TrackedDeviceBuffer() {
   if (allocator_) {
     for (const se::DeviceMemoryBase& buffer : device_memory_) {
-      Status status = allocator_->Deallocate(device_ordinal_, buffer);
+      Status status = allocator_->Deallocate(physical_device_ordinal(), buffer);
       if (!status.ok()) {
         LOG(ERROR) << "Buffer deallocation failed: " << status;
       }

@@ -377,7 +377,7 @@ StatusOr<std::unique_ptr<PjRtStreamExecutorBuffer>> AllocateDestinationBuffer(
   TF_ASSIGN_OR_RETURN(ScopedShapedBuffer dst_buffer,
                       transfer_manager->AllocateScopedShapedBuffer(
                           on_host_shape, se_client->allocator(),
-                          local_device->device_ordinal()));
+                          local_device->physical_device_ordinal()));  // clin-1
   if (local_device->allocation_model() ==
       LocalDeviceState::kComputeSynchronized) {
     if (copy_stream == nullptr) {
@@ -765,8 +765,11 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
       }
       absl::Span<const std::shared_ptr<BufferSequencingEvent>>
           definition_events;
+      LOG(ERROR) << "[clin] 111 physical_device_ordinal = "
+                 << local_device->physical_device_ordinal();
       auto device_buffer = std::make_shared<TrackedDeviceBuffer>(
           /*allocator=*/nullptr, local_device->device_ordinal(),
+          local_device->physical_device_ordinal(),
           std::initializer_list<se::DeviceMemoryBase>{buffer},
           definition_events, std::move(on_delete_callback));
       return std::unique_ptr<PjRtBuffer>(
@@ -775,12 +778,14 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
     }
   }
 
+  LOG(ERROR) << "[clin] a-11111111111 creating PjRtStreamExecutorBuffer.";
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<PjRtStreamExecutorBuffer> py_buffer,
       AllocateDestinationBuffer(device_shape, device, local_device,
                                 local_device->host_to_device_stream(),
                                 /*is_uninitialized_create=*/false, this));
 
+  LOG(ERROR) << "[clin] a-222222222222 GetBufferWithUsageHold.";
   PjRtStreamExecutorBuffer::ScopedHold device_buffer(
       py_buffer->GetBufferWithUsageHold());
   CHECK(device_buffer.ok());
@@ -849,6 +854,7 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
         // memory that has already been allocated, and a possible Event
         // allocation.
 
+        LOG(ERROR) << "[clin] 33333333 convert to shaped buffer.";
         ShapedBuffer buffer = device_buffer->AsShapedBuffer(on_device_shape);
         // If applicable on the backend, stage the transfer via host memory
         // allocated via the host_memory_allocator. On GPU, this is pinned
@@ -1116,8 +1122,11 @@ PjRtStreamExecutorClient::CreateViewOfDeviceBuffer(
   definition_events.back()->SetSequencingEvent(std::move(event),
                                                local_device->compute_stream());
 
+  LOG(ERROR) << "[clin] 2222 physical_device_ordinal = "
+             << device->physical_device_ordinal();
   auto device_buffer = std::make_shared<TrackedDeviceBuffer>(
       /*allocator=*/nullptr, device->local_hardware_id(),
+      device->physical_device_ordinal(),
       std::initializer_list<se::DeviceMemoryBase>{buffer}, definition_events,
       std::move(on_delete_callback));
   return std::unique_ptr<PjRtBuffer>(std::make_unique<PjRtStreamExecutorBuffer>(
@@ -1166,6 +1175,14 @@ PjRtStreamExecutorBuffer::PjRtStreamExecutorBuffer(
   for (int i = 0; i < ScopedHold::Type::kMaxValue; ++i) {
     holds_[i] = 0;
   }
+  LOG(ERROR) << "[clin] Creating PjRtStreamExecutorBuffer - "
+                "device_->logical_device_ordinal = "
+             << device_->logical_device_ordinal()
+             << "; device_->physical_device_ordinal = "
+             << device_->physical_device_ordinal();
+  LOG(ERROR) << "[clin] physical_device ordinal = "
+             << device_buffer_->physical_device_ordinal();
+  device_buffer_->set_device_ordinal(device_->logical_device_ordinal());
 }
 
 PjRtStreamExecutorBuffer::~PjRtStreamExecutorBuffer() {

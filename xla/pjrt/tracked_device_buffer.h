@@ -224,6 +224,10 @@ class TrackedDeviceBuffer {
 
   se::DeviceMemoryAllocator* allocator() const { return allocator_; }
   int device_ordinal() const { return device_ordinal_; }
+  void set_device_ordinal(int device_ordinal) {
+    device_ordinal_ = device_ordinal;
+  }
+  int physical_device_ordinal() const { return physical_device_ordinal_; }
   absl::InlinedVector<se::DeviceMemoryBase, 1>& device_memory() {
     return device_memory_;
   }
@@ -264,6 +268,7 @@ class TrackedDeviceBuffer {
 
   TrackedDeviceBuffer() : in_use_(true) {}
   TrackedDeviceBuffer(se::DeviceMemoryAllocator* allocator, int device_ordinal,
+                      int physical_device_ordinal,
                       absl::Span<se::DeviceMemoryBase const> device_memory,
                       absl::Span<const std::shared_ptr<BufferSequencingEvent>>
                           definition_events,
@@ -275,6 +280,7 @@ class TrackedDeviceBuffer {
   // ordinal? May be nullptr, indicating the buffers are not owned.
   se::DeviceMemoryAllocator* allocator_;
   int device_ordinal_;
+  int physical_device_ordinal_;
 
   // Each host-side buffer may have several buffers on-device.
   absl::InlinedVector<se::DeviceMemoryBase, 1> device_memory_;

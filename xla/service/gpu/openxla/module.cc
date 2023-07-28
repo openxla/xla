@@ -25,7 +25,6 @@ limitations under the License.
 #include "third_party/iree/runtime/src/iree/vm/native_module_packing.h"
 #include "xla/service/gpu/openxla/gemm.h"
 #include "xla/service/gpu/openxla/kernel.h"
-#include "xla/service/gpu/openxla/memcpy.h"
 #include "xla/service/gpu/openxla/vm.h"
 
 namespace xla::gpu {
@@ -36,18 +35,12 @@ namespace xla::gpu {
 
 using vm::GemmAPI;
 using vm::KernelAPI;
-using vm::MemcpyAPI;
 using vm::TraceAPI;
 
-class XlaGpuModuleState : public GemmAPI,
-                          public KernelAPI,
-                          public MemcpyAPI,
-                          public TraceAPI {
+class XlaGpuModuleState : public GemmAPI, public KernelAPI, public TraceAPI {
  public:
   explicit XlaGpuModuleState(iree_hal_allocator_t* device_allocator)
-      : GemmAPI(device_allocator),
-        KernelAPI(device_allocator),
-        MemcpyAPI(device_allocator) {}
+      : GemmAPI(device_allocator), KernelAPI(device_allocator) {}
 };
 
 //===----------------------------------------------------------------------===//
@@ -93,9 +86,6 @@ static const iree::vm::NativeFunction<XlaGpuModuleState> kXlaGpuFunctions[] = {
     // XLA:GPU kernel APIs
     MakeApiFunction("kernel.create", &KernelAPI::KernelCreate),
     MakeApiFunction("kernel.dispatch", &KernelAPI::KernelDispatch),
-
-    // XLA:GPU memcpy APIs
-    MakeApiFunction("memcpy.d2d", &MemcpyAPI::MemcpyD2D),
 
     // XLA:GPU tracing APIs
     MakeApiFunction("trace.create", &TraceAPI::TraceCreate),
