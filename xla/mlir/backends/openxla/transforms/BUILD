@@ -42,6 +42,8 @@ package(
 #         "//xla/mlir/backends/openxla/conversion:convert_library_ops",
 #         "//xla/mlir/backends/openxla/conversion:convert_memref_ops",
 #         "//xla/mlir/backends/openxla/conversion:convert_while_op",
+#         "//xla/mlir/backends/openxla/conversion:de_bufferization",
+#         "//xla/mlir/backends/openxla/conversion:xla_gpu_api",
 #         "//xla/mlir/backends/openxla/ir:xla_gpu",
 #         "//xla/mlir_hlo:lhlo",
 #         "@llvm-project//llvm:Support",
