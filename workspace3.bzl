@@ -54,6 +54,15 @@ def workspace():
     # but provides a script for setting up build rules via overlays.
     llvm("llvm-raw")
 
+    http_archive(
+        name = "iree_core",
+        sha256 = "e35697ab71d9a4d1e0d6fba6d21d89a34f5b55f02347e1a364226ef09d0cd460",
+        strip_prefix = "iree-{commit}".format(commit = "d78a804ab42d96c8b9cf4260f6ffaf108fa10713"),
+        urls = [
+            "https://github.com/openxla/iree/archive/{commit}.tar.gz".format(commit = "d78a804ab42d96c8b9cf4260f6ffaf108fa10713"),
+        ],
+    )
+
 # Alias so it can be loaded without assigning to a different symbol to prevent
 # shadowing previous loads and trigger a buildifier warning.
 xla_workspace3 = workspace

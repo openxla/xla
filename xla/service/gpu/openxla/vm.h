@@ -19,8 +19,8 @@ limitations under the License.
 #include <string>
 
 #include "absl/container/inlined_vector.h"
-#include "third_party/iree/runtime/src/iree/hal/api.h"  // IWYU pragma: keep
-#include "third_party/iree/runtime/src/iree/vm/api.h"   // IWYU pragma: keep
+#include "iree/hal/api.h"  // IWYU pragma: keep
+#include "iree/vm/api.h"   // IWYU pragma: keep
 
 namespace xla {
 

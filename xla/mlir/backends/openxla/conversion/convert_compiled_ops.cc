@@ -27,7 +27,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "third_party/iree/llvm-external-projects/iree-dialects/include/iree-dialects/Dialect/Input/InputOps.h"
+#include "iree-dialects/Dialect/Input/InputOps.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"

@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_format.h"
-#include "third_party/iree/runtime/src/iree/modules/hal/types.h"
+#include "iree/modules/hal/types.h"
 
 namespace xla::gpu::vm {
 

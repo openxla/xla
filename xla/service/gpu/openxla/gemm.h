@@ -19,8 +19,8 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/container/inlined_vector.h"
-#include "third_party/iree/runtime/src/iree/hal/api.h"  // IWYU pragma: keep
-#include "third_party/iree/runtime/src/iree/vm/api.h"   // IWYU pragma: keep
+#include "iree/hal/api.h"  // IWYU pragma: keep
+#include "iree/vm/api.h"   // IWYU pragma: keep
 #include "xla/service/gpu/openxla/vm.h"
 #include "xla/status.h"
 

@@ -9,60 +9,50 @@ package(
     licenses = ["notice"],
 )
 
-# copybara:uncomment_begin(not supported in OSS build)
-#
-# gentbl_cc_library(
-#     name = "passes_inc_gen",
-#     compatible_with = get_compatible_with_portable(),
-#     tbl_outs = [
-#         (
-#             ["-gen-pass-decls"],
-#             "passes.h.inc",
-#         ),
-#     ],
-#     tblgen = "@llvm-project//mlir:mlir-tblgen",
-#     td_file = "passes.td",
-#     deps = ["@llvm-project//mlir:PassBaseTdFiles"],
-# )
-#
-# cc_library(
-#     name = "passes",
-#     srcs = if_openxla([
-#         "convert_to_openxla.cc",
-#         "passes.cc",
-#     ]),
-#     hdrs = ["passes.h"],
-#     # TODO(ezhulenev): Override cc_library()'s default compatibility because IREE targets are not
-#     # compatible with `non_prod` constraint.
-#     compatible_with = [],
-#     defines = if_not_openxla(["XLA_DISABLE_OPENXLA_COMPILER=1"]),
-#     deps = [
-#         ":passes_inc_gen",
-#         "//xla/mlir/backends/openxla/conversion:convert_compiled_ops",
-#         "//xla/mlir/backends/openxla/conversion:convert_library_ops",
-#         "//xla/mlir/backends/openxla/conversion:convert_memref_ops",
-#         "//xla/mlir/backends/openxla/conversion:convert_while_op",
-#         "//xla/mlir/backends/openxla/conversion:de_bufferization",
-#         "//xla/mlir/backends/openxla/conversion:xla_gpu_api",
-#         "//xla/mlir/backends/openxla/ir:xla_gpu",
-#         "//xla/mlir_hlo:lhlo",
-#         "@llvm-project//llvm:Support",
-#         "@llvm-project//mlir:ArithDialect",
-#         "@llvm-project//mlir:FuncDialect",
-#         "@llvm-project//mlir:IR",
-#         "@llvm-project//mlir:MemRefDialect",
-#         "@llvm-project//mlir:Pass",
-#         "@llvm-project//mlir:SCFDialect",
-#         "@llvm-project//mlir:Support",
-#         "@llvm-project//mlir:TensorDialect",
-#         "@llvm-project//mlir:Transforms",
-#     ] + if_openxla(["//third_party/iree/llvm-external-projects/iree-dialects:IREEInputDialect"]),
-# )
-#
-# copybara:uncomment_end_and_comment_begin
+gentbl_cc_library(
+    name = "passes_inc_gen",
+    compatible_with = get_compatible_with_portable(),
+    tbl_outs = [
+        (
+            ["-gen-pass-decls"],
+            "passes.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "passes.td",
+    deps = ["@llvm-project//mlir:PassBaseTdFiles"],
+)
+
 cc_library(
     name = "passes",
+    srcs = if_openxla([
+        "convert_to_openxla.cc",
+        "passes.cc",
+    ]),
     hdrs = ["passes.h"],
-    defines = ["XLA_DISABLE_OPENXLA_COMPILER=1"],
+    # TODO(ezhulenev): Override cc_library()'s default compatibility because IREE targets are not
+    # compatible with `non_prod` constraint.
+    compatible_with = [],
+    defines = if_not_openxla(["XLA_DISABLE_OPENXLA_COMPILER=1"]),
+    deps = [
+        ":passes_inc_gen",
+        "//xla/mlir/backends/openxla/conversion:convert_compiled_ops",
+        "//xla/mlir/backends/openxla/conversion:convert_library_ops",
+        "//xla/mlir/backends/openxla/conversion:convert_memref_ops",
+        "//xla/mlir/backends/openxla/conversion:convert_while_op",
+        "//xla/mlir/backends/openxla/conversion:de_bufferization",
+        "//xla/mlir/backends/openxla/conversion:xla_gpu_api",
+        "//xla/mlir/backends/openxla/ir:xla_gpu",
+        "//xla/mlir_hlo:lhlo",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:Transforms",
+    ] + if_openxla(["@iree_core//llvm-external-projects/iree-dialects:IREEInputDialect"]),
 )
-# copybara:comment_end

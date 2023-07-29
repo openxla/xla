@@ -22,7 +22,7 @@ limitations under the License.
 #include <string_view>
 #include <vector>
 
-#include "third_party/iree/compiler/bindings/c/iree/compiler/embedding_api.h"
+#include "iree/compiler/embedding_api.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "xla/status.h"
 

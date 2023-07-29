@@ -17,12 +17,11 @@ limitations under the License.
 
 #include <memory>
 
-#include "third_party/iree/runtime/src/iree/base/api.h"  // IWYU pragma: keep
-#include "third_party/iree/runtime/src/iree/hal/api.h"   // IWYU pragma: keep
-#include "third_party/iree/runtime/src/iree/modules/hal/types.h"  // IWYU pragma: keep
-#include "third_party/iree/runtime/src/iree/vm/api.h"  // IWYU pragma: keep
-#include "third_party/iree/runtime/src/iree/vm/native_module_cc.h"
-#include "third_party/iree/runtime/src/iree/vm/native_module_packing.h"
+#include "iree/base/api.h"
+#include "iree/hal/api.h"
+#include "iree/vm/api.h"
+#include "iree/vm/native_module_cc.h"
+#include "iree/vm/native_module_packing.h"
 #include "xla/service/gpu/openxla/gemm.h"
 #include "xla/service/gpu/openxla/kernel.h"
 #include "xla/service/gpu/openxla/vm.h"

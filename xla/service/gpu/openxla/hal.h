@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_OPENXLA_HAL_H_
 #define XLA_SERVICE_GPU_OPENXLA_HAL_H_
 
-#include "third_party/iree/runtime/src/iree/hal/api.h"  // IWYU pragma: keep
+#include "iree/hal/api.h"  // IWYU pragma: keep
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory.h"
 

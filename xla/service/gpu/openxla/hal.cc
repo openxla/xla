@@ -17,7 +17,7 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/types/span.h"
-#include "third_party/iree/runtime/src/iree/hal/api.h"  // IWYU pragma: keep
+#include "iree/hal/api.h"  // IWYU pragma: keep
 #include "xla/shape_util.h"
 
 namespace xla::gpu {

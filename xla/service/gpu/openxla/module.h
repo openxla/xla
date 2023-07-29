@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_OPENXLA_MODULE_H_
 #define XLA_SERVICE_GPU_OPENXLA_MODULE_H_
 
-#include "third_party/iree/runtime/src/iree/hal/api.h"  // IWYU pragma: keep
-#include "third_party/iree/runtime/src/iree/vm/api.h"   // IWYU pragma: keep
+#include "iree/hal/api.h"  // IWYU pragma: keep
+#include "iree/vm/api.h"   // IWYU pragma: keep
 
 namespace xla::gpu {
 

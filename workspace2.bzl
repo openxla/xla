@@ -12,11 +12,23 @@ load("//third_party/dlpack:workspace.bzl", dlpack = "repo")
 load("//third_party/stablehlo:workspace.bzl", stablehlo = "repo")
 load("//third_party/triton:workspace.bzl", triton = "repo")
 
+load("@iree_core//build_tools/bazel:workspace.bzl", "configure_iree_submodule_deps", "configure_iree_cuda_deps")
+
+def iree():
+    """Imports IREE."""
+    configure_iree_submodule_deps(
+        iree_repo_alias = "@iree_core",
+        iree_path = "../iree",
+    )
+    configure_iree_cuda_deps()
+
+
 def _initialize_third_party():
     """ Load third party repositories.  See above load() statements. """
     dlpack()
     stablehlo()
     triton()
+    iree()
 
 # Define all external repositories required by TensorFlow
 def _tf_repositories():

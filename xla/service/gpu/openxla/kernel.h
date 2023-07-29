@@ -18,8 +18,8 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "third_party/iree/runtime/src/iree/hal/api.h"  // IWYU pragma: keep
-#include "third_party/iree/runtime/src/iree/vm/api.h"   // IWYU pragma: keep
+#include "iree/hal/api.h"  // IWYU pragma: keep
+#include "iree/vm/api.h"   // IWYU pragma: keep
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/openxla/vm.h"
 
