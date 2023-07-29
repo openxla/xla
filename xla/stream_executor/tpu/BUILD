@@ -273,6 +273,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/c:tsl_status",
         "@tsl//tsl/c:tsl_status_helper",
+        "@tsl//tsl/c:tsl_status_internal",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
