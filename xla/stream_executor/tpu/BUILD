@@ -68,6 +68,7 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/c:tsl_status",
     ],
 )
 
@@ -118,10 +119,8 @@ cc_library(
     name = "status_helper",
     hdrs = ["status_helper.h"],
     deps = [
-        ":tpu_api",
-        ":tpu_executor_c_api_hdrs",
+        "@tsl//tsl/c:tsl_status",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -370,6 +369,7 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "@com_google_absl//absl/cleanup",
+        "@tsl//tsl/c:tsl_status",
         "@tsl//tsl/platform:status",
     ],
 )
