@@ -1277,7 +1277,6 @@ cc_library(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:cpu_transfer_manager",
         "//xla/stream_executor",
-        "//xla/stream_executor/host:host_platform",
     ],
 )
 
