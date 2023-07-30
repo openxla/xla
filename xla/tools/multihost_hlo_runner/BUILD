@@ -62,6 +62,7 @@ cc_library(
         "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "//xla/service:hlo_parser",
