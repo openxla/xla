@@ -447,7 +447,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform/cloud:gcs_file_system",
     ],
 )
 
