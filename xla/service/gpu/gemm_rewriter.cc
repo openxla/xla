@@ -221,8 +221,7 @@ bool IsSupportedF8Pattern(HloInstruction *instr, HloInstruction *&x,
                                       instr->operand(0)->shape());
   };
   auto allgather_allowed = [](const HloInstruction *instr) -> bool {
-    return instr->GetModule()->config().num_partitions() <= 1 ||
-           instr->GetModule()->config().use_spmd_partitioning();
+    return instr->GetModule()->config().use_spmd_partitioning();
   };
   for (int i = 3; i < subgraph->size(); ++i) {
     // The remaining instructions must be commutative with dequantization.

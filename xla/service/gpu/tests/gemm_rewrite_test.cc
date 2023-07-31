@@ -6155,6 +6155,10 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllGatherF8) {
 #if CUDA_VERSION < 12000
   GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
 #endif
+  HloModuleConfig config = GetModuleConfigForTest();
+  if (config.num_partitions() != 4 || !config.use_spmd_partitioning()) {
+    GTEST_SKIP() << "All-gather is only expected in SPMD.";
+  }
   const char* hlo_text = R"(
     HloModule test
     ENTRY test {
