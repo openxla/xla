@@ -497,11 +497,12 @@ xla_cc_test(
         "//xla/service:collective_ops_utils",
         "//xla/service:despecializer",
         "//xla/service:hlo_verifier",
+        "//xla/service/spmd:spmd_partitioner",
+        "//xla/tests:client_library_test_base",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 
