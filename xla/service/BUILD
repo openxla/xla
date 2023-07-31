@@ -395,16 +395,11 @@ cc_library(
     deps = [
         ":collective_ops_utils",
         ":hlo_pass",
-        "//xla:literal_util",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/graphcycles",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
