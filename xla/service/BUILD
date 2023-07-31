@@ -3735,6 +3735,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
+        "@tsl//tsl/framework:device_id_utils",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
     ],

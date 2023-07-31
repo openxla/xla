@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "tsl/framework/device_id_utils.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 
@@ -112,6 +113,19 @@ void GenericTransferManager::TransferLiteralFromDevice(
   }
 }
 
+namespace {
+int GetPlatformOrdinal(const int tf_device_ordinal, const se::Stream* stream) {
+  if (stream->parent()->platform()->Name() != "CUDA") return tf_device_ordinal;
+  auto device_ordinal_or = tsl::GetPlatformDeviceIdFromTfDeviceId(
+      tsl::TfDeviceId(tf_device_ordinal),
+      tsl::DeviceType(tsl::DeviceType("GPU")));
+  if (device_ordinal_or.ok()) {
+    return device_ordinal_or.value();
+  }
+  return tf_device_ordinal;
+}
+}  // namespace
+
 Status GenericTransferManager::TransferLiteralToDeviceAsync(
     se::Stream* stream, const LiteralSlice& literal,
     const ShapedBuffer& device_buffer,
@@ -124,7 +138,7 @@ Status GenericTransferManager::TransferLiteralToDeviceAsync(
   TF_RET_CHECK(
       ShapeUtil::Compatible(literal.shape(), device_buffer.on_device_shape()));
   TF_RET_CHECK(stream->parent()->device_ordinal() ==
-               device_buffer.device_ordinal());
+               GetPlatformOrdinal(device_buffer.device_ordinal(), stream));
 
   TF_RETURN_IF_ERROR(WriteTupleIndexTablesAsync(stream, device_buffer));
 

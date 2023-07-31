@@ -67,6 +67,9 @@ StatusOr<int> GetDeviceIdFromDeviceParsedName(
     const DeviceNameUtils::ParsedName& device_name,
     const DeviceType& device_type);
 
+StatusOr<int> GetPlatformDeviceIdFromTfDeviceId(TfDeviceId tf_device_id,
+                                                const DeviceType& device_type);
+
 }  // namespace tsl
 
 #endif  // TENSORFLOW_TSL_FRAMEWORK_DEVICE_ID_UTILS_H_

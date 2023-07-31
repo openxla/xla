@@ -139,12 +139,31 @@ StatusOr<int> GetPlatformDeviceIdFromDeviceParsedName(
 StatusOr<int> GetDeviceIdFromDeviceParsedName(
     const DeviceNameUtils::ParsedName& device_name,
     const DeviceType& device_type) {
+  // TODO(b/293324740): Temporary workaournd to support virtual device in GPU.
+  // Note DEVICE_GPU is not in tsl, therefore "GPU" is used as a temporary
+  // solution. Should rename the method name to
+  // GetPjRtDeviceIdFromDeviceParsedName and support virtual devices in
+  // NextPluggableDevice.
+  if (device_type == DeviceType(DeviceType("GPU"))) {
+    return GetTfDeviceIdFromDeviceParsedName(device_name);
+  }
   auto platform_id =
       GetPlatformDeviceIdFromDeviceParsedName(device_name, device_type);
   if (platform_id.ok()) {
     return *platform_id;
   }
   return GetTfDeviceIdFromDeviceParsedName(device_name);
+}
+
+StatusOr<int> GetPlatformDeviceIdFromTfDeviceId(const TfDeviceId tf_device_id,
+                                                const DeviceType& device_type) {
+  PlatformDeviceId platform_device_id;
+  Status platform_id_status = DeviceIdManager::TfToPlatformDeviceId(
+      device_type, tf_device_id, &platform_device_id);
+  if (platform_id_status.ok()) {
+    return platform_device_id.value();
+  }
+  return platform_id_status;
 }
 
 }  // namespace tsl
