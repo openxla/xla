@@ -451,6 +451,8 @@ xla_cc_test(
         ":types",
         ":util",
         ":xla_data_proto_cc",
+        "//testing/base/public:gunit_main",
+        "//xla:status",
         "@com_google_absl//absl/hash:hash_testing",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test_benchmark",
