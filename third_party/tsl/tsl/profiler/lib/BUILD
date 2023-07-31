@@ -132,7 +132,10 @@ cc_library(
     srcs = ["profiler_lock.cc"],
     hdrs = ["profiler_lock.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility(["//tsl/profiler:internal"]),
+    visibility = set_external_visibility([
+        "//tsl/profiler:internal",
+        "//tsl/profiler:xla_internal",
+    ]),
     deps = [
         "//tsl/platform:errors",
         "//tsl/platform:macros",
