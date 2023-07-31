@@ -56,7 +56,7 @@ cc_library(
         ":host_command_handler",
         ":tpu_api",
         ":tpu_executor_c_api_hdrs",
-        ":tpu_platform_interface",
+        ":tpu_ops_c_api_hdrs",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",
