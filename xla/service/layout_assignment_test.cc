@@ -349,6 +349,27 @@ TEST_F(LayoutAssignmentTest, ElementwiseAndReshape) {
             PositionInContainer(reshape_minor_to_major, 2));
 }
 
+TEST_F(LayoutAssignmentTest, BroadcastOperandLayout) {
+  const char* module_str = R"(
+HloModule test
+
+ENTRY main {
+  param_0 = f32[512,1024,128]{2,1,0} parameter(0)
+  negate = f32[512,1024,128]{2,1,0} negate(param_0)
+  broadcast = f32[512,32,1024,64,128]{4,3,2,1,0} broadcast(negate), dimensions={0,2,4}
+  ROOT transpose = f32[128,32,1024,64,512]{0,3,2,1,4} transpose(broadcast), dimensions={4,1,2,3,0}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(module_str));
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape());
+  AssignLayouts(m.get(), &computation_layout);
+  auto broadcast = m->entry_computation()->root_instruction()->operand(0);
+  EXPECT_EQ(broadcast->operand(0)->shape().layout().minor_to_major(),
+            LayoutUtil::MakeLayout({0, 1, 2}).minor_to_major());
+}
+
 // Test whether LayoutAssignment assigns layouts to elementwise operations to
 // keep linear indices valid across them, and to transpositions to make them
 // bitcasts.

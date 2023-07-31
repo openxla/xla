@@ -1422,6 +1422,26 @@ std::unique_ptr<Layout> LayoutAssignment::ChooseOperandLayoutFromOutputLayout(
     return std::make_unique<Layout>(operand_layout);
   }
 
+  if (instruction->opcode() == HloOpcode::kBroadcast &&
+      instruction->dimensions().size() > 1) {
+    // Pick the same relative order for the broadcasted dimensions as in the
+    // output.
+    int64_t rank = instruction->shape().rank();
+    int64_t operand_rank = instruction->operand(0)->shape().rank();
+    absl::flat_hash_map<int64_t, int64_t> output_dim_to_operand_dim_mapping;
+    output_dim_to_operand_dim_mapping.reserve(operand_rank);
+    for (int64_t i = 0; i < operand_rank; ++i) {
+      output_dim_to_operand_dim_mapping[instruction->dimensions(i)] = i;
+    }
+    std::vector<int64_t> new_minor_to_major(operand_rank);
+    for (int64_t i = 0; i < rank; ++i) {
+      int64_t output_dim = LayoutUtil::Minor(output_layout, i);
+      if (output_dim_to_operand_dim_mapping.contains(output_dim)) {
+        new_minor_to_major[i] = output_dim_to_operand_dim_mapping[output_dim];
+      }
+    }
+  }
+
   return nullptr;
 }
 
