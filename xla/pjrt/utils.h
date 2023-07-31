@@ -55,7 +55,8 @@ Status DetermineArgumentLayoutsFromCompileOptions(
 // donated when executable is run. tuple_inputs reflects the option that
 // executable was compiled with.
 StatusOr<std::vector<int>> ComputeParametersThatMustBeDonated(
-    const HloModule& hlo_module, bool tuple_inputs);
+    const HloComputation* computation, const HloInputOutputAliasConfig& config,
+    bool tuple_inputs);
 
 // Return max parallelism level.
 int DefaultThreadPoolSize();
