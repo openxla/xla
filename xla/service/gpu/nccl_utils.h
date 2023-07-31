@@ -16,6 +16,10 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_NCCL_UTILS_H_
 #define XLA_SERVICE_GPU_NCCL_UTILS_H_
 
+#if TENSORFLOW_USE_ROCM
+#define __HIP_DISABLE_CPP_FUNCTIONS__
+#endif
+
 #include <memory>
 #include <utility>
 #include <vector>
