@@ -243,7 +243,6 @@ StatusOr<bool> MoveCollectivePermutes(HloComputation* computation,
       continue;
     }
     HloInstruction* input = input_gtes[cluster->root_tuple_index];
-    const std::vector<HloInstruction*> original_input_users = input->users();
     HloInstruction* cp = cluster->collective_permute;
     if (input == nullptr || cp->operand(0) == input) {
       VLOG(2) << "Skip " << loop->name() << " index " << i
@@ -283,6 +282,7 @@ StatusOr<bool> MoveCollectivePermutes(HloComputation* computation,
     new_input = body->AddInstruction(
         HloInstruction::CreateTernary(new_input->shape(), HloOpcode::kSelect,
                                       is_first_iter, input, new_input));
+    const std::vector<HloInstruction*> original_input_users = input->users();
     for (HloInstruction* user : original_input_users) {
       TF_RETURN_IF_ERROR(input->ReplaceUseWith(user, new_input));
     }
