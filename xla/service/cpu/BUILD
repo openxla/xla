@@ -195,7 +195,7 @@ cc_library(
 )
 
 cc_library(
-    name = "cpu_compiler",
+    name = "cpu_compiler_pure",
     srcs = ["cpu_compiler.cc"],
     hdrs = ["cpu_compiler.h"],
     deps = [
@@ -377,6 +377,29 @@ cc_library(
     }) + if_llvm_system_z_available([
         "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
     ]),
+)
+
+cc_library(
+    # The old target name will still be used so that dependencies won't break.
+    # In the future, dependencies should be cleaned up and relinked to the above
+    # target if registration is not necesary.
+    name = "cpu_compiler",
+    srcs = ["cpu_compiler_registerer.cc"],
+    hdrs = ["cpu_compiler.h"],
+    deps = [
+        "cpu_compiler_pure",
+        ":executable_proto_cc",
+        ":target_machine_features",
+        "//xla:cpu_function_runtime",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:llvm_compiler",
+        "//xla/stream_executor",
+        "//xla/stream_executor/host:host_platform_id",
+        "@llvm-project//llvm:Target",
+    ],
     alwayslink = True,  # Contains compiler registration
 )
 
