@@ -40,8 +40,8 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/mlir/backends/experimental/transforms/passes.h"
 #include "xla/mlir/backends/gpu/transforms/passes.h"
-#include "xla/mlir/backends/openxla/transforms/passes.h"
 #include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
 #include "xla/mlir_hlo/transforms/gpu_passes.h"
 #include "xla/service/bitcast_dtypes_expander.h"
@@ -130,21 +130,22 @@ static Status LowerToXlaGpuRuntime(mlir::ModuleOp module,
   return OkStatus();
 }
 
-// Lowers MLIR module to the OpenXla runtime (aka IREE input dialects).
-static Status LowerToOpenXlaRuntime(mlir::ModuleOp module,
-                                    llvm::StringRef entry_function_name,
-                                    llvm::ArrayRef<int64_t> buffer_sizes,
-                                    ThunkSequence* thunk_sequence,
-                                    const DebugOptions& debug_options) {
+// Lowers MLIR module to the Experimental runtime (aka IREE input dialects).
+static Status LowerToExperimentalRuntime(mlir::ModuleOp module,
+                                         llvm::StringRef entry_function_name,
+                                         llvm::ArrayRef<int64_t> buffer_sizes,
+                                         ThunkSequence* thunk_sequence,
+                                         const DebugOptions& debug_options) {
   mlir::PassManager pm(module->getName(), mlir::PassManager::Nesting::Implicit);
 
-  OpenXlaBackend backend = debug_options.xla_gpu_enable_openxla_hal()
-                               ? OpenXlaBackend::kHAL
-                               : OpenXlaBackend::kStreamExecutor;
-  populateOpenXlaRuntimePasses(pm, thunk_sequence, backend);
+  ExperimentalBackend backend = debug_options.xla_gpu_enable_experimental_hal()
+                                    ? ExperimentalBackend::kHAL
+                                    : ExperimentalBackend::kStreamExecutor;
+  populateExperimentalRuntimePasses(pm, thunk_sequence, backend);
 
   if (pm.run(module).failed()) {
-    return InternalError("Failed to lower LMHLO to OpenXLA input dialects.");
+    return InternalError(
+        "Failed to lower LMHLO to Experimental input dialects.");
   }
 
   return OkStatus();
@@ -219,7 +220,7 @@ StatusOr<GpuExecutable::OwnedGpuRuntimeProgram> LowerToJitRt(
       module_config.debug_options());
 }
 
-StatusOr<GpuExecutable::OwnedOpenXlaRuntimeProgram> LowerToOpenXla(
+StatusOr<GpuExecutable::OwnedExperimentalRuntimeProgram> LowerToExperimental(
     std::unique_ptr<mlir::MLIRContext> ctx,
     mlir::OwningOpRef<mlir::ModuleOp> module,
     llvm::StringRef entry_function_name, llvm::ArrayRef<int64_t> buffer_sizes,
@@ -229,8 +230,8 @@ StatusOr<GpuExecutable::OwnedOpenXlaRuntimeProgram> LowerToOpenXla(
   // Forward collective (NCCL) attributes for use by the lowering pipeline.
   ForwardCollectiveAttrs(*module, entry_function_name, module_config);
 
-  // Lower LMHLO operations to the OpenXLA compiler input dialects.
-  TF_RETURN_IF_ERROR(LowerToOpenXlaRuntime(
+  // Lower LMHLO operations to the Experimental compiler input dialects.
+  TF_RETURN_IF_ERROR(LowerToExperimentalRuntime(
       *module, {entry_function_name.data(), entry_function_name.size()},
       buffer_sizes, thunk_sequence.get(), module_config.debug_options()));
 
@@ -240,7 +241,7 @@ StatusOr<GpuExecutable::OwnedOpenXlaRuntimeProgram> LowerToOpenXla(
                             module_str);
   }
 
-  return std::make_unique<OpenXlaRuntimeProgram>(
+  return std::make_unique<ExperimentalRuntimeProgram>(
       std::move(ctx), std::move(module), entry_function_name.str(),
       buffer_sizes.vec(), module_config.debug_options());
 }
@@ -496,13 +497,14 @@ Status CompileModuleToLlvmIrImpl(
     return OkStatus();
   }
 
-  if (IsOpenXlaRuntimeEnabled(hlo_module->config())) {
+  if (IsExperimentalRuntimeEnabled(hlo_module->config())) {
     TF_ASSIGN_OR_RETURN(
         results->executable,
-        LowerToOpenXla(std::move(mlir_context), std::move(mlir_module),
-                       entry_function.getName(), buffer_sizes,
-                       hlo_module->config(), ir_emitter->ConsumeThunkSequence(),
-                       /*hlo_module_for_dump=*/hlo_module));
+        LowerToExperimental(std::move(mlir_context), std::move(mlir_module),
+                            entry_function.getName(), buffer_sizes,
+                            hlo_module->config(),
+                            ir_emitter->ConsumeThunkSequence(),
+                            /*hlo_module_for_dump=*/hlo_module));
     return OkStatus();
   }
 

@@ -38,10 +38,10 @@ limitations under the License.
 #include "xla/runtime/executable.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/experimental/executable.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_types.h"
 #include "xla/service/gpu/non_atomically_upgradeable_rw_lock.h"
-#include "xla/service/gpu/openxla/executable.h"
 #include "xla/service/gpu/runtime/executable.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/hlo_parser.h"
@@ -72,17 +72,19 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// If OpenXLA runtime is enabled, it automatically disables "classic" XLA
+// If Experimental runtime is enabled, it automatically disables "classic" XLA
 // runtime which is enabled by default.
 bool IsXlaRuntimeExecutableEnabled(const HloModuleConfig& config) {
   bool runtime = config.debug_options().xla_gpu_enable_xla_runtime_executable();
-  bool openxla = config.debug_options().xla_gpu_enable_openxla_runtime();
-  return runtime && !openxla;
+  bool experimental =
+      config.debug_options().xla_gpu_enable_experimental_runtime();
+  return runtime && !experimental;
 }
 
-bool IsOpenXlaRuntimeEnabled(const HloModuleConfig& config) {
-  bool openxla = config.debug_options().xla_gpu_enable_openxla_runtime();
-  return openxla;
+bool IsExperimentalRuntimeEnabled(const HloModuleConfig& config) {
+  bool experimental =
+      config.debug_options().xla_gpu_enable_experimental_runtime();
+  return experimental;
 }
 
 namespace {
@@ -119,12 +121,12 @@ StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(Params params) {
     return result;
   }
 
-  if (std::holds_alternative<OwnedOpenXlaRuntimeProgram>(executable)) {
-    auto& program = std::get<OwnedOpenXlaRuntimeProgram>(executable);
+  if (std::holds_alternative<OwnedExperimentalRuntimeProgram>(executable)) {
+    auto& program = std::get<OwnedExperimentalRuntimeProgram>(executable);
     TF_ASSIGN_OR_RETURN(
-        result->openxla_executable_,
-        OpenXlaRuntimeExecutable::Create(std::move(program), result->text(),
-                                         result->binary()));
+        result->experimental_executable_,
+        ExperimentalRuntimeExecutable::Create(
+            std::move(program), result->text(), result->binary()));
     return result;
   }
 
@@ -540,9 +542,9 @@ static Status ExecuteXlaRuntime(const std::string& module_name,
       block_host_until_done ? run_options->stream() : nullptr);
 }
 
-static Status ExecuteOpenXlaRuntime(
+static Status ExecuteExperimentalRuntime(
     const std::string& module_name, ModuleIdentifier module_id,
-    OpenXlaRuntimeExecutable& openxla_executable,
+    ExperimentalRuntimeExecutable& experimental_executable,
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations,
     const BufferAllocation* temp_buffer, bool block_host_until_done) {
@@ -561,8 +563,8 @@ static Status ExecuteOpenXlaRuntime(
                            module_id_str);
   });
 
-  auto executed =
-      openxla_executable.Execute(run_options, buffer_allocations, temp_buffer);
+  auto executed = experimental_executable.Execute(
+      run_options, buffer_allocations, temp_buffer);
   if (!executed.ok()) return executed;
 
   return MaybeSyncAndProfile(
@@ -836,10 +838,10 @@ Status GpuExecutable::ExecuteThunksOrXlaRuntime(
                              temp_buffer, block_host_until_done, gpu_lock);
   }
 
-  if (openxla_executable_) {
-    return ExecuteOpenXlaRuntime(module_name_, unique_id, *openxla_executable_,
-                                 run_options, buffer_allocations, temp_buffer,
-                                 block_host_until_done);
+  if (experimental_executable_) {
+    return ExecuteExperimentalRuntime(
+        module_name_, unique_id, *experimental_executable_, run_options,
+        buffer_allocations, temp_buffer, block_host_until_done);
   }
 
   return FailedPrecondition("Expected XLA gpu executable is not supplied.");
