@@ -62,6 +62,18 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "stack_frame_index_builder_test",
+    srcs = ["stack_frame_index_builder_test.cc"],
+    deps = [
+        ":stack_frame_index_builder",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
     ],
 )
 
