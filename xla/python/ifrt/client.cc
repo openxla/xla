@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/python/ifrt/client.h"
 
+#include "xla/statusor.h"
+
 namespace xla {
 namespace ifrt {
 
