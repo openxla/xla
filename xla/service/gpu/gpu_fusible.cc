@@ -345,27 +345,6 @@ static bool AllSatisfy(const HloInstruction& instr,
       });
 }
 
-bool IsReduceIntermediate(const HloInstruction* instr) {
-  if (instr->operand_count() > 1 || instr->user_count() > 1) {
-    return false;
-  }
-
-  // Only support elementwise ops that don't introduce additional compute.
-  // More benchmarking and better cost model are needed to enable this for
-  // more compute ops.
-  switch (instr->opcode()) {
-    case HloOpcode::kBitcast:
-    case HloOpcode::kBitcastConvert:
-    case HloOpcode::kConvert:
-      return true;
-    case HloOpcode::kReshape:
-      return ShapeUtil::ReshapeIsBitcast(instr->operand(0)->shape(),
-                                         instr->shape());
-    default:
-      return false;
-  }
-}
-
 FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
                                          const HloInstruction& consumer) {
   if (!IsLoopFusibleAsProducer(producer) &&
@@ -779,32 +758,6 @@ size_t GetOutputSizeOfFusible(const HloInstruction& instr) {
   }
   const HloInstruction* root = instr.fused_expression_root();
   return ShapeUtil::TupleElementCount(root->shape());
-}
-
-// Recursive helper for GetFusionRoots below.
-static void GetFusionRootsRec(HloInstruction* root,
-                              std::vector<HloInstruction*>& out) {
-  if (root->opcode() == HloOpcode::kGetTupleElement) {
-    return GetFusionRootsRec(root->mutable_operand(0), out);
-  } else if (root->opcode() == HloOpcode::kTuple) {
-    for (int i = 0; i < root->operand_count(); i++) {
-      GetFusionRootsRec(root->mutable_operand(i), out);
-    }
-  } else {
-    if (!out.empty() && out.back() == root) {
-      return;
-    }
-    CHECK(!absl::c_linear_search(out, root))
-        << "Fusion root contains instruction " << root->ToString()
-        << " multiple times";
-    out.push_back(root);
-  }
-}
-
-std::vector<HloInstruction*> GetFusionRoots(HloComputation* computation) {
-  std::vector<HloInstruction*> out;
-  GetFusionRootsRec(computation->root_instruction(), out);
-  return out;
 }
 
 bool HasAnyTiledTransposeRoot(HloComputation* computation) {

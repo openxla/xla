@@ -52,25 +52,30 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"                 // from @llvm-project
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from @llvm-project
-#include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"                // from @llvm-project
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"              // from @llvm-project
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"             // from @llvm-project
+#include "mlir/Dialect/MemRef/IR/MemRef.h"               // from @llvm-project
+#include "mlir/IR/Attributes.h"                          // from @llvm-project
+#include "mlir/IR/Builders.h"                            // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"                   // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"                          // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"                        // from @llvm-project
+#include "mlir/IR/Operation.h"                           // from @llvm-project
+#include "mlir/IR/Value.h"                               // from @llvm-project
+#include "mlir/IR/ValueRange.h"                          // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
+#include "tsl/platform/errors.h"
+#include "tsl/platform/human_readable_json.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/protobuf/dnn.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -145,11 +150,6 @@ limitations under the License.
 #include "xla/translate/mhlo_to_lhlo_with_xla/mhlo_to_lhlo_with_xla.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/human_readable_json.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/protobuf/dnn.pb.h"
 
 #if GOOGLE_CUDA || TF_HIPBLASLT
 #include "xla/service/gpu/cublas_lt_matmul_thunk.h"
@@ -3512,12 +3512,33 @@ void EmitFullWarpShuffleDownLoopForReduce(
   }
 }
 
-llvm::Value* GetOutputAddressForReduction(
-    llvm::IRBuilder<>* builder, int partial_result_idx, llvm::Type* index_ty,
+static IrArray::Index TransformIndexForOutputFusion(
+    const IrArray::Index& hero_index, const HloReduceInstruction* hero,
+    const HloInstruction* root, llvm::IRBuilder<>* b) {
+  IrArray::Index out = hero_index;
+  const HloInstruction* it = root;
+  while (it != hero) {
+    CHECK_EQ(it->operand_count(), 1);
+    const HloInstruction* op = it->operand(0);
+    if (!ShapeUtil::EqualIgnoringElementType(op->shape(), it->shape()) &&
+        it->opcode() == HloOpcode::kBitcast) {
+      // Only allow bitcast for now.
+      out = [&] {
+        return out.SourceIndexOfBitcast(op->shape(), it->shape(), b);
+      }();
+    }
+    it = op;
+  }
+  return out;
+}
+
+IrArray::Index IrEmitterUnnested::GetOutputAddressForReduction(
+    int partial_result_idx, llvm::Type* index_ty,
     const ReductionCodegenState& reduction_codegen_state,
     const TilingKernelInfo& tiling_kernel_info,
-    const ReductionOutputMap& output_arrays,
-    const HloReduceInstruction* reduction, int output_idx) {
+    const IrEmitterUnnested::ReductionOutputMap& output_arrays,
+    const HloReduceInstruction* reduction, const HloInstruction* root,
+    int output_idx) {
   auto constant = [&](uint64_t c) -> llvm::Constant* {
     return llvm::ConstantInt::get(index_ty, c);
   };
@@ -3538,8 +3559,6 @@ llvm::Value* GetOutputAddressForReduction(
         .AddOffsetToDim(start_offset_x, TilingScheme::DimX, builder);
   }();
 
-  const llvm_ir::IrArray& output_array =
-      output_arrays.at(reduction)[output_idx];
   const Shape& operand_shape = reduction->inputs()[output_idx]->shape();
   Shape reduction_kept_element_shape =
       ShapeUtil::DeleteDimensions(reduction->dimensions(), operand_shape);
@@ -3573,13 +3592,14 @@ llvm::Value* GetOutputAddressForReduction(
   // the correct output element.
   llvm_ir::IrArray::Index element_index(
       /*linear=*/untransposed_output_linear_address,
-      reduction_kept_element_shape, builder);
-  llvm_ir::IrArray::Index output_index(element_index.multidim(),
-                                       output_array.GetShape(),
-                                       element_index.GetType());
+      reduction_kept_element_shape, &b_);
+  const Shape& output_shape = !reduction->shape().IsTuple()
+                                  ? reduction->shape()
+                                  : reduction->shape().tuple_shapes(output_idx);
+  IrArray::Index output_index(element_index.multidim(), output_shape,
+                              element_index.GetType());
 
-  return output_array.EmitArrayElementAddress(output_index, builder,
-                                              "output_element_address");
+  return TransformIndexForOutputFusion(output_index, reduction, root, &b_);
 }
 
 llvm::Value* CastSharedToGlobal(llvm::IRBuilder<>* builder, llvm::Value* input,
@@ -3591,26 +3611,37 @@ llvm::Value* CastSharedToGlobal(llvm::IRBuilder<>* builder, llvm::Value* input,
       name);
 }
 
-void WriteReductionOutput(llvm::IRBuilder<>* builder,
-                          IrEmitterContext& ir_emitter_context,
-                          llvm::Type* index_ty,
-                          const ReductionCodegenState& reduction_codegen_state,
-                          const TilingKernelInfo& tiling_kernel_info,
-                          const ReductionOutputMap& output_arrays,
-                          const HloReduceInstruction* reduction,
-                          int partial_result_idx,
-                          const absl::Span<TypedPointer const> values) {
+void IrEmitterUnnested::WriteReductionOutput(
+    llvm::IRBuilder<>* builder,
+    IrEmitterContext& ir_emitter_context,llvm::Type* index_ty, const ReductionCodegenState& reduction_codegen_state,
+    const TilingKernelInfo& tiling_kernel_info,
+    const ReductionOutputMap& output_arrays,
+    const HloReduceInstruction* reduction, const HloInstruction* root,
+    int partial_result_idx, const absl::Span<TypedPointer const> values) {
   const HloComputation* reducer = reduction->to_apply();
   for (const auto& [oidx, typed_ptr] : llvm::enumerate(values)) {
     auto [output_ptr, type] = typed_ptr;
-    llvm::Value* output_address = GetOutputAddressForReduction(
+    IrArray::Index output_index = GetOutputAddressForReduction(
         builder, partial_result_idx, index_ty, reduction_codegen_state,
-        tiling_kernel_info, output_arrays, reduction, oidx);
+        tiling_kernel_info, output_arrays, reduction, root, oidx);
+
+    llvm::Value* output_address =
+        output_arrays.at(root)[oidx].EmitArrayElementAddress(
+            output_index, &b_, "output_element_address");
+
     if (reduction_codegen_state.IsRaceFree()) {
-      builder->CreateStore(builder->CreateLoad(type, output_ptr, "output"),
-                           output_address);
+      FusedIrEmitter fused_emitter(elemental_emitter_);
+      llvm::Value* loaded = b_.CreateLoad(type, output_ptr, "output");
+      fused_emitter.BindGenerator(
+          *reduction, [&](const IrArray::Index& index) { return loaded; });
+
+      llvm_ir::ElementGenerator gen = *fused_emitter.GetGenerator(*root);
+      llvm::Value* generated = *gen(output_index);
+      b_.CreateStore(generated, output_address);
     } else {
       CHECK_EQ(values.size(), 1);
+      CHECK_EQ(reduction, root)
+          << "output fusion is not allowed for racing reductions";
       TF_CHECK_OK(EmitAtomicOperationForNestedComputation(
           builder, ir_emitter_context, *reducer, output_address, output_ptr,
           type));
@@ -3625,7 +3656,8 @@ void EmitReductionOutputForRowReduction(
     const TilingKernelInfo& tiling_kernel_info,
     const ReductionCodegenState& reduction_codegen_state, llvm::Type* index_ty,
     const ReductionOutputMap& output_arrays,
-    const HloReduceInstruction* reduction, int partial_result_idx) {
+    const HloReduceInstruction* reduction, const HloInstruction* root,
+    int partial_result_idx) {
   const HloComputation* reducer = reduction->to_apply();
   const auto& thread_id_info = tiling_kernel_info.thread_id_info;
   auto constant = [&](uint64_t c) -> llvm::Constant* {
@@ -3662,10 +3694,9 @@ void EmitReductionOutputForRowReduction(
   auto emit_write_output = [&](llvm::Value* write_condition,
                                const absl::Span<TypedPointer const> values) {
     ksl.If("reduction_write_output", write_condition, [&] {
-      WriteReductionOutput(builder, ir_emitter_context, index_ty,
-                           reduction_codegen_state, tiling_kernel_info,
-                           output_arrays, reduction, partial_result_idx,
-                           values);
+      WriteReductionOutput(builder, ir_emitter_context, index_ty, reduction_codegen_state,
+                           tiling_kernel_info, output_arrays, reduction, root,
+                           partial_result_idx, values);
     });
   };
 
@@ -3743,7 +3774,8 @@ void EmitReductionOutputForColumnReduction(
     const TilingKernelInfo& tiling_kernel_info,
     const ReductionCodegenState& reduction_codegen_state, llvm::Type* index_ty,
     const ReductionOutputMap& output_arrays,
-    const HloReduceInstruction* reduction, int partial_result_idx) {
+    const HloReduceInstruction* reduction, const HloInstruction* root,
+    int partial_result_idx) {
   KernelSupportLibrary ksl(builder);
   const HloComputation* reducer = reduction->to_apply();
   const auto& thread_id_info = tiling_kernel_info.thread_id_info;
@@ -3818,10 +3850,10 @@ void EmitReductionOutputForColumnReduction(
                              tiling_kernel_info.output_tile_bounds[0]));
 
   ksl.If("reduction_write_output",
-         builder->CreateAnd(has_output, is_zero(thread_id_info.lane_id)), [&] {
-           WriteReductionOutput(builder, ir_emitter_context, index_ty,
-                                reduction_codegen_state, tiling_kernel_info,
-                                output_arrays, reduction, partial_result_idx,
+         builder.CreateAnd(has_output, is_zero(thread_id_info.lane_id)), [&] {
+           WriteReductionOutput(builder, ir_emitter_context, index_ty, reduction_codegen_state,
+                                tiling_kernel_info, output_arrays, reduction,
+                                root, partial_result_idx,
                                 shmem_transposed_addrs);
          });
 }
@@ -4052,27 +4084,28 @@ void GenerateElementForReducer(
   }
 }
 
-// Emits code for reductions in the output_instructions.
-Status EmitIRForReduction(llvm::IRBuilder<>* builder,
-                          IrEmitterContext& ir_emitter_context,
-                          mlir::lmhlo::FusionOp fusion,
-                          absl::Span<HloInstruction* const> instr_index_group,
-                          FusedIrEmitter& fused_emitter,
-                          const ReductionOutputMap& result_ir_arrays,
-                          const ReductionCodegenInfo& reduction_info,
-                          const Shape& input_shape) {
-  std::vector<const HloReduceInstruction*> reductions;
+Status IrEmitterUnnested::EmitIRForReduction(
+    llvm::IRBuilder<>* builder,
+                          IrEmitterContext& ir_emitter_context, mlir::lmhlo::FusionOp fusion,
+    absl::Span<HloInstruction* const> instr_index_group,
+    FusedIrEmitter& fused_emitter, const ReductionOutputMap& result_ir_arrays,
+    const ReductionCodegenInfo& reduction_info, const Shape& input_shape) {
+  std::vector<const HloInstruction*> roots;
+  std::vector<const HloReduceInstruction*> heros;
   ExtraOutputGensMap extra_output_gens;
 
   for (const HloInstruction* hlo : instr_index_group) {
-    if (IsReductionFromOrToContiguousDimensions(*hlo)) {
-      reductions.push_back(Cast<HloReduceInstruction>(hlo));
+    const HloInstruction* reduction_hero = FindRealReductionHero(hlo);
+    if (reduction_hero->opcode() == HloOpcode::kReduce) {
+      auto hero = Cast<HloReduceInstruction>(reduction_hero);
+      roots.push_back(hlo);
+      heros.push_back(hero);
     } else {
       extra_output_gens[hlo] = *fused_emitter.GetGenerator(*hlo);
     }
   }
 
-  CHECK(!reductions.empty()) << " expect at least one reduce instructions.";
+  CHECK(!roots.empty()) << " expect at least one reduce instructions.";
   const TilingScheme& tiling_scheme = reduction_info.GetTilingScheme();
   CHECK_EQ(tiling_scheme.GetNumThreadsPerBlockPhysical() % WarpSize(), 0);
   llvm::Type* index_ty =
@@ -4081,7 +4114,7 @@ Status EmitIRForReduction(llvm::IRBuilder<>* builder,
                                 tiling_scheme.GetNumberOfBlocksPhysical(),
                             builder);
   ReductionCodegenState codegen_state = GenerateReductionCodegenState(
-      builder, fusion, reduction_info, reductions, fused_emitter);
+      builder, fusion, reduction_info, heros, fused_emitter);
 
   EmitTileElementFunction emit_reduction_element =
       [&](const TilingThreadIdInfo& thread_id_info,
@@ -4108,9 +4141,8 @@ Status EmitIRForReduction(llvm::IRBuilder<>* builder,
 
         // Emit code to generate the input and perform the reduction computation
         // for each reduction instruction.
-        for (const HloReduceInstruction* reduce : reductions) {
-          GenerateElementForReducer(builder, ir_emitter_context, reduce,
-                                    partial_result_index, codegen_state,
+        for (const HloReduceInstruction* reduce : heros) {
+          GenerateElementForReducer(builder, ir_emitter_context, reduce, partial_result_index, codegen_state,
                                     index_without_linear, input_index,
                                     num_partial_results, result_ir_arrays);
         }
@@ -4134,18 +4166,18 @@ Status EmitIRForReduction(llvm::IRBuilder<>* builder,
                        }));
 
   KernelSupportLibrary ksl(builder);
-  for (const HloReduceInstruction* reduce : reductions) {
+  for (auto [reduce, root] : llvm::zip(heros, roots)) {
     for (int partial_result_idx = 0;
          partial_result_idx < reduction_info.GetNumPartialResults();
          ++partial_result_idx) {
       if (codegen_state.IsRowReduction()) {
-        EmitReductionOutputForRowReduction(
-            builder, ir_emitter_context, tiling_kernel_info, codegen_state,
-            index_ty, result_ir_arrays, reduce, partial_result_idx);
+        EmitReductionOutputForRowReduction(builder, ir_emitter_context, tiling_kernel_info, codegen_state,
+                                           index_ty, result_ir_arrays, reduce,
+                                           root, partial_result_idx);
       } else {
-        EmitReductionOutputForColumnReduction(
-            builder, ir_emitter_context, tiling_kernel_info, codegen_state,
-            index_ty, result_ir_arrays, reduce, partial_result_idx);
+        EmitReductionOutputForColumnReduction(builder, ir_emitter_context, tiling_kernel_info, codegen_state,
+                                              index_ty, result_ir_arrays,
+                                              reduce, root, partial_result_idx);
       }
     }
   }
@@ -4155,6 +4187,8 @@ Status EmitIRForReduction(llvm::IRBuilder<>* builder,
 
 Status IrEmitterUnnested::EmitUnnestedReduction(
     mlir::lmhlo::FusionOp fusion, HloFusionAnalysis& fusion_analysis) {
+  HloComputation* fused_computation =
+      const_cast<HloComputation*>(fusion_analysis.fused_computation());
   auto* reduction_codegen_info = fusion_analysis.GetReductionCodegenInfo();
   // Set flag to false as Reduction has it's own custom logic of choosing a
   // block size.
@@ -4162,6 +4196,7 @@ Status IrEmitterUnnested::EmitUnnestedReduction(
                       fusion_analysis.GetLaunchDimensions(
                           /*use_experimental_block_size=*/false));
 
+  auto hlo_roots = GetFusionRoots(fused_computation);
   VLOG(3) << "Launch dimensions of "
           << mlir::mhlo::GetDebugNameFromLocation(fusion.getLoc()) << ": "
           << launch_dimensions.ToString();
@@ -4169,9 +4204,10 @@ Status IrEmitterUnnested::EmitUnnestedReduction(
     absl::Span<HloInstruction* const> fusion_roots =
         fusion_analysis.fusion_roots();
     for (int i = 0; i < fusion_roots.size(); ++i) {
-      if (IsReductionFromOrToContiguousDimensions(*fusion_roots[i])) {
-        TF_RETURN_IF_ERROR(
-            BuildFusedInitializerThunk(fusion, fusion_analysis, i));
+      const HloInstruction* reduction_hero =
+          FindRealReductionHero(hlo_roots[i]);
+      if (reduction_hero->opcode() == HloOpcode::kReduce) {
+        TF_RETURN_IF_ERROR(BuildFusedInitializerThunk(fusion, fusion_analysis, i));
       }
     }
   }

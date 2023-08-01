@@ -161,25 +161,6 @@ absl::InlinedVector<const HloInstruction*, 2> GetOutputsOfFusible(
 // Returns the output size of the fusible `instr`.
 size_t GetOutputSizeOfFusible(const HloInstruction& instr);
 
-// Returns instructions which are roots of the fusion, following the operands of
-// GTE instructions in the root tuple. Groups multiple subsequent instructions
-// with the same root. CHECKs that the fusion never outputs the same instruction
-// twice, as well as that there are no explicitly created tuples or nested gtes
-// in fusion output.
-//
-// For input: (tuple (gte R1) (gte R1) O2)
-// Expected output: [R1, O2]
-//
-// For input: (tuple R1 R2 O2)
-// Expected output: [R1, R2, O2]
-//
-// For input: (tuple (gte R1) (gte R1) R2 O3)
-// Expected output: [R1, R2, O3]
-//
-// For input: R1
-// Expected output: [R1]
-std::vector<HloInstruction*> GetFusionRoots(HloComputation* computation);
-
 // Whether there is a fusion root triggering transposition emitter.
 bool HasAnyTiledTransposeRoot(HloComputation* computation);
 

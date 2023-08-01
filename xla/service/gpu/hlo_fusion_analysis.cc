@@ -267,9 +267,12 @@ HloFusionAnalysis::EmitterFusionKind HloFusionAnalysis::GetEmitterFusionKind()
 #endif
 
   HloComputation* fused_computation = fusion_->fused_instructions_computation();
-  if (HasAnyUnnestedReductionRoot(fused_computation)) {
+  const HloInstruction* reduction_hero =
+      FindRealReductionHero(fused_computation);
+  if (reduction_hero) {
     return EmitterFusionKind::kReduction;
   }
+
   // We expect that the last dimension is swapped with a different dimension.
   if (HasConsistentTransposeHeros() && tiled_transpose_->permutation[2] != 2) {
     return EmitterFusionKind::kTranspose;
@@ -360,14 +363,10 @@ namespace {
 // We always use the first reduce root that triggers unnested reduction emitter
 // as the hero reduction, since all the reductions are required to have the same
 // shape and layout as verified by `IsFusedReductionOutputConsistent()`.
-HloInstruction* FindHeroReduction(absl::Span<HloInstruction*> roots) {
-  auto it = absl::c_find_if(roots, [](HloInstruction* instr) {
-    return IsReductionFromOrToContiguousDimensions(*instr);
-  });
-  if (it == roots.end()) {
-    return nullptr;
-  }
-  return *it;
+HloInstruction* FindHeroReduction(HloComputation* computation) {
+  const HloInstruction* first_reduce = FindRealReductionHero(computation);
+  CHECK(first_reduce);
+  return const_cast<HloInstruction*>(first_reduce);
 }
 }  // namespace
 
@@ -377,7 +376,7 @@ const ReductionCodegenInfo* HloFusionAnalysis::GetReductionCodegenInfo() {
   }
 
   HloInstruction* hero_reduction =
-      FindHeroReduction(absl::Span<HloInstruction*>(fusion_roots_));
+      FindHeroReduction(const_cast<HloComputation*>(fused_computation_));
   CHECK_NE(hero_reduction, nullptr);
 
   auto reduction_codegen_info = ComputeReductionCodegenInfo(hero_reduction);

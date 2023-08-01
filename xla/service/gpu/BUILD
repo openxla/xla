@@ -998,6 +998,7 @@ cc_library(
     hdrs = ["ir_emission_utils.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        ":reduction_utils",
         ":target_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",

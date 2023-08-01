@@ -816,15 +816,13 @@ TEST_F(InstructionFusionTest, InputReductionFusion) {
       convert.1394 = f32[] convert(param_1.15)
       reduce.462 = f32[128,64]{1,0} reduce(convert.1391, convert.1394), dimensions={2}, to_apply=add.clone.13
       reduce.121 = f32[64]{0} reduce(reduce.462, convert.1394), dimensions={0}, to_apply=add.clone.14
-      convert.890 = bf16[64]{0} convert(reduce.121)
-      ROOT all-reduce.197 = bf16[64]{0} all-reduce(convert.890), channel_id=213, replica_groups={{0,1,2,3,4,5,6,7}}, use_global_device_ids=true, to_apply=add
+      ROOT convert.890 = bf16[64]{0} convert(reduce.121)
     })")
                     .value();
 
   EXPECT_TRUE(duplicating_instruction_fusion_.Run(module.get()).value());
 
-  HloInstruction* root = module->entry_computation()->root_instruction();
-  HloInstruction* fused_convert_fusion = root->mutable_operand(0);
+  HloInstruction* fused_convert_fusion = module->entry_computation()->root_instruction();
 
   ASSERT_THAT(fused_convert_fusion, op::Fusion());
   SCOPED_TRACE(module->ToString());
