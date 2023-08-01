@@ -19,6 +19,8 @@ limitations under the License.
 
 #include "llvm/ADT/StringExtras.h"
 #include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "xla/translate/mhlo_to_hlo/stack_frame_index_builder.h"
 
 namespace mlir {
 namespace mhlo {
@@ -95,7 +97,8 @@ static std::string GetOpTypeFromLoc(Location loc) {
 }
 
 xla::OpMetadata CreateOpMetadataFromLocation(
-    mlir::Operation* op, mlir::StackFrameIndexBuilder* frame_index_builder) {
+    mlir::Operation* op,
+    mlir::MlirToHloStackFrameIndexBuilder* frame_index_builder) {
   xla::OpMetadata metadata;
   mlir::Location loc = op->getLoc();
   if (isa<mlir::UnknownLoc>(loc)) return metadata;

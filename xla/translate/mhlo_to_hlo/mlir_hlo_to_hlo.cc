@@ -738,7 +738,7 @@ class ConvertToHloModule {
   xla::XlaBuilder& module_builder_;
 
   // Common stack frame index builder.
-  mlir::StackFrameIndexBuilder stack_frame_indexes_builder_;
+  mlir::MlirToHloStackFrameIndexBuilder stack_frame_indexes_builder_;
 
   // Map between function and lowered computation.
   FunctionLoweringMap lowered_computation_;
@@ -764,7 +764,7 @@ struct OpLoweringContext {
   llvm::DenseMap<mlir::Value, xla::XlaOp>* values;
   mlir::ConvertToHloModule* converter;
   xla::XlaBuilder* builder;
-  mlir::StackFrameIndexBuilder* frame_index_builder;
+  mlir::MlirToHloStackFrameIndexBuilder* frame_index_builder;
 };
 
 mlir::LogicalResult GetTuple(mlir::Operation* op,

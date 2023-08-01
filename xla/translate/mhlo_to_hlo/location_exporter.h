@@ -32,7 +32,7 @@ namespace mhlo {
 // file name and line number, and populating `source_file` and `source_line`
 // respectively.
 xla::OpMetadata CreateOpMetadataFromLocation(
-    Operation* op, StackFrameIndexBuilder* frame_index_builder);
+    Operation* op, MlirToHloStackFrameIndexBuilder* frame_index_builder);
 
 // Returns a name that can be used for debugging purposes, e.g., naming
 // variable names in generated IR or producing logging output.
