@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,19 +12,32 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "xla/pjrt/c/pjrt_c_api_cpu.h"
 
-#include "xla/pjrt/c/pjrt_c_api_test.h"
-#include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
+#include <gtest/gtest.h>
+#include "xla/pjrt/c/pjrt_c_api.h"
+
+#ifndef XLA_PJRT_C_PJRT_C_API_TEST_BASE_H_
+#define XLA_PJRT_C_PJRT_C_API_TEST_BASE_H_
 
 namespace xla {
 namespace pjrt {
-namespace {
 
-const bool kUnused = (RegisterPjRtCApiTestFactory([]() { return GetPjrtApi(); },
-                                                  /*platform_name=*/"cpu"),
-                      true);
+class PjrtCApiTestBase : public ::testing::Test {
+ public:
+  explicit PjrtCApiTestBase(const PJRT_Api* api);
+  ~PjrtCApiTestBase() override;
 
-}  // namespace
+ protected:
+  const PJRT_Api* api_;
+  PJRT_Client* client_;
+  void destroy_client(PJRT_Client* client);
+
+ private:
+  PjrtCApiTestBase(const PjrtCApiTestBase&) = delete;
+  void operator=(const PjrtCApiTestBase&) = delete;
+};
+
 }  // namespace pjrt
 }  // namespace xla
+
+#endif  // XLA_PJRT_C_PJRT_C_API_TEST_BASE_H_
