@@ -1827,28 +1827,35 @@ Status CheckCompatibleShapes(bool strict_shape_checking,
           "shape %s",
           ShapeUtil::HumanStringWithLayout(execution_shape), parameter_index,
           ShapeUtil::HumanStringWithLayout(buffer_on_device_shape));
+    } else {
+      return OkStatus();
     }
-  } else {
-    const int64_t buffer_size =
-        transfer_manager.GetByteSizeRequirement(buffer_on_device_shape);
-    const int64_t execute_size =
-        transfer_manager.GetByteSizeRequirement(execution_shape);
-    if (buffer_on_device_shape.is_static() && buffer_size != execute_size) {
-      return InvalidArgument(
-          "Executable expected shape %s for argument %d but got "
-          "incompatible "
-          "shape %s",
-          ShapeUtil::HumanStringWithLayout(execution_shape), parameter_index,
-          ShapeUtil::HumanStringWithLayout(buffer_on_device_shape));
-    }
-    if (!buffer_on_device_shape.is_static() && buffer_size < execute_size) {
-      return InvalidArgument(
-          "Executable expected shape %s for argument %d but got "
-          "incompatible "
-          "shape %s",
-          ShapeUtil::HumanStringWithLayout(execution_shape), parameter_index,
-          ShapeUtil::HumanStringWithLayout(buffer_on_device_shape));
-    }
+  }
+
+  if (buffer_on_device_shape.dimensions().empty()) {
+    return OkStatus();
+  }
+  const int64_t buffer_size =
+      transfer_manager.GetByteSizeRequirement(buffer_on_device_shape);
+  const int64_t execute_size =
+      transfer_manager.GetByteSizeRequirement(execution_shape);
+  if (buffer_on_device_shape.is_static() && buffer_size != execute_size) {
+    return InvalidArgument(
+        "Executable expected shape %s (size %d) for argument %d but got "
+        "incompatible "
+        "shape %s (size %d)",
+        ShapeUtil::HumanStringWithLayout(execution_shape), execute_size,
+        parameter_index,
+        ShapeUtil::HumanStringWithLayout(buffer_on_device_shape), buffer_size);
+  }
+  if (!buffer_on_device_shape.is_static() && buffer_size < execute_size) {
+    return InvalidArgument(
+        "Executable expected shape %s (size %d) for argument %d but got "
+        "incompatible "
+        "shape %s (size %d)",
+        ShapeUtil::HumanStringWithLayout(execution_shape), execute_size,
+        parameter_index,
+        ShapeUtil::HumanStringWithLayout(buffer_on_device_shape), buffer_size);
   }
   return OkStatus();
 }
