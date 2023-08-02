@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_autotuning.pb.h"
 #include "xla/service/gpu/hlo_algorithm_denylist.h"
 #include "xla/service/gpu/stream_executor_util.h"
+#include "xla/service/slow_operation_alarm.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
@@ -528,6 +529,12 @@ StatusOr<AutotuneResult> GpuConvAlgorithmPicker::AutotuneOneConvRunner(
 
   se::dnn::ProfileResult profile_result;
   VLOG(4) << "Trying algorithm " << alg.ToString() << " for " << instr_str;
+
+  SlowOperationAlarm alarm(absl::Seconds(1), [&] {
+    return absl::StrFormat(
+        "Trying algorithm %s for conv %s is taking a while...", alg.ToString(),
+        instr_str);
+  });
 
   std::optional<size_t> workspace_size =
       runner->ToAlgorithmDesc().workspace_size();
