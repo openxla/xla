@@ -1079,6 +1079,7 @@ cc_library(
         "@com_google_absl//absl/types:optional",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:types",
+        "@tsl//tsl/profiler/convert:xla_op_utils",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
         "@tsl//tsl/profiler/utils:file_system_utils",
