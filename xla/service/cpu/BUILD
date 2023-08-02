@@ -397,6 +397,7 @@ cc_library(
         "//xla/service:executable",
         "//xla/service:llvm_compiler",
         "//xla/stream_executor",
+        "//xla/stream_executor:stream_executor_pimpl",  # fixdeps: keep
         "//xla/stream_executor/host:host_platform_id",
         "@llvm-project//llvm:Target",
     ],
