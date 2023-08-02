@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/service/hlo_runner_pjrt.h"
 #include "xla/service/platform_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/statusor.h"
 #include "xla/tests/filecheck.h"
@@ -62,7 +63,7 @@ bool ProgramShapesEqual(const ProgramShape& lhs, const ProgramShape& rhs) {
       return false;
     }
   }
-  return ShapeUtil::Equal(lhs.result(), rhs.result());
+  return Shape::Equal().IgnoreElementSizeInLayout()(lhs.result(), rhs.result());
 }
 
 ProgramShape GetProgramShapeWithLayout(const HloModule& module) {
