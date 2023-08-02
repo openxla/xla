@@ -6180,11 +6180,10 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllGatherF8) {
   config.set_use_spmd_partitioning(true);
   config.set_num_partitions(8);
 
-  RunAndFilecheckHloRewriteWithConfig(
-      config, hlo_text,
-      GemmRewriter(
-          se::CudaComputeCapability{se::CudaComputeCapability::HOPPER, 0}),
-      R"(
+  RunAndFilecheckHloRewrite(hlo_text,
+                            GemmRewriter(se::CudaComputeCapability{
+                                se::CudaComputeCapability::HOPPER, 0}),
+                            R"(
 ; CHECK-LABEL: ENTRY %test (x: f8e4m3fn[16,32], y: f8e4m3fn[16,32], x_scale: f32[], y_scale: f32[]) -> f32[16,32] {
 ; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK:         [[AG:%[^ ]+]] = f8e4m3fn[16,64]{1,0} all-gather([[P0]]), {{[^ ]+}}
@@ -6211,7 +6210,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllGatherF8) {
 ; CHECK-DAG:         }
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
-      )");
+      )", nullptr, &config);
 }
 
 TEST_P(ParameterizedFp8GemmRewriteTest,
