@@ -269,7 +269,7 @@ HloFusionAnalysis::EmitterFusionKind HloFusionAnalysis::GetEmitterFusionKind()
   HloComputation* fused_computation = fusion_->fused_instructions_computation();
   const HloInstruction* reduction_hero =
       FindRealReductionHero(fused_computation);
-  if (reduction_hero) {
+  if (reduction_hero->opcode() == HloOpcode::kReduce) {
     return EmitterFusionKind::kReduction;
   }
 
