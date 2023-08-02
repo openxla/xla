@@ -53,7 +53,7 @@ extern "C" {
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 17
+#define PJRT_API_MINOR 18
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -963,6 +963,19 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Memory_ToString_Args, to_string_size);
 // Debug string suitable for reading by end users, should be reasonably terse.
 typedef PJRT_Error* PJRT_Memory_ToString(PJRT_Memory_ToString_Args* args);
 
+struct PJRT_Memory_AttachedDevices_Args {
+  size_t struct_size;
+  void* priv;
+  PJRT_Memory* memory;
+  PJRT_Device** attached_devices;  // out
+  size_t num_attached_devices;     // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Memory_AttachedDevices_Args, attached_devices);
+
+// The devices that this memory is attached to.
+typedef PJRT_Error* PJRT_Memory_AttachedDevices(
+    PJRT_Memory_AttachedDevices_Args* args);
+
 // ------------------------------- Executables ---------------------------------
 
 struct PJRT_Executable_Destroy_Args {
@@ -1854,6 +1867,7 @@ typedef struct {
   _PJRT_API_STRUCT_FIELD(PJRT_Memory_Kind);
   _PJRT_API_STRUCT_FIELD(PJRT_Memory_DebugString);
   _PJRT_API_STRUCT_FIELD(PJRT_Memory_ToString);
+  _PJRT_API_STRUCT_FIELD(PJRT_Memory_AttachedDevices);
 
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_Destroy);
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_Name);

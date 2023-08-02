@@ -64,13 +64,13 @@ class PjRtCApiDeviceDescription : public PjRtDeviceDescription {
 class PjRtCApiMemorySpace : public PjRtMemorySpace {
  public:
   explicit PjRtCApiMemorySpace(PjRtCApiClient* client, PJRT_Memory* c_memory)
-      : client_(client), c_memory_(c_memory) {}
+      : client_(client), c_memory_(c_memory) {
+    InitDevices();
+  }
 
   PjRtClient* client() const override;
 
-  absl::Span<PjRtDevice* const> devices() const override {
-    LOG(FATAL) << "PJRT C API does not support PjRtMemorySpace::devices";
-  }
+  absl::Span<PjRtDevice* const> devices() const override { return devices_; }
 
   int id() const override;
 
@@ -83,8 +83,10 @@ class PjRtCApiMemorySpace : public PjRtMemorySpace {
   const PJRT_Api* pjrt_c_api() const;
 
  private:
+  void InitDevices();
   PjRtCApiClient* client_;
   PJRT_Memory* c_memory_;
+  std::vector<PjRtDevice*> devices_;
 };
 
 class PjRtCApiDevice : public PjRtDevice {

@@ -732,6 +732,7 @@ cc_library(
         "//xla/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_c_api_client.h"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -23,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "mlir/Bytecode/BytecodeWriter.h"  // from @llvm-project
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
@@ -694,6 +696,25 @@ absl::string_view PjRtCApiMemorySpace::ToString() const {
   pjrt::LogFatalIfPjrtError(pjrt_c_api()->PJRT_Memory_ToString(&args),
                             pjrt_c_api());
   return absl::string_view(args.to_string, args.to_string_size);
+}
+
+void PjRtCApiMemorySpace::InitDevices() {
+  PJRT_Memory_AttachedDevices_Args attached_devices_args;
+  attached_devices_args.struct_size =
+      PJRT_Memory_AttachedDevices_Args_STRUCT_SIZE;
+  attached_devices_args.priv = nullptr;
+  attached_devices_args.memory = c_memory_;
+  pjrt::LogFatalIfPjrtError(
+      pjrt_c_api()->PJRT_Memory_AttachedDevices(&attached_devices_args),
+      pjrt_c_api());
+
+  const size_t n = attached_devices_args.num_attached_devices;
+  devices_.reserve(n);
+
+  for (size_t i = 0; i < n; ++i) {
+    PJRT_Device* c_device = attached_devices_args.attached_devices[i];
+    devices_.push_back(client_->GetCppDevice(c_device));
+  }
 }
 
 // ------------------------------- Executables ---------------------------------

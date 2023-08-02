@@ -42,6 +42,12 @@ struct PJRT_Client {
   // Map from wrapped C++ devices to C devices. The values are the same as
   // `owned_devices`.
   absl::flat_hash_map<xla::PjRtDevice*, PJRT_Device*> c_device_from_cpp_device;
+  std::vector<PJRT_Memory> owned_memories;
+  std::vector<PJRT_Memory*> memories;
+  // Map from wrapped C++ memories to C memories. The values are the same as
+  // `owned_memories`.
+  absl::flat_hash_map<xla::PjRtMemorySpace*, PJRT_Memory*>
+      c_memory_from_cpp_memory;
 };
 
 // PJRT_DeviceDescriptions are owned by their corresponding PJRT_Device.
@@ -58,17 +64,14 @@ struct PJRT_Device {
   // The xla::PjRtDevice* is owned by the corresponding xla::PjRtClient.
   xla::PjRtDevice* device;
   PJRT_DeviceDescription description;
-  std::vector<PJRT_Memory> owned_memories;
   // `memories` contains the addresses of the contents of `owned_memories`.
   std::vector<PJRT_Memory*> memories;
-  // Map from wrapped C++ memories to C memories. The values are the same as
-  // `owned_memories`.
-  absl::flat_hash_map<xla::PjRtMemorySpace*, PJRT_Memory*>
-      c_memory_from_cpp_memory;
+  PJRT_Client* client;
 };
 
 struct PJRT_Memory {
   xla::PjRtMemorySpace* memory_space;
+  std::vector<PJRT_Device*> attached_devices;
 };
 
 struct PJRT_Executable {
@@ -205,6 +208,7 @@ PJRT_Error* PJRT_Memory_Id(PJRT_Memory_Id_Args* args);
 PJRT_Error* PJRT_Memory_Kind(PJRT_Memory_Kind_Args* args);
 PJRT_Error* PJRT_Memory_DebugString(PJRT_Memory_DebugString_Args* args);
 PJRT_Error* PJRT_Memory_ToString(PJRT_Memory_ToString_Args* args);
+PJRT_Error* PJRT_Memory_AttachedDevices(PJRT_Memory_AttachedDevices_Args* args);
 
 PJRT_Error* PJRT_Executable_Destroy(PJRT_Executable_Destroy_Args* args);
 PJRT_Error* PJRT_Executable_Name(PJRT_Executable_Name_Args* args);
@@ -406,6 +410,7 @@ constexpr PJRT_Api CreatePjrtApi(
       /*PJRT_Memory_Kind=*/pjrt::PJRT_Memory_Kind,
       /*PJRT_Memory_DebugString=*/pjrt::PJRT_Memory_DebugString,
       /*PJRT_Memory_ToString=*/pjrt::PJRT_Memory_ToString,
+      /*PJRT_Memory_AttachedDevices=*/pjrt::PJRT_Memory_AttachedDevices,
 
       /*PJRT_Executable_Destroy=*/pjrt::PJRT_Executable_Destroy,
       /*PJRT_Executable_Name=*/pjrt::PJRT_Executable_Name,
