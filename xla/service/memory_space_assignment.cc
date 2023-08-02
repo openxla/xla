@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/status.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -3396,11 +3397,6 @@ HeapSimulator::Result<HloValue> AlternateMemoryBestFitHeap::Finish() {
   if (options_.autotuning_config.has_value()) {
     CHECK_EQ((*options_.autotuning_config).size(), buffer_intervals_.size());
   }
-  // TODO(b/275905276): Add support to allow both slicing and repacking to be
-  // enabled. When done, remove this check.
-  CHECK(options_.sliced_prefetch_options.max_slices() < 2 ||
-        options_.max_repacks == 0)
-      << "Repacking must be disabled when slicing is enabled.";
   VLOG(1) << "Slicing is "
           << (options_.sliced_prefetch_options.max_slices() >= 2 ? "enabled"
                                                                  : "disabled");
@@ -5145,8 +5141,7 @@ void AlternateMemoryBestFitHeap::ImportRepackedAllocations() {
             << ", " << allocation_block.end_time << ") from "
             << allocation_block.initial_offset << " to "
             << allocation_block.offset;
-    allocation_block.allocation->mutable_chunk()->offset =
-        allocation_block.offset;
+    allocation_block.allocation->ReplaceOffset(allocation_block.offset);
     interval_tree_.Add(allocation_block.start_time, allocation_block.end_time,
                        HeapSimulator::Chunk::FromOffsetSize(
                            allocation_block.offset, allocation_block.size));
@@ -6297,9 +6292,21 @@ bool DoWeHaveEnoughCopyResource(
   // The specs must be in slice start time order because that's the order
   // they'll be added to prefetch_async_copy_resource_ in
   // AddAsyncSlicesForPrefetch(), if the solution is selected.
+  static const float kSlicedCopyResourceInflation = 2.0;
   for (int i = 0; i < slice_start_times.size(); ++i) {
+    float original_copy_resource = copy_resource_per_slice[i];
+    float new_copy_resource = original_copy_resource;
+    if (slice_start_times.size() > 1) {
+      // This is a hack that makes us more conservative about using sliced
+      // prefetching vs unsliced prefetching.
+      new_copy_resource = original_copy_resource * kSlicedCopyResourceInflation;
+      VLOG(5)
+          << "Inflating required copy resources DoWeHaveEnoughCopyResource() "
+             "slice check from "
+          << original_copy_resource << " to " << new_copy_resource;
+    }
     specs.push_back(
-        {slice_start_times[i], prefetch_end_time, copy_resource_per_slice[i]});
+        {slice_start_times[i], prefetch_end_time, new_copy_resource});
   }
 
   auto specs_to_string = [&specs]() {
@@ -6925,6 +6932,11 @@ void MemorySpaceAssignment::Allocation::AddUse(HloUse use) {
   uses_.push_back(use);
 }
 
+void MemorySpaceAssignment::Allocation::ReplaceOffset(int64_t offset) {
+  CHECK(chunk_.has_value());
+  chunk_->offset = offset;
+}
+
 float MemorySpaceAssignment::ComputeEstimatedElapsedTime(
     const HloLiveRange& hlo_live_range, const AllocationSequence& allocations) {
   absl::flat_hash_map<const HloInstruction*, std::vector<ShapeIndex>>
@@ -7371,6 +7383,15 @@ HloPosition MemorySpaceAssignment::SlicedCopyAllocation::defining_position()
 int64_t MemorySpaceAssignment::SlicedCopyAllocation::earliest_available_time()
     const {
   return sorted_slice_details().back().copy_done_before_time;
+}
+
+void MemorySpaceAssignment::SlicedCopyAllocation::ReplaceOffset(
+    int64_t offset) {
+  int64_t diff = chunk().offset - offset;
+  Allocation::ReplaceOffset(offset);
+  for (SliceDetail& slice_detail : slice_details_sorted_by_start_time_) {
+    slice_detail.slice_decision.chunk.offset -= diff;
+  }
 }
 
 const std::vector<MemorySpaceAssignment::SlicedCopyAllocation::SliceDetail>&
