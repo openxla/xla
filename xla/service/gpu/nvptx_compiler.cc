@@ -29,6 +29,11 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/util/env_var.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/call_inliner.h"
@@ -66,20 +71,15 @@ limitations under the License.
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/layout_normalization.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/reshape_decomposer.h"
 #include "xla/service/reshape_mover.h"
 #include "xla/service/tuple_simplifier.h"
-#include "xla/service/reshape_decomposer.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/asm_compiler.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/util.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/util/env_var.h"
 
 namespace xla {
 namespace gpu {
@@ -214,6 +214,8 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     // "slow" minmax means we propagate nan.
     alg_sim_options.set_minmax_propagate_nan(
         !hlo_module->config().debug_options().xla_gpu_enable_fast_min_max());
+    alg_sim_options.set_enable_unconditional_reduce_of_concat_replacement(
+        false);
     if (debug_options.xla_gpu_normalize_layouts()) {
       mha_fusion_pipeline.AddPass<ReshapeDecomposer>();
       mha_fusion_pipeline.AddPass<LayoutNormalization>();
@@ -221,6 +223,7 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
     mha_fusion_pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(
         alg_sim_options);
+    mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
 
     // Rewrite Multi-Headed Attention modules to Fused MHA custom-calls.
     if (stream_exec) {
@@ -230,11 +233,7 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
       mha_fusion_pipeline.AddPass<CudnnFusedMHARewriter>(
           cuda_compute_capability, gpu_target_config.dnn_version_info);
     }
-    AlgebraicSimplifierOptions algebraic_simplifier_options({}, {});
-    algebraic_simplifier_options
-        .set_enable_unconditional_reduce_of_concat_replacement(false);
-    mha_fusion_pipeline.AddPass<AlgebraicSimplifier>(
-        alg_sim_options);
+    mha_fusion_pipeline.AddPass<AlgebraicSimplifier>(alg_sim_options);
     mha_fusion_pipeline.AddPass<CudnnFusedMHATransposeFusion>();
     mha_fusion_pipeline.AddPass<HloDCE>();
     mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
