@@ -119,6 +119,7 @@ package(
 #     deps = [
 #         "//xla/mlir/backends/openxla/ir:xla_gpu",
 #         "@llvm-project//llvm:Support",
+#         "@llvm-project//mlir:ArithDialect",
 #         "@llvm-project//mlir:FuncDialect",
 #         "@llvm-project//mlir:IR",
 #         "@llvm-project//mlir:MemRefDialect",
