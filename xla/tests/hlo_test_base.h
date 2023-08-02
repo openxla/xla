@@ -175,6 +175,18 @@ class HloTestBase : public ManifestCheckingTest {
       std::optional<absl::string_view> expected,
       std::function<void(HloModule*)> after_pass_checks = nullptr);
 
+  void RunAndFilecheckHloRewriteWithConfig(
+      const HloModuleConfig& config,
+      absl::string_view hlo, HloPassInterface&& hlo_pass,      
+      std::optional<absl::string_view> expected,
+      std::function<void(HloModule*)> after_pass_checks = nullptr);
+
+  void RunAndFilecheckHloWithModule(
+      std::unique_ptr<VerifiedHloModule> module,
+      HloPassInterface&& hlo_pass,
+      std::optional<absl::string_view> expected,
+      std::function<void(HloModule*)> after_pass_checks);
+
   // Runs pass `hlo_pass` on a group of input HLO modules `hlo_module_strs`,
   // and FileChecks the result against `expected`.
   void RunAndFilecheckHloModuleGroupRewrite(

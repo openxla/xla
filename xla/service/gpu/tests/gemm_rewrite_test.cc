@@ -6179,17 +6179,39 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllGatherF8) {
   HloModuleConfig config = GetModuleConfigForTest();
   config.set_use_spmd_partitioning(true);
   config.set_num_partitions(8);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_text, config));
-  GemmRewriter pass(
-      se::CudaComputeCapability{se::CudaComputeCapability::HOPPER, 0});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
 
-  EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::CustomCall({"__cublas$lt$matmul$f8"}).WithShape(F32, {16, 32})));
+  RunAndFilecheckHloRewriteWithConfig(
+      config, hlo_text,
+      GemmRewriter(
+          se::CudaComputeCapability{se::CudaComputeCapability::HOPPER, 0}),
+      R"(
+; CHECK-LABEL: ENTRY %test (x: f8e4m3fn[16,32], y: f8e4m3fn[16,32], x_scale: f32[], y_scale: f32[]) -> f32[16,32] {
+; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
+; CHECK:         [[AG:%[^ ]+]] = f8e4m3fn[16,64]{1,0} all-gather([[P0]]), {{[^ ]+}}
+; CHECK:         [[P1:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(1)
+; CHECK:         [[AG1:%[^ ]+]] = f8e4m3fn[64,32]{1,0} all-gather([[P1]]), {{[^ ]+}}
+; CHECK:         [[P1_TRANSPOSE:%[^ ]+]] = f8e4m3fn[32,64]{1,0} transpose([[AG1]]), dimensions={1,0}
+; CHECK:         [[P2:%[^ ]+]] = f32[] parameter(2)
+; CHECK:         [[P3:%[^ ]+]] = f32[] parameter(3)
+; CHECK:         [[C:%[^ ]+]] = f32[] constant(1)
+; CHECK:         ROOT [[GEMM:%[^ ]+]] = f32[16,32]{1,0} custom-call([[AG]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[C]], /*index=5*/[[C]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"DEFAULT"
+; CHECK:           }
+      )");
 }
 
 TEST_P(ParameterizedFp8GemmRewriteTest,
