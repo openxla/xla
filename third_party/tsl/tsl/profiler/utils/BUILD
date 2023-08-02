@@ -211,8 +211,6 @@ cc_library(
         ":xplane_schema",
         ":xplane_visitor",
         "//tsl/platform:fingerprint",
-        "//tsl/platform:logging",
-        "//tsl/platform:protobuf",
         "//tsl/platform:types",
         "//tsl/profiler/lib:context_types",
         "//tsl/profiler/protobuf:xplane_proto_cc",
