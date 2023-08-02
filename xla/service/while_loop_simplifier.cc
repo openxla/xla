@@ -29,8 +29,10 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/primitive_util.h"
 #include "xla/service/call_inliner.h"
+#include "xla/service/hlo_dce.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/while_loop_analysis.h"
+#include "xla/statusor.h"
 #include "xla/union_find.h"
 
 namespace xla {
@@ -1441,7 +1443,9 @@ StatusOr<bool> WhileLoopSimplifier::Run(
       continue;
     }
   }
-
+  HloDCE dce;
+  TF_ASSIGN_OR_RETURN(bool dce_changed, dce.Run(module));
+  changed |= dce_changed;
   XLA_VLOG_LINES(3,
                  "WhileLoopSimplifier::Run(), after:\n" + module->ToString());
   return changed;
