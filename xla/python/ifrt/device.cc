@@ -15,14 +15,18 @@ limitations under the License.
 
 #include "xla/python/ifrt/device.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
-#include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/types.pb.h"
 
 namespace xla {
 namespace ifrt {
+
+DeviceList::DeviceList(Devices devices)
+    : state_(std::shared_ptr<State>(new State{.devices = std::move(devices)})) {
+}
 
 StatusOr<DeviceList> DeviceList::FromProto(LookupDeviceFunc lookup_device,
                                            const DeviceListProto& proto) {
