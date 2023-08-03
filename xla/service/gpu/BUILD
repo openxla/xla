@@ -996,6 +996,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":target_util",
+        "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
