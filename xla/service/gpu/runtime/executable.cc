@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/memcpy.h"
 #include "xla/service/gpu/runtime/memset.h"
 #include "xla/service/gpu/runtime/send_recv.h"
+#include "xla/service/gpu/runtime/stream_synchronization.h"
 #include "xla/service/gpu/runtime/support.h"
 #include "xla/service/gpu/runtime/topk.h"
 #include "xla/service/gpu/runtime/tracing.h"
@@ -109,6 +110,7 @@ void RegisterXlaGpuRuntimeCustomCalls(DirectCustomCallRegistry& registry) {
   // Graph launch kernels depend on Cuda Graph API.
   RegisterGraphLaunchCustomCalls(registry);
   RegisterConcurrentRegionCustomCalls(registry);
+  RegisterStreamSynchronizationCustomCalls(registry);
 
   RegisterXlaClassicCustomCalls(registry);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

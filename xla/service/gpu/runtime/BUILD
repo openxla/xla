@@ -154,6 +154,7 @@ cc_library(
         ":memcpy",
         ":memset",
         ":send_recv",
+        ":stream_synchronization",
         ":support",
         ":topk",
         ":tracing",
@@ -378,6 +379,23 @@ cc_library(
     srcs = ["concurrent_region.cc"],
     hdrs = ["concurrent_region.h"],
     deps = [
+        ":support",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/service:executable",
+        "//xla/service:stream_pool",
+        "//xla/stream_executor",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "stream_synchronization",
+    srcs = ["stream_synchronization.cc"],
+    hdrs = ["stream_synchronization.h"],
+    deps = [
+        ":concurrent_region",
         ":support",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
