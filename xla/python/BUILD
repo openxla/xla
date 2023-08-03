@@ -1058,7 +1058,7 @@ tsl_pybind_extension(
     }) + select({
         ":tpu_enabled": [
             "//xla/pjrt:tpu_client",
-            "//xla/stream_executor/tpu:tpu_initializer_helper",
+            "//xla/stream_executor/tpu:tpu_initializer_framework_helper",
         ],
         "//conditions:default": [],
     }),
