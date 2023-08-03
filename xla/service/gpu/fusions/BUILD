@@ -101,3 +101,22 @@ cc_library(
         "@llvm-project//llvm:ir_headers",
     ],
 )
+
+cc_library(
+    name = "thunk_util",
+    srcs = ["thunk_util.cc"],
+    hdrs = ["thunk_util.h"],
+    visibility = ["//xla/service/gpu:__subpackages__"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu:ir_emitter_context",
+        "//xla/service/gpu:thunk",
+        "//xla/translate/hlo_to_mhlo:hlo_utils",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+    ],
+)
