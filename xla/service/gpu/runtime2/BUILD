@@ -103,14 +103,17 @@ package_group(
 #     deps = [
 #         ":hal",
 #         ":vm",
+#         "@com_google_absl//absl/container:flat_hash_map",
 #         "@com_google_absl//absl/container:inlined_vector",
 #         "@com_google_absl//absl/log",
+#         "@com_google_absl//absl/synchronization",
 #         "//xla:status",
 #         "//xla:statusor",
 #         "//xla/service:executable",
 #         "//xla/service/gpu:launch_dimensions",
 #         "//xla/service/gpu:stream_executor_util",
 #         "//xla/stream_executor:device_memory",
+#         "//xla/stream_executor:kernel",
 #         "@tsl//tsl/profiler/lib:scoped_annotation",
 #     ] + if_gpu2([
 #         "//third_party/iree/runtime/src/iree/hal",
