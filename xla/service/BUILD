@@ -1807,12 +1807,15 @@ xla_cc_test(
         ":hlo_memory_scheduler",
         ":hlo_ordering",
         "//xla:shape_util",
+        "//xla:test_helpers",
         "//xla:types",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
