@@ -720,6 +720,7 @@ cc_library(
         ":pjrt_executable",
         ":pjrt_future",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
