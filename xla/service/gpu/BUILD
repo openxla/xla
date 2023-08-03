@@ -1241,6 +1241,7 @@ xla_cc_test(
         "//xla/service:pattern_matcher_gmock",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
+        "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
