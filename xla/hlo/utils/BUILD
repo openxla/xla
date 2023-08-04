@@ -139,3 +139,24 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
     ],
 )
+
+cc_library(
+    name = "stack_frame_index_builder",
+    srcs = ["stack_frame_index_builder.cc"],
+    hdrs = ["stack_frame_index_builder.h"],
+    deps = [
+        "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+xla_cc_test(
+    name = "stack_frame_index_builder_test",
+    srcs = ["stack_frame_index_builder_test.cc"],
+    deps = [
+        ":stack_frame_index_builder",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+    ],
+)
