@@ -46,6 +46,9 @@ bool GetJaxEnableMemoryKind() {
 
 pybind11::object CanonicalizeMemoryKind(pybind11::object memory_kind,
                                         pybind11::object device) {
+  if (!GetJaxEnableMemoryKind()) {
+    return py::none();
+  }
   if (memory_kind != py::none()) {
     return memory_kind;
   }
@@ -58,8 +61,7 @@ pybind11::object CanonicalizeMemoryKind(pybind11::object memory_kind,
       pybind11::detail::cast_op<xla::ClientAndPtr<xla::PjRtDevice>>(
           std::move(conv));
 
-  if (!GetJaxEnableMemoryKind() ||
-      absl::StrContains(pjrt_device.client()->platform_version(),
+  if (absl::StrContains(pjrt_device.client()->platform_version(),
                         "PJRT C API")) {
     return py::none();
   }
