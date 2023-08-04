@@ -20,12 +20,12 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
+#include "tsl/platform/logging.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/layout_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
 
 #ifdef GOOGLE_CUDA
 #include "xla/service/gpu/gpu_asm_opts_util.h"
@@ -208,5 +208,25 @@ ReductionDimensions GetReductionKindAndContiguousComponents(
   return {/*is_row_reduction=*/false, shape_partition};
 }
 
+bool IsReduceIntermediate(const HloInstruction* instr) {
+  if (instr->operand_count() > 1 || instr->user_count() > 1) {
+    return false;
+  }
+
+  // Only support elementwise ops that don't introduce additional compute.
+  // More benchmarking and better cost model are needed to enable this for
+  // more compute ops.
+  switch (instr->opcode()) {
+    case HloOpcode::kBitcast:
+    case HloOpcode::kBitcastConvert:
+    case HloOpcode::kConvert:
+      return true;
+    case HloOpcode::kReshape:
+      return ShapeUtil::ReshapeIsBitcast(instr->operand(0)->shape(),
+                                         instr->shape());
+    default:
+      return false;
+  }
+}
 }  // namespace gpu
 }  // namespace xla

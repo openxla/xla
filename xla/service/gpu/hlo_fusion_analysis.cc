@@ -267,9 +267,7 @@ HloFusionAnalysis::EmitterFusionKind HloFusionAnalysis::GetEmitterFusionKind()
 #endif
 
   HloComputation* fused_computation = fusion_->fused_instructions_computation();
-  const HloInstruction* reduction_hero =
-      FindRealReductionHero(fused_computation);
-  if (reduction_hero->opcode() == HloOpcode::kReduce) {
+  if (HasFirstRealReductionHero(fused_computation)) {
     return EmitterFusionKind::kReduction;
   }
 
@@ -364,9 +362,9 @@ namespace {
 // as the hero reduction, since all the reductions are required to have the same
 // shape and layout as verified by `IsFusedReductionOutputConsistent()`.
 HloInstruction* FindHeroReduction(HloComputation* computation) {
-  const HloInstruction* first_reduce = FindRealReductionHero(computation);
+  HloInstruction* first_reduce = FindFirstRealReductionHero(computation);
   CHECK(first_reduce);
-  return const_cast<HloInstruction*>(first_reduce);
+  return first_reduce;
 }
 }  // namespace
 
@@ -554,7 +552,7 @@ HloFusionAnalysis::GroupDisjointReductions() const {
 
   for (HloInstruction* root : fusion_roots()) {
     disjoint_sets[root].Get() = root;
-    if (!IsReductionFromOrToContiguousDimensions(*root)) {
+    if (!HasRealReductionHero(root)) {
       if (!first_non_reduction_root) {
         first_non_reduction_root = root;
       } else {
@@ -569,8 +567,8 @@ HloFusionAnalysis::GroupDisjointReductions() const {
     std::vector<HloInstruction*> reached_output_ids;
     bool added_to_reduce = false;
     for (HloInstruction* output : fusion_roots()) {
-      if (IsReductionFromOrToContiguousDimensions(*output) &&
-          (hlo_query::IsBroadcastedConstantOrScalar(*instr))) {
+      bool has_real_hero = HasRealReductionHero(output);
+      if (has_real_hero && (hlo_query::IsBroadcastedConstantOrScalar(*instr))) {
         if (added_to_reduce) {
           // Do not group more than one output reduce instructions through
           // broadcasted constants or scalars, as the recomputation should be
@@ -585,7 +583,7 @@ HloFusionAnalysis::GroupDisjointReductions() const {
         VLOG(3) << "Reaching " << output->ToString() << " from "
                 << instr->ToString();
         reached_output_ids.push_back(output);
-        if (IsReductionFromOrToContiguousDimensions(*output)) {
+        if (has_real_hero) {
           added_to_reduce = true;
         }
       }

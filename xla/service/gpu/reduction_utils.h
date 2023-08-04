@@ -64,6 +64,8 @@ Vector3 GetReductionTiling(const ReductionDimensions& reduction_dimensions);
 bool ReductionIsRaceFree(const HloModuleConfig& hlo_module_config,
                          const ReductionDimensions& reduction_dimensions);
 
+// Whether reduce is an intermediate node.
+bool IsReduceIntermediate(const HloInstruction* instr);
 }  // namespace gpu
 }  // namespace xla
 #endif  // XLA_SERVICE_GPU_REDUCTION_UTILS_H_

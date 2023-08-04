@@ -760,6 +760,32 @@ size_t GetOutputSizeOfFusible(const HloInstruction& instr) {
   return ShapeUtil::TupleElementCount(root->shape());
 }
 
+// Recursive helper for GetFusionRoots below.
+static void GetFusionRootsRec(HloInstruction* root,
+                              std::vector<HloInstruction*>& out) {
+  if (root->opcode() == HloOpcode::kGetTupleElement) {
+    return GetFusionRootsRec(root->mutable_operand(0), out);
+  } else if (root->opcode() == HloOpcode::kTuple) {
+    for (int i = 0; i < root->operand_count(); i++) {
+      GetFusionRootsRec(root->mutable_operand(i), out);
+    }
+  } else {
+    if (!out.empty() && out.back() == root) {
+      return;
+    }
+    CHECK(!absl::c_linear_search(out, root))
+        << "Fusion root contains instruction " << root->ToString()
+        << " multiple times";
+    out.push_back(root);
+  }
+}
+
+std::vector<HloInstruction*> GetFusionRoots(HloComputation* computation) {
+  std::vector<HloInstruction*> out;
+  GetFusionRootsRec(computation->root_instruction(), out);
+  return out;
+}
+
 bool HasAnyTiledTransposeRoot(HloComputation* computation) {
   return absl::c_any_of(GetFusionRoots(computation),
                         [&](const HloInstruction* instr) {
@@ -772,6 +798,49 @@ bool HasAnyUnnestedReductionRoot(HloComputation* computation) {
       GetFusionRoots(computation), [&](const HloInstruction* instr) {
         return IsReductionFromOrToContiguousDimensions(*instr);
       });
+}
+
+static HloInstruction* FindNonTrivialReductionHero(HloInstruction& instr) {
+  HloInstruction* idx = &instr;
+  while (IsReduceIntermediate(idx) && idx->operand_count() == 1) {
+    idx = idx->mutable_operand(0);
+  }
+  if (IsReductionFromOrToContiguousDimensions(*idx)) {
+    return idx;
+  }
+  return nullptr;
+}
+
+HloInstruction* FindFirstRealReductionHero(HloComputation* cmp) {
+  std::vector<HloInstruction*> roots = GetFusionRoots(cmp);
+  CHECK(!roots.empty());
+  for (HloInstruction* r : roots) {
+    HloInstruction* hero = FindRealReductionHero(r);
+    if (hero != nullptr) {
+      return hero;
+    }
+  }
+  return nullptr;
+}
+
+HloInstruction* FindRealReductionHero(HloInstruction* hlo) {
+  if (HloInstruction* rh = FindNonTrivialReductionHero(*hlo)) {
+    if (rh == hlo ||
+        (rh->user_count() == 1 &&
+         ReductionIsRaceFree(hlo->GetModule()->config(),
+                             GetReductionKindAndContiguousComponents(*rh)))) {
+      return rh;
+    }
+  }
+  return nullptr;
+}
+
+bool HasFirstRealReductionHero(HloComputation* cmp) {
+  return FindFirstRealReductionHero(cmp) != nullptr;
+}
+
+bool HasRealReductionHero(HloInstruction* hlo) {
+  return FindRealReductionHero(hlo) != nullptr;
 }
 
 }  // namespace gpu

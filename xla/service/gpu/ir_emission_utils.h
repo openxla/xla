@@ -221,33 +221,6 @@ std::string GetIrNameFromLoc(mlir::Location loc);
 
 // Whether the module's target is an AMD GPU.
 bool IsAMDGPU(const llvm::Module* module);
-
-// Returns instructions which are roots of the fusion, following the operands of
-// GTE instructions in the root tuple. Groups multiple subsequent instructions
-// with the same root. CHECKs that the fusion never outputs the same instruction
-// twice, as well as that there are no explicitly created tuples or nested gtes
-// in fusion output.
-//
-// For input: (tuple (gte R1) (gte R1) O2)
-// Expected output: [R1, O2]
-//
-// For input: (tuple R1 R2 O2)
-// Expected output: [R1, R2, O2]
-//
-// For input: (tuple (gte R1) (gte R1) R2 O3)
-// Expected output: [R1, R2, O3]
-//
-// For input: R1
-// Expected output: [R1]
-std::vector<HloInstruction*> GetFusionRoots(HloComputation* computation);
-
-// Whether reduce is an intermediate node.
-bool IsReduceIntermediate(const HloInstruction* instr);
-
-// Finds real reduction hero for the fusion.
-const HloInstruction* FindRealReductionHero(HloComputation* cmp);
-const HloInstruction* FindRealReductionHero(const HloInstruction* hlo);
-
 }  // namespace gpu
 }  // namespace xla
 

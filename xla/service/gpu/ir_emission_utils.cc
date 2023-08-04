@@ -31,7 +31,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
@@ -758,90 +757,6 @@ bool IsIntermediate(const HloInstruction* instr, int allowed_operand_count) {
     default:
       return false;
   }
-}
-
-bool IsReduceIntermediate(const HloInstruction* instr) {
-  if (instr->operand_count() > 1 || instr->user_count() > 1) {
-    return false;
-  }
-
-  // Only support elementwise ops that don't introduce additional compute.
-  // More benchmarking and better cost model are needed to enable this for
-  // more compute ops.
-  switch (instr->opcode()) {
-    case HloOpcode::kBitcast:
-    case HloOpcode::kBitcastConvert:
-    case HloOpcode::kConvert:
-      return true;
-    case HloOpcode::kReshape:
-      return ShapeUtil::ReshapeIsBitcast(instr->operand(0)->shape(),
-                                         instr->shape());
-    default:
-      return false;
-  }
-}
-
-// Recursive helper for GetFusionRoots below.
-static void GetFusionRootsRec(HloInstruction* root,
-                              std::vector<HloInstruction*>& out) {
-  if (root->opcode() == HloOpcode::kGetTupleElement) {
-    return GetFusionRootsRec(root->mutable_operand(0), out);
-  } else if (root->opcode() == HloOpcode::kTuple) {
-    for (int i = 0; i < root->operand_count(); i++) {
-      GetFusionRootsRec(root->mutable_operand(i), out);
-    }
-  } else {
-    if (!out.empty() && out.back() == root) {
-      return;
-    }
-    CHECK(!absl::c_linear_search(out, root))
-        << "Fusion root contains instruction " << root->ToString()
-        << " multiple times";
-    out.push_back(root);
-  }
-}
-
-std::vector<HloInstruction*> GetFusionRoots(HloComputation* computation) {
-  std::vector<HloInstruction*> out;
-  GetFusionRootsRec(computation->root_instruction(), out);
-  return out;
-}
-
-static const HloInstruction* FindNonTrivialReductionHero(
-    const HloInstruction& instr) {
-  const HloInstruction* idx = &instr;
-  while (IsReduceIntermediate(idx) && idx->operand_count() == 1) {
-    idx = idx->operand(0);
-  }
-  if (IsReductionFromOrToContiguousDimensions(*idx)) {
-    return idx;
-  }
-  return nullptr;
-}
-
-const HloInstruction* FindRealReductionHero(HloComputation* cmp) {
-  std::vector<HloInstruction*> roots = GetFusionRoots(cmp);
-  CHECK(!roots.empty());
-  HloInstruction* found = nullptr;
-  for (const HloInstruction* r : roots) {
-    const HloInstruction* hero = FindRealReductionHero(r);
-    if (found == nullptr) {
-      found = const_cast<HloInstruction*>(hero);
-    }
-  }
-  return found;
-}
-
-const HloInstruction* FindRealReductionHero(const HloInstruction* hlo) {
-  if (const HloInstruction* rh = FindNonTrivialReductionHero(*hlo)) {
-    if (rh == hlo ||
-        (rh->user_count() == 1 &&
-         ReductionIsRaceFree(hlo->GetModule()->config(),
-                             GetReductionKindAndContiguousComponents(*rh)))) {
-      return rh;
-    }
-  }
-  return hlo;
 }
 
 const HloInstruction& FindNonTrivialHero(const HloInstruction& instr) {
