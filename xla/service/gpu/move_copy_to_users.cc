@@ -15,15 +15,20 @@ limitations under the License.
 
 #include "xla/service/gpu/move_copy_to_users.h"
 
-#include <algorithm>
-#include <memory>
-#include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout.h"
 #include "xla/service/hlo_creation_utils.h"
-#include "xla/xla_data.pb.h"
+#include "xla/status.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -79,6 +84,18 @@ class MoveCopyToUsersVisitor : public DfsHloRewriteVisitor {
       HloInstruction* later_copy =
           MakeCopyHlo(earlier_reduce_window, hlo->shape());
       TF_RETURN_IF_ERROR(ReplaceInstruction(hlo, later_copy));
+    }
+    return OkStatus();
+  }
+
+  Status HandleReduce(HloInstruction* hlo) override {
+    HloInstruction* operand = hlo->mutable_operand(0);
+    // Reductions can handle transposes, e.g. via column reduction.
+    if (operand->opcode() == HloOpcode::kCopy && !hlo->shape().IsTuple()) {
+      HloInstruction* new_reduce = hlo->AddInstruction(
+          hlo->CloneWithNewOperands(hlo->shape(), {operand->mutable_operand(0),
+                                                   hlo->mutable_operand(1)}));
+      TF_RETURN_IF_ERROR(ReplaceInstruction(hlo, new_reduce));
     }
     return OkStatus();
   }
