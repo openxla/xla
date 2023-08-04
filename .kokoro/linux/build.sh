@@ -18,7 +18,7 @@
 # -o pipefail: entire command fails if pipe fails. watch out for yes | ...
 # -o history: record shell history
 set -euox pipefail -o history
-
+printenv
 # Generate a templated results file to make output accessible to everyone
 "$KOKORO_ARTIFACTS_DIR"/github/xla/.kokoro/generate_index_html.sh "$KOKORO_ARTIFACTS_DIR"/index.html
 
@@ -55,6 +55,8 @@ else
     TAGS_FILTER="$TAGS_FILTER,-gpu,-requires-gpu-nvidia"
     ADDITIONAL_FLAGS="$ADDITIONAL_FLAGS --config=nonccl"
 fi
+
+docker exec xla bazel aquery "mnemonic(CppCompile, //xla/tests/fuzz:all)"
 
 # Build & test XLA
 docker exec xla bazel --bazelrc=$RC_FILE \
