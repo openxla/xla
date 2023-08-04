@@ -87,15 +87,22 @@ message AutotuneResult {
 
   FailureResult failure = 7;
 
+  // Produced by loop fusion autotuner, which selects the best unroll factor for
+  // a given fusion, and consumed by loop fusion emitter.
+  message LoopFusionKey {
+    int64 unroll_factor = 1;
+  }
+
   oneof key {
     ConvKey conv = 5;
     GemmKey gemm = 6;
     TritonGemmKey triton = 17;
+    LoopFusionKey loop_fusion = 18;
     CudaConvPlanKey cuda_conv_plan = 15;
     stream_executor.dnn.AlgorithmProto algorithm = 16;
   }
 
-  // Next ID: 17
+  // Next ID: 19
 }
 
 message AutotuningLog {

@@ -88,7 +88,7 @@ TEST_F(GpuLdgTest, LdgForNonParamRead) {
   CompileAndOptionallyVerifyPtx(std::move(hlo_module), R"(
     CHECK: {
     CHECK-NOT: ld.global.f32
-    CHECK: ld.global.nc.f32
+    CHECK: ld.global.nc.{{.*}}f32
     CHECK: }
   )");
 }

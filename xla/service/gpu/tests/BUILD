@@ -176,9 +176,13 @@ xla_cc_test(
     deps = [
         ":gpu_codegen_test",
         "//xla:statusor",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:executable",
+        "//xla/service:hlo_module_config",
         "//xla/tests:hlo_test_base",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )

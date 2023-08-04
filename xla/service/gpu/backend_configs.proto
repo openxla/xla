@@ -132,6 +132,9 @@ message FusionBackendConfig {
 
   // Cost model prediction.
   ReificationCost reification_cost = 3;
+
+  // Backend config for loop fusion emitter.
+  AutotuneResult.LoopFusionKey loop_fusion_config = 4;
 }
 
 // Backend config for a fused Multi-Headed Attention (fMHA) that runs through

@@ -108,6 +108,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_sanitize_constant_names.h"
 #include "xla/service/gpu/gpu_scatter_expander.h"
 #include "xla/service/gpu/gpu_shape_verifier.h"
+#include "xla/service/gpu/hlo_emitter_parameters_autotuner.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
 #include "xla/service/gpu/horizontal_input_fusion.h"
 #include "xla/service/gpu/horizontal_loop_fusion.h"
@@ -843,9 +844,11 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
       pipeline.AddPass<AllReduceContiguous>();
     }
 
-    TF_RETURN_IF_ERROR(AddHloEmitterAutotuningPasses(
-        &pipeline, stream_exec, debug_options, options, gpu_target_config,
-        autotune_results, thread_pool));
+    TF_ASSIGN_OR_RETURN(AutotuneConfig autotune_config,
+                        GetAutotuneConfig(stream_exec, debug_options, options,
+                                          gpu_target_config, autotune_results));
+    pipeline.AddPass<HloEmitterParametersAutotuner>(autotune_config,
+                                                    thread_pool);
 
     int32_t blueconnect_num_devices_per_host =
         debug_options.xla_gpu_all_reduce_blueconnect_num_devices_per_host();

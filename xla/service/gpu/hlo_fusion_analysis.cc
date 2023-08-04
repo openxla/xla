@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
+#include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -471,18 +472,23 @@ const LaunchDimensionsConfig* HloFusionAnalysis::GetLoopFusionConfig() {
   }
 
   int unroll_factor = 1;
-  // Unrolling is good to read large inputs with small elements
-  // due to vector loads, but increases the register pressure when one
-  // thread has to produce multiple output elements.
-  // Therefore for fusions with small outputs prefer to use one thread
-  // per output element = no unroll.
-  // Call 'small' fusions that use less threads than the GPU has.
-  int64_t num_elements = ShapeUtil::ElementsIn(GetElementShape());
-  int64_t n_threads_max =
-      device_info_->threads_per_core_limit * device_info_->core_count;
-  if (num_elements >= n_threads_max &&
-      !MayPreventVectorization(fused_computation_)) {
-    unroll_factor = ComputeMaxUnrollFactor(num_elements);
+  if (fusion_backend_config_.has_loop_fusion_config() &&
+      fusion_backend_config_.loop_fusion_config().unroll_factor() > 0) {
+    unroll_factor = fusion_backend_config_.loop_fusion_config().unroll_factor();
+  } else {
+    // Unrolling is good to read large inputs with small elements
+    // due to vector loads, but increases the register pressure when one
+    // thread has to produce multiple output elements.
+    // Therefore for fusions with small outputs prefer to use one thread
+    // per output element = no unroll.
+    // Call 'small' fusions that use less threads than the GPU has.
+    int64_t num_elements = ShapeUtil::ElementsIn(GetElementShape());
+    int64_t n_threads_max =
+        device_info_->threads_per_core_limit * device_info_->core_count;
+    if (num_elements >= n_threads_max &&
+        !MayPreventVectorization(fused_computation_)) {
+      unroll_factor = ComputeMaxUnrollFactor(num_elements);
+    }
   }
   VLOG(2) << "Unroll factor: " << unroll_factor;
 

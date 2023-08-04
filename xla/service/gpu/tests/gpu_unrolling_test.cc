@@ -45,6 +45,7 @@ TEST_F(GpuUnrollingTest, UnrollDefaultTimes) {
   // The default unrolling factor is 4.
   HloModuleConfig config;
   auto debug_options = GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_unroll_factor_autotune(false);
   config.set_debug_options(debug_options);
   auto hlo_module = ParseAndReturnVerifiedModule(kAddModule, config).value();
 
@@ -216,6 +217,7 @@ TEST_F(GpuUnrollingTest, DisabledUnrollUnfusedAtan2) {
 TEST_F(GpuUnrollingTest, UnrollMultiOutputFusion) {
   HloModuleConfig config;
   auto debug_options = HloTestBase::GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_unroll_factor_autotune(false);
   // Disable layout assignment for this test.  Layout assignment does not expect
   // fusions to be present, and so it does the wrong thing.
   debug_options.add_xla_disable_hlo_passes("layout-assignment");

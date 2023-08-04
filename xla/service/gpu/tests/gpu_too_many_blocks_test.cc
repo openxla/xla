@@ -13,23 +13,34 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <memory>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/executable.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/statusor.h"
 #include "xla/tests/hlo_test_base.h"
-#include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/test.h"
+#include "xla/xla.pb.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
 
 namespace {
 
-class TooManyBlocksTest : public GpuCodegenTest {};
+class TooManyBlocksTest : public GpuCodegenTest {
+ protected:
+  DebugOptions GetDebugOptionsForTest() override {
+    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
+    return debug_options;
+  }
+};
 
-TEST_F(TooManyBlocksTest, FailsWithInvalidStatus) {
-  const char* hlo_text = R"(
+const char* hlo_text = R"(
 HloModule primitive_computation_mul.8
 
 ENTRY primitive_computation_mul.8 {
@@ -42,9 +53,10 @@ ENTRY primitive_computation_mul.8 {
   ROOT multiply.7 = f32[4,1048576,1048576,1]{3,2,1,0} multiply(broadcast.4, broadcast.6)
 }
 )";
+
+TEST_F(TooManyBlocksTest, BackendFailsWithInvalidStatus) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
                           GetOptimizedModule(hlo_text));
-
   StatusOr<std::unique_ptr<Executable>> failed_executable =
       backend().compiler()->RunBackend(
           std::move(optimized_module), backend().default_stream_executor(),
@@ -53,6 +65,19 @@ ENTRY primitive_computation_mul.8 {
   EXPECT_FALSE(failed_executable.ok());
   EXPECT_THAT(failed_executable.status().ToString(),
               ::testing::HasSubstr("Kernel launch needs more blocks"));
+}
+
+TEST_F(TooManyBlocksTest, OptimizationFailsWithInvalidStatus) {
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_unroll_factor_autotune(true);
+  HloModuleConfig config;
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+  EXPECT_DEATH(auto executable =
+                   CreateExecutable(std::move(module), /*run_hlo_passes=*/true),
+               "Kernel launch needs more blocks");
 }
 
 }  // namespace
