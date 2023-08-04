@@ -22,10 +22,12 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
+#include "xla/autotune_results.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace gpu {
@@ -45,7 +47,8 @@ class NVPTXCompiler : public GpuCompiler {
   Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
-      const AutotuneResults* autotune_results) override;
+      const AutotuneResults* autotune_results,
+      tsl::thread::ThreadPool* thread_pool) override;
 
   bool EnableCollectiveScheduleLinearizerForSpmd(
       HloModule* hlo_module, se::StreamExecutor* stream_exec) override;

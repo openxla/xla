@@ -2294,7 +2294,7 @@ xla_cc_test(
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/gpu:gpu_compiler",
         "//xla/stream_executor",
-        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test_main",
     ]),
 )
