@@ -298,6 +298,78 @@ build:linux --copt="-Werror=switch"
 # Required for building with clang
 build:linux --copt="-Wno-error=unused-but-set-variable"
 
+# Treat warnings as errors...
+build:generic_clang --copt=-Werror --host_copt=-Werror
+# ...and silence them outside of the workspace.
+build:generic_clang --per_file_copt=external/.*@-w
+# ...and silence them on host builds. There is no host_per_file_copt and
+# everything we build in the host configuration we either also build in the
+# target configuration or is external, so we can't control it.
+# If/when Bazel supports --host_per_file_copt, we could use that instead:
+# https://github.com/bazelbuild/bazel/issues/12406.
+# Would need to then make all the --copt below duplicated with --host_copt.
+build:generic_clang --host_copt=-w
+
+# Set clang warnings and promotion to errors. These largely match the set of 
+# warnings used within Google. If you feel that some of these should be
+# different, please raise an issue!  
+
+build:generic_clang --copt=-Wall
+
+# Disable warnings that generally have a low signal/noise ratio.
+build:generic_clang --copt=-Wno-ambiguous-member-template
+build:generic_clang --copt=-Wno-char-subscripts
+build:generic_clang --copt=-Wno-extern-c-compat # Matches upstream. Cannot impact due to extern C inclusion method.
+build:generic_clang --copt=-Wno-gnu-alignof-expression
+build:generic_clang --copt=-Wno-gnu-variable-sized-type-not-at-end
+build:generic_clang --copt=-Wno-ignored-optimization-argument
+build:generic_clang --copt=-Wno-invalid-offsetof # Technically UB but needed for intrusive ptrs
+build:generic_clang --copt=-Wno-invalid-source-encoding
+build:generic_clang --copt=-Wno-mismatched-tags
+build:generic_clang --copt=-Wno-pointer-sign
+build:generic_clang --copt=-Wno-reserved-user-defined-literal
+build:generic_clang --copt=-Wno-return-type-c-linkage
+build:generic_clang --copt=-Wno-self-assign-overloaded
+build:generic_clang --copt=-Wno-sign-compare
+build:generic_clang --copt=-Wno-signed-unsigned-wchar
+build:generic_clang --copt=-Wno-strict-overflow
+build:generic_clang --copt=-Wno-trigraphs
+build:generic_clang --copt=-Wno-unknown-pragmas
+build:generic_clang --copt=-Wno-unknown-warning-option
+build:generic_clang --copt=-Wno-unused-command-line-argument
+build:generic_clang --copt=-Wno-unused-const-variable
+build:generic_clang --copt=-Wno-unused-function
+build:generic_clang --copt=-Wno-unused-local-typedef
+build:generic_clang --copt=-Wno-unused-private-field
+build:generic_clang --copt=-Wno-user-defined-warnings
+
+# Explicitly enable some additional warnings.
+# Some of these aren't on by default, or under -Wall, or are subsets of warnings
+# turned off above.
+build:generic_clang --copt=-Wc++20-extensions
+build:generic_clang --copt=-Wctad-maybe-unsupported
+build:generic_clang --copt=-Wfloat-overflow-conversion
+build:generic_clang --copt=-Wfloat-zero-conversion
+build:generic_clang --copt=-Wfor-loop-analysis
+build:generic_clang --copt=-Wformat-security
+build:generic_clang --copt=-Wgnu-redeclared-enum
+build:generic_clang --copt=-Wimplicit-fallthrough
+build:generic_clang --copt=-Winfinite-recursion
+build:generic_clang --copt=-Wliteral-conversion
+build:generic_clang --copt=-Wnon-virtual-dtor
+build:generic_clang --copt=-Woverloaded-virtual
+build:generic_clang --copt=-Wself-assign
+build:generic_clang --copt=-Wstring-conversion
+build:generic_clang --copt=-Wtautological-overlap-compare
+build:generic_clang --copt=-Wthread-safety
+build:generic_clang --copt=-Wthread-safety-beta
+build:generic_clang --copt=-Wunused-comparison
+build:generic_clang --copt=-Wvla
+
+# Treat backrefs during linking as errors.
+build:generic_clang --linkopt=-Wl,--warn-backrefs
+build:generic_clang --linkopt=-Wl,--fatal-warnings
+
 # On Windows, `__cplusplus` is wrongly defined without this switch
 # See https://devblogs.microsoft.com/cppblog/msvc-now-correctly-reports-__cplusplus/
 build:windows --copt=/Zc:__cplusplus
