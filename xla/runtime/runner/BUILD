@@ -1,3 +1,4 @@
+load("//third_party/bazel_rules/rules_python/python:defs.bzl", "py_library", "py_test")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_py_proto_library")
 
