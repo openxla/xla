@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_executor.h"
 
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <utility>
 
 #include "absl/cleanup/cleanup.h"
@@ -26,8 +28,6 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_event.h"
 #include "xla/stream_executor/tpu/tpu_stream.h"
 #include "tsl/c/tsl_status.h"
-
-using stream_executor::DeviceMemoryBase;
 
 namespace stream_executor {
 namespace tpu {

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/optimization_barrier_expander.h"
 
+#include <iterator>
+#include <vector>
+
 namespace xla {
 
 StatusOr<bool> OptimizationBarrierExpander::Run(

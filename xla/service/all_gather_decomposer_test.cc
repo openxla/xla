@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/all_gather_decomposer.h"
 
 #include <memory>
+#include <string>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

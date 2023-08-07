@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
 
+#include <algorithm>
+#include <vector>
+
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"

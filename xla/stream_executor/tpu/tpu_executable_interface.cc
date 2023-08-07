@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_executable_interface.h"
 
 #include <limits>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "xla/service/compiler.h"

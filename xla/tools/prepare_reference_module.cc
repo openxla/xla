@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <functional>
 #include <memory>
+#include <utility>
 
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_module.h"

@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/hlo_algorithm_denylist.h"
 
+#include <optional>
 #include <string>
+#include <tuple>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "xla/debug_options_flags.h"

@@ -18,7 +18,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_PROTO_UTIL_H_
 #define XLA_SERVICE_HLO_PROTO_UTIL_H_
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"

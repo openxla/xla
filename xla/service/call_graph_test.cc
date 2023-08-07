@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/call_graph.h"
 
+#include <iterator>
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>

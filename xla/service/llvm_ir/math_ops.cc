@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/service/llvm_ir/math_ops.h"
+
+#include <array>
+
 #include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {

@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_WHILE_UTIL_H_
 #define XLA_SERVICE_WHILE_UTIL_H_
 
+#include <memory>
+#include <vector>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"

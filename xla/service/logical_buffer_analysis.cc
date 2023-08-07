@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/service/logical_buffer_analysis.h"
 
+#include <memory>
 #include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"

@@ -18,6 +18,7 @@ limitations under the License.
 #include <deque>
 #include <functional>
 #include <memory>
+#include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"

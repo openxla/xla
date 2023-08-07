@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "xla/service/cpu/runtime_fork_join.h"
 
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
 #define EIGEN_USE_THREADS
 
 #include "absl/base/dynamic_annotations.h"

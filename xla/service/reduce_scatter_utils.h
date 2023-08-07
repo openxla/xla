@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_REDUCE_SCATTER_UTILS_H_
 #define XLA_SERVICE_REDUCE_SCATTER_UTILS_H_
 
+#include <functional>
 #include <optional>
 #include <vector>
 

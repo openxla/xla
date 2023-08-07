@@ -16,6 +16,10 @@ limitations under the License.
 #ifndef XLA_HLO_EVALUATOR_HLO_EVALUATOR_H_
 #define XLA_HLO_EVALUATOR_HLO_EVALUATOR_H_
 
+#include <complex>
+#include <random>
+#include <utility>
+#include <vector>
 #define _USE_MATH_DEFINES
 
 #include <functional>

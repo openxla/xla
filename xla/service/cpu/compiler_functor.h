@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_CPU_COMPILER_FUNCTOR_H_
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>

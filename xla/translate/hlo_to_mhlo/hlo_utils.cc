@@ -17,6 +17,9 @@ limitations under the License.
 
 #include "xla/translate/hlo_to_mhlo/hlo_utils.h"
 
+#include <cstring>
+#include <vector>
+
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project

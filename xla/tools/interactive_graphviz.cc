@@ -25,8 +25,11 @@ limitations under the License.
 #include <unistd.h>
 
 #include <functional>
+#include <iostream>
+#include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
@@ -260,8 +263,7 @@ void DoListCommand(const HloModule& module,
   std::cout << "Query results:" << std::endl;
   for (const auto& computation : module.computations()) {
     for (const auto& instr : computation->instructions()) {
-      if ((type == "name" &&
-           instr->name().find(pattern) != std::string::npos) ||
+      if ((type == "name" && absl::StrContains(instr->name(), pattern)) ||
           (type == "op_name" &&
            instr->metadata().op_name().find(pattern) != std::string::npos) ||
           (type == "op_type" &&

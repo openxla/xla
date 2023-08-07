@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment_best_fit_repacker.h"
 
+#include <list>
+#include <vector>
+
 #include "tsl/platform/test.h"
 
 namespace xla {

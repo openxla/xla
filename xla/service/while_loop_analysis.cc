@@ -15,6 +15,14 @@ limitations under the License.
 
 #include "xla/service/while_loop_analysis.h"
 
+#include <algorithm>
+#include <limits>
+#include <map>
+#include <memory>
+#include <ostream>
+#include <utility>
+#include <vector>
+
 #include "absl/base/casts.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_instruction.h"

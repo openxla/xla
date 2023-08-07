@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "xla/service/spmd/convolution_handler.h"
 
+#include <algorithm>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "absl/algorithm/container.h"
 #include "absl/functional/function_ref.h"
 #include "xla/hlo/ir/hlo_computation.h"

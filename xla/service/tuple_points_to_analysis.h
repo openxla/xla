@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -341,7 +342,7 @@ class TuplePointsToAnalysis : public DfsHloVisitorWithDefault {
   bool HasUniqueFusedUseOfOperandAt(HloInstruction* operand,
                                     const ShapeIndex& operand_index,
                                     HloInstruction* fusion,
-                                    const int64_t use_operand_index) const;
+                                    int64_t use_operand_index) const;
 
   // The module this analysis is performed on.
   const HloModule* module_;

@@ -16,9 +16,13 @@ limitations under the License.
 #include "xla/service/dump.h"
 
 #include <functional>
+#include <iostream>
 #include <memory>
+#include <optional>
 #include <queue>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
@@ -472,7 +476,7 @@ static std::vector<std::string> DumpHloModuleImpl(
       if (!rendered_graph.ok()) {
         VLOG(1) << "Skipping fusion visualization"
                 << " for computation " << computation->name()
-                << " due to: " << rendered_graph.status().ToString();
+                << " due to: " << rendered_graph.status();
         continue;
       }
       file_paths.push_back(DumpToFileInDirImpl(

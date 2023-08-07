@@ -16,8 +16,13 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_gpu_executor.h"
 
 #include <cstdint>
+#include <ios>
+#include <memory>
 #include <optional>
+#include <string>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>

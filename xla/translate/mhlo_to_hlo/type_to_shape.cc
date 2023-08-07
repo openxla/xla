@@ -15,10 +15,12 @@ limitations under the License.
 
 #include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 
+#include <algorithm>
 #include <numeric>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "mlir/Dialect/SparseTensor/IR/Enums.h"  // from @llvm-project
@@ -41,8 +43,6 @@ using mlir::RankedTensorType;
 using mlir::ShapedType;
 using mlir::VectorType;
 using mlir::mhlo::TypeExtensionsAttr;
-using xla::PrimitiveType;
-using xla::ShapeUtil;
 
 namespace xla {
 

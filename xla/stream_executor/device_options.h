@@ -20,6 +20,8 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_DEVICE_OPTIONS_H_
 #define XLA_STREAM_EXECUTOR_DEVICE_OPTIONS_H_
 #include <map>
+#include <string>
+#include <vector>
 
 #include "absl/strings/str_join.h"
 #include "xla/stream_executor/platform/logging.h"
@@ -55,7 +57,7 @@ struct DeviceOptions {
 
   // Constructs an or-d together set of device options.
   explicit DeviceOptions(unsigned flags) : flags_(flags) {
-    CHECK((flags & kMask) == flags);
+    ABSL_CHECK((flags & kMask) == flags);
   }
 
   // Factory for the default set of device options.

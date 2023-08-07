@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_ELEMENTAL_IR_EMITTER_H_
 #define XLA_SERVICE_CPU_ELEMENTAL_IR_EMITTER_H_
 
+#include <vector>
+
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"

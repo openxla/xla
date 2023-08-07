@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GENERIC_TRANSFER_MANAGER_H_
 #define XLA_SERVICE_GENERIC_TRANSFER_MANAGER_H_
 
+#include <functional>
 #include <vector>
 
 #include "xla/service/transfer_manager.h"

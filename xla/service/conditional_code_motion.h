@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_CONDITIONAL_CODE_MOTION_H_
 
 #include <string>
+#include <vector>
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"

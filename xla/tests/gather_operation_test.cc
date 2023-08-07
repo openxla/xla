@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <string>
+#include <vector>
+
 #include "xla/client/xla_builder.h"
 #include "xla/execution_options_util.h"
 #include "xla/literal_util.h"

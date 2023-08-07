@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/fft_thunk.h"
 
+#include <memory>
 #include <string>
 
 #include "absl/strings/str_cat.h"

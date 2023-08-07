@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <vector>
 
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/stream_executor_util.h"

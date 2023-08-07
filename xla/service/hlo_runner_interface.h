@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_RUNNER_INTERFACE_H_
 #define XLA_SERVICE_HLO_RUNNER_INTERFACE_H_
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -91,7 +92,7 @@ class HloRunnerInterface {
   // Converts an HloModule from the given hlo textual IR string (in
   // HloModule::ToString format).
   static StatusOr<std::unique_ptr<HloModule>> CreateModuleFromString(
-      const absl::string_view hlo_string, const DebugOptions& debug_options);
+      absl::string_view hlo_string, const DebugOptions& debug_options);
 
   // Reads the proto file in xla.HloProto format, creates and returns the
   // HloModule.

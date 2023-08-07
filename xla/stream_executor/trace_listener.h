@@ -44,7 +44,7 @@ class Stream;
 // tracepoints should be named NameBegin and NameComplete.
 class TraceListener {
  public:
-  virtual ~TraceListener() {}
+  virtual ~TraceListener() = default;
 
   virtual void LaunchSubmit(Stream* stream, const ThreadDim& thread_dims,
                             const BlockDim& block_dims,

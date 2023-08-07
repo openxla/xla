@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/dynamic_padder.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "absl/strings/str_replace.h"
 #include "xla/client/xla_builder.h"
 #include "xla/hlo/ir/hlo_computation.h"

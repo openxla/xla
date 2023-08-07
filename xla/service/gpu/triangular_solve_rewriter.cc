@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/triangular_solve_rewriter.h"
 
 #include <numeric>
+#include <vector>
 
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo_creation_utils.h"

@@ -13,7 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
 #include <cmath>
+#include <tuple>
+#include <utility>
 
 #include "xla/tests/exhaustive/exhaustive_op_test_utils.h"
 

@@ -43,7 +43,7 @@ namespace xla {
 //
 class WhileLoopSimplifier : public HloModulePass {
  public:
-  ~WhileLoopSimplifier() override {}
+  ~WhileLoopSimplifier() override = default;
   absl::string_view name() const override { return "simplify-while-loops"; }
   using HloPassInterface::Run;
   StatusOr<bool> Run(

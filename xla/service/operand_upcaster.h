@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_OPERAND_UPCASTER_H_
 #define XLA_SERVICE_OPERAND_UPCASTER_H_
 
+#include <utility>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/op_expander_pass.h"
 

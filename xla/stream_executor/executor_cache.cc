@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/executor_cache.h"
 
+#include <functional>
 #include <memory>
+#include <utility>
 
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"

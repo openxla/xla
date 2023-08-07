@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tests/filecheck.h"
 
 #include <cstdlib>
+#include <string>
 
 #include "xla/types.h"
 #include "xla/util.h"

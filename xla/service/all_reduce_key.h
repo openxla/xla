@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_ALL_REDUCE_KEY_H_
 #define XLA_SERVICE_ALL_REDUCE_KEY_H_
 
+#include <optional>
 #include <tuple>
 #include <vector>
 

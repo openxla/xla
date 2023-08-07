@@ -15,11 +15,14 @@ limitations under the License.
 
 #include "xla/service/broadcast_canonicalizer.h"
 
+#include <iterator>
+#include <vector>
+
 #include "xla/service/hlo_creation_utils.h"
 
 namespace xla {
 
-BroadcastCanonicalizer::BroadcastCanonicalizer() {}
+BroadcastCanonicalizer::BroadcastCanonicalizer() = default;
 
 StatusOr<bool> BroadcastCanonicalizer::Run(
     HloModule* module,

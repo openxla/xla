@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/cudnn_vectorize_convolutions.h"
 
+#include <utility>
 #include <vector>
 
 #include "xla/service/call_inliner.h"

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/all_reduce_blueconnect.h"
 
 #include <memory>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

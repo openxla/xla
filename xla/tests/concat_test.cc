@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <numeric>
 #include <vector>
 
 #include "xla/array2d.h"

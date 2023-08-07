@@ -19,8 +19,10 @@ limitations under the License.
 #include <functional>
 #include <ios>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>

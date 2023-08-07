@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_ALL_GATHER_DECOMPOSER_H_
 #define XLA_SERVICE_ALL_GATHER_DECOMPOSER_H_
 
+#include <functional>
+#include <utility>
+
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"

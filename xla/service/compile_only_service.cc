@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/compile_only_service.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>

@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_PJRT_DISTRIBUTED_KEY_VALUE_STORE_H_
 #define XLA_PJRT_DISTRIBUTED_KEY_VALUE_STORE_H_
 
+#include <string>
+
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"

@@ -13,7 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <algorithm>
+#include <iterator>
+#include <memory>
 #include <numeric>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "xla/array2d.h"

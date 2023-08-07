@@ -111,7 +111,7 @@ class CUDAFftPlan : public fft::Plan {
 class CUDAFft : public fft::FftSupport {
  public:
   explicit CUDAFft(GpuExecutor* parent) : parent_(parent) {}
-  ~CUDAFft() override {}
+  ~CUDAFft() override = default;
 
   TENSORFLOW_STREAM_EXECUTOR_GPU_FFT_SUPPORT_OVERRIDES
 
@@ -122,17 +122,17 @@ class CUDAFft : public fft::FftSupport {
 
   // This is for complex to complex FFT, when the direction is required.
   template <typename FuncT, typename InputT, typename OutputT>
-  bool DoFftWithDirectionInternal(Stream *stream, fft::Plan *plan,
-                                  FuncT cufft_exec,
-                                  const DeviceMemory<InputT> &input,
-                                  DeviceMemory<OutputT> *output);
+  bool DoFftWithDirectionInternal(Stream* stream, fft::Plan* plan,
+                                  FuncT cufftExec,
+                                  const DeviceMemory<InputT>& input,
+                                  DeviceMemory<OutputT>* output);
 
   // This is for complex to real or real to complex FFT, when the direction
   // is implied.
   template <typename FuncT, typename InputT, typename OutputT>
-  bool DoFftInternal(Stream *stream, fft::Plan *plan, FuncT cufft_exec,
-                     const DeviceMemory<InputT> &input,
-                     DeviceMemory<OutputT> *output);
+  bool DoFftInternal(Stream* stream, fft::Plan* plan, FuncT cufftExec,
+                     const DeviceMemory<InputT>& input,
+                     DeviceMemory<OutputT>* output);
 
   SE_DISALLOW_COPY_AND_ASSIGN(CUDAFft);
 };

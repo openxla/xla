@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <array>
+#include <memory>
+#include <ostream>
+#include <string>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"

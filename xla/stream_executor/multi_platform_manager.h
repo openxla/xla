@@ -66,6 +66,7 @@ limitations under the License.
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/strings/string_view.h"

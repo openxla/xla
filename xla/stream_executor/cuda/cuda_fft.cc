@@ -18,6 +18,8 @@ limitations under the License.
 #include <array>
 #include <complex>
 #include <limits>
+#include <memory>
+#include <utility>
 
 #include "absl/strings/str_cat.h"
 #include "xla/stream_executor/cuda/cuda_activation.h"

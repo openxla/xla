@@ -18,6 +18,7 @@ limitations under the License.
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/ascii.h"

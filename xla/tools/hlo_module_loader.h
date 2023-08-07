@@ -29,7 +29,7 @@ namespace xla {
 namespace hlo_module_loader_details {
 
 struct Config {
-  Config() {}
+  Config() = default;
   int64_t num_replicas = 1;
   int64_t num_partitions = 1;
 };

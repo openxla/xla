@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/hlo_graph_dumper.h"
 
+#include <string>
+#include <vector>
+
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"

@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_COMPILE_ONLY_SERVICE_H_
 #define XLA_SERVICE_COMPILE_ONLY_SERVICE_H_
 
+#include <memory>
+#include <vector>
+
 #include "xla/service/backend.h"
 #include "xla/service/compiler.h"
 #include "xla/service/service.h"

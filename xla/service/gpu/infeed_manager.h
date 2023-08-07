@@ -20,6 +20,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_INFEED_MANAGER_H_
 #define XLA_SERVICE_GPU_INFEED_MANAGER_H_
 
+#include <memory>
+
 #include "absl/base/thread_annotations.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/xfeed_queue.h"

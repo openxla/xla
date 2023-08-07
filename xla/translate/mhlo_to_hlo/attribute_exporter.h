@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_TRANSLATE_MHLO_TO_HLO_ATTRIBUTE_EXPORTER_H_
 #define XLA_TRANSLATE_MHLO_TO_HLO_ATTRIBUTE_EXPORTER_H_
 
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
@@ -35,7 +37,7 @@ ConvolutionDimensionNumbers ConvertConvDimensionNumbers(
     mlir::mhlo::ConvDimensionNumbersAttr input);
 
 StatusOr<stream_executor::dnn::ActivationMode> ConvertConvActivationMode(
-    mlir::lmhlo_gpu::Activation input);
+    mlir::lmhlo_gpu::Activation activation);
 
 StatusOr<std::vector<ReplicaGroup>> ConvertReplicaGroups(
     mlir::DenseIntElementsAttr input);

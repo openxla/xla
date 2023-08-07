@@ -14,8 +14,12 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 
+#include <array>
+#include <complex>
 #include <initializer_list>
+#include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <tuple>

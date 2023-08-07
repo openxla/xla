@@ -19,6 +19,7 @@ limitations under the License.
 #include <map>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "xla/executable_run_options.h"
 #include "xla/service/backend.h"
@@ -70,7 +71,7 @@ class ExecutionTracker {
   ExecutionHandle Register(Backend* backend,
                            std::vector<StreamPool::Ptr> stream,
                            const ExecutionProfile& profile,
-                           GlobalDataHandle data);
+                           GlobalDataHandle result);
 
   // Unregisters the execution for the given handle.
   Status Unregister(const ExecutionHandle& handle);

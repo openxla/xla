@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <string>
 #include <utility>
+#include <variant>
 
 #include "absl/types/variant.h"
 #include "xla/stream_executor/device_description.h"

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/hlo_module_dce.h"
 
+#include <string>
+#include <vector>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

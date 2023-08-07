@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/service/allocation_tracker.h"
 
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "xla/map_util.h"

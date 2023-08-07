@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_MEMORY_SCHEDULER_H_
 #define XLA_SERVICE_HLO_MEMORY_SCHEDULER_H_
 
+#include <functional>
+#include <vector>
+
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

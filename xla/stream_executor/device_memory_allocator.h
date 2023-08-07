@@ -62,7 +62,7 @@ class ScopedDeviceMemory {
   ScopedDeviceMemory(DeviceMemoryBase mem, int device_ordinal,
                      DeviceMemoryAllocator *allocator)
       : wrapped_(mem), device_ordinal_(device_ordinal), allocator_(allocator) {
-    DCHECK_GE(device_ordinal_, 0);
+    ABSL_DCHECK_GE(device_ordinal_, 0);
   }
 
   // A helper constructor to generate a scoped device memory given an already
@@ -164,7 +164,7 @@ class DeviceMemoryAllocator {
   // on. Must be non-null.
   explicit DeviceMemoryAllocator(const Platform *platform)
       : platform_(platform) {}
-  virtual ~DeviceMemoryAllocator() {}
+  virtual ~DeviceMemoryAllocator() = default;
 
   // Allocates memory on the device.
   //
@@ -276,7 +276,7 @@ class StreamExecutorMemoryAllocator : public DeviceMemoryAllocator {
 template <typename ElemT>
 tsl::Status ScopedDeviceMemory<ElemT>::Free() {
   if (!wrapped_.is_null()) {
-    CHECK(allocator_ != nullptr) << "Owning pointer in inconsistent state";
+    ABSL_CHECK(allocator_ != nullptr) << "Owning pointer in inconsistent state";
     TF_RETURN_IF_ERROR(allocator_->Deallocate(device_ordinal_, wrapped_));
   }
   wrapped_ = DeviceMemory<ElemT>{};

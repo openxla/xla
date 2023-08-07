@@ -17,8 +17,10 @@ limitations under the License.
 #define XLA_HLO_UTILS_HLO_MATCHERS_H_
 
 #include <optional>
+#include <ostream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_parser.h"

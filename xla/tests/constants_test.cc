@@ -18,6 +18,7 @@ limitations under the License.
 #include "xla/client/lib/constants.h"
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "xla/array2d.h"

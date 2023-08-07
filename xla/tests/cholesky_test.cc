@@ -16,6 +16,7 @@ limitations under the License.
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <tuple>
 #include <vector>
 
 #include "xla/array2d.h"

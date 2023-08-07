@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <functional>
 #define EIGEN_USE_THREADS
 
 #include "xla/service/hlo_runner.h"
@@ -47,7 +48,7 @@ HloRunner::HloRunner(se::Platform* platform, int intra_op_parallelism_threads) {
   VLOG(1) << "Created HloRunner for platform: " << platform->Name();
 }
 
-HloRunner::~HloRunner() {}
+HloRunner::~HloRunner() = default;
 
 StatusOr<ScopedShapedBuffer> HloRunner::TransferLiteralToDevice(
     const Literal& literal, int64_t param_no) {

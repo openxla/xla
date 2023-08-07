@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/result_caster.h"
 
+#include <optional>
+
 #include "xla/service/shape_inference.h"
 
 namespace xla {

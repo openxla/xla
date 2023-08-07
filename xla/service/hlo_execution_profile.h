@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_EXECUTION_PROFILE_H_
 #define XLA_SERVICE_HLO_EXECUTION_PROFILE_H_
 
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"

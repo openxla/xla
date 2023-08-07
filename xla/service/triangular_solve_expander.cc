@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/service/triangular_solve_expander.h"
 
+#include <algorithm>
 #include <memory>
+#include <numeric>
+#include <string>
 #include <vector>
 
 #include "absl/types/span.h"

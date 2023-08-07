@@ -34,7 +34,7 @@ class CpuLayoutAssignment : public LayoutAssignment {
       ChannelLayoutConstraints* channel_constraints = nullptr)
       : LayoutAssignment(entry_computation_layout, channel_constraints),
         target_machine_features_(*target_machine_features) {}
-  ~CpuLayoutAssignment() override {}
+  ~CpuLayoutAssignment() override = default;
 
  protected:
   Status AddBackendConstraints(LayoutConstraints* constraints) override;

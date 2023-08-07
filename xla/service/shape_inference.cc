@@ -18,9 +18,13 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <limits>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"

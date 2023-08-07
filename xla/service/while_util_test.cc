@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/service/while_util.h"
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "xla/hlo/utils/hlo_matchers.h"

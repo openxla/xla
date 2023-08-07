@@ -15,7 +15,11 @@ limitations under the License.
 
 #include "xla/service/while_util.h"
 
+#include <iterator>
 #include <memory>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"

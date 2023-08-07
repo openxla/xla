@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/variadic_op_splitter.h"
 
+#include <vector>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

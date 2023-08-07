@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_COMPILE_TIME_CAP_H_
 #define XLA_SERVICE_COMPILE_TIME_CAP_H_
 #include <algorithm>
+#include <optional>
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"

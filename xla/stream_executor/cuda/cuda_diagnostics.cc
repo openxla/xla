@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 
+#include <string>
+
 #if !defined(PLATFORM_WINDOWS)
 #include <dirent.h>
 #endif

@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_TPU_TPU_TOPOLOGY_H_
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "xla/stream_executor/tpu/c_api_decl.h"

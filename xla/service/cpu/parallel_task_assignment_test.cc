@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/cpu/parallel_task_assignment.h"
 
+#include <string>
+
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/target_machine_features_fake.h"
 #include "xla/test.h"

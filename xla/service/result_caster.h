@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_RESULT_CASTER_H_
 #define XLA_SERVICE_RESULT_CASTER_H_
 
+#include <utility>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/op_expander_pass.h"
 

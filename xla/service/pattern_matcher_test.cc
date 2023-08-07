@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/pattern_matcher.h"
 
+#include <memory>
+#include <sstream>
 #include <string>
 
 #include "absl/strings/str_cat.h"

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 
 #include <algorithm>
+#include <atomic>
 #include <ostream>
 
 #include "xla/shape_util.h"

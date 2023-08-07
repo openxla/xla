@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_conv_rewriter.h"
 
+#include <optional>
+#include <string>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

@@ -21,6 +21,8 @@ limitations under the License.
 
 #include <map>
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_options.h"
@@ -71,7 +73,7 @@ std::string StreamPriorityToString(StreamPriority priority);
 
 // Returns the PlatformKind corresponding to the input string; returns kInvalid
 // in the case of no match.
-PlatformKind PlatformKindFromString(std::string platform_string);
+PlatformKind PlatformKindFromString(std::string kind);
 
 // Checks that kind takes on a valid value.
 void CheckPlatformKindIsValid(PlatformKind kind);

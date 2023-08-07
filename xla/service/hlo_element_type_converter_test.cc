@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/hlo_element_type_converter.h"
 
+#include <string>
+
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/tests/hlo_test_base.h"
 

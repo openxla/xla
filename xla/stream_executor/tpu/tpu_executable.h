@@ -16,6 +16,11 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTABLE_H_
 #define XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTABLE_H_
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "xla/stream_executor/tpu/tpu_executable_interface.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 

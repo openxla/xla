@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_ALLOCATOR_STATS_H_
 #define XLA_STREAM_EXECUTOR_ALLOCATOR_STATS_H_
 
+#include <optional>
 #include <string>
 
 #include "absl/types/optional.h"

@@ -16,6 +16,10 @@ limitations under the License.
 #ifndef XLA_SERVICE_LLVM_COMPILER_H_
 #define XLA_SERVICE_LLVM_COMPILER_H_
 
+#include <functional>
+#include <memory>
+#include <vector>
+
 #include "llvm/IR/Module.h"
 #include "xla/service/compiler.h"
 
@@ -32,7 +36,7 @@ namespace xla {
 //   status.
 class LLVMCompiler : public Compiler {
  public:
-  ~LLVMCompiler() override {}
+  ~LLVMCompiler() override = default;
 
   // A callback of this type can be run before and/or after IR-level
   // optimization to e.g. dump out the generated IR to disk or gather some

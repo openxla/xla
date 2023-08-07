@@ -16,7 +16,10 @@ limitations under the License.
 // Tests that we call into Eigen for dot operations as needed.
 
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_computation.h"

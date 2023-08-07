@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/hlo_profile_printer.h"
 
+#include <string>
+
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_cat.h"
 #include "xla/service/human_readable_profile_builder.h"

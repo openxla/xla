@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_INTERPRETER_EXECUTABLE_H_
 
 #include <memory>
+#include <optional>
 
 #include "absl/types/span.h"
 #include "xla/backends/interpreter/executable_base.h"

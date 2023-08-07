@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <utility>
 
 #include "xla/client/lib/sorting.h"
 #include "xla/client/xla_builder.h"

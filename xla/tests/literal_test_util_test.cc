@@ -18,8 +18,11 @@ limitations under the License.
 
 #include "xla/tests/literal_test_util.h"
 
+#include <limits>
+#include <string>
 #include <vector>
 
+#include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
 #include "xla/literal.h"
 #include "xla/test_helpers.h"
@@ -154,11 +157,11 @@ TEST(LiteralTestUtilTest, ExpectNearFailurePlacesResultsInTemporaryDirectory) {
     TF_CHECK_OK(
         tsl::ReadBinaryProto(tsl::Env::Default(), result, &literal_proto));
     Literal literal = Literal::CreateFromProto(literal_proto).value();
-    if (result.find("expected") != std::string::npos) {
+    if (absl::StrContains(result, "expected")) {
       EXPECT_EQ("f32[] 2", literal.ToString());
-    } else if (result.find("actual") != std::string::npos) {
+    } else if (absl::StrContains(result, "actual")) {
       EXPECT_EQ("f32[] 4", literal.ToString());
-    } else if (result.find("mismatches") != std::string::npos) {
+    } else if (absl::StrContains(result, "mismatches")) {
       EXPECT_EQ("pred[] true", literal.ToString());
     } else {
       FAIL() << "unknown file in temporary directory: " << result;

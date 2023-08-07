@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/custom_call_target_registry.h"
 
+#include <mutex>
+#include <string>
+#include <utility>
+
 namespace xla {
 
 CustomCallTargetRegistry* CustomCallTargetRegistry::Global() {

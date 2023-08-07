@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/shape_util.h"
 
+#include <algorithm>
 #include <numeric>
 #include <optional>
 #include <variant>

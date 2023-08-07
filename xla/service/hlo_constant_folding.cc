@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/hlo_constant_folding.h"
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <utility>

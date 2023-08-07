@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

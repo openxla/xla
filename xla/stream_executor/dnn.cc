@@ -16,8 +16,15 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 
 #include <algorithm>
+#include <complex>
 #include <cstdint>
 #include <iterator>
+#include <memory>
+#include <optional>
+#include <ostream>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/btree_map.h"
@@ -963,7 +970,7 @@ FilterDescriptor::FilterDescriptor(int ndims) {
 
 FilterDescriptor::FilterDescriptor() : FilterDescriptor(/*ndims=*/2) {}
 
-FilterDescriptor::~FilterDescriptor() {}
+FilterDescriptor::~FilterDescriptor() = default;
 
 void FilterDescriptor::CloneFrom(const FilterDescriptor& other) {
   tensor_ = other.tensor_;
@@ -1083,7 +1090,7 @@ ConvolutionDescriptor::ConvolutionDescriptor(int ndims) {
 ConvolutionDescriptor::ConvolutionDescriptor()
     : ConvolutionDescriptor(/*ndims=*/2) {}
 
-ConvolutionDescriptor::~ConvolutionDescriptor() {}
+ConvolutionDescriptor::~ConvolutionDescriptor() = default;
 
 std::string ConvolutionDescriptor::ToString() const {
   std::string padding;

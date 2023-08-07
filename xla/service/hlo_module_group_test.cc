@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_module_group.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_group_metadata.h"

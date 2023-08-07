@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/bfloat16_propagation.h"
 
+#include <memory>
+#include <string>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -35,7 +38,7 @@ namespace xla {
 class TestBFloat16Support : public FloatSupport {
  public:
   TestBFloat16Support() : FloatSupport(BF16) {}
-  ~TestBFloat16Support() override {}
+  ~TestBFloat16Support() override = default;
 
   bool SupportsLowPrecisionOperand(const HloInstruction& hlo,
                                    int64_t operand_index) const override {

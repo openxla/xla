@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_transfer_manager.h"
 
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <utility>

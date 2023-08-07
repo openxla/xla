@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/reduce_scatter_decomposer.h"
 
 #include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"

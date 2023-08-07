@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/service/rng_expander.h"
 
+#include <iterator>
 #include <random>
+#include <tuple>
+#include <vector>
 
 #include "xla/client/lib/prng.h"
 #include "xla/client/xla_builder.h"

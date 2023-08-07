@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_SPMD_STATEFUL_RNG_SPMD_PARTITIONER_H_
 #define XLA_SERVICE_SPMD_STATEFUL_RNG_SPMD_PARTITIONER_H_
 
+#include <memory>
 #include <utility>
 
 #include "xla/hlo/ir/hlo_computation.h"

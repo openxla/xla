@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/hlo_domain_remover.h"
 
+#include <vector>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"

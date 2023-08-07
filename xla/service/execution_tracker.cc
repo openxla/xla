@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"

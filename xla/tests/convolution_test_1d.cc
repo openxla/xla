@@ -17,6 +17,7 @@ limitations under the License.
 // strides and padding).
 
 #include <memory>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "xla/array2d.h"

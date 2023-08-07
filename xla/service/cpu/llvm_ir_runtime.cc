@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/cpu/llvm_ir_runtime.h"
 
+#include <functional>
+#include <vector>
+
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"

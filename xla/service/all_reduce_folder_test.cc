@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/all_reduce_folder.h"
 
+#include <iostream>
+#include <memory>
+#include <utility>
+
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"

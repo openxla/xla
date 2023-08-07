@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_SERVICE_HLO_DOMAIN_MAP_H_
 
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -80,7 +82,7 @@ class HloDomainMap {
   using InstructionOrderMap =
       absl::flat_hash_map<const HloInstruction*, int64_t>;
 
-  HloDomainMap(std::string domain_kind)
+  explicit HloDomainMap(std::string domain_kind)
       : domain_kind_(std::move(domain_kind)) {}
 
   // Check if the kDomain instruction is facing (via its operand link) another

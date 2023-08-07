@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/service/dot_decomposer.h"
 
+#include <memory>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_join.h"

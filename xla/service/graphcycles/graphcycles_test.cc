@@ -17,8 +17,10 @@ limitations under the License.
 
 #include "xla/service/graphcycles/graphcycles.h"
 
+#include <algorithm>
 #include <optional>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"

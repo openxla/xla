@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_SERVICE_GPU_ELEMENTAL_IR_EMITTER_H_
 
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/types/span.h"
 #include "llvm/IR/IRBuilder.h"

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <map>
 #include <optional>
+#include <utility>
 
 #include "absl/algorithm/container.h"
 #include "xla/status_macros.h"

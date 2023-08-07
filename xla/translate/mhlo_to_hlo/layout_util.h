@@ -19,6 +19,7 @@ limitations under the License.
 #define XLA_TRANSLATE_MHLO_TO_HLO_LAYOUT_UTIL_H_
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "xla/client/xla_builder.h"

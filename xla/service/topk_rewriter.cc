@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/topk_rewriter.h"
 
 #include <array>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>

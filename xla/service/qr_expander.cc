@@ -15,7 +15,11 @@ limitations under the License.
 
 #include "xla/service/qr_expander.h"
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
+#include <numeric>
+#include <string>
 #include <vector>
 
 #include "xla/client/lib/arithmetic.h"

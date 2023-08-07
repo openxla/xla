@@ -17,6 +17,8 @@ limitations under the License.
 // resulting object file to stdout.
 
 #include <iostream>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "llvm/TargetParser/Host.h"

@@ -15,9 +15,15 @@ limitations under the License.
 
 #include "xla/tests/client_library_test_base.h"
 
+#include <algorithm>
+#include <functional>
+#include <iterator>
 #include <memory>
+#include <numeric>
 #include <string>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "xla/client/client_library.h"

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment_tuning_utils.h"
 
+#include <optional>
+#include <vector>
+
 #include "xla/service/memory_space_assignment_utils.h"
 namespace xla {
 

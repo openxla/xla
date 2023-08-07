@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/dynamic_dimension_inference.h"
 
+#include <functional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -129,7 +132,7 @@ class DynamicDimensionInferenceVisitor : public DfsHloVisitorWithDefault {
 
   Status HandleBroadcast(HloInstruction* hlo) override;
 
-  Status HandleGetDimensionSize(HloInstruction* hlo) override;
+  Status HandleGetDimensionSize(HloInstruction* gds) override;
 
   Status HandleSetDimensionSize(HloInstruction* hlo) override;
 

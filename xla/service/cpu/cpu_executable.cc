@@ -18,7 +18,9 @@ limitations under the License.
 #include <stdint.h>
 
 #include <algorithm>
+#include <cstring>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>

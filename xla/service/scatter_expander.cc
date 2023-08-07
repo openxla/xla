@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/scatter_expander.h"
 
+#include <iterator>
+#include <vector>
+
 #include "absl/algorithm/container.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"

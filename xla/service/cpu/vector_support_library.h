@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_CPU_VECTOR_SUPPORT_LIBRARY_H_
 
 #include <string>
+#include <vector>
 
 #include "absl/types/span.h"
 #include "llvm/IR/IRBuilder.h"

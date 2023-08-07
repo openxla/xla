@@ -16,7 +16,11 @@ limitations under the License.
 #ifndef XLA_SERVICE_INDEXED_ARRAY_ANALYSIS_H_
 #define XLA_SERVICE_INDEXED_ARRAY_ANALYSIS_H_
 
+#include <memory>
+#include <string>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"

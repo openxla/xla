@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/convert_mover.h"
 
+#include <deque>
+#include <vector>
+
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_creation_utils.h"
 

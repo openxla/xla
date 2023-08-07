@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_OUTFEED_THUNK_H_
 #define XLA_SERVICE_GPU_OUTFEED_THUNK_H_
 
+#include <vector>
+
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/thunk.h"

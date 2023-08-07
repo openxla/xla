@@ -17,6 +17,9 @@ limitations under the License.
 
 #include <complex>
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/tools/hlo_slicer.h"
 
+#include <deque>
 #include <memory>
 #include <vector>
 

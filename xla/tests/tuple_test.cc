@@ -15,6 +15,8 @@ limitations under the License.
 
 #include <initializer_list>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "xla/array2d.h"
 #include "xla/client/local_client.h"

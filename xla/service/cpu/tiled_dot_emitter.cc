@@ -15,6 +15,12 @@ limitations under the License.
 
 #include "xla/service/cpu/tiled_dot_emitter.h"
 
+#include <algorithm>
+#include <iterator>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/cpu/vector_support_library.h"
 #include "xla/service/llvm_ir/kernel_support_library.h"

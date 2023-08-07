@@ -20,6 +20,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_HOST_HOST_GPU_EXECUTOR_H_
 
 #include <cstdint>
+#include <memory>
 
 #include "absl/functional/any_invocable.h"
 #include "xla/stream_executor/blas.h"

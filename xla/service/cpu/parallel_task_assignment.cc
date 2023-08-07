@@ -16,7 +16,10 @@ limitations under the License.
 #include "xla/service/cpu/parallel_task_assignment.h"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -35,7 +38,7 @@ class SimpleCostModel : public ParallelCostModel {
   SimpleCostModel(const int64_t max_parallelism,
                   const HloCostAnalysis::ShapeSizeFunction& shape_size)
       : max_parallelism_(max_parallelism), shape_size_(shape_size) {}
-  ~SimpleCostModel() override {}
+  ~SimpleCostModel() override = default;
 
   int64_t GetParallelTaskCount(HloInstruction* instruction) override {
     // Simple cost model based on hlo size and typical L2 cache size.
@@ -60,7 +63,7 @@ class DefaultCostModel : public ParallelCostModel {
       : max_parallelism_(max_parallelism),
         shape_size_(shape_size),
         cost_analysis_(std::move(cost_analysis)) {}
-  ~DefaultCostModel() override {}
+  ~DefaultCostModel() override = default;
 
   int64_t GetParallelTaskCount(HloInstruction* instruction) override {
     // Parameters for parallel task count computation.
@@ -121,13 +124,14 @@ ParallelTaskAssignment::ParallelTaskAssignment(
   Status status = computation->root_instruction()->Accept(cost_analysis.get());
   if (status.ok()) {
     // Set default cost model based on 'cost_analysis'.
-    cost_model_.reset(new DefaultCostModel(max_parallelism, shape_size,
-                                           std::move(cost_analysis)));
+    cost_model_ = std::make_unique<DefaultCostModel>(
+        max_parallelism, shape_size, std::move(cost_analysis));
   } else {
     // Fall back to a simple cost model based on hlo size and L2 cache size.
     // Note that HloCostAnalysis can returns an error status (likely because
     // HLOs like CustomCall are not yet implemented in the HloCostAnalysis).
-    cost_model_.reset(new SimpleCostModel(max_parallelism, shape_size));
+    cost_model_ =
+        std::make_unique<SimpleCostModel>(max_parallelism, shape_size);
   }
 }
 

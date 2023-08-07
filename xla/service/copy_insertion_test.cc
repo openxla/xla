@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include "absl/log/log.h"

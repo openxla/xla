@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/service/op_expander_pass.h"
 
+#include <iterator>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "xla/hlo/ir/hlo_instruction.h"

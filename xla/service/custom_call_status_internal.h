@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_CUSTOM_CALL_STATUS_INTERNAL_H_
 
 #include <optional>
+#include <string>
 
 #include "absl/strings/string_view.h"
 #include "xla/service/custom_call_status.h"

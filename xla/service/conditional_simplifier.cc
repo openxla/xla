@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/conditional_simplifier.h"
 
+#include <algorithm>
+#include <functional>
 #include <iterator>
 #include <set>
 #include <string>

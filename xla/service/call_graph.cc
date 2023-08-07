@@ -17,7 +17,10 @@ limitations under the License.
 
 #include <deque>
 #include <memory>
+#include <ostream>
 #include <queue>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"

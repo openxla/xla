@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/all_reduce_folder.h"
 
+#include <algorithm>
+#include <optional>
+#include <vector>
+
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"

@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "absl/strings/str_replace.h"
 #include "xla/debug_options_flags.h"

@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/tuple_util.h"
 
+#include <vector>
+
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 

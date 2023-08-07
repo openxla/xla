@@ -15,7 +15,12 @@ limitations under the License.
 
 #include "xla/service/cholesky_expander.h"
 
+#include <algorithm>
+#include <limits>
 #include <memory>
+#include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "xla/client/lib/arithmetic.h"

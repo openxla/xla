@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/all_reduce_simplifier.h"
 
+#include <utility>
 #include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"

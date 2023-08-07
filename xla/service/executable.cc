@@ -16,6 +16,9 @@ limitations under the License.
 #include "xla/service/executable.h"
 
 #include <memory>
+#include <optional>
+#include <utility>
+#include <vector>
 
 #include "absl/strings/str_format.h"
 #include "xla/debug_options_flags.h"

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/client/value_inference.h"
 
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 

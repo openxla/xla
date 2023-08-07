@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/bfloat16_propagation.h"
 
+#include <utility>
+
 #include "absl/algorithm/container.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_set.h"

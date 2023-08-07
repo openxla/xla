@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_H_
 #define XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_H_
 
+#include <map>
 #include <memory>
+#include <string>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/str_format.h"
 #include "xla/service/llvm_ir/llvm_loop.h"

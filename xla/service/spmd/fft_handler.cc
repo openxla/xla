@@ -18,7 +18,9 @@ limitations under the License.
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"

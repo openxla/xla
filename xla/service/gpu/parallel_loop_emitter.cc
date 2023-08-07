@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/parallel_loop_emitter.h"
 
 #include <memory>
+#include <vector>
 
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"

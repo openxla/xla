@@ -15,7 +15,11 @@ limitations under the License.
 
 #include "xla/backends/interpreter/executable_base.h"
 
+#include <algorithm>
+#include <memory>
+#include <optional>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"

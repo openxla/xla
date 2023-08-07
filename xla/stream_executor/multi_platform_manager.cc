@@ -15,7 +15,12 @@ limitations under the License.
 
 #include "xla/stream_executor/multi_platform_manager.h"
 
+#include <functional>
+#include <map>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"

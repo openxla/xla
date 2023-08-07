@@ -23,15 +23,20 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_GPU_GPU_EXECUTOR_H_
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/node_hash_map.h"
+#include "absl/container/node_hash_set.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/event.h"
@@ -57,7 +62,7 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   // we just need to support some XLA specific state.
   class Object {
     struct Concept {
-      virtual ~Concept() {}
+      virtual ~Concept() = default;
     };
     template <typename T>
     struct Model : Concept {
@@ -332,7 +337,7 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   // Guards the in-memory-module mapping.
   absl::Mutex in_memory_modules_mu_;
 
-  std::map<const char*, GpuModuleHandle> in_memory_modules_
+  absl::node_hash_map<const char*, GpuModuleHandle> in_memory_modules_
       ABSL_GUARDED_BY(in_memory_modules_mu_);
 
   absl::Mutex shared_constants_mu_;
@@ -343,7 +348,7 @@ class GpuExecutor : public internal::StreamExecutorInterface {
       shared_constants_ ABSL_GUARDED_BY(shared_constants_mu_);
 
   // Kernel -> loaded GPU binary. Many kernels may load the same binary.
-  std::unordered_map<const KernelBase*, const void*> kernel_to_gpu_binary_
+  absl::flat_hash_map<const KernelBase*, const void*> kernel_to_gpu_binary_
       ABSL_GUARDED_BY(in_memory_modules_mu_);
   // GPU binary (PTX or CUBIN or HSACO) -> {CUDA module, reference count}.
   std::unordered_map<const void*, std::pair<GpuModuleHandle, uint64_t>>
@@ -354,7 +359,7 @@ class GpuExecutor : public internal::StreamExecutorInterface {
 
   // Keeps track of the set of launched kernels. Currently used to suppress the
   // occupancy check on subsequent launches.
-  std::set<GpuFunctionHandle> launched_kernels_
+  absl::node_hash_set<GpuFunctionHandle> launched_kernels_
       ABSL_GUARDED_BY(launched_kernels_mu_);
 
   // Handle for the CUDA device being operated on. Immutable

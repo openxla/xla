@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GRAPHCYCLES_GRAPHCYCLES_H_
 #define XLA_SERVICE_GRAPHCYCLES_GRAPHCYCLES_H_
 
+#include <string>
 #include <vector>
 
 // GraphCycles detects the introduction of a cycle into a directed
@@ -72,13 +73,13 @@ class GraphCycles {
   // Attempt to insert an edge from source_node to dest_node.  If the
   // edge would introduce a cycle, return false without making any
   // changes. Otherwise add the edge and return true.
-  bool InsertEdge(int32_t source_node, int32_t dest_node);
+  bool InsertEdge(int32_t x, int32_t y);
 
   // Remove any edge that exists from source_node to dest_node.
-  void RemoveEdge(int32_t source_node, int32_t dest_node);
+  void RemoveEdge(int32_t x, int32_t y);
 
   // Return whether there is an edge directly from source_node to dest_node.
-  bool HasEdge(int32_t source_node, int32_t dest_node) const;
+  bool HasEdge(int32_t x, int32_t y) const;
 
   // Contracts the edge from 'a' to node 'b', merging nodes 'a' and 'b'. One of
   // the nodes is removed from the graph, and edges to/from it are added to
@@ -91,10 +92,10 @@ class GraphCycles {
 
   // Return whether dest_node is reachable from source_node
   // by following edges.
-  bool IsReachable(int32_t source_node, int32_t dest_node) const;
+  bool IsReachable(int32_t x, int32_t y) const;
 
   // A faster non-thread-safe version of IsReachable.
-  bool IsReachableNonConst(int32_t source_node, int32_t dest_node);
+  bool IsReachableNonConst(int32_t x, int32_t y);
 
   // Return or set the node data for a node.  This data is unused
   // by the implementation.
@@ -112,8 +113,7 @@ class GraphCycles {
   // except the source and destination node if they are identical; therefore,
   // the return value is at most one greater than the number of nodes in the
   // graph.
-  int FindPath(int32_t source, int32_t dest, int max_path_len,
-               int32_t path[]) const;
+  int FindPath(int32_t x, int32_t y, int max_path_len, int32_t path[]) const;
 
   // Check internal invariants. Crashes on failure, returns true on success.
   // Expensive: should only be called from graphcycles_test.cc.

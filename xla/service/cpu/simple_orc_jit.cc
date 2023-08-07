@@ -19,8 +19,10 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <list>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "llvm/ExecutionEngine/ExecutionEngine.h"

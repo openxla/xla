@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/ir_emitter_nested.h"
 
+#include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 

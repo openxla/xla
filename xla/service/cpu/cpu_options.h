@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_CPU_OPTIONS_H_
 #define XLA_SERVICE_CPU_CPU_OPTIONS_H_
 
+#include <optional>
+#include <tuple>
+
 #include "xla/service/hlo_module_config.h"
 
 // Helper functions for querying options that are specific to the CPU backend.

@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
+#include <tuple>
+
 #include "xla/tests/exhaustive/exhaustive_op_test_utils.h"
 
 #ifdef __FAST_MATH__

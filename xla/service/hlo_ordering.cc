@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/hlo_ordering.h"
 
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 

@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_CHOLESKY_EXPANDER_H_
 #define XLA_SERVICE_CHOLESKY_EXPANDER_H_
 
+#include <string>
+#include <utility>
+
 #include "absl/container/flat_hash_map.h"
 #include "xla/client/xla_builder.h"
 #include "xla/service/op_expander_pass.h"

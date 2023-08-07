@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 
 #include <memory>
+#include <set>
 #include <utility>
 
 #include "xla/map_util.h"

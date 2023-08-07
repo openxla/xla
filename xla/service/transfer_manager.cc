@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/strings/str_cat.h"
@@ -30,8 +31,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/notification.h"
-
-using absl::StrCat;
 
 namespace xla {
 

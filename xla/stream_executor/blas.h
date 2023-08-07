@@ -201,7 +201,7 @@ constexpr ComputePrecision kDefaultComputePrecision = 0;
 // behavior at the current time; see b/13176597
 class BlasSupport {
  public:
-  virtual ~BlasSupport() {}
+  virtual ~BlasSupport() = default;
 
   // Performs a BLAS y <- ax+y operation.
   virtual bool DoBlasAxpy(Stream *stream, uint64_t elem_count, float alpha,

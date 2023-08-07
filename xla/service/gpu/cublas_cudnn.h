@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_CUBLAS_CUDNN_H_
 #define XLA_SERVICE_GPU_CUBLAS_CUDNN_H_
 
+#include <string>
+
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"

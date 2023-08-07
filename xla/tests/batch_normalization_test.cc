@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <cmath>
 #include <memory>
+#include <ostream>
 #include <vector>
 
 #include "absl/strings/str_join.h"

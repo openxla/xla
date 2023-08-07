@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/custom_call_thunk.h"
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "absl/strings/str_format.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/util.h"

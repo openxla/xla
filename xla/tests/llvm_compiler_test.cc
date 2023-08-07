@@ -49,7 +49,7 @@ class GpuDummyCompiler : public GpuCompiler {
   Status OptimizeHloConvolutionCanonicalization(
       HloModule* hlo_module, GpuVersion gpu_version,
       se::dnn::VersionInfo dnn_version,
-      se::DeviceMemoryAllocator* device_allocator) {
+      se::DeviceMemoryAllocator* device_allocator) override {
     return OkStatus();
   }
 
@@ -92,7 +92,7 @@ class LLVMCompilerTest : public ::testing::Test {
     backend_ = std::move(backend_or_status).value();
   }
 
-  ~LLVMCompilerTest() override {}
+  ~LLVMCompilerTest() override = default;
 
  protected:
   using Platform = se::Platform;

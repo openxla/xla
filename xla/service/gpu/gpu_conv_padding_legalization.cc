@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_conv_padding_legalization.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <memory>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/literal.h"

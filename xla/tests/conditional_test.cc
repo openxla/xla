@@ -14,7 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <random>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "xla/client/xla_builder.h"
 #include "xla/client/xla_computation.h"

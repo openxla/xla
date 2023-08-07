@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/slow_operation_alarm.h"
 
+#include <atomic>
 #include <functional>
 #include <iterator>
 #include <list>

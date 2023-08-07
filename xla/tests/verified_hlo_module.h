@@ -16,6 +16,7 @@ limitations under the License.
 #define XLA_TESTS_VERIFIED_HLO_MODULE_H_
 
 #include <functional>
+#include <string>
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"

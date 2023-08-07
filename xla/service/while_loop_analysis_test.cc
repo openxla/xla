@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/while_loop_analysis.h"
 
+#include <vector>
+
 #include "xla/service/hlo_parser.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"

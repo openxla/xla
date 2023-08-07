@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_FFT_THUNK_H_
 #define XLA_SERVICE_GPU_FFT_THUNK_H_
 
+#include <memory>
 #include <optional>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"

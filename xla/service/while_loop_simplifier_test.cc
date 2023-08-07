@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/while_loop_simplifier.h"
 
+#include <memory>
+#include <string>
+
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "xla/hlo/ir/hlo_instruction.h"

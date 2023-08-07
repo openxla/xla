@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <string>
+
 #include "xla/execution_options_util.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/status_macros.h"

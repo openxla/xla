@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/horizontal_input_fusion.h"
 
 #include <algorithm>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
@@ -46,7 +47,7 @@ class HorizontalInputFusionImpl {
                                      const GpuDeviceInfo& d)
       : computation_(computation), device_info_(d) {}
 
-  ~HorizontalInputFusionImpl() {}
+  ~HorizontalInputFusionImpl() = default;
 
   StatusOr<bool> Run();
 

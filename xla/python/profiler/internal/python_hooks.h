@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <stack>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"

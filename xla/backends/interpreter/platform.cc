@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/interpreter/platform.h"
 
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "absl/strings/str_format.h"
@@ -33,7 +34,7 @@ XlaInterpreterPlatform::XlaInterpreterPlatform(const std::string& name,
                                                const Platform::Id& id)
     : name_(name), id_(id) {}
 
-XlaInterpreterPlatform::~XlaInterpreterPlatform() {}
+XlaInterpreterPlatform::~XlaInterpreterPlatform() = default;
 
 Platform::Id XlaInterpreterPlatform::id() const { return id_; }
 

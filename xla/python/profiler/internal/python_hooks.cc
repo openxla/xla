@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <atomic>
 #include <string>
+#include <utility>
 
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"

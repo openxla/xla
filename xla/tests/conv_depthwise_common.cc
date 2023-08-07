@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tests/conv_depthwise_common.h"
 
 #include <optional>
+#include <string>
 
 #include "xla/client/xla_computation.h"
 #include "xla/execution_options_util.h"

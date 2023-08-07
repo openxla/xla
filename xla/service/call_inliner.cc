@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/service/call_inliner.h"
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"

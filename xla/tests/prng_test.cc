@@ -15,6 +15,9 @@ limitations under the License.
 
 #include <limits>
 #include <memory>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #include "absl/types/span.h"
 #include "xla/client/local_client.h"

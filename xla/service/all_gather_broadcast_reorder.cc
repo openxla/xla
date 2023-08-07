@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/all_gather_broadcast_reorder.h"
 
+#include <vector>
+
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

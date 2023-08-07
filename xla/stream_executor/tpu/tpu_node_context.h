@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_TPU_TPU_NODE_CONTEXT_H_
 
 #include <memory>
+#include <string>
 
 #include "xla/service/backend.h"
 #include "xla/service/stream_pool.h"

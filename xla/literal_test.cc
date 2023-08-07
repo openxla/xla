@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/literal.h"
 
-#include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"

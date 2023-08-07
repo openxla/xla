@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/service/hlo_dataflow_analysis.h"
 
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -2071,7 +2074,7 @@ TEST_F(HloDataflowAnalysisTest, AllGatherStartAndDoneWithTuple) {
   TF_ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_text));
   const HloDataflowAnalysis& analysis = RunAnalysis(/*ssa_form=*/false);
   Status status = analysis.Verify();
-  EXPECT_TRUE(status.ok()) << status.ToString();
+  EXPECT_TRUE(status.ok()) << status;
 
   HloInstruction* done = module_->entry_computation()->root_instruction();
   HloInstruction* start = done->mutable_operand(0);

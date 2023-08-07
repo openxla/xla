@@ -17,6 +17,8 @@ limitations under the License.
 // strides and padding).
 
 #include <memory>
+#include <numeric>
+#include <vector>
 
 #include "xla/array2d.h"
 #include "xla/array4d.h"
@@ -287,12 +289,12 @@ XLA_TEST_F(ConvolutionTest, Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid) {
   }
 
   std::vector<float> input_elems(ShapeUtil::ElementsIn(input_shape));
-  iota(input_elems.begin(), input_elems.end(), 1.0f);
+  std::iota(input_elems.begin(), input_elems.end(), 1.0f);
   auto input_r1 = LiteralUtil::CreateR1<float>(input_elems);
   auto input_r5 = input_r1.Reshape(input_dims).value();
 
   std::vector<float> filter_elems(ShapeUtil::ElementsIn(filter_shape));
-  iota(filter_elems.begin(), filter_elems.end(), 1.0f);
+  std::iota(filter_elems.begin(), filter_elems.end(), 1.0f);
   auto filter_r1 = LiteralUtil::CreateR1<float>(filter_elems);
   auto filter_r5 = filter_r1.Reshape(filter_dims).value();
 

@@ -19,6 +19,11 @@ limitations under the License.
 #ifndef XLA_LITERAL_COMPARISON_H_
 #define XLA_LITERAL_COMPARISON_H_
 
+#include <functional>
+#include <optional>
+#include <string>
+#include <vector>
+
 #include "xla/error_spec.h"
 #include "xla/literal.h"
 #include "tsl/platform/status.h"

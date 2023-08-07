@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/reduce_scatter_combiner.h"
 
+#include <memory>
 #include <utility>
 
 #include "xla/hlo/ir/hlo_module.h"

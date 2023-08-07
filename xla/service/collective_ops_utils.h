@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_COLLECTIVE_OPS_UTILS_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -252,7 +253,7 @@ struct ParticipantData {
   explicit ParticipantData(const RendezvousKey& rendezvous_key)
       : rendezvous_key(rendezvous_key) {}
 
-  virtual ~ParticipantData() {}
+  virtual ~ParticipantData() = default;
 
   RendezvousKey rendezvous_key;
 
@@ -317,7 +318,7 @@ template <typename I, typename O,
               std::enable_if_t<std::is_base_of<ParticipantData, I>::value>>
 class Rendezvous {
  public:
-  virtual ~Rendezvous() {}
+  virtual ~Rendezvous() = default;
   explicit Rendezvous(const RendezvousKey& k) : key_(k) {}
 
   // Submit a participant to the rendezvous. We get the rendezvous from

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/slice_sinker.h"
 
 #include <algorithm>
+#include <iterator>
 #include <optional>
 #include <utility>
 #include <vector>

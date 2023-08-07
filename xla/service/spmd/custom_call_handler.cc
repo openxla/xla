@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/spmd/custom_call_handler.h"
 
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"

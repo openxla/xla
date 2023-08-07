@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/bfloat16_conversion_folding.h"
 
+#include <vector>
+
 #include "absl/types/span.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"

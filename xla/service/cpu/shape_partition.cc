@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "xla/service/cpu/shape_partition.h"
 
+#include <algorithm>
+#include <cmath>
+#include <utility>
+#include <vector>
+
 namespace xla {
 namespace cpu {
 

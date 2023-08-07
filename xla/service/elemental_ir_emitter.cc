@@ -16,11 +16,14 @@ limitations under the License.
 #include "xla/service/elemental_ir_emitter.h"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 // IWYU pragma: no_include "llvm/IR/Intrinsics.gen.inc"
@@ -285,7 +288,7 @@ llvm::Value* EmitF16ToF8e4m3fn(llvm::Value* f16_value, llvm::IRBuilder<>* b) {
       /*dest_exponent_bits=*/5,
       /*dest_mantissa_bits=*/3,
       /*quiet_nans=*/false, b);
-  CHECK(f16_reduced_statusor.ok());  // Crash OK
+  CHECK_OK(f16_reduced_statusor.status());  // Crash OK
   Value* f16_reduced = f16_reduced_statusor.value();
   f16_reduced = b->CreateBitCast(f16_reduced, i16_type);
 

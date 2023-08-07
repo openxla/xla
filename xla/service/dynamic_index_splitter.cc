@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/dynamic_index_splitter.h"
 
 #include <map>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"

@@ -15,9 +15,13 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "absl/base/call_once.h"
 #include "absl/container/fixed_array.h"

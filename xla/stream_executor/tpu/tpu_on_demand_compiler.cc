@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "absl/cleanup/cleanup.h"
 #include "xla/hlo/ir/hlo_module.h"

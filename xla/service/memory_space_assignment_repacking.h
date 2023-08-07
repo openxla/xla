@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_REPACKING_H_
 #define XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_REPACKING_H_
 
+#include <string>
+#include <vector>
+
 #include "xla/statusor.h"
 #include "xla/types.h"
 

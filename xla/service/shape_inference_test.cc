@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/service/shape_inference.h"
 
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"

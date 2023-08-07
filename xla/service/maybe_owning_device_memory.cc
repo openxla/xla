@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/maybe_owning_device_memory.h"
 
+#include <optional>
+#include <utility>
+#include <variant>
+
 #include "absl/types/variant.h"
 
 namespace xla {

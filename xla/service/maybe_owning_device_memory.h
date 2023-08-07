@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_SERVICE_MAYBE_OWNING_DEVICE_MEMORY_H_
 
 #include <optional>
+#include <utility>
+#include <variant>
 
 #include "absl/types/variant.h"
 #include "xla/stream_executor/device_memory_allocator.h"

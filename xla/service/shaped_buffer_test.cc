@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 
 #include <memory>
+#include <set>
 #include <utility>
+#include <vector>
 
 #include "xla/service/platform_util.h"
 #include "xla/shape_util.h"

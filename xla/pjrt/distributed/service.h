@@ -17,7 +17,9 @@ limitations under the License.
 #define XLA_PJRT_DISTRIBUTED_SERVICE_H_
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"

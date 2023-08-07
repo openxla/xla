@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <memory>
+
 #include "xla/service/copy_insertion.h"
 #include "xla/service/gpu/instruction_fusion.h"
 #include "xla/service/hlo_verifier.h"

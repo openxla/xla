@@ -16,6 +16,7 @@ limitations under the License.
 #define XLA_SERVICE_FUSION_QUEUE_H_
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/str_cat.h"

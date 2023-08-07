@@ -65,7 +65,7 @@ bool hasPrivateFeaturesNotInStablehlo(HloOpTy hloOp) {
     // This feature isn't supported in HLO and doesn't have documentation, so
     // we may end up removing it from MHLO as well.
     auto dimensionNumbers = debugString(hloOp.getDimensionNumbers());
-    if (dimensionNumbers.find('?') != std::string::npos) return true;
+    if (absl::StrContains(dimensionNumbers, '?')) return true;
   }
   if constexpr (std::is_same<HloOpTy, mhlo::CustomCallOp>::value) {
     // To the best of our knowledge, none of the ML frontends are using this
@@ -563,6 +563,7 @@ void populateHloToStablehloPatterns(RewritePatternSet* patterns,
   populateHloToStablehloPatterns<
 #define GET_OP_LIST
 #include "stablehlo/dialect/StablehloOps.cpp.inc"
+#include "absl/strings/match.h"
       >(patterns, converter, context, allowExperimentalFeatures);
 
   populateHloToStablehloCustomCallPatterns<mhlo::TanOp>(

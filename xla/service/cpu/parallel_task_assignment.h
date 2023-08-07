@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_PARALLEL_TASK_ASSIGNMENT_H_
 #define XLA_SERVICE_CPU_PARALLEL_TASK_ASSIGNMENT_H_
 
+#include <memory>
+
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/cpu/target_machine_features.h"
@@ -39,11 +41,11 @@ class ParallelTaskAssignment {
   // 'shape_size': shape size function used by HloCostAnalysis during parallel
   //               task assignment.
   // 'module': the containing HloModule.
-  ParallelTaskAssignment(const int64_t max_parallelism,
+  ParallelTaskAssignment(int64_t max_parallelism,
                          const HloCostAnalysis::ShapeSizeFunction& shape_size,
                          HloModule* module,
                          const TargetMachineFeatures* target_machine_features);
-  ~ParallelTaskAssignment() {}
+  ~ParallelTaskAssignment() = default;
 
   // Computes and returns the target parallel task count for 'instruction'.
   int64_t GetTargetParallelTaskCount(HloInstruction* instruction);
@@ -72,7 +74,7 @@ class ParallelTaskAssigner : public HloModulePass {
       : max_parallelism_(max_parallelism),
         shape_size_function_(shape_size),
         target_machine_features_(*target_machine_features) {}
-  ~ParallelTaskAssigner() override {}
+  ~ParallelTaskAssigner() override = default;
 
   absl::string_view name() const override {
     return "cpu-parallel-task-assigner";

@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 
 #include <cstdint>
+#include <ostream>
+#include <string>
 
 #include "absl/strings/str_cat.h"
 

@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_SHAPE_PARTITION_H_
 #define XLA_SERVICE_CPU_SHAPE_PARTITION_H_
 
+#include <utility>
 #include <vector>
 
 #include "xla/shape_util.h"
@@ -64,7 +65,7 @@ namespace cpu {
 //
 class ShapePartitionAssigner {
  public:
-  ShapePartitionAssigner(const Shape& shape) : shape_(shape) {}
+  explicit ShapePartitionAssigner(const Shape& shape) : shape_(shape) {}
 
   // Returns dimension partition counts (starting at outer-most dimension).
   std::vector<int64_t> Run(int64_t target_partition_count);

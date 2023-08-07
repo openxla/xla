@@ -17,6 +17,7 @@ limitations under the License.
 // given platform(s). See kUsage for details.
 
 #include <iostream>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>

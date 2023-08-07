@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <utility>

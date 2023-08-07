@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <functional>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/collective_ops_utils.h"

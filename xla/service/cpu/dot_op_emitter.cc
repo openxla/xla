@@ -15,7 +15,15 @@ limitations under the License.
 
 #include "xla/service/cpu/dot_op_emitter.h"
 
+#include <algorithm>
+#include <array>
+#include <iterator>
 #include <memory>
+#include <numeric>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/str_cat.h"

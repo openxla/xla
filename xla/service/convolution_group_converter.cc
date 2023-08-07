@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/service/convolution_group_converter.h"
 
 #include <algorithm>
+#include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -60,7 +62,7 @@ class ConvolutionVisitor : public DfsHloVisitorWithDefault {
                   bool convert_batch_groups_only, bool filter_expansion);
 
   // Returns whether any convolution ops were rewritten.
-  const bool changed() const { return changed_; }
+  bool changed() const { return changed_; }
 
   ~ConvolutionVisitor() override = default;
 

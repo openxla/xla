@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_options.h"
 
+#include <optional>
+#include <string>
+#include <tuple>
+#include <vector>
+
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_split.h"
 

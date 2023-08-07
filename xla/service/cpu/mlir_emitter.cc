@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/cpu/mlir_emitter.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "llvm/Linker/Linker.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"  // from @llvm-project

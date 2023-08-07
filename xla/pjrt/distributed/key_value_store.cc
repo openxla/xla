@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/pjrt/distributed/key_value_store.h"
 
+#include <string>
+#include <utility>
+
 namespace xla {
 
 KeyValueStore::KeyValueStore() = default;

@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"

@@ -16,8 +16,11 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 
 #include <algorithm>
+#include <optional>
+#include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_join.h"

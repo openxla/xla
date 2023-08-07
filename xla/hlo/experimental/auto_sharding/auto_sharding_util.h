@@ -493,7 +493,7 @@ inline std::vector<const HloInstruction*> GetGradientComputationInstructions(
 // Gets the mapping vector from dim_from to dim_to.
 // Example: GetDimensionMapping([2], 3) = [0, 1, -1]
 std::vector<int64_t> GetDimensionMapping(
-    const absl::Span<const int64_t> reduced_dimensions, const int64_t op_count);
+    absl::Span<const int64_t> reduced_dimensions, int64_t op_count);
 
 // Checks whether denominator is divisible by numerator.
 bool IsDivisible(int64_t denominator, int64_t numerator);
@@ -523,7 +523,7 @@ bool TileAssignmentMatchesMesh(const HloSharding& spec,
 // is replicated on that dimension.
 // For example, returned value [1,2] means the 0th tensor dim maps to the 1st
 // mesh dim, and 1st tensor dim maps to the 2nd mesh dim.
-std::vector<int64_t> GetTensorDimToMeshDim(const int64_t tensor_shape_rank,
+std::vector<int64_t> GetTensorDimToMeshDim(int64_t tensor_shape_rank,
                                            const HloSharding& spec,
                                            const Array<int64_t>& device_mesh);
 
@@ -569,7 +569,7 @@ size_t VectorGreaterThanOneElementCount(absl::Span<const int64_t> span,
 // This functions returns the indices of all vector elements larger than 1, in
 // order.
 std::vector<int64_t> VectorGreaterThanOneElementIndices(
-    absl::Span<const int64_t> span, bool omit_last_dim = false);
+    absl::Span<const int64_t> vector, bool omit_last_dim = false);
 
 int64_t GetInstructionSize(const Shape& shape);
 
@@ -603,7 +603,7 @@ inline bool AdjustShardingsWithPartialMeshShape(
     const std::vector<int64_t>& mesh_shape, int64_t total_num_devices) {
   auto result = AdjustShardingsWithPartialMeshShape(instructions, mesh_shape,
                                                     total_num_devices, true);
-  CHECK(result.ok());
+  CHECK_OK(result.status());
   return *result;
 }
 

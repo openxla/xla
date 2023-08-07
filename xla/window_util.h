@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_WINDOW_UTIL_H_
 #define XLA_WINDOW_UTIL_H_
 
+#include <string>
+
 #include "absl/types/span.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"

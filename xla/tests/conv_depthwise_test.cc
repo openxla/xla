@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "xla/client/xla_computation.h"
 #include "xla/execution_options_util.h"

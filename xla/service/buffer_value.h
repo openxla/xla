@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_BUFFER_VALUE_H_
 
 #include <functional>
+#include <ostream>
 #include <string>
 
 #include "absl/types/span.h"
@@ -100,7 +101,7 @@ class BufferValue {
   BufferValue(BufferValue&&) = default;
   BufferValue& operator=(BufferValue&&) = default;
 
-  virtual ~BufferValue() {}
+  virtual ~BufferValue() = default;
 
   Id id() const { return id_; }
 

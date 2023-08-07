@@ -16,6 +16,9 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_live_range.h"
 
 #include <algorithm>
+#include <memory>
+#include <optional>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>

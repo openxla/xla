@@ -16,7 +16,9 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 
 #include <functional>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>

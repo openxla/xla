@@ -21,6 +21,8 @@ limitations under the License.
 #include <stddef.h>
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 #include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/gpu/gpu_types.h"

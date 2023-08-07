@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_CONSTANT_FOLDING_H_
 #define XLA_SERVICE_HLO_CONSTANT_FOLDING_H_
 
+#include <atomic>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
 

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <stddef.h>
 
+#include <iterator>
 #include <string>
 #include <vector>
 

@@ -16,6 +16,7 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <functional>
 #include <limits>
 #include <memory>

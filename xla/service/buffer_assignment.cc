@@ -22,7 +22,10 @@ limitations under the License.
 #include <deque>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <ostream>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 

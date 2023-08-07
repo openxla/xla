@@ -16,7 +16,12 @@ limitations under the License.
 #include "xla/service/copy_insertion.h"
 
 #include <algorithm>
+#include <memory>
 #include <optional>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -567,8 +572,7 @@ class Relation {
       : intercept_def_use_(intercept_def_use) {
     orders_.push_back(order);
   }
-  Relation(const Relation& that)
-      : intercept_def_use_(that.intercept_def_use_), orders_(that.orders_) {}
+  Relation(const Relation& that) = default;
   bool operator==(const Relation& that) const {
     return intercept_def_use_ == that.intercept_def_use_ &&
            absl::c_equal(orders_, that.orders_);

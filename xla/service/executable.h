@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <memory>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -244,7 +245,7 @@ class Executable {
     CHECK_EQ(hlo_profile_printer_data_.get() == nullptr,
              hlo_profile_index_map_.get() == nullptr);
   }
-  virtual ~Executable() {}
+  virtual ~Executable() = default;
 
   // Enqueues the compilation result on the provided stream, passing the given
   // arguments. This call is blocking and returns after the execution is done.
@@ -350,7 +351,7 @@ class Executable {
   HloModule& module() const { return *hlo_module_; }
   std::shared_ptr<HloModule> shared_module() const { return hlo_module_; }
 
-  const bool has_module() const { return hlo_module_ != nullptr; }
+  bool has_module() const { return hlo_module_ != nullptr; }
 
   const HloModuleConfig& module_config() const { return hlo_module_->config(); }
 

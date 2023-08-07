@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_GRAPH_DUMPER_H_
 #define XLA_SERVICE_HLO_GRAPH_DUMPER_H_
 
+#include <functional>
 #include <string>
 
 #include "xla/hlo/ir/hlo_computation.h"

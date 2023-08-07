@@ -39,7 +39,7 @@ class TpuExecutorInterface
 
   class TemporaryDeviceMemory {
    public:
-    virtual ~TemporaryDeviceMemory() {}
+    virtual ~TemporaryDeviceMemory() = default;
     virtual stream_executor::DeviceMemoryBase AsDeviceMemoryBase() const = 0;
   };
 

@@ -15,8 +15,14 @@ limitations under the License.
 
 // Tests the reduce-window XLA operation.
 
+#include <algorithm>
+#include <array>
 #include <limits>
 #include <memory>
+#include <numeric>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"

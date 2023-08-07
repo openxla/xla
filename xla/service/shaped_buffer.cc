@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 
 #include <memory>
+#include <ostream>
 #include <string>
 #include <utility>
 
@@ -65,7 +66,7 @@ ShapedBuffer& ShapedBuffer::operator=(ShapedBuffer&& s) {
   return *this;
 }
 
-ShapedBuffer::~ShapedBuffer() {}
+ShapedBuffer::~ShapedBuffer() = default;
 
 StatusOr<ShapedBuffer> ShapedBuffer::SubShapedBuffer(
     const ShapeIndex& index) const {

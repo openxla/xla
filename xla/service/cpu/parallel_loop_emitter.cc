@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/cpu/parallel_loop_emitter.h"
 
+#include <memory>
+#include <vector>
+
 #include "absl/strings/str_format.h"
 #include "xla/service/llvm_ir/llvm_loop.h"
 #include "xla/service/llvm_ir/llvm_util.h"

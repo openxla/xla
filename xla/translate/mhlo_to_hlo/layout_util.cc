@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/translate/mhlo_to_hlo/layout_util.h"
 
+#include <optional>
+#include <vector>
+
 namespace mlir {
 
 // Rewrites the layout of xla_shape if there is tiled sharding.

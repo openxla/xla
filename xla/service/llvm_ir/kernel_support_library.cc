@@ -15,6 +15,12 @@ limitations under the License.
 
 #include "xla/service/llvm_ir/kernel_support_library.h"
 
+#include <algorithm>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <vector>
+
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 

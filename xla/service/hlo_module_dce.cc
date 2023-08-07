@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/service/hlo_module_dce.h"
 
 #include <deque>
+#include <memory>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

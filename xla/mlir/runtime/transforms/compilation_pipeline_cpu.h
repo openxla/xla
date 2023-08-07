@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_MLIR_RUNTIME_TRANSFORMS_COMPILATION_PIPELINE_CPU_H_
 
 #include <functional>
+#include <string>
 
 #include "xla/mlir/runtime/transforms/compilation_pipeline_options.h"
 #include "xla/runtime/compiler.h"

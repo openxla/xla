@@ -18,6 +18,9 @@ limitations under the License.
 
 #include <functional>
 #include <map>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
@@ -30,7 +33,7 @@ namespace stream_executor {
 // Thread-safe.
 class ExecutorCache {
  public:
-  ExecutorCache() {}
+  ExecutorCache() = default;
 
   // Looks up 'config' in the cache. Returns a pointer to the existing executor,
   // if already present, or creates it using 'factory', if it does not.

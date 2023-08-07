@@ -16,6 +16,9 @@ limitations under the License.
 #include "xla/service/gpu/reduction_layout_normalizer.h"
 
 #include <algorithm>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_join.h"

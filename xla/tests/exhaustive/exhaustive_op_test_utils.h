@@ -24,6 +24,7 @@ limitations under the License.
 #include <iterator>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "xla/bit_cast.h"
 #include "xla/client/lib/constants.h"

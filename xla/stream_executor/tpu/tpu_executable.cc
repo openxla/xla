@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_executable.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "absl/cleanup/cleanup.h"
 #include "xla/stream_executor/tpu/c_api_conversions.h"
 #include "xla/stream_executor/tpu/status_helper.h"

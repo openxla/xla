@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
 #define XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_FAKE_H_
 
+#include <functional>
+#include <utility>
+
 #include "xla/service/cpu/target_machine_features.h"
 
 namespace xla {

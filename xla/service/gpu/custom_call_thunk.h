@@ -16,6 +16,11 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_CUSTOM_CALL_THUNK_H_
 #define XLA_SERVICE_GPU_CUSTOM_CALL_THUNK_H_
 
+#include <functional>
+#include <optional>
+#include <string>
+#include <vector>
+
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/thunk.h"

@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_RNG_EXPANDER_H_
 #define XLA_SERVICE_RNG_EXPANDER_H_
 
+#include <tuple>
+
 #include "xla/service/op_expander_pass.h"
 
 namespace xla {

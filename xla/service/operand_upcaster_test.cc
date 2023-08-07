@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/operand_upcaster.h"
 
+#include <tuple>
+
 #include "absl/strings/substitute.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/primitive_util.h"

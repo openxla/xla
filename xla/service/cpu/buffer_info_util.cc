@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/cpu/buffer_info_util.h"
 
+#include <vector>
+
 #include "xla/cpu_function_runtime.h"
 
 namespace xla {

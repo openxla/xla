@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_TRANSPOSE_FOLDING_H_
 
 #include <functional>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"

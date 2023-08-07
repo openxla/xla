@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include <sstream>
+#include <string>
+#include <utility>
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"

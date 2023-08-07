@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/rendezvous.h"
 
+#include <cstdlib>
+
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "tsl/platform/logging.h"

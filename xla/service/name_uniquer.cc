@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/name_uniquer.h"
 
+#include <string>
+
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"

@@ -16,6 +16,8 @@ limitations under the License.
 // Basic server binary that exposes a xla::Service through a GRPC interface
 // on a configurable port.
 
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/strings/str_format.h"

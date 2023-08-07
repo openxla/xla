@@ -36,7 +36,7 @@ constexpr const char* kSymbolicShapeAttrName = "rt.symbolic_shape";
 
 // Listener class to control notifications during specialization.
 struct SpecializationListener {
-  virtual ~SpecializationListener() {}
+  virtual ~SpecializationListener() = default;
 
   // Called at the end of module specialization.
   // - 'operands' is a reference to the specialized operands' types.

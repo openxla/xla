@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 
 #include <iostream>
+#include <string>
 #include <utility>
 
 #include "mlir/IR/Builders.h"  // from @llvm-project

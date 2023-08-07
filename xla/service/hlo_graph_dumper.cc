@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/hlo_graph_dumper.h"
 
+#include <functional>
+#include <unordered_map>
+#include <utility>
+
 #ifndef _WIN32
 #include <unistd.h>
 #endif

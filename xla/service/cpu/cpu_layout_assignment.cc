@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/cpu/cpu_layout_assignment.h"
 
 #include <numeric>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "xla/map_util.h"

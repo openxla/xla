@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/hlo_domain_verifier.h"
 
 #include <set>
+#include <string>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

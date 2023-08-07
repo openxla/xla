@@ -99,16 +99,15 @@ class HloControlFlowFlattening : public HloModulePass {
 // exceed a given max, returns the max. This function is more opportunistic than
 // ComputeWhileLoopTripCount in the while loop analysis as it may return a
 // constant found in a compare expression when it is not an actual bound.
-int GetLoopBound(const HloInstruction& while_hlo, const int default_loop_count,
-                 const int max_loop_count);
+int GetLoopBound(const HloInstruction& while_hlo, int default_loop_count,
+                 int max_loop_count);
 
 // Retrieves the loop bound determined by the original loop bound, the max
 // outer loops count and max loop count.
 int GetLoopBoundWithOuterLoopMax(const HloInstruction& while_hlo,
                                  const CallGraph& call_graph,
-                                 const int default_loop_count,
-                                 const int max_outer_loop_count,
-                                 const int max_loop_count);
+                                 int default_loop_count,
+                                 int max_outer_loop_count, int max_loop_count);
 }  // namespace xla
 
 #endif  // XLA_TOOLS_HLO_CONTROL_FLOW_FLATTENING_H_

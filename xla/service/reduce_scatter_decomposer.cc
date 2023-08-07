@@ -18,6 +18,7 @@ limitations under the License.
 #include <sys/types.h>
 
 #include <limits>
+#include <optional>
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"

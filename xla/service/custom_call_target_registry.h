@@ -22,6 +22,7 @@ limitations under the License.
 #include <map>
 #include <mutex>  // NOLINT
 #include <string>
+#include <utility>
 
 namespace xla {
 

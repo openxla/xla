@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_WHILE_THUNK_H_
 #define XLA_SERVICE_GPU_WHILE_THUNK_H_
 
+#include <memory>
 #include <vector>
 
 #include "xla/hlo/ir/hlo_instruction.h"

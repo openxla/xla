@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <utility>
 #define EIGEN_USE_THREADS
 
 #include "xla/tests/local_client_test_base.h"
@@ -130,7 +131,7 @@ LocalClientTestBase::LocalClientTestBase(se::Platform* platform)
       TransferManager::GetForPlatform(local_client_->platform()).value();
 }
 
-LocalClientTestBase::~LocalClientTestBase() {}
+LocalClientTestBase::~LocalClientTestBase() = default;
 
 ScopedShapedBuffer LocalClientTestBase::LiteralToShapedBuffer(
     const Literal& literal) {

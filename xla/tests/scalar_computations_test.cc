@@ -14,8 +14,11 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <memory>
+#include <ostream>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"

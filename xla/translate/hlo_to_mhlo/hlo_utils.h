@@ -18,6 +18,8 @@ limitations under the License.
 #ifndef XLA_TRANSLATE_HLO_TO_MHLO_HLO_UTILS_H_
 #define XLA_TRANSLATE_HLO_TO_MHLO_HLO_UTILS_H_
 
+#include <vector>
+
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/SparseTensor/IR/Enums.h"  // from @llvm-project
 #include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"  // from @llvm-project
@@ -42,7 +44,7 @@ StatusOr<int> GetElementTypeBytes(mlir::Type type);
 // Creates an DenseIntElementsAttr using the elements of the vector and the
 // optional shape.
 mlir::DenseIntElementsAttr CreateDenseIntElementsAttrFromVector(
-    const llvm::ArrayRef<int64_t> vector, mlir::Builder builder,
+    llvm::ArrayRef<int64_t> vector, mlir::Builder builder,
     llvm::ArrayRef<int64_t> shape = {});
 
 StatusOr<mlir::Type> ConvertPrimitiveTypeToMLIRType(PrimitiveType element_type,

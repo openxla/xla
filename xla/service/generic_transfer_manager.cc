@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/generic_transfer_manager.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>

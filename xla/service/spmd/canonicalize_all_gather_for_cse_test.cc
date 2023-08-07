@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/spmd/canonicalize_all_gather_for_cse.h"
 
+#include <memory>
+#include <utility>
+
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_parser.h"

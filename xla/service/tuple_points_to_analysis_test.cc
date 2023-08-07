@@ -18,6 +18,8 @@ limitations under the License.
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -34,12 +36,9 @@ limitations under the License.
 #include "tsl/platform/logging.h"
 #include "tsl/platform/test.h"
 
-namespace op = xla::testing::opcode_matchers;
-
 namespace xla {
 namespace {
 
-using ::testing::UnorderedElementsAre;
 using ::testing::UnorderedElementsAreArray;
 
 class TuplePointsToAnalysisTest : public HloTestBase {
@@ -63,8 +62,8 @@ class TuplePointsToAnalysisTest : public HloTestBase {
 
   // Returns the LogicalBuffer defined at the given instruction and
   // index. CHECKs if no buffer is defined at that point.
-  const LogicalBuffer* const GetBuffer(const HloInstruction* instruction,
-                                       const ShapeIndex& index) {
+  const LogicalBuffer* GetBuffer(const HloInstruction* instruction,
+                                 const ShapeIndex& index) {
     const auto& pointed_to =
         points_to_analysis_->GetPointsToSet(instruction).element(index);
     CHECK_EQ(1, pointed_to.size());

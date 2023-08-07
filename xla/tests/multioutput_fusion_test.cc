@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <memory>
 #include <new>
+#include <string>
 #include <utility>
 
 #include "absl/strings/str_cat.h"

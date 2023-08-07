@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_DOT_OP_EMITTER_H_
 #define XLA_SERVICE_CPU_DOT_OP_EMITTER_H_
 
+#include <optional>
+
 #include "absl/strings/string_view.h"
 #include "llvm/IR/IRBuilder.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project

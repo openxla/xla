@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/compilation_cache.h"
 
+#include <memory>
 #include <utility>
 
 #include "xla/types.h"

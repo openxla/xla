@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/sequential_thunk.h"
 
+#include <string>
+#include <utility>
+
 #include "tsl/platform/errors.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 

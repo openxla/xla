@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTABLE_INTERFACE_H_
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/types/span.h"

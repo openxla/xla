@@ -37,7 +37,7 @@ using TimeBound = HloLiveRange::TimeBound;
 class HloLiveRangeTest : public HloTestBase {
  protected:
   HloLiveRangeTest() : module_(CreateNewVerifiedModule()) {}
-  ~HloLiveRangeTest() override {}
+  ~HloLiveRangeTest() override = default;
 
   void Analyze(const HloSchedule& schedule) {
     alias_analysis_ = HloAliasAnalysis::Run(module_.get()).value();

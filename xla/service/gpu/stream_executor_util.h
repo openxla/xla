@@ -16,7 +16,10 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_STREAM_EXECUTOR_UTIL_H_
 #define XLA_SERVICE_GPU_STREAM_EXECUTOR_UTIL_H_
 
+#include <memory>
+#include <optional>
 #include <string_view>
+#include <tuple>
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

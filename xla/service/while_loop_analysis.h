@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_WHILE_LOOP_ANALYSIS_H_
 
 #include <optional>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_instruction.h"
 

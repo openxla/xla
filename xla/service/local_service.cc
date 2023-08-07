@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/local_service.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>

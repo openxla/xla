@@ -16,8 +16,11 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 
 #include <algorithm>
+#include <limits>
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"

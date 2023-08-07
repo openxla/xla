@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/outfeed_thunk.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/outfeed_manager.h"

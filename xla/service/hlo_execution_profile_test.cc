@@ -14,6 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/service/hlo_execution_profile.h"
+
+#include <memory>
+
 #include "absl/strings/str_cat.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/tests/hlo_test_base.h"

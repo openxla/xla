@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cmath>
+#include <functional>
+#include <utility>
 #include <vector>
 
 #include "xla/client/xla_builder.h"

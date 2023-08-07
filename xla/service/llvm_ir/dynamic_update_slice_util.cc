@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/service/llvm_ir/dynamic_update_slice_util.h"
 
+#include <functional>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

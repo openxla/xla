@@ -16,8 +16,11 @@ limitations under the License.
 #ifndef XLA_SERVICE_MULTI_OUTPUT_FUSION_H_
 #define XLA_SERVICE_MULTI_OUTPUT_FUSION_H_
 
+#include <list>
+#include <memory>
 #include <optional>
 #include <queue>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"

@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/indexed_array_analysis.h"
 
+#include <string>
+
 #include "absl/strings/ascii.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"

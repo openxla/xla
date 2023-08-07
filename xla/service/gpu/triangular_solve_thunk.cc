@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/triangular_solve_thunk.h"
 
+#include <complex>
 #include <string>
 
 #include "absl/strings/str_cat.h"

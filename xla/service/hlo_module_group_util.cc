@@ -16,12 +16,14 @@ limitations under the License.
 #include "xla/service/hlo_module_group_util.h"
 
 #include <algorithm>
+#include <functional>
 #include <list>
 #include <memory>
 #include <queue>
 #include <stack>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"

@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/stream_executor/platform.h"
 
+#include <map>
+#include <memory>
+#include <string>
+
 #include "absl/strings/str_cat.h"
 #include "xla/stream_executor/platform/logging.h"
 #include "xla/stream_executor/platform/port.h"
@@ -96,7 +100,7 @@ StreamExecutorConfig::StreamExecutorConfig()
 StreamExecutorConfig::StreamExecutorConfig(int ordinal_in)
     : ordinal(ordinal_in), device_options(DeviceOptions::Default()) {}
 
-Platform::~Platform() {}
+Platform::~Platform() = default;
 
 bool Platform::Initialized() const { return true; }
 

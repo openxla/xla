@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_SERVICE_GPU_HLO_FUSION_STATS_H_
 
 #include <cstdint>
+#include <map>
+#include <set>
 #include <string>
 
 #include "absl/strings/string_view.h"

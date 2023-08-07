@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_HORIZONTAL_LOOP_FUSION_H_
 #define XLA_SERVICE_GPU_HORIZONTAL_LOOP_FUSION_H_
 
+#include <string>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -118,8 +120,9 @@ namespace gpu {
 // Note, reshapes are added only if the tensors isn't already a vector.
 class GpuHorizontalLoopFusion : public HloModulePass {
  public:
-  GpuHorizontalLoopFusion() {}
-  GpuHorizontalLoopFusion(absl::string_view prefix) : prefix_(prefix) {}
+  GpuHorizontalLoopFusion() = default;
+  explicit GpuHorizontalLoopFusion(absl::string_view prefix)
+      : prefix_(prefix) {}
 
   absl::string_view name() const override {
     return "gpu_horizontal_loop_fusion";

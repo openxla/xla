@@ -15,6 +15,8 @@
 #ifndef XLA_SERVICE_HLO_REMATERIALIZATION_H_
 #define XLA_SERVICE_HLO_REMATERIALIZATION_H_
 
+#include <functional>
+#include <memory>
 #include <optional>
 #include <utility>
 

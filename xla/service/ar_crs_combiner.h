@@ -16,6 +16,11 @@ limitations under the License.
 #ifndef XLA_SERVICE_AR_CRS_COMBINER_H_
 #define XLA_SERVICE_AR_CRS_COMBINER_H_
 
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"

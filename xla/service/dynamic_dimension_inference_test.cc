@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/dynamic_dimension_inference.h"
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "xla/client/xla_builder.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"

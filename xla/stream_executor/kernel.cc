@@ -19,6 +19,9 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel.h"
 
+#include <string>
+#include <utility>
+
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "xla/stream_executor/platform.h"

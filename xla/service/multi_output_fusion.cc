@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/service/multi_output_fusion.h"
 
+#include <algorithm>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "xla/debug_options_flags.h"

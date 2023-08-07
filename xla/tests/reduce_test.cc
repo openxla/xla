@@ -30,7 +30,9 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <ostream>
 #include <random>
 #include <string>
 #include <utility>

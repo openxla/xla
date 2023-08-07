@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_WHILE_LOOP_INVARIANT_CODE_MOTION_H_
 #define XLA_SERVICE_WHILE_LOOP_INVARIANT_CODE_MOTION_H_
 
+#include <functional>
+#include <optional>
+
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compile_time_cap.h"
 #include "xla/service/hlo_pass_interface.h"

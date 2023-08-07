@@ -15,10 +15,16 @@ limitations under the License.
 
 #include "xla/service/hlo_module_group_metadata.h"
 
+#include <algorithm>
+#include <iterator>
+#include <map>
 #include <memory>
+#include <optional>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"

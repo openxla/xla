@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_PARALLEL_LOOP_EMITTER_H_
 #define XLA_SERVICE_GPU_PARALLEL_LOOP_EMITTER_H_
 
+#include <vector>
+
 #include "llvm/IR/IRBuilder.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/llvm_ir/ir_array.h"

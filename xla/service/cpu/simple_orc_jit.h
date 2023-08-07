@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_SIMPLE_ORC_JIT_H_
 #define XLA_SERVICE_CPU_SIMPLE_ORC_JIT_H_
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>

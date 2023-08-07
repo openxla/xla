@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>

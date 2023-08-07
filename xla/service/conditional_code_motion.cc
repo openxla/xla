@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <iterator>
 #include <stack>
@@ -117,7 +118,7 @@ class BoundaryVisitor {
     worklist_.push_back(b);
   }
   // Start with an empty work list.
-  BoundaryVisitor() {}
+  BoundaryVisitor() = default;
   // Get next boundary to visit.
   Boundary PopNextBoundary() {
     CHECK(!worklist_.empty());

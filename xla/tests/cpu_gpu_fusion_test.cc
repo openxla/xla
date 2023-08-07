@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <memory>
 #include <new>
+#include <optional>
 #include <random>
 #include <utility>
 

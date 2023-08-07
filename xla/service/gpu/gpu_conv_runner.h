@@ -16,8 +16,11 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_CONV_RUNNER_H_
 #define XLA_SERVICE_GPU_GPU_CONV_RUNNER_H_
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "xla/hlo/ir/hlo_instruction.h"

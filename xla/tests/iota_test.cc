@@ -15,6 +15,8 @@ limitations under the License.
 
 #include <numeric>
 #include <optional>
+#include <string>
+#include <tuple>
 #include <vector>
 
 #include "xla/error_spec.h"

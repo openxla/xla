@@ -14,7 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 // Miscellaneous tests with the PRED type that don't fit anywhere else.
+#include <functional>
 #include <memory>
+#include <string>
 
 #include "xla/array2d.h"
 #include "xla/client/lib/arithmetic.h"

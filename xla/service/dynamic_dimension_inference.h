@@ -17,8 +17,11 @@ limitations under the License.
 #define XLA_SERVICE_DYNAMIC_DIMENSION_INFERENCE_H_
 
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"

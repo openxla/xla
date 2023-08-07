@@ -14,7 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <numeric>
 #include <utility>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"

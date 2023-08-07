@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/distributed/distributed.h"
 
+#include <memory>
 #include <string>
 
 #include "grpcpp/grpcpp.h"

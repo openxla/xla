@@ -19,6 +19,8 @@ limitations under the License.
 #include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -234,7 +236,7 @@ using CallSequence = std::vector<std::pair<std::string, const HloValue*>>;
 class HeapCallRecorder : public HeapAlgorithm<HloValue> {
  public:
   explicit HeapCallRecorder(CallSequence* calls) : calls_(calls) {}
-  ~HeapCallRecorder() override {}
+  ~HeapCallRecorder() override = default;
 
   void Alloc(const HloValue* buffer, int64_t size) override {
     calls_->emplace_back(kAlloc, buffer);
@@ -410,7 +412,7 @@ class HeapSimulatorTracker {
 class HeapSimulatorTest : public HloTestBase {
  protected:
   HeapSimulatorTest() {}
-  ~HeapSimulatorTest() override {}
+  ~HeapSimulatorTest() override = default;
 
   // Shapes for use in the examples.
   Shape f32scalar_ = ShapeUtil::MakeShape(xla::F32, {});
@@ -954,7 +956,7 @@ class HeapAlgorithmTestBase : public ::testing::Test {
     buffer_h_ = DummyBufferValue();
     buffer_i_ = DummyBufferValue();
   }
-  ~HeapAlgorithmTestBase() override {}
+  ~HeapAlgorithmTestBase() override = default;
 
   const HloValue* buffer_a_;
   const HloValue* buffer_b_;

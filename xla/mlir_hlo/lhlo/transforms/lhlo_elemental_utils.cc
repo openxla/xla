@@ -18,6 +18,8 @@ limitations under the License.
 
 #include "lhlo/transforms/lhlo_elemental_utils.h"
 
+#include <vector>
+
 #include "lhlo/IR/lhlo_ops.h"
 #include "lhlo/transforms/map_lmhlo_to_scalar_op.h"
 #include "llvm/Support/Debug.h"

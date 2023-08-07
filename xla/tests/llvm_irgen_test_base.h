@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_TESTS_LLVM_IRGEN_TEST_BASE_H_
 #define XLA_TESTS_LLVM_IRGEN_TEST_BASE_H_
 
+#include <memory>
 #include <string>
 
 #include "xla/service/llvm_compiler.h"

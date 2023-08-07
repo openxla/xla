@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/llvm_compiler.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "tsl/platform/denormal.h"
 
 #ifdef __FAST_MATH__

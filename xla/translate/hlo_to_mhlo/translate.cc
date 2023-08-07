@@ -14,6 +14,9 @@ limitations under the License.
 
 #include "xla/translate/hlo_to_mhlo/translate.h"
 
+#include <string>
+#include <utility>
+
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/hlo.pb.h"

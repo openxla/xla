@@ -17,7 +17,10 @@ limitations under the License.
 
 #include "xla/service/gpu/target_util.h"
 
+#include <functional>
 #include <string>
+#include <variant>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"

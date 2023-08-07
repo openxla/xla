@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "mlir/IR/Attributes.h"  // from @llvm-project

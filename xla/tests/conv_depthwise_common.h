@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_TESTS_CONV_DEPTHWISE_COMMON_H_
 
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "xla/client/xla_computation.h"
 #include "xla/execution_options_util.h"

@@ -16,8 +16,10 @@ limitations under the License.
 #include "xla/service/spmd/spmd_partitioner.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>

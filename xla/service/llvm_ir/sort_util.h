@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_LLVM_IR_SORT_UTIL_H_
 #define XLA_SERVICE_LLVM_IR_SORT_UTIL_H_
 
+#include <functional>
 #include <vector>
 
 #include "absl/strings/string_view.h"

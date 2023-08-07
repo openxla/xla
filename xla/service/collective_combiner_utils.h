@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_COLLECTIVE_COMBINER_UTILS_H_
 
 #include <functional>
+#include <memory>
 #include <utility>
 #include <vector>
 

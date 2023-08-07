@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <map>
 #include <memory>
+#include <set>
+#include <vector>
 
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_matchers.h"

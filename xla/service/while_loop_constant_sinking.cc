@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/while_loop_constant_sinking.h"
 
+#include <iterator>
+#include <vector>
+
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "xla/service/while_util.h"

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/sharding_remover.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>

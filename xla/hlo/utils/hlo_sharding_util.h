@@ -238,8 +238,7 @@ std::optional<HloSharding> ScatterUpdateShardingFromOutputParallelDimensions(
 // Returns an output sharding of gather or update operand sharding of scatter by
 // passing through the indices' sharding on index parallel dimensions.
 HloSharding GatherOutputOrScatterUpdateShardingFromIndicesParallelDimensions(
-    const HloSharding& indices_sharding,
-    const int64_t output_or_update_shape_rank,
+    const HloSharding& indices_sharding, int64_t output_or_update_shape_rank,
     absl::Span<const int64_t> indices_parallel_dims,
     absl::Span<const int64_t> output_or_update_parallel_dims);
 
@@ -323,12 +322,12 @@ absl::InlinedVector<int64_t, 1> GetScatterOperandPassthroughOperandDims(
 
 // Returns the index pass-through dimensions for gather/scatter indices.
 absl::InlinedVector<int64_t, 1> GetGatherScatterIndexPassthroughIndexDims(
-    const int64_t indices_rank, const int64_t index_vector_dim);
+    int64_t indices_rank, int64_t index_vector_dim);
 
 // Returns the index pass-through dimensions for gather output/scatter update.
 absl::InlinedVector<int64_t, 1>
 GetGatherScatterIndexPassthroughOutputOrUpdateDims(
-    const int64_t output_or_update_rank,
+    int64_t output_or_update_rank,
     absl::Span<const int64_t> offset_or_window_dims);
 
 // Returns the parallel dimensions of the data operand of a gather/scatter with
@@ -379,14 +378,14 @@ GroupedSharding GroupShardingOnAllDimsExcept(
 // Creates a GroupedSharding by trying to group on partially replicated
 // dimensions, otherwise replicate it.
 GroupedSharding GroupShardingOnReplicatedDim(const HloSharding& sharding,
-                                             const int64_t num_groups,
-                                             const int64_t num_tiles,
-                                             const int64_t data_rank);
+                                             int64_t num_groups,
+                                             int64_t num_tiles,
+                                             int64_t data_rank);
 
 // Get group sharding for replicated sharding.
-GroupedSharding GetGroupedReplicatedSharding(const int64_t num_groups,
-                                             const int64_t num_tiles,
-                                             const int64_t data_rank);
+GroupedSharding GetGroupedReplicatedSharding(int64_t num_groups,
+                                             int64_t num_tiles,
+                                             int64_t data_rank);
 
 // Get group sharding for each manual subgroup.
 GroupedSharding GetManualSubgroupSharding(const HloSharding& sharding);

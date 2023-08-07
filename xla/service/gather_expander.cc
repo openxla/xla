@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gather_expander.h"
 
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "xla/hlo/ir/hlo_instruction.h"

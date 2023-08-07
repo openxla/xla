@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <ostream>
 #include <string>
+#include <utility>
 
 #include "absl/types/span.h"
 #include "xla/shape_tree.h"

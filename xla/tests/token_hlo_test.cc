@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include <array>
+#include <memory>
+#include <string>
 
 #include "xla/service/hlo_verifier.h"
 #include "xla/tests/hlo_test_base.h"

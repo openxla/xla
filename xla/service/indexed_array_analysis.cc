@@ -16,10 +16,12 @@ limitations under the License.
 #include "xla/service/indexed_array_analysis.h"
 
 #include <algorithm>
+#include <iterator>
 #include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"

@@ -18,6 +18,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "xla/backends/interpreter/executable.h"
 #include "xla/service/algebraic_simplifier.h"

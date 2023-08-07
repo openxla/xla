@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_SOURCE_MAP_UTIL_H_
 #define XLA_SERVICE_SOURCE_MAP_UTIL_H_
 
+#include <string>
+
 #include "absl/strings/str_format.h"
 #include "xla/service/executable.h"
 #include "xla/status.h"

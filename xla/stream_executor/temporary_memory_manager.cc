@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/stream_executor/temporary_memory_manager.h"
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"

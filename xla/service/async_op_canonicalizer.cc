@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/async_op_canonicalizer.h"
 
+#include <optional>
+#include <vector>
+
 namespace xla {
 
 namespace {

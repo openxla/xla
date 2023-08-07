@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/batch_dot_simplification.h"
 
+#include <iterator>
+#include <vector>
+
 #include "absl/algorithm/container.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/service/hlo_creation_utils.h"

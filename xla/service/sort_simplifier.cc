@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/sort_simplifier.h"
 
+#include <iterator>
 #include <memory>
 #include <vector>
 

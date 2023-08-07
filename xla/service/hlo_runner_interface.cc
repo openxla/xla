@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/hlo_runner_interface.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "xla/service/hlo_parser.h"
 
 namespace xla {

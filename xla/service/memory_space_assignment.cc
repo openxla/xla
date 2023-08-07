@@ -22,6 +22,8 @@ limitations under the License.
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <list>
+#include <map>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -35,6 +37,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/node_hash_set.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -1984,7 +1987,7 @@ Status MemoryBoundLoopOptimizer::Initialize() {
   // traverse the program in instruction order, the buffers would be inserted in
   // a deterministic order, so we'll be able to iterate over these buffers in a
   // deterministic order.
-  std::set<const HloBuffer*> buffers_to_process;
+  absl::node_hash_set<const HloBuffer*> buffers_to_process;
   for (const auto& [instruction, idx] : instructions_in_loop_) {
     auto maybe_add_buffer = [&](const HloInstruction* instruction) {
       return [this, &buffers_to_process, instruction](const Shape& subshape,

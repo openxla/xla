@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_HLO_DOMAIN_VERIFIER_H_
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "xla/hlo/ir/hlo_domain_metadata.h"
@@ -31,7 +32,7 @@ namespace xla {
 // surrounded by the same metadata.
 class HloDomainVerifier : public HloModulePass {
  public:
-  HloDomainVerifier(std::vector<std::string> kinds)
+  explicit HloDomainVerifier(std::vector<std::string> kinds)
       : kinds_(std::move(kinds)) {}
 
   absl::string_view name() const override { return "domain_verifier"; }

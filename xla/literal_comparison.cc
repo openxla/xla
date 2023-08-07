@@ -15,8 +15,11 @@ limitations under the License.
 
 #include "xla/literal_comparison.h"
 
+#include <array>
 #include <limits>
+#include <optional>
 #include <type_traits>
+#include <utility>
 
 #include "xla/primitive_util.h"
 

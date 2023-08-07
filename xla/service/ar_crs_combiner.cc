@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/ar_crs_combiner.h"
 
+#include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>

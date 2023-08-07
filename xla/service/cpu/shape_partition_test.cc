@@ -16,7 +16,10 @@ limitations under the License.
 #include "xla/service/cpu/shape_partition.h"
 
 #include <algorithm>
+#include <map>
 #include <random>
+#include <utility>
+#include <vector>
 
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"

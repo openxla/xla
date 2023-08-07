@@ -18,6 +18,8 @@ limitations under the License.
 #include <algorithm>
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"

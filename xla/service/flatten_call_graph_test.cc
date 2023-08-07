@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/flatten_call_graph.h"
 
+#include <memory>
+#include <string>
+
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/literal.h"
 #include "xla/service/call_graph.h"

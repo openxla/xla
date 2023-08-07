@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/memory_space_propagation.h"
 
+#include <utility>
+
 namespace xla {
 
 StatusOr<bool> MemorySpacePropagation::Run(

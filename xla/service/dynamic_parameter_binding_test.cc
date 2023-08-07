@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "absl/algorithm/container.h"

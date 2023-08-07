@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_RPC_GRPC_SERVICE_H_
 #define XLA_RPC_GRPC_SERVICE_H_
 
+#include <memory>
+
 #include "grpcpp/server_context.h"
 #include "xla/rpc/xla_service.grpc.pb.h"
 #include "xla/service/service.h"

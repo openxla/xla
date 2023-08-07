@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/pattern_matcher_gmock.h"
 
+#include <sstream>
+#include <string>
+
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape_util.h"
 #include "xla/test.h"

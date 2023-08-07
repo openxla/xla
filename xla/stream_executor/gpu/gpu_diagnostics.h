@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_GPU_GPU_DIAGNOSTICS_H_
 #define XLA_STREAM_EXECUTOR_GPU_GPU_DIAGNOSTICS_H_
 
+#include <string>
 #include <tuple>
 
 #include "xla/stream_executor/platform/port.h"

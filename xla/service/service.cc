@@ -17,8 +17,11 @@ limitations under the License.
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <memory>
 #include <numeric>
+#include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>

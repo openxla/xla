@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_parser.h"

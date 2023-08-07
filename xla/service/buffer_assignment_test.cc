@@ -19,6 +19,7 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -84,7 +85,7 @@ class InstructionListVisitor : public DfsHloVisitorWithDefault {
   InstructionListVisitor& operator=(const InstructionListVisitor&) = delete;
 };
 
-const std::vector<const HloInstruction*> GetInstructions(HloInstruction* root) {
+std::vector<const HloInstruction*> GetInstructions(HloInstruction* root) {
   InstructionListVisitor main_list(root);
   TF_CHECK_OK(root->Accept(&main_list));
   return main_list.GetInstructions();
@@ -92,7 +93,7 @@ const std::vector<const HloInstruction*> GetInstructions(HloInstruction* root) {
 
 class BufferAssignmentTest : public HloTestBase {
  protected:
-  ~BufferAssignmentTest() override {}
+  ~BufferAssignmentTest() override = default;
 
   std::unique_ptr<BufferAssignment> RunBufferAssignment(HloModule* module,
                                                         int64_t alignment = 1) {

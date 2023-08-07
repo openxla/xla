@@ -21,7 +21,9 @@ limitations under the License.
 #include <cstdint>
 #include <map>
 #include <set>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/base/casts.h"
 #include "absl/base/const_init.h"

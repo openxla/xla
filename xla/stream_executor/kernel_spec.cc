@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/stream_executor/kernel_spec.h"
 
+#include <memory>
+#include <string>
+#include <tuple>
+
 #include "absl/strings/string_view.h"
 
 namespace stream_executor {
@@ -172,58 +176,61 @@ OpenCLBinaryOnDisk::OpenCLBinaryOnDisk(absl::string_view filename,
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddOpenCLTextOnDisk(
     absl::string_view filename, absl::string_view kernelname) {
   CHECK(ocl_text_on_disk_ == nullptr);
-  ocl_text_on_disk_.reset(new OpenCLTextOnDisk{filename, kernelname});
+  ocl_text_on_disk_ = std::make_unique<OpenCLTextOnDisk>(filename, kernelname);
   return this;
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddOpenCLBinaryOnDisk(
     absl::string_view filename, absl::string_view kernelname) {
   CHECK(ocl_binary_on_disk_ == nullptr);
-  ocl_binary_on_disk_.reset(new OpenCLBinaryOnDisk{filename, kernelname});
+  ocl_binary_on_disk_ =
+      std::make_unique<OpenCLBinaryOnDisk>(filename, kernelname);
   return this;
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddOpenCLTextInMemory(
     absl::string_view filename, absl::string_view kernelname) {
   CHECK(ocl_text_in_memory_ == nullptr);
-  ocl_text_in_memory_.reset(new OpenCLTextInMemory{filename, kernelname});
+  ocl_text_in_memory_ =
+      std::make_unique<OpenCLTextInMemory>(filename, kernelname);
   return this;
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaPtxOnDisk(
     absl::string_view filename, absl::string_view kernelname) {
   CHECK(cuda_ptx_on_disk_ == nullptr);
-  cuda_ptx_on_disk_.reset(new CudaPtxOnDisk{filename, kernelname});
+  cuda_ptx_on_disk_ = std::make_unique<CudaPtxOnDisk>(filename, kernelname);
   return this;
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaCubinInMemory(
     const char *bytes, absl::string_view kernelname) {
   CHECK(cuda_cubin_in_memory_ == nullptr);
-  cuda_cubin_in_memory_.reset(new CudaCubinInMemory{bytes, kernelname});
+  cuda_cubin_in_memory_ =
+      std::make_unique<CudaCubinInMemory>(bytes, kernelname);
   return this;
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaCubinOnDisk(
     absl::string_view filename, absl::string_view kernelname) {
   CHECK(cuda_cubin_on_disk_ == nullptr);
-  cuda_cubin_on_disk_.reset(new CudaCubinOnDisk{filename, kernelname});
+  cuda_cubin_on_disk_ = std::make_unique<CudaCubinOnDisk>(filename, kernelname);
   return this;
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaPtxInMemory(
     absl::string_view ptx, absl::string_view kernelname) {
   CHECK(cuda_ptx_in_memory_ == nullptr);
-  cuda_ptx_in_memory_.reset(
-      new CudaPtxInMemory{ptx, kernelname, false /* ptx_compressed */});
+  cuda_ptx_in_memory_ = std::make_unique<CudaPtxInMemory>(
+      ptx, kernelname, false /* ptx_compressed */);
   return this;
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaCompressedPtxInMemory(
     absl::string_view ptx, absl::string_view kernelname) {
   CHECK(cuda_ptx_in_memory_ == nullptr);
-  cuda_ptx_in_memory_.reset(
-      new CudaPtxInMemory{ptx, kernelname, true /* ptx_compressed */});
+  cuda_ptx_in_memory_ = std::make_unique<CudaPtxInMemory>(
+      ptx, kernelname, true /* ptx_compressed */);
   return this;
 }
 
@@ -231,8 +238,8 @@ MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaPtxInMemory(
     std::initializer_list<CudaPtxInMemory::PtxSpec> spec_list,
     absl::string_view kernelname) {
   CHECK(cuda_ptx_in_memory_ == nullptr);
-  cuda_ptx_in_memory_.reset(
-      new CudaPtxInMemory{spec_list, kernelname, false /* ptx_compressed */});
+  cuda_ptx_in_memory_ = std::make_unique<CudaPtxInMemory>(
+      spec_list, kernelname, false /* ptx_compressed */);
   return this;
 }
 
@@ -240,8 +247,8 @@ MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaCompressedPtxInMemory(
     std::initializer_list<CudaPtxInMemory::PtxSpec> spec_list,
     absl::string_view kernelname) {
   CHECK(cuda_ptx_in_memory_ == nullptr);
-  cuda_ptx_in_memory_.reset(
-      new CudaPtxInMemory{spec_list, kernelname, true /* ptx_compressed */});
+  cuda_ptx_in_memory_ = std::make_unique<CudaPtxInMemory>(
+      spec_list, kernelname, true /* ptx_compressed */);
   return this;
 }
 

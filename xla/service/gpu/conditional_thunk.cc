@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/conditional_thunk.h"
 
 #include <memory>
+#include <utility>
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/util.h"

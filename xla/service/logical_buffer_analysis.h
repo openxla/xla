@@ -16,6 +16,10 @@ limitations under the License.
 #ifndef XLA_SERVICE_LOGICAL_BUFFER_ANALYSIS_H_
 #define XLA_SERVICE_LOGICAL_BUFFER_ANALYSIS_H_
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"

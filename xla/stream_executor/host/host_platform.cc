@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "xla/stream_executor/host/host_platform.h"
 
+#include <memory>
+#include <string>
 #include <thread>
+#include <utility>
 
 #include "absl/memory/memory.h"
 #include "absl/strings/str_format.h"
@@ -29,7 +32,7 @@ namespace host {
 
 HostPlatform::HostPlatform() : name_("Host") {}
 
-HostPlatform::~HostPlatform() {}
+HostPlatform::~HostPlatform() = default;
 
 Platform::Id HostPlatform::id() const { return kHostPlatformId; }
 

@@ -17,8 +17,10 @@ limitations under the License.
 
 #include <iterator>
 #include <optional>
+#include <ostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "xla/service/computation_placer.h"

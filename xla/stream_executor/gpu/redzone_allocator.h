@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_GPU_REDZONE_ALLOCATOR_H_
 
 #include <cstdint>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "xla/stream_executor/device_memory_allocator.h"
@@ -45,7 +47,7 @@ class RedzoneAllocator : public ScratchAllocator {
       1LL << 23;  // 8MiB per side, 16MiB total.
   static constexpr uint8_t kDefaultRedzonePattern = -1;  // NOLINT
   RedzoneAllocator(Stream* stream, DeviceMemoryAllocator* memory_allocator,
-                   GpuAsmOpts gpu_compilation_opts_,
+                   GpuAsmOpts ptx_compilation_opts,
                    int64_t memory_limit = (1LL << 32),  // 4GB
                    int64_t redzone_size = kDefaultRedzoneSize,
                    uint8_t redzone_pattern = kDefaultRedzonePattern);

@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/infeed_manager.h"
 
+#include <limits>
 #include <memory>
+#include <utility>
 
 #include "xla/shape_util.h"
 

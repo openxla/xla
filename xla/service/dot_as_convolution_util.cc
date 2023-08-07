@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/dot_as_convolution_util.h"
 
+#include <algorithm>
+#include <memory>
 #include <optional>
 
 #include "xla/hlo/ir/hlo_instruction.h"

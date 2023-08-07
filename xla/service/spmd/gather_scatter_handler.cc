@@ -17,6 +17,9 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <optional>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"

@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

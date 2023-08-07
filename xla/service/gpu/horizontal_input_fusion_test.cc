@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/gpu/horizontal_input_fusion.h"
 
+#include <vector>
+
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"

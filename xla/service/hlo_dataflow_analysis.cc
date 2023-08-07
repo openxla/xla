@@ -16,10 +16,12 @@ limitations under the License.
 #include "xla/service/hlo_dataflow_analysis.h"
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <queue>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 

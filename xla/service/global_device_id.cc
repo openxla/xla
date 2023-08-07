@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/global_device_id.h"
 
+#include <string>
+#include <vector>
+
 #include "absl/strings/str_join.h"
 
 namespace xla {

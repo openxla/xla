@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/hlo_fusion_stats.h"
 
+#include <set>
 #include <string>
 
 #include "absl/strings/match.h"

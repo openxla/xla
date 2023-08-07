@@ -31,6 +31,8 @@ limitations under the License.
 #include <type_traits>
 #include <vector>
 
+#include "absl/strings/match.h"
+
 static constexpr int kSeed = 42;
 static constexpr int kUpperBound = 100;
 static constexpr int kLowerBound = -100;
@@ -172,7 +174,7 @@ std::string ArrayShapeToString(ArrayShape shape) {
 // Input: TYPE[D1,D2,...DN]
 ArrayShape ArrayShapeFromString(const std::string& s) {
   Log("Array shape from string: " + s);
-  Check(s.find('(') == std::string::npos, "Tuple shape is not supported");
+  Check(!absl::StrContains(s, '('), "Tuple shape is not supported");
   std::regex shape_r("([^\\[]+)\\[(.*)\\]");
   std::smatch match;
   Check(std::regex_match(s, match, shape_r), "Shape not found");

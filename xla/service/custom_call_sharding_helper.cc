@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/custom_call_sharding_helper.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 

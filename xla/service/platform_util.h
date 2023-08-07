@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_PLATFORM_UTIL_H_
 #define XLA_SERVICE_PLATFORM_UTIL_H_
 
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>

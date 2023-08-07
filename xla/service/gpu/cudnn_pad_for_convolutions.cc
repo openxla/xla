@@ -15,7 +15,12 @@ limitations under the License.
 
 #include "xla/service/gpu/cudnn_pad_for_convolutions.h"
 
+#include <functional>
+#include <memory>
+#include <optional>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #include "absl/functional/bind_front.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"

@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/translate/mhlo_to_hlo/translate.h"
 
 #include <memory>
+#include <vector>
 
 #include "xla/service/hlo.pb.h"
 #include "xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"

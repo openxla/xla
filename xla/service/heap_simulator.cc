@@ -22,6 +22,7 @@ limitations under the License.
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <list>
 #include <memory>
 #include <numeric>
 #include <ostream>
@@ -382,7 +383,7 @@ HeapSimulator::HeapSimulator(
   debug_trace_.set_whole_module_simulation(schedule_ != nullptr);
 }
 
-HeapSimulator::~HeapSimulator() {}
+HeapSimulator::~HeapSimulator() = default;
 
 bool HeapSimulator::IgnoreBuffer(const HloValue* buffer) const {
   // Buffers for constants are ignored unless the alloc_constants option is

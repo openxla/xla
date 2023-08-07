@@ -15,6 +15,12 @@ limitations under the License.
 
 #include "xla/service/cpu/vector_support_library.h"
 
+#include <algorithm>
+#include <iterator>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "absl/algorithm/container.h"
 #include "llvm/Support/raw_ostream.h"
 #include "xla/service/cpu/target_machine_features.h"

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/hlo_to_ir_bindings.h"
 
+#include <string>
+#include <vector>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "llvm/IR/BasicBlock.h"
