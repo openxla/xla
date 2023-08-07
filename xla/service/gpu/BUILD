@@ -1020,6 +1020,7 @@ cc_library(
     deps = [
         ":target_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
@@ -1043,6 +1044,7 @@ xla_cc_test(
     srcs = ["ir_emission_utils_test.cc"],
     deps = [
         ":ir_emission_utils",
+        "//xla:util",
         "//xla/mlir_hlo:lhlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
