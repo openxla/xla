@@ -31,7 +31,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
-#include "xla/hlo/ir/tile_assignment.h"
+#include "xla/hlo/ir/tile_assignment.h"  // IWYU pragma: export
 #include "xla/shape_tree.h"
 #include "xla/xla_data.pb.h"
 

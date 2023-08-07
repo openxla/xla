@@ -895,7 +895,6 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:hlo_proto_cc",
         "//xla/service:name_uniquer",
-        "//xla/service:platform_util",
         "//xla/service:tuple_simplifier",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/strings",
