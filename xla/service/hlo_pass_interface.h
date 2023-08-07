@@ -16,13 +16,12 @@ limitations under the License.
 #ifndef XLA_SERVICE_HLO_PASS_INTERFACE_H_
 #define XLA_SERVICE_HLO_PASS_INTERFACE_H_
 
-#include "absl/container/flat_hash_set.h"
-#include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_module_group.h"
-#include "xla/status_macros.h"
-#include "xla/statusor.h"
-#include "xla/types.h"
+#include "absl/container/flat_hash_set.h"  // IWYU pragma: export
+#include "absl/strings/string_view.h"      // IWYU pragma: export
+#include "xla/hlo/ir/hlo_module.h"  // IWYU pragma: export
+#include "xla/hlo/ir/hlo_module_group.h"  // IWYU pragma: export
+#include "xla/status.h"  // IWYU pragma: export
+#include "xla/statusor.h"  // IWYU pragma: export
 
 namespace xla {
 

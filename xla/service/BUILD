@@ -4770,9 +4770,8 @@ cc_library(
         "hlo_pass_interface.h",
     ],
     deps = [
-        "//xla:status_macros",
+        "//xla:status",
         "//xla:statusor",
-        "//xla:types",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "@com_google_absl//absl/container:flat_hash_set",
