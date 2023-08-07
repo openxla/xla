@@ -62,6 +62,7 @@ cc_library(
         ":in_place_dynamic_update_slice",
         ":loop",
         ":reduction",
+        ":transpose",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:lhlo",
         "//xla/service:elemental_ir_emitter",
@@ -144,6 +145,28 @@ cc_library(
         "//xla/service/llvm_ir:kernel_support_library",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/translate/mhlo_to_hlo:location_exporter",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+cc_library(
+    name = "transpose",
+    srcs = ["transpose.cc"],
+    hdrs = ["transpose.h"],
+    deps = [
+        ":fusion_emitter",
+        ":tiling_util",
+        "//xla:permutation_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/mlir_hlo:lhlo",
+        "//xla/service:elemental_ir_emitter",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emitter_context",
+        "//xla/service/gpu:parallel_loop_emitter",
+        "//xla/service/gpu:target_util",
+        "//xla/service/llvm_ir:fused_ir_emitter",
+        "//xla/service/llvm_ir:ir_array",
+        "//xla/service/llvm_ir:llvm_util",
         "@llvm-project//llvm:ir_headers",
     ],
 )
