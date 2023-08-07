@@ -963,7 +963,7 @@ FilterDescriptor::FilterDescriptor(int ndims) {
 
 FilterDescriptor::FilterDescriptor() : FilterDescriptor(/*ndims=*/2) {}
 
-FilterDescriptor::~FilterDescriptor() {}
+FilterDescriptor::~FilterDescriptor() = default;
 
 void FilterDescriptor::CloneFrom(const FilterDescriptor& other) {
   tensor_ = other.tensor_;
@@ -1083,7 +1083,7 @@ ConvolutionDescriptor::ConvolutionDescriptor(int ndims) {
 ConvolutionDescriptor::ConvolutionDescriptor()
     : ConvolutionDescriptor(/*ndims=*/2) {}
 
-ConvolutionDescriptor::~ConvolutionDescriptor() {}
+ConvolutionDescriptor::~ConvolutionDescriptor() = default;
 
 std::string ConvolutionDescriptor::ToString() const {
   std::string padding;

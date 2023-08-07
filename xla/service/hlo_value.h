@@ -250,7 +250,7 @@ class HloValueSet {
   std::vector<const HloValue*> values_;
 };
 
-std::ostream& operator<<(std::ostream& out, const HloValueSet& hlo_value);
+std::ostream& operator<<(std::ostream& out, const HloValueSet& value_set);
 
 // A class collecting the HloValues which might be contained in the output of
 // an HLO instruction. For array-shaped instructions, an InstructionValueSet

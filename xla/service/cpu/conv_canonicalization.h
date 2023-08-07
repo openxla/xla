@@ -37,7 +37,7 @@ class ConvCanonicalization : public HloModulePass {
       const TargetMachineFeatures* target_machine_features)
       : target_machine_features_(*target_machine_features) {}
 
-  ~ConvCanonicalization() override {}
+  ~ConvCanonicalization() override = default;
   absl::string_view name() const override {
     return "convolution-canonicalization";
   }

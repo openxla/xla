@@ -2251,7 +2251,7 @@ tsl::Status CudnnSupport::DoRnnBackwardImpl(
         /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
         /*fMode=*/CUDNN_FWD_MODE_TRAINING, /*xDesc=*/input_desc.data_handle(),
         /*workSpaceSize=*/&workspace_size_in_bytes,
-        /*reserveSpaceSize=*/NULL));
+        /*reserveSpaceSize=*/nullptr));
     if (workspace_size_in_bytes > 0) {
       TF_ASSIGN_OR_RETURN(workspace, workspace_allocator->AllocateBytes(
                                          workspace_size_in_bytes));

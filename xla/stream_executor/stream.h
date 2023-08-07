@@ -211,7 +211,7 @@ class Stream {
   template <typename P>
   Stream &ThenWaitFor(P others) {
     for (auto &stream : *others) {
-      CHECK_NE(stream.get(), this);
+      ABSL_CHECK_NE(stream.get(), this);
       ThenWaitFor(stream.get());
     }
     return *this;
@@ -241,12 +241,12 @@ class Stream {
       const DeviceMemory<float> &estimated_mean,
       const DeviceMemory<float> &estimated_variance,
       const DeviceMemory<float> &side_input, const dnn::BatchDescriptor &x_desc,
-      const dnn::BatchDescriptor &scale_offset_desc, const double epsilon,
-      const double exponential_average_factor,
-      dnn::ActivationMode activation_mode, DeviceMemory<float> *y,
-      DeviceMemory<float> *batch_mean, DeviceMemory<float> *batch_var,
-      DeviceMemory<float> *saved_mean, DeviceMemory<float> *saved_inv_var,
-      bool is_training, ScratchAllocator *reserve_space_allocator,
+      const dnn::BatchDescriptor &scale_offset_desc, double epsilon,
+      double exponential_average_factor, dnn::ActivationMode activation_mode,
+      DeviceMemory<float> *y, DeviceMemory<float> *batch_mean,
+      DeviceMemory<float> *batch_var, DeviceMemory<float> *saved_mean,
+      DeviceMemory<float> *saved_inv_var, bool is_training,
+      ScratchAllocator *reserve_space_allocator,
       ScratchAllocator *workspace_allocator);
 
   Stream &ThenBatchNormalizationBackward(
@@ -254,7 +254,7 @@ class Stream {
       const DeviceMemory<float> &scale, const DeviceMemory<float> &offset,
       const DeviceMemory<float> &mean, const DeviceMemory<float> &inv_var,
       const DeviceMemory<float> &y, const dnn::BatchDescriptor &x_desc,
-      const dnn::BatchDescriptor &scale_offset_desc, const double epsilon,
+      const dnn::BatchDescriptor &scale_offset_desc, double epsilon,
       dnn::ActivationMode activation_mode, DeviceMemory<float> *x_backprop,
       DeviceMemory<float> *scale_backprop, DeviceMemory<float> *offset_backprop,
       DeviceMemory<float> *side_input_backprop,
@@ -268,12 +268,12 @@ class Stream {
       const DeviceMemory<float> &estimated_variance,
       const DeviceMemory<Eigen::half> &side_input,
       const dnn::BatchDescriptor &x_desc,
-      const dnn::BatchDescriptor &scale_offset_desc, const double epsilon,
-      const double exponential_average_factor,
-      dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half> *y,
-      DeviceMemory<float> *batch_mean, DeviceMemory<float> *batch_var,
-      DeviceMemory<float> *saved_mean, DeviceMemory<float> *saved_inv_var,
-      bool is_training, ScratchAllocator *reserve_space_allocator,
+      const dnn::BatchDescriptor &scale_offset_desc, double epsilon,
+      double exponential_average_factor, dnn::ActivationMode activation_mode,
+      DeviceMemory<Eigen::half> *y, DeviceMemory<float> *batch_mean,
+      DeviceMemory<float> *batch_var, DeviceMemory<float> *saved_mean,
+      DeviceMemory<float> *saved_inv_var, bool is_training,
+      ScratchAllocator *reserve_space_allocator,
       ScratchAllocator *workspace_allocator);
 
   Stream &ThenBatchNormalizationBackward(
@@ -282,7 +282,7 @@ class Stream {
       const DeviceMemory<float> &offset, const DeviceMemory<float> &mean,
       const DeviceMemory<float> &inv_var, const DeviceMemory<Eigen::half> &y,
       const dnn::BatchDescriptor &x_desc,
-      const dnn::BatchDescriptor &scale_offset_desc, const double epsilon,
+      const dnn::BatchDescriptor &scale_offset_desc, double epsilon,
       dnn::ActivationMode activation_mode,
       DeviceMemory<Eigen::half> *x_backprop,
       DeviceMemory<float> *scale_backprop, DeviceMemory<float> *offset_backprop,
@@ -297,12 +297,12 @@ class Stream {
       const DeviceMemory<float> &estimated_variance,
       const DeviceMemory<Eigen::bfloat16> &side_input,
       const dnn::BatchDescriptor &x_desc,
-      const dnn::BatchDescriptor &scale_offset_desc, const double epsilon,
-      const double exponential_average_factor,
-      dnn::ActivationMode activation_mode, DeviceMemory<Eigen::bfloat16> *y,
-      DeviceMemory<float> *batch_mean, DeviceMemory<float> *batch_var,
-      DeviceMemory<float> *saved_mean, DeviceMemory<float> *saved_inv_var,
-      bool is_training, ScratchAllocator *reserve_space_allocator,
+      const dnn::BatchDescriptor &scale_offset_desc, double epsilon,
+      double exponential_average_factor, dnn::ActivationMode activation_mode,
+      DeviceMemory<Eigen::bfloat16> *y, DeviceMemory<float> *batch_mean,
+      DeviceMemory<float> *batch_var, DeviceMemory<float> *saved_mean,
+      DeviceMemory<float> *saved_inv_var, bool is_training,
+      ScratchAllocator *reserve_space_allocator,
       ScratchAllocator *workspace_allocator);
 
   Stream &ThenBatchNormalizationBackward(
@@ -312,7 +312,7 @@ class Stream {
       const DeviceMemory<float> &inv_var,
       const DeviceMemory<Eigen::bfloat16> &y,
       const dnn::BatchDescriptor &x_desc,
-      const dnn::BatchDescriptor &scale_offset_desc, const double epsilon,
+      const dnn::BatchDescriptor &scale_offset_desc, double epsilon,
       dnn::ActivationMode activation_mode,
       DeviceMemory<Eigen::bfloat16> *x_backprop,
       DeviceMemory<float> *scale_backprop, DeviceMemory<float> *offset_backprop,
@@ -620,7 +620,7 @@ class Stream {
   }
 
   Stream &ThenSeparableConvolve(
-      const dnn::BatchDescriptor &input_descriptor,
+      const dnn::BatchDescriptor &batch_descriptor,
       const DeviceMemory<float> &input_data,
       const dnn::FilterDescriptor &filter_descriptor, int depth_multiplier,
       const DeviceMemory<float> &first_weights,
@@ -782,7 +782,7 @@ class Stream {
   Stream &ThenDepthToSpace(const dnn::BatchDescriptor &input_dimensions,
                            const DeviceMemory<float> &input_data,
                            const dnn::DepthToSpaceLayout &depth_to_space_layout,
-                           const int sqrt_depth_reduction,
+                           int sqrt_depth_reduction,
                            DeviceMemory<float> *output_data);
 
   // Space to depth is the inverse of depth to space. Space to depth takes each
@@ -793,7 +793,7 @@ class Stream {
   Stream &ThenSpaceToDepth(const dnn::BatchDescriptor &input_dimensions,
                            const DeviceMemory<float> &input_data,
                            const dnn::DepthToSpaceLayout &space_to_depth_layout,
-                           const int sqrt_depth_increase,
+                           int sqrt_depth_increase,
                            DeviceMemory<float> *output_data);
 
   Stream &ThenElementwiseOperate(
@@ -1326,7 +1326,7 @@ class Stream {
   Stream &ThenMemcpyD2H(const DeviceMemory<T> &gpu_src,
                         absl::Span<T> host_dst) {
     auto host_size = host_dst.size() * sizeof(T);
-    CHECK(gpu_src.size() == 0 || host_size >= gpu_src.size());
+    ABSL_CHECK(gpu_src.size() == 0 || host_size >= gpu_src.size());
     return ThenMemcpy(host_dst.begin(), gpu_src, host_size);
   }
 
@@ -1337,7 +1337,7 @@ class Stream {
   Stream &ThenMemcpyH2D(absl::Span<const T> host_src,
                         DeviceMemory<T> *gpu_dst) {
     auto host_size = host_src.size() * sizeof(T);
-    CHECK(gpu_dst->size() == 0 || gpu_dst->size() >= host_size);
+    ABSL_CHECK(gpu_dst->size() == 0 || gpu_dst->size() >= host_size);
     return ThenMemcpy(gpu_dst, host_src.begin(), host_size);
   }
 
@@ -1604,7 +1604,7 @@ class Stream {
 
   // Returns the StreamExecutor (parent object) associated with this stream.
   StreamExecutor *parent() const {
-    CHECK(parent_ != nullptr);
+    ABSL_CHECK(parent_ != nullptr);
     return parent_;
   }
 
@@ -1688,8 +1688,9 @@ class Stream {
 
   void SetErrorAndLogNoDnnSupport() {
     SetError();
-    LOG(WARNING) << "attempting to perform DNN operation using StreamExecutor "
-                    "without DNN support";
+    ABSL_LOG(WARNING)
+        << "attempting to perform DNN operation using StreamExecutor "
+           "without DNN support";
   }
 
   // Runs the set of callbacks that are intended to run after

@@ -45,7 +45,7 @@ class XlaRuntimeMemoryMapper final
 
   llvm::sys::MemoryBlock allocateMappedMemory(
       llvm::SectionMemoryManager::AllocationPurpose purpose, size_t len,
-      const llvm::sys::MemoryBlock* const near_block, unsigned prot_flags,
+      const llvm::sys::MemoryBlock* near_block, unsigned prot_flags,
       std::error_code& error_code) final;
 
   std::error_code protectMappedMemory(const llvm::sys::MemoryBlock& block,

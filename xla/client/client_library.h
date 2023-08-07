@@ -43,7 +43,7 @@ namespace xla {
 // Options to configure the local client when it is created.
 class LocalClientOptions {
  public:
-  LocalClientOptions(
+  explicit LocalClientOptions(
       se::Platform* platform = nullptr, int number_of_replicas = 1,
       int intra_op_parallelism_threads = -1,
       const std::optional<std::set<int>>& allowed_devices = std::nullopt);

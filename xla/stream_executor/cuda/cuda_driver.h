@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_DRIVER_H_
 #define XLA_STREAM_EXECUTOR_CUDA_CUDA_DRIVER_H_
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
@@ -128,14 +129,14 @@ class CreatedContexts {
 
  private:
   // Returns the live map singleton.
-  static absl::node_hash_map<CUcontext, std::unique_ptr<GpuContext>>* Live() {
+  static absl::flat_hash_map<CUcontext, std::unique_ptr<GpuContext>>* Live() {
     static auto singleton =
-        new absl::node_hash_map<CUcontext, std::unique_ptr<GpuContext>>;
+        new absl::flat_hash_map<CUcontext, std::unique_ptr<GpuContext>>;
     return singleton;
   }
-  static absl::node_hash_map<int, std::vector<CUcontext>>* LiveOrdinal() {
+  static absl::flat_hash_map<int, std::vector<CUcontext>>* LiveOrdinal() {
     static auto singleton =
-        new absl::node_hash_map<int, std::vector<CUcontext>>;
+        new absl::flat_hash_map<int, std::vector<CUcontext>>;
     return singleton;
   }
 

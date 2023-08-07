@@ -50,7 +50,8 @@ class XfeedBuffer {
 // Reusable component for managing the infeed and outfeed queue state.
 class XfeedQueueManager {
  public:
-  XfeedQueueManager(std::string queue_name) : queue_name_(queue_name) {}
+  explicit XfeedQueueManager(std::string queue_name)
+      : queue_name_(queue_name) {}
 
   // Calls the completion callback for any enqueued buffers that have
   // not been dequeued by the runtime, and empties the

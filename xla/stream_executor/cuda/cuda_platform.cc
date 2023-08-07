@@ -38,7 +38,7 @@ const char kScheduleYieldString[] = "yield";
 // Synchronize with a "synchronization primitive" (e.g. mutex).
 const char kScheduleBlockingSyncString[] = "blocking_sync";
 
-const DeviceOptions GetDeviceOptionsFromEnv() {
+DeviceOptions GetDeviceOptionsFromEnv() {
   const char* gpu_schedule_string =
       std::getenv("TF_CUDA_PLATFORM_GPU_DEVICE_SCHEDULE");
 
@@ -69,7 +69,7 @@ const DeviceOptions GetDeviceOptionsFromEnv() {
 CudaPlatform::CudaPlatform()
     : name_("CUDA"), min_numa_node_(0), limit_numa_node_(0) {}
 
-CudaPlatform::~CudaPlatform() {}
+CudaPlatform::~CudaPlatform() = default;
 
 // Due to legacy issues in user code, we can't currently call InpectNumaNodes
 // at module initialization time, because non-GPU programs still include this

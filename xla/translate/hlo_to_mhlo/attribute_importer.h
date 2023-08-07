@@ -66,12 +66,12 @@ StatusOr<mlir::mhlo::CustomCallApiVersion> ConvertCustomCallApiVersion(
 // Extracts layouts from shapes and converts it into layout attributes (array of
 // rank-1 index tensors). Returns an error if any of the shapes is a tuple.
 StatusOr<mlir::ArrayAttr> ExtractLayoutsFromShapes(
-    const absl::Span<const Shape> shapes_with_layouts, mlir::Builder* builder);
+    absl::Span<const Shape> shapes_with_layouts, mlir::Builder* builder);
 
 // Extracts the layouts of each element from a tuple shape and returns them as
 // an array of rank-1 index tensors. Returns an error in presence of nested
 // tuple shapes.
-StatusOr<mlir::ArrayAttr> ExtractLayoutsFromTuple(const xla::Shape shape,
+StatusOr<mlir::ArrayAttr> ExtractLayoutsFromTuple(xla::Shape shape,
                                                   mlir::Builder* builder);
 
 }  // namespace xla

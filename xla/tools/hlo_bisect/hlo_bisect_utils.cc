@@ -170,7 +170,7 @@ MiscompareChecker::MiscompareChecker(HloModule* module,
   if (input_data.empty()) {
     StatusOr<std::vector<Literal>> input_status =
         MakeFakeArguments(module, &rng_engine);
-    CHECK(input_status.ok());
+    CHECK_OK(input_status.status());
     input_data_ = std::move(input_status).value();
   } else {
     VLOG(2) << "Using provided input data";
@@ -180,14 +180,14 @@ MiscompareChecker::MiscompareChecker(HloModule* module,
   // Set up the reference platform.
   StatusOr<se::Platform*> reference_platform_status =
       PlatformUtil::GetPlatform(std::string(reference_platform));
-  CHECK(reference_platform_status.ok());
+  CHECK_OK(reference_platform_status.status());
   reference_runner_ =
       std::make_unique<HloRunner>(reference_platform_status.value());
 
   // Set up the test platform.
   StatusOr<se::Platform*> test_platform_status =
       PlatformUtil::GetPlatform(std::string(test_platform));
-  CHECK(test_platform_status.ok());
+  CHECK_OK(test_platform_status.status());
   test_runner_ =
       std::make_unique<HloRunner>(std::move(test_platform_status).value());
 }
@@ -231,7 +231,7 @@ StatusOr<bool> MiscompareChecker::Run(const HloModule& module) {
                             /*error_spec=*/error_spec_,
                             /*detailed_message=*/true);
 
-  CHECK(status_or_result.ok())
+  CHECK_OK(status_or_result.status())
       << "Problem with running the clone module, may be there is a problem in "
          "the cloned module itself?";
   return !static_cast<bool>(std::move(status_or_result).value());

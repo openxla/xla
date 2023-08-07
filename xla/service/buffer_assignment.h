@@ -71,7 +71,7 @@ class BufferAllocation {
 
   BufferAllocation(Index index, int64_t size, LogicalBuffer::Color color)
       : index_(index), size_(size), color_(color) {}
-  ~BufferAllocation() {}
+  ~BufferAllocation() = default;
 
   // Returns the index of this allocation.
   Index index() const { return index_; }
@@ -164,7 +164,7 @@ class BufferAllocation {
   // to identify the memory range that a LogicalBuffer corresponds to.
   class Slice {
    public:
-    Slice() {}
+    Slice() = default;
     Slice(const BufferAllocation* allocation, int64_t offset, int64_t size)
         : allocation_(allocation), offset_(offset), size_(size) {}
 
@@ -244,9 +244,7 @@ class BufferAllocation {
 
   // Return the set of heap traces used to assign slices to logical buffers in
   // this allocation.
-  const std::vector<HeapSimulatorTrace> HeapTraces() const {
-    return heap_traces_;
-  }
+  std::vector<HeapSimulatorTrace> HeapTraces() const { return heap_traces_; }
 
   // Returns the LogicalBuffers which are live at the point of peak memory usage
   // for this allocation. The point of peak memory usage is the point at which
@@ -347,7 +345,7 @@ class BufferAllocation {
 };
 
 // Add stream operators for nicer output of CHECK/RET_CHECK failures.
-std::ostream& operator<<(std::ostream& out, const BufferAllocation& s);
+std::ostream& operator<<(std::ostream& out, const BufferAllocation& buffer);
 std::ostream& operator<<(std::ostream& out, const BufferAllocation::Slice& s);
 
 // This class encapsulates an assignment of the LogicalBuffers in an XLA

@@ -215,8 +215,7 @@ class AnnotationMap {
   explicit AnnotationMap(tsl::uint64 max_size, tsl::uint32 num_gpus)
       : max_size_(max_size), per_device_map_(num_gpus) {}
   void Add(tsl::uint32 device_id, tsl::uint32 correlation_id,
-           const absl::string_view annotation,
-           const absl::string_view nvtx_range);
+           absl::string_view annotation, absl::string_view nvtx_range);
   AnnotationInfo LookUp(tsl::uint32 device_id, tsl::uint32 correlation_id);
 
  private:
@@ -241,7 +240,7 @@ class CuptiTraceCollector {
   explicit CuptiTraceCollector(const CuptiTracerCollectorOptions& options)
       : options_(options),
         annotation_map_(options.max_annotation_strings, options.num_gpus) {}
-  virtual ~CuptiTraceCollector() {}
+  virtual ~CuptiTraceCollector() = default;
 
   // Producer side functions (i.e. called by CuptiTracer).
   virtual void AddEvent(CuptiTracerEvent&& event) = 0;
@@ -268,8 +267,8 @@ class CuptiTraceCollector {
 };
 
 std::unique_ptr<CuptiTraceCollector> CreateCuptiCollector(
-    const CuptiTracerCollectorOptions& options,
-    const tsl::uint64 start_walltime_ns, const tsl::uint64 start_gputime_ns);
+    const CuptiTracerCollectorOptions& options, tsl::uint64 start_walltime_ns,
+    tsl::uint64 start_gputime_ns);
 
 }  // namespace profiler
 }  // namespace xla

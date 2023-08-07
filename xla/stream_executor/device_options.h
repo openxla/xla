@@ -55,7 +55,7 @@ struct DeviceOptions {
 
   // Constructs an or-d together set of device options.
   explicit DeviceOptions(unsigned flags) : flags_(flags) {
-    CHECK((flags & kMask) == flags);
+    ABSL_CHECK((flags & kMask) == flags);
   }
 
   // Factory for the default set of device options.

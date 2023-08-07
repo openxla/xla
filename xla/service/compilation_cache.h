@@ -33,7 +33,7 @@ namespace xla {
 // compilation cache.
 class CompilationCache {
  public:
-  CompilationCache() {}
+  CompilationCache() = default;
 
   ExecutionHandle Insert(std::unique_ptr<Executable> executable);
 

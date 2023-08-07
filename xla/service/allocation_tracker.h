@@ -37,7 +37,8 @@ class AllocationTracker {
   // The allocator is used for deallocating memory when allocations are
   // deregistered. All registered allocations must have the same platform as the
   // allocator.
-  AllocationTracker(Backend* backend) : backend_(backend), next_handle_(1) {}
+  explicit AllocationTracker(Backend* backend)
+      : backend_(backend), next_handle_(1) {}
 
   // Registers a shaped buffer of device memory, and returns a corresponding
   // handle that can be used for talking to XLA clients. The given shaped buffer

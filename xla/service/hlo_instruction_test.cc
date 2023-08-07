@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/node_hash_set.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -568,7 +569,7 @@ TEST_F(HloInstructionTest, ReplaceAllUsesInMultipleOps) {
 // Simple visitor that collects and post-processes each node in the graph.
 class NodeCollectorAndPostProcessor : public DfsHloVisitorWithDefault {
  public:
-  NodeCollectorAndPostProcessor() {}
+  NodeCollectorAndPostProcessor() = default;
 
   Status Postprocess(HloInstruction* hlo) override {
     post_processed_nodes_.push_back(hlo);
@@ -595,7 +596,8 @@ class NodeCollectorAndPostProcessor : public DfsHloVisitorWithDefault {
 
 // Returns true if "vec" contains distinct nodes.
 bool Distinct(const std::vector<const HloInstruction*>& vec) {
-  std::set<const HloInstruction*> distinct_nodes(vec.begin(), vec.end());
+  absl::node_hash_set<const HloInstruction*> distinct_nodes(vec.begin(),
+                                                            vec.end());
   return distinct_nodes.size() == vec.size();
 }
 

@@ -400,7 +400,7 @@ class PartitionedHlo {
   const HloSharding& sharding() const { return hlo_->sharding(); }
 
   // Returns the rank of the SPMD instruction.
-  const int64_t rank() const { return base_shape_.rank(); }
+  int64_t rank() const { return base_shape_.rank(); }
 
   // Original full shape of the data.
   const Shape& base_shape() const { return base_shape_; }

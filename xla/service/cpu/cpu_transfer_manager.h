@@ -35,7 +35,7 @@ namespace xla {
 class CpuTransferManager : public GenericTransferManager {
  public:
   CpuTransferManager();
-  ~CpuTransferManager() override {}
+  ~CpuTransferManager() override = default;
 
   Status TransferLiteralToInfeed(se::StreamExecutor* executor,
                                  const LiteralSlice& literal) override;

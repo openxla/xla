@@ -1017,8 +1017,7 @@ Stream *Stream::GetOrCreateSubStream() {
   }
 
   // No streams are reusable; create a new stream.
-  sub_streams_.emplace_back(std::unique_ptr<Stream>{new Stream{parent_}},
-                            false);
+  sub_streams_.emplace_back(std::make_unique<Stream>(parent_), false);
   Stream *sub_stream = sub_streams_.back().first.get();
   sub_stream->Init();
   if (!sub_stream->ok()) {
@@ -2242,7 +2241,7 @@ tsl::Status Stream::BlockHostUntilDone() {
 
   if (!ok()) {
     absl::MutexLock lock(&mu_);
-    LOG(INFO) << status_.ToString();
+    LOG(INFO) << status_;
     tsl::Status status = tsl::Status(
         absl::StatusCode::kInternal,
         "stream did not block host until done; was already in an error state");

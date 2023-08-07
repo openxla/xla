@@ -49,7 +49,7 @@ class LocalService : public Service {
   // compiler is responsible for freeing any memory it allocates this way.
   StatusOr<std::vector<std::unique_ptr<Executable>>> CompileExecutables(
       const XlaComputation& computation,
-      const absl::Span<const Shape* const> argument_layouts,
+      absl::Span<const Shape* const> argument_layouts,
       const ExecutableBuildOptions& build_options);
 
   // Same as CompileExecutables() above, but return AotCompilationResult objects
@@ -57,7 +57,7 @@ class LocalService : public Service {
   // Executable objects.
   StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
   CompileAotResults(const XlaComputation& computation,
-                    const absl::Span<const Shape* const> argument_layouts,
+                    absl::Span<const Shape* const> argument_layouts,
                     const ExecutableBuildOptions& build_options);
 
   // Returns the device ordinal that corresponds to the given replica number.
@@ -88,7 +88,7 @@ class LocalService : public Service {
   // HloModuleConfig.
   StatusOr<std::unique_ptr<HloModuleConfig>> GetHloModuleConfig(
       const XlaComputation& computation,
-      const absl::Span<const Shape* const> argument_layouts,
+      absl::Span<const Shape* const> argument_layouts,
       const ExecutableBuildOptions& build_options);
 };
 

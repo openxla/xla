@@ -206,7 +206,7 @@ class LegalizeXLAFrameworkToLLVMPass
   }
 
  public:
-  explicit LegalizeXLAFrameworkToLLVMPass() {}
+  explicit LegalizeXLAFrameworkToLLVMPass() = default;
 
   void runOnOperation() override {
     ModuleOp m = getOperation();

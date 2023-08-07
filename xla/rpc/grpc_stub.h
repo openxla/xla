@@ -27,20 +27,20 @@ class GRPCStub : public ServiceInterface {
   explicit GRPCStub(grpc::XlaService::Stub* stub) : grpc_stub_(stub) {}
   ~GRPCStub() override;
 
-  Status TransferToClient(const TransferToClientRequest* arg,
-                          TransferToClientResponse* result) override;
+  Status TransferToClient(const TransferToClientRequest* request,
+                          TransferToClientResponse* response) override;
 
-  Status TransferToServer(const TransferToServerRequest* arg,
-                          TransferToServerResponse* result) override;
+  Status TransferToServer(const TransferToServerRequest* request,
+                          TransferToServerResponse* response) override;
 
-  Status TransferToInfeed(const TransferToInfeedRequest* arg,
-                          TransferToInfeedResponse* result) override;
+  Status TransferToInfeed(const TransferToInfeedRequest* request,
+                          TransferToInfeedResponse* response) override;
 
-  Status TransferFromOutfeed(const TransferFromOutfeedRequest* arg,
-                             TransferFromOutfeedResponse* result) override;
+  Status TransferFromOutfeed(const TransferFromOutfeedRequest* request,
+                             TransferFromOutfeedResponse* response) override;
 
-  Status ResetDevice(const ResetDeviceRequest* arg,
-                     ResetDeviceResponse* result) override;
+  Status ResetDevice(const ResetDeviceRequest* request,
+                     ResetDeviceResponse* response) override;
 
   Status Compile(const CompileRequest* request,
                  CompileResponse* response) override;
@@ -51,30 +51,30 @@ class GRPCStub : public ServiceInterface {
   Status ExecuteGraphParallel(const ExecuteGraphParallelRequest* request,
                               ExecuteParallelResponse* response) override;
 
-  Status WaitForExecution(const WaitForExecutionRequest* arg,
-                          WaitForExecutionResponse* result) override;
+  Status WaitForExecution(const WaitForExecutionRequest* request,
+                          WaitForExecutionResponse* response) override;
 
-  Status DeconstructTuple(const DeconstructTupleRequest* arg,
-                          DeconstructTupleResponse* result) override;
+  Status DeconstructTuple(const DeconstructTupleRequest* request,
+                          DeconstructTupleResponse* response) override;
 
   Status GetComputationGraphStats(const ComputationGraphStatsRequest* request,
                                   ComputationStatsResponse* response) override;
 
-  Status GetShape(const GetShapeRequest* arg,
-                  GetShapeResponse* result) override;
+  Status GetShape(const GetShapeRequest* request,
+                  GetShapeResponse* response) override;
 
-  Status GetDeviceHandles(const GetDeviceHandlesRequest* arg,
-                          GetDeviceHandlesResponse* result) override;
+  Status GetDeviceHandles(const GetDeviceHandlesRequest* request,
+                          GetDeviceHandlesResponse* response) override;
 
-  Status CreateChannelHandle(const CreateChannelHandleRequest* arg,
-                             CreateChannelHandleResponse* result) override;
+  Status CreateChannelHandle(const CreateChannelHandleRequest* request,
+                             CreateChannelHandleResponse* response) override;
 
-  Status ComputeConstantGraph(const ComputeConstantGraphRequest* arg,
-                              ComputeConstantResponse* result) override;
+  Status ComputeConstantGraph(const ComputeConstantGraphRequest* request,
+                              ComputeConstantResponse* response) override;
 
   // Methods used by GlobalData.
-  Status Unregister(const UnregisterRequest* arg,
-                    UnregisterResponse* result) override;
+  Status Unregister(const UnregisterRequest* request,
+                    UnregisterResponse* response) override;
 
   grpc::XlaService::Stub* service() { return grpc_stub_; }
 

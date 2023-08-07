@@ -106,7 +106,7 @@ class ElementalIrEmitter : public IrBuilderMixin<ElementalIrEmitter> {
                                  bool is_signed);
   llvm::Value* EmitIntegerRemainder(llvm::Value* lhs, llvm::Value* rhs,
                                     bool is_signed);
-  llvm::Value* EmitIntegerPow(llvm::Value* lhs, llvm::Value* rhs,
+  llvm::Value* EmitIntegerPow(llvm::Value* base, llvm::Value* exponent,
                               bool is_signed);
 
   virtual StatusOr<llvm::Value*> EmitPredBinaryOp(const HloInstruction* op,
@@ -249,7 +249,7 @@ class ElementalIrEmitter : public IrBuilderMixin<ElementalIrEmitter> {
   StatusOr<llvm::Value*> EmitElementalConcatenate(
       const HloInstruction* hlo,
       const HloToElementGeneratorMap& operand_to_generator,
-      const llvm_ir::IrArray::Index& target_index);
+      const llvm_ir::IrArray::Index& source_index);
 
   StatusOr<llvm::Value*> EmitElementalDynamicSlice(
       const HloInstruction* hlo,
@@ -297,7 +297,7 @@ class ElementalIrEmitter : public IrBuilderMixin<ElementalIrEmitter> {
       const llvm_ir::IrArray::Index& index);
 
   virtual StatusOr<llvm::Value*> EmitConvolution(
-      const HloInstruction* hlo,
+      const HloInstruction* convolution,
       const HloToElementGeneratorMap& operand_to_generator,
       const llvm_ir::IrArray::Index& index);
 

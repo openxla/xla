@@ -19,6 +19,7 @@ limitations under the License.
 #include <map>
 
 #include "absl/base/macros.h"
+#include "absl/container/node_hash_map.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/fft.h"
@@ -102,9 +103,9 @@ class PluginRegistry {
  private:
   // Containers for the sets of registered factories, by plugin kind.
   struct PluginFactories {
-    std::map<PluginId, BlasFactory> blas;
-    std::map<PluginId, DnnFactory> dnn;
-    std::map<PluginId, FftFactory> fft;
+    absl::node_hash_map<PluginId, BlasFactory> blas;
+    absl::node_hash_map<PluginId, DnnFactory> dnn;
+    absl::node_hash_map<PluginId, FftFactory> fft;
   };
 
   // Simple structure to hold the currently configured default plugins (for a
@@ -143,16 +144,16 @@ class PluginRegistry {
   std::map<PlatformKind, Platform::Id> platform_id_by_kind_;
 
   // The set of registered factories, keyed by platform ID.
-  std::map<Platform::Id, PluginFactories> factories_;
+  absl::node_hash_map<Platform::Id, PluginFactories> factories_;
 
   // Plugins supported for all platform kinds.
   PluginFactories generic_factories_;
 
   // The sets of default factories, keyed by platform ID.
-  std::map<Platform::Id, DefaultFactories> default_factories_;
+  absl::node_hash_map<Platform::Id, DefaultFactories> default_factories_;
 
   // Lookup table for plugin names.
-  std::map<PluginId, std::string> plugin_names_;
+  absl::node_hash_map<PluginId, std::string> plugin_names_;
 
   SE_DISALLOW_COPY_AND_ASSIGN(PluginRegistry);
 };

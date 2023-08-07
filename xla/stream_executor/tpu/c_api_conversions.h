@@ -140,7 +140,7 @@ void Destroy(XLA_HloModuleConfig* c_config);
 // Helper for managing stack based C -> C++ conversions.
 template <class CType>
 struct StackHelper {
-  explicit StackHelper() {}
+  explicit StackHelper() = default;
 
   template <class CppType>
   explicit StackHelper(const CppType& t) {

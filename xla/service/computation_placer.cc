@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/node_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "xla/literal.h"
 #include "xla/service/global_device_id.h"
@@ -197,9 +198,10 @@ StatusOr<DeviceAssignment> ComputationPlacer::AssignDevices(
 /* static */ absl::Mutex ComputationPlacer::platform_computation_placer_mutex_(
     absl::kConstInit);
 
-/* static */ std::map<se::Platform::Id, ComputationPlacer::State>*
+/* static */ absl::node_hash_map<se::Platform::Id, ComputationPlacer::State>*
 ComputationPlacer::GetPlatformComputationPlacers() {
-  static auto* r = new std::map<se::Platform::Id, ComputationPlacer::State>;
+  static auto* r =
+      new absl::node_hash_map<se::Platform::Id, ComputationPlacer::State>;
   return r;
 }
 

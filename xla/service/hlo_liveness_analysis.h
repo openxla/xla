@@ -53,7 +53,7 @@ class HloLivenessAnalysis {
               const ShapeIndex& shape_index) const;
 
  private:
-  HloLivenessAnalysis(const HloModule& module);
+  explicit HloLivenessAnalysis(const HloModule& module);
 
   void RunAnalysis();
 

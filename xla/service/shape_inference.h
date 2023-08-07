@@ -109,7 +109,7 @@ class ShapeInference {
   static StatusOr<Shape> InferConvolveShape(
       const Shape& lhs, const Shape& rhs, int64_t feature_group_count,
       int64_t batch_group_count, const Window& window,
-      const ConvolutionDimensionNumbers& dimension_numbers,
+      const ConvolutionDimensionNumbers& dnums,
       std::optional<PrimitiveType> preferred_element_type);
 
   // Infers the shape produced by the given FFT type on the given operand.
@@ -324,8 +324,8 @@ class ShapeInference {
   // Helper that validates the input data type for a reduce-precision operation,
   // and returns the result shape.
   static StatusOr<Shape> InferReducePrecisionShape(const Shape& operand_shape,
-                                                   const int exponent_bits,
-                                                   const int mantissa_bits);
+                                                   int exponent_bits,
+                                                   int mantissa_bits);
 
   // Helper that infers the shape produced by a pad operation based on the
   // padding configuration.

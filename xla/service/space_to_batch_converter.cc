@@ -234,7 +234,7 @@ class ConvolutionVisitor {
   StatusOr<bool> Run();
 
   // Returns whether any convolution ops were rewritten.
-  const bool changed() const { return changed_; }
+  bool changed() const { return changed_; }
 
   ~ConvolutionVisitor() = default;
 

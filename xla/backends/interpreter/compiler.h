@@ -39,8 +39,8 @@ namespace interpreter {
 // Refer to interpreter/README.md for more.
 class InterpreterCompiler : public Compiler {
  public:
-  InterpreterCompiler() {}
-  ~InterpreterCompiler() override {}
+  InterpreterCompiler() = default;
+  ~InterpreterCompiler() override = default;
 
   StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
       std::unique_ptr<HloModule> hlo_module, se::StreamExecutor* stream_exec,

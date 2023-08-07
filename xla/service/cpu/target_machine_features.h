@@ -70,7 +70,7 @@ class LLVMTargetMachineFeatures : public TargetMachineFeatures {
  public:
   static constexpr int kX86AvxVectorByteSize = 32;
 
-  LLVMTargetMachineFeatures(llvm::TargetMachine* target_machine)
+  explicit LLVMTargetMachineFeatures(llvm::TargetMachine* target_machine)
       : target_machine_(target_machine) {}
 
   int vectorization_factor_in_bytes() const override {

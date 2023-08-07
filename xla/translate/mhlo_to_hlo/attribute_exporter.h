@@ -35,7 +35,7 @@ ConvolutionDimensionNumbers ConvertConvDimensionNumbers(
     mlir::mhlo::ConvDimensionNumbersAttr input);
 
 StatusOr<stream_executor::dnn::ActivationMode> ConvertConvActivationMode(
-    mlir::lmhlo_gpu::Activation input);
+    mlir::lmhlo_gpu::Activation activation);
 
 StatusOr<std::vector<ReplicaGroup>> ConvertReplicaGroups(
     mlir::DenseIntElementsAttr input);

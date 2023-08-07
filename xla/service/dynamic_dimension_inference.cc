@@ -129,7 +129,7 @@ class DynamicDimensionInferenceVisitor : public DfsHloVisitorWithDefault {
 
   Status HandleBroadcast(HloInstruction* hlo) override;
 
-  Status HandleGetDimensionSize(HloInstruction* hlo) override;
+  Status HandleGetDimensionSize(HloInstruction* gds) override;
 
   Status HandleSetDimensionSize(HloInstruction* hlo) override;
 

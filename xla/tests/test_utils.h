@@ -102,7 +102,7 @@ StatusOr<std::vector<Literal>> MakeFakeArguments(
 
 // Check that a given module satisfies various constraints before trying to
 // execute it.
-Status VerifyHloModule(HloModule* const module, bool layout_sensitive,
+Status VerifyHloModule(HloModule* module, bool layout_sensitive,
                        bool allow_mixed_precision);
 
 // Creates a dot op with operands 'lhs' and 'rhs' that contracts dimension 1 of

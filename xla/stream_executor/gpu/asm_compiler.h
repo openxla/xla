@@ -84,8 +84,8 @@ struct HsacoImage {
 
 // Bundles the GPU machine code (HSA Code Object) and returns the resulting
 // binary (i.e. a fatbin) as a byte array.
-tsl::StatusOr<std::vector<uint8_t>> BundleGpuAsm(
-    std::vector<HsacoImage> images, const std::string rocm_root_dir);
+tsl::StatusOr<std::vector<uint8_t>> BundleGpuAsm(std::vector<HsacoImage> images,
+                                                 std::string rocm_root_dir);
 
 // Links multiple relocatable GPU images (e.g. results of ptxas -c) into a
 // single image.

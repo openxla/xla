@@ -108,7 +108,7 @@ class Layout {
                   absl::Span<const bool> dim_ordered,
                   absl::Span<const Tile> tiles,
                   PrimitiveType index_primitive_type = PRIMITIVE_TYPE_INVALID,
-                  PrimitiveType element_primitive_type = PRIMITIVE_TYPE_INVALID,
+                  PrimitiveType pointer_primitive_type = PRIMITIVE_TYPE_INVALID,
                   int64_t element_size_in_bits = 0, int64_t memory_space = 0,
                   std::unique_ptr<Shape> physical_shape = nullptr,
                   int64_t dynamic_shape_metadata_prefix_bytes = 0);

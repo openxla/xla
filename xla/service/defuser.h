@@ -27,8 +27,8 @@ namespace xla {
 // instructions.
 class Defuser : public HloModulePass {
  public:
-  Defuser() {}
-  ~Defuser() override {}
+  Defuser() = default;
+  ~Defuser() override = default;
   absl::string_view name() const override { return "defuser"; }
 
   // Run defusion on the given module. Returns whether the module was

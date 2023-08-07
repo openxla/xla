@@ -65,8 +65,8 @@ class GRPCClientTestBase : public ::testing::Test {
     LOG(INFO) << "Channel to server is connected on port " << port;
 
     xla_service_ = grpc::XlaService::NewStub(channel);
-    stub_.reset(new GRPCStub(xla_service_.get()));
-    client_.reset(new Client(stub_.get()));
+    stub_ = std::make_unique<GRPCStub>(xla_service_.get());
+    client_ = std::make_unique<Client>(stub_.get());
   }
 
   ~GRPCClientTestBase() override {

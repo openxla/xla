@@ -242,11 +242,10 @@ class ClientLibraryTestBase : public ManifestCheckingTest {
   // Creates an array of pseudorandom values lying between the given minimum and
   // maximum values.
   template <typename NativeT>
-  std::vector<NativeT> CreatePseudorandomR1(const int width, NativeT min_value,
+  std::vector<NativeT> CreatePseudorandomR1(int width, NativeT min_value,
                                             NativeT max_value, uint32_t seed);
   template <typename NativeT>
-  std::unique_ptr<Array2D<NativeT>> CreatePseudorandomR2(const int rows,
-                                                         const int cols,
+  std::unique_ptr<Array2D<NativeT>> CreatePseudorandomR2(int rows, int cols,
                                                          NativeT min_value,
                                                          NativeT max_value,
                                                          uint32_t seed);
@@ -260,16 +259,14 @@ class ClientLibraryTestBase : public ManifestCheckingTest {
   //
   // If provided, offset is added uniformly to every element (e.g. an offset of
   // 64 would cause 0 in the above to be 64, 1 to be 65, 1000 to be 1064, etc.)
-  std::unique_ptr<Array2D<float>> CreatePatternedMatrix(const int rows,
-                                                        const int cols,
+  std::unique_ptr<Array2D<float>> CreatePatternedMatrix(int rows, int cols,
                                                         float offset = 0.0);
 
   // Creates a (rows x cols) array as above, padded out to
   // (rows_padded x cols_padded) with zeroes.  Requires rows_padded >= rows
   // and cols_padded > cols.
   std::unique_ptr<Array2D<float>> CreatePatternedMatrixWithZeroPadding(
-      const int rows, const int cols, const int rows_padded,
-      const int cols_padded);
+      int rows, int cols, int rows_padded, int cols_padded);
 
   // Creates a parameter instruction, transfers the literal for the parameter to
   // server, then stores into "data_handle" the global handle for that

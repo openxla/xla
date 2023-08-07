@@ -96,7 +96,7 @@ StreamExecutorConfig::StreamExecutorConfig()
 StreamExecutorConfig::StreamExecutorConfig(int ordinal_in)
     : ordinal(ordinal_in), device_options(DeviceOptions::Default()) {}
 
-Platform::~Platform() {}
+Platform::~Platform() = default;
 
 bool Platform::Initialized() const { return true; }
 

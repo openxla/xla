@@ -121,11 +121,11 @@ class StreamInterface {
 
   // Sets priority for a stream.
   virtual void SetPriority(StreamPriority priority) {
-    LOG(ERROR) << "SetPriority unimplemented for this stream.";
+    ABSL_LOG(ERROR) << "SetPriority unimplemented for this stream.";
   }
 
   virtual void SetPriority(int priority) {
-    LOG(ERROR) << "SetPriority unimplemented for this stream.";
+    ABSL_LOG(ERROR) << "SetPriority unimplemented for this stream.";
   }
 
   // Gets priority for a stream.

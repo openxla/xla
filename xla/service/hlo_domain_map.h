@@ -80,7 +80,7 @@ class HloDomainMap {
   using InstructionOrderMap =
       absl::flat_hash_map<const HloInstruction*, int64_t>;
 
-  HloDomainMap(std::string domain_kind)
+  explicit HloDomainMap(std::string domain_kind)
       : domain_kind_(std::move(domain_kind)) {}
 
   // Check if the kDomain instruction is facing (via its operand link) another

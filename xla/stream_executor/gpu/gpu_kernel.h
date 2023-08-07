@@ -42,7 +42,7 @@ class GpuKernel : public internal::KernelInterface {
 
   // Note that the function is unloaded when the module is unloaded, and the
   // module that the function is contained in is owned by the GpuExecutor.
-  ~GpuKernel() override {}
+  ~GpuKernel() override = default;
 
   // As arity cannot be reflected upon using the CUDA API, the arity is
   // explicitly set during the GpuExecutor::GetKernel initialization process.

@@ -67,7 +67,7 @@ std::vector<int64_t> ToMixedRadix(const int64_t n,
 
 Status WithLogBacktrace(const Status& status) {
   CHECK(!status.ok());
-  VLOG(1) << status.ToString();
+  VLOG(1) << status;
   VLOG(2) << tsl::CurrentStackTrace();
   return status;
 }

@@ -64,7 +64,7 @@ namespace cpu {
 //
 class ShapePartitionAssigner {
  public:
-  ShapePartitionAssigner(const Shape& shape) : shape_(shape) {}
+  explicit ShapePartitionAssigner(const Shape& shape) : shape_(shape) {}
 
   // Returns dimension partition counts (starting at outer-most dimension).
   std::vector<int64_t> Run(int64_t target_partition_count);
