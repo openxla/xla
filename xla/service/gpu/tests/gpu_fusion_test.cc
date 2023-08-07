@@ -14,17 +14,12 @@ limitations under the License.
 ==============================================================================*/
 
 #include <optional>
-#include <utility>
 #include <vector>
 
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/instruction_fusion.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
-#include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_parser.h"
-#include "xla/tests/hlo_test_base.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {
@@ -56,7 +51,9 @@ TEST_F(GpuFusionTest, FusedReshape) {
 ; CHECK-LABEL: @fusion
 ; CHECK: fadd
 ; CHECK: }
-      )");
+      )",
+                     /*match_optimized_ir=*/false,
+                     /*run_optimization_passes=*/false);
 }
 
 // Check that we limit the number of operands to fusions we create.
