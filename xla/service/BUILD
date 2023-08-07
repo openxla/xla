@@ -4373,6 +4373,7 @@ xla_cc_test(
     deps = [
         ":copy_insertion",
         ":hlo_graph_dumper",
+        ":hlo_parser",
         ":hlo_runner",
         "//xla:debug_options_flags",
         "//xla:literal",
@@ -4384,6 +4385,9 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/log",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_benchmark",
     ],
 )
