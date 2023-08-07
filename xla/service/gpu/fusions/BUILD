@@ -60,6 +60,7 @@ cc_library(
         ":copy",
         ":fusion_emitter",
         ":in_place_dynamic_update_slice",
+        ":input_slices",
         ":loop",
         ":reduction",
         ":transpose",
@@ -166,6 +167,23 @@ cc_library(
         "//xla/service/gpu:target_util",
         "//xla/service/llvm_ir:fused_ir_emitter",
         "//xla/service/llvm_ir:ir_array",
+        "//xla/service/llvm_ir:llvm_util",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+cc_library(
+    name = "input_slices",
+    srcs = ["input_slices.cc"],
+    hdrs = ["input_slices.h"],
+    deps = [
+        ":fusion_emitter",
+        "//xla/service:elemental_ir_emitter",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu:parallel_loop_emitter",
+        "//xla/service/llvm_ir:fused_ir_emitter",
+        "//xla/service/llvm_ir:kernel_support_library",
         "//xla/service/llvm_ir:llvm_util",
         "@llvm-project//llvm:ir_headers",
     ],
