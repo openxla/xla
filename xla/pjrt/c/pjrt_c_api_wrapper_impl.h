@@ -16,16 +16,26 @@ limitations under the License.
 #ifndef XLA_PJRT_C_PJRT_C_API_WRAPPER_IMPL_H_
 #define XLA_PJRT_C_PJRT_C_API_WRAPPER_IMPL_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/pjrt_device_description.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/shape.h"
+#include "xla/status.h"
 
 struct PJRT_Error {
   xla::Status status;
