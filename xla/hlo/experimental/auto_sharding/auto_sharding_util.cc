@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_util.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -30,18 +31,30 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/btree_set.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/array.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
+#include "xla/shape.h"
+#include "xla/shape_tree.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace spmd {
@@ -1871,13 +1884,13 @@ size_t VectorGreaterThanOneElementCount(absl::Span<const int64_t> span,
 }
 
 std::vector<int64_t> VectorGreaterThanOneElementIndices(
-    absl::Span<const int64_t> vector, bool omit_last_dim) {
+    absl::Span<const int64_t> span, bool omit_last_dim) {
   std::vector<int64_t> result;
-  for (size_t i = 0; i < vector.size(); i++) {
-    if (i == vector.size() - 1 && omit_last_dim) {
+  for (size_t i = 0; i < span.size(); i++) {
+    if (i == span.size() - 1 && omit_last_dim) {
       continue;
     }
-    if (vector.at(i) > 1) {
+    if (span.at(i) > 1) {
       result.push_back(i);
     }
   }
