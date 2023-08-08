@@ -19,6 +19,8 @@ limitations under the License.
 #include <deque>
 
 #include "xla/service/transfer_manager.h"
+#include "xla/status.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/tpu/noncopyable_buffer.h"
 
 namespace xla {

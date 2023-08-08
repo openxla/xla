@@ -16,12 +16,16 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_TPU_STREAM_H_
 #define XLA_STREAM_EXECUTOR_TPU_TPU_STREAM_H_
 
-#include "xla/stream_executor/stream_executor_internal.h"
+#include <cstdint>
+
+#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/tpu/c_api_conversions.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/status_helper.h"
-#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_executor_api.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 #include "xla/stream_executor/tpu/tpu_stream_interface.h"
+#include "tsl/platform/status.h"
 
 namespace tensorflow {
 namespace tpu {

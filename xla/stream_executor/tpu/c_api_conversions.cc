@@ -16,19 +16,41 @@ limitations under the License.
 #include "xla/stream_executor/tpu/c_api_conversions.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/layout.h"
+#include "xla/literal.h"
+#include "xla/service/computation_layout.h"
+#include "xla/service/computation_placer.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/shape.h"
+#include "xla/shape_layout.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
-#include "xla/stream_executor/tpu/c_api_defn.h"
-#include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/c_api_defn.h"  // IWYU pragma: keep
+#include "xla/stream_executor/tpu/proto_helper.h"
+#include "xla/stream_executor/tpu/tpu_api.h"  // IWYU pragma: keep
+#include "xla/stream_executor/tpu/tpu_executor_api.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 #include "xla/stream_executor/tpu/tpu_ops_c_api.h"
+#include "xla/util.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace ApiConverter {
 

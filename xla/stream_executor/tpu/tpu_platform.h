@@ -16,16 +16,25 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_H_
 #define XLA_STREAM_EXECUTOR_TPU_TPU_PLATFORM_H_
 
+#include <cstdint>
+#include <map>
 #include <memory>
+#include <string>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/log.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/executor_cache.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/plugin.h"
 #include "xla/stream_executor/stream_executor_internal.h"
-#include "xla/stream_executor/tpu/tpu_executor_c_api.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/tpu_executor_c_api.h"  // IWYU pragma: keep
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
-#include "tsl/platform/types.h"
+#include "xla/stream_executor/tpu/tpu_topology.h"
+#include "xla/stream_executor/trace_listener.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace tpu {

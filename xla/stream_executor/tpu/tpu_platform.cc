@@ -15,15 +15,30 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_platform.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 
+#include "absl/log/check.h"
+#include "absl/synchronization/mutex.h"
+#include "xla/stream_executor/multi_platform_manager.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_executor.h"
+#include "xla/stream_executor/tpu/tpu_executor_api.h"
 #include "xla/stream_executor/tpu/tpu_platform_id.h"
+#include "xla/stream_executor/tpu/tpu_platform_interface.h"
+#include "xla/stream_executor/tpu/tpu_topology.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace tpu {

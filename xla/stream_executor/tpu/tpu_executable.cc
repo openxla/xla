@@ -15,13 +15,33 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_executable.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "absl/cleanup/cleanup.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/executable.h"
+#include "xla/service/hlo_execution_profile.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/tpu/c_api_conversions.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/proto_helper.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_executor_api.h"
 #include "xla/stream_executor/tpu/tpu_stream.h"
+#include "xla/xla_data.pb.h"
 
 namespace ApiConverter {
+
 static SE_ExecutableRunOptions ToC(
     const xla::ServiceExecutableRunOptions& options) {
   SE_ExecutableRunOptions se_options;
@@ -62,6 +82,7 @@ static SE_ExecutableRunOptions ToC(
       static_cast<tensorflow::tpu::TpuStream*>(impl)->se_stream();
   return se_options;
 }
+
 }  // namespace ApiConverter
 
 namespace xla {

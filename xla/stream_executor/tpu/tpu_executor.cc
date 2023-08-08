@@ -16,18 +16,31 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_executor.h"
 
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <utility>
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/types/span.h"
 #include "xla/status.h"
+#include "xla/stream_executor/allocator_stats.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_options.h"
+#include "xla/stream_executor/event.h"
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/tpu/c_api_conversions.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/status_helper.h"
-#include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_event.h"
+#include "xla/stream_executor/tpu/tpu_executor_api.h"
 #include "xla/stream_executor/tpu/tpu_stream.h"
+#include "xla/stream_executor/tpu/tpu_topology.h"
 #include "tsl/c/tsl_status.h"
-
-using stream_executor::DeviceMemoryBase;
+#include "tsl/platform/errors.h"
 
 namespace stream_executor {
 namespace tpu {

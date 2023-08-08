@@ -15,26 +15,37 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_transfer_manager.h"
 
+#include <atomic>
+#include <cstdint>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <utility>
 #include <vector>
 
 #include "absl/cleanup/cleanup.h"
+#include "absl/log/check.h"
+#include "absl/types/span.h"
 #include "xla/literal.h"
-#include "xla/shape_util.h"
+#include "xla/service/shaped_buffer.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/tpu/c_api_conversions.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/noncopyable_buffer.h"
 #include "xla/stream_executor/tpu/proto_helper.h"
 #include "xla/stream_executor/tpu/status_helper.h"
 #include "xla/stream_executor/tpu/tpu_api.h"
 #include "xla/stream_executor/tpu/tpu_executor.h"
+#include "xla/stream_executor/tpu/tpu_executor_api.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_id.h"
-#include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 #include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace tpu {

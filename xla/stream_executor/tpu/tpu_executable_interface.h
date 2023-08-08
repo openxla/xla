@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTABLE_INTERFACE_H_
 #define XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTABLE_INTERFACE_H_
 
+#include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/types/span.h"
@@ -24,7 +26,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo_execution_profile.h"
-#include "xla/service/hlo_profile_printer_data.pb.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
 #include "xla/status.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/types.h"
 
 namespace xla {
 

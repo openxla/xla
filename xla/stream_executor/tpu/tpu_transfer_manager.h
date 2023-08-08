@@ -16,16 +16,22 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_TPU_TRANSFER_MANAGER_H_
 #define XLA_STREAM_EXECUTOR_TPU_TPU_TRANSFER_MANAGER_H_
 
+#include <cstdint>
 #include <deque>
 #include <functional>
 
+#include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
+#include "xla/stream_executor/tpu/noncopyable_buffer.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 #include "xla/stream_executor/tpu/tpu_transfer_manager_interface.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace tensorflow {
 namespace tpu {

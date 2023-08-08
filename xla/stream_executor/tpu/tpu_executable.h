@@ -16,6 +16,21 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTABLE_H_
 #define XLA_STREAM_EXECUTOR_TPU_TPU_EXECUTABLE_H_
 
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/executable.h"
+#include "xla/service/hlo_execution_profile.h"
+#include "xla/service/service_executable_run_options.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/tpu_executable_interface.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
 

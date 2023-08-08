@@ -15,17 +15,35 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_executable_interface.h"
 
+#include <cstdint>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
+#include "xla/layout_util.h"
 #include "xla/service/compiler.h"
+#include "xla/service/executable.h"
+#include "xla/service/hlo_execution_profile.h"
 #include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/util.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 

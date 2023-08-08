@@ -15,16 +15,19 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
 
-#include <atomic>
-
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/multi_platform_manager.h"
+#include "xla/stream_executor/platform.h"
 #include "tsl/platform/env.h"
+#include "tsl/protobuf/error_codes.pb.h"
 
 namespace tensorflow {
 namespace tpu {
 
 namespace {
+
 TpuPlatformInterface* GetRegisteredPlatformStatic(bool initialize_platform,
                                                   int tries_left) {
   DCHECK_GT(tries_left, 0);
@@ -79,6 +82,7 @@ TpuPlatformInterface* GetRegisteredPlatformStatic(bool initialize_platform,
   tsl::Env::Default()->SleepForMicroseconds(1000000);  // 1 second
   return GetRegisteredPlatformStatic(initialize_platform, tries_left);
 }
+
 }  // namespace
 
 /* static */

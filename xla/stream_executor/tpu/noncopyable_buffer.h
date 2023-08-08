@@ -16,14 +16,18 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_TPU_NONCOPYABLE_BUFFER_H_
 #define XLA_STREAM_EXECUTOR_TPU_NONCOPYABLE_BUFFER_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
-#include "absl/base/casts.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
 #include "absl/types/span.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/mem.h"

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/stream_executor/tpu/c_api_conversions.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -35,7 +36,9 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
+#include "tsl/platform/statusor.h"
 
 namespace ApiConverter {
 
