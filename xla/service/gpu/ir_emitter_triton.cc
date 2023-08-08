@@ -806,10 +806,6 @@ StatusOr<LaunchDimensions> MatMulImpl(
                     dims.lhs_contracting_dimensions(0)) *
                 split_k;
 
-  // For now all parameters of one scope (dot LHS, RHS) are required to have the
-  // same physical layout = use the same indices in tiles. This is enforced by
-  // construction in the Triton GEMM rewriter.
-
   // LHS non-contracting can be split into two.
   bool lhs_nc_split = false;
   // Either batch GEMM size or upper part of the length of a split

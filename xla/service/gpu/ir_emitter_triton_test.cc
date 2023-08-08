@@ -732,6 +732,29 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
 }
 
+TEST_F(TritonGemmTest, ParametersWithDifferentLayoutsAreSupportedInOneScope) {
+  const std::string kHloText = R"(
+ENTRY e {
+  p0 = bf16[5,3] parameter(0)
+  p0c = f16[5,3] convert(p0)
+  p1 = f16[5,7] parameter(1)
+  p2 = f16[7,5] parameter(2)
+  t = f16[5,7] transpose(p2), dimensions={1,0}
+  a = f16[5,7] add(t, p1)
+  ROOT d = f16[3,7] dot(p0c, a),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(kHloText));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Parameter())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
+}
+
 class TritonGemmLevel2Test : public TritonGemmTest {
  public:
   void SetUp() override {

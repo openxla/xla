@@ -1128,27 +1128,6 @@ class GemmRewriterTritonLevel2Test : public GemmRewriterTritonTest {
   }
 };
 
-TEST_F(GemmRewriterTritonLevel2Test, DoNotFuseIncompatibleDimOrders) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
-HloModule m
-
-ENTRY e {
-  p0 = f16[5,3] parameter(0)
-  p1 = f16[5,7] parameter(1)
-  p2 = f16[7,5] parameter(2)
-  t = f16[5,7] transpose(p2), dimensions={1,0}
-  a = f16[5,7] add(t, p1)
-  ROOT d = f16[3,7] dot(p0, a),
-    lhs_contracting_dims={0}, rhs_contracting_dims={0}
-})"));
-
-  EXPECT_TRUE(GemmRewriterTriton(gpu_version_).Run(module.get()).value());
-  EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(), m::Transpose())));
-}
-
 TEST_F(GemmRewriterTritonLevel2Test, DoNotFuseTooManyParameters) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(
