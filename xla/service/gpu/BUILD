@@ -117,6 +117,10 @@ cc_library(
     deps = [
         ":gpu_device_info",
         "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:util",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
     ],
 )
 
