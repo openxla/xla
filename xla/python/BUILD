@@ -1043,11 +1043,11 @@ tsl_pybind_extension(
         "@pybind11",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform/cloud:gcs_file_system",
         "@tsl//tsl/python/lib/core:numpy",
     ] + select({
         ":gpu_enabled": [
             "//xla/pjrt/gpu:se_gpu_pjrt_client",
-            "@tsl//tsl/platform/cloud:gcs_file_system",
         ],
         "//conditions:default": [],
     }) + select({
