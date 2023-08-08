@@ -1824,6 +1824,7 @@ xla_cc_test(
         ":gpu_fusible",
         ":instruction_fusion",
         "//xla:util",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
@@ -3203,8 +3204,10 @@ cc_library(
         ":ir_emission_utils",
         ":reduction_utils",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:instruction_fusion",
+        "@com_google_absl//absl/algorithm:container",
     ],
 )
 
