@@ -72,7 +72,7 @@ const absl::string_view kMemcpyHToHOp = "MemcpyHToH";
 
 bool IsTfOpName(absl::string_view op_name) {
   // TODO(b/177602927): Confirm the naming convention with the TF team.
-  static const LazyRE2 kTfOpNameRegEx = {"[A-Za-z0-9.][A-Za-z0-9_.\\/>-]*"};
+  static const LazyRE2 kTfOpNameRegEx = {"[A-Za-z0-9.][A-Za-z0-9_.;\\/>-]*"};
   return RE2::FullMatch(op_name, *kTfOpNameRegEx);
 }
 
