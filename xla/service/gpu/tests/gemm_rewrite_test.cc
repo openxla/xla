@@ -32,6 +32,10 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "tsl/lib/core/status_test_util.h"
 
+#if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
+#endif
+
 namespace xla {
 namespace gpu {
 
