@@ -540,6 +540,10 @@ cc_library(
     name = "literal",
     srcs = ["literal.cc"],
     hdrs = ["literal.h"],
+    features = [
+        "layering_check",
+        "parse_headers",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":array",

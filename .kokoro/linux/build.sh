@@ -58,16 +58,16 @@ fi
 
 # Build & test XLA
 docker exec xla bazel --bazelrc=$RC_FILE \
-        test \
+        test -s \
         --build_tag_filters=$TAGS_FILTER  \
         --test_tag_filters=$TAGS_FILTER \
         --keep_going \
-        --features=layering_check \
         --profile=/tf/pkg/profile.json.gz \
         --flaky_test_attempts=3 \
         --config=rbe \
         --jobs=150 \
         --nobuild_tests_only \
+        --features=layering_check \
         $ADDITIONAL_FLAGS \
         -- //xla/... //build_tools/... $TARGET_FILTER
 

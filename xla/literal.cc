@@ -58,6 +58,7 @@ limitations under the License.
 #include "tsl/platform/float8.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/mem.h"
+#include "tsl/platform/platform.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/util/byte_swap_array.h"

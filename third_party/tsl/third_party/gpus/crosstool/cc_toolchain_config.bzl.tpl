@@ -381,6 +381,7 @@ def _features(cpu, compiler, ctx):
                                 flags = [
                                     "-U_FORTIFY_SOURCE",
                                     "-D_FORTIFY_SOURCE=1",
+                                    "-D_DDUNLEAVY=1",
                                     "-fstack-protector",
                                     "-Wall",
                                 ] + ctx.attr.host_compiler_warnings + [
@@ -596,6 +597,45 @@ def _features(cpu, compiler, ctx):
             feature(name = "pic", enabled = True),
             feature(name = "supports_pic", enabled = True),
             feature(name = "has_configured_linker_path", enabled = True),
+            feature(
+              name = "use_module_maps",
+              requires = [feature_set(features = ["module_maps"])],
+              flag_sets = [
+                  flag_set(
+                      actions = all_compile_actions(),
+                      flag_groups = [
+                          flag_group(
+                              flags = [
+                                  "-fmodule-name=%{module_name}",
+                                  "-fmodule-map-file=%{module_map_file}",
+                              ],
+                          ),
+                      ],
+                  ),
+              ],
+            ),
+            feature(name = "module_maps", enabled = True),
+            feature(
+                name = "layering_check",
+                implies = ["use_module_maps"],
+                flag_sets = [
+                    flag_set(
+                        actions = all_compile_actions(),
+                        flag_groups = [
+                            flag_group(flags = [
+                                "-fmodules-strict-decluse",
+                                "-Wprivate-header",
+                            ]),
+                            flag_group(
+                                iterate_over = "dependent_module_map_files",
+                                flags = [
+                                    "-fmodule-map-file=%{dependent_module_map_files}",
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
         ]
     elif cpu == "x64_windows":
         return [
