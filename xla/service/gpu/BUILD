@@ -1190,6 +1190,7 @@ cc_library(
         "//xla/service:pattern_matcher",
         "//xla/stream_executor:blas",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",

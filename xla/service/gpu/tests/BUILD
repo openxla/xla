@@ -140,6 +140,7 @@ xla_cc_test(
         "//xla/service/gpu:gpu_executable",
         "//xla/tests:filecheck",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test_main",
     ] + if_cuda_is_configured([
