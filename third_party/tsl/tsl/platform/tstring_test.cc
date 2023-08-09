@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 
 #include "tsl/platform/cord.h"
+#include "tsl/platform/platform.h"
 #include "tsl/platform/stringpiece.h"
 #include "tsl/platform/test.h"
 
