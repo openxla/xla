@@ -67,12 +67,16 @@ cc_library(
         ":loop",
         ":reduction",
         ":transpose",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:lhlo",
+        "//xla/service:buffer_assignment",
         "//xla/service:elemental_ir_emitter",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:IR",
     ],
 )
 
