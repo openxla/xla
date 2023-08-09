@@ -171,6 +171,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
