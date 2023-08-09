@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_PJRT_PJRT_CLIENT_H_
 #define XLA_PJRT_PJRT_CLIENT_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -25,26 +27,37 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "xla/client/xla_computation.h"
+#include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/service/computation_placer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/framework/allocator.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 // API notes:
 // PjRt stands for "Pretty much Just another RunTime".
@@ -476,6 +489,8 @@ class PjRtClient {
       int local_hardware_id) const = 0;
 
   // Return all memory spaces owned by the client.
+  // TODO(yueshengys): Maybe add a `addressable_memory_spaces` when we need to
+  // differentiate addressable and non-addressable memory spaces.
   virtual absl::Span<PjRtMemorySpace* const> memory_spaces() const = 0;
 
   // Return an ID that identifies the platform (CPU/GPU/TPU).
