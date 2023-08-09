@@ -1,1 +1,11 @@
 Auto generated patch. Do not edit or delete it, even if empty.
+diff -ruN --strip-trailing-cr a/clang/test/CodeGen/LoongArch/intrinsic-la32-error.c b/clang/test/CodeGen/LoongArch/intrinsic-la32-error.c
+--- a/clang/test/CodeGen/LoongArch/intrinsic-la32-error.c
++++ b/clang/test/CodeGen/LoongArch/intrinsic-la32-error.c
+@@ -1,5 +1,5 @@
+ // RUN: %clang_cc1 -triple loongarch32 -emit-llvm -S -verify %s -o /dev/null
+-// RUN: not %clang_cc1 -triple loongarch32 -DFEATURE_CHECK -emit-llvm %s 2>&1 \
++// RUN: not %clang_cc1 -triple loongarch32 -DFEATURE_CHECK -emit-llvm %s -o /dev/null 2>&1 \
+ // RUN:   | FileCheck %s
+ 
+ #include <larchintrin.h>
