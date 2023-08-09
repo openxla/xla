@@ -412,7 +412,7 @@ class TritonAutotunerLevelTest : public HloTestBase,
  public:
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_autotune_level(GetParam());
+    debug_options.set_xla_gpu_gemm_and_conv_autotune_level(GetParam());
     return debug_options;
   }
 };
@@ -431,7 +431,7 @@ ENTRY e {
 
   AutotunerUtil::ClearAutotuneResults();
 
-  if (GetDebugOptionsForTest().xla_gpu_autotune_level() == 0) {
+  if (GetDebugOptionsForTest().xla_gpu_gemm_and_conv_autotune_level() == 0) {
     MatchOptimizedHlo(kHloText, R"(
 ; CHECK: kind=kCustom
 ; CHECK-NOT: block_m

@@ -569,7 +569,8 @@ StatusOr<bool> TritonAutotuner::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   XLA_SCOPED_LOGGING_TIMER("Triton autotuner");
-  if (module->config().debug_options().xla_gpu_autotune_level() == 0) {
+  if (module->config().debug_options().xla_gpu_gemm_and_conv_autotune_level() ==
+      0) {
     return false;
   }
 

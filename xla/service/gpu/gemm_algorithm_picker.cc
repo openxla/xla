@@ -407,7 +407,8 @@ StatusOr<bool> GemmAlgorithmPicker::Run(
   XLA_SCOPED_LOGGING_TIMER(
       absl::StrCat("GemmAlgorithmPicker for ", module->name()));
 
-  if (module->config().debug_options().xla_gpu_autotune_level() == 0) {
+  if (module->config().debug_options().xla_gpu_gemm_and_conv_autotune_level() ==
+      0) {
     VLOG(2) << "GEMM auto-tuning disabled, GemmAlgorithmPicker returning early";
     return false;
   }

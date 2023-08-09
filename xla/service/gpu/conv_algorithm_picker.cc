@@ -329,13 +329,13 @@ StatusOr<bool> CheckRedzones(const se::RedzoneAllocator& allocator,
 
 bool ShouldInitConvData(const HloModuleConfig& hlo_module_config) {
   const int32_t conv_autotune_level =
-      hlo_module_config.debug_options().xla_gpu_autotune_level();
+      hlo_module_config.debug_options().xla_gpu_gemm_and_conv_autotune_level();
   return conv_autotune_level >= 2;
 }
 
 bool ShouldCheckConv(const HloModuleConfig& hlo_module_config) {
   const int32_t conv_autotune_level =
-      hlo_module_config.debug_options().xla_gpu_autotune_level();
+      hlo_module_config.debug_options().xla_gpu_gemm_and_conv_autotune_level();
   return conv_autotune_level >= 4;
 }
 

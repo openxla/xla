@@ -82,7 +82,9 @@ class GpuConvAlgorithmPicker : public HloModulePass {
   }
 
   static bool IsEnabled(const HloModule* module) {
-    return module->config().debug_options().xla_gpu_autotune_level() != 0;
+    return module->config()
+               .debug_options()
+               .xla_gpu_gemm_and_conv_autotune_level() != 0;
   }
 
   static bool IsCandidate(const HloInstruction* instr) {

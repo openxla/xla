@@ -101,7 +101,7 @@ class AutotuneConfig {
   AutotuneConfig(const std::variant<DeviceConfig, DevicelessConfig>& config,
                  const DebugOptions& debug_options)
       : config_(config),
-        autotune_level_(debug_options.xla_gpu_autotune_level()),
+        autotune_level_(debug_options.xla_gpu_gemm_and_conv_autotune_level()),
         should_crash_on_check_failure_(
             debug_options.xla_gpu_crash_on_verification_failures()),
         exhaustive_tiling_search_(
