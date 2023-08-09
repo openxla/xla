@@ -2902,6 +2902,7 @@ cc_library(
         "//xla/service:hlo_memory_scheduler",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:latency_hiding_scheduler",
+        "//xla/service:latency_hiding_scheduler_preparation",
         "//xla/service:profile_guided_latency_estimator",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
