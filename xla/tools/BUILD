@@ -284,6 +284,7 @@ cc_library(
     hdrs = ["hlo_slicer.h"],
     deps = [
         ":hlo_extractor",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:call_graph",
         "//xla/service:hlo_verifier",
