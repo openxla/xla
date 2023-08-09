@@ -432,15 +432,19 @@ cc_library(
     srcs = if_gpu_is_configured(["gpu_graph.cc"]),
     hdrs = if_gpu_is_configured(["gpu_graph.h"]),
     deps = if_gpu_is_configured([
-        "@com_google_absl//absl/strings:str_format",
+        ":gpu_driver_header",
+        ":gpu_types_header",
         "@com_google_absl//absl/functional:any_invocable",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/stream_executor",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ]) + if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
+        "//xla/stream_executor/cuda:cuda_driver",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor/rocm:rocm_driver",
     ]),
