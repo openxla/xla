@@ -240,6 +240,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -248,11 +249,14 @@ cc_library(
     srcs = ["hlo_extractor.cc"],
     hdrs = ["hlo_extractor.h"],
     deps = [
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:compilation_environments",
+        "//xla/service:hlo_module_config",
         "//xla/service:hlo_verifier",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/container:flat_hash_map",
