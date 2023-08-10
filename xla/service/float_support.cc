@@ -24,7 +24,6 @@ namespace xla {
 bool FloatSupport::SupportsLowPrecisionOperand(const HloInstruction& hlo,
                                                int64_t operand_index) const {
   switch (hlo.opcode()) {
-    case HloOpcode::kAllGather:
     case HloOpcode::kCall:
     case HloOpcode::kConditional:
     case HloOpcode::kCustomCall:
@@ -45,7 +44,6 @@ bool FloatSupport::SupportsLowPrecisionOperand(const HloInstruction& hlo,
 
 bool FloatSupport::SupportsLowPrecisionOutput(const HloInstruction& hlo) const {
   switch (hlo.opcode()) {
-    case HloOpcode::kAllGather:
     case HloOpcode::kCall:
     case HloOpcode::kConditional:
     case HloOpcode::kCustomCall:
