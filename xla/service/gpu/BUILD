@@ -3263,7 +3263,6 @@ xla_cc_test(
     shard_count = 10,
     tags = [
         "gpu",
-        "no_oss",
         "noasan",
         "nomsan",
         # This test runs some fusions that are only supported on Ampere+.
