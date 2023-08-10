@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/host_callback.h"
+#include "xla/python/ifrt/memory.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/py_array.h"
@@ -267,7 +268,8 @@ StatusOr<py::object> PyClient::BufferFromPyval(
       (!force_copy &&
        (host_buffer_semantics == ifrt::Client::HostBufferSemantics::kZeroCopy));
   TF_ASSIGN_OR_RETURN(DevicePutResult put,
-                      DevicePut(argument, ifrt_client_.get(), device, options));
+                      DevicePut(argument, ifrt_client_.get(), device, options,
+                                ifrt::MemoryKind()));
 
   if (put.ifrt_array) {
     auto traceback = Traceback::Get();
