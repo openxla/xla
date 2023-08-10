@@ -485,6 +485,7 @@ cc_library(
         ":tpu_initialize_util",
         ":tpu_library_init_fns",
         ":tpu_ops_c_api_hdrs",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
