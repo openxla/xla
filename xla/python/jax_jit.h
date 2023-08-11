@@ -25,17 +25,14 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
+#include "absl/types/span.h"
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/ifrt/array.h"
-#include "xla/python/py_client.h"
 #include "xla/python/py_values.h"
 #include "xla/python/python_ref_manager.h"
 #include "xla/python/pytree.h"
 #include "xla/python/sharding.h"
-#include "xla/types.h"
-#include "xla/xla_data.pb.h"
 
 namespace jax {
 
