@@ -31,7 +31,7 @@ static std::vector<llvm::Type*> GetComputeFunctionParams(
   llvm::Type* i8_ptr_type = llvm::Type::getInt8PtrTy(llvm_module->getContext());
   llvm::Type* i8_ptr_ptr_type = i8_ptr_type->getPointerTo();
   llvm::Type* i64_ptr_type =
-      llvm::Type::getInt64PtrTy(llvm_module->getContext());
+      llvm::PointerType::getUnqual(llvm_module->getContext());
   std::vector<llvm::Type*> compute_function_params(
       {i8_ptr_type, i8_ptr_type, i8_ptr_ptr_type, i8_ptr_ptr_type,
        i8_ptr_type});
@@ -262,7 +262,7 @@ Status EmitCallToParallelForkJoin(
   // Array of partitions. There is an array element for each
   // partition x partition_dim x 2 (for dimension start and limit).
   compute_function_params.push_back(
-      llvm::Type::getInt64PtrTy(module->getContext()));
+      llvm::PointerType::getUnqual(module->getContext()));
   // Number of partitioned most-major dimensions in 'shape'.
   compute_function_params.push_back(b->getInt32Ty());
   // Function pointer for compute function to be dispatched in parallel.
@@ -337,7 +337,7 @@ Status EmitCallToParallelForkJoin(
   // Add argument specifying parallel dimension partitions.
   fork_join_arguments.push_back(
       b->CreateBitCast(global_partitions_array,
-                       llvm::Type::getInt64PtrTy(module->getContext())));
+                       llvm::PointerType::getUnqual(module->getContext())));
   // Add argument specifying the number of partitioned most-major dimensions.
   fork_join_arguments.push_back(b->getInt32(num_partitioned_dims));
   // Add argument for parallel compute function pointer.
