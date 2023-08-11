@@ -24,17 +24,15 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:
-    case HloOpcode::kAllToAll:
-    case HloOpcode::kCollectivePermute:
     case HloOpcode::kReduceScatter:
     // Handled by Triton GEMM.
     case HloOpcode::kDot:
       return LowPrecisionType() == BF16;
-    case HloOpcode::kAllGather:
-      return LowPrecisionType() == BF16 || LowPrecisionType() == F8E4M3FN ||
-             LowPrecisionType() == F8E5M2;
     // Data movement only ops.
+    case HloOpcode::kAllGather:
+    case HloOpcode::kAllToAll:
     case HloOpcode::kBroadcast:
+    case HloOpcode::kCollectivePermute:
     case HloOpcode::kConcatenate:
     case HloOpcode::kCopy:
     case HloOpcode::kDynamicSlice:
