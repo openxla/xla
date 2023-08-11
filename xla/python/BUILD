@@ -472,6 +472,16 @@ cc_library(
 )
 
 cc_library(
+    name = "idempotent_serializer",
+    srcs = ["idempotent_serializer.cc"],
+    hdrs = ["idempotent_serializer.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@tsl//tsl/platform:protobuf",
+    ],
+)
+
+cc_library(
     name = "inspect_sharding",
     srcs = ["inspect_sharding.cc"],
     hdrs = ["inspect_sharding.h"],
@@ -873,9 +883,15 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":idempotent_serializer",
         ":py_client",
         ":status_casters",
         ":types",
+        # copybara:uncomment "//learning/brain/google/util:register_serializer",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "//xla:array",
         "//xla:debug_options_flags",
         "//xla:shape_util",
@@ -900,12 +916,8 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/service:name_uniquer",
         "//xla/service:tuple_simplifier",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@pybind11",
         "@tsl//tsl/lib/strings:proto_serialization",
+        "@pybind11",
     ],
 )
 
@@ -1091,6 +1103,17 @@ cc_library(
         "@tsl//tsl/profiler/utils:xplane_schema",
         "@tsl//tsl/profiler/utils:xplane_utils",
         "@tsl//tsl/profiler/utils:xplane_visitor",
+    ],
+)
+
+xla_cc_test(
+    name = "idempotent_serializer_test",
+    srcs = ["idempotent_serializer_test.cc"],
+    deps = [
+        ":idempotent_serializer",
+        "//xla/python/ifrt:sharding_proto_cc",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
