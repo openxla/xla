@@ -216,6 +216,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
+        "//xla/python/ifrt",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@pybind11",
