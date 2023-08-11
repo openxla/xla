@@ -5911,13 +5911,15 @@ cc_library(
     deps = [
         ":hlo_pass",
         "//xla:shape_util",
-        "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -5927,11 +5929,14 @@ xla_cc_test(
     deps = [
         ":optimize_input_output_buffer_alias",
         "//xla:shape_util",
+        "//xla:status",
         "//xla:test",
         "//xla:test_helpers",
+        "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test",
     ],
 )
