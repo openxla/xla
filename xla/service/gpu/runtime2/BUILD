@@ -96,6 +96,35 @@ package_group(
 # )
 #
 # cc_library(
+#     name = "graph",
+#     srcs = if_gpu2(["graph.cc"]),
+#     hdrs = if_gpu2(["graph.h"]),
+#     compatible_with = [],
+#     deps = [
+#         ":hal",
+#         ":kernel",
+#         ":vm",
+#         "@com_google_absl//absl/container:inlined_vector",
+#         "@com_google_absl//absl/log",
+#         "@com_google_absl//absl/synchronization",
+#         "@com_google_absl//absl/types:span",
+#         "//xla:status",
+#         "//xla:statusor",
+#         "//xla:xla_data_proto_cc",
+#         "//xla/service:executable",
+#         "//xla/service/gpu:launch_dimensions",
+#         "//xla/service/gpu:stream_executor_util",
+#         "//xla/stream_executor:kernel",
+#         "//xla/stream_executor/gpu:gpu_executor_header",
+#         "//xla/stream_executor/gpu:gpu_graph",
+#         "//xla/stream_executor/gpu:gpu_types_header",
+#     ] + if_gpu2([
+#         "//third_party/iree/runtime/src/iree/hal",
+#         "//third_party/iree/runtime/src/iree/vm",
+#     ]),
+# )
+#
+# cc_library(
 #     name = "kernel",
 #     srcs = if_gpu2(["kernel.cc"]),
 #     hdrs = if_gpu2(["kernel.h"]),
@@ -151,6 +180,7 @@ package_group(
 #     compatible_with = [],
 #     deps = [
 #         ":gemm",
+#         ":graph",
 #         ":hal",
 #         ":kernel",
 #         ":memcpy",
