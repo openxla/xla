@@ -130,6 +130,7 @@ package(
 #     srcs = ["de_bufferization.cc"],
 #     hdrs = ["de_bufferization.h"],
 #     deps = [
+#         "//xla/mlir_hlo:lhlo",
 #         "@llvm-project//llvm:Support",
 #         "@llvm-project//mlir:BufferizationDialect",
 #         "@llvm-project//mlir:IR",
