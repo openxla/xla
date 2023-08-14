@@ -1025,6 +1025,7 @@ cc_library(
     hdrs = ["ir_emission_utils.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        ":hlo_traversal",
         ":target_util",
         "//xla:shape_util",
         "//xla:util",
@@ -1037,7 +1038,6 @@ cc_library(
         "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/service/llvm_ir:llvm_util",
-        "//xla/stream_executor",
         "//xla/translate/mhlo_to_hlo:location_exporter",
         "//xla/translate/mhlo_to_hlo:type_to_shape",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -4132,6 +4132,17 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
+    name = "hlo_traversal",
+    srcs = ["hlo_traversal.cc"],
+    hdrs = ["hlo_traversal.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
     ],
 )
 
