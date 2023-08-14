@@ -1782,23 +1782,24 @@ void ConvertOp::build(OpBuilder& builder, OperationState& result, Value operand,
 }
 
 OpFoldResult ConvertOp::fold(FoldAdaptor adaptor) {
-  auto operands = adaptor.getOperands();
-  auto operandTy = getOperand().getType().cast<TensorType>();
-  auto resultTy = getResult().getType().cast<TensorType>();
-  if (operandTy == resultTy) return getOperand();
+  return {};
+  // auto operands = adaptor.getOperands();
+  // auto operandTy = getOperand().getType().cast<TensorType>();
+  // auto resultTy = getResult().getType().cast<TensorType>();
+  // if (operandTy == resultTy) return getOperand();
 
-  // If the result has non-static shape, a convert op is necessary to go from
-  // static shape to non-static shape.
-  if (!resultTy.hasStaticShape()) return {};
+  // // If the result has non-static shape, a convert op is necessary to go from
+  // // static shape to non-static shape.
+  // if (!resultTy.hasStaticShape()) return {};
 
-  // If the operand is constant, we can do the conversion now.
-  auto elementsAttr = operands.front().dyn_cast_or_null<ElementsAttr>();
-  if (!elementsAttr) return {};
+  // // If the operand is constant, we can do the conversion now.
+  // auto elementsAttr = operands.front().dyn_cast_or_null<ElementsAttr>();
+  // if (!elementsAttr) return {};
 
-  // Prevent folding if the result is too large.
-  if (elementsAttr.getNumElements() > kFoldOpEltLimit) return {};
-  return hlo::convertElementsAttr(elementsAttr,
-                                  getElementTypeOrSelf(getResult()));
+  // // Prevent folding if the result is too large.
+  // if (elementsAttr.getNumElements() > kFoldOpEltLimit) return {};
+  // return hlo::convertElementsAttr(elementsAttr,
+  //                                 getElementTypeOrSelf(getResult()));
 }
 
 namespace {
@@ -2153,40 +2154,41 @@ LogicalResult BitcastConvertOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult BroadcastOp::fold(FoldAdaptor adaptor) {
-  auto attrs = adaptor.getOperands();
-  auto type = getType().cast<RankedTensorType>();
-  auto sizesType = getBroadcastSizes().getType();
-  if (sizesType.getNumElements() == 0) {
-    return getOperand();
-  }
+  return {};
+  // auto attrs = adaptor.getOperands();
+  // auto type = getType().cast<RankedTensorType>();
+  // auto sizesType = getBroadcastSizes().getType();
+  // if (sizesType.getNumElements() == 0) {
+  //   return getOperand();
+  // }
 
   // Constant fold when an operand is a splat tensor attribute.
-  if (!attrs[0] || !type.hasStaticShape()) return {};
-  auto splatOperandAttr = attrs[0].dyn_cast<SplatElementsAttr>();
-  if (!splatOperandAttr) return {};
+  // if (!attrs[0] || !type.hasStaticShape()) return {};
+  // auto splatOperandAttr = attrs[0].dyn_cast<SplatElementsAttr>();
+  // if (!splatOperandAttr) return {};
 
-  // Handle complex type
-  if (type.getElementType().isa<ComplexType>()) {
-    ComplexType complex = type.getElementType().cast<ComplexType>();
-    if (complex.getElementType().isa<FloatType>()) {
-      return DenseElementsAttr::get(
-          type, {splatOperandAttr.getSplatValue<std::complex<APFloat>>()});
-    }
-    if (complex.getElementType().isa<IntegerType>()) {
-      return DenseElementsAttr::get(
-          type, {splatOperandAttr.getSplatValue<std::complex<APInt>>()});
-    }
-    return {};
-  }
+  // // Handle complex type
+  // if (type.getElementType().isa<ComplexType>()) {
+  //   ComplexType complex = type.getElementType().cast<ComplexType>();
+  //   if (complex.getElementType().isa<FloatType>()) {
+  //     return DenseElementsAttr::get(
+  //         type, {splatOperandAttr.getSplatValue<std::complex<APFloat>>()});
+  //   }
+  //   if (complex.getElementType().isa<IntegerType>()) {
+  //     return DenseElementsAttr::get(
+  //         type, {splatOperandAttr.getSplatValue<std::complex<APInt>>()});
+  //   }
+  //   return {};
+  // }
 
-  // Skip Quantized types since they are not supported in
-  // DenseElementsAttr::get.
-  if (type.getElementType().isa<quant::QuantizedType>()) {
-    return {};
-  }
+  // // Skip Quantized types since they are not supported in
+  // // DenseElementsAttr::get.
+  // if (type.getElementType().isa<quant::QuantizedType>()) {
+  //   return {};
+  // }
 
-  return SplatElementsAttr::get(
-      type, splatOperandAttr.getSplatValue<mlir::Attribute>());
+  // return SplatElementsAttr::get(
+  //     type, splatOperandAttr.getSplatValue<mlir::Attribute>());
 }
 
 LogicalResult BroadcastOp::inferReturnTypeComponents(
@@ -2243,44 +2245,45 @@ LogicalResult BroadcastInDimOp::verify() {
 }
 
 OpFoldResult BroadcastInDimOp::fold(FoldAdaptor adaptor) {
-  auto attrs = adaptor.getOperands();
-  auto type = getType().cast<RankedTensorType>();
-  if (type == getOperand().getType()) {
-    auto broadcastValues = getBroadcastDimensions().getValues<int64_t>();
-    if (!std::equal(broadcastValues.begin(), broadcastValues.end(),
-                    llvm::seq<int64_t>(0, type.getRank()).begin())) {
-      return {};
-    }
-    return getOperand();
-  }
+  return {};
+  // auto attrs = adaptor.getOperands();
+  // auto type = getType().cast<RankedTensorType>();
+  // if (type == getOperand().getType()) {
+  //   auto broadcastValues = getBroadcastDimensions().getValues<int64_t>();
+  //   if (!std::equal(broadcastValues.begin(), broadcastValues.end(),
+  //                   llvm::seq<int64_t>(0, type.getRank()).begin())) {
+  //     return {};
+  //   }
+  //   return getOperand();
+  // }
 
-  // Constant fold when an operand is a splat tensor attribute.
-  if (!attrs[0] || !type.hasStaticShape()) return {};
-  auto splatOperandAttr = attrs[0].dyn_cast<SplatElementsAttr>();
-  if (!splatOperandAttr) return {};
+  // // Constant fold when an operand is a splat tensor attribute.
+  // if (!attrs[0] || !type.hasStaticShape()) return {};
+  // auto splatOperandAttr = attrs[0].dyn_cast<SplatElementsAttr>();
+  // if (!splatOperandAttr) return {};
 
-  // Handle complex type
-  if (type.getElementType().isa<ComplexType>()) {
-    ComplexType complex = type.getElementType().cast<ComplexType>();
-    if (complex.getElementType().isa<FloatType>()) {
-      return DenseElementsAttr::get(
-          type, {splatOperandAttr.getSplatValue<std::complex<APFloat>>()});
-    }
-    if (complex.getElementType().isa<IntegerType>()) {
-      return DenseElementsAttr::get(
-          type, {splatOperandAttr.getSplatValue<std::complex<APInt>>()});
-    }
-    return {};
-  }
+  // // Handle complex type
+  // if (type.getElementType().isa<ComplexType>()) {
+  //   ComplexType complex = type.getElementType().cast<ComplexType>();
+  //   if (complex.getElementType().isa<FloatType>()) {
+  //     return DenseElementsAttr::get(
+  //         type, {splatOperandAttr.getSplatValue<std::complex<APFloat>>()});
+  //   }
+  //   if (complex.getElementType().isa<IntegerType>()) {
+  //     return DenseElementsAttr::get(
+  //         type, {splatOperandAttr.getSplatValue<std::complex<APInt>>()});
+  //   }
+  //   return {};
+  // }
 
-  // Skip Quantized types since they are not supported in
-  // DenseElementsAttr::get.
-  if (type.getElementType().isa<quant::QuantizedType>()) {
-    return {};
-  }
+  // // Skip Quantized types since they are not supported in
+  // // DenseElementsAttr::get.
+  // if (type.getElementType().isa<quant::QuantizedType>()) {
+  //   return {};
+  // }
 
-  return SplatElementsAttr::get(
-      type, splatOperandAttr.getSplatValue<mlir::Attribute>());
+  // return SplatElementsAttr::get(
+  //     type, splatOperandAttr.getSplatValue<mlir::Attribute>());
 }
 
 // Simplify BroadcastInDim has the following behaviors: replace BroadcastInDim
@@ -2715,25 +2718,26 @@ static Attribute foldConcatenate(ConcatenateOp* op,
 }
 
 OpFoldResult ConcatenateOp::fold(FoldAdaptor adaptor) {
-  auto operands = adaptor.getOperands();
-  if (getNumOperands() == 1) return getOperand(0);
+  // auto operands = adaptor.getOperands();
+  // if (getNumOperands() == 1) return getOperand(0);
+  return {};
 
-  ShapedType type = getResult().getType().cast<ShapedType>();
-  if (!type.hasStaticShape()) return {};
+  // ShapedType type = getResult().getType().cast<ShapedType>();
+  // if (!type.hasStaticShape()) return {};
 
-  auto axis = getDimension();
-  if (auto attr = foldConcatenate(this, operands)) {
-    return attr;
-  }
+  // auto axis = getDimension();
+  // if (auto attr = foldConcatenate(this, operands)) {
+  //   return attr;
+  // }
 
-  for (auto operand : getOperands()) {
-    auto ty = operand.getType().cast<ShapedType>();
-    if (ty.getDimSize(axis) != 0) {
-      return {};
-    }
-  }
+  // for (auto operand : getOperands()) {
+  //   auto ty = operand.getType().cast<ShapedType>();
+  //   if (ty.getDimSize(axis) != 0) {
+  //     return {};
+  //   }
+  // }
 
-  return DenseElementsAttr::get(type, ArrayRef<Attribute>());
+  // return DenseElementsAttr::get(type, ArrayRef<Attribute>());
 }
 
 LogicalResult ConcatenateOp::reifyReturnTypeShapes(
@@ -4429,19 +4433,20 @@ LogicalResult ReshapeOp::verify() {
 }
 
 OpFoldResult ReshapeOp::fold(FoldAdaptor adaptor) {
-  auto operands = adaptor.getOperands();
-  if (getOperand().getType() == getType()) {
-    return getOperand();
-  }
+  // auto operands = adaptor.getOperands();
+  // if (getOperand().getType() == getType()) {
+  //   return getOperand();
+  // }
 
-  if (auto prevOp = getOperand().getDefiningOp<ReshapeOp>()) {
-    setOperand(prevOp.getOperand());
-    return getResult();
-  }
+  // if (auto prevOp = getOperand().getDefiningOp<ReshapeOp>()) {
+  //   setOperand(prevOp.getOperand());
+  //   return getResult();
+  // }
 
-  if (auto elements = operands.front().dyn_cast_or_null<DenseElementsAttr>()) {
-    return reshape(elements, getResult().getType().cast<ShapedType>());
-  }
+  // if (auto elements = operands.front().dyn_cast_or_null<DenseElementsAttr>())
+  // {
+  //   return reshape(elements, getResult().getType().cast<ShapedType>());
+  // }
 
   return {};
 }
@@ -4873,11 +4878,8 @@ struct Min<APFloat> {
     return BinaryFolder<Op, IntegerType, APInt, Func<APSInt>>(this, attrs);  \
   return {};
 
-#define BINARY_FOLDER(Op, Func)                \
-  OpFoldResult Op::fold(FoldAdaptor adaptor) { \
-    auto attrs = adaptor.getOperands();        \
-    BINARY_FOLDER_INTERNAL(Op, Func)           \
-  }
+#define BINARY_FOLDER(Op, Func) \
+  OpFoldResult Op::fold(FoldAdaptor adaptor) { return {}; }
 
 // Addition, subtraction and multiplication use the std:: versions of the ops.
 // Due to the other ops behaving differently in signed vs unsigned integers,
@@ -4900,9 +4902,9 @@ OpFoldResult AddOp::fold(FoldAdaptor adaptor) {
     if (isSplatZero(splatRhs))
       return splatLhs ? (OpFoldResult)splatLhs : getLhs();
   }
-  if (attrs[0] && attrs[1]) {
-    BINARY_FOLDER_INTERNAL(AddOp, std::plus)
-  }
+  // if (attrs[0] && attrs[1]) {
+  //   BINARY_FOLDER_INTERNAL(AddOp, std::plus)
+  // }
   return {};
 }
 
@@ -4928,9 +4930,9 @@ OpFoldResult MulOp::fold(FoldAdaptor adaptor) {
     if (isSplatOne(splatRhs))
       return splatLhs ? (OpFoldResult)splatLhs : getLhs();
   }
-  if (attrs[0] && attrs[1]) {
-    BINARY_FOLDER_INTERNAL(MulOp, std::multiplies);
-  }
+  // if (attrs[0] && attrs[1]) {
+  //   BINARY_FOLDER_INTERNAL(MulOp, std::multiplies);
+  // }
   return {};
 }
 
@@ -5457,16 +5459,19 @@ LogicalResult TopKOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult TransposeOp::fold(FoldAdaptor adaptor) {
-  auto operands = adaptor.getOperands();
-  if (auto elements = operands.front().dyn_cast_or_null<SplatElementsAttr>()) {
-    return reshape(elements, getResult().getType().cast<ShapedType>());
-  }
-  for (const auto& it : llvm::enumerate(getPermutation().getValues<APInt>())) {
-    if (it.index() != it.value()) {
-      return {};
-    }
-  }
-  return getOperand();
+  return {};
+  // auto operands = adaptor.getOperands();
+  // if (auto elements = operands.front().dyn_cast_or_null<SplatElementsAttr>())
+  // {
+  //   return reshape(elements, getResult().getType().cast<ShapedType>());
+  // }
+  // for (const auto& it : llvm::enumerate(getPermutation().getValues<APInt>()))
+  // {
+  //   if (it.index() != it.value()) {
+  //     return {};
+  //   }
+  // }
+  // return getOperand();
 }
 
 // transpose(transpose(X)) => transpose(X)
