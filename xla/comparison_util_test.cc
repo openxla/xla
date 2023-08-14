@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/comparison_util.h"
 
+#include <cstdint>
 #include <limits>
 
 #include "xla/test.h"
+#include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/bfloat16.h"
 
 namespace xla {
 namespace {
