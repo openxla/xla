@@ -15,7 +15,14 @@ limitations under the License.
 
 #include "xla/service/while_loop_analysis.h"
 
+#include <map>
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/log/check.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -28,22 +35,71 @@ namespace xla {
 using std::nullopt;
 using std::optional;
 namespace m = match;
-
-// Finds and returns the non-constant operand in instr.
-//
-// CHECK-fails if instr doesn't have exactly one unique non-constant operand.
-static const HloInstruction* NonConstantOperand(const HloInstruction* instr) {
-  const HloInstruction* result = nullptr;
-  for (const HloInstruction* operand : instr->operands()) {
-    if (!operand->IsConstant()) {
-      if (result != nullptr) {
-        CHECK_EQ(result, operand);
+// TODO(b/288142663) This can possibly be expensive for large modules. Will
+// remove when the feature is added.
+static optional<const HloInstruction*> GetCallerWhileInstructionOfComputation(
+    const HloComputation* compuatation) {
+  // std::cout << "finding caller of " << compuatation->name() << std::endl;
+  auto* m = compuatation->parent();
+  for (auto comp : m->computations()) {
+    for (const HloInstruction* instr : comp->instructions()) {
+      if (instr->opcode() == HloOpcode::kWhile &&
+          instr->while_body() == compuatation) {
+        return instr;
       }
-      result = operand;
     }
   }
-  CHECK_NE(result, nullptr);
-  return result;
+  return nullopt;
+}
+
+/*static*/ optional<Literal> GetLiteral(const HloInstruction* var) {
+  if (var->opcode() == HloOpcode::kConstant) {
+    return var->literal().Clone();
+  }
+  if (var->opcode() == HloOpcode::kCopy) {
+    return GetLiteral(var->operand(0));
+  }
+  if (var->opcode() == HloOpcode::kReshape) {
+    return GetLiteral(var->operand(0));
+  }
+  if (var->opcode() == HloOpcode::kBitcast) {
+    return GetLiteral(var->operand(0));
+  }
+
+  auto* parent = var->parent();
+  // Instruction is in the entry and is not constant
+  if (parent->IsEntryComputation()) {
+    return nullopt;
+  }
+  // TODO(b/288142663) Change this to retrieve the instruction from the
+  // computation.
+  // auto while_caller = GetCallerWhileInstructionOfComputation(parent);
+  // if(!while_caller.has_value()) {
+  //   return nullopt;
+  // }
+  std::unique_ptr<CallGraph> call_graph = CallGraph::Build(var->GetModule());
+  std::vector<HloInstruction*> callers =
+      call_graph->GetComputationCallers(parent);
+  if (callers.size() != 1) {
+    return nullopt;
+  }
+  HloInstruction* while_caller = callers.at(0);
+  std::cout << "while_caller: " << while_caller->ToShortString() << " of the ";
+  if (while_caller->called_computations().at(0) == parent) {
+    std::cout << "body" << std::endl;
+  } else {
+    std::cout << "condition" << std::endl;
+  }
+  const HloInstruction* operand = while_caller->operand(0);
+  if (operand->opcode() != HloOpcode::kTuple) {
+    return nullopt;
+  }
+  if (var->opcode() != HloOpcode::kGetTupleElement) {
+    return nullopt;
+  }
+  // We are sure that var is an element in a tuple
+  int64_t tuple_idx = var->tuple_index();
+  return GetLiteral(operand->operand(tuple_idx));
 }
 
 // If all of instr's operands are either constants or have the form
@@ -51,9 +107,6 @@ static const HloInstruction* NonConstantOperand(const HloInstruction* instr) {
 // for the same value N, returns N.  Otherwise, returns nullopt.
 static optional<int64_t> GetGTEOperandIndex(const HloInstruction* instr,
                                             const HloInstruction* gte_operand) {
-  VLOG(2) << "GetGTEOperandIndex(" << instr->ToString() << ", "
-          << gte_operand->ToString() << ")";
-
   // All operands of `instr` must be either constants or of the form
   //   get-tuple-element(gte_operand, tuple_idx)
   // for the same value tuple_idx. We also support the case where GTE feeds a
@@ -83,152 +136,13 @@ static optional<int64_t> GetGTEOperandIndex(const HloInstruction* instr,
     if (!tuple_idx.has_value()) {
       tuple_idx = operand_tuple_idx;
     } else {
-      if (operand_tuple_idx != tuple_idx) {
+      if (operand_tuple_idx != tuple_idx &&
+          !GetLiteral(possibly_gte_operand).has_value()) {
         return nullopt;
       }
     }
   }
   return tuple_idx;
-}
-
-// The below function identifies a subset of all possible auxiliary
-// induction variables (AIV). Specifically, candidates are gtes, e.g.,
-// gte(param0, N)
-// The function checks if the loop body plumbs the AIV
-// through the same tuple index at root, and that ops involving AIV
-// involve constants.
-//   op2 = op(constants, gte(param0, N), constants)
-//   op3 = op(constants, f(op2, gte(param0, N), constants)
-//   op4 = op(constants, f(op3, constants)
-//   root = tuple(..., op4, ...)
-// Further, the ops are restricted to basic math ops (+,-,*,/).
-// Finally, loop invariant GTEs are excluded from AIVs.
-// We can expand the ops category/nature of AIVs as needed.
-std::vector<const HloInstruction*> GetAuxiliaryLoopInductionVars(
-    const HloInstruction* while_op) {
-  std::vector<const HloInstruction*> aux_ind_gte;
-  CHECK_EQ(while_op->opcode(), HloOpcode::kWhile);
-  auto* while_body = while_op->while_body();
-  auto* while_body_param = while_body->parameter_instruction(0);
-  VLOG(2) << "Aux Induction Variables for loop:" << while_op->ToShortString();
-  VLOG(2) << "the parameter instr:" << while_body_param->ToShortString();
-  VLOG(2) << "the parameter user count:" << while_body_param->users().size();
-  if (while_body_param == nullptr) return aux_ind_gte;
-
-  // candidates_pairs = pair<inst, inst>(
-  //   operands of the root while body,
-  //   GTE only operands that index into the same position in the parameter)
-  // for each candidate_pair (x, y)
-  //  find all paths between x and y,
-  //  each paths should satisfy the above listed criterion
-  //  index that x and y used is added as a aux variable index
-  std::map<int64_t, const HloInstruction*> extractions;
-  for (const HloInstruction* indx_instr : while_body_param->users()) {
-    if (indx_instr->opcode() != HloOpcode::kGetTupleElement) {
-      continue;
-    }
-    auto it = extractions.find(indx_instr->tuple_index());
-    // if we find two extractions at the same index, we ignore such
-    // a candidate
-    if (it != extractions.end()) {
-      it->second = nullptr;
-      VLOG(2) << "two extractions at same index:" << indx_instr->ToString();
-    } else {
-      extractions.insert(std::make_pair(indx_instr->tuple_index(), indx_instr));
-      VLOG(2) << "inserting extraction :" << indx_instr->ToString();
-    }
-  }
-  VLOG(2) << "total extractions size:" << extractions.size() << std::endl;
-  if (extractions.empty()) {
-    return aux_ind_gte;
-  }
-
-  auto* while_body_root = while_body->root_instruction();
-  if (while_body_root->opcode() != HloOpcode::kTuple) {
-    VLOG(2) << "While body root is not a tuple:" << while_body_root->ToString();
-    return aux_ind_gte;
-  }
-  int64_t index = -1;
-  std::map<int64_t, const HloInstruction*> insertions;
-  for (const HloInstruction* operand : while_body_root->operands()) {
-    index++;
-    if (!operand->IsConstant()) {
-      auto it = insertions.find(index);
-      if (it != insertions.end()) {
-        it->second = nullptr;
-        VLOG(2) << "two insertions at same index:" << operand->ToString();
-      } else {
-        insertions.insert(std::make_pair(index, operand));
-        VLOG(2) << "inserting insertions:" << operand->ToString();
-      }
-    }
-  }
-  if (insertions.empty()) {
-    return aux_ind_gte;
-  }
-
-  std::map<int64_t, std::pair<const HloInstruction*, const HloInstruction*>>
-      candidate_pairs;
-  for (; index >= 0; --index) {
-    const HloInstruction *ext, *inst;
-    ext = (extractions.find(index) != extractions.end())
-              ? extractions.find(index)->second
-              : nullptr;
-    inst = (insertions.find(index) != insertions.end())
-               ? insertions.find(index)->second
-               : nullptr;
-    if (ext != nullptr && inst != nullptr) {
-      // Filter out trivial aux, i.e., extract directly to an insert.
-      if (ext != inst) {
-        candidate_pairs.insert(
-            std::make_pair(index, std::make_pair(ext, inst)));
-      }
-    }
-  }
-  VLOG(2) << "total candidate pairs:" << candidate_pairs.size() << std::endl;
-
-  // Passed to ReachabilityMap to decide the type of produce-consumer edges
-  // along the reachability path.
-  const auto add_dependencies = [](const HloInstruction* hlo,
-                                   std::vector<HloInstruction*>* inputs) {
-    HloInstruction* non_const_operand = nullptr;
-    int num_non_constants = 0;
-    for (HloInstruction* operand : hlo->operands()) {
-      if (!operand->IsConstant()) {
-        num_non_constants++;
-        non_const_operand = operand;
-      }
-    }
-    if (num_non_constants == 1 &&
-        (hlo->opcode() == HloOpcode::kGetTupleElement ||
-         hlo->opcode() == HloOpcode::kAdd ||
-         hlo->opcode() == HloOpcode::kMultiply ||
-         hlo->opcode() == HloOpcode::kDivide ||
-         hlo->opcode() == HloOpcode::kSubtract)) {
-      inputs->push_back(non_const_operand);
-    }
-  };
-
-  std::unique_ptr<HloReachabilityMap> hrm =
-      HloReachabilityMap::BuildWithRestrictions(
-          while_body,
-          absl::FunctionRef<void(const HloInstruction* hlo,
-                                 std::vector<HloInstruction*>* inputs)>(
-              add_dependencies));
-
-  for (auto candidates : candidate_pairs) {
-    VLOG(2) << "are reachable?:" << (candidates.second.first)->ToString()
-            << "*************" << (candidates.second.second)->ToString()
-            << std::endl;
-    if (hrm->IsReachable(candidates.second.first, candidates.second.second)) {
-      aux_ind_gte.push_back(candidates.second.first);
-      VLOG(2) << "YES";
-    } else {
-      VLOG(2) << "NO";
-    }
-  }
-  VLOG(2) << "num auxiliary candidates :" << aux_ind_gte.size();
-  return aux_ind_gte;
 }
 
 // Tries to get the tuple index of the induction variable of a while loop.
@@ -267,7 +181,7 @@ optional<int64_t> GetLoopInductionVarTupleIdx(const HloInstruction* while_op) {
       GetGTEOperandIndex(while_cond_root, while_cond_param);
   if (!indvar_tuple_idx) {
     VLOG(2) << "Induction variable not found in loop condition: "
-            << while_cond->root_instruction()->ToString();
+            << while_cond->root_instruction()->ToShortString();
     return nullopt;
   }
 
@@ -282,7 +196,7 @@ optional<int64_t> GetLoopInductionVarTupleIdx(const HloInstruction* while_op) {
   auto* while_body_root = while_body->root_instruction();
   if (while_body_root->opcode() != HloOpcode::kTuple) {
     VLOG(2) << "While body's root is not a tuple instruction: "
-            << while_body_root->ToString();
+            << while_body_root->ToShortString();
     return nullopt;
   }
 
@@ -293,7 +207,7 @@ optional<int64_t> GetLoopInductionVarTupleIdx(const HloInstruction* while_op) {
   if (!while_body_indvar_tuple_idx) {
     VLOG(2)
         << "Induction variable not found in while body increment instruction: "
-        << while_body_inc->ToString();
+        << while_body_inc->ToShortString();
     return nullopt;
   }
   if (while_body_indvar_tuple_idx != indvar_tuple_idx) {
@@ -308,56 +222,79 @@ optional<int64_t> GetLoopInductionVarTupleIdx(const HloInstruction* while_op) {
   // elements.
   auto* while_init = while_op->operand(0);
   if (while_init->opcode() != HloOpcode::kTuple) {
-    VLOG(2) << "While init expected to be a tuple: " << while_init->ToString();
+    VLOG(2) << "While init expected to be a tuple: "
+            << while_init->ToShortString();
     return nullopt;
   }
 
-  VLOG(2) << "Induction variable's tuple index: " << *indvar_tuple_idx;
+  std::cout << "Induction variable's tuple index: " << *indvar_tuple_idx
+            << std::endl;
   return indvar_tuple_idx;
 }
 
-// Converts the given literal to a scalar int64_t, if possible.
-//
-// Fails if the literal is not an integral type or if the value it contains
-// cannot be represented in an int64_t.
-static optional<int64_t> LiteralAsScalarInt64(const Literal& l) {
-  if (!ShapeUtil::IsEffectiveScalar(l.shape())) {
-    VLOG(2) << "literal is not an effective scalar: " << l.ToString();
-    return nullopt;
-  }
-  switch (l.shape().element_type()) {
-    case S8:
-      return l.GetFirstElement<int8_t>();
-    case S16:
-      return l.GetFirstElement<int16_t>();
-    case S32:
-      return l.GetFirstElement<int32_t>();
-    case S64:
-      return l.GetFirstElement<int64_t>();
-    case U8:
-      return l.GetFirstElement<uint8_t>();
-    case U16:
-      return l.GetFirstElement<uint16_t>();
-    case U32:
-      return l.GetFirstElement<uint32_t>();
-    case U64: {
-      uint64_t v = l.GetFirstElement<uint64_t>();
-      if (v > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-        VLOG(2) << "uint64_t literal is out of range for int64_t: " << v;
-        return nullopt;
-      }
-      return v;
+// Retrieves the list of all induction variables in the form of
+//    gte(computation_param), index=tuple_idx
+// We note that there might be multiple of such variables with different names.
+std::vector<HloInstruction*> GetGTEInductionVars(
+    const HloComputation* computation, int64_t tuple_idx) {
+  std::vector<HloInstruction*> vars;
+  CHECK_EQ(computation->parameter_instructions().size(), 1);
+  const HloInstruction* param = computation->parameter_instruction(0);
+  for (HloInstruction* inst : computation->instructions()) {
+    if (Match(inst, m::GetTupleElement(m::Op().Is(param), tuple_idx))) {
+      vars.emplace_back(inst);
     }
-    default:
-      VLOG(2) << "literal is of non-integral type " << l.shape().ToString();
-      return nullopt;
   }
+  return vars;
+}
+
+// For now, we only handle shape changing operations. This can be further
+// extended to support math operations that involve only constants.
+bool IsPointerTo(const HloInstruction* pointer, const HloInstruction* pointee) {
+  if (pointer == pointee) return true;
+
+  if (pointer->opcode() == HloOpcode::kCopy) {
+    return IsPointerTo(pointer->operand(0), pointee);
+  }
+  if (pointer->opcode() == HloOpcode::kReshape) {
+    return IsPointerTo(pointer->operand(0), pointee);
+  }
+  if (pointer->opcode() == HloOpcode::kBitcast) {
+    return IsPointerTo(pointer->operand(0), pointee);
+  }
+  return false;
+}
+
+// Finds the variable that points to the induction var in the given instruction.
+// The only assumption is that instr should be in a computation that is called
+// by a while instruction.
+HloInstruction* FindInductionVarInInstruction(const HloInstruction* instr,
+                                              int64_t indvar_tuple_idx) {
+  // Returns the GTE induction variables of the parent of the instr. Any pointer
+  // to induction var should eventually point to one of the gte variables.
+  std::vector<HloInstruction*> indvars =
+      GetGTEInductionVars(instr->parent(), indvar_tuple_idx);
+  // This must pass since we are sure that the while accepts a single tuple.
+  CHECK_GT(indvars.size(), 0);
+
+  HloInstruction* instr_indvar = nullptr;
+  for (HloInstruction* instr_op : instr->operands()) {
+    for (HloInstruction* var : indvars) {
+      if (IsPointerTo(instr_op, var)) {
+        if (instr_indvar == nullptr) {
+          instr_indvar = instr_op;
+        }
+      }
+    }
+  }
+  CHECK_NE(instr_indvar, nullptr);
+  return instr_indvar;
 }
 
 // Computes a + b, returning nullopt if it overflows.
 optional<int64_t> CheckedAdd(int64_t a, int64_t b) {
   // Overflow occurred iff `a` and `b` have the same sign and `a + b` has a
-  // different sign, see Hacker's Delignt 2nd Ed. pp 28.
+  // different sign, see Hacker's Delight 2nd Ed. pp 28.
   uint64_t aa = absl::bit_cast<uint64_t>(a);
   uint64_t bb = absl::bit_cast<uint64_t>(b);
   int64_t result = absl::bit_cast<int64_t>(aa + bb);
@@ -386,7 +323,8 @@ optional<int64_t> CheckedSubtract(int64_t a, int64_t b) {
 //  - the while body does `i++`.
 // If so, it's trivial to compute the loop bound.
 static optional<int64_t> PatternMatchLoopTripCount(
-    const HloInstruction* while_op, int64_t indvar_tuple_idx,
+    const HloInstruction* while_op, HloInstruction* while_body_indvar,
+    HloInstruction* while_cond_indvar, int64_t indvar_tuple_idx,
     const Literal& indvar_init) {
   // First, find the scalar constant K that `i` is initialized to.
   optional<int64_t> indvar_init_val = LiteralAsScalarInt64(indvar_init);
@@ -397,18 +335,48 @@ static optional<int64_t> PatternMatchLoopTripCount(
     return nullopt;
   }
 
-  // Check that `i` goes as `i++` in the while body.
-  //
-  // TODO(jlebar): We could also handle i-- and other idioms.
   auto* while_body = while_op->while_body();
   auto* while_body_indvar_update =
       while_body->root_instruction()->operand(indvar_tuple_idx);
-  auto* while_body_indvar = NonConstantOperand(while_body_indvar_update);
-  if (!Match(while_body_indvar_update,
-             m::AddAnyOrder(m::Op().Is(while_body_indvar),
-                            m::ConstantEffectiveScalar(1)))) {
-    VLOG(2) << "Pattern-match failed: induction variable does not go as i++: "
-            << while_body_indvar_update->ToString();
+
+  // Check that `i` goes as `i++` in the while body.
+  //
+  // TODO(b/288907795): We could also handle i-- and other idioms.
+  if (!Match(while_body_indvar_update, m::Add())) {
+    VLOG(2) << "Pattern-match failed. We only support add operation in "
+               "pattern-matching.";
+    return nullopt;
+  }
+
+  // Given the update instruction in the body and the induction variable, it
+  // returns the single operand that points to the induction variable.
+  auto body_indvar_ptr_operand =
+      FindInductionVarInInstruction(while_body_indvar_update, indvar_tuple_idx);
+  VLOG(2) << "indvar_ptr_operand: " << body_indvar_ptr_operand->ToShortString();
+
+  // Finding other operand of the update instruction and check if it points to a
+  // constant.
+  int64_t other_update_operand_idx =
+      1 - while_body_indvar_update->operand_index(body_indvar_ptr_operand);
+  const HloInstruction* other_update_operand =
+      while_body_indvar_update->operand(other_update_operand_idx);
+  VLOG(2) << "other_update_operand: " << other_update_operand->ToShortString();
+
+  auto const_other_operand = GetLiteral(other_update_operand);
+  if (!const_other_operand.has_value()) {
+    VLOG(2) << "Pattern-match failed: induction variable does not get "
+               "updated with a constant value";
+    return nullopt;
+  }
+  if (!const_other_operand.value().GetIntegralAsS64({}).has_value()) {
+    VLOG(2) << "Pattern-match failed: induction variable is not of type int64, "
+            << other_update_operand->ToShortString();
+    return nullopt;
+  }
+  if (const_other_operand.value().GetIntegralAsS64({}).value() != 1) {
+    VLOG(2) << "Pattern-match failed: induction variable does not go as i++, "
+               "other operand is "
+            << other_update_operand->ToShortString();
     return nullopt;
   }
 
@@ -416,20 +384,33 @@ static optional<int64_t> PatternMatchLoopTripCount(
   // value N.
   auto* while_cond = while_op->while_condition();
   auto* while_cond_root = while_cond->root_instruction();
-  auto* while_cond_indvar = NonConstantOperand(while_cond_root);
-  HloInstruction* while_cond_bound = nullptr;
-  if (!Match(while_cond_root,
-             m::Op().WithBinaryOperandsAnyOrder(
-                 m::Op().Is(while_cond_indvar),
-                 m::ConstantEffectiveScalar(&while_cond_bound)))) {
+  auto cond_indvar_ptr_operand =
+      FindInductionVarInInstruction(while_cond_root, indvar_tuple_idx);
+  VLOG(2) << "condition induction variable: "
+          << cond_indvar_ptr_operand->ToShortString();
+
+  // Finding other operand of the update op
+  int64_t other_cond_operand_idx =
+      1 - while_cond_root->operand_index(cond_indvar_ptr_operand);
+  const HloInstruction* other_cond_operand =
+      while_cond_root->operand(other_cond_operand_idx);
+  if (!Match(while_cond_root, m::Op().WithBinaryOperandsAnyOrder(
+                                  m::Op().Is(cond_indvar_ptr_operand),
+                                  m::Op().Is(other_cond_operand)))) {
     VLOG(2) << "Pattern-match failed: while condition is not of the form "
                "op(i, N) or op(N, i).";
+    return nullopt;
+  }
+  auto while_cond_bound = GetLiteral(other_cond_operand);
+  if (!while_cond_bound.has_value()) {
+    VLOG(2)
+        << "Pattern-match failed: while condition is not bound with a constant";
     return nullopt;
   }
   // Note: If this succeeds, the constant `N` is representable as an int64_t --
   // that is, if it's an XLA U64, it fits within an int64_t.
   optional<int64_t> while_cond_bound_val =
-      LiteralAsScalarInt64(while_cond_bound->literal());
+      LiteralAsScalarInt64(while_cond_bound.value());
   if (!while_cond_bound_val) {
     VLOG(2) << "Pattern-match failed: while condition induction variable is "
                "not a constant scalar representable as an int64_t.";
@@ -440,9 +421,9 @@ static optional<int64_t> PatternMatchLoopTripCount(
   if (Match(while_cond_root,
             m::Op()
                 .WithComparisonDirection(ComparisonDirection::kLt)
-                .WithOperand(0, m::Op().Is(while_cond_indvar)))) {
+                .WithOperand(0, m::Op().Is(cond_indvar_ptr_operand)))) {
     VLOG(2) << "Pattern-match succeeded: loop condition is i < N: "
-            << while_cond_root->ToString();
+            << while_cond_root->ToShortString();
     optional<int64_t> trips =
         CheckedSubtract(*while_cond_bound_val, *indvar_init_val);
     if (trips) {
@@ -457,15 +438,16 @@ static optional<int64_t> PatternMatchLoopTripCount(
   if (Match(while_cond_root,
             m::Op()
                 .WithComparisonDirection(ComparisonDirection::kLe)
-                .WithOperand(0, m::Op().Is(while_cond_indvar)))) {
+                .WithOperand(0, m::Op().Is(cond_indvar_ptr_operand)))) {
     VLOG(2) << "Pattern-match succeeded: loop condition is i <= N: "
-            << while_cond_root->ToString();
+            << while_cond_root->ToShortString();
     optional<int64_t> trips =
         CheckedSubtract(*while_cond_bound_val, *indvar_init_val);
     if (!trips) {
       VLOG(2) << "Pattern-match failed: Trip count exceeds INT64_MAX";
       return nullopt;
     }
+
     trips = CheckedAdd(*trips, 1);
     if (!trips) {
       VLOG(2) << "Pattern-match failed: Trip count exceeds INT64_MAX";
@@ -475,13 +457,15 @@ static optional<int64_t> PatternMatchLoopTripCount(
   }
 
   VLOG(2) << "Pattern-match failed: while condition follows unknown pattern: "
-          << while_cond_root->ToString();
+          << while_cond_root->ToShortString();
   return nullopt;
 }
 
 optional<int64_t> ComputeWhileLoopTripCount(const HloInstruction* while_op,
                                             int64_t max_brute_force_iters) {
-  VLOG(2) << "Getting trip count for loop " << while_op->ToString();
+  // std::cout << "Getting trip count for loop " << while_op->ToShortString() <<
+  // std::endl; std::cout << while_op->parent()->parent()->ToString() <<
+  // std::endl;
 
   // The loop's induction variable is found at
   //
@@ -496,33 +480,37 @@ optional<int64_t> ComputeWhileLoopTripCount(const HloInstruction* while_op,
   // Now that we know the index of the induction variable, we can we can try to
   // compute how many times the loop executes.  Start by computing the induction
   // variable's initial value.
-  HloEvaluator evaluator(/*max_loop_iterations=*/0);
   auto* while_init = while_op->operand(0);
   auto* indvar_init = while_init->operand(*indvar_tuple_idx);
-  StatusOr<Literal> indvar_init_result = evaluator.Evaluate(indvar_init);
-  if (!indvar_init_result.ok()) {
-    VLOG(2) << "Couldn't evaluate induction variable init, "
-            << indvar_init_result.status() << ", " << indvar_init->ToString();
+  optional<Literal> indvar_init_result = GetLiteral(indvar_init);
+  if (!indvar_init_result.has_value()) {
+    std::cout << "Couldn't evaluate induction variable init, "
+              << indvar_init->ToShortString() << std::endl;
     return nullopt;
   }
   Literal indvar_iter_val = std::move(indvar_init_result).value();
 
+  auto* while_body = while_op->while_body();
+  auto* while_body_indvar_update =
+      while_body->root_instruction()->operand(*indvar_tuple_idx);
+  // Given the update instruction in the body and the induction variable, it
+  // returns the single operand that points to the induction variable.
+  auto* while_body_indvar = FindInductionVarInInstruction(
+      while_body_indvar_update, *indvar_tuple_idx);
+
+  auto* while_cond_root = while_op->while_condition()->root_instruction();
+  HloInstruction* while_cond_indvar =
+      FindInductionVarInInstruction(while_cond_root, *indvar_tuple_idx);
+
   // First, try to pattern-match.
-  if (auto trip_count = PatternMatchLoopTripCount(while_op, *indvar_tuple_idx,
-                                                  indvar_iter_val)) {
+  if (auto trip_count = PatternMatchLoopTripCount(
+          while_op, while_body_indvar, while_cond_indvar, *indvar_tuple_idx,
+          indvar_iter_val)) {
     return trip_count;
   }
 
   // If our pattern-match failed, try brute-forcing the loop trip count.
-  auto* while_body = while_op->while_body();
-  auto* while_body_indvar_update =
-      while_body->root_instruction()->operand(*indvar_tuple_idx);
-  auto* while_body_indvar = NonConstantOperand(while_body_indvar_update);
-
-  auto* while_cond = while_op->while_condition();
-  auto* while_cond_root = while_cond->root_instruction();
-  auto* while_cond_indvar = NonConstantOperand(while_cond_root);
-
+  HloEvaluator evaluator(/*max_loop_iterations=*/0);
   for (int64_t trip_count = 0; trip_count != max_brute_force_iters + 1;
        ++trip_count) {
     StatusOr<Literal> result = evaluator.EvaluateWithSubstitutions(
@@ -573,7 +561,8 @@ optional<int64_t> ComputeWhileLoopTripCountUpperBound(
   // If we know the exact trip count, it's also the upper bound.
   auto exact_trip_count = ComputeWhileLoopTripCount(while_op);
   if (exact_trip_count) {
-    VLOG(2) << "Loop has exact trip count.";
+    VLOG(2) << "Loop " << while_op->ToShortString()
+            << " has exact trip count: " << *exact_trip_count;
     return exact_trip_count;
   }
 
@@ -594,7 +583,7 @@ optional<int64_t> ComputeWhileLoopTripCountUpperBound(
   auto* cond_gte = GetOnlyGTE(while_cond_param);
   if (!cond_gte) {
     VLOG(2) << "Induction variable not found in loop condition: "
-            << while_cond->root_instruction()->ToString();
+            << while_cond->root_instruction()->ToShortString();
     return nullopt;
   }
 
@@ -603,7 +592,7 @@ optional<int64_t> ComputeWhileLoopTripCountUpperBound(
   auto* while_body_root = while_body->root_instruction();
   if (while_body_root->opcode() != HloOpcode::kTuple) {
     VLOG(3) << "While body's root is not a tuple instruction: "
-            << while_body_root->ToString();
+            << while_body_root->ToShortString();
     return nullopt;
   }
 
@@ -611,7 +600,7 @@ optional<int64_t> ComputeWhileLoopTripCountUpperBound(
   auto* while_body_indvar = while_body_root->operand(indvar_index);
   if (while_body_indvar->opcode() != HloOpcode::kConstant) {
     VLOG(3) << "While body does not set the IV to a constant: "
-            << while_body_indvar->ToString();
+            << while_body_indvar->ToShortString();
     return nullopt;
   }
 
@@ -643,6 +632,145 @@ optional<int64_t> ComputeWhileLoopTripCountUpperBound(
 
   VLOG(2) << "Loop has no known upper bound on the trip count.";
   return nullopt;
+}
+
+// The below function identifies a subset of all possible auxiliary
+// induction variables (AIV). Specifically, candidates are gtes, e.g.,
+// gte(param0, N)
+// The function checks if the loop body plumbs the AIV
+// through the same tuple index at root, and that ops involving AIV
+// involve constants.
+//   op2 = op(constants, gte(param0, N), constants)
+//   op3 = op(constants, f(op2, gte(param0, N), constants)
+//   op4 = op(constants, f(op3, constants)
+//   root = tuple(..., op4, ...)
+// Further, the ops are restricted to basic math ops (+,-,*,/).
+// Finally, loop invariant GTEs are excluded from AIVs.
+// We can expand the ops category/nature of AIVs as needed.
+std::vector<const HloInstruction*> GetAuxiliaryLoopInductionVars(
+    const HloInstruction* while_op) {
+  std::vector<const HloInstruction*> aux_ind_gte;
+  CHECK_EQ(while_op->opcode(), HloOpcode::kWhile);
+  auto* while_body = while_op->while_body();
+  auto* while_body_param = while_body->parameter_instruction(0);
+  VLOG(2) << "Aux Induction Variables for loop:" << while_op->ToShortString();
+  VLOG(2) << "the parameter instr:" << while_body_param->ToShortString();
+  VLOG(2) << "the parameter user count:" << while_body_param->users().size();
+  if (while_body_param == nullptr) return aux_ind_gte;
+
+  // candidates_pairs = pair<inst, inst>(
+  //   operands of the root while body,
+  //   GTE only operands that index into the same position in the parameter)
+  // for each candidate_pair (x, y)
+  //  find all paths between x and y,
+  //  each paths should satisfy the above listed criterion
+  //  index that x and y used is added as a aux variable index
+  std::map<int64_t, const HloInstruction*> extractions;
+  for (const HloInstruction* indx_instr : while_body_param->users()) {
+    if (indx_instr->opcode() != HloOpcode::kGetTupleElement) {
+      continue;
+    }
+    auto it = extractions.find(indx_instr->tuple_index());
+    // if we find two extractions at the same index, we ignore such
+    // a candidate
+    if (it != extractions.end()) {
+      it->second = nullptr;
+      VLOG(2) << "two extractions at same index:" << indx_instr->ToString();
+    } else {
+      extractions.insert(std::make_pair(indx_instr->tuple_index(), indx_instr));
+      VLOG(2) << "inserting extraction :" << indx_instr->ToString();
+    }
+  }
+  VLOG(2) << "total extractions size:" << extractions.size();
+  if (extractions.empty()) {
+    return aux_ind_gte;
+  }
+
+  auto* while_body_root = while_body->root_instruction();
+  if (while_body_root->opcode() != HloOpcode::kTuple) {
+    VLOG(2) << "While body root is not a tuple:" << while_body_root->ToString();
+    return aux_ind_gte;
+  }
+  int64_t index = -1;
+  std::map<int64_t, const HloInstruction*> insertions;
+  for (const HloInstruction* operand : while_body_root->operands()) {
+    index++;
+    if (!operand->IsConstant()) {
+      auto it = insertions.find(index);
+      if (it != insertions.end()) {
+        it->second = nullptr;
+        VLOG(2) << "two insertions at same index:" << operand->ToString();
+      } else {
+        insertions.insert(std::make_pair(index, operand));
+        VLOG(2) << "inserting insertions:" << operand->ToString();
+      }
+    }
+  }
+  if (insertions.empty()) {
+    return aux_ind_gte;
+  }
+
+  std::map<int64_t, std::pair<const HloInstruction*, const HloInstruction*>>
+      candidate_pairs;
+  for (; index >= 0; --index) {
+    const HloInstruction *ext, *inst;
+    ext = (extractions.find(index) != extractions.end())
+              ? extractions.find(index)->second
+              : nullptr;
+    inst = (insertions.find(index) != insertions.end())
+               ? insertions.find(index)->second
+               : nullptr;
+    if (ext != nullptr && inst != nullptr) {
+      // Filter out trivial aux, i.e., extract directly to an insert.
+      if (ext != inst) {
+        candidate_pairs.insert(
+            std::make_pair(index, std::make_pair(ext, inst)));
+      }
+    }
+  }
+  VLOG(2) << "total candidate pairs:" << candidate_pairs.size();
+
+  // Passed to ReachabilityMap to decide the type of produce-consumer edges
+  // along the reachability path.
+  const auto add_dependencies = [](const HloInstruction* hlo,
+                                   std::vector<HloInstruction*>* inputs) {
+    HloInstruction* non_const_operand = nullptr;
+    int num_non_constants = 0;
+    for (HloInstruction* operand : hlo->operands()) {
+      if (!operand->IsConstant()) {
+        num_non_constants++;
+        non_const_operand = operand;
+      }
+    }
+    if (num_non_constants == 1 &&
+        (hlo->opcode() == HloOpcode::kGetTupleElement ||
+         hlo->opcode() == HloOpcode::kAdd ||
+         hlo->opcode() == HloOpcode::kMultiply ||
+         hlo->opcode() == HloOpcode::kDivide ||
+         hlo->opcode() == HloOpcode::kSubtract)) {
+      inputs->push_back(non_const_operand);
+    }
+  };
+
+  std::unique_ptr<HloReachabilityMap> hrm =
+      HloReachabilityMap::BuildWithRestrictions(
+          while_body,
+          absl::FunctionRef<void(const HloInstruction* hlo,
+                                 std::vector<HloInstruction*>* inputs)>(
+              add_dependencies));
+
+  for (auto candidates : candidate_pairs) {
+    VLOG(2) << "are reachable?:" << (candidates.second.first)->ToString()
+            << "*************" << (candidates.second.second)->ToString();
+    if (hrm->IsReachable(candidates.second.first, candidates.second.second)) {
+      aux_ind_gte.push_back(candidates.second.first);
+      VLOG(2) << "YES";
+    } else {
+      VLOG(2) << "NO";
+    }
+  }
+  VLOG(2) << "num auxiliary candidates :" << aux_ind_gte.size();
+  return aux_ind_gte;
 }
 
 }  // namespace xla

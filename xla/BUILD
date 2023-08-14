@@ -592,6 +592,7 @@ cc_library(
         ":array4d",
         ":literal",
         ":shape_util",
+        ":status",
         ":status_macros",
         ":types",
         ":util",
