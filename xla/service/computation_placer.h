@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/node_hash_map.h"
 #include "xla/array2d.h"
 #include "xla/service/global_device_id.h"
 #include "xla/status.h"
@@ -38,7 +39,7 @@ namespace xla {
 // by assignment(replica, computation).
 class DeviceAssignment : public Array2D<int> {
  public:
-  DeviceAssignment() {}
+  DeviceAssignment() = default;
   DeviceAssignment(int replica_count, int computation_count)
       : Array2D<int>(replica_count, computation_count, -1) {
     CHECK_GT(replica_count, 0);
@@ -79,8 +80,8 @@ class DeviceAssignment : public Array2D<int> {
 // ids to a set of replicated computations.
 class ComputationPlacer {
  public:
-  ComputationPlacer() {}
-  virtual ~ComputationPlacer() {}
+  ComputationPlacer() = default;
+  virtual ~ComputationPlacer() = default;
 
   // Returns the device id assigned to the given replica and computation
   // instance for [replica_count x computation_count] setup. The returned device
@@ -119,7 +120,8 @@ class ComputationPlacer {
   };
 
   // Map from platform kind to computation placer singleton.
-  static std::map<se::Platform::Id, State>* GetPlatformComputationPlacers();
+  static absl::node_hash_map<se::Platform::Id, State>*
+  GetPlatformComputationPlacers();
 
   ComputationPlacer(const ComputationPlacer&) = delete;
   ComputationPlacer& operator=(const ComputationPlacer&) = delete;

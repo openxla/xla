@@ -60,7 +60,7 @@ class ConvolutionVisitor : public DfsHloVisitorWithDefault {
                   bool convert_batch_groups_only, bool filter_expansion);
 
   // Returns whether any convolution ops were rewritten.
-  const bool changed() const { return changed_; }
+  bool changed() const { return changed_; }
 
   ~ConvolutionVisitor() override = default;
 

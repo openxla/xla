@@ -1349,7 +1349,7 @@ static void BenchmarkCustomCall(
 
   // Prepare the call frame outside of a benchmark loop.
   Executable::CallFrame call_frame;
-  CHECK(executable->InitializeCallFrame(args, &call_frame).ok());
+  CHECK_OK(executable->InitializeCallFrame(args, &call_frame));
 
   Executable::ExecuteOpts execute_opts;
   execute_opts.custom_call_data = &user_data;

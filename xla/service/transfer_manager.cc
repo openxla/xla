@@ -31,8 +31,6 @@ limitations under the License.
 #include "tsl/platform/logging.h"
 #include "tsl/platform/notification.h"
 
-using absl::StrCat;
-
 namespace xla {
 
 /* static */ absl::Mutex TransferManager::platform_transfer_manager_mutex_(

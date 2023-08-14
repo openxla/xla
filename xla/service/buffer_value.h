@@ -100,7 +100,7 @@ class BufferValue {
   BufferValue(BufferValue&&) = default;
   BufferValue& operator=(BufferValue&&) = default;
 
-  virtual ~BufferValue() {}
+  virtual ~BufferValue() = default;
 
   Id id() const { return id_; }
 

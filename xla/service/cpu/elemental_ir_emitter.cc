@@ -28,8 +28,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
-using xla::llvm_ir::IrArray;
-
 namespace xla {
 namespace cpu {
 

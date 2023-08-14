@@ -33,7 +33,7 @@ XlaInterpreterExecutor::XlaInterpreterExecutor(
     const PluginConfig &plugin_config)
     : plugin_config_(plugin_config) {}
 
-XlaInterpreterExecutor::~XlaInterpreterExecutor() {}
+XlaInterpreterExecutor::~XlaInterpreterExecutor() = default;
 
 DeviceMemoryBase XlaInterpreterExecutor::Allocate(uint64_t size,
                                                   int64_t memory_space) {

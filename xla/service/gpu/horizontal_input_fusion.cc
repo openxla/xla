@@ -46,7 +46,7 @@ class HorizontalInputFusionImpl {
                                      const GpuDeviceInfo& d)
       : computation_(computation), device_info_(d) {}
 
-  ~HorizontalInputFusionImpl() {}
+  ~HorizontalInputFusionImpl() = default;
 
   StatusOr<bool> Run();
 

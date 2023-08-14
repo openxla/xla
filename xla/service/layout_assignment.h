@@ -117,7 +117,7 @@ class OperandLayoutConstraint : public LayoutConstraint {
 
   const ShapeLayout& shape_layout() const { return shape_layout_[0]; }
   const HloInstruction* instruction() const { return instruction_; }
-  const int64_t operand_no() const { return operand_no_; }
+  int64_t operand_no() const { return operand_no_; }
   const HloInstruction* operand() const {
     return instruction_->operand(operand_no_);
   }
@@ -196,7 +196,7 @@ class ComputationLayoutConstraint : public LayoutConstraint {
 class ChannelLayoutConstraints {
  public:
   // Construct an empty constraint set.
-  ChannelLayoutConstraints() {}
+  ChannelLayoutConstraints() = default;
 
   // Returns true if channel_id has a layout constraint.
   bool IsChannelConstrained(int64_t channel_id) const {
@@ -254,7 +254,7 @@ class LayoutAssignment : public HloModulePass {
       ComputationLayout* entry_computation_layout,
       ChannelLayoutConstraints* channel_constraints = nullptr,
       bool reverse_computation_order = false);
-  ~LayoutAssignment() override {}
+  ~LayoutAssignment() override = default;
   const TuplePointsToAnalysis& points_to_analysis() const {
     return *points_to_analysis_;
   }

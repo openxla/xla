@@ -407,7 +407,8 @@ class KernelArgsArray : public KernelArgsArrayBase {
         &generic_arguments_[number_of_generic_arguments_++ *
                             kMaxGenericArgSize];
 
-    CHECK_EQ(reinterpret_cast<uintptr_t>(generic_arg_storage) % alignof(T), 0);
+    ABSL_CHECK_EQ(reinterpret_cast<uintptr_t>(generic_arg_storage) % alignof(T),
+                  0);
     std::memcpy(generic_arg_storage, &arg, sizeof(T));
 
     argument_addresses_[number_of_argument_addresses_] = generic_arg_storage;

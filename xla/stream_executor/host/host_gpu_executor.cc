@@ -46,7 +46,7 @@ HostStream* AsHostStream(Stream* stream) {
 HostExecutor::HostExecutor(const PluginConfig& plugin_config)
     : plugin_config_(plugin_config) {}
 
-HostExecutor::~HostExecutor() {}
+HostExecutor::~HostExecutor() = default;
 
 tsl::Status HostExecutor::Init(int device_ordinal,
                                DeviceOptions device_options) {

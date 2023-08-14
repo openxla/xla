@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/base/macros.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/node_hash_map.h"
+#include "absl/container/node_hash_set.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/memory/memory.h"
 #include "absl/synchronization/mutex.h"
@@ -202,7 +204,7 @@ class StreamExecutor {
   //
   // Note: this will only be populated if --check_device_leaks flag is
   // activated.
-  void GetMemAllocs(std::map<void*, AllocRecord>* records_out);
+  void GetMemAllocs(absl::node_hash_map<void*, AllocRecord>* records_out);
 
   // Allocates unified memory space of the given size, if supported.
   // See
@@ -274,7 +276,7 @@ class StreamExecutor {
   tsl::Status SynchronousMemcpyH2D(absl::Span<const T> host_src,
                                    DeviceMemoryBase* device_dst) {
     auto host_size = host_src.size() * sizeof(T);
-    CHECK(device_dst->size() == 0 || device_dst->size() >= host_size);
+    ABSL_CHECK(device_dst->size() == 0 || device_dst->size() >= host_size);
     return SynchronousMemcpyH2D(host_src.begin(), host_size, device_dst);
   }
 
@@ -289,7 +291,7 @@ class StreamExecutor {
   tsl::Status SynchronousMemcpyD2H(const DeviceMemory<T>& device_src,
                                    absl::Span<T> host_dst) {
     auto host_size = host_dst.size() * sizeof(T);
-    CHECK(device_src.size() == 0 || host_size >= device_src.size());
+    ABSL_CHECK(device_src.size() == 0 || host_size >= device_src.size());
     return SynchronousMemcpyD2H(device_src, host_size, host_dst.begin());
   }
 
@@ -687,7 +689,7 @@ class StreamExecutor {
   // A mapping of pointer (to device memory) to string representation of the
   // stack (of the allocating thread) at the time at which the pointer was
   // allocated.
-  std::map<void*, AllocRecord> mem_allocs_ ABSL_GUARDED_BY(mu_);
+  absl::node_hash_map<void*, AllocRecord> mem_allocs_ ABSL_GUARDED_BY(mu_);
 
   // Memoized BLAS support object -- we only want to create this once when asked
   // for a BLAS interface.
@@ -742,7 +744,7 @@ class StreamExecutor {
   bool tracing_enabled_;
 
   // The set of TraceListeners registered for this StreamExecutor.
-  std::set<TraceListener*> listeners_ ABSL_GUARDED_BY(mu_);
+  absl::node_hash_set<TraceListener*> listeners_ ABSL_GUARDED_BY(mu_);
 
   // Allocated memory in bytes.
   int64_t mem_alloc_bytes_;
@@ -780,7 +782,7 @@ class ScopedModuleHandle {
 
   ~ScopedModuleHandle() {
     if (static_cast<bool>(module_handle_)) {
-      CHECK(executor_->UnloadModule(module_handle_));
+      ABSL_CHECK(executor_->UnloadModule(module_handle_));
     }
   }
 
@@ -872,9 +874,10 @@ DeviceMemory<T> StreamExecutor::GetSubBuffer(DeviceMemory<T>* parent,
                                              uint64_t element_offset,
                                              uint64_t element_count) {
   if (element_offset + element_count > parent->ElementCount()) {
-    LOG(ERROR) << "requested sub-buffer allocation (offset + size) is greater "
-               << "than parent allocation size: (" << element_offset << " + "
-               << element_count << ") vs. (" << parent->ElementCount() << ")";
+    ABSL_LOG(ERROR)
+        << "requested sub-buffer allocation (offset + size) is greater "
+        << "than parent allocation size: (" << element_offset << " + "
+        << element_count << ") vs. (" << parent->ElementCount() << ")";
     return DeviceMemory<T>{};
   }
 

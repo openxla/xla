@@ -77,7 +77,7 @@ enum class Type {
 // as a common type that is used to execute the plan.
 class Plan {
  public:
-  virtual ~Plan() {}
+  virtual ~Plan() = default;
 };
 
 // FFT support interface -- this can be derived from a GPU executor when the
@@ -89,7 +89,7 @@ class Plan {
 // thread-compatible, but not thread-safe.
 class FftSupport {
  public:
-  virtual ~FftSupport() {}
+  virtual ~FftSupport() = default;
 
   // Creates a 1d FFT plan.
   virtual std::unique_ptr<Plan> Create1dPlan(Stream *stream, uint64_t num_x,

@@ -244,7 +244,7 @@ class AlgebraicSimplifierOptions {
   // determine if the operand of an instruction is always positive.
   struct Metadata {
     std::string cudnn_batchnorm_forward_training_metadata{""};
-    Metadata() {}
+    Metadata() = default;
   };
   ReshapeIsBitcastCallback reshape_is_bitcast_callback_;
   ConvIsLowerableCallback conv_is_lowerable_callback_;

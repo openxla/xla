@@ -47,7 +47,7 @@ HloRunner::HloRunner(se::Platform* platform, int intra_op_parallelism_threads) {
   VLOG(1) << "Created HloRunner for platform: " << platform->Name();
 }
 
-HloRunner::~HloRunner() {}
+HloRunner::~HloRunner() = default;
 
 StatusOr<ScopedShapedBuffer> HloRunner::TransferLiteralToDevice(
     const Literal& literal, int64_t param_no) {

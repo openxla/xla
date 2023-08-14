@@ -393,7 +393,7 @@ XLA_TEST_F(TransferManagerTest, TransferDynamicShape) {
 class TransferDeviceToHostBenchmark : public TransferManagerTest {
  public:
   using TransferManagerTest::TransferManagerTest;
-  ~TransferDeviceToHostBenchmark() override {}
+  ~TransferDeviceToHostBenchmark() override = default;
 
   void Run(::testing::benchmark::State& state, int num_tuple_elements,
            int array_size) {
@@ -422,7 +422,7 @@ class TransferDeviceToHostBenchmark : public TransferManagerTest {
 class TransferHostToDeviceBenchmark : public TransferManagerTest {
  public:
   using TransferManagerTest::TransferManagerTest;
-  ~TransferHostToDeviceBenchmark() override {}
+  ~TransferHostToDeviceBenchmark() override = default;
 
   void Run(::testing::benchmark::State& state, int num_tuple_elements,
            int array_size) {

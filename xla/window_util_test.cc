@@ -20,8 +20,6 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using ::testing::ElementsAre;
-
 TEST(WindowUtilTest, HasOverlappingWindowTest) {
   // MakeWindow() set a stride of 1 by default.
   EXPECT_FALSE(

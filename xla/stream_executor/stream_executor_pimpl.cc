@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/base/const_init.h"
+#include "absl/container/node_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
@@ -226,7 +227,8 @@ void StreamExecutor::Deallocate(DeviceMemoryBase* mem) {
   mem->Reset(nullptr, 0);
 }
 
-void StreamExecutor::GetMemAllocs(std::map<void*, AllocRecord>* records_out) {
+void StreamExecutor::GetMemAllocs(
+    absl::node_hash_map<void*, AllocRecord>* records_out) {
   absl::ReaderMutexLock lock(&mu_);
   *records_out = mem_allocs_;
 }

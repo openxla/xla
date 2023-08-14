@@ -147,7 +147,7 @@ class OutlineWithXLAFrameworkPass
   }
 
  public:
-  explicit OutlineWithXLAFrameworkPass() {}
+  explicit OutlineWithXLAFrameworkPass() = default;
 
   void runOnOperation() override {
     ModuleOp m = getOperation();

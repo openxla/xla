@@ -378,7 +378,7 @@ class HloParserImpl : public HloParser {
   // Fills parsed operands into 'operands' and expects a certain number of
   // operands.
   bool ParseOperands(std::vector<HloInstruction*>* operands,
-                     HloComputation::Builder* builder, const int expected_size);
+                     HloComputation::Builder* builder, int expected_size);
 
   // Describes the start, limit, and stride on every dimension of the operand
   // being sliced.
@@ -489,14 +489,13 @@ class HloParserImpl : public HloParser {
   bool ParseHloComputation(HloComputation** result);
   bool ParseHloComputationList(std::vector<HloComputation*>* result);
   bool ParseShapeList(std::vector<Shape>* result);
-  bool ParseInt64List(const TokKind start, const TokKind end,
-                      const TokKind delim, std::vector<int64_t>* result);
-  bool ParseInt64ListList(const TokKind start, const TokKind end,
-                          const TokKind delim,
+  bool ParseInt64List(TokKind start, TokKind end, TokKind delim,
+                      std::vector<int64_t>* result);
+  bool ParseInt64ListList(TokKind start, TokKind end, TokKind delim,
                           std::vector<std::vector<int64_t>>* result);
   // 'parse_and_add_item' is an lambda to parse an element in the list and add
   // the parsed element to the result. It's supposed to capture the result.
-  bool ParseList(const TokKind start, const TokKind end, const TokKind delim,
+  bool ParseList(TokKind start, TokKind end, TokKind delim,
                  absl::FunctionRef<bool()> parse_and_add_item);
 
   bool ParseParamListToShape(Shape* shape, LocTy* shape_loc);

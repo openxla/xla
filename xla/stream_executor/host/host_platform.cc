@@ -29,7 +29,7 @@ namespace host {
 
 HostPlatform::HostPlatform() : name_("Host") {}
 
-HostPlatform::~HostPlatform() {}
+HostPlatform::~HostPlatform() = default;
 
 Platform::Id HostPlatform::id() const { return kHostPlatformId; }
 

@@ -687,7 +687,7 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
 
   explicit GlobalDecreasingSizeBestFitHeap(int64_t alignment,
                                            Type type = kSpatial);
-  ~GlobalDecreasingSizeBestFitHeap() override {}
+  ~GlobalDecreasingSizeBestFitHeap() override = default;
 
   void Alloc(const BufferType* buffer, int64_t size) override;
   void Free(const BufferType* buffer, int64_t size) override;
@@ -808,7 +808,7 @@ class ConstrainedGlobalDecreasingSizeBestFitHeap
       uint64_t size_limit_per_heap, int64_t alignment, Type type = kSpatial)
       : GlobalDecreasingSizeBestFitHeap<HloValue>(alignment, type),
         size_limit_per_heap_(size_limit_per_heap) {}
-  ~ConstrainedGlobalDecreasingSizeBestFitHeap() override {}
+  ~ConstrainedGlobalDecreasingSizeBestFitHeap() override = default;
 
   Result Finish() override;
 
@@ -823,11 +823,11 @@ class ChooseBestHeapAlgorithm : public HeapAlgorithm<BufferType> {
  public:
   using Result = HeapSimulator::Result<BufferType>;
 
-  ChooseBestHeapAlgorithm(
+  explicit ChooseBestHeapAlgorithm(
       std::unique_ptr<std::vector<std::unique_ptr<HeapAlgorithm<BufferType>>>>
           algorithms)
       : algorithms_(std::move(*algorithms)) {}
-  ~ChooseBestHeapAlgorithm() override {}
+  ~ChooseBestHeapAlgorithm() override = default;
 
   void Alloc(const BufferType* buffer, int64_t size) override {
     for (auto& algorithm : algorithms_) {

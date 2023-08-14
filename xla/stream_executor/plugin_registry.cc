@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/plugin_registry.h"
 
 #include "absl/base/const_init.h"
+#include "absl/container/node_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
@@ -51,7 +52,7 @@ static absl::Mutex& GetPluginRegistryMutex() {
 
 /* static */ PluginRegistry* PluginRegistry::instance_ = nullptr;
 
-PluginRegistry::PluginRegistry() {}
+PluginRegistry::PluginRegistry() = default;
 
 /* static */ PluginRegistry* PluginRegistry::Instance() {
   absl::MutexLock lock{&GetPluginRegistryMutex()};
@@ -69,7 +70,7 @@ void PluginRegistry::MapPlatformKindToId(PlatformKind platform_kind,
 template <typename FACTORY_TYPE>
 tsl::Status PluginRegistry::RegisterFactoryInternal(
     PluginId plugin_id, const std::string& plugin_name, FACTORY_TYPE factory,
-    std::map<PluginId, FACTORY_TYPE>* factories) {
+    absl::node_hash_map<PluginId, FACTORY_TYPE>* factories) {
   absl::MutexLock lock{&GetPluginRegistryMutex()};
 
   if (factories->find(plugin_id) != factories->end()) {
@@ -87,8 +88,10 @@ tsl::Status PluginRegistry::RegisterFactoryInternal(
 
 template <typename FACTORY_TYPE>
 tsl::StatusOr<FACTORY_TYPE> PluginRegistry::GetFactoryInternal(
-    PluginId plugin_id, const std::map<PluginId, FACTORY_TYPE>& factories,
-    const std::map<PluginId, FACTORY_TYPE>& generic_factories) const {
+    PluginId plugin_id,
+    const absl::node_hash_map<PluginId, FACTORY_TYPE>& factories,
+    const absl::node_hash_map<PluginId, FACTORY_TYPE>& generic_factories)
+    const {
   auto iter = factories.find(plugin_id);
   if (iter == factories.end()) {
     iter = generic_factories.find(plugin_id);

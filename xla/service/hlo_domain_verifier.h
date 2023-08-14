@@ -31,7 +31,7 @@ namespace xla {
 // surrounded by the same metadata.
 class HloDomainVerifier : public HloModulePass {
  public:
-  HloDomainVerifier(std::vector<std::string> kinds)
+  explicit HloDomainVerifier(std::vector<std::string> kinds)
       : kinds_(std::move(kinds)) {}
 
   absl::string_view name() const override { return "domain_verifier"; }

@@ -567,8 +567,7 @@ class Relation {
       : intercept_def_use_(intercept_def_use) {
     orders_.push_back(order);
   }
-  Relation(const Relation& that)
-      : intercept_def_use_(that.intercept_def_use_), orders_(that.orders_) {}
+  Relation(const Relation& that) = default;
   bool operator==(const Relation& that) const {
     return intercept_def_use_ == that.intercept_def_use_ &&
            absl::c_equal(orders_, that.orders_);

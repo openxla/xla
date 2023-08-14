@@ -52,7 +52,7 @@ class PhiGraph {
 
   // Given `id`, returns the new id that `id` should be replaced with. If the
   // node is not optimized, returns the same value.
-  HloValue::Id FindOptimizedValue(const HloValue::Id id);
+  HloValue::Id FindOptimizedValue(HloValue::Id id);
 
   // Optimize the entire graph.
   void Optimize();

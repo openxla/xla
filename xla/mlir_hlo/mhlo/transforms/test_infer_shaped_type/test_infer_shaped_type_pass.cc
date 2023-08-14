@@ -66,7 +66,7 @@ struct InferReturnTypesPattern : public RewritePattern {
 };
 
 struct ReifyReturnTypeShapesPattern : public RewritePattern {
-  ReifyReturnTypeShapesPattern(MLIRContext *context)
+  explicit ReifyReturnTypeShapesPattern(MLIRContext *context)
       : RewritePattern("mhlo_test.reify_return_type_shapes", 1, context) {}
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {

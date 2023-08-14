@@ -472,7 +472,7 @@ static std::vector<std::string> DumpHloModuleImpl(
       if (!rendered_graph.ok()) {
         VLOG(1) << "Skipping fusion visualization"
                 << " for computation " << computation->name()
-                << " due to: " << rendered_graph.status().ToString();
+                << " due to: " << rendered_graph.status();
         continue;
       }
       file_paths.push_back(DumpToFileInDirImpl(

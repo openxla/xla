@@ -41,8 +41,6 @@ using mlir::RankedTensorType;
 using mlir::ShapedType;
 using mlir::VectorType;
 using mlir::mhlo::TypeExtensionsAttr;
-using xla::PrimitiveType;
-using xla::ShapeUtil;
 
 namespace xla {
 

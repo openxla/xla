@@ -31,7 +31,7 @@ TfAllocatorAdapter::TfAllocatorAdapter(tsl::Allocator *wrapped,
                                        Platform *platform)
     : DeviceMemoryAllocator(platform), wrapped_(wrapped), stream_(nullptr) {}
 
-TfAllocatorAdapter::~TfAllocatorAdapter() {}
+TfAllocatorAdapter::~TfAllocatorAdapter() = default;
 
 tsl::StatusOr<OwningDeviceMemory> TfAllocatorAdapter::Allocate(
     int device_ordinal, uint64_t size, bool retry_on_failure,

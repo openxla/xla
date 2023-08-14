@@ -279,7 +279,7 @@ class TransferManager {
   typedef std::unique_ptr<TransferManager> (*TransferManagerCreationFunction)();
   static void RegisterTransferManager(
       se::Platform::Id platform_id,
-      TransferManagerCreationFunction transfer_manager);
+      TransferManagerCreationFunction creation_function);
 
   // Returns the transfer manager singleton pointer if it is available for the
   // given platform, or an error status if it is not.

@@ -65,7 +65,7 @@ ShapedBuffer& ShapedBuffer::operator=(ShapedBuffer&& s) {
   return *this;
 }
 
-ShapedBuffer::~ShapedBuffer() {}
+ShapedBuffer::~ShapedBuffer() = default;
 
 StatusOr<ShapedBuffer> ShapedBuffer::SubShapedBuffer(
     const ShapeIndex& index) const {

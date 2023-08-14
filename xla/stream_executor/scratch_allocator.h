@@ -39,7 +39,7 @@ class Stream;
 // optionally request scratch space to speed up the operation.
 class ScratchAllocator {
  public:
-  virtual ~ScratchAllocator() {}
+  virtual ~ScratchAllocator() = default;
 
   // Returns a limit of memory this scratch allocator wants to produce, in
   // bytes. This information may be used to help select an algorithm.

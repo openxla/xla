@@ -28,7 +28,7 @@ namespace xla {
 // stub is used as the implementation.
 class ServiceInterface {
  public:
-  ServiceInterface() {}
+  ServiceInterface() = default;
   virtual ~ServiceInterface() = default;
 
   // TODO(b/31824348): Convert to use StatusOr.
