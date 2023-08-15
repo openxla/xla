@@ -2278,11 +2278,11 @@ BuildStrategyAndCost(const HloInstructionSequence& sequence,
 AutoShardingSolverResult CallSolver(
     const HloInstructionSequence& sequence, const LivenessSet& liveness_set,
     const StrategyMap& strategy_map, const LeafStrategies& leaf_strategies,
-    const CostGraph& cost_graph, const AliasSet& alias_set,
-    const std::vector<NodeStrategyIdx>& s_hint,
+    const CostGraph& cost_graph, const AliasSet& orig_alias_set,
+    const CrosscutMap& crosscut_map, const std::vector<NodeStrategyIdx>& s_hint,
     int64_t memory_budget_per_device, bool crash_at_infinity_costs_check,
     bool compute_iis, int64_t solver_timeout_in_seconds,
-    bool allow_alias_to_follower_conversion) {
+    bool allow_alias_to_follower_conversion, int64_t max_crosscut_span) {
   // Serialize edges and edge costs to 1d numpy arrays
   AutoShardingSolverRequest request;
   request.num_nodes = leaf_strategies.size();
@@ -2322,6 +2322,17 @@ AutoShardingSolverResult CallSolver(
     request.c.push_back(ci);
     request.d.push_back(di);
     request.m.push_back(mi);
+  }
+
+  // Add aliases for all crosscut chains up to 'max_crosscut_span' pairs long.
+  AliasSet alias_set = orig_alias_set;
+  for (const auto& [_, crosscut_set] : crosscut_map) {
+    int64_t crosscut_count = 1;
+    auto prev = crosscut_set.begin(), next = crosscut_set.begin();
+    for (++next; next != crosscut_set.end(); ++prev, ++next, ++crosscut_count) {
+      if (crosscut_count % max_crosscut_span == 0) continue;  // Skip this pair.
+      alias_set.insert({prev->second, next->second});
+    }
   }
 
   // Serialize special edges that forces a alias pair have the same sharding
@@ -4108,27 +4119,58 @@ StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
     spmd::CostGraph cost_graph(leaf_strategies, associative_dot_pairs);
     cost_graph.Simplify(option_.simplify_graph);
 
+    // ----- Build crosscut sets -----
+    spmd::CrosscutMap crosscut_map =
+        spmd::BuildCrosscutMap(*hlo_live_range, leaf_strategies);
+
     // ----- Call the ILP Solver -----
     std::vector<spmd::NodeStrategyIdx> s_val;
     std::vector<spmd::EdgeStrategyIdx> e_val;
     double objective = -1.0;
     if (!solver_option.load_solution_vector) {
+      // First, try solving the problem with crosscut sets (to restrict search).
+      const absl::Time solver_start_time = absl::Now();
       auto solver_result = CallSolver(
           sequence, liveness_set, strategy_map, leaf_strategies, cost_graph,
-          alias_set, /*s_hint*/ {}, option_.memory_budget_per_device,
-          /*crash_at_infinity_costs_check*/ !option_.try_multiple_mesh_shapes,
-          /*compute_iis*/ true, option_.solver_timeout_in_seconds,
-          option_.allow_alias_to_follower_conversion);
-      if (solver_result.skip_auto_sharding) {
-        return AutoShardingResult::kModuleUnchangedNoShardingPerfomed;
-      } else if (!solver_result.status.ok()) {
+          alias_set, crosscut_map, /*s_hint*/ {},
+          option_.memory_budget_per_device, /*crash_at_infinity_costs_check*/
+          !option_.try_multiple_mesh_shapes, /*compute_iis*/ false,
+          option_.solver_timeout_in_seconds,
+          option_.allow_alias_to_follower_conversion,
+          option_.max_crosscut_span);
+      // Second, try solving the problem without crosscut sets (to reduce cost).
+      std::vector<spmd::NodeStrategyIdx> s_hint;
+      if (auto s = solver_result.status; s.ok()) s_hint = std::get<0>(*s);
+      int64_t remaining_time_in_seconds =
+          option_.solver_timeout_in_seconds -
+          absl::ToInt64Seconds(absl::Now() - solver_start_time);
+      auto refined_result = CallSolver(
+          sequence, liveness_set, strategy_map, leaf_strategies, cost_graph,
+          alias_set, /*crosscut_map*/ {}, s_hint,
+          option_.memory_budget_per_device, /*crash_at_infinity_costs_check*/
+          !option_.try_multiple_mesh_shapes, /*compute_iis*/ true,
+          remaining_time_in_seconds, option_.allow_alias_to_follower_conversion,
+          option_.max_crosscut_span);
+      // Outcomes are (1) optimal, (2) suboptimal, (3) timeout, (4) infeasible.
+      if (refined_result.status.ok()) {
+        LOG(INFO) << "Auto Sharding found an optimal solution";
+        solver_result = refined_result;
+      } else if (solver_result.status.ok()) {
+        // Note: while suboptimal for the original problem, this solution should
+        // nevertheless be *optimal* for the reduced crosscut problem (and
+        // therefore deterministic).
+        LOG(WARNING) << "Auto Sharding found a potentially suboptimal solution";
+      } else if (refined_result.skip_auto_sharding) {
+        LOG(WARNING) << "Auto Sharding could not find a solution in time";
         return AutoShardingResult::kModuleUnchanged;
       } else {
-        TF_ASSIGN_OR_RETURN(auto solution, solver_result.status);
-        std::tie(s_val, e_val, objective) = solution;
-        if (mesh_idx == partial_mesh_shapes.size() - 1) {
-          this->solver_optimal_objective_value_ = objective;
-        }
+        LOG(ERROR) << "Auto Sharding could not find any feasible solution";
+        return AutoShardingResult::kModuleUnchangedNoShardingPerformed;
+      }
+      TF_ASSIGN_OR_RETURN(auto solution, solver_result.status);
+      std::tie(s_val, e_val, objective) = solution;
+      if (mesh_idx == partial_mesh_shapes.size() - 1) {
+        this->solver_optimal_objective_value_ = objective;
       }
     } else {
       s_val = option_.strategy_vector;
@@ -4288,7 +4330,7 @@ StatusOr<bool> AutoSharding::Run(
     }
     if (pass_result.ok() &&
         pass_result.value() !=
-            AutoShardingResult::kModuleUnchangedNoShardingPerfomed) {
+            AutoShardingResult::kModuleUnchangedNoShardingPerformed) {
       skip_auto_sharding = false;
     }
   }

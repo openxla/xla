@@ -180,6 +180,9 @@ struct AutoShardingOption {
   // smaller Mixed ILP).
   bool allow_alias_to_follower_conversion = true;
 
+  // Breaks crosscut chains that are longer than this many pairs.
+  int64_t max_crosscut_span = 10;
+
   std::vector<int64_t> strategy_vector;
   // If greater than zero, tensors with size smaller than or equal to this limit
   // will always be replicated if they don't have a different user-specified
@@ -367,7 +370,7 @@ struct AutoShardingOption {
 enum class AutoShardingResult {
   kModuleUnchanged,
   kModuleChangedShardingPerformed,
-  kModuleUnchangedNoShardingPerfomed
+  kModuleUnchangedNoShardingPerformed
 };
 
 class AutoShardingImplementation {
