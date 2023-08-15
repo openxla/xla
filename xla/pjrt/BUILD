@@ -140,6 +140,8 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
     ],
@@ -150,6 +152,8 @@ xla_cc_test(
     srcs = ["pjrt_api_test.cc"],
     deps = [
         ":pjrt_api",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status_matchers",
