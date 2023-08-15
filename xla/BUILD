@@ -420,6 +420,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
@@ -498,7 +499,12 @@ xla_cc_test(
     srcs = ["layout_util_test.cc"],
     deps = [
         ":shape_util",
+        ":test",
         ":test_helpers",
+        ":xla_data_proto_cc",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test_main",
     ],
@@ -509,7 +515,6 @@ xla_cc_test(
     srcs = ["layout_test.cc"],
     deps = [
         ":shape_util",
-        ":status",
         ":test",
         ":xla_data_proto_cc",
         "@tsl//tsl/platform:test_main",
@@ -928,11 +933,9 @@ cc_library(
     deps = [
         ":printer",
         ":shape_util",
-        ":types",
+        ":status",
         ":util",
-        ":xla_data_proto_cc",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 

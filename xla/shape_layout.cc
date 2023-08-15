@@ -15,10 +15,13 @@ limitations under the License.
 
 #include "xla/shape_layout.h"
 
+#include "xla/layout.h"
 #include "xla/layout_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 

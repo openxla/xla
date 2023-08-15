@@ -16,16 +16,18 @@ limitations under the License.
 #ifndef XLA_LAYOUT_H_
 #define XLA_LAYOUT_H_
 
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <ostream>
 #include <string>
-#include <vector>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/types/span.h"
 #include "xla/printer.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 
