@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,9 +12,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "xla/pjrt/c/pjrt_c_api_cpu.h"
+
+#ifndef XLA_PJRT_C_PJRT_C_API_CPU_INTERNAL_H_
+#define XLA_PJRT_C_PJRT_C_API_CPU_INTERNAL_H_
 
 #include "xla/pjrt/c/pjrt_c_api.h"
-#include "xla/pjrt/c/pjrt_c_api_cpu_internal.h"
 
-const PJRT_Api* GetPjrtApi() { return pjrt::cpu_plugin::GetCpuPjrtApi(); }
+namespace pjrt {
+namespace cpu_plugin {
+
+const PJRT_Api* GetCpuPjrtApi();
+
+}  // namespace cpu_plugin
+}  // namespace pjrt
+
+#endif  // XLA_PJRT_C_PJRT_C_API_CPU_INTERNAL_H_
