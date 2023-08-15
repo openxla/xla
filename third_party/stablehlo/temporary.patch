@@ -275,7 +275,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.cpp b/stablehlo/stablehlo/diale
 diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stablehlo/dialect/ExperimentalOps.cpp
 --- stablehlo/stablehlo/dialect/ExperimentalOps.cpp
 +++ stablehlo/stablehlo/dialect/ExperimentalOps.cpp
-@@ -0,0 +1,504 @@
+@@ -0,0 +1,530 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -778,12 +778,38 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +  return DynamicTopKOpAdaptor(op);
 +}
 +
++LogicalResult TanOpAdaptor::verify() {
++  if (op_->getNumOperands() != 1)
++    return op_.emitError("expects size(operands) = 1");
++  if (op_->getNumResults() != 1)
++    return op_.emitError("expects size(results) = 1");
++  auto operand = op_.getInputs()[0];
++  auto result = op_.getResults()[0];
++
++  // tan_c1
++  auto operandType = operand.getType().dyn_cast<ShapedType>();
++  auto resultType = result.getType().dyn_cast<ShapedType>();
++  if (!hlo::isCompatibleForHloTypeInference(operandType, resultType))
++    return op_.emitError()
++           << "expects operand and result to have compatible shapes";
++  return success();
++}
++
++TypedValue<ShapedType> TanOpAdaptor::getOperand() {
++  return op_.getInputs()[0].cast<TypedValue<ShapedType>>();
++}
++
++std::optional<TanOpAdaptor> getTanOp(CustomCallOp op) {
++  if (op.getCallTargetName() != "mhlo.tan") return {};
++  return TanOpAdaptor(op);
++}
++
 +}  // namespace stablehlo
 +}  // namespace mlir
 diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.h b/stablehlo/stablehlo/dialect/ExperimentalOps.h
 --- stablehlo/stablehlo/dialect/ExperimentalOps.h
 +++ stablehlo/stablehlo/dialect/ExperimentalOps.h
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,275 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -1006,6 +1032,54 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.h b/stablehlo/stablehlo
 +// Fails if the call_target_name of the custom call doesn't match
 +// "stablehlo.dynamic_top_k".
 +std::optional<DynamicTopKOpAdaptor> getDynamicTopKOp(CustomCallOp op);
++
++// The TanOp experiment provides a StableHLO adapter to MHLO TanOp.
++// In the future we expect stablehlo.tan to be added which will use the same
++// refinement rules.
++//
++// Within this experiment, TanOp is represented via the serialized MHLO
++// `stablehlo.custom_call @mhlo.tan` custom call. S
++//
++// Semantics of experimental TanOp are inherited from semantics of mhlo.tan.
++
++// #### Inputs
++//
++// | Label | Name            | Type                                         |
++// |-------|-----------------|----------------------------------------------|
++// | (I1)  | `operand`       | tensor of floating-point or complex type     |
++//
++// #### Outputs
++//
++// | Name           | Type                                     |
++// |----------------|------------------------------------------|
++// | `result`       | tensor of floating-point or complex type |
++//
++// #### Constraints
++//
++// * (C1) baseline_type(operand) = baseline_type(result)
++//
++class TanOpAdaptor {
++ public:
++  TanOpAdaptor(CustomCallOp op) : op_(op) {}
++  operator Operation*() { return op_; }
++  Operation* operator->() { return op_; }
++
++  // These accessors assume that the operation is well-formed (i.e. that it
++  // can pass verification).
++  TypedValue<ShapedType> getOperand();
++
++  // Verifies the constraints documented above.
++  // Emits errors if errors are detected.
++  LogicalResult verify();
++
++ private:
++  CustomCallOp op_;
++};
++
++// Wraps a custom call in a TanOpAdaptor.
++// Fails if the call_target_name of the custom call doesn't match
++// "mhlo.tan".
++std::optional<TanOpAdaptor> getTanOp(CustomCallOp op);
 +
 +}  // namespace stablehlo
 +}  // namespace mlir
@@ -1448,7 +1522,7 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir b/st
 diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
 --- stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
 +++ stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
-@@ -607,12 +607,55 @@
+@@ -607,12 +607,68 @@
  
  // -----
  
@@ -1501,6 +1575,19 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/
 +  %k = stablehlo.constant dense<4> : tensor<ui64>
 +  %1:2 = stablehlo.custom_call @stablehlo.dynamic_top_k(%arg0, %k) : (tensor<16xf32>, tensor<ui64>) -> (tensor<?xf32>, tensor<?xi32>)
 +  return %1#0, %1#1 : tensor<?xf32>, tensor<?xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @refine_tan
++func.func @refine_tan(%arg0: tensor<16xf32>) -> tensor<?xf32> {
++  // CHECK: mhlo.tan{{.*}} -> tensor<16xf32>
++  %0 = "stablehlo.custom_call"(%arg0) {
++    call_target_name = "mhlo.tan",
++    mhlo.attributes = {},
++    mhlo.version = 1 : i64
++  } : (tensor<16xf32>) -> tensor<?xf32>
++  func.return %0 : tensor<?xf32>
  }
  
  // -----
@@ -1780,7 +1867,26 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehl
    }
  };
  
-@@ -1181,7 +1267,10 @@
+@@ -976,6 +1062,18 @@
+   LogicalResult matchAndRewrite(RngOp op,
+                                 PatternRewriter& rewriter) const override {
+     return refineReturnShape(rewriter, op, op.getShape());
++  }
++};
++
++struct RefineTanOpPattern : public OpRewritePattern<CustomCallOp> {
++  using OpRewritePattern::OpRewritePattern;
++  LogicalResult matchAndRewrite(CustomCallOp impl,
++                                PatternRewriter& rewriter) const override {
++    auto maybeOp = getTanOp(impl);
++    if (!maybeOp || failed(maybeOp->verify())) return failure();
++    TanOpAdaptor op = *maybeOp;
++    return refineReturnShape(rewriter, op,
++                             op.getOperand().getType().getShape());
+   }
+ };
+ 
+@@ -1181,11 +1279,15 @@
      patterns.add<RefineDynamicConvOpPattern>(&getContext());
      patterns.add<RefineDynamicIotaOpPattern>(&getContext());
      patterns.add<RefineDynamicPadOpPattern>(&getContext());
@@ -1791,6 +1897,11 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehl
      patterns.add<RefineInferTypeOpInterfacePattern>(&getContext());
      patterns.add<RefineRealDynamicSliceOpPattern>(&getContext());
      patterns.add<RefineReduceScatterOpPattern>(&getContext());
+     patterns.add<RefineRngOpPattern>(&getContext());
++    patterns.add<RefineTanOpPattern>(&getContext());
+     patterns.add<RefineUniformQuantizeOpPattern>(&getContext());
+     patterns.add<RefineWhileOpPattern>(&getContext());
+     patterns.add<UpdateFunctionTypePattern>(&getContext());
 diff --ruN a/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
 --- stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
 +++ stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
