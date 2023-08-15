@@ -16,18 +16,21 @@ limitations under the License.
 #ifndef XLA_PJRT_UTILS_H_
 #define XLA_PJRT_UTILS_H_
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
 
-#include "absl/container/flat_hash_set.h"
+#include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/computation_placer.h"
 #include "xla/shape.h"
+#include "xla/status.h"
 #include "xla/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

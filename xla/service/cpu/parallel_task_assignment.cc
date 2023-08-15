@@ -16,16 +16,31 @@ limitations under the License.
 #include "xla/service/cpu/parallel_task_assignment.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <memory>
+#include <utility>
+#include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/ir_emission_utils.h"
 #include "xla/service/cpu/shape_partition.h"
+#include "xla/service/cpu/target_machine_features.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/llvm_ir/dynamic_update_slice_util.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace cpu {
@@ -121,13 +136,14 @@ ParallelTaskAssignment::ParallelTaskAssignment(
   Status status = computation->root_instruction()->Accept(cost_analysis.get());
   if (status.ok()) {
     // Set default cost model based on 'cost_analysis'.
-    cost_model_.reset(new DefaultCostModel(max_parallelism, shape_size,
-                                           std::move(cost_analysis)));
+    cost_model_ = std::make_unique<DefaultCostModel>(
+        max_parallelism, shape_size, std::move(cost_analysis));
   } else {
     // Fall back to a simple cost model based on hlo size and L2 cache size.
     // Note that HloCostAnalysis can returns an error status (likely because
     // HLOs like CustomCall are not yet implemented in the HloCostAnalysis).
-    cost_model_.reset(new SimpleCostModel(max_parallelism, shape_size));
+    cost_model_ =
+        std::make_unique<SimpleCostModel>(max_parallelism, shape_size);
   }
 }
 
