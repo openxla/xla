@@ -17,10 +17,10 @@ limitations under the License.
 #define XLA_LITERAL_H_
 
 #include <algorithm>
+#include <complex>
+#include <cstdint>
 #include <cstring>
-#include <functional>
 #include <initializer_list>
-#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -34,23 +34,27 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/array4d.h"
 #include "xla/index_util.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/printer.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
+#include "xla/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/core/bitmap.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/status.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/macros.h"
 
 namespace xla {
 

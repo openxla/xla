@@ -15,27 +15,40 @@ limitations under the License.
 
 #include "xla/literal_comparison.h"
 
-#include <limits>
-#include <type_traits>
-
-#include "xla/primitive_util.h"
-
 #ifndef _WIN32
 #include <unistd.h>
 #endif
 
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/types/span.h"
+#include "Eigen/Core"  // from @eigen_archive
+#include "xla/error_spec.h"
+#include "xla/index_util.h"
+#include "xla/layout_util.h"
+#include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/env.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/float8.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 using absl::StrAppend;
 using absl::StrAppendFormat;

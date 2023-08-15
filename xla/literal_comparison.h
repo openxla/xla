@@ -19,9 +19,17 @@ limitations under the License.
 #ifndef XLA_LITERAL_COMPARISON_H_
 #define XLA_LITERAL_COMPARISON_H_
 
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
+#include <vector>
+
 #include "xla/error_spec.h"
 #include "xla/literal.h"
-#include "tsl/platform/status.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/status.h"
 
 namespace xla {
 namespace literal_comparison {
