@@ -115,6 +115,9 @@ class PjRtTopologyDescription {
     return absl::UnimplementedError(
         "CoreCountOfDefaultTypePerChip is unsupported.");
   }
+
+  // Returns true if the mesh has limited ICI routing.
+  virtual absl::StatusOr<bool> HasLimitedIciRouting() const { return false; }
 };
 
 // Abstract interface that all registered compilers must implement.
