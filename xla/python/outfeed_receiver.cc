@@ -25,7 +25,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/sharding_builder.h"
@@ -33,6 +35,7 @@ limitations under the License.
 #include "xla/client/xla_computation.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/status.h"
 #include "xla/util.h"
 #include "tsl/profiler/lib/traceme.h"
 
@@ -175,6 +178,8 @@ class OutfeedReceiverImpl {
                                       uint32_t consumer_id,
                                       std::vector<XlaOp> arrays,
                                       uint32_t device_idx);
+
+  Status RegisterOutfeed(uint32_t consumer_id, const Shape& shape);
 
  private:
   bool CallbackQueueHasSpace() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
@@ -442,6 +447,27 @@ Status OutfeedReceiverImpl::SendShutdownOutfeedHeader(int device_idx) {
   return OkStatus();
 }
 
+Status OutfeedReceiverImpl::RegisterOutfeed(uint32_t consumer_id,
+                                            const Shape& shape) {
+  VLOG(2) << "RegisterShape cons=" << consumer_id
+          << "; shape=" << shape.ToString();
+  {
+    absl::MutexLock lock(&mu_);
+    auto found = shape_registry_.find(consumer_id);
+    if (found != shape_registry_.end()) {
+      if (!ShapeUtil::Equal(shape, found->second)) {
+        return InvalidArgument(
+            "Shape %s does not match previous shape %s used "
+            "for consumer id %d",
+            shape.DebugString(), found->second.DebugString(), consumer_id);
+      }
+    } else {
+      shape_registry_.insert({consumer_id, shape});
+    }
+  }
+  return absl::OkStatus();
+}
+
 StatusOr<XlaOp> OutfeedReceiverImpl::AddOutfeedToBuilder(
     XlaBuilder* builder, XlaOp token, uint32_t consumer_id,
     std::vector<XlaOp> arrays, uint32_t device_idx) {
@@ -453,23 +479,7 @@ StatusOr<XlaOp> OutfeedReceiverImpl::AddOutfeedToBuilder(
           LayoutUtil::SetToDefaultLayout(subshape);
         }
       });
-  VLOG(2) << "RegisterShape cons=" << consumer_id
-          << "; shape=" << shape_with_layout.ToString();
-  {
-    absl::MutexLock lock(&mu_);
-    auto found = shape_registry_.find(consumer_id);
-    if (found != shape_registry_.end()) {
-      if (!ShapeUtil::Equal(shape_with_layout, found->second)) {
-        return InvalidArgument(
-            "Shape %s does not match previous shape %s used "
-            "for consumer id %d",
-            shape_with_layout.DebugString(), found->second.DebugString(),
-            consumer_id);
-      }
-    } else {
-      shape_registry_.insert({consumer_id, shape_with_layout});
-    }
-  }
+  TF_RETURN_IF_ERROR(RegisterOutfeed(consumer_id, shape_with_layout));
 
   std::vector<uint32_t> header{kOutfeedHeaderStart, consumer_id};
   XlaOp header_op = ConstantR1<uint32_t>(builder, header);
@@ -509,6 +519,15 @@ StatusOr<XlaOp> OutfeedReceiver::AddOutfeedToBuilder(XlaBuilder* builder,
   }
   return p_impl_->AddOutfeedToBuilder(builder, token, consumer_id, arrays,
                                       device_idx);
+}
+
+Status OutfeedReceiver::RegisterOutfeed(uint32_t consumer_id,
+                                        const Shape& shape) {
+  if (consumer_id == kOutfeedCidShutdown) {
+    return InvalidArgument("Consumer ID cannot be a reserved value: %d",
+                           consumer_id);
+  }
+  return p_impl_->RegisterOutfeed(consumer_id, shape);
 }
 
 }  // namespace xla

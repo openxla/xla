@@ -22,6 +22,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/xla_builder.h"
 #include "xla/literal.h"
@@ -73,6 +74,8 @@ class OutfeedReceiver {
                                       uint32_t consumer_id,
                                       std::vector<XlaOp> arrays,
                                       uint32_t device_idx);
+
+  Status RegisterOutfeed(uint32_t consumer_id, const Shape& shape);
 
  private:
   std::unique_ptr<OutfeedReceiverImpl> p_impl_;

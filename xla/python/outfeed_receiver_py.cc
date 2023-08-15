@@ -97,6 +97,18 @@ class OutfeedReceiverForPython {
                                                   arrays, device_idx);
   }
 
+  Status RegisterOutfeed(uint32_t consumer_id,
+                         const std::vector<Shape>& shapes) {
+    Shape shape = ShapeUtil::MakeTupleShape(shapes);
+    ShapeUtil::ForEachMutableSubshape(
+        &shape, [](Shape* subshape, const ShapeIndex&) {
+          if (!subshape->has_layout()) {
+            LayoutUtil::SetToDefaultLayout(subshape);
+          }
+        });
+    return outfeed_receiver_->RegisterOutfeed(consumer_id, shape);
+  }
+
   void Callback(PjRtDevice* device, uint32_t consumer_id,
                 std::shared_ptr<Literal> literal) {
     {
@@ -177,6 +189,15 @@ void BuildOutfeedReceiverSubmodule(py::module* m) {
       R"(Adds an outfeed into the given computation builder.
 
       Has the side-effect of registering the sent shape along with the consumer
+      ID. Returns error if the outfeed shape is not compatible with previously
+      used shape for the same consumer ID.)",
+      py::call_guard<py::gil_scoped_release>());
+
+  outfeed_receiver_class.def(
+      "register_outfeed",
+      xla::ThrowIfErrorWrapper(&OutfeedReceiverForPython::RegisterOutfeed),
+      py::arg("consumer_id"), py::arg("shapes"),
+      R"(Registers the sent shape along with the consumer
       ID. Returns error if the outfeed shape is not compatible with previously
       used shape for the same consumer ID.)",
       py::call_guard<py::gil_scoped_release>());
