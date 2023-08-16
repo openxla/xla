@@ -16,20 +16,34 @@ limitations under the License.
 #ifndef XLA_HLO_EXPERIMENTAL_AUTO_SHARDING_AUTO_SHARDING_H_
 #define XLA_HLO_EXPERIMENTAL_AUTO_SHARDING_AUTO_SHARDING_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <numeric>
 #include <string>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/array.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_cost_graph.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_solver_option.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_util.h"
 #include "xla/hlo/experimental/auto_sharding/cluster_environment.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/service/hlo_pass_interface.h"
+#include "xla/shape.h"
+#include "xla/statusor.h"
+
 namespace xla {
 
 class DummyAutoSharding : public HloModulePass {
@@ -387,7 +401,7 @@ class AutoShardingImplementation {
       const absl::flat_hash_set<absl::string_view>& execution_threads = {});
 
   // Canonicalizes entry_computation_layouts by calling
-  // module.layout_canonicalization_callback(), which gives canolicalized
+  // module.layout_canonicalization_callback(), which gives canonicalized
   // argument and result layouts based on current module. Currently used by
   // PJRT which assigns layouts based on runtime shapes: see
   // DetermineArgumentLayoutsFromCompileOptions() in
