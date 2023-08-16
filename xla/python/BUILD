@@ -627,6 +627,17 @@ cc_library(
 )
 
 xla_cc_test(
+    name = "serialization_test",
+    srcs = ["serialization_test.cc"],
+    deps = [
+        "//xla:xla_proto_cc",
+        "//xla/pjrt:compile_options_proto_cc",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/strings:proto_serialization",
+    ],
+)
+
+xla_cc_test(
     name = "outfeed_receiver_test_cpu",
     size = "small",
     srcs = ["outfeed_receiver_test.cc"],
