@@ -265,7 +265,7 @@ class AlgebraicSimplifierOptions {
   bool minmax_propagate_nan_{true};
   bool enable_unconditional_reduce_of_concat_replacement_{true};
   bool use_associative_reordering_{false};
-  double associative_reordering_threshold_{2.0};
+  double associative_reordering_threshold_{1.1};
   Metadata metadata_;
 };
 

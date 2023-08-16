@@ -3613,10 +3613,10 @@ Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
           HloInstruction* transposed_new_outer;
           TF_ASSIGN_OR_RETURN(transposed_new_outer,
                               MakeTransposeHlo(new_outer, permutation));
-          VLOG(10) << "Reordering with associativity and transpose";
+          VLOG(1) << "Reordering with associativity and transpose";
           return ReplaceInstruction(dot, transposed_new_outer);
         } else {
-          VLOG(10) << "Reordering with associativity";
+          VLOG(1) << "Reordering with associativity";
           return ReplaceInstruction(dot, new_outer);
         }
       }
@@ -3627,7 +3627,7 @@ Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
     TF_ASSIGN_OR_RETURN(HloInstruction * dot_operator_reordered,
                         AssociativeReorderDotOperator(dot));
     if (dot_operator_reordered) {
-      VLOG(10) << "Reordering dot operand to its mirror";
+      VLOG(1) << "Reordering dot operand to its mirror";
       return ReplaceInstruction(dot, dot_operator_reordered);
     }
   }
@@ -5934,7 +5934,7 @@ Status AlgebraicSimplifierVisitor::HandleSlice(HloInstruction* slice) {
     if (!DotHasOnlyBatchAndContractingOnOneOperand(
             ShapeUtil::TrueRank(new_lhs->shape()),
             ShapeUtil::TrueRank(new_rhs->shape()), dnums)) {
-      VLOG(10) << "Reordering slice into dot operands";
+      VLOG(1) << "Reordering slice into dot operands";
       return ReplaceInstruction(slice, new_dot);
     }
   }
@@ -6741,7 +6741,7 @@ Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
       // Only reorder if it would result in sufficiently fewer flops
       if (old_flops / static_cast<double>(new_flops) >
           options_.associative_reordering_threshold()) {
-        VLOG(10) << "Reordering reduce into dot operands";
+        VLOG(1) << "Reordering reduce into dot operands";
         return ReplaceInstruction(reduce, new_dot);
       }
     }
