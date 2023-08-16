@@ -12,20 +12,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-load("//xla:pytype.default.bzl", "pytype_strict_binary")
+load("//xla:pytype.default.bzl", "pytype_strict_library")
 
-pytype_strict_binary(
+pytype_strict_library(
     name = "check_contents",
     srcs = ["check_contents.py"],
+    deps = [":diff_parser"],
+)
+
+pytype_strict_library(
+    name = "diff_parser",
+    srcs = ["diff_parser.py"],
 )
 
 py_test(
     name = "check_contents_test",
-    srcs = [
-        "check_contents.py",
-        "check_contents_test.py",
+    srcs = ["check_contents_test.py"],
+    data = [
+        "testdata/bad_cc.diff",
+        "testdata/important_cc.diff",
     ],
+    tags = ["no_oss"],
     deps = [
+        ":check_contents",
+        "@absl_py//absl/testing:absltest",
+    ],
+)
+
+py_test(
+    name = "diff_parser_test",
+    srcs = ["diff_parser_test.py"],
+    data = [
+        "testdata/bad_cc.diff",
+        "testdata/crosstool.diff",
+        "testdata/important_cc.diff",
+    ],
+    tags = ["no_oss"],
+    deps = [
+        ":diff_parser",
         "@absl_py//absl/testing:absltest",
     ],
 )

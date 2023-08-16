@@ -17,31 +17,15 @@
 Filters `git diff` by path, then checks to make sure no lines matching a regex
 have been added in the diff.
 """
-
 import argparse
 import dataclasses
-import itertools
 import logging  # Intended to run on vanilla Github Actions runner
 import re
 import subprocess
 import sys
-from typing import Iterable, Generator, Optional, Sequence, TypeVar
+from typing import Iterable, Optional, Sequence
 
-
-_T = TypeVar("_T")
-
-
-@dataclasses.dataclass
-class FileDiff:
-  """Represents a diff of a file.
-
-  Attributes:
-    path: Path of the file being diffed.
-    added_lines: List of tuples with (line_number, text)
-  """
-
-  path: str
-  added_lines: list[tuple[int, str]]
+from xla.build_tools.github_actions.check_contents import diff_parser
 
 
 @dataclasses.dataclass
@@ -72,81 +56,20 @@ def get_git_diff_stdout() -> str:
   return proc.stdout
 
 
-def batch(
-    iterable: Iterable[_T], n: int
-) -> Generator[tuple[_T, ...], None, None]:
-  """Splits an iterable into chunks of size n.
-
-  TODO(ddunleavy): once python 3.12 is available, use itertools.batch.
-
-  Arguments:
-    iterable: the iterable to batch.
-    n: the number of elements in each batch.
-
-  Yields:
-    A tuple of length n of the type that the iterable produces.
-  """
-  iterator = iter(iterable)
-  while True:
-    try:
-      # Unnecessary list here, but a generator won't raise StopIteration,
-      # instead it will raise RuntimeError: "generator raises StopIteration".
-      # I'd rather have a list comprehension in place of a generator expression
-      # than catch RuntimeError and have to inspect the payload to verify it's
-      # the one I want to be catching.
-      yield tuple([next(iterator) for _ in range(n)])
-    except StopIteration:
-      return
-
-
-def parse_diff(diff: str) -> list[FileDiff]:
-  """Parses the otuput of git diff into structured FileDiff objects.
-
-  Arguments:
-    diff: The raw output of git diff.
-
-  Returns:
-    A list of FileDiffs which contain the added lines for each file in the diff.
-  """
-  diff_pattern = r"diff --git a/.* b/(.*)\n"  # capture filename
-  chunk_header_pattern = r"@@ -\d+,\d+ \+(\d+),\d+ @@\n"  # capture line number
-
-  # ignore initial empty match
-  raw_per_file_diffs = re.split(diff_pattern, diff)[1:]
-
-  file_diffs = []
-  for path, raw_chunks in batch(raw_per_file_diffs, 2):
-    chunks = re.split(chunk_header_pattern, raw_chunks, re.MULTILINE)
-
-    # ignore extraneous diff metadata
-    for _, starting_line_no, diff in batch(chunks, 3):
-      starting_line_no = int(starting_line_no)
-      lines = diff.split("\n")
-
-      added_lines = [
-          (line_no, line[1:])
-          for line_no, line in zip(itertools.count(starting_line_no), lines)
-          if line.startswith("+")
-      ]
-      file_diffs.append(FileDiff(path=path, added_lines=added_lines))
-
-  return file_diffs
-
-
-def filter_diffs_by_path(
-    diffs: Iterable[FileDiff],
+def filter_hunks_by_path(
+    hunks: Iterable[diff_parser.Hunk],
     *,
     path_regexes: list[str],
     path_regex_exclusions: list[str],
-) -> list[FileDiff]:
+) -> list[diff_parser.Hunk]:
   """Filters files according to path_regexes.
 
   If a file matches both a path_regex and a path_regex_exclusion, then
   it will be filtered out.
 
   Arguments:
-    diffs: A sequence of FileDiff objects representing the diffs of each file in
-      the change.
+    hunks: A sequence of Hunk objects representing the hunks of the diff in the
+      change.
     path_regexes: A list of regexes. Paths matching these will pass through the
       filter. By default, every path is matched.
     path_regex_exclusions: A list of regexes. Paths that match both a path_regex
@@ -171,14 +94,14 @@ def filter_diffs_by_path(
     return any(regex.search(path) for regex in path_regex_exclusions)
 
   return [
-      diff
-      for diff in diffs
-      if should_include(diff.path) and not should_exclude(diff.path)
+      hunk
+      for hunk in hunks
+      if should_include(hunk.file) and not should_exclude(hunk.file)
   ]
 
 
 def check_diffs(
-    diffs: Iterable[FileDiff],
+    hunks: Iterable[diff_parser.Hunk],
     *,
     prohibited_regex: str,
     suppression_regex: Optional[str] = None,  # TODO(ddunleavy): CI not on 3.10
@@ -186,8 +109,7 @@ def check_diffs(
   """Checks FileDiffs for prohibited regexes.
 
   Arguments:
-    diffs: A sequence of FileDiff objects representing the diffs of each file in
-      the change.
+    hunks: A sequence of Hunk objects representing the hunks of the diff.
     prohibited_regex: The regex that isn't allowed in the diff.
     suppression_regex: A regex used as an escape hatch to allow the prohibited
       regex in the diff. If this is found on the same line as prohibited_regex,
@@ -207,12 +129,12 @@ def check_diffs(
     return True
 
   regex_locations = []
-  for diff in diffs:
-    for line_no, line in diff.added_lines:
+  for hunk in hunks:
+    for line_no, line in hunk.added_lines():
       if should_not_suppress(line):
         regex_locations.extend(
             [
-                RegexLocation(diff.path, line_no, line, regex_match.group())
+                RegexLocation(hunk.file, line_no, line, regex_match.group())
                 for regex_match in prohibited_regex.finditer(line)
             ]
         )
@@ -233,8 +155,8 @@ def main(argv: Sequence[str]):
   # We don't want to include path/to/check_contents.py as an argument
   args = parser.parse_args(argv[1:])
 
-  file_diffs = filter_diffs_by_path(
-      parse_diff(get_git_diff_stdout()),
+  file_diffs = filter_hunks_by_path(
+      diff_parser.parse_hunks(get_git_diff_stdout()),
       path_regexes=args.path_regex,
       path_regex_exclusions=args.path_regex_exclusion,
   )
