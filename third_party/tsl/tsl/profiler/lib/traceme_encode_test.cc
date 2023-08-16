@@ -31,7 +31,7 @@ TEST(TraceMeEncodeTest, NoArgTest) {
 
 TEST(TraceMeEncodeTest, OneArgTest) {
   EXPECT_EQ(TraceMeEncode("Hello", {{"context", "World"}}),
-            "Hello#context=World#");
+            "Hello#context=World#123");
 }
 
 TEST(TraceMeEncodeTest, TwoArgsTest) {
