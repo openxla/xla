@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tsl/platform/default/error_logging.h"
+#include "tsl/platform/error_logging.h"
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
