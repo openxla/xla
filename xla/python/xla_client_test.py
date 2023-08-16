@@ -2217,9 +2217,8 @@ def TestFactory(xla_backend,
 
     def testLocalHardwareId(self):
       for device in self.backend.devices():
-        local_hardware_id = device.local_hardware_id
-        if local_hardware_id is not None:
-          self.assertGreaterEqual(local_hardware_id, 0)
+        if hasattr(device, "local_hardware_id"):
+          self.assertGreaterEqual(device.local_hardware_id, 0)
 
     @unittest.skipIf(pathways, "not implemented")
     def testMemoryStats(self):
