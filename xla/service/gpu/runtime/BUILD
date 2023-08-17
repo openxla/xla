@@ -501,6 +501,7 @@ cc_library(
     name = "support",
     srcs = ["support.cc"],
     hdrs = ["support.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         "//xla:shape_util",
         "//xla/mlir/runtime/transforms:custom_call_encoding",
@@ -542,6 +543,7 @@ cc_library(
     name = "tracing",
     srcs = ["tracing.cc"],
     hdrs = ["tracing.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":support",
         "//xla/runtime:custom_call",
