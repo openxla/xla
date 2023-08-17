@@ -17,7 +17,10 @@ limitations under the License.
 
 #include <algorithm>
 #include <climits>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <numeric>
 #include <optional>
 #include <ostream>
@@ -26,18 +29,36 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/synchronization/blocking_counter.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "xla/index_util.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/overflow_util.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/printer.h"
+#include "xla/shape.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
+#include "xla/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/cpu_info.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
 
 namespace xla {
@@ -1155,7 +1176,7 @@ ShapeUtil::InsertedOrDeleted1SizedDimensions(const Shape& shape_pre,
   std::vector<int64_t> inserted_indices;
   // Returns false if any input/output index between prior_unmodified_dim_pair
   // and unmodified_dim_pair have size >1. Otherwise, returns true and appends
-  // the degerenate input/output dimensions in the gap to
+  // the degenerate input/output dimensions in the gap to
   // deleted_indices/inserted_indices respectively.
   auto check_modified_dims =
       [&shape_pre, &shape_post, &deleted_indices, &inserted_indices](
