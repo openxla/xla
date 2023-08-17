@@ -22,6 +22,13 @@ name: Check Contents
 on:
   pull_request:
 
+env:
+  # A bit tricky here: this lets us invoke python files outside of `bazel run`
+  # as long as the python file has imports as if it expects bazel to invoke it,
+  # and only depends on other python files in this workspace or the standard
+  # library.
+  PYTHONPATH: ".."
+
 jobs:
   check-contents:
     runs-on: ubuntu-22.04
@@ -30,8 +37,8 @@ jobs:
         shell: bash
     timeout-minutes: 1
     if: |
-      github.event.pull_request.draft == false &&
-      github.event.sender.type == 'User'
+      github.event.sender.type == 'User' ||
+      contains(github.event.pull_request.body, 'FORCE_TEST_ACTIONS')
     steps:
       - name: "Checking out repository"
         uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
