@@ -3946,6 +3946,7 @@ tsl_gpu_library(
         "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/service:collective_ops_utils",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",
@@ -3957,6 +3958,22 @@ tsl_gpu_library(
         "@tsl//tsl/platform:statusor",
     ],
     alwayslink = 1,
+)
+
+xla_cc_test(
+    name = "runtime_intrinsics_test",
+    srcs = ["runtime_intrinsics_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        ":runtime_intrinsics",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:gpu_plugin",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
+    ],
 )
 
 cc_library(
