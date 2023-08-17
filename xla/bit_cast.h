@@ -26,6 +26,8 @@ limitations under the License.
 #ifndef XLA_BIT_CAST_H_
 #define XLA_BIT_CAST_H_
 
+#include <cstdint>
+
 #include "absl/base/casts.h"
 #include "Eigen/Core"  // from @eigen_archive
 #include "xla/types.h"

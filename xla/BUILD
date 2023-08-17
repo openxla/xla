@@ -116,6 +116,8 @@ xla_cc_test(
     deps = [
         ":bit_cast",
         ":test",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -138,8 +140,10 @@ cc_library(
         ":xla_data_proto_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -149,8 +153,8 @@ xla_cc_test(
     deps = [
         ":comparison_util",
         ":test",
+        ":types",
         ":xla_data_proto_cc",
-        "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:test_main",
     ],
 )
