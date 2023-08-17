@@ -11,10 +11,7 @@ package(
 cc_library(
     name = "tpu_client",
     srcs = ["tpu_client.cc"],
-    hdrs = [
-        "tpu_client.h",
-    ],
-    compatible_with = [],
+    hdrs = ["tpu_client.h"],
     deps = [
         "//xla:executable_run_options",
         "//xla:literal",
@@ -47,9 +44,7 @@ cc_library(
 
 tsl_pybind_extension(
     name = "tpu_client_extension",
-    srcs = [
-        "tpu_client_extension.cc",
-    ],
+    srcs = ["tpu_client_extension.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -75,15 +70,14 @@ tsl_pybind_extension(
 
 py_strict_library(
     name = "py_tpu_client",
-    srcs = [
-        "tpu_client.py",
-    ],
+    srcs = ["tpu_client.py"],
     srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":tpu_client_extension",
         "//xla/python:xla_client",
         "//xla/python:xla_extension",
+        "@ml_dtypes",  # buildcleaner: keep, needed by //third_party/tensorflow/tsl/python/lib/core:ml_dtypes_lib
     ],
 )
 

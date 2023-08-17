@@ -7,9 +7,7 @@ load("//tsl/platform:rules_cc.bzl", "cc_shared_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
-        "//visibility:public",
-    ],
+    default_visibility = ["//visibility:public"],
     features = [
         # For ml_dtypes.so (see b/259896740)
         "windows_export_all_symbols",
@@ -31,8 +29,12 @@ cc_library(
     name = "ml_dtypes_lib",
     srcs = ["ml_dtypes.cc"],
     hdrs = ["ml_dtypes.h"],
-    # Requires data dependency in order to load py module from C++.
     data = [
+        # Fallback data dependency to allow other native extensions to have the
+        # Python module available.
+        #
+        # The better solution, though, would be for the other native extension's
+        # containing Python library to depend on //third_party/py/ml_dtypes.
         "@ml_dtypes",
     ],
     deps = [
