@@ -113,6 +113,16 @@ class ParseDiffTest(absltest.TestCase):
     self.assertEqual(literal_cc_hunk.start, 47)
     self.assertEqual(literal_cc_hunk.length, 7)
 
+  def test_added_lines(self):
+    hunks = diff_parser.parse_hunks(self.crosstool_diff)
+    small_hunk, big_hunk, literal_cc_hunk = hunks
+
+    line_numbers = lambda hunk: [line_no for line_no, _ in hunk.added_lines()]
+
+    self.assertEqual(line_numbers(small_hunk), [27])
+    self.assertEqual(line_numbers(big_hunk), list(range(303, 342)))
+    self.assertEqual(line_numbers(literal_cc_hunk), [50])
+
 
 if __name__ == "__main__":
   absltest.main()
