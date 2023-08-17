@@ -3,7 +3,6 @@
 
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl:tsl.bzl", "tsl_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -136,7 +135,6 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_eigen_dot_operation_test",
     srcs = ["cpu_eigen_dot_operation_test.cc"],
-    copts = tsl_copts(),
     tags = ["no_mac_arm64"],
     deps = [
         "//xla/hlo/ir:hlo",

@@ -198,7 +198,6 @@ cc_library(
     name = "cpu_compiler_pure",
     srcs = ["cpu_compiler.cc"],
     hdrs = ["cpu_compiler.h"],
-    copts = tsl_copts(),
     deps = [
         ":buffer_info_util",
         ":compiler_functor",
@@ -213,7 +212,6 @@ cc_library(
         ":hlo_xla_runtime_pipeline",
         ":ir_emission_utils",
         ":ir_emitter",
-        ":onednn_rewriter",
         ":parallel_task_assignment",
         ":simple_orc_jit",
         ":target_machine_features",
@@ -514,11 +512,10 @@ cc_library(
         "windows_compatibility.h",
     ],
     hdrs = ["simple_orc_jit.h"],
-    copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]) + tsl_copts(),
+    copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]),
     deps = [
         ":compiler_functor",
         ":cpu_runtime",
-        ":onednn_matmul",
         ":orc_jit_memory_mapper",
         ":runtime_conv2d",
         ":runtime_conv2d_acl",
@@ -646,7 +643,6 @@ cc_library(
         "elemental_ir_emitter.h",
         "ir_emitter.h",
     ],
-    copts = tsl_copts(),
     deps = [
         ":backend_config_proto_cc",
         ":cpu_options",
@@ -654,7 +650,6 @@ cc_library(
         ":dot_op_emitter",
         ":ir_emission_utils",
         ":ir_function",
-        ":onednn_memory_util",
         ":parallel_loop_emitter",
         ":target_machine_features",
         "//xla:shape_util",
@@ -1621,73 +1616,4 @@ tf_proto_library(
     name = "backend_config_proto",
     srcs = ["backend_config.proto"],
     cc_api_version = 2,
-)
-
-cc_library(
-    name = "onednn_memory_util",
-    srcs = ["onednn_memory_util.cc"],
-    hdrs = ["onednn_memory_util.h"],
-    copts = runtime_copts() + tsl_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_lightweight_check",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:statusor",
-        "//xla:types",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service/llvm_ir:ir_array",
-        "//xla/service/llvm_ir:ir_builder_mixin",
-        "//xla/service/llvm_ir:llvm_util",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:dynamic_annotations",
-        "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:TargetParser",
-        "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-    ] + mkl_deps(),
-)
-
-cc_library(
-    name = "onednn_matmul",
-    srcs = ["onednn_matmul.cc"],
-    hdrs = [
-        "onednn_matmul.h",
-        "@tsl//tsl/util:onednn_util_hdrs",
-    ],
-    copts = runtime_copts() + tsl_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":backend_config_proto_cc",
-        ":onednn_memory_util",
-        ":runtime_lightweight_check",
-        "//xla:executable_run_options",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:dynamic_annotations",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:blocking_counter",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:platform_port",
-    ] + mkl_deps(),
-)
-
-cc_library(
-    name = "onednn_rewriter",
-    srcs = ["onednn_rewriter.cc"],
-    hdrs = ["onednn_rewriter.h"],
-    copts = tsl_copts(),
-    deps = [
-        ":backend_config_proto_cc",
-        ":onednn_memory_util",
-        "//xla:status_macros",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_creation_utils",
-        "//xla/service:hlo_pass",
-        "//xla/service:pattern_matcher",
-    ] + mkl_deps(),
 )

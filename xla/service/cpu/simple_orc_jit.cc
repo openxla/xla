@@ -57,10 +57,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "tsl/platform/logging.h"
 
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-#include "xla/service/cpu/onednn_matmul.h"
-#endif
-
 // Provided by compiler-rt and MLIR.
 // Converts an F32 value to a BF16.
 extern "C" uint16_t __truncsfbf2(float);
@@ -328,9 +324,6 @@ bool RegisterKnownJITSymbols() {
   REGISTER_CPU_RUNTIME_SYMBOL(TopKF32);
   REGISTER_CPU_RUNTIME_SYMBOL(TracingStart);
   REGISTER_CPU_RUNTIME_SYMBOL(TracingEnd);
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-  REGISTER_CPU_RUNTIME_SYMBOL(OneDnnMatMul);
-#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
 
   registry->Register("__gnu_f2h_ieee", reinterpret_cast<void*>(__gnu_f2h_ieee),
                      "Host");
