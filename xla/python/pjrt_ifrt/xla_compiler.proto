@@ -18,7 +18,9 @@ syntax = "proto3";
 package xla.ifrt;
 
 import "xla/pjrt/compile_options.proto";
+import "xla/python/ifrt/serdes.proto";
 
 message XlaCompileOptionsProto {
   xla.CompileOptionsProto compile_options = 1;
+  repeated xla.ifrt.Serialized host_callbacks = 2;
 }

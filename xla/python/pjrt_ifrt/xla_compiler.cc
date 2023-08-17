@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -24,9 +25,12 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/python/ifrt/compiler.h"
+#include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.pb.h"
 #include "tsl/platform/statusor.h"
+#include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 
 namespace xla {
 namespace ifrt {
@@ -46,17 +50,16 @@ class XlaCompileOptionsSerDes
     XlaCompileOptionsProto proto;
     TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                         options.compile_options.ToProto());
-    if (!options.loaded_host_callbacks.empty()) {
-      return absl::UnimplementedError(
-          "xla::ifrt::XlaCompileOptions with loaded_host_callbacks is not "
-          "serializable");
+    for (const auto& loaded_host_callback : options.loaded_host_callbacks) {
+      TF_ASSIGN_OR_RETURN(*proto.add_host_callbacks(),
+                          xla::ifrt::Serialize(*loaded_host_callback));
     }
     return proto.SerializeAsString();
   }
 
   absl::StatusOr<std::unique_ptr<Serializable>> Deserialize(
       const std::string& serialized,
-      std::unique_ptr<DeserializeOptions>) override {
+      std::unique_ptr<DeserializeOptions> deserialize_options) override {
     XlaCompileOptionsProto proto;
     if (!proto.ParseFromString(serialized)) {
       return absl::DataLossError(
@@ -67,6 +70,38 @@ class XlaCompileOptionsSerDes
     TF_ASSIGN_OR_RETURN(
         options->compile_options,
         xla::CompileOptions::FromProto(proto.compile_options()));
+
+    if (!proto.host_callbacks().empty()) {
+      auto* deserialize_compile_options_options =
+          llvm::dyn_cast_or_null<DeserializeCompileOptionsOptions>(
+              deserialize_options.get());
+      if (deserialize_compile_options_options == nullptr ||
+          deserialize_compile_options_options->client == nullptr) {
+        return absl::InvalidArgumentError(
+            "Host callbacks cannot be deserialized without an IFRT client "
+            "provided via DeserializeOptions");
+      }
+
+      for (const auto& host_callback : proto.host_callbacks()) {
+        TF_ASSIGN_OR_RETURN(
+            auto serializable,
+            xla::ifrt::Deserialize(
+                host_callback,
+                std::make_unique<DeserializeLoadedHostCallbackOptions>(
+                    deserialize_compile_options_options->client)));
+
+        auto loaded_host_callback = tsl::TakeRef(
+            llvm::dyn_cast<LoadedHostCallback>(serializable.release()));
+        if (loaded_host_callback == nullptr) {
+          return absl::InvalidArgumentError(
+              "XlaCompileOptionsProto.host_callbacks must be serialized "
+              "instances of xla::ifrt::LoadedHostCallback");
+        }
+        options->loaded_host_callbacks.push_back(
+            std::move(loaded_host_callback));
+      }
+    }
+
     return options;
   }
 

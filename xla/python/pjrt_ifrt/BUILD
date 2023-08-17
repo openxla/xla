@@ -55,6 +55,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@tf_runtime//:ref_count",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -69,7 +70,10 @@ tf_proto_library(
 tf_proto_library(
     name = "xla_compiler_proto",
     srcs = ["xla_compiler.proto"],
-    protodeps = ["//xla/pjrt:compile_options_proto"],
+    protodeps = [
+        "//xla/pjrt:compile_options_proto",
+        "//xla/python/ifrt:serdes_proto",
+    ],
 )
 
 cc_library(

@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 
 #include "llvm/Support/ExtensibleRTTI.h"
+#include "xla/python/ifrt/serdes.h"
 #include "xla/statusor.h"
 #include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 
@@ -32,7 +33,7 @@ class Client;
 //
 // TODO(hyeontaek): Unify `HostCallback` with `Executable` once `Executable` is
 // added.
-class HostCallback : public llvm::RTTIExtends<HostCallback, llvm::RTTIRoot> {
+class HostCallback : public llvm::RTTIExtends<HostCallback, Serializable> {
  public:
   // Returns a serialized host callback.
   virtual std::string Serialize() const = 0;
@@ -52,7 +53,7 @@ class HostCallback : public llvm::RTTIExtends<HostCallback, llvm::RTTIRoot> {
 // execution.
 class LoadedHostCallback
     : public tsl::ReferenceCounted<LoadedHostCallback>,
-      public llvm::RTTIExtends<LoadedHostCallback, llvm::RTTIRoot> {
+      public llvm::RTTIExtends<LoadedHostCallback, Serializable> {
  public:
   virtual Client* client() const = 0;
 
@@ -65,6 +66,17 @@ class LoadedHostCallback
   // TODO(hyeontaek): Change `Serialize()` to return `HostCallback` instead of a
   // serialized host callback directly.
   virtual StatusOr<std::string> Serialize() const = 0;
+
+  static char ID;  // NOLINT
+};
+
+struct DeserializeLoadedHostCallbackOptions
+    : public llvm::RTTIExtends<DeserializeLoadedHostCallbackOptions,
+                               DeserializeOptions> {
+  explicit DeserializeLoadedHostCallbackOptions(Client* client)
+      : client(client) {}
+
+  Client* client;
 
   static char ID;  // NOLINT
 };

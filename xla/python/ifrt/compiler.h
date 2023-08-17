@@ -26,6 +26,8 @@ limitations under the License.
 namespace xla {
 namespace ifrt {
 
+class Client;
+
 // Abstract program.
 struct Program : llvm::RTTIExtends<Program, Serializable> {
   static char ID;  // NOLINT
@@ -38,6 +40,15 @@ struct Program : llvm::RTTIExtends<Program, Serializable> {
 //
 // TODO(hyeontaek): Make an new `LoadOptions` that is specific for loading.
 struct CompileOptions : llvm::RTTIExtends<CompileOptions, Serializable> {
+  static char ID;  // NOLINT
+};
+
+struct DeserializeCompileOptionsOptions
+    : llvm::RTTIExtends<DeserializeCompileOptionsOptions, DeserializeOptions> {
+  explicit DeserializeCompileOptionsOptions(Client* client) : client(client) {}
+
+  Client* client;
+
   static char ID;  // NOLINT
 };
 

@@ -20,6 +20,7 @@ namespace ifrt {
 
 char HostCallback::ID = 0;
 char LoadedHostCallback::ID = 0;
+char DeserializeLoadedHostCallbackOptions::ID = 0;
 
 }  // namespace ifrt
 }  // namespace xla
