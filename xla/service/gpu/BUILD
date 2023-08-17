@@ -2014,6 +2014,38 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "analytical_latency_estimator",
+    srcs = ["analytical_latency_estimator.cc"],
+    hdrs = ["analytical_latency_estimator.h"],
+    deps = [
+        ":gpu_hlo_cost_analysis",
+        ":gpu_performance_model",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:latency_hiding_scheduler",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+xla_cc_test(
+    name = "analytical_latency_estimator_test",
+    srcs = ["analytical_latency_estimator_test.cc"],
+    deps = [
+        ":analytical_latency_estimator",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_parser",
+        "//xla/service:latency_hiding_scheduler",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
     name = "gpu_sanitize_constant_names",
     srcs = ["gpu_sanitize_constant_names.cc"],
     hdrs = ["gpu_sanitize_constant_names.h"],
@@ -3110,6 +3142,7 @@ cc_library(
     srcs = ["gpu_hlo_schedule.cc"],
     hdrs = ["gpu_hlo_schedule.h"],
     deps = [
+        ":analytical_latency_estimator",
         ":backend_configs_cc",
         ":cublas_cudnn",
         "//xla/hlo/ir:hlo",

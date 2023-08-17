@@ -46,6 +46,14 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
+#include "tsl/platform/blocking_counter.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/threadpool.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -195,14 +203,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/blocking_counter.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/threadpool.h"
-#include "tsl/profiler/lib/traceme.h"
 
 #ifdef PLATFORM_GOOGLE
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.h"
@@ -1168,8 +1168,8 @@ StatusOr<std::unique_ptr<BufferAssignment>> GpuCompiler::AssignBuffers(
       stream_exec->GetDeviceDescription();
   const int64_t scheduler_mem_limit =
       GetSchedulerMemoryLimit(hlo_module, gpu_device_info, pointer_size_);
-  TF_RETURN_IF_ERROR(
-      ScheduleGpuModule(hlo_module, pointer_size_, scheduler_mem_limit));
+  TF_RETURN_IF_ERROR(ScheduleGpuModule(hlo_module, pointer_size_,
+                                       scheduler_mem_limit, gpu_device_info));
   TF_RETURN_IF_ERROR(
       RunPostSchedulingCopyInsertion(hlo_module, GetCanShareBuffer()));
 

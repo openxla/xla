@@ -27,9 +27,12 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/service//gpu/analytical_latency_estimator.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo_memory_scheduler.h"
@@ -596,7 +599,8 @@ int64_t GetSizeOfShape(const Shape& shape, int pointer_size) {
 }
 
 Status ScheduleGpuModule(HloModule* module, int64_t pointer_size,
-                         int64_t memory_limit) {
+                         int64_t memory_limit,
+                         const GpuDeviceInfo& gpu_device_info) {
   HloPassPipeline prepare_pipeline("p2p-schedule-preparation");
   prepare_pipeline.AddPass<P2PSchedulePreparation>();
   TF_RETURN_IF_ERROR(prepare_pipeline.Run(module).status());
@@ -632,7 +636,20 @@ Status ScheduleGpuModule(HloModule* module, int64_t pointer_size,
   std::unique_ptr<LatencyEstimator> latency_estimator;
   std::optional<tensorflow::profiler::ProfiledInstructionsProto> profile =
       ReadPGLEProfile(module, fingerprint);
-  if (profile.has_value()) {
+
+  const bool enable_analytical_latency_estimator =
+      module->config()
+          .debug_options()
+          .xla_gpu_enable_analytical_latency_estimator();
+  if (enable_analytical_latency_estimator) {
+    latency_estimator = std::make_unique<AnalyticalLatencyEstimator>(
+        config, std::move(gpu_latency_estimator), gpu_device_info,
+        [input_pointer_size = pointer_size](const Shape& shape) {
+          return GetSizeOfShape(shape, input_pointer_size);
+        },
+        module->entry_computation());
+    LOG(INFO) << "Using analytical latency estimator";
+  } else if (profile.has_value()) {
     latency_estimator = std::make_unique<ProfileGuidedLatencyEstimator>(
         config, std::move(gpu_latency_estimator), profile.value());
     LOG(INFO) << "Found profile, using profile guided latency estimator";

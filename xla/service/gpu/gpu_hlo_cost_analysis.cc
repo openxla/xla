@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/map_util.h"
 #include "xla/service/elemental_ir_emitter.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "xla/service/gpu/hlo_op_profile.pb.h"
 #include "xla/service/gpu/hlo_op_profiles.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/service/hlo_module_config.h"
 
 namespace xla {
 namespace gpu {
@@ -41,6 +43,16 @@ static constexpr absl::string_view kIRSizeKey = HloCostAnalysis::kReserved0Key;
 static constexpr absl::string_view kBasicBlockSplitCountKey =
     HloCostAnalysis::kReserved1Key;
 
+// TODO TJ consider adding these in the fast lookup path
+static constexpr absl::string_view kCollAlgoScaleRatioKey =
+    "Collective algorithm's scaling ratio";
+static constexpr absl::string_view kCollNumDevicesKey =
+    "Number of devices of a collective group";
+
+// We use static tables to look up system bandwidths for different
+// type of hardware below.
+// TODO TJ this needs to be hosted somewhere more centralized.
+
 Status GpuHloCostAnalysis::Preprocess(const HloInstruction* hlo) {
   TF_RETURN_IF_ERROR(HloCostAnalysis::Preprocess(hlo));
 
@@ -49,6 +61,14 @@ Status GpuHloCostAnalysis::Preprocess(const HloInstruction* hlo) {
       ElementalIrEmitter::OpInvalidatesCache(hlo);
 
   return OkStatus();
+}
+
+float GpuHloCostAnalysis::ScalingRatio(const HloInstruction& hlo) const {
+  return GetPropertyForHlo(hlo, kCollAlgoScaleRatioKey, hlo_properties_);
+}
+
+int64_t GpuHloCostAnalysis::NumOfDevices(const HloInstruction& hlo) const {
+  return GetPropertyForHlo(hlo, kCollNumDevicesKey, hlo_properties_);
 }
 
 int64_t GpuHloCostAnalysis::FusionParameterReadBytes(
@@ -325,11 +345,65 @@ int64_t FlopsPerElement(const se::DeviceDescription* device_info,
   return FindOrDefault(dtype_profiles->get(), opcode, kDefaultFlopsPerElement);
 }
 
+int64_t GetFlopsForElementwiseOp(const GpuDeviceInfo* gpu_device_info,
+                                 const HloOpcode op_code, const Shape& shape) {
+  int64_t flop_per_element = FlopsPerElement(
+      gpu_device_info ? gpu_device_info->name : kDefaultDeviceName,
+      shape.element_type(), op_code);
+  return flop_per_element * ShapeUtil::ElementsInRecursive(shape);
+}
+
+int64_t GetFlopsForElementwiseOp(const GpuDeviceInfo* gpu_device_info,
+                                 const HloInstruction* instr) {
+  LOG(ERROR) << "#####ShapeUtil::ElementsInRecursive(instr->shape()) "
+             << ShapeUtil::ElementsInRecursive(instr->shape())
+             << " INSTR: " << instr->ToString();
+
+  return GetFlopsForElementwiseOp(gpu_device_info, instr->opcode(),
+                                  instr->shape());
+}
+
+Status GpuHloCostAnalysis::HandleAllReduce(const HloInstruction* allreduce) {
+  const HloModuleConfig& config = allreduce->GetModule()->config();
+  int64_t num_devices = config.num_partitions();
+  int64_t num_replicas = config.replica_count();
+  // Data parallel ranks
+  int64_t num_ranks = num_devices;
+
+  int64_t output_bytes_accessed = 0;
+  ShapeUtil::ForEachSubshape(
+      allreduce->shape(), [&](const Shape& subshape, const ShapeIndex&) {
+        if (subshape.IsArray()) {
+          output_bytes_accessed += GetShapeSize(subshape);
+        }
+      });
+  int64_t bytes_accessed = output_bytes_accessed;
+  for (const HloInstruction* operand : allreduce->operands()) {
+    bytes_accessed += GetShapeSize(operand->shape());
+  }
+  current_properties_.set_output_bytes_accessed(output_bytes_accessed);
+  current_properties_[kBytesAccessedKey] = bytes_accessed;
+  current_properties_[kCollNumDevicesKey] = num_ranks;
+  // Since allreduce has compute, we need to get flops for the compute
+  // part which is an elementwise op.
+  current_properties_[kFlopsKey] = GetFlopsForElementwiseOp(
+      device_info_, allreduce->to_apply()->root_instruction()->opcode(),
+      allreduce->shape());
+
+  // Compute algorithmic scaling ratio, this can be used with link bandwidth
+  // to get the effective bandwidth of the algorithm.
+  // TODO TJ support multi-node case, we need to know how many nodes there are.
+  int num_intra_steps = 2 * (num_ranks - 1);
+  float scaling_ratio = (1.0 * num_ranks) / num_intra_steps;
+  // This is the scaling factor for ring since NCCL will only use ring
+  // for single-node, need to add support for tree algo in multi-node case.
+  current_properties_[kCollAlgoScaleRatioKey] = scaling_ratio;
+
+  return OkStatus();
+}
+
 Status GpuHloCostAnalysis::HandleElementwiseOp(const HloInstruction* hlo) {
-  int64_t flop_per_element =
-      FlopsPerElement(device_info_, hlo->shape().element_type(), hlo->opcode());
-  current_properties_[kFlopsKey] =
-      flop_per_element * ShapeUtil::ElementsInRecursive(hlo->shape());
+  current_properties_[kFlopsKey] = GetFlopsForElementwiseOp(device_info_, hlo);
   return OkStatus();
 }
 

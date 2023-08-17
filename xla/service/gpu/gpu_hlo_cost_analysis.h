@@ -40,6 +40,9 @@ class GpuHloCostAnalysis : public HloCostAnalysis {
 
   Status Preprocess(const HloInstruction* hlo) override;
 
+  float ScalingRatio(const HloInstruction& hlo) const;
+  int64_t NumOfDevices(const HloInstruction& hlo) const;
+
   Status HandleCustomCall(const HloInstruction* call) override;
 
   int64_t GetConvolutionFlops(const HloInstruction* convolution) override;
@@ -47,6 +50,8 @@ class GpuHloCostAnalysis : public HloCostAnalysis {
   Status HandleElementwiseOp(const HloInstruction* hlo);
   Status HandleElementwiseUnary(const HloInstruction* hlo) override;
   Status HandleElementwiseBinary(const HloInstruction* hlo) override;
+
+  Status HandleAllReduce(const HloInstruction* hlo) override;
 
   // Estimate the total size of IR accounting for both duplication
   // of producer code by consumer and the total number of basic blocks.
