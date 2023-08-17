@@ -483,9 +483,7 @@ cc_library(
         ":tpu_ops_c_api_hdrs",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 
