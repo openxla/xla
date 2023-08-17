@@ -31,6 +31,20 @@ namespace support {
 StatusOr<OpSharding> ToOpSharding(const ShardingParam& sharding_param,
                                   absl::Span<const int> device_mapping) {
   OpSharding op_sharding;
+  {
+    bool all_dim_replicated = true;
+    for (const int64_t dim_shard : sharding_param.dim_shards()) {
+      if (dim_shard != 1) {
+        all_dim_replicated = false;
+        break;
+      }
+    }
+    if (all_dim_replicated) {
+      op_sharding.set_type(OpSharding::REPLICATED);
+      return op_sharding;
+    }
+  }
+
   op_sharding.set_type(OpSharding::OTHER);
 
   // Populate tile_assignment_dimensions.
@@ -59,7 +73,7 @@ StatusOr<OpSharding> ToOpSharding(const ShardingParam& sharding_param,
     if (device < 0 || device >= device_mapping.size()) {
       return tsl::errors::OutOfRange("Can't map device ", device);
     }
-    tile_assignment_devices->Add(device_mapping[device]);
+    tile_assignment_devices->Add(device);
   }
 
   return op_sharding;

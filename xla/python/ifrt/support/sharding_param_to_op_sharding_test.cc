@@ -56,12 +56,12 @@ TEST(ShardingParamToOpShardingTest, Replicated) {
   EXPECT_EQ(actual.ToString(), "{replicated}");
 }
 
-TEST(ShardingParamToOpShardingTest, Maximal) {
+TEST(ShardingParamToOpShardingTest, EffectivelyReplicated) {
   ShardingParam sharding_param{/*dim_shards=*/{1, 1},
                                {/*permutation=*/{0}, /*axis_sizes=*/{1}}};
   TF_ASSERT_OK_AND_ASSIGN(const xla::HloSharding actual,
                           ToHloSharding(sharding_param, {0}));
-  EXPECT_EQ(actual.ToString(), "{maximal device=0}");
+  EXPECT_EQ(actual.ToString(), "{replicated}");
 }
 
 TEST(ShardingParamToOpShardingTest, Permutation) {
@@ -94,7 +94,7 @@ TEST(ShardingParamToOpShardingTest, NonTrivialDeviceAssignment) {
                                {/*permutation=*/{1, 0}, /*axis_sizes=*/{3, 2}}};
   TF_ASSERT_OK_AND_ASSIGN(const xla::HloSharding actual,
                           ToHloSharding(sharding_param, {6, 5, 4, 3, 2, 1}));
-  EXPECT_EQ(actual.ToString(), "{devices=[2,1,3]6,3,5,2,4,1}");
+  EXPECT_EQ(actual.ToString(), "{devices=[2,1,3]0,3,1,4,2,5}");
 }
 
 TEST(ShardingParamToOpShardingTest, ErrorOnDeviceAssignment) {
