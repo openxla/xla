@@ -529,8 +529,10 @@ xla_cc_test(
     srcs = ["collective_pipeliner_test.cc"],
     deps = [
         ":collective_pipeliner",
+        ":hlo_parser",
         ":hlo_pass_pipeline",
         "//xla:statusor",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
