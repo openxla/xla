@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/array.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_cost_graph.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_option.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_solver.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_solver_option.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
 #include "xla/hlo/experimental/auto_sharding/cluster_environment.h"
@@ -203,6 +204,16 @@ bool HasReduceScatterOpportunity(
 HloSharding GetReduceScatterOutput(const HloInstruction* ins,
                                    const ShardingStrategy& strategy,
                                    const ClusterEnvironment& cluster_env);
+
+// The high-level "recipe" for solving an Auto Sharding problem.
+AutoShardingSolverResult Solve(const HloInstructionSequence& sequence,
+                               const LivenessSet& liveness_set,
+                               const StrategyMap& strategy_map,
+                               const LeafStrategies& leaf_strategies,
+                               const CostGraph& cost_graph,
+                               const AliasSet& alias_set,
+                               const AutoShardingOption& option);
+
 }  // namespace spmd
 }  // namespace xla
 

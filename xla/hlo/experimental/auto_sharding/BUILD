@@ -32,6 +32,7 @@ cc_library(
         ":auto_sharding_solver_option",
         ":auto_sharding_strategy",
         ":auto_sharding_util",
+        ":auto_sharding_wrapper",
         ":cluster_environment",
         ":matrix",
         ":metrics",
@@ -129,6 +130,30 @@ cc_library(
 )
 
 cc_library(
+    name = "auto_sharding_wrapper",
+    hdrs = ["auto_sharding_wrapper.h"],
+    deps = [
+        ":auto_sharding_cost_graph",
+        ":auto_sharding_solver",
+        ":auto_sharding_strategy",
+        "//xla/hlo/ir:hlo",
+    ],
+)
+
+cc_library(
+    name = "auto_sharding_impl",
+    srcs = ["auto_sharding_impl.cc"],
+    deps = [
+        ":auto_sharding_cost_graph",
+        ":auto_sharding_option",
+        ":auto_sharding_solver",
+        ":auto_sharding_strategy",
+        ":auto_sharding_wrapper",
+        "//xla/hlo/ir:hlo",
+    ],
+)
+
+cc_library(
     name = "matrix",
     hdrs = ["matrix.h"],
     deps = [
@@ -198,6 +223,7 @@ xla_cc_binary(
     srcs = ["auto_sharding_runner.cc"],
     deps = [
         ":auto_sharding",
+        ":auto_sharding_impl",
         "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_parser",
@@ -219,6 +245,7 @@ xla_cc_test(
     srcs = ["auto_sharding_test.cc"],
     deps = [
         ":auto_sharding",
+        ":auto_sharding_impl",
         ":auto_sharding_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",

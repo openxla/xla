@@ -4109,12 +4109,9 @@ StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
     std::vector<spmd::EdgeStrategyIdx> e_val;
     double objective = -1.0;
     if (!solver_option.load_solution_vector) {
-      auto solver_result = CallSolver(
-          sequence, liveness_set, strategy_map, leaf_strategies, cost_graph,
-          alias_set, /*s_hint*/ {}, option_.memory_budget_per_device,
-          /*crash_at_infinity_costs_check*/ !option_.try_multiple_mesh_shapes,
-          /*compute_iis*/ true, option_.solver_timeout_in_seconds,
-          option_.allow_alias_to_follower_conversion);
+      auto solver_result =
+          Solve(sequence, liveness_set, strategy_map, leaf_strategies,
+                cost_graph, alias_set, option_);
       if (solver_result.skip_auto_sharding) {
         return AutoShardingResult::kModuleUnchangedNoShardingPerfomed;
       } else if (!solver_result.status.ok()) {

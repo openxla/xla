@@ -2543,7 +2543,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-    ]),
+    ]) + ["//xla/hlo/experimental/auto_sharding:auto_sharding_impl"],
 )
 
 xla_cc_test(
