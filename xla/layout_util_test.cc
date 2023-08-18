@@ -15,12 +15,18 @@ limitations under the License.
 
 #include "xla/layout_util.h"
 
-#include <optional>
-#include <sstream>
+#include <cstdint>
 #include <vector>
 
+#include "absl/types/span.h"
+#include "xla/layout.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/test.h"
 #include "xla/test_helpers.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/status_matchers.h"
 
 namespace xla {
@@ -585,5 +591,6 @@ TEST_F(LayoutUtilTest, HasCustomElementSizeInBits) {
       ->set_element_size_in_bits(32);
   EXPECT_TRUE(LayoutUtil::HasCustomElementSizeInBits(shape));
 }
+
 }  // namespace
 }  // namespace xla

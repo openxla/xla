@@ -16,6 +16,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 
 #include <algorithm>
+#include <climits>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <iostream>
 #include <iterator>
@@ -28,37 +31,57 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/memory/memory.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_op_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/iterator_util.h"
+#include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/map_util.h"
+#include "xla/primitive_util.h"
 #include "xla/printer.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_lexer.h"
 #include "xla/service/mapped_ptr_container_sorter.h"
 #include "xla/service/name_uniquer.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
+#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/lib/gtl/map_util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/human_readable_json.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -1626,9 +1649,8 @@ HloInstruction::CreateStochasticConvert(const Shape& shape,
     const Shape& shape, HloInstruction* operand, HloInstruction* init_value,
     absl::Span<const int64_t> dimensions_to_reduce,
     HloComputation* reduce_computation) {
-  auto instruction = absl::WrapUnique(new HloReduceInstruction(
+  return absl::WrapUnique(new HloReduceInstruction(
       shape, {operand, init_value}, dimensions_to_reduce, reduce_computation));
-  return std::move(instruction);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateReduce(

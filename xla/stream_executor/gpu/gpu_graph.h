@@ -23,13 +23,19 @@ limitations under the License.
 #include <type_traits>
 
 #include "absl/functional/any_invocable.h"
+#include "absl/types/span.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
+#include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace gpu {
+
+// Forward declare.
+class GpuContext;
 
 class GpuGraphSupport {
  public:
@@ -99,6 +105,21 @@ class OwnedGpuGraphExec
 //===----------------------------------------------------------------------===//
 // Gpu Graph Helpers.
 //===----------------------------------------------------------------------===//
+
+// Creates new empty Gpu graph.
+tsl::StatusOr<OwnedGpuGraph> CreateGpuGraph();
+
+// Adds a kernel node to the graph.
+tsl::StatusOr<GpuGraphNodeHandle> AddKernelNode(
+    GpuGraphHandle graph, absl::Span<GpuGraphNodeHandle> deps,
+    ThreadDim threads, BlockDim blocks, const KernelBase& kernel,
+    const KernelArgsArrayBase& args);
+
+// Adds a memory copy node to the graph.
+tsl::StatusOr<GpuGraphNodeHandle> AddMemcpyD2DNode(
+    GpuContext* context, GpuGraphHandle graph,
+    absl::Span<GpuGraphNodeHandle> deps, const DeviceMemoryBase& dst,
+    const DeviceMemoryBase& src);
 
 // Captures all operations added to a `stream` by the `capture` function into
 // the gpu graph instance.

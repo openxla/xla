@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/status.h"
 #include "xla/tests/test_utils.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -45,9 +44,12 @@ namespace gpu {
     HloOpcode op, PrimitiveType data_type, int64_t n_elements,
     int chain_length) {
   const Shape shape = ShapeUtil::MakeShape(data_type, {n_elements});
-  auto module = std::make_unique<HloModule>("m", HloModuleConfig{});
-  HloComputation::Builder entry_builder("b");
-  HloComputation::Builder fusion_builder("sb");
+  HloModuleConfig config;
+  config.set_debug_options(GetDebugOptionsFromFlags());
+  auto module = std::make_unique<HloModule>("module", config);
+
+  HloComputation::Builder entry_builder("entry");
+  HloComputation::Builder fusion_builder("fusion");
 
   if (HloOpcodeArity(op) == 2) {
     HloInstruction* pf0 = fusion_builder.AddInstruction(

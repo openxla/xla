@@ -200,6 +200,24 @@ namespace {
 bool ConvIsLowerable(HloInstruction* conv) {
   return GpuConvRewriter::ConvIsLowerable(conv);
 }
+
+StatusOr<AutotuneConfig> GetAutotuneConfig(
+    se::StreamExecutor* stream_exec, const DebugOptions& debug_options,
+    const GpuCompiler::CompileOptions& options,
+    const GpuTargetConfig& gpu_target_config,
+    const AutotuneResults* autotune_results) {
+  if (stream_exec) {
+    return AutotuneConfig{DeviceConfig{stream_exec, options.device_allocator},
+                          debug_options};
+  }
+  AutotuneConfig deviceless_config =
+      AutotuneConfig{DevicelessConfig{gpu_target_config.device_description_str},
+                     debug_options};
+  // Deviceless config means we can't run autotuning, and need to rely on saved
+  // results.
+  TF_RETURN_IF_ERROR(AutotunerUtil::LoadAutotuneResults(*autotune_results));
+  return deviceless_config;
+}
 }  // end anonymous namespace
 
 StatusOr<std::unique_ptr<Executable>>
@@ -624,36 +642,45 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
     collectives_pipeline.AddPass<WhileLoopAllReduceCodeMotion>(
         /*enable_reduce_scatter=*/debug_options
             .xla_gpu_enable_while_loop_reduce_scatter_code_motion());
-    if (debug_options.xla_gpu_enable_pipelined_all_reduce()) {
+
+    const bool enable_all_pipelined =
+        debug_options.xla_gpu_enable_pipelined_collectives();
+    if (enable_all_pipelined ||
+        debug_options.xla_gpu_enable_pipelined_all_reduce()) {
       CollectivePipeliner::Config config{
           /*op=*/HloOpcode::kAllReduce,
           /*level_to_operate_on=*/0,
           /*max_pipelining_per_loop=*/INT64_MAX,
           /*last_run=*/true,
+          /*pipeline_use_tree=*/false,
           /*process_different_sized_ops=*/true,
           /*pipelining_direction=*/
           CollectivePipeliner::PipeliningDirection::kForward,
           /*should_process=*/HloPredicateTrue};
       collectives_pipeline.AddPass<CollectivePipeliner>(config);
     }
-    if (debug_options.xla_gpu_enable_pipelined_all_gather()) {
+    if (enable_all_pipelined ||
+        debug_options.xla_gpu_enable_pipelined_all_gather()) {
       CollectivePipeliner::Config config{
           /*op=*/HloOpcode::kAllGather,
           /*level_to_operate_on=*/0,
           /*max_pipelining_per_loop=*/INT64_MAX,
           /*last_run=*/true,
+          /*pipeline_use_tree=*/false,
           /*process_different_sized_ops=*/true,
           /*pipelining_direction=*/
           CollectivePipeliner::PipeliningDirection::kBackward,
           /*should_process=*/HloPredicateTrue};
       collectives_pipeline.AddPass<CollectivePipeliner>(config);
     }
-    if (debug_options.xla_gpu_enable_pipelined_reduce_scatter()) {
+    if (enable_all_pipelined ||
+        debug_options.xla_gpu_enable_pipelined_reduce_scatter()) {
       CollectivePipeliner::Config config{
           /*op=*/HloOpcode::kReduceScatter,
           /*level_to_operate_on=*/0,
           /*max_pipelining_per_loop=*/INT64_MAX,
           /*last_run=*/true,
+          /*pipeline_use_tree=*/false,
           /*process_different_sized_ops=*/true,
           /*pipelining_direction=*/
           CollectivePipeliner::PipeliningDirection::kForward,
@@ -831,20 +858,27 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
       pipeline.AddPass<AsyncCollectiveCreator>(std::move(config));
 
       auto convert_to_async = [&debug_options](const HloInstruction* inst) {
+        const bool enable_all_async =
+            debug_options.xla_gpu_enable_async_collectives();
         switch (inst->opcode()) {
           case HloOpcode::kAllReduceStart:
-            return debug_options.xla_gpu_enable_async_all_reduce();
+            return enable_all_async ||
+                   debug_options.xla_gpu_enable_async_all_reduce();
           case HloOpcode::kAllGatherStart:
-            return debug_options.xla_gpu_enable_async_all_gather();
+            return enable_all_async ||
+                   debug_options.xla_gpu_enable_async_all_gather();
           case HloOpcode::kCollectivePermuteStart:
-            return debug_options.xla_gpu_enable_async_collective_permute();
+            return enable_all_async ||
+                   debug_options.xla_gpu_enable_async_collective_permute();
           case HloOpcode::kAsyncStart: {
             auto async_inst = Cast<HloAsyncInstruction>(inst);
             switch (async_inst->async_wrapped_opcode()) {
               case HloOpcode::kReduceScatter:
-                return debug_options.xla_gpu_enable_async_reduce_scatter();
+                return enable_all_async ||
+                       debug_options.xla_gpu_enable_async_reduce_scatter();
               case HloOpcode::kAllToAll:
-                return debug_options.xla_gpu_enable_async_all_to_all();
+                return enable_all_async ||
+                       debug_options.xla_gpu_enable_async_all_to_all();
               default:
                 return false;
             }
@@ -989,8 +1023,12 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     if (debug_options.xla_gpu_enable_triton_softmax_fusion() &&
         std::holds_alternative<se::CudaComputeCapability>(
             gpu_target_config.gpu_version)) {
-      pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(options);
-      pipeline.AddPass<SoftmaxRewriterTriton>(gpu_target_config.gpu_version);
+      auto cuda_compute_capability =
+          std::get<se::CudaComputeCapability>(gpu_target_config.gpu_version);
+      if (cuda_compute_capability.IsAtLeast(se::CudaComputeCapability::VOLTA)) {
+        pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(options);
+        pipeline.AddPass<SoftmaxRewriterTriton>(gpu_target_config.gpu_version);
+      }
     }
 
     pipeline.AddPass<ReductionDimensionGrouper>();
@@ -1042,9 +1080,11 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // f32).
   add_float_normalization(pipeline);
 
-  TF_RETURN_IF_ERROR(AddAutotuningPasses(
-      &pipeline, hlo_module, stream_exec, debug_options, options,
-      gpu_target_config, autotune_results, thread_pool));
+  TF_ASSIGN_OR_RETURN(AutotuneConfig autotune_config,
+                      GetAutotuneConfig(stream_exec, debug_options, options,
+                                        gpu_target_config, autotune_results));
+  TF_RETURN_IF_ERROR(
+      AddAutotuningPasses(&pipeline, hlo_module, autotune_config, thread_pool));
 
   // The Triton autotuner can insert new bf16 reductions that need to be
   // normalized again.
@@ -1067,7 +1107,12 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(options);
   }
 
-  pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
+  // Since this CSE runs after collective schedule linearizer which inserts
+  // control dependencies, ignore these control deps when replacing instructions
+  // with equivalent ones here.
+  pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true,
+                           /*only_fusion_computations*/ false,
+                           /*ignore_control_dependencies=*/true);
   TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
 
   return OkStatus();
@@ -1699,12 +1744,6 @@ std::optional<bool> GpuCompiler::FusionCanShareBufferHint(
     const ShapeIndex& user_index) {
   if (user->opcode() != HloOpcode::kFusion) {
     return std::nullopt;
-  }
-
-  auto backend_config = user->backend_config<FusionBackendConfig>();
-  if (backend_config.ok() &&
-      backend_config.value().kind() == kTritonSoftmaxFusionKind) {
-    return true;
   }
 
   // First, do the trivial check: if the fusion operand and the fusion output

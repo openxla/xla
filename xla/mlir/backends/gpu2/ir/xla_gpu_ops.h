@@ -13,17 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_TSL_PLATFORM_DEFAULT_ERROR_LOGGING_H_
-#define TENSORFLOW_TSL_PLATFORM_DEFAULT_ERROR_LOGGING_H_
+#ifndef XLA_MLIR_BACKENDS_GPU2_IR_XLA_GPU_OPS_H_
+#define XLA_MLIR_BACKENDS_GPU2_IR_XLA_GPU_OPS_H_
 
-#include "absl/status/status.h"
-#include "absl/strings/string_view.h"
+#include "mlir/IR/Builders.h"  // from @llvm-project  // IWYU pragma: keep
+#include "mlir/IR/OpImplementation.h"  // from @llvm-project  // IWYU pragma: keep
+#include "mlir/IR/OperationSupport.h"  // from @llvm-project  // IWYU pragma: keep
+#include "xla/mlir/backends/gpu2/ir/xla_gpu_dialect.h"
 
-namespace tsl::error_logging {
+#define GET_OP_CLASSES
+#include "xla/mlir/backends/gpu2/ir/xla_gpu_ops.h.inc"
 
-absl::Status Log(absl::string_view component, absl::string_view subcomponent,
-                 absl::string_view error_msg);
-
-}
-
-#endif  // TENSORFLOW_TSL_PLATFORM_DEFAULT_ERROR_LOGGING_H_
+#endif  // XLA_MLIR_BACKENDS_GPU2_IR_XLA_GPU_OPS_H_

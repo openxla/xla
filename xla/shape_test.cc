@@ -15,18 +15,10 @@ limitations under the License.
 
 #include "xla/shape.h"
 
-#include <numeric>
-
 #include "absl/hash/hash_testing.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
-#include "xla/layout_util.h"
+#include "xla/layout.h"
 #include "xla/shape_util.h"
-#include "xla/status_macros.h"
 #include "xla/test.h"
-#include "xla/test_helpers.h"
-#include "xla/types.h"
-#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/test_benchmark.h"
 

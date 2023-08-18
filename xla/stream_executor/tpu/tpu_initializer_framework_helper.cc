@@ -23,13 +23,13 @@ limitations under the License.
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "absl/status/status.h"
 #include "xla/stream_executor/tpu/libtftpu.h"
 #include "xla/stream_executor/tpu/tpu_api_dlsym_set_fn.h"
-#include "xla/stream_executor/tpu/tpu_initialize_util.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"
+#include "xla/stream_executor/tpu/tpu_initialize_util.h"
 #include "xla/stream_executor/tpu/tpu_ops_c_api.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 #if !defined(PLATFORM_GOOGLE)
 #include "xla/stream_executor/tpu/tpu_api.h"
@@ -46,8 +46,8 @@ namespace tpu {
 #if !defined(PLATFORM_GOOGLE)
 #include "xla/stream_executor/tpu/tpu_library_init_fns.inc"
 
-tsl::Status InitializeTpuLibrary(void* library_handle) {
-  tsl::Status s = InitializeTpuStructFns(library_handle);
+absl::Status InitializeTpuLibrary(void* library_handle) {
+  absl::Status s = InitializeTpuStructFns(library_handle);
 
   // Retrieve arguments from environment if applicable
   std::pair<std::vector<std::string>, std::vector<const char*>> args =
@@ -69,31 +69,50 @@ tsl::Status InitializeTpuLibrary(void* library_handle) {
   return s;
 }
 
-// TODO(b/261484192): refactor this function to align with supporting different
-// PJRT plugins.
-tsl::Status FindAndLoadTpuLibrary() {
+static absl::StatusOr<void*> OpenTpuLibrary() {
   const char* env_value = getenv("TPU_LIBRARY_PATH");
   const char* libtpu_path =
       env_value && strlen(env_value) > 0 ? env_value : "libtpu.so";
   LOG(INFO) << "Libtpu path is: " << libtpu_path;
   void* library = dlopen(libtpu_path, RTLD_LAZY);
-  if (library) {
-    // We can open the shared library which means we are in a TPU environment.
-    // Try to acquire exclusive access.
-    TF_RETURN_IF_ERROR(TryAcquireTpuLock());
-    TF_RETURN_IF_ERROR(InitializeTpuLibrary(library));
-  } else {
-    LOG(INFO) << "Failed to open libtpu: " << dlerror();
+  if (library == nullptr) {
+    return absl::InternalError(
+        absl::StrCat("Failed to open libtpu ", dlerror()));
+  }
+  return library;
+}
+
+// TODO(b/261484192): remove after StreamExecutor is fully deprecated in Cloud
+// TPU.
+absl::Status FindAndLoadTpuLibrary() {
+  absl::StatusOr<void*> library = OpenTpuLibrary();
+  if (!library.ok()) {
+    LOG(INFO) << library.status();
+    return absl::OkStatus();
   }
 
-  return ::tsl::OkStatus();
+  // We can open the shared library which means we are in a TPU environment.
+  // Try to acquire exclusive access.
+  TF_RETURN_IF_ERROR(TryAcquireTpuLock());
+  TF_RETURN_IF_ERROR(InitializeTpuLibrary(*library));
+  return absl::OkStatus();
+}
+
+absl::Status LoadTpuLibraryAndInitializeTpuStructFns() {
+  absl::StatusOr<void*> library = OpenTpuLibrary();
+  if (!library.ok()) {
+    LOG(INFO) << library.status();
+    return absl::OkStatus();
+  }
+  TF_RETURN_IF_ERROR(InitializeTpuStructFns(*library));
+  return absl::OkStatus();
 }
 
 #elif defined(LIBTPU_STATIC)
 
 #include "xla/stream_executor/tpu/tpu_library_init_fns.inc"
 
-tsl::Status InitializeTpuLibrary() {
+absl::Status InitializeTpuLibrary() {
   // Retrieve arguments from environment if applicable
   std::pair<std::vector<std::string>, std::vector<const char*>> args =
       GetLibTpuInitArguments();
@@ -102,21 +121,24 @@ tsl::Status InitializeTpuLibrary() {
                    args.second.data());
 
   RegisterTpuPlatform();
-  return ::tsl::OkStatus();
+  return absl::OkStatus();
 }
 
-tsl::Status FindAndLoadTpuLibrary() {
+absl::Status FindAndLoadTpuLibrary() {
   // We can open the shared library which means we are in a TPU environment.
   // Try to acquire exclusive access.
   TF_RETURN_IF_ERROR(TryAcquireTpuLock());
   TF_RETURN_IF_ERROR(InitializeTpuLibrary());
-  return ::tsl::OkStatus();
+  return absl::OkStatus();
 }
 
 #else   // PLATFORM_GOOGLE
-tsl::Status InitializeTpuLibrary(void* library_handle) {
-  return tsl::errors::Unimplemented(
-      "You must statically link in a TPU library.");
+absl::Status InitializeTpuLibrary(void* library_handle) {
+  return absl::UnimplementedError("You must statically link in a TPU library.");
+}
+
+absl::Status LoadTpuLibraryAndInitializeTpuStructFns() {
+  return absl::UnimplementedError("You must statically link in a TPU library.");
 }
 #endif  // PLATFORM_GOOGLE
 

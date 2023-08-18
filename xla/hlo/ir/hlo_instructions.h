@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef XLA_HLO_IR_HLO_INSTRUCTIONS_H_
 #define XLA_HLO_IR_HLO_INSTRUCTIONS_H_
 
+#include <cstdint>
 #include <list>
 #include <memory>
 #include <optional>
@@ -27,14 +28,26 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/comparison_util.h"
+#include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/iterator_util.h"
+#include "xla/layout.h"
+#include "xla/literal.h"
 #include "xla/printer.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/lib/gtl/iterator_range.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 

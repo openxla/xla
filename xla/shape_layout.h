@@ -18,11 +18,11 @@ limitations under the License.
 
 #include <string>
 
+#include "xla/layout.h"
 #include "xla/printer.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/types.h"
-#include "xla/xla_data.pb.h"
-#include "tsl/platform/status.h"
+#include "xla/status.h"
 
 namespace xla {
 

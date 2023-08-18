@@ -23,12 +23,14 @@ limitations under the License.
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/status.h"
+
 #if GOOGLE_CUDA
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #elif TENSORFLOW_USE_ROCM
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "tsl/platform/rocm_rocdl_path.h"
 #endif
+#include "xla/tests/test_utils.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "tsl/platform/init_main.h"
 #include "tsl/util/command_line_flags.h"
@@ -53,6 +55,10 @@ xla::Status CompileAndPrintLlvmIr(const std::string& hlo_text,
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<xla::HloModule> hlo_module,
       xla::LoadModuleFromData(/*data=*/hlo_text, /*format=*/"hlo"));
+
+  TF_RETURN_IF_ERROR(VerifyHloModule(hlo_module.get(),
+                                     /*layout_sensitive=*/false,
+                                     /*allow_mixed_precision=*/true));
   llvm::LLVMContext llvm_context;
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM

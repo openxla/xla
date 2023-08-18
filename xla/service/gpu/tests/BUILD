@@ -730,6 +730,7 @@ xla_cc_binary(
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:stream_executor_impl",
         "//xla/stream_executor/host:host_platform",
+        "//xla/tests:test_utils",
         "//xla/tools:hlo_module_loader",
         "@llvm-project//llvm:Target",
         "@tsl//tsl/platform:logging",

@@ -24,7 +24,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/cleanup/cleanup.h"
-#include "absl/log/check.h"
 #include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/service/shaped_buffer.h"
@@ -44,6 +43,7 @@ limitations under the License.
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "xla/stream_executor/tpu/tpu_platform_id.h"
 #include "tsl/platform/casts.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 
@@ -328,10 +328,12 @@ tsl::Status TpuTransferManager::WriteSingleTupleIndexTable(
 }
 
 tsl::Status TpuTransferManager::LinearizeToBuffers(
-    const xla::LiteralSlice& literal,
+    const xla::LiteralSlice& literal, const xla::Shape& device_shape,
     std::deque<tensorflow::tpu::NoncopyableBuffer>* buffers) {
   XLA_Literal c_literal;
   ApiConverter::ToC(literal, &c_literal);
+  XLA_Shape c_device_shape;
+  ApiConverter::ToC(device_shape, &c_device_shape);
 
   char** buffers_array;
   int64_t* buffers_size;
@@ -340,7 +342,7 @@ tsl::Status TpuTransferManager::LinearizeToBuffers(
 
   stream_executor::tpu::ExecutorApiFn()
       ->TpuTransferManager_LinearizeToBuffersFn(
-          manager_, &c_literal, &buffers_array, &buffers_size,
+          manager_, &c_literal, &c_device_shape, &buffers_array, &buffers_size,
           &buffers_array_size, status.c_status);
 
   for (int64_t i = 0; i < buffers_array_size; ++i) {
@@ -353,6 +355,7 @@ tsl::Status TpuTransferManager::LinearizeToBuffers(
   stream_executor::tpu::ExecutorApiFn()->TpuTransferManager_FreeBuffersFn(
       buffers_array, buffers_size, buffers_array_size);
 
+  ApiConverter::Destroy(&c_device_shape);
   ApiConverter::Destroy(&c_literal);
   return status.status();
 }

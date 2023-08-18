@@ -85,15 +85,27 @@ cc_library(
 )
 
 cc_library(
-    name = "pjrt_c_api_cpu",
-    srcs = ["pjrt_c_api_cpu.cc"],
-    hdrs = ["pjrt_c_api_cpu.h"],
+    name = "pjrt_c_api_cpu_internal",
+    srcs = ["pjrt_c_api_cpu_internal.cc"],
+    hdrs = ["pjrt_c_api_cpu_internal.h"],
     visibility = ["//visibility:public"],
     deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt:pjrt_client",
         "//xla/pjrt:tfrt_cpu_pjrt_client",
+    ],
+)
+
+cc_library(
+    name = "pjrt_c_api_cpu",
+    srcs = ["pjrt_c_api_cpu.cc"],
+    hdrs = ["pjrt_c_api_cpu.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_cpu_internal",
+        ":pjrt_c_api_hdrs",
     ],
 )
 
@@ -190,17 +202,23 @@ cc_library(
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_test_base",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/client:xla_builder",
-        "//xla/client:xla_computation",
+        "//xla/client:executable_build_options",
+        "//xla/hlo/ir:hlo",
+        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
+        "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:literal_test_util",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",

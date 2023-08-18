@@ -13,6 +13,8 @@
 # limitations under the License.
 # ==============================================================================
 
+from __future__ import annotations
+
 import enum
 import inspect
 import types
@@ -350,6 +352,7 @@ class Device:
   platform: str
   device_kind: str
   client: Client
+  local_hardware_id: int | None
   def __repr__(self) -> str: ...
   def __str__(self) -> str: ...
   def transfer_to_infeed(self, literal: _LiteralSlice): ...
@@ -367,7 +370,7 @@ class Memory:
   kind: str
   def __repr__(self) -> str: ...
   def __str__(self) -> str: ...
-  def attached_devices(self) -> List[Device]: ...
+  def addressable_by_devices(self) -> List[Device]: ...
 
 class GpuAllocatorConfig:
   class Kind(enum.IntEnum):
@@ -467,6 +470,8 @@ def get_topology_for_devices(devices: List[Device]) -> DeviceTopology:
 
 def load_pjrt_plugin(platform_name: str, library_path: str) -> _Status: ...
 def pjrt_plugin_loaded(plugin_name: str) -> bool: ...
+def pjrt_plugin_initialized(plugin_name: str) -> bool: ...
+def initialize_pjrt_plugin(platform_name: str) -> _Status: ...
 
 ArrayImpl = Any
 
@@ -509,8 +514,8 @@ def batched_device_put(
 ) -> ArrayImpl:
   ...
 
-def canonicalize_memory_kind(
-    memory_kind: Optional[str], device: Device) -> Optional[str]: ...
+def check_and_canonicalize_memory_kind(
+    memory_kind: Optional[str], device_list: DeviceList) -> Optional[str]: ...
 
 def array_result_handler(
                aval: Any,
@@ -685,6 +690,10 @@ class DeviceList:
   def is_fully_addressable(self) -> bool: ...
   @property
   def addressable_device_list(self) -> DeviceList: ...
+  @property
+  def default_memory_kind(self) -> Optional[str]: ...
+  @property
+  def memory_kinds(self) -> Tuple[str, ...]: ...
 
 
 class Sharding: ...
@@ -698,16 +707,19 @@ class NamedSharding(XLACompatibleSharding):
   spec: Any
   _memory_kind: Optional[str]
   _parsed_pspec: Any
+  _internal_device_list: DeviceList
 
 class SingleDeviceSharding(XLACompatibleSharding):
   def __init__(self, device: Device, *, memory_kind: Optional[str] = None): ...
   _device: Device
   _memory_kind: Optional[str]
+  _internal_device_list: DeviceList
 
 class PmapSharding(XLACompatibleSharding):
   def __init__(self, devices: Sequence[Any], sharding_spec: pmap_lib.ShardingSpec): ...
   devices: List[Any]
   sharding_spec: pmap_lib.ShardingSpec
+  _internal_device_list: DeviceList
 
 class GSPMDSharding(XLACompatibleSharding):
   def __init__(self, devices: Sequence[Device],
@@ -716,6 +728,7 @@ class GSPMDSharding(XLACompatibleSharding):
   _devices: Tuple[Device, ...]
   _hlo_sharding: HloSharding
   _memory_kind: Optional[str]
+  _internal_device_list: DeviceList
 
 class PjitFunction:
   def __call__(self, *args, **kwargs) -> Any: ...

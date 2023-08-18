@@ -15,27 +15,20 @@ limitations under the License.
 
 #include "xla/service/hlo_cse.h"
 
-#include <functional>
-#include <list>
-#include <map>
 #include <memory>
-#include <set>
+#include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/shape_util.h"
-#include "xla/types.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
@@ -286,8 +279,9 @@ StatusOr<bool> HloCSE::Run(
         HloInstruction* equivalent_instruction = pair.first->hlo;
         TF_RETURN_IF_ERROR(
             instruction->ReplaceAllUsesWith(equivalent_instruction));
-        TF_RETURN_IF_ERROR(
-            computation->RemoveInstructionAndUnusedOperands(instruction));
+        TF_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(
+            instruction, /*cleanup=*/std::nullopt,
+            ignore_control_dependencies_));
         changed = true;
         continue;
       }

@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef XLA_PRIMITIVE_UTIL_H_
 #define XLA_PRIMITIVE_UTIL_H_
 
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <tuple>
@@ -29,6 +30,7 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/float8.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace primitive_util {

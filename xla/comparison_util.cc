@@ -18,12 +18,14 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/primitive_util.h"
+#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace {

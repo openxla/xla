@@ -15,28 +15,33 @@ limitations under the License.
 
 #include "xla/literal_util.h"
 
-#include <algorithm>
 #include <cstdint>
-#include <cstring>
-#include <functional>
 #include <limits>
 #include <memory>
-#include <numeric>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/array2d.h"
 #include "xla/index_util.h"
+#include "xla/layout_util.h"
+#include "xla/literal.h"
 #include "xla/primitive_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/status_macros.h"
+#include "xla/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/lib/core/bitmap.h"
 #include "tsl/platform/float8.h"
-#include "tsl/platform/logging.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace {

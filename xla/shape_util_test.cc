@@ -15,21 +15,28 @@ limitations under the License.
 
 #include "xla/shape_util.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <numeric>
 #include <optional>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/types/span.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
-#include "xla/permutation_util.h"
-#include "xla/status_macros.h"
+#include "xla/shape.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 #include "xla/test.h"
 #include "xla/test_helpers.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/env.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/test_benchmark.h"
 #include "tsl/platform/threadpool.h"

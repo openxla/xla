@@ -16,11 +16,20 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_PARALLEL_TASK_ASSIGNMENT_H_
 #define XLA_SERVICE_CPU_PARALLEL_TASK_ASSIGNMENT_H_
 
+#include <cstdint>
+#include <memory>
+
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/cpu/target_machine_features.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_pass_interface.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace cpu {
@@ -39,7 +48,7 @@ class ParallelTaskAssignment {
   // 'shape_size': shape size function used by HloCostAnalysis during parallel
   //               task assignment.
   // 'module': the containing HloModule.
-  ParallelTaskAssignment(const int64_t max_parallelism,
+  ParallelTaskAssignment(int64_t max_parallelism,
                          const HloCostAnalysis::ShapeSizeFunction& shape_size,
                          HloModule* module,
                          const TargetMachineFeatures* target_machine_features);

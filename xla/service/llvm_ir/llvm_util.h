@@ -16,28 +16,29 @@ limitations under the License.
 #ifndef XLA_SERVICE_LLVM_IR_LLVM_UTIL_H_
 #define XLA_SERVICE_LLVM_IR_LLVM_UTIL_H_
 
-#include <stdint.h>
-
+#include <cstdint>
+#include <map>
 #include <string>
-#include <vector>
+#include <utility>
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/FPEnv.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/literal.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/types.h"
+#include "xla/shape.h"
+#include "xla/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace llvm {

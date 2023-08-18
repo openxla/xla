@@ -2215,6 +2215,12 @@ def TestFactory(xla_backend,
       for device in self.backend.local_devices():
         self.assertEqual(device.platform, self.backend.platform)
 
+    def testLocalHardwareId(self):
+      for device in self.backend.devices():
+        local_hardware_id = device.local_hardware_id
+        if local_hardware_id is not None:
+          self.assertGreaterEqual(local_hardware_id, 0)
+
     @unittest.skipIf(pathways, "not implemented")
     def testMemoryStats(self):
       for device in self.backend.local_devices():
@@ -2233,13 +2239,13 @@ def TestFactory(xla_backend,
           self.assertEqual(type(stats["largest_alloc_size"]), int)
           self.assertGreaterEqual(stats["largest_alloc_size"], 0)
 
-    @unittest.skipIf(pathways or pjrt_c_api, "not implemented")
+    @unittest.skipIf(pathways, "not implemented")
     def testMemory(self):
       for device in self.backend.local_devices():
         for memory in device.addressable_memories():
           self.assertEqual(memory.process_index, device.process_index)
           self.assertEqual(memory.platform, device.platform)
-          self.assertIn(device, memory.attached_devices())
+          self.assertIn(device, memory.addressable_by_devices())
           self.assertEqual(memory, device.memory(memory.kind))
 
   tests.append(DeviceTest)

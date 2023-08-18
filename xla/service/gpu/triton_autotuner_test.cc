@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/xla.pb.h"
 #include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 namespace gpu {
