@@ -476,6 +476,7 @@ cc_library(
         ":libtftpu_header",
         ":tpu_api",
         ":tpu_api_dlsym_set_fn",
+        ":tpu_executor_api",
         ":tpu_executor_base",
         ":tpu_executor_c_api_hdrs",
         ":tpu_initialize_util",

@@ -33,6 +33,7 @@ limitations under the License.
 
 #if !defined(PLATFORM_GOOGLE)
 #include "xla/stream_executor/tpu/tpu_api.h"
+#include "xla/stream_executor/tpu/tpu_executor_api.h"
 #include "xla/stream_executor/tpu/tpu_platform.h"
 #include "tsl/platform/env.h"
 #elif defined(LIBTPU_STATIC)
@@ -56,7 +57,10 @@ absl::Status InitializeTpuLibrary(void* library_handle) {
   // TPU platform registration must only be performed after the library is
   // loaded. We do not want to register a TPU platform in XLA without the
   // supporting library providing the necessary APIs.
-  if (s.ok()) {
+  // Should only run TfTpu_Initialize when StreamExecutor is used. TFRT PJRT
+  // initialization is done in PJRT_Plugin_Initialize.
+  if (s.ok() && stream_executor::tpu::IsStreamExecutorEnabled(
+                    stream_executor::tpu::ExecutorApiFn())) {
     void (*initialize_fn)(bool init_library, int num_args, const char** args);
     initialize_fn = reinterpret_cast<decltype(initialize_fn)>(
         dlsym(library_handle, "TfTpu_Initialize"));
