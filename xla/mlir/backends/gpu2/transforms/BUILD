@@ -40,6 +40,7 @@ package(
 #     defines = if_not_gpu2(["XLA_DISABLE_GPU2_COMPILER=1"]),
 #     deps = [
 #         ":passes_inc_gen",
+#         "//xla/mlir/backends/gpu2/conversion:convert_case_op",
 #         "//xla/mlir/backends/gpu2/conversion:convert_compiled_ops",
 #         "//xla/mlir/backends/gpu2/conversion:convert_graph_region_op",
 #         "//xla/mlir/backends/gpu2/conversion:convert_library_ops",
