@@ -16,9 +16,11 @@ cc_library(
         "//xla:internal",
     ],
     deps = [
-        "//xla/stream_executor/tpu:status_helper",
         "//xla/stream_executor/tpu:tpu_api",
+        "//xla/stream_executor/tpu:tpu_api_dlsym_set_fn",
         "//xla/stream_executor/tpu:tpu_ops_c_api_hdrs",
+        "//xla/stream_executor/tpu:tpu_profiler_init_fns",
+        "//xla/stream_executor/tpu:tsl_status_helper",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
