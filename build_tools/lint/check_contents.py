@@ -25,7 +25,7 @@ import subprocess
 import sys
 from typing import Iterable, Optional, Sequence
 
-from xla.build_tools.github_actions.check_contents import diff_parser
+from xla.build_tools.lint import diff_parser
 
 
 @dataclasses.dataclass

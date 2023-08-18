@@ -48,7 +48,7 @@ jobs:
       # ----------------C++ checks----------------
       - name: "Check for tsl::{Status,StatusOr}"
         if: always() # We want to run all checks, not just til first failure
-        run: "python3 build_tools/github_actions/check_contents/check_contents.py
+        run: "python3 build_tools/lint/check_contents.py
           --path_regex_exclusion '.github/workflows/check_contents\\.yml'
           --prohibited_regex 'tsl::Status(Or)?'
           --suppression_regex 'TENSORFLOW_STATUS_OK'
@@ -56,21 +56,21 @@ jobs:
 
       - name: "Check for tsl::Status::OK()"
         if: always() # We want to run all checks, not just til first failure
-        run: "python3 build_tools/github_actions/check_contents/check_contents.py
+        run: "python3 build_tools/lint/check_contents.py
           --path_regex_exclusion '.github/workflows/check_contents\\.yml'
           --prohibited_regex 'tsl::Status::OK'
           --failure_message 'Use OkStatus instead of Status::OK.'"
 
       - name: "Check for std::call_once"
         if: always() # We want to run all checks, not just til first failure
-        run: "python3 build_tools/github_actions/check_contents/check_contents.py
+        run: "python3 build_tools/lint/check_contents.py
           --path_regex_exclusion '.github/workflows/check_contents\\.yml'
           --prohibited_regex 'std::call_once'
           --failure_message 'Use absl::call_once instead of std::call_once'"
 
       - name: "Check for Abseil compatibility API"
         if: always() # We want to run all checks, not just til first failure
-        run: "python3 build_tools/github_actions/check_contents/check_contents.py
+        run: "python3 build_tools/lint/check_contents.py
           --path_regex_exclusion '.github/workflows/check_contents\\.yml'
           --prohibited_regex '\\b(absl::(\
                               any|\
@@ -92,7 +92,7 @@ jobs:
 
       - name: "Use absl instead of Tensorflow/TSL functions/types"
         if: always() # We want to run all checks, not just til first failure
-        run: "python3 build_tools/github_actions/check_contents/check_contents.py
+        run: "python3 build_tools/lint/check_contents.py
           --path_regex_exclusion '.github/workflows/check_contents\\.yml'
           --prohibited_regex '\\b(\
                               gtl::FlatMap|\
@@ -114,7 +114,7 @@ jobs:
       # ----------------Python checks----------------
       - name: "Check for python print()"
         if: always() # We want to run all checks, not just til first failure
-        run: "python3 build_tools/github_actions/check_contents/check_contents.py
+        run: "python3 build_tools/lint/check_contents.py
           --path_regex '.*\\.py'
           --prohibited_regex '(^|\\n|\\s)print\\(.*\\)'
           --suppression_regex 'DISABLE_DEBUG_PRINT_CHECK'
@@ -123,7 +123,7 @@ jobs:
 
       - name: "Check for mock.patch"
         if: always() # We want to run all checks, not just til first failure
-        run: "python3 build_tools/github_actions/check_contents/check_contents.py
+        run: "python3 build_tools/lint/check_contents.py
           --path_regex '.*\\.py'
           --prohibited_regex 'mock\\.patch\\('
           --failure_message 'Please use match.patch.object instead of mock.patch.'"

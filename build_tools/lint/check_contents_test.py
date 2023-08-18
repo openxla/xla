@@ -14,8 +14,8 @@
 # ============================================================================
 from absl.testing import absltest
 
-from xla.build_tools.github_actions.check_contents import check_contents
-from xla.build_tools.github_actions.check_contents import diff_parser
+from xla.build_tools.lint import check_contents
+from xla.build_tools.lint import diff_parser
 
 
 class CheckDiffsTest(absltest.TestCase):
@@ -24,7 +24,7 @@ class CheckDiffsTest(absltest.TestCase):
   def setUpClass(cls):
     super().setUpClass()
 
-    base_path = "third_party/xla/build_tools/github_actions/check_contents"
+    base_path = "third_party/xla/build_tools/lint"
     with open(f"{base_path}/testdata/bad_cc.diff") as f:
       cls.bad_cc_hunks = diff_parser.parse_hunks(f.read())
 

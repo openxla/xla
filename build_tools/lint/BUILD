@@ -14,6 +14,11 @@
 # ============================================================================
 load("//xla:pytype.default.bzl", "pytype_strict_library")
 
+package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    licenses = ["notice"],
+)
+
 pytype_strict_library(
     name = "check_contents",
     srcs = ["check_contents.py"],
