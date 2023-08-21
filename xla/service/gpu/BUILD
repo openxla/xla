@@ -27,6 +27,7 @@ load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
 package(
@@ -2310,12 +2311,12 @@ cc_library(
     ],
     deps = [
         ":executable_proto_cc",
+        ":fusion_wrapper",
         ":gpu_constants",
         ":gpu_convert_async_collectives_to_sync",
         ":gpu_device_info",
         ":gpu_executable",
         ":gpu_hlo_schedule",
-        ":ir_emitter",
         ":ir_emitter_context",
         ":ir_emitter_unnested",
         ":metrics",
@@ -3111,14 +3112,16 @@ cc_library(
     testonly = True,
     srcs = ["hlo_op_profiler.cc"],
     hdrs = ["hlo_op_profiler.h"],
+    local_defines = if_cuda(["GOOGLE_CUDA"]),
     deps = [
         ":gpu_device_info",
         ":hlo_op_profile_proto_cc",
         "//xla:literal",
         "//xla:shape_util",
-        "//xla:status",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/profiler/gpu:cupti_collector",
+        "//xla/backends/profiler/gpu:cupti_tracer",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "//xla/service:gpu_plugin",
@@ -3134,8 +3137,11 @@ xla_cc_test(
     name = "hlo_op_profiler_run",
     timeout = "eternal",
     srcs = ["hlo_op_profiler_run.cc"],
+    # Disable backend optimizations (in particular reassociate and instcombine) which would optimize
+    # expressions like integer add and multiply.
+    args = ["--xla_backend_optimization_level=0"],
     # This is a development tool, not a normal test, and thus should only be run
-    # manually.
+    # manually with --config=cuda.
     tags = [
         "gpu",
         "manual",
@@ -3163,6 +3169,7 @@ xla_cc_test(
 xla_cc_test(
     name = "hlo_op_profiler_test",
     srcs = ["hlo_op_profiler_test.cc"],
+    local_defines = if_cuda(["GOOGLE_CUDA"]),
     tags = tf_cuda_tests_tags(),
     deps = [
         ":hlo_op_profiler_lib",
@@ -4170,6 +4177,32 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_set",
+    ],
+)
+
+cc_library(
+    name = "fusion_wrapper",
+    srcs = ["fusion_wrapper.cc"],
+    hdrs = ["fusion_wrapper.h"],
+    deps = [
+        ":gpu_fusible",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+xla_cc_test(
+    name = "fusion_wrapper_test",
+    srcs = ["fusion_wrapper_test.cc"],
+    deps = [
+        ":fusion_wrapper",
+        "//xla/tests:hlo_test_base",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

@@ -452,5 +452,5 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_driver",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor/rocm:rocm_driver",
-    ]),
+    ]) + ["@com_google_absl//absl/strings"],
 )

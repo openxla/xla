@@ -167,6 +167,7 @@ tsl_cc_test(
         "//tsl/platform:env",
         "//tsl/platform:env_impl",
         "//tsl/platform:errors",
+        "//tsl/platform:protobuf",
         "//tsl/platform:status",
         "//tsl/platform:test",
         "//tsl/platform:test_main",

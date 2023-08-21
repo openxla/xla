@@ -28,11 +28,15 @@ limitations under the License.
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/python/inspect_sharding.h"
 #include "xla/python/status_casters.h"
+#include "xla/service/call_inliner.h"
 #include "xla/service/custom_call_sharding_helper.h"
+#include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/spmd/spmd_partitioner_util.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -154,6 +158,12 @@ class PyCustomCallPartitioner : public CustomCallPartitioner {
                 .Reshard(arg_shardings[i])
                 .hlo());
       }
+
+      // The custom call module does not go through the main compiler pipeline,
+      // so inline all calls here explicitly, since some targets require it.
+      HloPassPipeline pipeline("custom-call-inliner");
+      pipeline.AddPass<CallInliner>();
+      TF_RETURN_IF_ERROR(pipeline.Run(hlo_module.get(), {}).status());
 
       auto* partitioned_hlo = InlineHloComputation(
           instruction, hlo_module->entry_computation(), partitioner->builder(),

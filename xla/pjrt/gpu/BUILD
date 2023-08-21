@@ -71,6 +71,7 @@ cc_library(
         "@tsl//tsl/framework:bfc_allocator",
         "@tsl//tsl/framework:device_id",
         "@tsl//tsl/framework:device_id_impl",
+        "@tsl//tsl/lib/strings:proto_serialization",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/profiler/lib:connected_traceme",
