@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_executable.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
@@ -60,7 +61,14 @@ StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
   if (multi_slice_config != nullptr) {
     output.set_serialized_multi_slice_config(multi_slice_config->Serialize());
   }
-  for (auto& env_option_override : env_option_overrides) {
+  using MapElement = std::pair<std::string, OptionOverride>;
+  std::vector<MapElement> sorted_env_option_overrides(env_option_overrides);
+  std::sort(sorted_env_option_overrides.begin(),
+            sorted_env_option_overrides.end(),
+            [](const MapElement& a, const MapElement& b) {
+              return a.first < b.first;
+            });
+  for (auto& env_option_override : sorted_env_option_overrides) {
     auto& tmp =
         (*output.mutable_env_option_overrides())[env_option_override.first];
     std::visit([&](const auto& arg) { SetOptionOverride(tmp, arg); },
