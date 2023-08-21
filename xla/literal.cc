@@ -305,7 +305,7 @@ void Literal::DeallocateBuffers() {
       });
 }
 
-Literal::Literal(Literal&& other) : MutableLiteralBase() {
+Literal::Literal(Literal&& other) : Literal() {
   *this = std::move(other);
 }
 
