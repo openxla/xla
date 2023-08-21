@@ -718,7 +718,7 @@ void BuildXlaCompilerSubmodule(py::module& m) {
       .def(py::pickle(
           [](const CompileOptions& self) -> py::tuple {
             return py::make_tuple(
-                py::bytes(ValueOrThrow(self.ToProto()).SerializeAsString()));
+                py::bytes(ValueOrThrow(self.SerializeAsStringDeterministic())));
           },
           [](py::tuple t) {
             CompileOptionsProto result;
@@ -727,7 +727,8 @@ void BuildXlaCompilerSubmodule(py::module& m) {
           }))
       .def("SerializeAsString",
            [](const CompileOptions& self) -> py::bytes {
-             return py::bytes(ValueOrThrow(self.ToProto()).SerializeAsString());
+             return py::bytes(
+                 ValueOrThrow(self.SerializeAsStringDeterministic()));
            })
       .def_static("ParseFromString",
                   [](py::bytes s) {

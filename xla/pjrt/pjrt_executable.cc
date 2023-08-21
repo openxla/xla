@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/client/executable_build_options.h"
 #include "xla/pjrt/execute_options.pb.h"
 #include "xla/util.h"
+#include "tsl/lib/strings/proto_serialization.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -65,6 +66,15 @@ StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
         (*output.mutable_env_option_overrides())[env_option_override.first];
     std::visit([&](const auto& arg) { SetOptionOverride(tmp, arg); },
                env_option_override.second);
+  }
+  return output;
+}
+
+StatusOr<std::string> CompileOptions::SerializeAsStringDeterministic() const {
+  TF_ASSIGN_OR_RETURN(CompileOptionsProto proto, ToProto());
+  std::string output;
+  if (!tsl::SerializeToStringDeterministic(proto, &output)) {
+    return InternalError("Failed to serialize CompileOptionsProto.");
   }
   return output;
 }

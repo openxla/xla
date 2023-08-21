@@ -243,6 +243,7 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/strings:proto_serialization",
         "@tsl//tsl/platform:statusor",
     ],
 )

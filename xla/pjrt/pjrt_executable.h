@@ -110,6 +110,9 @@ struct CompileOptions {
 
   // Deserialize the CompileOptionsProto into a CompileOptions.
   static StatusOr<CompileOptions> FromProto(const CompileOptionsProto& proto);
+
+  // Serialize deterministically.
+  StatusOr<std::string> SerializeAsStringDeterministic() const;
 };
 
 struct LoadOptions {
