@@ -133,6 +133,7 @@ cc_library(
     copts = if_cuda_clang([
         "-x",
         "cuda",
+        "--cuda-gpu-arch=sm_50",
     ]),
     include_prefix = "third_party/nccl",
     linkopts = ["-lrt"],
