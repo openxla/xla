@@ -162,20 +162,26 @@ absl::Duration ComputeTime(const GpuDeviceInfo& gpu_device_info,
 struct EstimateRunTimeData {
   int64_t flops;
   float bytes_written;
-  float elements_out;
+  float num_threads;
   absl::Duration write_time;
   absl::Duration exec_time;
 };
 
 EstimateRunTimeData EstimateRunTimeImpl(
-    const HloInstruction* instr, const GpuHloCostAnalysis* cost_analysis) {
+    const HloInstruction* instr, const GpuHloCostAnalysis* cost_analysis,
+    std::optional<se::CudaComputeCapability> cc) {
   int64_t flops = cost_analysis->flop_count(*instr);
   float bytes_written = cost_analysis->output_bytes_accessed(*instr);
   float bytes_read = cost_analysis->bytes_accessed(*instr) - bytes_written;
-  float elements_out = ShapeUtil::ElementsInRecursive(instr->shape());
+
+  float num_threads = ShapeUtil::ElementsInRecursive(instr->shape());
+  if (auto thread_count =
+          EstimateThreadCount(instr, *cost_analysis->device_info_, cc)) {
+    num_threads = *thread_count;
+  }
 
   absl::Duration compute_time =
-      ComputeTime(*cost_analysis->device_info_, flops, elements_out);
+      ComputeTime(*cost_analysis->device_info_, flops, num_threads);
   absl::Duration read_time = ProducerInputAccessTime(
       cost_analysis, *cost_analysis->device_info_, instr);
   absl::Duration write_time = absl::Seconds(
@@ -186,13 +192,13 @@ EstimateRunTimeData EstimateRunTimeImpl(
     LOG(INFO) << "FLOPs: " << flops;
     LOG(INFO) << "Bytes read: " << bytes_read;
     LOG(INFO) << "Bytes written: " << bytes_written;
-    LOG(INFO) << "Elements out: " << elements_out;
+    LOG(INFO) << "Num threads: " << num_threads;
     LOG(INFO) << "Compute time: " << compute_time;
     LOG(INFO) << "Input read time: " << read_time;
     LOG(INFO) << "Output write time: " << write_time;
   }
 
-  return {flops, bytes_written, elements_out, write_time, exec_time};
+  return {flops, bytes_written, num_threads, write_time, exec_time};
 }
 
 }  // namespace
@@ -207,7 +213,7 @@ GpuPerformanceModel::RunTimes GpuPerformanceModel::EstimateRunTimes(
   }
 
   EstimateRunTimeData producer_data =
-      EstimateRunTimeImpl(producer, cost_analysis);
+      EstimateRunTimeImpl(producer, cost_analysis, cc);
 
   int64_t fused_consumer_count = fused_users.size();
   float total_producer_utilization = 0;
@@ -219,15 +225,15 @@ GpuPerformanceModel::RunTimes GpuPerformanceModel::EstimateRunTimes(
         cost_analysis->operand_utilization(*u, u->operand_index(producer));
     total_producer_utilization += utilization_by_this_consumer;
 
-    auto thread_count =
-        EstimateThreadCount(u, *cost_analysis->device_info_, cc);
-    int64_t upper_bound =
-        producer_data.elements_out * utilization_by_this_consumer;
+    int64_t num_threads =
+        producer_data.num_threads * utilization_by_this_consumer;
+    if (auto thread_count =
+            EstimateThreadCount(u, *cost_analysis->device_info_, cc)) {
+      num_threads = std::min(*thread_count, num_threads);
+    }
     absl::Duration compute_time_by_this_consumer = ComputeTime(
         *cost_analysis->device_info_,
-        producer_data.flops * utilization_by_this_consumer,
-        thread_count.has_value() ? std::min(*thread_count, upper_bound)
-                                 : upper_bound);
+        producer_data.flops * utilization_by_this_consumer, num_threads);
     exec_time_fused +=
         std::max(compute_time_by_this_consumer,
                  ProducerInputAccessTime(
@@ -263,11 +269,13 @@ GpuPerformanceModel::RunTimes GpuPerformanceModel::EstimateRunTimes(
 }
 
 void GpuPerformanceModel::RecordEstimatedRunTime(
-    HloInstruction* instruction, const GpuHloCostAnalysis* cost_analysis) {
+    HloInstruction* instruction, const GpuHloCostAnalysis* cost_analysis,
+    std::optional<se::CudaComputeCapability> cc) {
   DCHECK(Cast<const HloFusionInstruction>(instruction)) << "expected fusion";
   DCHECK(cost_analysis != nullptr) << "expected cost analysis";
 
-  EstimateRunTimeData data = EstimateRunTimeImpl(instruction, cost_analysis);
+  EstimateRunTimeData data =
+      EstimateRunTimeImpl(instruction, cost_analysis, cc);
   double cycles = absl::ToDoubleNanoseconds(data.exec_time) *
                   cost_analysis->device_info_->clock_rate_ghz;
 

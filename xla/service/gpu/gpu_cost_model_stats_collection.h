@@ -35,9 +35,12 @@ namespace gpu {
 class GpuCostModelStatsCollection : public HloModulePass {
  public:
   explicit GpuCostModelStatsCollection(
-      const GpuDeviceInfo& d,
+      const GpuDeviceInfo& device_info,
+      const se::CudaComputeCapability& compute_capability,
       const GpuHloCostAnalysis::Options& cost_analysis_options)
-      : device_info_(d), cost_analysis_(cost_analysis_options, &device_info_) {}
+      : device_info_(device_info),
+        compute_capability_(compute_capability),
+        cost_analysis_(cost_analysis_options, &device_info_) {}
 
   absl::string_view name() const override {
     return "gpu_cost_model_stats_collection";
@@ -50,6 +53,7 @@ class GpuCostModelStatsCollection : public HloModulePass {
 
  private:
   const GpuDeviceInfo device_info_;
+  const se::CudaComputeCapability compute_capability_;
   GpuHloCostAnalysis cost_analysis_;
 };
 

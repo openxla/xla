@@ -44,6 +44,7 @@ class GpuCostModelStatsCollectionTest : public HloTestBase {
  public:
   GpuCostModelStatsCollection cost_model_stats_{
       TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+      se::CudaComputeCapability(se::CudaComputeCapability::AMPERE, 0),
       GpuHloCostAnalysis::Options{ShapeSizeBytesFunction(),
                                   /*per_second_rates=*/{},
                                   /*count_multiple_input_accesses=*/true}};

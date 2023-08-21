@@ -806,7 +806,8 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
     if (debug_options.xla_gpu_collect_cost_model_stats()) {
       HloPassPipeline post_fusion_analysis("post_fusion_analysis");
       post_fusion_analysis.AddPass<GpuCostModelStatsCollection>(
-          gpu_device_info, cost_analysis_options);
+          gpu_device_info, get_cuda_compute_capability(),
+          cost_analysis_options);
       TF_RETURN_IF_ERROR(post_fusion_analysis.Run(hlo_module).status());
     }
   }

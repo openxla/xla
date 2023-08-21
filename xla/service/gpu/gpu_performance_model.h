@@ -37,8 +37,9 @@ class GpuPerformanceModel {
       std::vector<HloInstruction*> fused_users = {}, bool multi_output = false);
 
   // Writes estimated execution time to FusionBackendConfig.reification_cost.
-  static void RecordEstimatedRunTime(HloInstruction* instruction,
-                                     const GpuHloCostAnalysis* cost_analysis);
+  static void RecordEstimatedRunTime(
+      HloInstruction* instruction, const GpuHloCostAnalysis* cost_analysis,
+      std::optional<se::CudaComputeCapability> cc = std::nullopt);
 };
 
 }  // namespace gpu
