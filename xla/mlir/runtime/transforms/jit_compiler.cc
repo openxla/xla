@@ -372,6 +372,8 @@ MakeOptimizingTransformerForJit(llvm::TargetMachine* targetMachine) {
   auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
   if (!builder) return InternalError(toString(builder.takeError()));
 
+  builder->setCodeGenOptLevel(compiler->options().jit_code_opt_level);
+
   auto target_machine = builder->createTargetMachine();
   if (!target_machine)
     return InternalError(toString(target_machine.takeError()));

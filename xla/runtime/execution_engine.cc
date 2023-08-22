@@ -29,6 +29,7 @@ limitations under the License.
 #include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/ExecutionEngine/ObjectCache.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
+#include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
@@ -63,9 +64,9 @@ using llvm::orc::IRCompileLayer;
 using llvm::orc::JITTargetMachineBuilder;
 using llvm::orc::RTDyldObjectLinkingLayer;
 using llvm::orc::SelfExecutorProcessControl;
+using llvm::orc::SimpleCompiler;
 using llvm::orc::SymbolMap;
 using llvm::orc::ThreadSafeModule;
-using llvm::orc::TMOwningSimpleCompiler;
 
 ExecutionEngine::ExecutionEngine(bool enable_gdb_listener,
                                  bool enable_perf_listener) {
@@ -290,13 +291,10 @@ ExecutionEngine::CreateFromModule(std::unique_ptr<llvm::LLVMContext> ctx,
           : nullptr;
 
   // Callback to compile IR module on demand.
-  auto compile_function_creator = [&](JITTargetMachineBuilder jtmb)
+  auto compile_function_creator = [&](JITTargetMachineBuilder)
       -> Expected<std::unique_ptr<IRCompileLayer::IRCompiler>> {
-    jtmb.setCodeGenOptLevel(options.opt_level);
-    auto tm = jtmb.createTargetMachine();
-    if (!tm) return tm.takeError();
-    return std::make_unique<TMOwningSimpleCompiler>(std::move(*tm),
-                                                    obj_cache.get());
+    return std::make_unique<SimpleCompiler>(*options.target_machine,
+                                            obj_cache.get());
   };
 
   // Use in-process executor process control with in-place task dispatcher.
