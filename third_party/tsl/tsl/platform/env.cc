@@ -327,6 +327,12 @@ Status Env::HasAtomicMove(const string& path, bool* has_atomic_move) {
   return fs->HasAtomicMove(path, has_atomic_move);
 }
 
+Status Env::CanCreateTempFile(const string& fname, bool* can_create_temp_file) {
+  FileSystem* fs;
+  TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
+  return fs->CanCreateTempFile(fname, can_create_temp_file);
+}
+
 Status Env::DeleteRecursively(const string& dirname, int64_t* undeleted_files,
                               int64_t* undeleted_dirs) {
   FileSystem* fs;
