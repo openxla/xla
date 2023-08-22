@@ -14,15 +14,6 @@ cc_library(
 )
 
 cc_library(
-    name = "pjrt_c_api_tpu_hdrs",
-    hdrs = ["pjrt_c_api_tpu.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":pjrt_c_api_hdrs",
-    ],
-)
-
-cc_library(
     name = "pjrt_c_api_wrapper_impl",
     srcs = ["pjrt_c_api_wrapper_impl.cc"],
     hdrs = ["pjrt_c_api_wrapper_impl.h"],
@@ -114,22 +105,13 @@ cc_library(
 )
 
 cc_library(
-    name = "pjrt_c_api_gpu_hdrs",
+    name = "pjrt_c_api_gpu",
+    srcs = ["pjrt_c_api_gpu.cc"],
     hdrs = ["pjrt_c_api_gpu.h"],
     visibility = ["//visibility:public"],
     deps = [
+	":pjrt_c_api_gpu_internal",
         ":pjrt_c_api_hdrs",
-    ],
-    alwayslink = True,
-)
-
-cc_library(
-    name = "pjrt_c_api_gpu",
-    srcs = ["pjrt_c_api_gpu.cc"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":pjrt_c_api_gpu_internal",
-        ":pjrt_c_api_gpu_hdrs",
     ],
     alwayslink = True,
 )
@@ -143,7 +125,6 @@ cc_binary(
     	"-Wl,--no-undefined",
     ],
     deps = [
-        ":version_script.lds",
         ":pjrt_c_api_gpu",
     ],
 )
