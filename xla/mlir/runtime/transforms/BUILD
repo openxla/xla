@@ -236,6 +236,7 @@ cc_library(
         "//xla/runtime:symbolic_shape",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Passes",

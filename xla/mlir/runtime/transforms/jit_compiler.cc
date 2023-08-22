@@ -24,6 +24,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
@@ -33,6 +35,7 @@ limitations under the License.
 #include "llvm/Pass.h"
 #include "llvm/Passes/OptimizationLevel.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
@@ -302,6 +305,29 @@ MakeOptimizingTransformerForJit(llvm::TargetMachine* targetMachine) {
   };
 }
 
+// Detects target machine for the host process and shares it with all instances
+// of ExecutionEngine (LLJIT under the hood).
+static absl::StatusOr<llvm::TargetMachine*> DetectTargetMachine(
+    llvm::CodeGenOpt::Level opt_level) {
+  static auto* mu = new absl::Mutex();
+  absl::MutexLock lock(mu);
+
+  static llvm::TargetMachine* machine = nullptr;
+  if (machine) return machine;
+
+  // Prepare JIT target machine for code generation.
+  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+  if (!builder) return InternalError(toString(builder.takeError()));
+
+  builder->setCodeGenOptLevel(opt_level);
+
+  auto target_machine = builder->createTargetMachine();
+  if (!target_machine)
+    return InternalError(toString(target_machine.takeError()));
+
+  return machine = target_machine->release();
+}
+
 /*static*/ absl::StatusOr<Executable> JitCompiler::Compile(
     std::unique_ptr<JitCompiler> compiler, std::string_view memory_region_name,
     std::optional<size_t> specialization) {
@@ -368,14 +394,6 @@ MakeOptimizingTransformerForJit(llvm::TargetMachine* targetMachine) {
 
   if (EnablePassTiming()) llvm::TimePassesIsEnabled = true;
 
-  // Prepare JIT target machine for code generation.
-  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
-  if (!builder) return InternalError(toString(builder.takeError()));
-
-  auto target_machine = builder->createTargetMachine();
-  if (!target_machine)
-    return InternalError(toString(target_machine.takeError()));
-
   // Name of the compiled module if available.
   auto module_name = compiler->module().getSymName().value_or("<unknown>");
 
@@ -393,10 +411,15 @@ MakeOptimizingTransformerForJit(llvm::TargetMachine* targetMachine) {
   ExecutionEngine::SymbolsBinding symbols =
       RuntimeSymbolsBinding(compiler->options().symbols_binding);
 
+  // Detect target machine from the host.
+  TF_ASSIGN_OR_RETURN(
+      auto target_machine,
+      DetectTargetMachine(compiler->options().jit_code_opt_level));
+
   // Construct options for the XLA runtime execution engine.
   ExecutionEngine::JitOptions engine_options;
   engine_options.opt_level = compiler->options().jit_code_opt_level;
-  engine_options.target_machine = target_machine->get();
+  engine_options.target_machine = target_machine;
   engine_options.make_optimizing_transformer = MakeOptimizingTransformerForJit;
   engine_options.section_memory_mapper = memory_mapper.get();
   engine_options.symbols_binding = std::move(symbols);
