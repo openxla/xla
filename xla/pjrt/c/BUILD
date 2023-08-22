@@ -119,7 +119,7 @@ cc_library(
     hdrs = ["pjrt_c_api_gpu.h"],
     visibility = ["//visibility:public"],
     deps = [
-	":pjrt_c_api_gpu_internal",
+        ":pjrt_c_api_gpu_internal",
         ":pjrt_c_api_hdrs",
     ],
     alwayslink = True,
