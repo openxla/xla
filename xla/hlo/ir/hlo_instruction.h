@@ -566,6 +566,9 @@ class HloInstruction {
   // Creates a literal constant instruction.
   static std::unique_ptr<HloInstruction> CreateConstant(Literal literal);
 
+  // Creates a literal constant instruction with a given shape
+  static std::unique_ptr<HloInstruction> CreateConstant(Literal literal, const Shape& shape);
+
   // Creates an Iota instruction.
   static std::unique_ptr<HloInstruction> CreateIota(const Shape& shape,
                                                     int64_t iota_dimension);

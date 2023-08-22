@@ -1086,6 +1086,11 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
   return std::make_unique<HloConstantInstruction>(std::move(literal));
 }
 
+/* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateConstant(
+    Literal literal, const Shape& shape) {
+  return std::make_unique<HloConstantInstruction>(std::move(literal), shape);
+}
+
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateIota(
     const Shape& shape, int64_t iota_dimension) {
   return std::make_unique<HloIotaInstruction>(shape, iota_dimension);

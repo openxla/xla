@@ -65,11 +65,10 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
       return OkStatus();
     }
 
-    Shape normalized_shape = Normalize(hlo->shape());
-    *literal.mutable_shape_do_not_use() = normalized_shape;
+    Shape normalized_shape = Normalize(shape);
 
     HloInstruction* normalized = hlo->parent()->AddInstruction(
-        HloInstruction::CreateConstant(std::move(literal)), &hlo->metadata());
+        HloInstruction::CreateConstant(std::move(literal), normalized_shape), &hlo->metadata());
     HloInstruction* bc_to_orig = MakeBitcastHlo(normalized, shape);
     TF_RETURN_IF_ERROR(ReplaceInstruction(hlo, bc_to_orig));
     return OkStatus();
