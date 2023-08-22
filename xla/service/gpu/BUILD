@@ -681,6 +681,7 @@ xla_test(
         ":gemm_rewriter_triton",
         ":triton_autotuner",
         "//xla:autotuning_proto_cc",
+        "//xla:shape_util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass_pipeline",
@@ -692,6 +693,7 @@ xla_test(
         "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:platform_port",
     ],
