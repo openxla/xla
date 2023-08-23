@@ -1,0 +1,12 @@
+==== triton/test/BUILD#8 - triton/test/BUILD ====
+# action=edit type=text
+--- triton/test/BUILD	2023-07-10 07:12:19.000000000 -0700
++++ triton/test/BUILD	2023-08-23 13:51:34.000000000 -0700
+@@ -9,6 +9,7 @@
+ )
+ 
+ glob_lit_tests(
++    name = "all_tests",
+     data = [
+         "@llvm-project//llvm:FileCheck",
+         "//third_party/triton:triton-opt",
