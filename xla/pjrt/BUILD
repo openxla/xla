@@ -447,7 +447,6 @@ cc_library(
         "//xla/stream_executor/tpu:tpu_executable_interface",
         "//xla/stream_executor/tpu:tpu_executor",
         "//xla/stream_executor/tpu:tpu_executor_interface",
-        "//xla/stream_executor/tpu:tpu_initializer_framework_helper",
         "//xla/stream_executor/tpu:tpu_on_demand_compiler",
         "//xla/stream_executor/tpu:tpu_platform_interface",
         "//xla/stream_executor/tpu:tpu_topology_external",
