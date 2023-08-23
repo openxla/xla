@@ -1,6 +1,10 @@
 """Provides build configuration for TSL"""
 
 load(
+    "//devtools/build_cleaner/skylark:build_defs.bzl",
+    "register_extension_info",
+)
+load(
     "@local_config_cuda//cuda:build_defs.bzl",
     "if_cuda",
 )
@@ -330,6 +334,11 @@ def tsl_gpu_library(deps = None, cuda_deps = None, copts = tsl_copts(), **kwargs
         **kwargs
     )
 
+register_extension_info(
+    extension = tsl_gpu_library,
+    label_regex_for_dep = "{extension_name}",
+)
+
 # Traverse the dependency graph along the "deps" attribute of the
 # target and return a struct with one field called 'tf_collected_deps'.
 # tf_collected_deps will be the union of the deps of the current target
@@ -473,6 +482,11 @@ def cc_header_only_library(name, deps = [], includes = [], extra_deps = [], comp
         deps = [":" + name + "_gathered_parameters"] + extra_deps,
         **kwargs
     )
+
+register_extension_info(
+    extension = cc_header_only_library,
+    label_regex_for_dep = "{extension_name}",
+)
 
 def _get_transitive_headers(hdrs, deps):
     """Obtain the header files for a target and its transitive dependencies.
