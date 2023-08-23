@@ -103,7 +103,6 @@ xla_cc_test(
         "//xla:statusor",
         "//xla:test",
         "//xla/pjrt:utils",
-        "//xla/pjrt/distributed:topology_util",
         "//xla/service:gpu_plugin",
         "//xla/service:hlo_parser",
         "//xla/tests:literal_test_util",
