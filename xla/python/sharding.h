@@ -54,11 +54,6 @@ class Sharding {
   std::optional<int> num_devices_;
 };
 
-// Returns if the environment variable "JAX_ENABLE_MEMORY_KIND" has
-// a non-empty string, indicating that JAX should get the memory_kind from the
-// executable and apply it to output arrays from executions.
-bool GetJaxEnableMemoryKind();
-
 // Checks if the memory kind is valid, and canonicalizes the
 // memory kind to default memory on backends that support memories.
 pybind11::object CheckAndCanonicalizeMemoryKind(pybind11::object memory_kind,

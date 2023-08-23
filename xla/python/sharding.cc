@@ -38,17 +38,6 @@ namespace jax {
 
 namespace py = pybind11;
 
-bool GetJaxEnableMemoryKind() {
-  static bool fetch_memory_kind_on_executable = [] {
-    char* v = getenv("JAX_ENABLE_MEMORY_KIND");
-    if (v == nullptr || *v == '\0') {
-      return false;
-    }
-    return true;
-  }();
-  return fetch_memory_kind_on_executable;
-}
-
 py::object CheckAndCanonicalizeMemoryKind(py::object memory_kind,
                                           PyDeviceList* device_list) {
   if (!memory_kind.is_none()) {

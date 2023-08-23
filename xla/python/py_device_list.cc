@@ -322,11 +322,6 @@ void PyDeviceList::PopulateMemoryKindInfo() {
     throw py::value_error("Unrecognized DeviceList type");
   }
   MemoryKindInfo info;
-  if (!GetJaxEnableMemoryKind()) {
-    info.default_memory_kind = py::none();
-    memory_kind_info_ = std::move(info);
-    return;
-  }
   xla::ifrt::Device* addressable_device = nullptr;
   const int process_index = py_client_ ? py_client_->process_index() : 0;
   for (xla::ifrt::Device* device : std::get<0>(device_list_).devices()) {
@@ -360,12 +355,6 @@ void PyDeviceList::PopulateMemoryKindInfo() {
 
 void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
   MemoryKindInfo info;
-  if (!GetJaxEnableMemoryKind()) {
-    info.default_memory_kind = py::none();
-    // info.memory_kinds is default-initialized to an empty tuple.
-    memory_kind_info_ = std::move(info);
-    return;
-  }
   try {
     py::handle addressable_device;
     for (py::handle device : std::get<1>(device_list_)) {
