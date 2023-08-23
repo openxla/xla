@@ -569,7 +569,6 @@ Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
   assign_scale();
   assign_dropout_rate();
   assign_seed();
-  }
   return config;
 }
 
