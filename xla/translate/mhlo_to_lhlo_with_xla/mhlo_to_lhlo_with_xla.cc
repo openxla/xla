@@ -1333,8 +1333,6 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnfMHABackward(
         builder_, config.bmm2_grad_gemm2_dot_dimension_numbers()));
 
     op.setFmhaScaleAttr(builder_.getF64FloatAttr(config.fmha_scale()));
-    // op.setDropoutRateAttr(builder_.getF64FloatAttr(config.dropout_rate()));
-    // op.setSeedAttr(builder_.getI64IntegerAttr(config.seed()));
 
     const auto& algorithm = config.algorithm();
     std::vector<int64_t> knob_ids;

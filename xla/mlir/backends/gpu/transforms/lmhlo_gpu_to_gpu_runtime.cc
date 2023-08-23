@@ -554,29 +554,32 @@ class FusedAttentionForwardLowering
           fused_attention += "bmm.bmm.inference";
         } else if (num_operands == 6) {
           fused_attention += "bmm.bmm.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - BMMBMM");
+        }
         break;
       case mlir::lmhlo_gpu::FusedMhaDagSignature::Softmax:
         if (num_operands == 5) {
           fused_attention += "softmax.inference";
         } else if (num_operands == 6) {
           fused_attention += "softmax.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - "
               "BMM_Softmax_BMM");
+        }
         break;
       case mlir::lmhlo_gpu::FusedMhaDagSignature::SoftmaxDropout:
         if (num_operands == 5) {
           fused_attention += "softmax.dropout.inference";
         } else if (num_operands == 6) {
           fused_attention += "softmax.dropout.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - "
               "BMM_Softmax_Dropout_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaDagSignature::ScaleBiasMaskSoftmax:
@@ -584,10 +587,11 @@ class FusedAttentionForwardLowering
           fused_attention += "scale.bias.mask.softmax.inference";
         } else if (num_operands == 8) {
           fused_attention += "scale.bias.mask.softmax.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - "
               "BMM_Bias_Mask_Softmax_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaDagSignature::ScaleBiasMaskSoftmaxDropout:
@@ -595,10 +599,11 @@ class FusedAttentionForwardLowering
           fused_attention += "scale.bias.mask.softmax.dropout.inference";
         } else if (num_operands == 8) {
           fused_attention += "scale.bias.mask.softmax.dropout.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - "
               "BMM_Bias_Mask_Softmax_Dropout_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaDagSignature::ScaleMaskSoftmax:
@@ -606,10 +611,11 @@ class FusedAttentionForwardLowering
           fused_attention += "scale.mask.softmax.inference";
         } else if (num_operands == 7) {
           fused_attention += "scale.mask.softmax.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - "
               "BMM_mask_Softmax_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaDagSignature::ScaleMaskSoftmaxDropout:
@@ -617,10 +623,11 @@ class FusedAttentionForwardLowering
           fused_attention += "scale.mask.softmax.dropout.inference";
         } else if (num_operands == 7) {
           fused_attention += "scale.mask.softmax.dropout.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - "
               "BMM_mask_Softmax_Dropout_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaDagSignature::ScaleBiasSoftmax:
@@ -628,10 +635,11 @@ class FusedAttentionForwardLowering
           fused_attention += "scale.bias.softmax.inference";
         } else if (num_operands == 7) {
           fused_attention += "scale.bias.softmax.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - "
               "BMM_bias_Softmax_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaDagSignature::ScaleBiasSoftmaxDropout:
@@ -639,10 +647,11 @@ class FusedAttentionForwardLowering
           fused_attention += "scale.bias.softmax.dropout.inference";
         } else if (num_operands == 7) {
           fused_attention += "scale.bias.softmax.dropout.forward";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused dot attention - "
               "BMM_bias_Softmax_Dropout_BMM");
+        }
         break;
 
       default:
@@ -662,16 +671,14 @@ class FusedAttentionForwardLowering
 
     // Helper functins to copy attributes from the conv op to the custom call.
     auto set_attr = [&](StringRef name, Attribute attr) {
-      call->setAttr(b.getStringAttr(name), attr);
+      if (attr) {
+        call->setAttr(b.getStringAttr(name), attr);
+      }
     };
 
     set_attr("fmha_scale", op.getFmhaScaleAttr());
-    if (op.getDropoutRate()) {
-      set_attr("dropout_rate", op.getDropoutRateAttr());
-    }
-    if (op.getSeed()) {
-      set_attr("seed", op.getSeedAttr());
-    }
+    set_attr("dropout_rate", op.getDropoutRateAttr());
+    set_attr("seed", op.getSeedAttr());
 
     set_attr("fused_mha_dag", op.getFusedMhaDagAttr());
     set_attr("algorithm_config", op.getAlgorithmConfigAttr());
@@ -754,10 +761,11 @@ class FusedAttentionBackwardLowering
           fused_attention += "scale.softmax";
         } else if (num_operands == 11) {
           fused_attention += "scale.dbias.softmax";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused attention backward - "
               "BMM_Bias_Softmax_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
@@ -766,10 +774,11 @@ class FusedAttentionBackwardLowering
           fused_attention += "scale.softmax.dropout";
         } else if (num_operands == 11) {
           fused_attention += "scale.dbias.softmax.dropout";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused attention backward - "
               "BMM_Bias_Softmax_Dropout_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
@@ -778,10 +787,11 @@ class FusedAttentionBackwardLowering
           fused_attention += "scale.mask.softmax";
         } else if (num_operands == 12) {
           fused_attention += "scale.dbias.mask.softmax";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused attention backward - "
               "BMM_Bias_Mask_Softmax_BMM");
+        }
         break;
 
       case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
@@ -790,10 +800,11 @@ class FusedAttentionBackwardLowering
           fused_attention += "scale.mask.softmax.dropout";
         } else if (num_operands == 12) {
           fused_attention += "scale.dbias.mask.softmax.dropout";
-        } else
+        } else {
           return op.emitOpError(
               "unexpected number of operands for fused attention backward - "
               "BMM_Bias_Mask_Softmax_Dropout_BMM");
+        }
         break;
 
       default:
@@ -813,16 +824,14 @@ class FusedAttentionBackwardLowering
 
     // Helper functins to copy attributes from the conv op to the custom call.
     auto set_attr = [&](StringRef name, Attribute attr) {
-      call->setAttr(b.getStringAttr(name), attr);
+      if (attr) {
+        call->setAttr(b.getStringAttr(name), attr);
+      }
     };
 
     set_attr("fmha_scale", op.getFmhaScaleAttr());
-    if (op.getDropoutRate()) {
-      set_attr("dropout_rate", op.getDropoutRateAttr());
-    }
-    if (op.getSeed()) {
-      set_attr("seed", op.getSeedAttr());
-    }
+    set_attr("dropout_rate", op.getDropoutRateAttr());
+    set_attr("seed", op.getSeedAttr());
 
     set_attr("fused_mha_dag", op.getFusedMhaDagAttr());
     set_attr("algorithm_config", op.getAlgorithmConfigAttr());
