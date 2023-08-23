@@ -875,6 +875,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":exceptions",
         ":py_client",
         ":status_casters",
         ":types",
