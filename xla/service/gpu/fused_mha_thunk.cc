@@ -90,11 +90,11 @@ Status FusedMHAThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   RunFusedMHAOptions opts;
   opts.runner_cache = &GetOrCreateRunner(params.stream);
-
   TF_RETURN_IF_ERROR(RunGpuFMHA(config_, lhs_bmm1_buffer, rhs_bmm1_buffer,
                                 rhs_bmm2_buffer, output_buffer, scratch_buffer,
                                 mask_buffer, bias_buffer, activation_buffer,
                                 params.stream, opts));
+
   if (!params.stream->ok()) {
     return InternalError("FusedMHAThunk::ExecuteOnStream failed.");
   }
