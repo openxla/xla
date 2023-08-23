@@ -16,16 +16,19 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_SOFTMAX_REWRITER_TRITON_H_
 #define XLA_SERVICE_GPU_SOFTMAX_REWRITER_TRITON_H_
 
+#include <optional>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/gpu_types.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/status.h"
 #include "xla/statusor.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace gpu {
@@ -39,8 +42,13 @@ struct DiamondChainDescriptor {
 // with the Triton-based Softmax emitter.
 class SoftmaxRewriterTriton : public HloModulePass {
  public:
-  explicit SoftmaxRewriterTriton(GpuVersion gpu_version)
-      : gpu_version_(gpu_version) {}
+  explicit SoftmaxRewriterTriton(
+      GpuVersion gpu_version,
+      const std::optional<AutotuneConfig>& autotune_config = std::nullopt,
+      tsl::thread::ThreadPool* thread_pool = nullptr)
+      : gpu_version_(gpu_version),
+        autotune_config_(autotune_config),
+        thread_pool_(thread_pool) {}
   absl::string_view name() const override { return "triton-softmax-rewriter"; }
 
   using HloPassInterface::Run;
@@ -62,6 +70,8 @@ class SoftmaxRewriterTriton : public HloModulePass {
 
  private:
   GpuVersion gpu_version_;
+  std::optional<AutotuneConfig> autotune_config_;
+  tsl::thread::ThreadPool* thread_pool_;
 };
 
 }  // namespace gpu

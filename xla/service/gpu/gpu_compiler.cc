@@ -970,7 +970,8 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         cuda_cc != nullptr &&
         cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
       pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(simplifier_options);
-      pipeline.AddPass<SoftmaxRewriterTriton>(gpu_version);
+      pipeline.AddPass<SoftmaxRewriterTriton>(gpu_version, autotune_config,
+                                              thread_pool);
     }
 
     pipeline.AddPass<ReductionDimensionGrouper>();

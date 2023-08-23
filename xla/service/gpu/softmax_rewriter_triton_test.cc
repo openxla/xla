@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_types.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
+#include "xla/status.h"
 #include "xla/statusor.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/errors.h"
