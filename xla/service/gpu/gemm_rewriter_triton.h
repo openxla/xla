@@ -15,7 +15,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GEMM_REWRITER_TRITON_H_
 #define XLA_SERVICE_GPU_GEMM_REWRITER_TRITON_H_
 
-#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -30,6 +29,9 @@ limitations under the License.
 #include "xla/service/gpu/gpu_types.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/service/instruction_fusion.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -101,19 +103,18 @@ class TensorIterationSpec {
   StorageType dim_iteration_specs_;
 };
 
-// Analysis of iteration of HLO shapes within a fusion around dot().
-class DotFusionAnalysis {
-  DotFusionAnalysis() {}
+// Analysis of tensor iteration orders within tiled fusions.
+class TritonFusionAnalysis {
+  TritonFusionAnalysis() {}
 
-  Status ExecuteImpl(const HloComputation* computation, int split_k);
+  Status ExecuteForDotFusion(const HloInstruction& dot, int split_k);
 
  public:
-  // Execute the analysis of a dot fusion computation.
-  // `computation` is a computation of a dot fusion to analyze.
+  // Execute the analysis of a fusion computation.
   // `split_k` indicates whether this operation was converted to the split-K
   // form and tells the analysis how to interpret the batch dimensions.
-  static StatusOr<DotFusionAnalysis> Execute(const HloComputation* computation,
-                                             int split_k = 1);
+  static StatusOr<TritonFusionAnalysis> Execute(
+      const HloComputation& computation, int split_k = 1);
 
   // A scope is an HLO graph that can be tiled efficiently using same or
   // compatible tile shapes on all operations. GEMM fusion has 3 scopes
