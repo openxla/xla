@@ -41,8 +41,6 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
-#include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -66,6 +64,7 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/protobuf.h"
 
 namespace xla {

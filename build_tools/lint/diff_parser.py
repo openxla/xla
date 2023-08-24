@@ -15,6 +15,7 @@
 """Parses diffs into hunks."""
 import dataclasses
 import re
+import subprocess
 from typing import Generator, Iterable, TypeVar
 
 _T = TypeVar("_T")
@@ -102,3 +103,14 @@ def parse_hunks(diff: str) -> list[Hunk]:
       parsed_hunks.append(Hunk(file, int(start), int(length), lines))
 
   return parsed_hunks
+
+
+def get_git_diff_stdout() -> str:
+  """Run git diff with appropriate arguments and capture stdout as a str."""
+  proc = subprocess.run(
+      ["git", "diff", "origin/main", "HEAD"],
+      capture_output=True,
+      check=True,
+      text=True,
+  )
+  return proc.stdout

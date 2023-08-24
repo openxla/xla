@@ -24,12 +24,15 @@ Example usage:
 
 This would run clang-tidy on all files that need to be compiled to build xla.
 """
+import argparse
 import dataclasses
 import json
 import logging
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Collection
+
+from xla.build_tools.lint import diff_parser
 
 JSONDict = dict[Any, Any]  # Approximates parsed JSON
 
@@ -78,32 +81,68 @@ class ClangTidyCommand:
 
 def extract_clang_tidy_commands(
     parsed_aquery_output: JSONDict,
+    file_allowlist: Collection[str] | None,
 ) -> list[ClangTidyCommand]:
+  """Gathers clang-tidy commands to run from `bazel aquery` JSON output.
+
+  Arguments:
+    parsed_aquery_output: Parsed JSON representing the output of `bazel aquery
+      --output=jsonproto`.
+    file_allowlist: The list of files to generate commands for. If None,
+      generate commands for all files. Useful to only keep commands for files
+      that have have been edited compared to HEAD, for example.
+
+  Returns:
+    The list of ClangTidyCommands that should be executed.
+  """
   actions = parsed_aquery_output["actions"]
-  return [
-      ClangTidyCommand.from_args_list(action["arguments"]) for action in actions
-  ]
+
+  commands = []
+  for action in actions:
+    command = ClangTidyCommand.from_args_list(action["arguments"])
+
+    if not file_allowlist or command.file in file_allowlist:
+      commands.append(command)
+  return commands
 
 
-def run_commands(commands: list[ClangTidyCommand]) -> None:
+def run_commands(commands: list[ClangTidyCommand]) -> list[ClangTidyCommand]:
   failed = []
   for command in commands:
     sp = subprocess.run(command.to_invocation(), check=False)
     if sp.returncode != 0:
-      failed.append(command.file)
+      failed.append(command)
 
-  if failed:
-    raise RuntimeError(f"clang-tidy commands failed for these files: {failed}")
+  return failed
 
 
-def main():
+def main() -> int:
+  # Setup logging
   logging.basicConfig()
   logging.getLogger().setLevel(logging.INFO)
 
+  # Parse arguments
+  parser = argparse.ArgumentParser(description="Run clang-tidy on XLA.")
+  parser.add_argument(
+      "--changed_files_only", action=argparse.BooleanOptionalAction
+  )
+  args = parser.parse_args(sys.argv)
+
+  # Gather and run clang-tidy invocations
   parsed_aquery_output = json.loads(sys.stdin.read())
-  commands = extract_clang_tidy_commands(parsed_aquery_output)
-  run_commands(commands)
+
+  # Maybe make file_allowlist
+  file_allowlist = None
+  if args.changed_files_only:
+    file_allowlist = {
+        hunk.file
+        for hunk in diff_parser.parse_hunks(diff_parser.get_git_diff_stdout())
+    }
+
+  commands = extract_clang_tidy_commands(parsed_aquery_output, file_allowlist)
+  failed_invocations = run_commands(commands)
+  return 1 if failed_invocations else 0
 
 
 if __name__ == "__main__":
-  main()
+  raise SystemExit(main())

@@ -21,7 +21,6 @@ import argparse
 import dataclasses
 import logging  # Intended to run on vanilla Github Actions runner
 import re
-import subprocess
 import sys
 from typing import Iterable, Optional, Sequence
 
@@ -43,17 +42,6 @@ class RegexLocation:
   line_number: int
   line_contents: str
   matched_text: str
-
-
-def get_git_diff_stdout() -> str:
-  """Run git diff with appropriate arguments and capture stdout as a str."""
-  proc = subprocess.run(
-      ["git", "diff", "origin/main", "HEAD"],
-      capture_output=True,
-      check=True,
-      text=True,
-  )
-  return proc.stdout
 
 
 def filter_hunks_by_path(
@@ -156,7 +144,7 @@ def main(argv: Sequence[str]):
   args = parser.parse_args(argv[1:])
 
   file_diffs = filter_hunks_by_path(
-      diff_parser.parse_hunks(get_git_diff_stdout()),
+      diff_parser.parse_hunks(diff_parser.get_git_diff_stdout()),
       path_regexes=args.path_regex,
       path_regex_exclusions=args.path_regex_exclusion,
   )
