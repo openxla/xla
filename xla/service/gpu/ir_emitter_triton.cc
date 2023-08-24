@@ -360,15 +360,16 @@ Value AddPtr(ImplicitLocOpBuilder& b, Value ptr, Value offset) {
 }
 
 Value EmitElementwise(ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
-                      const HloInstruction& hlo, ValueRange inputs) {
+                      const HloInstruction& hlo, std::vector<Value> inputs) {
   if (ElementType(inputs[0]).isF32() || ElementType(inputs[0]).isF64()) {
     auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
     if (dev_fn_id.ok()) {
-      return b.create<mt::PureExternElementwiseOp>(
+      return b.create<mt::ExternElementwiseOp>(
           inputs[0].getType(), inputs, "libdevice", libdevice_path,
           ObtainDeviceFunctionName(dev_fn_id.value(),
                                    hlo.shape().element_type(),
-                                   llvm::Triple("nvptx64-unknown-unknown")));
+                                   llvm::Triple("nvptx64-unknown-unknown")),
+          true /* pure */);
     }
   }
   const bool is_integer = ElementType(inputs[0]).isa<mlir::IntegerType>();
@@ -668,7 +669,7 @@ void CreateTritonPipeline(mlir::OpPassManager& pm,
   // @triton//:lib/Target/LLVMIR/LLVMIRTranslation.cpp
   pm.addPass(mlir::createConvertSCFToCFPass());
   pm.addPass(mlir::createConvertIndexToLLVMPass());
-  pm.addPass(mt::createConvertTritonGPUToLLVMPass(ccAsInt));
+  pm.addPass(mt::createConvertTritonGPUToLLVMPass({ccAsInt}));
   pm.addPass(mlir::createArithToLLVMConversionPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
@@ -1517,6 +1518,7 @@ StatusOr<LaunchDimensions> TritonWrapper(
                                 device_info.shared_memory_per_block_optin));
 
   b.create<mt::ReturnOp>(loc);
+  VLOG(6) << llvm_ir::DumpToString(*triton_module);
   if (DumpingEnabledForHloModule(*hlo_computation->parent())) {
     DumpToFileInDirOrStdout(*hlo_computation->parent(), "triton_ir", "ttir",
                             llvm_ir::DumpToString(*triton_module));
