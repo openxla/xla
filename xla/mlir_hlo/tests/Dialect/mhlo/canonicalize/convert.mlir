@@ -1,4 +1,4 @@
-// RUN: mlir-hlo-opt %s -split-input-file -pass-pipeline='builtin.module(func.func(canonicalize))' | FileCheck %s
+// RUN: mlir-hlo-opt %s -split-input-file -pass-pipeline='builtin.module(func.func(canonicalize), func.func(mhlo-folders))' | FileCheck %s
 
 // -----
 

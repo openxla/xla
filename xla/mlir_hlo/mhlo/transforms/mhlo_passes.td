@@ -58,6 +58,18 @@ def HloCanonicalizeDotPass : Pass<"hlo-canonicalize-dot", "func::FuncOp"> {
   let dependentDialects = ["mhlo::MhloDialect", "tensor::TensorDialect"];
 }
 
+def MhloFoldersPass : Pass<"mhlo-folders", "func::FuncOp"> {
+  let summary = "Constant fold MHLO ops.";
+  let dependentDialects = ["mhlo::MhloDialect"];
+  let constructor = "createMhloFoldersPass()";
+  let options = [
+    Option<"op_fold_limit_", "op-fold-limit", "int", /*default=*/"65536",
+           "This is an upper limit on how many elements can be folded by an op"
+           "folder. This limit doesn't apply to some special cases like adding"
+           "a zero, multiplying by one, doing many operations with splats.">
+  ];
+}
+
 def HloLegalizeToMemrefPass :Pass<"hlo-legalize-to-memref", "ModuleOp"> {
   let summary = "Legalize from HLO dialect to memref dialect.";
   let constructor = "createLegalizeToMemrefPass()";

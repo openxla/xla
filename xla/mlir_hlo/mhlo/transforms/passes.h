@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef MLIR_HLO_MHLO_TRANSFORMS_PASSES_H
 #define MLIR_HLO_MHLO_TRANSFORMS_PASSES_H
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -153,6 +154,8 @@ createRankSpecializationClusterPass();
 std::unique_ptr<OperationPass<func::FuncOp>> createRankSpecializationToSCFPass(
     int64_t maxTargetRank = 5);
 
+std::unique_ptr<OperationPass<func::FuncOp>> createMhloFoldersPass(
+    int64_t opFoldLimit = 65536);
 std::unique_ptr<OperationPass<func::FuncOp>> createOptimizeMhloPass();
 std::unique_ptr<OperationPass<func::FuncOp>> createLowerComplexPass();
 

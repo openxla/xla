@@ -67,6 +67,8 @@ add_mlir_library(MhloPasses
   mhlo_canonicalize_reduction/mhlo_canonicalize_reduction.cc
   mhlo_canonicalize_scatter/mhlo_canonicalize_scatter.cc
   mhlo_flatten_tuple/mhlo_flatten_tuple.cc
+  folders/folders.cc
+  folders/folders_pass.cc
   prepare_for_export/prepare_for_export.cc
   optimize_mhlo/optimize_mhlo.cc
   optimize_mhlo/optimize_mhlo_pass.cc

@@ -772,6 +772,7 @@ cc_library(
     ],
     hdrs = [
         "mhlo/interfaces/bufferizable_op_interface_impl.h",
+        "mhlo/transforms/folders/folders.h",
         "mhlo/transforms/passes.h",
         "mhlo/transforms/rewriters.h",
         "mhlo/utils/legalize_to_linalg_utils.h",
@@ -780,6 +781,7 @@ cc_library(
     strip_include_prefix = ".",
     deps = [
         ":chlo_legalize_to_hlo",
+        ":convert_op_folder",
         ":hlo_legalize_to_stablehlo",
         ":legalize_to_linalg_utils",
         ":legalize_to_standard_inc_gen",
@@ -788,6 +790,7 @@ cc_library(
         ":map_chlo_to_hlo_op",
         ":map_hlo_to_lhlo_op",
         ":map_mhlo_to_scalar_op",
+        ":mhlo_folders",
         ":mhlo_pass_inc_gen",
         ":mhlo_rng_utils",
         ":mhlo_scatter_gather_utils",
@@ -829,6 +832,30 @@ cc_library(
         "@stablehlo//:base",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
+    ],
+)
+
+cc_library(
+    name = "mhlo_folders",
+    srcs = [
+        "mhlo/transforms/folders/folders.cc",
+        "mhlo/transforms/folders/folders_pass.cc",
+    ],
+    hdrs = [
+        "mhlo/transforms/folders/folders.h",
+        "mhlo/transforms/passes.h",
+        "mhlo/transforms/rewriters.h",
+    ],
+    strip_include_prefix = ".",
+    deps = [
+        ":convert_op_folder",
+        ":mhlo_pass_inc_gen",
+        ":mlir_hlo",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:Transforms",
     ],
 )
 

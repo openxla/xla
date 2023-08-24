@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "mhlo/IR/hlo_ops.h"
+#include "mhlo/transforms/folders/folders.h"
 #include "mhlo/transforms/passes.h"
 #include "mhlo/transforms/rewriters.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -227,7 +228,9 @@ createLegalizeToStdPass() {
 void populateMhloToStdPatterns(RewritePatternSet *patterns,
                                mlir::MLIRContext *ctx) {
   mlir::populateWithGenerated(*patterns);
-  patterns->add<CompareFConvert, CompareIConvert, ConvertIotaOp>(ctx);
+  patterns
+      ->add<CompareFConvert, CompareIConvert, ConvertIotaOp, ConvertOpFolder>(
+          ctx);
 }
 
 /// Perform the lowering to standard dialect.

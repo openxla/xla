@@ -187,6 +187,14 @@ void populateLegalizeSparseOpsToCustomCallPatterns(MLIRContext *context,
                                                    TypeConverter &typeConverter,
                                                    RewritePatternSet *patterns);
 
+// Populate patterns to constant folding MHLO ops.
+// `opFoldLimit` is an upper limit on how many elements can be folded by an op
+// folder. This limit doesn't apply to some special cases like adding a zero,
+// multiplying by one, doing many operations with splats.
+void populateMhloFolderPatterns(MLIRContext *context,
+                                RewritePatternSet *patterns,
+                                int64_t opFoldLimit);
+
 }  // namespace mhlo
 
 namespace chlo {
