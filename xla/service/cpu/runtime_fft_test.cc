@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/cpu/runtime_fft_impl.h"
+#include "xla/service/cpu/runtime_eigen_fft_impl.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/test.h"
 

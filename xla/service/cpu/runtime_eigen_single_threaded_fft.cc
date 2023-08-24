@@ -12,14 +12,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include "xla/service/cpu/runtime_eigen_single_threaded_fft.h"
 
-#include "xla/service/cpu/runtime_single_threaded_fft.h"
+#include <cstdint>
 
-#include "absl/base/dynamic_annotations.h"
-#include "xla/service/cpu/runtime_fft_impl.h"
+#include "xla/service/cpu/runtime_eigen_fft_impl.h"
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_EigenSingleThreadedFft(
-    const void* run_options_ptr, void* out, void* operand, int32_t fft_type,
+    const void* /*run_options_ptr*/, void* out, void* operand, int32_t fft_type,
     int32_t double_precision, int32_t fft_rank, int64_t input_batch,
     int64_t fft_length0, int64_t fft_length1, int64_t fft_length2) {
   xla::EigenFftImpl(Eigen::DefaultDevice(), out, operand,

@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef XLA_SERVICE_CPU_RUNTIME_FFT_IMPL_H_
-#define XLA_SERVICE_CPU_RUNTIME_FFT_IMPL_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_EIGEN_FFT_IMPL_H_
+#define XLA_SERVICE_CPU_RUNTIME_EIGEN_FFT_IMPL_H_
 
 #include <array>
 
@@ -265,4 +265,4 @@ void EigenFftImpl(const EigenDevice& device, void* out, void* operand,
 
 }  // namespace xla
 
-#endif  // XLA_SERVICE_CPU_RUNTIME_FFT_IMPL_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_EIGEN_FFT_IMPL_H_

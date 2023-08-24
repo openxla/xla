@@ -30,7 +30,7 @@
 #include "xla/runtime/custom_call.h"
 #include "xla/runtime/custom_call_registry.h"
 #include "xla/runtime/executable.h"
-#include "xla/service/cpu/runtime_fft.h"
+#include "xla/service/cpu/runtime_ducc_fft.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/xla.pb.h"
 
@@ -73,11 +73,11 @@ absl::Status XlaFft::operator()(const ExecutableRunOptions* run_options,
   for (int64_t dim = 0; dim < input.sizes.size() - fft_rank; ++dim) {
     input_batch *= input.sizes[dim];
   }
-  __xla_cpu_runtime_EigenFft(run_options, output.data, input.data, fft_type,
-                             static_cast<int32_t>(double_precision), fft_rank,
-                             input_batch, fft_length[0],
-                             fft_length.size() > 1 ? fft_length[1] : 0,
-                             fft_length.size() > 2 ? fft_length[2] : 0);
+  __xla_cpu_runtime_DuccFft(run_options, output.data, input.data, fft_type,
+                            static_cast<int32_t>(double_precision), fft_rank,
+                            input_batch, fft_length[0],
+                            fft_length.size() > 1 ? fft_length[1] : 0,
+                            fft_length.size() > 2 ? fft_length[2] : 0);
   return absl::OkStatus();
 }
 

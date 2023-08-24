@@ -13,14 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_CPU_RUNTIME_FFT_H_
-#define XLA_SERVICE_CPU_RUNTIME_FFT_H_
+#ifndef XLA_SERVICE_CPU_RUNTIME_DUCC_FFT_H_
+#define XLA_SERVICE_CPU_RUNTIME_DUCC_FFT_H_
 
 #include <stdint.h>
 
 extern "C" {
 
-extern void __xla_cpu_runtime_EigenFft(
+extern void __xla_cpu_runtime_DuccFft(
     const void* /* xla::ExecutableRunOptions* */ run_options_ptr, void* out,
     void* operand, int32_t fft_type, int32_t double_precision, int32_t fft_rank,
     int64_t input_batch, int64_t fft_length0, int64_t fft_length1,
@@ -28,4 +28,4 @@ extern void __xla_cpu_runtime_EigenFft(
 
 }  // extern "C"
 
-#endif  // XLA_SERVICE_CPU_RUNTIME_FFT_H_
+#endif  // XLA_SERVICE_CPU_RUNTIME_DUCC_FFT_H_

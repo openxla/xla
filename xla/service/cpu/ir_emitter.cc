@@ -1117,8 +1117,8 @@ Status IrEmitter::HandleFft(HloInstruction* fft) {
   bool multi_threaded_eigen =
       hlo_module_config_.debug_options().xla_cpu_multi_thread_eigen();
   const char* fn_name = multi_threaded_eigen
-                            ? runtime::kEigenFftSymbolName
-                            : runtime::kEigenSingleThreadedFftSymbolName;
+                            ? runtime::kDuccFftSymbolName
+                            : runtime::kDuccSingleThreadedFftSymbolName;
   const int fft_rank = fft_length.size();
   EmitCallToFunc(
       fn_name,

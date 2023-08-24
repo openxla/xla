@@ -13,13 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/cpu/runtime_fft.h"
+#include "xla/service/cpu/runtime_eigen_fft.h"
+
+#include <cstdint>
 
 #define EIGEN_USE_THREADS
 
-#include "absl/base/dynamic_annotations.h"
+#include "absl/base/attributes.h"
 #include "xla/executable_run_options.h"
-#include "xla/service/cpu/runtime_fft_impl.h"
+#include "xla/service/cpu/runtime_eigen_fft_impl.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_EigenFft(
