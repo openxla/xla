@@ -2571,7 +2571,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-    ]),
+    ]) + ["@tsl//tsl/lib/monitoring:counter"],
 )
 
 xla_cc_test(
@@ -2580,6 +2580,7 @@ xla_cc_test(
     tags = tf_cuda_tests_tags(),
     deps = [
         ":horizontal_loop_fusion",
+        ":metrics",
         "//xla:autotune_results_proto_cc",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:gpu_plugin",
@@ -3930,6 +3931,7 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = [
+        "@tsl//tsl/lib/monitoring:counter",
         "@tsl//tsl/lib/monitoring:sampler",
     ],
 )
