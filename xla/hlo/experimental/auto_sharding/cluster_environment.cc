@@ -236,6 +236,11 @@ double ClusterEnvironment::ReshardingCost(const Shape& shape,
     if (!src_spec.HasPartialReplication() && dst_spec.IsReplicated()) {
       auto equivalent_src_spec = HloSharding::IotaTile(
           src_spec.tile_assignment().dimensions(), src_spec.metadata());
+      // TODO(pratikf) Make sure that we don't this case by excluding sharding
+      // specs which might lead us here.
+      if (equivalent_src_spec == src_spec) {
+        return kInfinityCost;
+      }
       return ReshardingCost(shape, equivalent_src_spec, dst_spec);
     }
     return TryCollectivePermuteForResharding(shape, src_spec, dst_spec);
