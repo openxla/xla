@@ -124,7 +124,7 @@ cc_library(
     ],
 )
 
-cc_library(
+cuda_library(
     name = "enqueue",
     srcs = [
         "src/enqueue.cc",

@@ -529,6 +529,7 @@ def _find_tensorrt_config(base_paths, required_version):
 
   return {
       "tensorrt_version": tensorrt_version,
+      "tensorrt_full_version": header_version,
       "tensorrt_include_dir": os.path.dirname(header_path),
       "tensorrt_library_dir": os.path.dirname(library_path),
   }
