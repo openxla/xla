@@ -300,8 +300,7 @@ StatusOr<std::unique_ptr<PjRtBuffer>> TransferPjRtBufferBetweenMemories(
   // Fast path for transferring asynchronously from host to device.
   // TODO(yashkatariya, hyeontaek): Make this work for all memory kinds as the
   // default path and remove the fallback code below.
-  if ((pjrt_buffer->memory_space() != nullptr &&
-       pjrt_buffer->memory_space()->memory_space_kind() == "unpinned_host") &&
+  if (pjrt_buffer->memory_space()->memory_space_kind() == "unpinned_host" &&
       (new_memory_kind.memory_kind().has_value() &&
        new_memory_kind.memory_kind() == "tpu_hbm") &&
       !absl::StrContains(new_device->client()->platform_version(),
@@ -388,14 +387,10 @@ StatusOr<tsl::RCReference<Array>> PjRtArray::Reshard(
   PjRtBuffers buffers;
   buffers.reserve(pjrt_buffers_.size());
   for (int i = 0; i < pjrt_buffers_.size(); ++i) {
-    // TODO(yashkatariya): Remove the
-    // `pjrt_buffers_[i]->memory_space() != nullptr` check after PJRT C API
-    // populates memory space on PJRT_Buffer.
     bool memory_kind_equal =
         !new_sharding->memory_kind().memory_kind().has_value() ||
-        (pjrt_buffers_[i]->memory_space() != nullptr &&
-         pjrt_buffers_[i]->memory_space()->memory_space_kind() ==
-             new_sharding->memory_kind().memory_kind());
+        pjrt_buffers_[i]->memory_space()->memory_space_kind() ==
+            new_sharding->memory_kind().memory_kind();
     bool devices_equal =
         pjrt_buffers_[i]->device() == new_sharding->devices()[i];
 
