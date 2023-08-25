@@ -1186,6 +1186,24 @@ class GemmRewriterTritonLevel2Test : public GemmRewriterTritonTest {
   }
 };
 
+TEST_F(GemmRewriterTritonLevel2Test, ReshapeToScalarIsHandled) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+  p0 = s8[5,3] parameter(0)
+  c = f16[5,3] convert(p0)
+  p1 = f16[1] parameter(1)
+  r = f16[] reshape(p1)
+  b = f16[5,7] broadcast(r)
+  ROOT d = f16[3,7] dot(c, b),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+})"));
+
+  EXPECT_TRUE(GemmRewriterTriton(gpu_version_).Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
+}
+
 TEST_F(GemmRewriterTritonLevel2Test, DoNotFuseIncompatibleDimensionSplits) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(

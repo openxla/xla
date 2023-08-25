@@ -720,10 +720,12 @@ DimOrderUpdatesOrError FusionContext::HandleBitcast(
     if (dst_shape.dimensions(*dst_dim_iter) != 1) {
       return "Unsupported bitcast";
     }
-    dst_fragments_order.push_back(
-        {dst_fragments_order.back().dst_dim_number, 1});
-    src_to_dst[&src_fragments_order.back()].push_back(
-        dst_fragments_order.size() - 1);
+    if (!dst_fragments_order.empty()) {
+      dst_fragments_order.push_back(
+          {dst_fragments_order.back().dst_dim_number, 1});
+      src_to_dst[&src_fragments_order.back()].push_back(
+          dst_fragments_order.size() - 1);
+    }
     ++dst_dim_iter;
   }
 
