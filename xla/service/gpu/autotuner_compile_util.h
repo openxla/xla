@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -27,6 +28,9 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/autotuner_util.h"
+#include "xla/shape.h"
+#include "xla/statusor.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -62,7 +66,8 @@ class AutotunerCompileUtil {
   // `Status` otherwise.
   StatusOr<std::optional<ProfilingOutput>> ProfileExecutable(
       Executable* executable, se::Stream* stream,
-      absl::Span<se::DeviceMemoryBase const> input_buffers);
+      absl::Span<se::DeviceMemoryBase const> input_buffers,
+      absl::Span<Shape const> input_shapes);
 
   // Generic method to compile a generated module from `extractor` in isolation.
   //
