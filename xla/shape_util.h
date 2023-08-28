@@ -19,6 +19,7 @@ limitations under the License.
 #ifndef XLA_SHAPE_UTIL_H_
 #define XLA_SHAPE_UTIL_H_
 
+#include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <iterator>
@@ -33,11 +34,18 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/types/span.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/printer.h"
 #include "xla/shape.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/macros.h"
 
 namespace xla {
 
@@ -284,6 +292,8 @@ class ShapeUtil {
   static Shape ChangeElementType(const Shape& original, PrimitiveType type);
 
   // Returns a shape with same dimensions but with all dimensions set to static.
+  // If the shape has a layout, its dynamic_shape_metadata_prefix_bytes will be
+  // set to zero.
   static Shape MakeStaticShape(const Shape& original);
 
   // Creates a tuple shape from a slice of element shapes within the tuple.

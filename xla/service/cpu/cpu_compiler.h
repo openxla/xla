@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_CPU_COMPILER_H_
 #define XLA_SERVICE_CPU_CPU_COMPILER_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -24,12 +25,20 @@ limitations under the License.
 #include "llvm/Target/TargetMachine.h"
 #include "xla/cpu_function_runtime.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_module_group.h"
+#include "xla/service/buffer_assignment.h"
+#include "xla/service/compiler.h"
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/service/cpu/target_machine_features.h"
 #include "xla/service/executable.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_profile_printer_data.pb.h"
 #include "xla/service/llvm_compiler.h"
+#include "xla/status.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace cpu {

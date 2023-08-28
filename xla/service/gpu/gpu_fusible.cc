@@ -34,6 +34,18 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+namespace {
+
+bool HasAnyTiledTransposeRoot(const HloComputation& computation) {
+  return absl::c_any_of(GetFusionRoots(computation),
+                        [&](const HloInstruction* instr) {
+                          return GetDescriptionForTiledTransposeEmitter(
+                                     *instr, FindNonTrivialHero(*instr))
+                              .has_value();
+                        });
+}
+
+}  // namespace
 
 bool IfFusedReadsElementsMultipleTimes(const HloInstruction& instr) {
   CHECK_NE(instr.opcode(), HloOpcode::kFusion) << "`instr` has to be unfused.";
@@ -96,7 +108,11 @@ bool IsPhysicallyTransposing(const HloInstruction& instr) {
 
 bool IsReduceInputFusion(const HloInstruction& instr) {
   return instr.opcode() == HloOpcode::kFusion &&
-         HasAnyUnnestedReductionRoot(*instr.called_computations()[0]);
+         absl::c_any_of(GetFusionRoots(*instr.called_computations()[0]),
+                        [](const HloInstruction* root) {
+                          return IsRealReductionHero(*root,
+                                                     FindNonTrivialHero(*root));
+                        });
 }
 
 bool IsInputFusibleReduction(const HloInstruction& instr) {
@@ -113,16 +129,16 @@ bool IsNestableVariadicReduction(const HloInstruction& instr) {
            instr.fused_expression_root()->opcode() == HloOpcode::kReduce));
 }
 
-bool IsTransposeInputFusion(const HloInstruction& instr) {
-  if (instr.IsCustomFusion()) {
+bool IsInputFusibleTranspose(const HloInstruction& instr) {
+  if (instr.opcode() == HloOpcode::kBitcast) {
     return false;
   }
-  return instr.opcode() == HloOpcode::kFusion &&
+  auto& hero = FindNonTrivialHero(instr);
+  if (GetDescriptionForTiledTransposeEmitter(instr, hero).has_value()) {
+    return true;
+  }
+  return !instr.IsCustomFusion() && instr.opcode() == HloOpcode::kFusion &&
          HasAnyTiledTransposeRoot(*instr.called_computations()[0]);
-}
-
-bool IsInputFusibleTranspose(const HloInstruction& instr) {
-  return FindAnyTiledTranspose(instr) || IsTransposeInputFusion(instr);
 }
 
 const HloInstruction* GetRealHeroForMultiOutputFusion(
@@ -132,9 +148,11 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   }
   auto fused_expression_root = instr.fused_expression_root();
   if (!instr.IsMultiOutputFusion()) {
-    if (HasRealReductionHero(fused_expression_root) ||
-        FindAnyTiledTranspose(*fused_expression_root)) {
-      return &FindNonTrivialHero(*fused_expression_root);
+    const auto& hero = FindNonTrivialHero(*fused_expression_root);
+    if (IsRealReductionHero(*fused_expression_root, hero) ||
+        GetDescriptionForTiledTransposeEmitter(*fused_expression_root, hero)
+            .has_value()) {
+      return &hero;
     }
     return fused_expression_root;
   }
@@ -143,8 +161,10 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
   // constraints. Note that we cannot have both kinds at the same time, so once
   // we find any, we can immediately return it.
   for (auto* inst : fused_expression_root->mutable_operands()) {
-    if (HasRealReductionHero(inst) || FindAnyTiledTranspose(*inst)) {
-      return &FindNonTrivialHero(*inst);
+    const auto& hero = FindNonTrivialHero(*inst);
+    if (IsRealReductionHero(*inst, hero) ||
+        GetDescriptionForTiledTransposeEmitter(*inst, hero).has_value()) {
+      return &hero;
     }
   }
   return fused_expression_root->operands()[0];
@@ -154,7 +174,8 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
 // `first_reduce`.
 static bool IsFusedReductionOutputConsistent(
     const HloInstruction* inst, const HloInstruction* first_reduce) {
-  if (HasRealReductionHero(inst)) {
+  const auto& hero = FindNonTrivialHero(*inst);
+  if (IsRealReductionHero(*inst, hero)) {
     // Shapes, layouts and dimensions must be the same for all reduces
     // inside of this fusion.
     return ShapeUtil::EqualIgnoringElementType(first_reduce->shape(),
@@ -175,11 +196,13 @@ FusionDecision FusionHeroesAreCompatible(const HloInstruction* hero1,
                                          const HloInstruction* hero2) {
   auto hero1_is_unnested_reduce =
       IsReductionFromOrToContiguousDimensions(*hero1);
-  auto tiled_transpose_hero1 = FindAnyTiledTranspose(*hero1);
+  auto tiled_transpose_hero1 =
+      GetDescriptionForTiledTransposeEmitter(*hero1, *hero1);
   bool hero1_is_unnested_transpose = tiled_transpose_hero1.has_value();
   bool hero2_is_unnested_reduce =
       IsReductionFromOrToContiguousDimensions(*hero2);
-  auto tiled_transpose_hero2 = FindAnyTiledTranspose(*hero2);
+  auto tiled_transpose_hero2 =
+      GetDescriptionForTiledTransposeEmitter(*hero2, *hero2);
   bool hero2_is_unnested_transpose = tiled_transpose_hero2.has_value();
 
   if (hero1_is_unnested_reduce && hero2_is_unnested_reduce &&
@@ -242,9 +265,12 @@ FusionDecision ShapesCompatibleForMultiOutputFusion(
   auto get_loop_shape = [&](const HloInstruction* element_instr) {
     // Special-case reduction-to-vector ops: The loop dimensions are determined
     // by the shape of the first operand.
+    // TODO(jreiffers): Compute the non-trivial hero only once here.
+    const auto& hero = FindNonTrivialHero(*element_instr);
     if (IsReductionFromOrToContiguousDimensions(*element_instr) ||
-        FindAnyTiledTranspose(*element_instr)) {
-      return FindNonTrivialHero(*element_instr).operand(0)->shape();
+        GetDescriptionForTiledTransposeEmitter(*element_instr, hero)
+            .has_value()) {
+      return hero.operand(0)->shape();
     }
     return element_instr->shape();
   };
@@ -292,42 +318,46 @@ bool IsInputFusible(const HloInstruction& instr) {
           IsInputFusibleTranspose(instr));
 }
 
-bool IsUniversallyLoopFusible(const HloInstruction& instr) {
+bool IsUniversallyLoopFusible(const HloInstruction& instr,
+                              const HloInstruction& hero) {
   // Don't fuse get-tuple-element on GPU: We can, but it's slower than not
   // fusing.  We never generate kernels for unfused GTEs.  Instead, if an
   // unfused GTE is an input to a kernel (including a fusion kernel), we
   // compute the address of the GTE at the top of the kernel.  Often we know the
   // address of the GTE result statically, so we can do this without chasing any
   // pointers.
-  return (
-      (instr.IsElementwise() && instr.operand_count() > 0 &&
-       instr.opcode() != HloOpcode::kCopy) ||
-      (instr.opcode() == HloOpcode::kCopy && !FindAnyTiledTranspose(instr)) ||
-      instr.opcode() == HloOpcode::kBitcast ||
-      instr.opcode() == HloOpcode::kBroadcast ||
-      instr.opcode() == HloOpcode::kConcatenate ||
-      instr.opcode() == HloOpcode::kDynamicSlice ||
-      instr.opcode() == HloOpcode::kDynamicUpdateSlice ||
-      (instr.opcode() == HloOpcode::kFusion &&
-       instr.fusion_kind() == HloInstruction::FusionKind::kLoop) ||
-      instr.opcode() == HloOpcode::kGather ||
-      instr.opcode() == HloOpcode::kPad ||
-      instr.opcode() == HloOpcode::kReduceWindow ||
-      instr.opcode() == HloOpcode::kReshape ||
-      instr.opcode() == HloOpcode::kReverse ||
-      instr.opcode() == HloOpcode::kSlice ||
-      instr.opcode() == HloOpcode::kTranspose);
+  return ((instr.IsElementwise() && instr.operand_count() > 0 &&
+           instr.opcode() != HloOpcode::kCopy) ||
+          (instr.opcode() == HloOpcode::kCopy &&
+           !GetDescriptionForTiledTransposeEmitter(instr, hero).has_value()) ||
+          instr.opcode() == HloOpcode::kBitcast ||
+          instr.opcode() == HloOpcode::kBroadcast ||
+          instr.opcode() == HloOpcode::kConcatenate ||
+          instr.opcode() == HloOpcode::kDynamicSlice ||
+          instr.opcode() == HloOpcode::kDynamicUpdateSlice ||
+          (instr.opcode() == HloOpcode::kFusion &&
+           instr.fusion_kind() == HloInstruction::FusionKind::kLoop) ||
+          instr.opcode() == HloOpcode::kGather ||
+          instr.opcode() == HloOpcode::kPad ||
+          instr.opcode() == HloOpcode::kReduceWindow ||
+          instr.opcode() == HloOpcode::kReshape ||
+          instr.opcode() == HloOpcode::kReverse ||
+          instr.opcode() == HloOpcode::kSlice ||
+          instr.opcode() == HloOpcode::kTranspose);
 }
 
-bool IsLoopFusibleAsConsumer(const HloInstruction& instr) {
-  return instr.IsFusible() && (IsUniversallyLoopFusible(instr) ||
-                               // Any reduction can be fused as a consumer.
-                               instr.opcode() == HloOpcode::kReduce);
+bool IsLoopFusibleAsConsumer(const HloInstruction& instr,
+                             const HloInstruction& hero) {
+  return instr.IsFusible() && instr.opcode() != HloOpcode::kBitcast &&
+         (IsUniversallyLoopFusible(instr, hero) ||
+          // Any reduction can be fused as a consumer.
+          instr.opcode() == HloOpcode::kReduce);
 }
 
-bool IsLoopFusibleAsProducer(const HloInstruction& instr) {
+bool IsLoopFusibleAsProducer(const HloInstruction& instr,
+                             const HloInstruction& hero) {
   return instr.IsFusible() &&
-         (IsUniversallyLoopFusible(instr) ||
+         (IsUniversallyLoopFusible(instr, hero) ||
           (instr.opcode() == HloOpcode::kIota ||
            instr.opcode() == HloOpcode::kConstant ||
            // Non-variadic reductions can be fused as producers.
@@ -348,13 +378,22 @@ static bool AllSatisfy(const HloInstruction& instr,
 
 FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
                                          const HloInstruction& consumer) {
-  if (!IsLoopFusibleAsProducer(producer) &&
-      !(FindAnyTiledTranspose(producer) &&
-        &FindNonTrivialHero(consumer) == &producer)) {
+  const auto& producer_hero = FindNonTrivialHero(producer);
+  const auto& consumer_hero = FindNonTrivialHero(consumer);
+  if (!IsLoopFusibleAsProducer(producer, producer_hero) &&
+      !(GetDescriptionForTiledTransposeEmitter(producer, producer_hero)
+            .has_value() &&
+        &consumer_hero == &producer)) {
     return "the producer is not loop-fusible";
   }
 
   if (IsInputFusibleReduction(producer)) {
+    if (!producer.GetModule()
+             ->config()
+             .debug_options()
+             .xla_gpu_enable_reduction_epilogue_fusion()) {
+      return "Reduction epilogue fusion is not enabled.";
+    }
     if (!AllSatisfy(consumer, [](const HloInstruction* hlo) {
           return IsIntermediate(hlo, /*allowed_operand_count=*/1);
         })) {
@@ -366,7 +405,8 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
     }
   }
 
-  if (!IsInputFusible(consumer) && !IsLoopFusibleAsConsumer(consumer)) {
+  if (!IsInputFusible(consumer) &&
+      !IsLoopFusibleAsConsumer(consumer, consumer_hero)) {
     return "the consumer is not input-fusible and not loop-fusible";
   }
 
@@ -427,7 +467,7 @@ FusionDecision IsProducerMultiOutputFusible(const HloInstruction& producer) {
     return "In-place operations are present";
   }
 
-  if (!IsLoopFusibleAsProducer(producer)) {
+  if (!IsLoopFusibleAsProducer(producer, FindNonTrivialHero(producer))) {
     return "producer is not loop-fusible";
   }
 
@@ -457,7 +497,9 @@ static int64_t SharedMemoryUsageNoCache(const HloInstruction& instr) {
       // from potential x-tiling).
       return 2 * 32 * 33 * primitive_size * num_variadic;
     }
-  } else if (FindAnyTiledTranspose(instr)) {
+  } else if (GetDescriptionForTiledTransposeEmitter(instr,
+                                                    FindNonTrivialHero(instr))
+                 .has_value()) {
     // Tile size for transposition.
     int64_t primitive_size =
         ShapeUtil::ByteSizeOfPrimitiveType(instr.shape().element_type());
@@ -789,66 +831,15 @@ std::vector<HloInstruction*> GetFusionRoots(const HloComputation& computation) {
   return out;
 }
 
-bool HasAnyTiledTransposeRoot(const HloComputation& computation) {
-  return absl::c_any_of(GetFusionRoots(computation),
-                        [&](const HloInstruction* instr) {
-                          return FindAnyTiledTranspose(*instr);
-                        });
-}
-
-bool HasAnyUnnestedReductionRoot(const HloComputation& computation) {
-  return HasAnyUnnestedReductionRoot(GetFusionRoots(computation));
-}
-
-bool HasAnyUnnestedReductionRoot(
-    const std::vector<HloInstruction*>& fusion_roots) {
-  return absl::c_any_of(fusion_roots, [](const HloInstruction* instr) {
-    return HasRealReductionHero(instr);
-  });
-}
-
-static const HloInstruction* FindNonTrivialReductionHero(
-    const HloInstruction& instr) {
-  const HloInstruction* idx = &instr;
-  while (IsIntermediate(idx, /*allowed_operand_count=*/1)) {
-    idx = idx->operand(0);
+bool IsRealReductionHero(const HloInstruction& root,
+                         const HloInstruction& hero) {
+  if (!IsReductionFromOrToContiguousDimensions(hero)) {
+    return false;
   }
-  if (IsReductionFromOrToContiguousDimensions(*idx)) {
-    return idx;
-  }
-  return nullptr;
-}
-
-const HloInstruction* FindFirstRealReductionHero(
-    const std::vector<HloInstruction*>& fusion_roots) {
-  CHECK(!fusion_roots.empty());
-  for (HloInstruction* r : fusion_roots) {
-    const HloInstruction* hero = FindRealReductionHero(r);
-    if (hero != nullptr) {
-      return hero;
-    }
-  }
-  return nullptr;
-}
-
-const HloInstruction* FindRealReductionHero(const HloInstruction* hlo) {
-  if (const HloInstruction* rh = FindNonTrivialReductionHero(*hlo)) {
-    if (rh == hlo ||
-        (rh->user_count() == 1 &&
-         ReductionIsRaceFree(hlo->GetModule()->config(),
-                             GetReductionKindAndContiguousComponents(*rh)))) {
-      return rh;
-    }
-  }
-  return nullptr;
-}
-
-bool HasRealReductionHero(const HloInstruction* hlo) {
-  return FindRealReductionHero(hlo) != nullptr;
-}
-
-bool HasRealReductionHero(const std::vector<HloInstruction*>& fusion_roots) {
-  return FindFirstRealReductionHero(fusion_roots) != nullptr;
+  return &root == &hero ||
+         (hero.user_count() == 1 &&
+          ReductionIsRaceFree(hero.GetModule()->config(),
+                              GetReductionKindAndContiguousComponents(hero)));
 }
 
 }  // namespace gpu

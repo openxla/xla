@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/log/log.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -35,6 +34,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 
@@ -306,7 +306,7 @@ std::string HloBufferDonorConfig::ToShortString() const {
   std::vector<std::string> pieces;
   pieces.reserve(buffer_donor_.size());
   for (const auto& donor : buffer_donor_) {
-    pieces.push_back(absl::StrFormat("%lld at %s", donor.param_number,
+    pieces.push_back(absl::StrFormat("(%lld, %s)", donor.param_number,
                                      donor.param_index.ToString()));
   }
   return absl::StrJoin(pieces, ", ");

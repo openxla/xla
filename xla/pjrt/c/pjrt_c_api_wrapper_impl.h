@@ -52,6 +52,16 @@ struct PJRT_Client {
   // Map from wrapped C++ devices to C devices. The values are the same as
   // `owned_devices`.
   absl::flat_hash_map<xla::PjRtDevice*, PJRT_Device*> c_device_from_cpp_device;
+  // TODO(yueshengys): Add a `memories` member when global memories are
+  // supported.
+  std::vector<PJRT_Memory> owned_memories;
+  // `addressable_memories` contains pointers to the `owned_memories` that the
+  // client can transfer to and from.
+  std::vector<PJRT_Memory*> addressable_memories;
+  // Map from wrapped C++ memories to C memories. The values are the same as
+  // `owned_memories`.
+  absl::flat_hash_map<xla::PjRtMemorySpace*, PJRT_Memory*>
+      c_memory_from_cpp_memory;
 };
 
 // PJRT_DeviceDescriptions are owned by their corresponding PJRT_Device.
@@ -68,17 +78,15 @@ struct PJRT_Device {
   // The xla::PjRtDevice* is owned by the corresponding xla::PjRtClient.
   xla::PjRtDevice* device;
   PJRT_DeviceDescription description;
-  std::vector<PJRT_Memory> owned_memories;
-  // `memories` contains the addresses of the contents of `owned_memories`.
-  std::vector<PJRT_Memory*> memories;
-  // Map from wrapped C++ memories to C memories. The values are the same as
-  // `owned_memories`.
-  absl::flat_hash_map<xla::PjRtMemorySpace*, PJRT_Memory*>
-      c_memory_from_cpp_memory;
+  std::vector<PJRT_Memory*> addressable_memories;
+  PJRT_Client* client;
 };
 
 struct PJRT_Memory {
+  // The xla::PjRtMemorySpace* is owned by the corresponding xla::PjRtClient.
   xla::PjRtMemorySpace* memory_space;
+  std::vector<PJRT_Device*> devices;
+  PJRT_Client* client;
 };
 
 struct PJRT_Executable {
@@ -132,6 +140,9 @@ struct PJRT_Buffer {
   std::optional<std::vector<size_t>> dynamic_dim_indices;
   // Used to synchronize concurrent setting of cached values.
   absl::Mutex mu;
+  // Manages, holds, and takes ownership of external references.
+  std::vector<std::unique_ptr<xla::PjRtBuffer::ExternalReference>>
+      external_references;
 };
 
 struct PJRT_Event {
@@ -144,6 +155,10 @@ struct PJRT_Event {
 };
 
 struct PJRT_SerializedExecutable {
+  std::string serialized;
+};
+
+struct PJRT_SerializedTopology {
   std::string serialized;
 };
 
@@ -191,6 +206,8 @@ PJRT_Error* PJRT_Client_AddressableDevices(
 PJRT_Error* PJRT_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args);
 PJRT_Error* PJRT_Client_LookupAddressableDevice(
     PJRT_Client_LookupAddressableDevice_Args* args);
+PJRT_Error* PJRT_Client_AddressableMemories(
+    PJRT_Client_AddressableMemories_Args* args);
 PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args);
 PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
     PJRT_Client_DefaultDeviceAssignment_Args* args);
@@ -220,6 +237,8 @@ PJRT_Error* PJRT_Memory_Id(PJRT_Memory_Id_Args* args);
 PJRT_Error* PJRT_Memory_Kind(PJRT_Memory_Kind_Args* args);
 PJRT_Error* PJRT_Memory_DebugString(PJRT_Memory_DebugString_Args* args);
 PJRT_Error* PJRT_Memory_ToString(PJRT_Memory_ToString_Args* args);
+PJRT_Error* PJRT_Memory_AddressableByDevices(
+    PJRT_Memory_AddressableByDevices_Args* args);
 
 PJRT_Error* PJRT_Executable_Destroy(PJRT_Executable_Destroy_Args* args);
 PJRT_Error* PJRT_Executable_Name(PJRT_Executable_Name_Args* args);
@@ -252,11 +271,6 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
 PJRT_Error* PJRT_LoadedExecutable_GetExecutable(
     PJRT_LoadedExecutable_GetExecutable_Args* args);
 
-PJRT_Error* PJRT_SerializedExecutable_Destroy(
-    PJRT_SerializedExecutable_Destroy_Args* args);
-PJRT_Error* PJRT_SerializedExecutable_Data(
-    PJRT_SerializedExecutable_Data_Args* args);
-
 PJRT_Error* PJRT_Buffer_Destroy(PJRT_Buffer_Destroy_Args* args);
 PJRT_Error* PJRT_Buffer_ElementType(PJRT_Buffer_ElementType_Args* args);
 PJRT_Error* PJRT_Buffer_Dimensions(PJRT_Buffer_Dimensions_Args* args);
@@ -270,6 +284,7 @@ PJRT_Error* PJRT_Buffer_OnDeviceTrimmedShape(
 PJRT_Error* PJRT_Buffer_OnDeviceSizeInBytes(
     PJRT_Buffer_OnDeviceSizeInBytes_Args* args);
 PJRT_Error* PJRT_Buffer_Device(PJRT_Buffer_Device_Args* args);
+PJRT_Error* PJRT_Buffer_Memory(PJRT_Buffer_Memory_Args* args);
 PJRT_Error* PJRT_Buffer_Delete(PJRT_Buffer_Delete_Args* args);
 PJRT_Error* PJRT_Buffer_IsDeleted(PJRT_Buffer_IsDeleted_Args* args);
 PJRT_Error* PJRT_Buffer_CopyToDevice(PJRT_Buffer_CopyToDevice_Args* args);
@@ -277,6 +292,12 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args);
 PJRT_Error* PJRT_Buffer_IsOnCpu(PJRT_Buffer_IsOnCpu_Args* args);
 PJRT_Error* PJRT_Buffer_ReadyEvent(PJRT_Buffer_ReadyEvent_Args* args);
 PJRT_Error* PJRT_Buffer_UnsafePointer(PJRT_Buffer_UnsafePointer_Args* args);
+PJRT_Error* PJRT_Buffer_IncreaseExternalReferenceCount(
+    PJRT_Buffer_IncreaseExternalReferenceCount_Args* args);
+PJRT_Error* PJRT_Buffer_DecreaseExternalReferenceCount(
+    PJRT_Buffer_DecreaseExternalReferenceCount_Args* args);
+PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
+    PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args* args);
 
 PJRT_Error* PJRT_CopyToDeviceStream_Destroy(
     PJRT_CopyToDeviceStream_Destroy_Args* args);
@@ -297,6 +318,8 @@ PJRT_Error* PJRT_TopologyDescription_PlatformVersion(
     PJRT_TopologyDescription_PlatformVersion_Args* args);
 PJRT_Error* PJRT_TopologyDescription_GetDeviceDescriptions(
     PJRT_TopologyDescription_GetDeviceDescriptions_Args* args);
+PJRT_Error* PJRT_TopologyDescription_Serialize(
+    PJRT_TopologyDescription_Serialize_Args* args);
 
 PJRT_Error* PJRT_Compile(PJRT_Compile_Args* args);
 
@@ -395,6 +418,7 @@ constexpr PJRT_Api CreatePjrtApi(
       /*PJRT_Client_LookupDevice=*/pjrt::PJRT_Client_LookupDevice,
       /*PJRT_Client_LookupAddressableDevice=*/
       pjrt::PJRT_Client_LookupAddressableDevice,
+      /*PJRT_Client_AddressableMemories=*/pjrt::PJRT_Client_AddressableMemories,
       /*PJRT_Client_Compile=*/pjrt::PJRT_Client_Compile,
       /*PJRT_Client_DefaultDeviceAssignment=*/
       pjrt::PJRT_Client_DefaultDeviceAssignment,
@@ -423,6 +447,8 @@ constexpr PJRT_Api CreatePjrtApi(
       /*PJRT_Memory_Kind=*/pjrt::PJRT_Memory_Kind,
       /*PJRT_Memory_DebugString=*/pjrt::PJRT_Memory_DebugString,
       /*PJRT_Memory_ToString=*/pjrt::PJRT_Memory_ToString,
+      /*PJRT_Memory_AddressableByDevices=*/
+      pjrt::PJRT_Memory_AddressableByDevices,
 
       /*PJRT_Executable_Destroy=*/pjrt::PJRT_Executable_Destroy,
       /*PJRT_Executable_Name=*/pjrt::PJRT_Executable_Name,
@@ -451,11 +477,6 @@ constexpr PJRT_Api CreatePjrtApi(
       /*PJRT_Executable_DeserializeAndLoad=*/
       pjrt::PJRT_Executable_DeserializeAndLoad,
 
-      /*PJRT_SerializedExecutable_Destroy=*/
-      pjrt::PJRT_SerializedExecutable_Destroy,
-      /*PJRT_SerializedExecutable_Data=*/
-      pjrt::PJRT_SerializedExecutable_Data,
-
       /*PJRT_Buffer_Destroy=*/pjrt::PJRT_Buffer_Destroy,
       /*PJRT_Buffer_ElementType=*/pjrt::PJRT_Buffer_ElementType,
       /*PJRT_Buffer_Dimensions=*/pjrt::PJRT_Buffer_Dimensions,
@@ -477,6 +498,12 @@ constexpr PJRT_Api CreatePjrtApi(
       /*PJRT_Buffer_IsOnCpu=*/pjrt::PJRT_Buffer_IsOnCpu,
       /*PJRT_Buffer_ReadyEvent=*/pjrt::PJRT_Buffer_ReadyEvent,
       /*PJRT_Buffer_UnsafePointer=*/pjrt::PJRT_Buffer_UnsafePointer,
+      /*PJRT_Buffer_IncreaseExternalReferenceCount=*/
+      pjrt::PJRT_Buffer_IncreaseExternalReferenceCount,
+      /*PJRT_Buffer_DecreaseExternalReferenceCount=*/
+      pjrt::PJRT_Buffer_DecreaseExternalReferenceCount,
+      /*PJRT_Buffer_OpaqueDeviceMemoryDataPointer=*/
+      pjrt::PJRT_Buffer_OpaqueDeviceMemoryDataPointer,
 
       /*PJRT_CopyToDeviceStream_Destroy=*/
       pjrt::PJRT_CopyToDeviceStream_Destroy,
@@ -498,8 +525,15 @@ constexpr PJRT_Api CreatePjrtApi(
       pjrt::PJRT_TopologyDescription_PlatformVersion,
       /*PJRT_TopologyDescription_GetDeviceDescriptions=*/
       pjrt::PJRT_TopologyDescription_GetDeviceDescriptions,
+      /*PJRT_TopologyDescription_Serialize=*/
+      pjrt::PJRT_TopologyDescription_Serialize,
 
       /*.PJRT_Compile=*/pjrt::PJRT_Compile,
+
+      // Always add new fields to the end of the struct.
+      // TODO(skyewm, jieying): Move fields below to their corresponding places
+      // after each major version bump.
+      /*PJRT_Buffer_Memory=*/pjrt::PJRT_Buffer_Memory,
   };
 }
 

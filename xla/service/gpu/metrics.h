@@ -39,6 +39,12 @@ void RecordLlvmToPtxDuration(uint64_t time_usecs);
 // Compiling PTX to cubin.
 void RecordPtxToCubinDuration(uint64_t time_usecs);
 
+// Counts compiled programs numbers.
+void IncrementCompiledProgramsCount();
+
+// Gets compiled programs numbers.
+int64_t GetCompiledProgramsCount();
+
 }  // namespace xla
 
 #endif  // XLA_SERVICE_GPU_METRICS_H_

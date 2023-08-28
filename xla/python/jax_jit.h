@@ -25,17 +25,14 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
+#include "absl/types/span.h"
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/ifrt/array.h"
-#include "xla/python/py_client.h"
 #include "xla/python/py_values.h"
 #include "xla/python/python_ref_manager.h"
 #include "xla/python/pytree.h"
 #include "xla/python/sharding.h"
-#include "xla/types.h"
-#include "xla/xla_data.pb.h"
 
 namespace jax {
 
@@ -57,6 +54,7 @@ struct JitState {
 
   std::optional<bool> disable_jit;
   std::optional<bool> enable_x64;
+  std::optional<bool> enable_memories;
 
   // Used to manually set the default device jax should use. May be unset even
   // in global state, indicating there is no manual override.
@@ -82,6 +80,7 @@ JitState& ThreadLocalJitState();
 // fallback to global state.
 bool GetDisableJit();
 bool GetEnableX64();
+
 // TODO(skyewm): return a C++ type when all JAX backends support a single C++
 // device interface
 std::optional<pybind11::object> GetDefaultDevice();
@@ -129,6 +128,7 @@ struct CallSignature {
   // This is not the case for PMAP, and is set to `nullptr`.
   xla::PjRtDevice* device = nullptr;
   bool jax_enable_x64;
+  bool jax_enable_memories = false;
 
   // For JIT on PJIT, we need to fallback to python whenever default_device
   // changes.

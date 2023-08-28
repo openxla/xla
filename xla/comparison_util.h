@@ -16,18 +16,20 @@ limitations under the License.
 #ifndef XLA_COMPARISON_UTIL_H_
 #define XLA_COMPARISON_UTIL_H_
 
-#include <cmath>
+#include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
-#include <type_traits>
 
+#include "absl/meta/type_traits.h"
+#include "absl/strings/string_view.h"
 #include "xla/primitive_util.h"
 #include "xla/statusor.h"
-#include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 

@@ -15,8 +15,12 @@ limitations under the License.
 
 #include "xla/shape_tree.h"
 
+#include <iterator>
 #include <memory>
+#include <utility>
+#include <vector>
 
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/test.h"
 #include "xla/xla_data.pb.h"

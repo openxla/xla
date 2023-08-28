@@ -1,3 +1,4 @@
+load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_py_proto_library")
 
@@ -47,18 +48,19 @@ xla_py_proto_library(
     deps = ["//xla:xla_data_proto"],
 )
 
-py_library(
+py_strict_library(
     name = "runner",
     testonly = True,
     srcs = ["runner.py"],
     deps = [
         ":runner_proto_py",
-        "//xla/python:xla_client",
+        "//third_party/py/numpy",
+        "//xla:xla_data_proto_py",
     ],
 )
 
 # copybara:uncomment_begin(b/254857628)
-# py_test(
+# py_strict_test(
 #     name = "testlib_runner_test",
 #     size = "small",
 #     srcs = ["testlib_runner_test.py"],

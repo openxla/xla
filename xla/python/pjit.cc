@@ -344,7 +344,7 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
         TF_ASSIGN_OR_RETURN(
             xla::DevicePutResult on_device,
             DevicePut(arg, executable.ifrt_loaded_executable()->client(),
-                      data_device, options));
+                      data_device, options, xla::ifrt::MemoryKind()));
 
         num_args_arrays.push_back(std::move(on_device.ifrt_array));
         if (on_device.owning_pybuffer) {
@@ -629,6 +629,7 @@ xla::Status PjitFunction::UpdateArgsSignature(
 
   arguments.signature.default_device = GetDefaultDevice();
   arguments.signature.jax_enable_x64 = jax_enable_x64;
+  arguments.signature.jax_enable_memories = GetEnableMemories();
 
   auto& dynamic_arg_signatures = arguments.signature.dynamic_arg_signatures;
   dynamic_arg_signatures.reserve(arguments.flat_dynamic_args.size());

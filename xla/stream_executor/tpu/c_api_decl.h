@@ -342,6 +342,7 @@ typedef struct XLA_HloModule {
 } XLA_HloModule;
 
 typedef struct XLA_TransferManager XLA_TransferManager;
+typedef struct XLA_TpuMeshState XLA_TpuMeshState;
 
 typedef struct XLA_ComputationPlacer XLA_ComputationPlacer;
 
@@ -352,6 +353,7 @@ typedef struct SE_TpuTopology SE_TpuTopology;
 typedef struct SE_TpuTopology_Core SE_TpuTopology_Core;
 typedef struct SE_TpuTopology_Core SE_TpuTopology_Host;
 
+typedef struct OpaqueTransferManagerImpl OpaqueTransferManagerImpl;
 typedef struct SE_OutsideCompilationParams SE_OutsideCompilationParams;
 
 #ifdef __cplusplus

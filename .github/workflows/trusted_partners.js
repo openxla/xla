@@ -53,7 +53,7 @@ const get_email_domain = async ({github, username}) => {
 const filter_action = async ({github, context, domain}) => {
   const labels = ['kokoro:force-run'];
 
-  let assignees = ['xla-rotation'];
+  let assignees = ['radhakrishnaba', 'xla-rotation'];
   const title =
       context.payload.pull_request && context.payload.pull_request.title;
   const lowercased_title = (title || '').toLowerCase();

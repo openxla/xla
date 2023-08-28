@@ -3203,8 +3203,7 @@ ENTRY entry {
                           ParseAndReturnVerifiedModule(hlo_string));
   CopyInsertion copy_insertion(nullptr,
                                /*use_region_based_live_range_analysis=*/-1);
-  SequentialHloOrdering ordering(module->schedule());
-  ASSERT_IS_OK(copy_insertion.RemoveUnnecessaryCopies(&ordering, module.get()));
+  ASSERT_IS_OK(copy_insertion.RemoveUnnecessaryCopies(module.get()));
   auto while_1 = FindInstruction(module.get(), "while.1");
   EXPECT_THAT(while_1, op::While(op::Tuple(op::Copy())));
 }
@@ -3580,13 +3579,6 @@ ENTRY main {
 TEST_F(CopyInsertionTest, RegionAnalysisNoCopyOfAddOutputInsideWhileBody) {
   const char* const kModuleString = R"(
 HloModule while_aliasing
-
-add {
-  param_0 = f32[1,128] parameter(0)
-  param_1 = f32[1,128] parameter(1)
-  ROOT add = f32[1,128] add(param_0, param_1)
-}
-
 condition {
   input_tuple = (f32[1,128], f32[1,128], pred[]) parameter(0)
   ROOT cond = pred[] get-tuple-element(input_tuple), index=2
@@ -3609,8 +3601,7 @@ ENTRY main {
   param_1 = f32[1,128] parameter(1)
   param_2 = pred[] parameter(2)
   tuple = (f32[1,128], f32[1,128], pred[]) tuple(param_0, param_1, param_2)
-  while = (f32[1,128], f32[1,128], pred[]) while(tuple), condition=condition, body=body
-  ROOT %root = f32[1,128] get-tuple-element((f32[1,128], f32[1,128], pred[]) %while), index=1
+  ROOT while = (f32[1,128], f32[1,128], pred[]) while(tuple), condition=condition, body=body
 }
 )";
 

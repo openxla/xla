@@ -93,6 +93,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -168,6 +169,7 @@ xla_cc_test(
         "//xla/service:hlo_verifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
     ],
 )
@@ -271,5 +273,37 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
+    name = "whole_graph_manual_pass",
+    srcs = [
+        "whole_graph_manual_pass.cc",
+    ],
+    hdrs = [
+        "whole_graph_manual_pass.h",
+    ],
+    deps = [
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+    ],
+)
+
+xla_cc_test(
+    name = "whole_graph_manual_pass_test",
+    srcs = ["whole_graph_manual_pass_test.cc"],
+    deps = [
+        ":whole_graph_manual_pass",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:hlo_parser",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:hlo_verifier",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/lib/core:status_test_util",
     ],
 )

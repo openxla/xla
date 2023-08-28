@@ -15,26 +15,41 @@ limitations under the License.
 
 #include "xla/literal.h"
 
+#include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstdint>
+#include <functional>
 #include <limits>
-#include <memory>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"
 #include "absl/strings/match.h"
-#include "absl/strings/str_cat.h"
+#include "absl/types/span.h"
+#include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/array4d.h"
+#include "xla/index_util.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/test.h"
 #include "xla/types.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/float8.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/macros.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/test_benchmark.h"
 
 namespace xla {

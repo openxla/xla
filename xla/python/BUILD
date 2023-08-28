@@ -1,3 +1,4 @@
+load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
@@ -17,7 +18,7 @@ load(
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
-load("//xla:pytype.default.bzl", "pytype_library")
+load("//xla:pytype.default.bzl", "pytype_strict_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -33,10 +34,9 @@ package_group(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "xla_client",
     srcs = ["xla_client.py"],
-    pytype_srcs = ["xla_client.pyi"],
     srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
@@ -53,7 +53,7 @@ pyx_library(
     srcs = ["custom_call_for_test.pyx"],
 )
 
-py_test(
+py_strict_test(
     name = "xla_client_backend_independent_test",
     srcs = ["xla_client_backend_independent_test.py"],
     python_version = "PY3",
@@ -65,7 +65,7 @@ py_test(
     ] + xla_py_test_deps(),
 )
 
-py_library(
+py_strict_library(
     name = "xla_client_test",
     testonly = 1,
     srcs = ["xla_client_test.py"],
@@ -80,7 +80,7 @@ py_library(
     ],
 )
 
-py_test(
+py_strict_test(
     name = "xla_client_test_cpu",
     srcs = ["xla_client_test.py"],
     args = ["--backend=cpu"],
@@ -102,7 +102,7 @@ py_test(
     ] + xla_py_test_deps(),
 )
 
-py_test(
+py_strict_test(
     name = "weakref_lru_cache_test",
     srcs = ["weakref_lru_cache_test.py"],
     python_version = "PY3",
@@ -117,7 +117,7 @@ py_test(
     ] + xla_py_test_deps(),
 )
 
-py_test(
+py_strict_test(
     name = "xla_client_test_gpu",
     srcs = ["xla_client_test.py"],
     args = ["--backend=gpu"],
@@ -168,7 +168,7 @@ tsl_pybind_extension(
     ],
 )
 
-py_test(
+py_strict_test(
     name = "status_casters_test",
     srcs = ["status_casters_test.py"],
     main = "status_casters_test.py",
@@ -216,6 +216,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
+        "//xla/python/ifrt",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@pybind11",
@@ -499,11 +500,13 @@ cc_library(
         ":status_casters",
         "//xla/client:xla_computation",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_sharding_util",
+        "//xla/service:call_inliner",
         "//xla/service:custom_call_sharding_helper",
+        "//xla/service:hlo_pass_pipeline",
         "//xla/service/spmd:spmd_partitioner",
         "@pybind11",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -666,7 +669,7 @@ cc_library(
     ],
 )
 
-py_test(
+py_strict_test(
     name = "pytree_test",
     srcs = ["pytree_test.py"],
     python_version = "PY3",
@@ -872,6 +875,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":exceptions",
         ":py_client",
         ":status_casters",
         ":types",
@@ -934,18 +938,6 @@ config_setting(
     },
 )
 
-bool_flag(
-    name = "enable_tpu",
-    build_setting_default = True,
-)
-
-config_setting(
-    name = "tpu_enabled",
-    flag_values = {
-        ":enable_tpu": "True",
-    },
-)
-
 # If this flag is enabled, it sets RPATH on the xla_extension to values that are suitable for
 # finding NVIDIA's CUDA libraries when they are installed as pip packages.
 bool_flag(
@@ -973,16 +965,7 @@ cc_library(
 
 tsl_pybind_extension(
     name = "xla_extension",
-    srcs = [
-        "xla.cc",
-    ],
-    defines = select({
-        ":gpu_enabled": ["XLA_PYTHON_ENABLE_GPU=1"],
-        "//conditions:default": [],
-    }) + select({
-        ":tpu_enabled": ["XLA_PYTHON_ENABLE_TPU=1"],
-        "//conditions:default": [],
-    }),
+    srcs = ["xla_extension.cc"],
     linkopts = select({
         ":use_jax_cuda_pip_rpaths": [
             "-Wl,-rpath,$$ORIGIN/../nvidia/cuda_cupti/lib",
@@ -999,6 +982,30 @@ tsl_pybind_extension(
     ],
     pytype_srcs = glob(["xla_extension/*.pyi"]),
     visibility = ["//visibility:public"],
+    deps = [
+        ":xla_extension_library",
+        "@pybind11",
+    ],
+)
+
+cc_library(
+    name = "xla_extension_library",
+    srcs = [
+        "xla.cc",
+    ],
+    hdrs = [
+        "xla.h",
+    ],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    defines = select({
+        ":gpu_enabled": ["XLA_PYTHON_ENABLE_GPU=1"],
+        "//conditions:default": [],
+    }),
+    features = ["-use_header_modules"],
     deps = [
         ":custom_call_sharding",
         ":dlpack",
@@ -1036,11 +1043,13 @@ tsl_pybind_extension(
         "//xla/pjrt:tfrt_cpu_pjrt_client",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
+        "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/distributed:service",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
@@ -1058,12 +1067,6 @@ tsl_pybind_extension(
             ":gpu_plugin_deps",
         ],
         "//conditions:default": [],
-    }) + select({
-        ":tpu_enabled": [
-            "//xla/pjrt:tpu_client",
-            "//xla/stream_executor/tpu:tpu_initializer_framework_helper",
-        ],
-        "//conditions:default": [],
     }),
 )
 
@@ -1077,6 +1080,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",

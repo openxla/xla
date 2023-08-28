@@ -15,6 +15,13 @@ limitations under the License.
 
 #include "xla/shape_tree.h"
 
+#include <cstddef>
+#include <cstdint>
+
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+
 namespace xla {
 namespace internal {
 

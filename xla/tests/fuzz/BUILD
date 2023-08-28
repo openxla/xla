@@ -2,8 +2,20 @@ load("//xla/tests/fuzz:build_defs.bzl", "hlo_test")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
+cc_library(
+    name = "hlo_test_lib",
+    testonly = True,
+    srcs = ["hlo_test_lib.cc"],
+    deps = [
+        "//xla:error_spec",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/platform:env",
+    ],
+)
+
 hlo_test(
     name = "rand",
+    srcs = [],
     hlo_files = glob(
         include = ["rand_*.hlo"],
         exclude = [
@@ -15,4 +27,8 @@ hlo_test(
             "rand_000072.hlo",
         ],
     ),
+    deps = [
+        ":hlo_test_lib",
+        "@tsl//tsl/platform:test_main",
+    ],
 )

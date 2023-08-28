@@ -36,6 +36,11 @@ try:
 except ImportError:
   custom_call_for_test = None
 
+xla_client._xla.jax_jit.set_thread_local_state_initialization_callback(
+    lambda: None
+)
+xla_client._xla.jax_jit.global_state().enable_memories = False
+
 bfloat16 = xla_client.bfloat16
 float8_e4m3fn = xla_client.float8_e4m3fn
 float8_e4m3fnuz = xla_client.float8_e4m3fnuz
@@ -2215,6 +2220,19 @@ def TestFactory(xla_backend,
       for device in self.backend.local_devices():
         self.assertEqual(device.platform, self.backend.platform)
 
+    def testLocalHardwareId(self):
+      for device in self.backend.devices():
+        local_hardware_id = device.local_hardware_id
+        if local_hardware_id is not None:
+          self.assertGreaterEqual(local_hardware_id, 0)
+
+    def testLocalDeviceFromLocalHardwareId(self):
+      for device in self.backend.local_devices():
+        if device.local_hardware_id is not None:
+          lookup_device = self.backend.device_from_local_hardware_id(
+              device.local_hardware_id)
+          self.assertEqual(lookup_device, device)
+
     @unittest.skipIf(pathways, "not implemented")
     def testMemoryStats(self):
       for device in self.backend.local_devices():
@@ -2233,13 +2251,13 @@ def TestFactory(xla_backend,
           self.assertEqual(type(stats["largest_alloc_size"]), int)
           self.assertGreaterEqual(stats["largest_alloc_size"], 0)
 
-    @unittest.skipIf(pathways or pjrt_c_api, "not implemented")
+    @unittest.skipIf(pathways, "not implemented")
     def testMemory(self):
       for device in self.backend.local_devices():
         for memory in device.addressable_memories():
           self.assertEqual(memory.process_index, device.process_index)
           self.assertEqual(memory.platform, device.platform)
-          self.assertIn(device, memory.attached_devices())
+          self.assertIn(device, memory.addressable_by_devices())
           self.assertEqual(memory, device.memory(memory.kind))
 
   tests.append(DeviceTest)

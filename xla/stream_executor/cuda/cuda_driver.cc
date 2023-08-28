@@ -19,6 +19,7 @@ limitations under the License.
 #include <stdlib.h>
 
 #include <cstdint>
+#include <cstring>
 #include <map>
 #include <set>
 #include <string>
@@ -44,6 +45,7 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/stacktrace.h"
 #include "tsl/platform/static_threadlocal.h"
+#include "tsl/platform/status.h"
 #include "tsl/platform/threadpool.h"
 
 bool FLAGS_gpuexec_cuda_driver_inject_init_error = false;
@@ -468,7 +470,7 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
   VLOG(2) << "Create new CUDA graph";
   RETURN_IF_CUDA_RES_ERROR(cuGraphCreate(graph, /*flags=*/0),
                            "Failed to create CUDA graph");
-  VLOG(2) << "Created CUDA graph " << graph;
+  VLOG(2) << "Created CUDA graph " << *graph;
   return ::tsl::OkStatus();
 }
 
@@ -566,13 +568,18 @@ static std::string_view StreamCaptureModeToString(
 
 #if CUDA_VERSION >= 12000
   CUgraphExecUpdateResultInfo cu_result;
-  RETURN_IF_CUDA_RES_ERROR(cuGraphExecUpdate(exec, graph, &cu_result),
-                           "Failed to update CUDA graph");
+  memset(&cu_result, 0, sizeof(cu_result));
+  CUresult err_code = cuGraphExecUpdate(exec, graph, &cu_result);
   auto cu_result_enum = cu_result.result;
+  if (cu_result.errorFromNode) {
+    result->error_from_node = cu_result.errorFromNode;
+  }
+  if (cu_result.errorNode) {
+    result->error_node = cu_result.errorNode;
+  }
 #else
   CUgraphExecUpdateResult cu_result;
-  RETURN_IF_CUDA_RES_ERROR(cuGraphExecUpdate(exec, graph, nullptr, &cu_result),
-                           "Failed to update CUDA graph");
+  CUresult err_code = cuGraphExecUpdate(exec, graph, nullptr, &cu_result);
   auto cu_result_enum = cu_result;
 #endif  // CUDA_VERSION >= 12000
 
@@ -607,11 +614,12 @@ static std::string_view StreamCaptureModeToString(
       break;
   }
 
+  RETURN_IF_CUDA_RES_ERROR(err_code, "Failed to update CUDA graph");
   return ::tsl::OkStatus();
 }
 
 /* static */ tsl::Status GpuDriver::DestroyGraphExec(CUgraphExec exec) {
-  VLOG(2) << "Destroying CUDA executable graph" << exec;
+  VLOG(2) << "Destroying CUDA executable graph " << exec;
   RETURN_IF_CUDA_RES_ERROR(cuGraphExecDestroy(exec),
                            "Failed to destroy CUDA graph");
   return ::tsl::OkStatus();
@@ -647,6 +655,76 @@ static std::string_view StreamCaptureModeToString(
                            "Failed to check stream capturing status");
 
   return status == CU_STREAM_CAPTURE_STATUS_ACTIVE;
+}
+
+/* static */ tsl::Status GpuDriver::GraphAddKernelNode(
+    CUgraphNode* node, CUgraph graph, absl::Span<CUgraphNode> deps,
+    absl::string_view kernel_name, CUfunction function, unsigned int grid_dim_x,
+    unsigned int grid_dim_y, unsigned int grid_dim_z, unsigned int block_dim_x,
+    unsigned int block_dim_y, unsigned int block_dim_z,
+    unsigned int shared_mem_bytes, void** kernel_params, void** extra) {
+  VLOG(2) << "Add kernel node to a graph " << graph
+          << "; kernel: " << kernel_name << "; gdx: " << grid_dim_x
+          << " gdy: " << grid_dim_y << " gdz: " << grid_dim_z
+          << " bdx: " << block_dim_x << " bdy: " << block_dim_y
+          << " bdz: " << block_dim_z << "; shmem: " << shared_mem_bytes
+          << "; deps: " << deps.size();
+
+  CUDA_KERNEL_NODE_PARAMS params;
+  memset(&params, 0, sizeof(params));
+
+  params.func = function;
+  params.gridDimX = grid_dim_x;
+  params.gridDimY = grid_dim_y;
+  params.gridDimZ = grid_dim_z;
+  params.blockDimX = block_dim_x;
+  params.blockDimY = block_dim_y;
+  params.blockDimZ = block_dim_z;
+  params.sharedMemBytes = shared_mem_bytes;
+  params.kernelParams = kernel_params;
+  params.extra = extra;
+
+  if (shared_mem_bytes != 0) {
+    RETURN_IF_CUDA_RES_ERROR(
+        cuFuncSetAttribute(function,
+                           CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                           shared_mem_bytes),
+        "Failed to set shared memory size");
+  }
+
+  RETURN_IF_CUDA_RES_ERROR(
+      cuGraphAddKernelNode(node, graph, deps.data(), deps.size(), &params),
+      "Failed to add kernel node to a CUDA graph");
+
+  return ::tsl::OkStatus();
+}
+
+/* static */ tsl::Status GpuDriver::GraphAddMemcpyD2DNode(
+    GpuContext* context, CUgraphNode* node, CUgraph graph,
+    absl::Span<CUgraphNode> deps, CUdeviceptr gpu_dst, CUdeviceptr gpu_src,
+    uint64_t size) {
+  VLOG(2) << "Add memcpy d2d node to a graph " << graph
+          << "; dst: " << reinterpret_cast<void*>(gpu_dst)
+          << "; src: " << reinterpret_cast<void*>(gpu_src) << "; size: " << size
+          << "; context: " << context->context() << "; deps: " << deps.size();
+
+  CUDA_MEMCPY3D params;
+  memset(&params, 0, sizeof(params));
+
+  params.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+  params.srcDevice = gpu_src;
+  params.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+  params.dstDevice = gpu_dst;
+  params.WidthInBytes = size;
+  params.Height = 1;
+  params.Depth = 1;
+
+  RETURN_IF_CUDA_RES_ERROR(
+      cuGraphAddMemcpyNode(node, graph, deps.data(), deps.size(), &params,
+                           context->context()),
+      "Failed to add memcpy d2d node to a CUDA graph");
+
+  return ::tsl::OkStatus();
 }
 
 /* static */ tsl::Status GpuDriver::LaunchKernel(

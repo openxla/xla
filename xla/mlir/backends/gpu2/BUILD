@@ -31,6 +31,7 @@ config_setting(
 #     name = "xla-gpu2-opt",
 #     srcs = ["xla-gpu2-opt.cc"],
 #     deps = [
+#         "//xla/mlir/backends/gpu2/ir:xla_gpu",
 #         "//xla/mlir/backends/gpu2/transforms:passes",
 #         "//xla/mlir_hlo:lhlo",
 #         "//xla/mlir_hlo:lhlo_gpu",
