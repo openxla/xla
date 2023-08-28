@@ -56,7 +56,8 @@ TEST(PjRtCApiHelperTest, ValidOptionNameAndPjRtValueTypeIndex) {
       {"int64", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
   });
   absl::flat_hash_map<std::string, xla::PjRtValueType> valid_map = {
-      {"string", "v1"}, {"int64", static_cast<int64_t>(1)}};
+      {"string", static_cast<std::string>("v1")},
+      {"int64", static_cast<int64_t>(1)}};
 
   TF_EXPECT_OK(ValidateCreateOptions(valid_map, expected));
 }

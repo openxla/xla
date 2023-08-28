@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -30,6 +29,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/primitive_util.h"
 #include "xla/status.h"
@@ -431,6 +431,10 @@ static xla::StatusOr<PJRT_NamedValue> ConvertToPjRtNamedValue(
     c_value.type = PJRT_NamedValue_Type::PJRT_NamedValue_kFloat;
     c_value.float_value = std::get<float>(value);
     c_value.value_size = 1;
+  } else if (std::holds_alternative<bool>(value)) {
+    c_value.type = PJRT_NamedValue_Type::PJRT_NamedValue_kBool;
+    c_value.bool_value = std::get<bool>(value);
+    c_value.value_size = 1;
   } else {
     return tsl::errors::InvalidArgument("Unexpected PjRtValueType: '",
                                         value.index(), " with name: ", name);
@@ -478,6 +482,10 @@ ConvertFromPjRtNamedValueList(PJRT_NamedValue* c_value_list, size_t list_size) {
         cpp_value_map[name] = xla::PjRtValueType(c_value.float_value);
         break;
       }
+      case PJRT_NamedValue_Type::PJRT_NamedValue_kBool: {
+        cpp_value_map[name] = xla::PjRtValueType(c_value.bool_value);
+        break;
+      }
       default: {
         LOG(FATAL) << "Unexpected PJRT_NamedValue type: " << c_value.type
                    << " with name: " << name;
@@ -491,16 +499,29 @@ ConvertFromPjRtNamedValueList(PJRT_NamedValue* c_value_list, size_t list_size) {
 static xla::StatusOr<PJRT_NamedValue_Type> GetPjrtNamedValueType(
     xla::PjRtValueType cpp_value) {
   if (std::holds_alternative<std::string>(cpp_value)) {
+    LOG(INFO) << "NAMED VALUE IS "
+              << "STRING";
     return PJRT_NamedValue_Type::PJRT_NamedValue_kString;
   }
   if (std::holds_alternative<int64_t>(cpp_value)) {
+    LOG(INFO) << "NAMED VALUE IS "
+              << "INT64_T";
     return PJRT_NamedValue_Type::PJRT_NamedValue_kInt64;
   }
   if (std::holds_alternative<std::vector<int64_t>>(cpp_value)) {
+    LOG(INFO) << "NAMED VALUE IS "
+              << "VECTOR<INT64_T>";
     return PJRT_NamedValue_Type::PJRT_NamedValue_kInt64List;
   }
   if (std::holds_alternative<float>(cpp_value)) {
+    LOG(INFO) << "NAMED VALUE IS "
+              << "FLOAT";
     return PJRT_NamedValue_Type::PJRT_NamedValue_kFloat;
+  }
+  if (std::holds_alternative<bool>(cpp_value)) {
+    LOG(INFO) << "NAMED VALUE IS "
+              << "BOOL";
+    return PJRT_NamedValue_Type::PJRT_NamedValue_kBool;
   }
   return tsl::errors::InvalidArgument("Unexpected PjRtValueType with index",
                                       cpp_value.index());
@@ -518,7 +539,11 @@ xla::Status ValidateCreateOptions(
     }
     TF_ASSIGN_OR_RETURN(PJRT_NamedValue_Type type,
                         GetPjrtNamedValueType(value));
+    LOG(INFO) << "DA TYPE index IS: " << static_cast<int>(type)
+              << " AND DA NAME IS: " << name
+              << " AND DA VAL IS: " << value.index();
     if (type != it->second) {
+      LOG(INFO) << "it->second index is: " << static_cast<int>(it->second);
       return tsl::errors::InvalidArgument(
           "Option passed to PJRT_Client_Create with name ", name,
           " has type index ", value.index(), " but expected type index is ",

@@ -145,6 +145,7 @@ typedef enum {
   PJRT_NamedValue_kInt64,
   PJRT_NamedValue_kInt64List,
   PJRT_NamedValue_kFloat,
+  PJRT_NamedValue_kBool,
 } PJRT_NamedValue_Type;
 
 // Named value for key-value pairs.
@@ -159,6 +160,7 @@ struct PJRT_NamedValue {
     int64_t int64_value;
     const int64_t* int64_array_value;
     float float_value;
+    bool bool_value;
   };
   // `value_size` is the number of elements for array/string and 1 for scalar
   // values.
