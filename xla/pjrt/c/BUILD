@@ -1,4 +1,4 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
@@ -63,6 +63,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -102,6 +103,9 @@ cc_library(
     srcs = ["pjrt_c_api_gpu_internal.cc"],
     hdrs = ["pjrt_c_api_gpu_internal.h"],
     visibility = ["//visibility:public"],
+    copts = [
+        "-fvisibility=hidden",
+    ],
     deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
@@ -125,10 +129,9 @@ cc_library(
     alwayslink = True,
 )
 
-cc_binary(
+xla_cc_binary(
     name = "gpu_plugin.so",
     linkshared = True,
-    linkstatic = True,
     linkopts = [
         "-Wl,--version-script,/home/jieying/xla/xla/pjrt/c/version_script.lds",
     	"-Wl,--no-undefined",
