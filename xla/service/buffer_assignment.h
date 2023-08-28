@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_BUFFER_ASSIGNMENT_H_
 #define XLA_SERVICE_BUFFER_ASSIGNMENT_H_
 
+#include <algorithm>
 #include <functional>
 #include <iosfwd>
 #include <memory>

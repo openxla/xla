@@ -136,6 +136,15 @@ TpuExecutableInterface::AllocateOutputMemoryWithInputReuse(
     se::DeviceMemoryBase& result_buffer = pair.second;
     int64_t allocation_bytes = shape_size_fn(ShapeUtil::GetSubshape(
         result.Result().on_device_shape(), result_index));
+    if (alias_config.OutputHasAlias(result_index)) {
+      // The input and output sharing the buffer may have different sizes, i.e.,
+      // input >= output. allocation_bytes should correspond to the larger size
+      // (input size).
+      const auto& alias = alias_config.GetAliasedParameter(result_index);
+      allocation_bytes = shape_size_fn(
+          ShapeUtil::GetSubshape((*arguments)[alias->parameter_number].shape(),
+                                 alias->parameter_index));
+    }
     total_result_buffer_bytes += allocation_bytes;
 
     // Return an InternalError if result_index is invalid. This avoids failing
