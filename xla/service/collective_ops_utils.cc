@@ -467,6 +467,22 @@ bool ReplicaGroupsOrthogonal(absl::Span<const ReplicaGroup> first,
   return true;
 }
 
+bool ReplicaGroupsEqual(absl::Span<const ReplicaGroup> first,
+                        absl::Span<const ReplicaGroup> second) {
+  if (first.size() != second.size() ||
+      first[0].replica_ids_size() != second[0].replica_ids_size()) {
+    return false;
+  }
+  for (int64_t i = 0; i < first.size(); ++i) {
+    for (int64_t j = 0; j < first[i].replica_ids_size(); ++j) {
+      if (first[i].replica_ids(j) != second[i].replica_ids(j)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool IsCollective(const HloInstruction* instruction) {
   switch (instruction->opcode()) {
     case HloOpcode::kAllReduce:
