@@ -60,7 +60,7 @@ package(
 #         "@llvm-project//mlir:Support",
 #         "@llvm-project//mlir:TensorDialect",
 #         "@llvm-project//mlir:Transforms",
-#     ] + if_gpu2(["//third_party/iree/llvm-external-projects/iree-dialects:IREEInputDialect"]),
+#     ] + if_gpu2(["//third_party/iree/llvm-external-projects/iree-dialects/google_internal:IREEInputDialect"]),
 # )
 #
 # copybara:uncomment_end_and_comment_begin

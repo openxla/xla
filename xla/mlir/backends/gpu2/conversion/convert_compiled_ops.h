@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_MLIR_BACKENDS_GPU2_CONVERSION_CONVERT_COMPILED_OPS_H_
 #define XLA_MLIR_BACKENDS_GPU2_CONVERSION_CONVERT_COMPILED_OPS_H_
 
-#include "third_party/iree/llvm-external-projects/iree-dialects/include/iree-dialects/Dialect/Input/InputOps.h"
+#include "iree-dialects/Dialect/Input/InputOps.h"
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
 #include "mlir/Transforms/DialectConversion.h"  // from @llvm-project
 #include "xla/mlir/backends/gpu2/conversion/de_bufferization.h"
