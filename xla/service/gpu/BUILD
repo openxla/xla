@@ -99,10 +99,9 @@ cc_library(
 cc_library(
     name = "gpu_types",
     hdrs = ["gpu_types.h"],
+    compatible_with = get_compatible_with_portable(),
     deps = [
-        "//xla:types",
         "//xla/stream_executor:device_description",
-        "@com_google_absl//absl/types:variant",
     ],
 )
 
@@ -247,6 +246,7 @@ cc_library(
     hdrs = ["gpu_device_info.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        ":gpu_types",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor:stream_executor_headers",
     ],
@@ -260,6 +260,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":gpu_device_info",
+        "//xla/stream_executor:device_description",
     ],
 )
 
@@ -270,6 +271,7 @@ xla_cc_test(
     deps = [
         ":gpu_device_info",
         ":gpu_device_info_for_tests",
+        ":gpu_types",
         "//xla/service:pattern_matcher_gmock",
         "//xla/stream_executor",
         "//xla/stream_executor:device_description",
@@ -3055,6 +3057,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:elemental_ir_emitter",
         "//xla/service:hlo_cost_analysis",
+        "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
     ],
