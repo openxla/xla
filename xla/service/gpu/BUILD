@@ -2399,6 +2399,55 @@ cc_library(
 )
 
 cc_library(
+    name = "fusion_pipeline",
+    srcs = ["fusion_pipeline.cc"],
+    hdrs = ["fusion_pipeline.h"],
+    deps = [
+        ":fusion_merger",
+        ":gpu_device_info",
+        ":gpu_hlo_cost_analysis",
+        ":gpu_shape_verifier",
+        ":horizontal_input_fusion",
+        ":horizontal_loop_fusion",
+        ":instruction_fusion",
+        ":multi_output_fusion",
+        ":priority_fusion",
+        ":variadic_op_splitter",
+        "//xla:xla_proto_cc",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service:hlo_cse",
+        "//xla/service:hlo_dce",
+        "//xla/service:hlo_pass",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:hlo_verifier",
+        "//xla/service:layout_assignment",
+        "//xla/stream_executor:device_description",
+    ],
+)
+
+cc_library(
+    name = "prepare_hlo_for_ir_emitting_pipeline",
+    srcs = ["prepare_hlo_for_ir_emitting_pipeline.cc"],
+    hdrs = ["prepare_hlo_for_ir_emitting_pipeline.h"],
+    deps = [
+        ":alias_passthrough_params",
+        ":copy_fusion",
+        ":gpu_sanitize_constant_names",
+        ":gpu_shape_verifier",
+        ":horizontal_loop_fusion",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:copy_insertion",
+        "//xla/service:hlo_dataflow_analysis",
+        "//xla/service:hlo_dce",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:hlo_verifier",
+        "//xla/service:layout_assignment",
+        "//xla/service:loop_schedule_linearizer",
+    ],
+)
+
+cc_library(
     name = "gpu_compiler",
     srcs = if_gpu_is_configured([
         "gpu_compiler.cc",
@@ -2586,7 +2635,11 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-    ]) + ["@tsl//tsl/lib/monitoring:counter"],
+    ]) + [
+        ":fusion_pipeline",
+        ":prepare_hlo_for_ir_emitting_pipeline",
+        "@tsl//tsl/lib/monitoring:counter",
+    ],
 )
 
 xla_cc_test(
