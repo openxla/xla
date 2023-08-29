@@ -193,6 +193,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_single_wave_autotuning(true);
   opts.set_xla_gpu_enable_reduction_epilogue_fusion(true);
   opts.set_xla_gpu_enable_nccl_clique_optimization(false);
+  opts.set_xla_gpu_enable_while_loop_double_buffering(false);
+
   return opts;
 }
 
@@ -1266,6 +1268,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                     &DebugOptions::set_xla_gpu_enable_nccl_clique_optimization),
                 debug_options->xla_gpu_enable_nccl_clique_optimization(),
                 "Allow early return when acquiring NCCL cliques"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_while_loop_double_buffering",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_while_loop_double_buffering),
+      debug_options->xla_gpu_enable_while_loop_double_buffering(),
+      "Enable double buffering for while loop"));
+
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

@@ -2526,6 +2526,7 @@ cc_library(
         ":metrics",
         ":move_copy_to_users",
         ":multi_output_fusion",
+        ":test_double_buffer",
         ":priority_fusion",
         ":reduction_degenerate_dim_remover",
         ":reduction_dimension_grouper",
@@ -4442,5 +4443,28 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/lib/core:status_test_util",
+    ],
+)
+
+cc_library(
+    name = "test_double_buffer",
+    srcs = ["test_double_buffer.cc"],
+    hdrs = ["test_double_buffer.h"],
+    deps = [
+        ":gpu_device_info",
+        ":gpu_fusible",
+        ":gpu_types",
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:while_loop_analysis",
+        "//xla/service:fusion_node_indexing_evaluation",
+        "//xla/service:fusion_queue",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/meta:type_traits",
+        "@com_google_absl//absl/strings",
     ],
 )
