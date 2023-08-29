@@ -1188,7 +1188,6 @@ xla_test(
     backends = ["gpu"],
     shard_count = 50,
     tags = [
-        "no_rocm",
         "nozapfhahn",
         "optonly",
     ],
@@ -1270,7 +1269,6 @@ xla_test(
         "interpreter",
     ],
     shard_count = 40,
-    tags = ["no_rocm"],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
