@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/primitive_util.h"
+#include "xla/service/dump.h"
 #include "xla/service/gpu/gemm_rewriter_triton.h"
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -1472,7 +1473,11 @@ StatusOr<LaunchDimensions> TritonWrapper(
                                 device_info.shared_memory_per_block_optin));
 
   b.create<mt::ReturnOp>(loc);
-  VLOG(6) << llvm_ir::DumpToString(*triton_module);
+  if (DumpingEnabledForHloModule(*hlo_computation->parent())) {
+    DumpToFileInDirOrStdout(*hlo_computation->parent(), "triton_ir", "ttir",
+                            llvm_ir::DumpToString(*triton_module));
+  }
+
   CHECK(mlir::succeeded(mlir::verify(*triton_module)));
 
   // Compile Triton kernel to LLVM.

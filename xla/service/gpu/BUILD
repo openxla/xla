@@ -474,6 +474,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",
+        "//xla/service:dump",
         "//xla/service/gpu/llvm_gpu_backend",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",
