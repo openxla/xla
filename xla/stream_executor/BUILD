@@ -177,7 +177,7 @@ cc_library(
     hdrs = ["data_type.h"],
     deps = [
         ":dnn_proto_cc",
-        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )

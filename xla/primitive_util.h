@@ -29,8 +29,8 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/float8.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace primitive_util {

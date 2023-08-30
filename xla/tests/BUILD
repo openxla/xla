@@ -277,8 +277,8 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:bitmap",
-        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -1033,7 +1033,7 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client/lib:constants",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -1925,7 +1925,7 @@ xla_test(
         "//xla/stream_executor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
-        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -2079,7 +2079,7 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/stream_executor",
-        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:test",
     ],
 )

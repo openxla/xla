@@ -59,7 +59,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/gtl/map_util.h"
-#include "tsl/platform/float8.h"
+#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 

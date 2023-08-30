@@ -1015,7 +1015,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":bfloat16",
-        ":float8",
+        ":ml_dtypes",
         ":platform",
         ":tstring",
     ] + tf_platform_deps("types"),
@@ -1054,11 +1054,22 @@ cc_library(
 )
 
 cc_library(
-    name = "float8",
-    hdrs = ["float8.h"],
+    name = "ml_dtypes",
+    hdrs = ["ml_dtypes.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         "@ml_dtypes//:float8",
+        "@ml_dtypes//:int4",
+    ],
+)
+
+cc_library(
+    name = "float8",
+    hdrs = ["float8.h"],
+    compatible_with = get_compatible_with_portable(),
+    deprecation = "Please use ml_dtypes.",
+    deps = [
+        ":ml_dtypes",
     ],
 )
 

@@ -4,7 +4,7 @@ index ffa305c77..8ad22502a 100644
 +++ b/third_party/gpus/crosstool/cc_toolchain_config.bzl.tpl
 @@ -24,7 +24,7 @@ def all_assembly_actions():
      ]
- 
+
  def all_compile_actions():
 -    return [
 +    retur [
@@ -63,9 +63,9 @@ index 2cef23917..d362f8af9 100644
 +++ b/xla/literal.cc
 @@ -47,6 +47,7 @@ limitations under the License.
  #include "tsl/platform/errors.h"
- #include "tsl/platform/float8.h"
+ #include "tsl/platform/ml_dtypes.h"
  #include "tsl/platform/logging.h"
 +#include "tsl/platform/platform.h"
  #include "tsl/platform/mem.h"
  #include "tsl/util/byte_swap_array.h"
- 
+
