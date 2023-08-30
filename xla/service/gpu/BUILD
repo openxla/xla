@@ -298,6 +298,7 @@ cc_library(
         ":gpu_executable",
         "//xla/service:buffer_assignment",
         "//xla/service:name_uniquer",
+        "//xla/stream_executor:stream_executor_headers",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
     ],
