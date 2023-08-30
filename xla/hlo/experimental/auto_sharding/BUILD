@@ -248,6 +248,7 @@ xla_cc_test(
     srcs = ["auto_sharding_test.cc"],
     deps = [
         ":auto_sharding",
+        ":auto_sharding_option",
         ":auto_sharding_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
