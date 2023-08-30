@@ -543,6 +543,8 @@ def tsl_pybind_extension_opensource(
         data = [],
         defines = [],
         deprecation = None,
+        enable_stub_generation = False,  # @unused
+        additional_stubgen_deps = [],  # @unused
         features = [],
         licenses = None,
         linkopts = [],
