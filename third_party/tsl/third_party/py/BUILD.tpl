@@ -63,6 +63,19 @@ alias(
     actual = ":python_headers",
 )
 
+py_library(
+    name = "numpy",
+    srcs = ["tf_numpy_dummy.py"],
+    srcs_version = "PY3",
+)
+
+genrule(
+    name = "dummy",
+    outs = ["tf_numpy_dummy.py"],
+    cmd = "touch $@",
+    visibility = ["//visibility:private"],
+)
+
 cc_library(
     name = "numpy_headers",
     hdrs = [":numpy_include"],
