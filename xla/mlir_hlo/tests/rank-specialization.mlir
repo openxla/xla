@@ -123,7 +123,7 @@ func.func @add_mul(%arg0 : tensor<*xf32>, %arg1 : tensor<*xf32>,
 func.func @compare_const_like(%arg0 : tensor<*xf32>) -> tensor<*xi1> {
   // CHECK: %[[RES:.*]] = "chlo.rank_specialization_cluster"(%[[ARG0]]) ({
   // CHECK: ^bb0(%[[ARG1:.*]]: tensor<*xf32>):
-  // CHECK:   %[[ZERO:.*]] = "chlo.constant_like"(%[[ARG1]]) {value = 0.000000e+00 : f32} : (tensor<*xf32>) -> tensor<*xf32>
+  // CHECK:   %[[ZERO:.*]] = "chlo.constant_like"(%[[ARG1]]) <{value = 0.000000e+00 : f32}> : (tensor<*xf32>) -> tensor<*xf32>
   // CHECK:   %[[CMP_GT:.*]] = chlo.broadcast_compare %[[ARG1]], %[[ZERO]] {comparison_direction = #chlo<comparison_direction GT>} : (tensor<*xf32>, tensor<*xf32>) -> tensor<*xi1>
   // CHECK:   "chlo.rank_specialization_cluster_yield"(%[[CMP_GT]]) : (tensor<*xi1>) -> ()
   // CHECK: }) : (tensor<*xf32>) -> tensor<*xi1>
@@ -622,7 +622,7 @@ func.func @all_equal_shapes_inferrable(%arg0: tensor<*xf64>, %arg1 : tensor<*xf6
 func.func @relu_grad(%arg0: tensor<*xf32>, %arg1: tensor<*xf32>) -> tensor<*xf32> {
   // CHECK: %[[RES:.*]] = "chlo.rank_specialization_cluster"(%[[ARG1]], %[[ARG0]])
   // CHECK: ^bb0(%[[ARG1_:.*]]: tensor<*xf32>, %[[ARG0_:.*]]: tensor<*xf32>)
-  // CHECK:   %[[TMP0:.*]] = "chlo.constant_like"(%[[ARG0_]]) {value = 0.0{{.*}}e+00 : f32}
+  // CHECK:   %[[TMP0:.*]] = "chlo.constant_like"(%[[ARG0_]]) <{value = 0.0{{.*}}e+00 : f32}>
   // CHECK:   %[[TMP1:.*]] = mhlo.compare GT, %[[ARG0_]], %[[TMP0]]
   // CHECK:   %[[TMP2:.*]] = mhlo.select %[[TMP1]], %[[ARG1_]], %[[TMP0]]
   // CHECK:   "chlo.rank_specialization_cluster_yield"(%[[TMP2]])
@@ -642,7 +642,7 @@ func.func @relu_grad(%arg0: tensor<*xf32>, %arg1: tensor<*xf32>) -> tensor<*xf32
 // CHECK-SCF-DAG:   %[[FLAT_SHAPE:.*]] = tensor.from_elements %[[N]]
 // CHECK-SCF-DAG:   %[[FLAT0:.*]] = mhlo.dynamic_reshape %[[ARG0]], %[[FLAT_SHAPE]]
 // CHECK-SCF-DAG:   %[[FLAT1:.*]] = mhlo.dynamic_reshape %[[ARG1]], %[[FLAT_SHAPE]]
-// CHECK-SCF-DAG:   %[[ZERO:.*]] = "chlo.constant_like"(%[[FLAT0]]) {value = 0.0{{.*}}+00 : f32}
+// CHECK-SCF-DAG:   %[[ZERO:.*]] = "chlo.constant_like"(%[[FLAT0]]) <{value = 0.0{{.*}}+00 : f32}>
 // CHECK-SCF-DAG:   %[[PRED:.*]] = mhlo.compare GT, %[[FLAT0]], %[[ZERO]]
 // CHECK-SCF:       %[[UNSHAPED_RES:.*]] = mhlo.select %[[PRED]], %[[FLAT1]], %[[ZERO]]
 // CHECK-SCF-DAG:   %[[RES:.*]] = mhlo.dynamic_reshape %[[UNSHAPED_RES]], %[[S1]]
@@ -660,7 +660,7 @@ func.func @relu_grad(%arg0: tensor<*xf32>, %arg1: tensor<*xf32>) -> tensor<*xf32
   // CHECK:     %[[RES:.*]] = shape.assuming %[[CSTR_EQ]]
   // CHECK:       %[[INNER_RES:.*]] = "chlo.rank_specialization_cluster"(%[[ARG1]], %[[ARG0]])
   // CHECK:       ^bb0(%[[ARG1_:.*]]: tensor<*xf32>, %[[ARG0_:.*]]: tensor<*xf32>):
-  // CHECK-DAG:     %[[ZERO:.*]] = "chlo.constant_like"(%[[ARG0_]]) {value = 0.0{{.*}}+00 : f32}
+  // CHECK-DAG:     %[[ZERO:.*]] = "chlo.constant_like"(%[[ARG0_]]) <{value = 0.0{{.*}}+00 : f32}>
   // CHECK-DAG:     %[[PRED:.*]] = mhlo.compare GT, %[[ARG0_]], %[[ZERO]]
   // CHECK-DAG:     %[[INNER_INNER_RES:.*]] = mhlo.select %[[PRED]], %[[ARG1_]], %[[ZERO]]
   // CHECK:         "chlo.rank_specialization_cluster_yield"(%[[INNER_INNER_RES]])
@@ -694,7 +694,7 @@ func.func @relu_grad(%arg0: tensor<*xf32>, %arg1: tensor<*xf32>) -> tensor<*xf32
 // CHECK-SCF-DAG:     %[[FLAT_SHAPE:.*]] = tensor.from_elements %[[N]]
 // CHECK-SCF-DAG:     %[[FLAT0:.*]] = mhlo.dynamic_reshape %[[ARG0]], %[[FLAT_SHAPE]]
 // CHECK-SCF-DAG:     %[[FLAT1:.*]] = mhlo.dynamic_reshape %[[ARG1]], %[[FLAT_SHAPE]]
-// CHECK-SCF-DAG:     %[[ZERO:.*]] = "chlo.constant_like"(%[[FLAT0]]) {value = 0.0{{.*}}+00 : f32}
+// CHECK-SCF-DAG:     %[[ZERO:.*]] = "chlo.constant_like"(%[[FLAT0]]) <{value = 0.0{{.*}}+00 : f32}>
 // CHECK-SCF-DAG:     %[[PRED:.*]] = mhlo.compare GT, %[[FLAT0]], %[[ZERO]]
 // CHECK-SCF:         %[[UNSHAPED_RES:.*]] = mhlo.select %[[PRED]], %[[FLAT1]], %[[ZERO]]
 // CHECK-SCF-DAG:     %[[INNER_RES:.*]] = mhlo.dynamic_reshape %[[UNSHAPED_RES]], %[[S1]]

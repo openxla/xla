@@ -12,7 +12,7 @@
 // CHECK-LABEL: func.func @sparse_vecvec(
 // CHECK-SAME:    %[[ARG0:.*]]: tensor<10xf64, #sparse_tensor.encoding<{{{.*}}}>>,
 // CHECK-SAME:    %[[ARG1:.*]]: tensor<10xf64, #sparse_tensor.encoding<{{{.*}}}>>) -> tensor<f64> {
-// CHECK:         %[[DOT:.*]] = "mhlo.dot"(%[[ARG0]], %[[ARG1]]) {precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]} : (tensor<10xf64, #sparse_tensor.encoding<{{{.*}}}>>, tensor<10xf64, #sparse_tensor.encoding<{{{.*}}}>>) -> tensor<f64>
+// CHECK:         %[[DOT:.*]] = "mhlo.dot"(%[[ARG0]], %[[ARG1]]) <{precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]}> : (tensor<10xf64, #sparse_tensor.encoding<{{{.*}}}>>, tensor<10xf64, #sparse_tensor.encoding<{{{.*}}}>>) -> tensor<f64>
 // CHECK:         return %[[DOT]] : tensor<f64>
 // CHECK:       }
 //
@@ -34,7 +34,7 @@ func.func @sparse_vecvec(%arg0: tensor<10xf64, #SV>,
 // CHECK-LABEL: func.func @sparse_matvec(
 // CHECK-SAME:    %[[ARG0:.*]]: tensor<3x5xf64, #sparse_tensor.encoding<{{{.*}}}>>,
 // CHECK-SAME:    %[[ARG1:.*]]: tensor<5xf64, #sparse_tensor.encoding<{{{.*}}}>>) -> tensor<3xf64> {
-// CHECK:         %[[DOT:.*]] = "mhlo.dot"(%[[ARG0]], %[[ARG1]]) {precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]} : (tensor<3x5xf64, #sparse_tensor.encoding<{{{.*}}}>>, tensor<5xf64, #sparse_tensor.encoding<{{{.*}}}>>) -> tensor<3xf64>
+// CHECK:         %[[DOT:.*]] = "mhlo.dot"(%[[ARG0]], %[[ARG1]]) <{precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]}> : (tensor<3x5xf64, #sparse_tensor.encoding<{{{.*}}}>>, tensor<5xf64, #sparse_tensor.encoding<{{{.*}}}>>) -> tensor<3xf64>
 // CHECK:        return %[[DOT]] : tensor<3xf64>
 // CHECK:       }
 //
@@ -56,7 +56,7 @@ func.func @sparse_matvec(%arg0: tensor<3x5xf64, #CSR>,
 // CHECK-LABEL: func.func @sparse_matmat_1s(
 // CHECK-SAME:    %[[ARG0:.*]]: tensor<16x32xf64, #sparse_tensor.encoding<{{{.*}}}>>,
 // CHECK-SAME:    %[[ARG1:.*]]: tensor<32x64xf64>) -> tensor<16x64xf64> {
-// CHECK:         %[[DOT:.*]] = "mhlo.dot"(%[[ARG0]], %[[ARG1]]) {precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]} : (tensor<16x32xf64, #sparse_tensor.encoding<{{{.*}}}>>, tensor<32x64xf64>) -> tensor<16x64xf64>
+// CHECK:         %[[DOT:.*]] = "mhlo.dot"(%[[ARG0]], %[[ARG1]]) <{precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]}> : (tensor<16x32xf64, #sparse_tensor.encoding<{{{.*}}}>>, tensor<32x64xf64>) -> tensor<16x64xf64>
 // CHECK:         return %[[DOT]] : tensor<16x64xf64>
 // CHECK:       }
 //
@@ -78,7 +78,7 @@ func.func @sparse_matmat_1s(%arg0: tensor<16x32xf64, #CSR>,
 // CHECK-LABEL: func.func @sparse_matmat_as(
 // CHECK-SAME:    %[[ARG0:.*]]: tensor<16x32xf64, #sparse_tensor.encoding<{{{.*}}}>>,
 // CHECK-SAME:    %[[ARG1:.*]]: tensor<32x64xf64, #sparse_tensor.encoding<{{{.*}}}>>) -> tensor<16x64xf64, #sparse_tensor.encoding<{{{.*}}}>> {
-// CHECK:         %[[DOT:.*]] = "mhlo.dot"(%[[ARG0]], %[[ARG1]]) {precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]} : (tensor<16x32xf64, #sparse_tensor.encoding<{ lvlTypes = [ "compressed", "compressed" ] }>>, tensor<32x64xf64, #sparse_tensor.encoding<{ lvlTypes = [ "compressed", "compressed" ] }>>) -> tensor<16x64xf64, #sparse_tensor.encoding<{ lvlTypes = [ "compressed", "compressed" ] }>>
+// CHECK:         %[[DOT:.*]] = "mhlo.dot"(%[[ARG0]], %[[ARG1]]) <{precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]}> : (tensor<16x32xf64, #sparse_tensor.encoding<{ lvlTypes = [ "compressed", "compressed" ] }>>, tensor<32x64xf64, #sparse_tensor.encoding<{ lvlTypes = [ "compressed", "compressed" ] }>>) -> tensor<16x64xf64, #sparse_tensor.encoding<{ lvlTypes = [ "compressed", "compressed" ] }>>
 // CHECK:         return %[[DOT]] : tensor<16x64xf64, #sparse_tensor.encoding<{{{.*}}}>>
 // CHECK:       }
 //

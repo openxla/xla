@@ -305,7 +305,7 @@ func.func @reshape_integration(%arg0: tensor<512x512xf32>, %arg1: tensor<?x8x?x6
   %12 = "mhlo.reshape"(%11) : (tensor<1xi32>) -> tensor<i32>
   %13 = mhlo.multiply %10, %12 : tensor<i32>
   %14 = "mhlo.reshape"(%13) : (tensor<i32>) -> tensor<1xi32>
-  // CHECK:      Value info for %15 = "mhlo.concatenate"(%14, %0) {dimension = 0 : i64} : (tensor<1xi32>, tensor<1xi32>) -> tensor<2xi32>
+  // CHECK:      Value info for %15 = "mhlo.concatenate"(%14, %0) <{dimension = 0 : i64}> : (tensor<1xi32>, tensor<1xi32>) -> tensor<2xi32>
   // CHECK-NEXT:   s0 * s1 with
   // CHECK-NEXT:     s0 = <block argument> of type 'tensor<4xi32>' at index: 2[0]
   // CHECK-NEXT:     s1 = <block argument> of type 'tensor<4xi32>' at index: 2[2]

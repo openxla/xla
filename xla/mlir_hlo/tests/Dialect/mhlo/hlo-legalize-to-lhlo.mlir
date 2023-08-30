@@ -121,7 +121,7 @@ func.func @compare(%lhs: tensor<2x2xf32>, %rhs: tensor<2x2xf32>) -> tensor<2x2xi
   %result = "mhlo.compare"(%lhs, %rhs)
       {comparison_direction = #mhlo<comparison_direction EQ>}
       : (tensor<2x2xf32>, tensor<2x2xf32>) -> tensor<2x2xi1>
-  // CHECK: "lmhlo.compare"(%{{.*}}, %{{.*}}, %{{.*}}) {comparison_direction = #mhlo<comparison_direction EQ>}
+  // CHECK: "lmhlo.compare"(%{{.*}}, %{{.*}}, %{{.*}}) <{comparison_direction = #mhlo<comparison_direction EQ>}>
   func.return %result : tensor<2x2xi1>
 }
 
@@ -132,7 +132,7 @@ func.func @broadcast(%operand: tensor<5xf32>) -> tensor<10x5xf32> {
   %result = "mhlo.broadcast_in_dim"(%operand)
       {broadcast_dimensions = dense<1> : tensor<1xi64>}
         : (tensor<5xf32>) -> tensor<10x5xf32>
-  // CHECK: "lmhlo.broadcast_in_dim"(%{{.*}}, %{{.*}}) {broadcast_dimensions = dense<1> : tensor<1xi64>}
+  // CHECK: "lmhlo.broadcast_in_dim"(%{{.*}}, %{{.*}}) <{broadcast_dimensions = dense<1> : tensor<1xi64>}>
   func.return %result : tensor<10x5xf32>
 }
 
@@ -224,7 +224,7 @@ func.func @imag_dyn(%operand: tensor<?xcomplex<f32>>) -> tensor<?xf32> {
 func.func @iota(%dummy: tensor<?xf32>) -> tensor<10xi32> {
   %result = "mhlo.iota"()
       {iota_dimension = 0 : i64} : () -> tensor<10xi32>
-  // CHECK: "lmhlo.iota"(%{{.*}}) {iota_dimension = 0 : i64}
+  // CHECK: "lmhlo.iota"(%{{.*}}) <{iota_dimension = 0 : i64}>
   func.return %result : tensor<10xi32>
 }
 
@@ -457,7 +457,7 @@ func.func @tanh_dyn(%arg0: tensor<?x?xf32>) -> tensor<?x?xf32> {
 func.func @dot(%arg0: tensor<1024x1024xf32>) -> tensor<1024x1024xf32> {
 // CHECK-SAME: (%[[ARG0:.*]]: [[TYPE:.*]]) -> [[TYPE]]
 // CHECK-NEXT: %[[ALLOC:.*]] = memref.alloc
-//      CHECK: "lmhlo.dot"(%[[ARG0]], %[[ARG0]], %[[ALLOC]]) {
+//      CHECK: "lmhlo.dot"(%[[ARG0]], %[[ARG0]], %[[ALLOC]]) <{
 //      CHECK:  dot_dimension_numbers =
 //      CHECK-NOT:    lhs_batching_dimensions =
 //      CHECK-NOT:    rhs_batching_dimensions =
@@ -505,14 +505,15 @@ func.func @conv(%input: tensor<3x2x4x3xf32>, %filter : tensor<2x2x3x4xf32>)
 // CHECK-LABEL: func @reduce
 func.func @reduce(%arg0: tensor<1x8xf32>, %arg1: tensor<f32>) -> tensor<1xf32> {
   // CHECK: %[[OUT:.*]] = memref.alloc() : memref<1xf32>
-  // CHECK:  "lmhlo.reduce"(%{{.+}}, %{{.+}}, %[[OUT]]) ({
+  // CHECK:  "lmhlo.reduce"(%{{.+}}, %{{.+}}, %[[OUT]])
+  // CHECK-SAME: <{dimensions = dense<1> : tensor<1xi64>}> ({
   // CHECK:  ^bb0(%[[ARG1:.*]]: memref<f32>, %[[ARG2:.*]]: memref<f32>,
   // CHECK-SAME:  %[[ARG3:.*]]: memref<f32>):
   // CHECK:    %[[TMP:.*]] = memref.alloc() : memref<f32>
   // CHECK:    "lmhlo.add"(%[[ARG1]], %[[ARG2]], %[[TMP]])
   // CHECK:    "lmhlo.copy"(%[[TMP]], %[[ARG3]])
   // CHECK:    "lmhlo.terminator"() : () -> ()
-  // CHECK:  }) {dimensions = dense<1> : tensor<1xi64>}
+  // CHECK:  })
   // CHECK-SAME: : (memref<1x8xf32>, memref<f32>, memref<1xf32>) -> ()
   %0 = "mhlo.reduce"(%arg0, %arg1) ({
   ^bb0(%arg2: tensor<f32>, %arg3: tensor<f32>):
@@ -526,11 +527,12 @@ func.func @reduce(%arg0: tensor<1x8xf32>, %arg1: tensor<f32>) -> tensor<1xf32> {
 // -----
 
 // CHECK-LABEL: func @reduce_multiple_operand
-func.func @reduce_multiple_operand(%arg0: tensor<1x8xf32>, %arg1: tensor<1x8xi32>, %arg2: tensor<f32>, %arg3: tensor<i32>) -> 
+func.func @reduce_multiple_operand(%arg0: tensor<1x8xf32>, %arg1: tensor<1x8xi32>, %arg2: tensor<f32>, %arg3: tensor<i32>) ->
   (tensor<1xf32>, tensor<1xi32>) {
   // CHECK: %[[OUT_F:.*]] = memref.alloc() : memref<1xf32>
   // CHECK: %[[OUT_I:.*]] = memref.alloc() : memref<1xi32>
-  // CHECK: "lmhlo.reduce"(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[OUT_F]], %[[OUT_I]]) ({
+  // CHECK: "lmhlo.reduce"(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[OUT_F]], %[[OUT_I]])
+  // CHECK-SAME: <{dimensions = dense<1> : tensor<1xi64>}> ({
   // CHECK:  ^bb0(%[[ARG1:.*]]: memref<f32>, %[[ARG2:.*]]: memref<i32>, %[[ARG3:.*]]: memref<f32>, %[[ARG4:.*]]: memref<i32>,
   // CHECK-SAME:  %[[ARG5:.*]]: memref<f32>, %[[ARG6:.*]]: memref<i32>):
   // CHECK:    %[[TMP_OUT0:.*]] = memref.alloc() : memref<f32>
@@ -540,14 +542,14 @@ func.func @reduce_multiple_operand(%arg0: tensor<1x8xf32>, %arg1: tensor<1x8xi32
   // CHECK:    "lmhlo.copy"(%[[TMP_OUT0]], %[[ARG5]])
   // CHECK:    "lmhlo.copy"(%[[TMP_OUT1]], %[[ARG6]])
   // CHECK:    "lmhlo.terminator"() : () -> ()
-  // CHECK:  }) {dimensions = dense<1> : tensor<1xi64>}
+  // CHECK:  })
   // CHECK-SAME: : (memref<1x8xf32>, memref<1x8xi32>, memref<f32>, memref<i32>, memref<1xf32>, memref<1xi32>) -> ()
   %0:2 = "mhlo.reduce"(%arg0, %arg1, %arg2, %arg3) ({
   ^bb0(%arg4: tensor<f32>, %arg5: tensor<i32>, %arg6: tensor<f32>, %arg7: tensor<i32>):
     %1 = mhlo.add %arg4, %arg6 : tensor<f32>
     %2 = mhlo.add %arg5, %arg7 : tensor<i32>
     "mhlo.return"(%1, %2) : (tensor<f32>, tensor<i32>) -> ()
-  }) {dimensions = dense<1> : tensor<1xi64>} 
+  }) {dimensions = dense<1> : tensor<1xi64>}
     : (tensor<1x8xf32>, tensor<1x8xi32>, tensor<f32>, tensor<i32>) -> (tensor<1xf32>, tensor<1xi32>)
   func.return %0#0, %0#1 : tensor<1xf32>, tensor<1xi32>
 }
@@ -557,20 +559,21 @@ func.func @reduce_multiple_operand(%arg0: tensor<1x8xf32>, %arg1: tensor<1x8xi32
 // CHECK-LABEL: func @reduce_window
 func.func @reduce_window(%arg0: tensor<1x17x17x64xf32>, %arg1: tensor<f32>) -> tensor<1x8x8x64xf32> {
   // CHECK: %[[OUT:.*]] = memref.alloc() : memref<1x8x8x64xf32>
-  // CHECK:  "lmhlo.reduce_window"(%{{.+}}, %{{.+}}, %[[OUT]]) ({
+  // CHECK:  "lmhlo.reduce_window"(%{{.+}}, %{{.+}}, %[[OUT]])
+  // CHECK-SAME: <{window_dimensions = dense<[1, 3, 3, 1]> : tensor<4xi64>, window_strides = dense<[1, 2, 2, 1]> : tensor<4xi64>}> ({
   // CHECK:  ^bb0(%[[ARG1:.*]]: memref<f32>, %[[ARG2:.*]]: memref<f32>,
   // CHECK-SAME:  %[[ARG3:.*]]: memref<f32>):
   // CHECK:    %[[TMP:.*]] = memref.alloc() : memref<f32>
   // CHECK:    "lmhlo.add"(%[[ARG1]], %[[ARG2]], %[[TMP]])
   // CHECK:    "lmhlo.copy"(%[[TMP]], %[[ARG3]])
   // CHECK:    "lmhlo.terminator"() : () -> ()
-  // CHECK:  }) {window_dimensions = dense<[1, 3, 3, 1]> : tensor<4xi64>, window_strides = dense<[1, 2, 2, 1]> : tensor<4xi64>}
+  // CHECK:  })
   // CHECK-SAME: : (memref<1x17x17x64xf32>, memref<f32>, memref<1x8x8x64xf32>) -> ()
   %0 = "mhlo.reduce_window"(%arg0, %arg1) ( {
   ^bb0(%arg2: tensor<f32>, %arg3: tensor<f32>):  // no predecessors
     %1 = mhlo.add %arg2, %arg3 : tensor<f32>
     "mhlo.return"(%1) : (tensor<f32>) -> ()
-  }) {window_dimensions = dense<[1, 3, 3, 1]> : tensor<4xi64>, window_strides = dense<[1, 2, 2, 1]> : tensor<4xi64>} 
+  }) {window_dimensions = dense<[1, 3, 3, 1]> : tensor<4xi64>, window_strides = dense<[1, 2, 2, 1]> : tensor<4xi64>}
     : (tensor<1x17x17x64xf32>, tensor<f32>) -> tensor<1x8x8x64xf32>
   func.return %0 : tensor<1x8x8x64xf32>
 }
@@ -578,11 +581,12 @@ func.func @reduce_window(%arg0: tensor<1x17x17x64xf32>, %arg1: tensor<f32>) -> t
 // -----
 
 // CHECK-LABEL: func @reduce_window_multiple_operand
-func.func @reduce_window_multiple_operand(%arg0: tensor<1x17x17x64xf32>, %arg1: tensor<1x17x17x64xi32>, %arg2: tensor<f32>, %arg3: tensor<i32>) -> 
+func.func @reduce_window_multiple_operand(%arg0: tensor<1x17x17x64xf32>, %arg1: tensor<1x17x17x64xi32>, %arg2: tensor<f32>, %arg3: tensor<i32>) ->
   (tensor<1x8x8x64xf32>, tensor<1x8x8x64xi32>) {
   // CHECK: %[[OUT_F:.*]] = memref.alloc() : memref<1x8x8x64xf32>
   // CHECK: %[[OUT_I:.*]] = memref.alloc() : memref<1x8x8x64xi32>
-  // CHECK: "lmhlo.reduce_window"(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[OUT_F]], %[[OUT_I]]) ({
+  // CHECK: "lmhlo.reduce_window"(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[OUT_F]], %[[OUT_I]])
+  // CHECK-SAME: <{window_dimensions = dense<[1, 3, 3, 1]> : tensor<4xi64>, window_strides = dense<[1, 2, 2, 1]> : tensor<4xi64>}> ({
   // CHECK:  ^bb0(%[[ARG1:.*]]: memref<f32>, %[[ARG2:.*]]: memref<i32>, %[[ARG3:.*]]: memref<f32>, %[[ARG4:.*]]: memref<i32>,
   // CHECK-SAME:  %[[ARG5:.*]]: memref<f32>, %[[ARG6:.*]]: memref<i32>):
   // CHECK:    %[[TMP_OUT0:.*]] = memref.alloc() : memref<f32>
@@ -592,7 +596,7 @@ func.func @reduce_window_multiple_operand(%arg0: tensor<1x17x17x64xf32>, %arg1: 
   // CHECK:    "lmhlo.copy"(%[[TMP_OUT0]], %[[ARG5]])
   // CHECK:    "lmhlo.copy"(%[[TMP_OUT1]], %[[ARG6]])
   // CHECK:    "lmhlo.terminator"() : () -> ()
-  // CHECK:  }) {window_dimensions = dense<[1, 3, 3, 1]> : tensor<4xi64>, window_strides = dense<[1, 2, 2, 1]> : tensor<4xi64>}
+  // CHECK:  })
   // CHECK-SAME: : (memref<1x17x17x64xf32>, memref<1x17x17x64xi32>, memref<f32>, memref<i32>, memref<1x8x8x64xf32>, memref<1x8x8x64xi32>) -> ()
   %0:2 = "mhlo.reduce_window"(%arg0, %arg1, %arg2, %arg3) ( {
   ^bb0(%arg4: tensor<f32>, %arg5: tensor<i32>, %arg6: tensor<f32>, %arg7: tensor<i32>):
@@ -610,7 +614,7 @@ func.func @reduce_window_multiple_operand(%arg0: tensor<1x17x17x64xf32>, %arg1: 
 func.func @transpose(%operand: tensor<2x2xf32>) -> tensor<2x2xf32> {
   %result = "mhlo.transpose"(%operand) {permutation = dense<[1, 0]> : tensor<2xi64>}
               : (tensor<2x2xf32>) -> tensor<2x2xf32>
-  // CHECK: "lmhlo.transpose"(%{{.*}}, %{{.*}}) {permutation = dense<[1, 0]> : tensor<2xi64>}
+  // CHECK: "lmhlo.transpose"(%{{.*}}, %{{.*}}) <{permutation = dense<[1, 0]> : tensor<2xi64>}>
   func.return %result : tensor<2x2xf32>
 }
 
@@ -619,8 +623,9 @@ func.func @transpose(%operand: tensor<2x2xf32>) -> tensor<2x2xf32> {
 // CHECK-LABEL: func @custom_call
 // CHECK-SAME:([[ARG0:%.*]]: memref<2x2xf32>, [[ARG1:%.*]]: memref<2x3xf32>)
 func.func @custom_call(%arg0: tensor<2x2xf32>, %arg1: tensor<2x3xf32>) -> tensor<4x4xf16> {
-  // CHECK: "lmhlo.custom_call"([[ARG0]], [[ARG1]], %{{.*}}) ({
-  // CHECK-NEXT: }) {backend_config = "", call_target_name = "foo", has_side_effect = false, operandSegmentSizes = array<i32: 2, 1>}
+  // CHECK: "lmhlo.custom_call"([[ARG0]], [[ARG1]], %{{.*}})
+  // CHECK-SAME: <{backend_config = "", call_target_name = "foo", has_side_effect = false, operandSegmentSizes = array<i32: 2, 1>}> ({
+  // CHECK-NEXT: })
   %result = "mhlo.custom_call"(%arg0, %arg1)
               {backend_config = "", call_target_name = "foo", has_side_effect = false}
               : (tensor<2x2xf32>, tensor<2x3xf32>) -> tensor<4x4xf16>
@@ -632,8 +637,9 @@ func.func @custom_call(%arg0: tensor<2x2xf32>, %arg1: tensor<2x3xf32>) -> tensor
 // CHECK-LABEL: func @custom_call_multiout
 // CHECK-SAME:([[ARG0:%.*]]: memref<2x2xf32>, [[ARG1:%.*]]: memref<2x3xf32>)
 func.func @custom_call_multiout(%arg0: tensor<2x2xf32>, %arg1: tensor<2x3xf32>) -> tensor<4x4xf16> {
-  // CHECK: "lmhlo.custom_call"([[ARG0]], [[ARG1]], %{{.*}}, %{{.*}}) ({
-  // CHECK-NEXT: }) {backend_config = "", call_target_name = "foo", has_side_effect = false, operandSegmentSizes = array<i32: 2, 2>}
+  // CHECK: "lmhlo.custom_call"([[ARG0]], [[ARG1]], %{{.*}}, %{{.*}})
+  // CHECK-SAME: <{backend_config = "", call_target_name = "foo", has_side_effect = false, operandSegmentSizes = array<i32: 2, 2>}> ({
+  // CHECK-NEXT: })
   %temp:2 = "mhlo.custom_call"(%arg0, %arg1)
                    {backend_config = "", call_target_name = "foo", has_side_effect = false}
                    : (tensor<2x2xf32>, tensor<2x3xf32>) -> (tensor<4x4xf16>, tensor<4x4xf16>)
@@ -698,4 +704,3 @@ func.func @clamp_broadcast(%min: tensor<f32>, %value: tensor<4xf32>, %max: tenso
   %0 = "mhlo.clamp"(%min, %value, %max) : (tensor<f32>, tensor<4xf32>, tensor<f32>) -> tensor<4xf32>
   func.return %0 : tensor<4xf32>
 }
-

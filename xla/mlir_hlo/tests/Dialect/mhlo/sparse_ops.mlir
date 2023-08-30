@@ -207,7 +207,7 @@ func.func @sparse_mul_eltwise2(%arg0: tensor<10x20xf32>,
 // CHECK-LABEL: func @dot1(
 //  CHECK-SAME: %[[A:.*]]: tensor<4xf64, #{{.*}}>,
 //  CHECK-SAME: %[[B:.*]]: tensor<4xf64>) -> tensor<f64> {
-//       CHECK: %[[T:.*]] = "mhlo.dot_general"(%[[A]], %[[B]]) {{{.*}}} : (tensor<4xf64, #{{.*}}>, tensor<4xf64>) -> tensor<f64>
+//       CHECK: %[[T:.*]] = "mhlo.dot_general"(%[[A]], %[[B]]) <{{{.*}}}> : (tensor<4xf64, #{{.*}}>, tensor<4xf64>) -> tensor<f64>
 //       CHECK: return %[[T]] : tensor<f64>
 func.func @dot1(%arg0: tensor<4xf64, #SV>,
                 %arg1: tensor<4xf64>) -> tensor<f64> {
@@ -223,7 +223,7 @@ func.func @dot1(%arg0: tensor<4xf64, #SV>,
 // CHECK-LABEL: func @dot2(
 //  CHECK-SAME: %[[A:.*]]: tensor<4xf64>,
 //  CHECK-SAME: %[[B:.*]]: tensor<4xf64, #{{.*}}>) -> tensor<f64> {
-//       CHECK: %[[T:.*]] = "mhlo.dot_general"(%[[A]], %[[B]]) {{{.*}}} : (tensor<4xf64>, tensor<4xf64, #{{.*}}>) -> tensor<f64>
+//       CHECK: %[[T:.*]] = "mhlo.dot_general"(%[[A]], %[[B]]) <{{{.*}}}> : (tensor<4xf64>, tensor<4xf64, #{{.*}}>) -> tensor<f64>
 //       CHECK: return %[[T]] : tensor<f64>
 func.func @dot2(%arg0: tensor<4xf64>,
                 %arg1: tensor<4xf64, #SV>) -> tensor<f64> {
@@ -239,7 +239,7 @@ func.func @dot2(%arg0: tensor<4xf64>,
 // CHECK-LABEL: func @dot3(
 //  CHECK-SAME: %[[A:.*]]: tensor<4xf64, #{{.*}}>,
 //  CHECK-SAME: %[[B:.*]]: tensor<4xf64, #{{.*}}>) -> tensor<f64> {
-//       CHECK: %[[T:.*]] = "mhlo.dot_general"(%[[A]], %[[B]]) {{{.*}}} : (tensor<4xf64, #{{.*}}>, tensor<4xf64, #{{.*}}>) -> tensor<f64>
+//       CHECK: %[[T:.*]] = "mhlo.dot_general"(%[[A]], %[[B]]) <{{{.*}}}> : (tensor<4xf64, #{{.*}}>, tensor<4xf64, #{{.*}}>) -> tensor<f64>
 //       CHECK: return %[[T]] : tensor<f64>
 func.func @dot3(%arg0: tensor<4xf64, #SV>,
                 %arg1: tensor<4xf64, #SV>) -> tensor<f64> {
@@ -277,7 +277,7 @@ func.func @sparse_reduce(%arg0: tensor<10xi64, #SV>) -> tensor<i64> {
 
 // CHECK-LABEL: func @sparse_transpose(
 //  CHECK-SAME: %[[A:.*]]: tensor<100x100xf64, #{{.*}}>) -> tensor<100x100xf64, #{{.*}}> {
-//       CHECK: %[[T:.*]] = "mhlo.transpose"(%[[A]]) {{{.*}}} : (tensor<100x100xf64, #{{.*}}>) -> tensor<100x100xf64, #{{.*}}>
+//       CHECK: %[[T:.*]] = "mhlo.transpose"(%[[A]]) <{{{.*}}}> : (tensor<100x100xf64, #{{.*}}>) -> tensor<100x100xf64, #{{.*}}>
 //       CHECK: return %[[T]] : tensor<100x100xf64, #{{.*}}>
 func.func @sparse_transpose(%arg0: tensor<100x100xf64, #CSR>)
                                 -> tensor<100x100xf64, #DCSR> {

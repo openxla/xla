@@ -122,7 +122,7 @@ func.func @inner_reduction(%arg : tensor<3x4x5x6x7x8xf32>) -> tensor<3x4x7x8xf32
   // CHECK-SAME:     {{\[}}[0, 1], [2, 3], [4, 5]{{\]}}
   // CHECK-SAME:     : tensor<3x4x5x6x7x8xf32> into tensor<12x30x56xf32>
   // CHECK:      %[[CTED:.*]] = "mhlo.transpose"(%[[CED]])
-  // CHECK-SAME:     {permutation = dense<[1, 0, 2]> : tensor<3xi64>}
+  // CHECK-SAME:     <{permutation = dense<[1, 0, 2]> : tensor<3xi64>}>
   // CHECK-SAME:     : (tensor<12x30x56xf32>) -> tensor<30x12x56xf32>
   // CHECK:      %[[CTCED:.*]] = tensor.collapse_shape %[[CTED]]
   // CHECK-SAME:     {{\[}}[0], [1, 2]{{\]}}
@@ -151,7 +151,7 @@ func.func @non_consecutive_reduction(%arg : tensor<3x4x5x6x7x8xf32>)
   // CHECK-SAME:     {{\[}}[0, 1], [2, 3], [4, 5]{{\]}}
   // CHECK-SAME:     : tensor<3x4x5x6x7x8xf32> into tensor<12x30x56xf32>
   // CHECK:      %[[CTED:.*]] = "mhlo.transpose"(%[[CED]])
-  // CHECK-SAME:     {permutation = dense<[0, 2, 1]> : tensor<3xi64>}
+  // CHECK-SAME:     <{permutation = dense<[0, 2, 1]> : tensor<3xi64>}>
   // CHECK-SAME:     : (tensor<12x30x56xf32>) -> tensor<12x56x30xf32>
   // CHECK:      %[[CTCED:.*]] = tensor.collapse_shape %[[CTED]]
   // CHECK-SAME:     {{\[}}[0, 1], [2]{{\]}}
@@ -374,7 +374,7 @@ func.func @needs_transpose(%arg : tensor<10x11x12x13x14x15x16x17x18x19xf32>)
   // CHECK-SAME:     : tensor<10x11x12x13x14x15x16x17x18x19xf32>
   // CHECK-SAME:     into tensor<110x156x210x272x342xf32>
   // CHECK:      %[[CTED:.*]] = "mhlo.transpose"(%[[CED]])
-  // CHECK-SAME:     {permutation = dense<[1, 3, 0, 2, 4]> : tensor<5xi64>}
+  // CHECK-SAME:     <{permutation = dense<[1, 3, 0, 2, 4]> : tensor<5xi64>}>
   // CHECK-SAME:     : (tensor<110x156x210x272x342xf32>)
   // CHECK-SAME:     -> tensor<156x272x110x210x342xf32>
   // CHECK:      %[[CTCED:.*]] = tensor.collapse_shape %[[CTED]]
@@ -406,8 +406,8 @@ func.func @needs_transpose(%arg : tensor<10x11x12x13x14x15x16x17x18x19xf32>)
 // CHECK-ROW-RED-SAME:     : tensor<10x11x12x13x14x15x16x17x18x19xf32>
 // CHECK-ROW-RED-SAME:     into tensor<110x156x210x272x342xf32>
 // CHECK-ROW-RED:      %[[CTED:.*]] = "mhlo.transpose"(%[[CED]])
-// CHECK-ROW-RED-SAME:     {permutation = dense<[0, 2, 4, 1, 3]>
-// CHECK-ROW-RED-SAME:     : tensor<5xi64>} : (tensor<110x156x210x272x342xf32>)
+// CHECK-ROW-RED-SAME:     <{permutation = dense<[0, 2, 4, 1, 3]>
+// CHECK-ROW-RED-SAME:     : tensor<5xi64>}> : (tensor<110x156x210x272x342xf32>)
 // CHECK-ROW-RED-SAME:     -> tensor<110x210x342x156x272xf32>
 // CHECK-ROW-RED:      %[[CTCED:.*]] = tensor.collapse_shape %[[CTED]]
 // CHECK-ROW-RED-SAME:     {{\[}}[0, 1, 2], [3, 4]{{\]}}
@@ -447,7 +447,7 @@ func.func @needs_transpose_and_dynamic_reshape(
   // CHECK-SAME:     : tensor<?x11x12x13x14x15x16x17x18x?xf32>
   // CHECK-SAME:     into tensor<?x156x210x272x?xf32>
   // CHECK:      %[[CTED:.*]] = "mhlo.transpose"(%[[CED]])
-  // CHECK-SAME:     {permutation = dense<[1, 3, 0, 2, 4]> : tensor<5xi64>}
+  // CHECK-SAME:     <{permutation = dense<[1, 3, 0, 2, 4]> : tensor<5xi64>}>
   // CHECK-SAME:     : (tensor<?x156x210x272x?xf32>)
   // CHECK-SAME:     -> tensor<156x272x?x210x?xf32>
   // CHECK:      %[[CTCED:.*]] = tensor.collapse_shape %[[CTED]]
@@ -474,7 +474,7 @@ func.func @needs_transpose_and_dynamic_reshape(
 func.func @transpose_wo_collapse(%arg : tensor<2x3x4xf32>) -> tensor<3xf32> {
   // CHECK-DAG:  %[[C0:.*]] = mhlo.constant dense<0.000000e+00>
   // CHECK:      %[[TED:.*]] = "mhlo.transpose"(%[[ARG]])
-  // CHECK-SAME:     {permutation = dense<[0, 2, 1]> : tensor<3xi64>}
+  // CHECK-SAME:     <{permutation = dense<[0, 2, 1]> : tensor<3xi64>}>
   // CHECK-SAME:     : (tensor<2x3x4xf32>) -> tensor<2x4x3xf32>
   // CHECK:      %[[TCED:.*]] = tensor.collapse_shape %[[TED]]
   // CHECK-SAME:     {{\[}}[0, 1], [2]{{\]}}
