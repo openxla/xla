@@ -16,6 +16,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/numbers.h"
 #include "tsl/platform/errors.h"
 #if TENSORFLOW_USE_ROCM
@@ -27,6 +28,8 @@ limitations under the License.
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/python/callback.h"
 #include "xla/python/exceptions.h"
+#include "xla/service/custom_call_target_registry.h"
+#include "xla/service/platform_util.h"
 
 #if TENSORFLOW_USE_ROCM
 #define gpuSuccess hipSuccess
@@ -142,5 +145,9 @@ void XlaPythonGpuCallback(gpuStreamHandle stream, void** buffers,
     delete[] static_cast<char*>(temp_buffers[i]);
   }
 }
+
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
+    "xla_python_gpu_callback", &XlaPythonGpuCallback,
+    absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value()));
 
 }  // namespace xla

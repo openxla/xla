@@ -130,6 +130,7 @@ py_strict_test(
         "requires-gpu-nvidia",
     ],  # TODO(phawkins): This test passes, but requires --config=monolithic.
     deps = [
+        ":py_client_gpu",
         ":xla_client",
         ":xla_extension",
         "@absl_py//absl/flags",
@@ -317,9 +318,7 @@ cc_library(
         "py_host_callback.cc",
         "py_values.cc",
         "sharding.cc",
-    ] + if_cuda_or_rocm([
-        "py_client_gpu.cc",
-    ]),
+    ],
     hdrs = [
         "callback.h",
         "py_array.h",
@@ -332,17 +331,12 @@ cc_library(
         "py_values.h",
         "sharded_device_array.h",
         "sharding.h",
-    ] + if_cuda_or_rocm([
-        "py_client_gpu.h",
-    ]),
+    ],
     compatible_with = [],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
     features = ["-use_header_modules"],
     deps = [
         ":exceptions",
@@ -395,11 +389,41 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/python/lib/core:numpy",
-    ] + if_cuda([
-        "@local_config_cuda//cuda:cuda_headers",
-    ]) + if_rocm([
-        "@local_config_rocm//rocm:rocm_headers",
-    ]),
+    ],
+)
+
+cc_library(
+    name = "py_client_gpu",
+    srcs = [
+        "py_client_gpu.cc",
+    ],
+    hdrs = [
+        "py_client_gpu.h",
+    ],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    defines = if_rocm(
+        ["TENSORFLOW_USE_ROCM=1"],
+        ["GOOGLE_CUDA=1"],
+    ),
+    features = ["-use_header_modules"],
+    deps = [
+        ":exceptions",
+        ":py_client",
+        "//xla/service:custom_call_status",
+        "//xla/service:custom_call_target_registry",
+        "//xla/service:platform_util",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/strings",
+        "@pybind11",
+        "@tsl//tsl/platform:errors",
+    ] + if_rocm(
+        ["@local_config_rocm//rocm:rocm_headers"],
+        ["@local_config_cuda//cuda:cuda_headers"],
+    ),
 )
 
 cc_library(
@@ -960,6 +984,8 @@ cc_library(
         "//xla/service:gpu_plugin",
     ] + if_cuda_is_configured([
         "//xla/stream_executor:cuda_platform",
+    ]) + if_cuda_or_rocm([
+        ":py_client_gpu",
     ]),
 )
 
