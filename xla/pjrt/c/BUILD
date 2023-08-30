@@ -1,9 +1,9 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library", "cc_binary")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
@@ -63,6 +63,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -114,6 +115,9 @@ cc_library(
     srcs = ["pjrt_c_api_gpu_internal.cc"],
     hdrs = ["pjrt_c_api_gpu_internal.h"],
     visibility = ["//visibility:public"],
+    copts = [
+        "-fvisibility=hidden",
+    ],
     deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
@@ -122,15 +126,30 @@ cc_library(
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "@com_google_absl//absl/time",
     ],
+    alwayslink = True,
 )
 
 cc_library(
     name = "pjrt_c_api_gpu",
     srcs = ["pjrt_c_api_gpu.cc"],
     hdrs = ["pjrt_c_api_gpu.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":pjrt_c_api_gpu_internal",
         ":pjrt_c_api_hdrs",
+    ],
+    alwayslink = True,
+)
+
+xla_cc_binary(
+    name = "gpu_plugin.so",
+    linkshared = True,
+    linkopts = [
+        "-Wl,--version-script,/home/jieying/xla/xla/pjrt/c/version_script.lds",
+    	"-Wl,--no-undefined",
+    ],
+    deps = [
+        ":pjrt_c_api_gpu",
     ],
 )
 
