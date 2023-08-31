@@ -955,8 +955,11 @@ xla_test(
         ":hlo_test_base",
         ":test_macros_header",
         ":xla_internal_test_main",
+        "//xla:error_spec",
+        "//xla:literal",
         "//xla:status_macros",
         "//xla:test",
+        "@com_google_absl//absl/strings",
     ],
 )
 
