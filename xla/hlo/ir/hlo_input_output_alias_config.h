@@ -66,6 +66,7 @@ class HloInputOutputAliasConfig {
   };
 
   HloInputOutputAliasConfig() = default;
+  HloInputOutputAliasConfig(const HloInputOutputAliasConfig&) = default;
 
   explicit HloInputOutputAliasConfig(Shape output_shape)
       : alias_(std::move(output_shape)) {}

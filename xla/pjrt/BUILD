@@ -334,6 +334,8 @@ cc_library(
     hdrs = ["utils.h"],
     visibility = ["//xla:friends"],
     deps = [
+        ":pjrt_hlo_module_metadata",
+        ":pjrt_hlo_module_metadata_proto_cc",
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
@@ -442,6 +444,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -945,4 +948,49 @@ tf_proto_library(
     name = "execute_options_proto",
     srcs = ["execute_options.proto"],
     visibility = ["//visibility:public"],
+)
+
+tf_proto_library(
+    name = "pjrt_hlo_module_metadata_proto",
+    srcs = ["pjrt_hlo_module_metadata.proto"],
+    cc_api_version = 2,
+    protodeps = [
+        "//xla:xla_data_proto",
+        "//xla/service:hlo_proto",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "pjrt_hlo_module_metadata",
+    srcs = ["pjrt_hlo_module_metadata.cc"],
+    hdrs = ["pjrt_hlo_module_metadata.h"],
+    deps = [
+        ":pjrt_hlo_module_metadata_proto_cc",
+        "//third_party/protobuf:protobuf_lite",
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:computation_layout",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service:name_uniquer",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_hlo_module_metadata_test",
+    srcs = ["pjrt_hlo_module_metadata_test.cc"],
+    deps = [
+        ":pjrt_hlo_module_metadata",
+        "//xla/service:hlo_parser",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
 )
