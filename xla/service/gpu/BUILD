@@ -1985,6 +1985,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:errors",
