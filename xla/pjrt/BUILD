@@ -1,3 +1,4 @@
+# Placeholder: load py_proto_library
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load(

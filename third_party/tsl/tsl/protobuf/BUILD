@@ -1,3 +1,4 @@
+# Placeholder: load py_proto_library
 load(
     "//tsl:tsl.bzl",
     "if_google",
