@@ -18,12 +18,18 @@ limitations under the License.
 
 #include "xla/pjrt/c/pjrt_c_api.h"
 
+#if defined(_WIN32)
+#define PJRT_CAPI_EXPORT __declspec(dllexport)
+#else
+#define PJRT_CAPI_EXPORT __attribute__((visibility("default")))
+#endif  // _WIN32
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 // Does not pass ownership of returned PJRT_Api* to caller.
-const PJRT_Api* GetPjrtApi();
+PJRT_CAPI_EXPORT const PJRT_Api* GetPjrtApi();
 
 #ifdef __cplusplus
 }
