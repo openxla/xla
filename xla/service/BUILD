@@ -663,6 +663,7 @@ xla_cc_test(
         "sharding_propagation_test.cc",
     ],
     deps = [
+        ":hlo_dce",
         ":hlo_parser",
         ":sharding_propagation",
         "//xla:protobuf_util",
@@ -702,9 +703,11 @@ xla_cc_test(
         ":hlo_parser",
         ":sharding_remover",
         "//xla:status_macros",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -4746,6 +4749,7 @@ xla_cc_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:status_test_util",
     ],
 )
