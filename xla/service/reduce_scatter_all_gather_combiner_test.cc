@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_reduce_scatter_all_gather_combiner.h"
+#include "tensorflow/compiler/xla/service/reduce_scatter_all_gather_combiner.h"
 
 #include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
 #include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
 #include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
 #include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
+#include "tensorflow/compiler/xla/hlo/utils/hlo_matchers.h"
 #include "tensorflow/compiler/xla/service/hlo_parser.h"
 #include "tensorflow/compiler/xla/service/hlo_pass_pipeline.h"
 #include "tensorflow/compiler/xla/service/hlo_verifier.h"
@@ -29,7 +29,6 @@ limitations under the License.
 #include "tensorflow/tsl/lib/core/status_test_util.h"
 
 namespace xla {
-namespace gpu {
 namespace {
 
 namespace op = xla::testing::opcode_matchers;
@@ -55,24 +54,10 @@ class ReduceScatterAllGatherCombinerTest : public HloTestBase {
     return StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }
 
-  size_t AllGatherCount(std::unique_ptr<HloModule> &module) {
+  template <HloOpcode oc>
+  size_t CollectiveCount(std::unique_ptr<HloModule> &module) {
     return absl::c_count_if(module->entry_computation()->instructions(),
-                            [](const HloInstruction *inst) {
-                              return inst->opcode() == HloOpcode::kAllGather;
-                            });
-  }
-  size_t AllReduceCount(std::unique_ptr<HloModule> &module) {
-    return absl::c_count_if(module->entry_computation()->instructions(),
-                            [](const HloInstruction *inst) {
-                              return inst->opcode() == HloOpcode::kAllReduce;
-                            });
-  }
-  size_t ReduceScatterCount(std::unique_ptr<HloModule> &module) {
-    return absl::c_count_if(module->entry_computation()->instructions(),
-                            [](const HloInstruction *inst) {
-                              return inst->opcode() ==
-                                     HloOpcode::kReduceScatter;
-                            });
+                            HloPredicateIsOp<oc>);
   }
 };
 
@@ -101,33 +86,44 @@ add.1 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/true));
-  EXPECT_EQ(AllGatherCount(module), 0);
-  EXPECT_EQ(ReduceScatterCount(module), 0);
-  EXPECT_EQ(AllReduceCount(module), 2);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 0);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 0);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllReduce>(module), 2);
+}
+
+TEST_F(ReduceScatterAllGatherCombinerTest, IncompatibleProperties) {
+  absl::string_view hlo_string = R"(
+HloModule ReduceScatter
+
+add {
+  x = bf16[] parameter(0)
+  y = bf16[] parameter(1)
+  ROOT add = bf16[] add(x, y)
+}
+
+ENTRY main {
+param.1 = bf16[8,128,1024]{2,1,0} parameter(0)
+reduce-scatter.1 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=false, dimensions={1}, to_apply=add
+all-gather.1 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                               /*num_replicas=*/8,
+                                               /*num_partitions=*/1,
+                                               /*expect_change=*/false));
 }
 
 TEST_F(ReduceScatterAllGatherCombinerTest, ReduceScatterWithMoreThanOneUser) {
-  /* In the following pattern only the left side should be reduced as the right
-  reduce scatter has two children
+  /* The following pattern should stay untouched as the the ReduceScatters
+     have two users
 
-  Param              Param            Param
-    |                  |                |
-  ReduceScatter   ReduceScatter   ReduceScatter
-  |               |          \     /        |
-  AllGather       AllGather    Add      AllGather
-          \      /
-             add
-  ---------------------------------
-                TO
-  ---------------------------------
+      Param            Param
+        |                |
+    ReduceScatter   ReduceScatter
+    |          \     /        |
+    AllGather    Add      AllGather
 
-  Param              Param            Param
-  |
-  |               ReduceScatter   ReduceScatter
-  |               |         \     /         |
-  AllReduce       AllGather    Add      AllGather
-          \       /
-              add
   */
 
   absl::string_view hlo_string = R"(
@@ -142,28 +138,24 @@ add {
 ENTRY main {
 param.1 = bf16[8,128,1024]{2,1,0} parameter(0)
 param.2 = bf16[8,128,1024]{2,1,0} parameter(1)
-param.3 = bf16[8,128,1024]{2,1,0} parameter(2)
 reduce-scatter.1 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
 all-gather.1 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
 reduce-scatter.2 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.2), channel_id=9, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
 all-gather.2 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.2), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
-reduce-scatter.3 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.3), channel_id=9, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
-all-gather.3 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.3), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
 
 add.1 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
-add.2 = bf16[8,64,1024]{2,1,0} add(reduce-scatter.1, reduce-scatter.3)
+add.2 = bf16[8,64,1024]{2,1,0} add(reduce-scatter.1, reduce-scatter.2)
 }
 )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
-                                               /*expect_change=*/true));
-  EXPECT_EQ(AllGatherCount(module), 2);
-  EXPECT_EQ(ReduceScatterCount(module), 2);
-  EXPECT_EQ(AllReduceCount(module), 1);
+                                               /*expect_change=*/false));
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 2);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 2);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllReduce>(module), 0);
 }
 
 }  // namespace
-}  // namespace gpu
 }  // namespace xla

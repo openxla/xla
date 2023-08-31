@@ -2773,6 +2773,40 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "reduce_scatter_all_gather_combiner",
+    srcs = ["reduce_scatter_all_gather_combiner.cc"],
+    hdrs = ["reduce_scatter_all_gather_combiner.h"],
+    deps = [
+        ":collective_ops_utils",
+        ":hlo_pass",
+        ":pattern_matcher",
+        ":reduce_scatter_utils",
+        "//xla:executable_run_options",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+    ],
+)
+
+xla_cc_test(
+    name = "reduce_scatter_all_gather_combiner_test",
+    srcs = ["reduce_scatter_all_gather_combiner_test.cc"],
+    deps = [
+        ":reduce_scatter_all_gather_combiner",
+        ":hlo_parser",
+        ":hlo_pass_pipeline",
+        ":hlo_verifier",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
     name = "all_reduce_simplifier",
     srcs = ["all_reduce_simplifier.cc"],
     hdrs = ["all_reduce_simplifier.h"],

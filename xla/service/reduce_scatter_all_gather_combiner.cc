@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_reduce_scatter_all_gather_combiner.h"
+#include "xla/service/reduce_scatter_all_gather_combiner.h"
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/collective_ops_utils.h"
-#include "tensorflow/compiler/xla/service/hlo_query.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/hlo/utils/hlo_query.h"
+
 
 namespace xla {
-namespace gpu {
 
 StatusOr<bool> ReduceScatterAllGatherCombiner::Run(
     HloModule* module,
@@ -42,11 +42,13 @@ StatusOr<bool> ReduceScatterAllGatherCombiner::Run(
           !instruction->shape().IsArray()) {
         continue;
       }
-      auto* rs = Cast<HloReduceScatterInstruction>(instruction);
 
-      if (!rs->shape().IsArray() || rs->constrain_layout() ||
-          (rs->IsCrossModuleAllReduce() &&
-           !rs->GetModule()->config().use_spmd_partitioning())) {
+      auto* rs = Cast<HloReduceScatterInstruction>(instruction);
+      if (rs->constrain_layout()  ) {
+        VLOG(2) << " The layout is enforced by the XLA client: " << rs->ToString();
+        continue;
+      }
+      if (rs->GetModule()->config().use_spmd_partitioning()) {
         VLOG(2) << "Unsupported reduce-scatter: " << rs->ToString();
         continue;
       }
@@ -55,19 +57,6 @@ StatusOr<bool> ReduceScatterAllGatherCombiner::Run(
         VLOG(2) << " Should be at least rank-" << min_rank
                 << " excluding trivial dimensions " << rs->ToString();
         continue;
-      }
-      if (rs->replica_groups().size() > 1) {
-        const int64_t size = rs->replica_groups()[0].replica_ids_size();
-        absl::Span<const ReplicaGroup> rgs = rs->replica_groups();
-        const bool has_uniform_size = absl::c_all_of(
-            rgs.subspan(1, size - 1), [size](const ReplicaGroup& group) {
-              return group.replica_ids_size() == size;
-            });
-        if (!has_uniform_size) {
-          VLOG(2) << "Unsupported non-uniform replica group size "
-                  << rs->ToString();
-          continue;
-        }
       }
       if (rs->user_count() != 1) {
         // reduce-scatter Should not have more than 1 users
@@ -82,6 +71,18 @@ StatusOr<bool> ReduceScatterAllGatherCombiner::Run(
                 << user->ToString();
         continue;
       }
+
+      auto* ag = Cast<HloAllGatherInstruction>(user);
+      // Check whether the Reduce-Scatter and the following
+      // all-gather have matching properties.
+      if (rs->constrain_layout() != ag->constrain_layout() ||
+          rs->use_global_device_ids() != ag->use_global_device_ids() ||
+          !ReplicaGroupsEqual(rs->replica_groups(), ag->replica_groups())) {
+        VLOG(2) << "The Reduce-Scatter and All-gather ops are not compatible "
+                   "to merge. ";
+        continue;
+      }
+
       HloInstruction* source = rs->mutable_operand(0);
 
       std::optional<int64_t> channel_id;
@@ -102,9 +103,6 @@ StatusOr<bool> ReduceScatterAllGatherCombiner::Run(
       changed = true;
     }
   }
-
   return changed;
 }
-
-}  // namespace gpu
 }  // namespace xla

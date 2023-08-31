@@ -2314,19 +2314,6 @@ cc_library(
 )
 
 cc_library(
-    name = "gpu_reduce_scatter_all_gather_combiner",
-    srcs = ["gpu_reduce_scatter_all_gather_combiner.cc"],
-    hdrs = ["gpu_reduce_scatter_all_gather_combiner.h"],
-    deps = [
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_query",
-        "//xla/service:hlo_pass",
-        "//xla/service:reduce_scatter_utils",
-        "//xla/service:collective_ops_utils",
-    ],
-)
-
-cc_library(
     name = "gpu_reduce_scatter_creator",
     srcs = ["gpu_reduce_scatter_creator.cc"],
     hdrs = ["gpu_reduce_scatter_creator.h"],
@@ -2443,7 +2430,6 @@ cc_library(
         ":gpu_hlo_schedule",
         ":gpu_layout_assignment",
         ":gpu_reduce_scatter_creator",
-        ":gpu_reduce_scatter_all_gather_combiner",
         ":gpu_sanitize_constant_names",
         ":gpu_scatter_expander",
         ":gpu_shape_verifier",
@@ -3828,7 +3814,6 @@ test_suite(
         "//xla/service/gpu/tests:gpu_ldg_test",
         "//xla/service/gpu/tests:gpu_noalias_test",
         "//xla/service/gpu/tests:gpu_reduce_scatter_creator_test",
-        "//xla/service/gpu/tests:gpu_reduce_scatter_all_gather_combiner_test",
         "//xla/service/gpu/tests:gpu_spmd_e2e_compile_test",
         "//xla/service/gpu/tests:gpu_too_many_blocks_test",
         "//xla/service/gpu/tests:gpu_unrolling_test",

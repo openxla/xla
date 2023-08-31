@@ -13,13 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_GPU_REDUCE_SCATTER_ALL_GATHER_COMBINER_H_
-#define XLA_SERVICE_GPU_GPU_REDUCE_SCATTER_ALL_GATHER_COMBINER_H_
+#ifndef XLA_SERVICE_REDUCE_SCATTER_ALL_GATHER_COMBINER_H_
+#define XLA_SERVICE_REDUCE_SCATTER_ALL_GATHER_COMBINER_H_
 
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
+#include "xla/service/hlo_pass_interface.h"
 
 namespace xla {
-namespace gpu {
 
 // Transforms ReduceScatter - AllGather into AllReduce
 
@@ -34,7 +33,6 @@ class ReduceScatterAllGatherCombiner : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 };
 
-}  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_GPU_REDUCE_SCATTER_ALL_GATHER_COMBINER_H_
+#endif  // XLA_SERVICE_REDUCE_SCATTER_ALL_GATHER_COMBINER_H_
