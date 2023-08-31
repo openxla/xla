@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_all_gather_optimizer.h"
+#include "xla/service/gpu/gpu_all_gather_optimizer.h"
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_pipeline.h"
-#include "tensorflow/compiler/xla/service/hlo_verifier.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/hlo_pass_pipeline.h"
+#include "xla/service/hlo_verifier.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace gpu {
@@ -55,18 +55,10 @@ class GpuAllGatherOptimizerTest : public HloTestBase {
     return StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }
 
-  size_t AllGatherCount(std::unique_ptr<HloModule> &module) {
+  template <HloOpcode oc>
+  size_t CollectiveCount(std::unique_ptr<HloModule> &module) {
     return absl::c_count_if(module->entry_computation()->instructions(),
-                            [](const HloInstruction *inst) {
-                              return inst->opcode() == HloOpcode::kAllGather;
-                            });
-  }
-  size_t ReduceScatterCount(std::unique_ptr<HloModule> &module) {
-    return absl::c_count_if(module->entry_computation()->instructions(),
-                            [](const HloInstruction *inst) {
-                              return inst->opcode() ==
-                                     HloOpcode::kReduceScatter;
-                            });
+                            HloPredicateIsOp<oc>);
   }
 };
 
@@ -95,8 +87,8 @@ add.1 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/true));
-  EXPECT_EQ(AllGatherCount(module), 1);
-  EXPECT_EQ(ReduceScatterCount(module), 2);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 1);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 2);
 }
 
 TEST_F(GpuAllGatherOptimizerTest, MoreThanSingleUserForAllGather) {
@@ -128,8 +120,8 @@ add.2 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/false));
-  EXPECT_EQ(AllGatherCount(module), 3);
-  EXPECT_EQ(ReduceScatterCount(module), 3);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 3);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 3);
 }
 
 TEST_F(GpuAllGatherOptimizerTest, AllGatherWithOpInBetweenOnRightBranch) {
@@ -160,8 +152,8 @@ add.2 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.3)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/true));
-  EXPECT_EQ(AllGatherCount(module), 1);
-  EXPECT_EQ(ReduceScatterCount(module), 3);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 1);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 3);
 }
 
 TEST_F(GpuAllGatherOptimizerTest, AllGatherOneSided) {
@@ -190,8 +182,8 @@ add.2 = bf16[8,128,1024]{2,1,0} add(all-gather, add.1)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/false));
-  EXPECT_EQ(AllGatherCount(module), 1);
-  EXPECT_EQ(ReduceScatterCount(module), 1);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 1);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 1);
 }
 
 }  // namespace

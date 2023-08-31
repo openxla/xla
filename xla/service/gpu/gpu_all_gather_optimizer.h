@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_ALL_GATHER_OPTIMIZER_CREATOR_H_
 #define XLA_SERVICE_GPU_GPU_ALL_GATHER_OPTIMIZER_CREATOR_H_
 
-#include "tensorflow/compiler/xla/service/hlo_pass_interface.h"
+#include "xla/service/hlo_pass_interface.h"
 
 namespace xla {
 namespace gpu {

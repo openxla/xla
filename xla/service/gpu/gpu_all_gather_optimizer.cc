@@ -13,19 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/gpu/gpu_all_gather_optimizer.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instruction.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/service/collective_ops_utils.h"
-#include "tensorflow/compiler/xla/service/hlo_query.h"
-#include "tensorflow/compiler/xla/service/reduce_scatter_utils.h"
+#include "xla/service/gpu/gpu_all_gather_optimizer.h"
+
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/reduce_scatter_utils.h"
 
 namespace xla {
 namespace gpu {
-
+namespace {
 // Structure to keep track of the subgraph to optimize
 // "Left" and "Right" are conceptual. The initial
 // reduce scatter is always considered "left" and "right"
@@ -77,10 +78,10 @@ std::optional<AllGatherReduceScatterSpec> MatchReduceScatter(
     VLOG(2) << "all-gather user_count > 1 " << user->ToString();
     return std::nullopt;
   }
-  HloInstruction* allgatherLeft = user;
-  HloInstruction* binaryOp;
+  HloInstruction* all_gather_left = user;
+  HloInstruction* binary_op;
   user = user->users().front();
-  //the common node between the left and right branches
+  // the common node between the left and right branches
   // needs to be a binary op
   if (!HloOpcodeIsBinaryCommutative(user->opcode())) {
     VLOG(2) << "There is no binary op in the pipeline path, "
@@ -88,53 +89,53 @@ std::optional<AllGatherReduceScatterSpec> MatchReduceScatter(
             << user->ToString();
     return std::nullopt;
   }
-  binaryOp = user;  // the end of "left" side branch
-  HloInstruction* allgatherRight = (user->mutable_operand(0) == allgatherLeft)
+  binary_op = user;  // the end of "left" side branch
+  HloInstruction* all_gather_right = (user->mutable_operand(0) == all_gather_left)
                                        ? user->mutable_operand(1)
                                        : user->mutable_operand(0);
-  if (allgatherRight->opcode() != HloOpcode::kAllGather) {
+  if (all_gather_right->opcode() != HloOpcode::kAllGather) {
     VLOG(2) << "Binary op's right operand is not all-gather "
-            << allgatherRight->ToString();
+            << all_gather_right->ToString();
     return std::nullopt;
   }
   // right side all-gather is also subject to removal
   // and should not contain more than 1 users
-  if (allgatherRight->user_count() != 1) {
+  if (all_gather_right->user_count() != 1) {
     VLOG(2) << "right side all-gather user_count > 1 "
-            << allgatherRight->ToString();
+            << all_gather_right->ToString();
     return std::nullopt;
   }
-  HloInstruction* rightReduceScatter = allgatherRight->mutable_operand(0);
+  HloInstruction* right_reduce_scatter = all_gather_right->mutable_operand(0);
   
   // we need to traverse the right branch backwards in search of 
   // a reduce scatter collective
-  while (rightReduceScatter->opcode() != HloOpcode::kReduceScatter &&
-             rightReduceScatter->operand_count() > 0 ) {
-        rightReduceScatter = rightReduceScatter->mutable_operand(0);
+  while (right_reduce_scatter->opcode() != HloOpcode::kReduceScatter &&
+             right_reduce_scatter->operand_count() > 0 ) {
+        right_reduce_scatter = right_reduce_scatter->mutable_operand(0);
       }
 
-  if (rightReduceScatter->opcode() != HloOpcode::kReduceScatter) {
+  if (right_reduce_scatter->opcode() != HloOpcode::kReduceScatter) {
     VLOG(2)
         << "Binary op's right operand path doesn not include reduce scatter "
-        << rightReduceScatter->ToString();
+        << right_reduce_scatter->ToString();
     return std::nullopt;
   }
   if (!ReplicaGroupsEqual(rs->replica_groups(),
-                          rightReduceScatter->replica_groups())) {
+                          right_reduce_scatter->replica_groups())) {
     VLOG(2)
         << "Reduce-Scatters in two branches don't have similar replica groups"
-        << rightReduceScatter->ToString();
+        << right_reduce_scatter->ToString();
     return std::nullopt;
   }
   AllGatherReduceScatterSpec spec;
-  spec.all_gather_left = allgatherLeft;
-  spec.all_gather_right = allgatherRight;
-  spec.binary_op = binaryOp;
-  spec.right_source = allgatherRight->mutable_operand(0);
+  spec.all_gather_left = all_gather_left;
+  spec.all_gather_right = all_gather_right;
+  spec.binary_op = binary_op;
+  spec.right_source = all_gather_right->mutable_operand(0);
 
   return spec;
 }
-
+}
 StatusOr<bool> AllGatherOptimizer::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -156,7 +157,7 @@ StatusOr<bool> AllGatherOptimizer::Run(
       auto rs_spec = MatchReduceScatter(rs);
 
       if (!rs_spec) {
-        VLOG(2) << "Cannot match all-gather combining optimziation "
+        VLOG(2) << "Cannot match all-gather combining optimization "
                 << rs->ToString();
         continue;
       }
