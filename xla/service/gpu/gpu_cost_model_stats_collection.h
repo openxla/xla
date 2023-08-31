@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/gpu_performance_model.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/statusor.h"
@@ -37,7 +38,8 @@ class GpuCostModelStatsCollection : public HloModulePass {
   explicit GpuCostModelStatsCollection(
       const GpuDeviceInfo& d,
       const GpuHloCostAnalysis::Options& cost_analysis_options)
-      : device_info_(d), cost_analysis_(cost_analysis_options, &device_info_) {}
+      : device_info_(d),
+        performance_model_(cost_analysis_options, &device_info_) {}
 
   absl::string_view name() const override {
     return "gpu_cost_model_stats_collection";
@@ -50,7 +52,7 @@ class GpuCostModelStatsCollection : public HloModulePass {
 
  private:
   const GpuDeviceInfo device_info_;
-  GpuHloCostAnalysis cost_analysis_;
+  GpuPerformanceModel performance_model_;
 };
 
 }  // namespace gpu

@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/gpu_performance_model.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/statusor.h"
 
@@ -107,7 +108,7 @@ class GpuMultiOutputFusion : public HloModulePass {
 
  private:
   bool FuseSiblings(HloInstruction* parent, FusionInfoCache* fusion_info_cache,
-                    GpuHloCostAnalysis* cost_analysis);
+                    GpuPerformanceModel* performance_model);
 
   StatusOr<bool> DoMultiOutputFusion();
 

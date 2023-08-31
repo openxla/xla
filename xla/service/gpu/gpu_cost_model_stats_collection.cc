@@ -34,13 +34,12 @@ StatusOr<bool> GpuCostModelStatsCollection::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   // Scan all computations for fusion instructions.
   for (auto* computation : module->MakeComputationPostOrder()) {
-    TF_CHECK_OK(computation->Accept(&cost_analysis_));
+    TF_CHECK_OK(performance_model_.Accept(computation));
 
     for (auto* fusion_instr : computation->instructions()) {
       if (fusion_instr->opcode() != HloOpcode::kFusion) continue;
 
-      GpuPerformanceModel::RecordEstimatedRunTime(fusion_instr,
-                                                  &cost_analysis_);
+      performance_model_.RecordEstimatedRunTime(fusion_instr);
     }
   }
   return false;

@@ -62,7 +62,7 @@ class FusionInstructionMerger {
   HloCostAnalysis::ShapeSizeFunction shape_size_function_;
   // Many cheap checks can prevent fusion merging - postpone execution of full
   // HLO cost analysis of the computation so that it may be not needed at all.
-  std::optional<GpuHloCostAnalysis> cost_analysis_;
+  std::optional<GpuPerformanceModel> gpu_performance_model_;
   FusionInfoCache fusion_info_cache_;
   const GpuDeviceInfo& gpu_device_info_;
   bool changed_ = false;
@@ -96,7 +96,7 @@ Status FusionInstructionMerger::FuseIntoAllUsers(HloInstruction* producer) {
           /*producer=*/producer);
     }
 
-    TF_RETURN_IF_ERROR(cost_analysis_->RemoveInstruction(user));
+    TF_RETURN_IF_ERROR(gpu_performance_model_->RemoveInstruction(user));
 
     // Wrap consumers which are not fusions first.
     HloInstruction* consumer = user;
@@ -107,7 +107,7 @@ Status FusionInstructionMerger::FuseIntoAllUsers(HloInstruction* producer) {
     }
 
     consumer->MergeFusionInstruction(producer);
-    TF_RETURN_IF_ERROR(cost_analysis_->RevisitInstruction(consumer));
+    TF_RETURN_IF_ERROR(gpu_performance_model_->RevisitInstruction(consumer));
     fusion_info_cache_.Invalidate(consumer);
 
     if (dump_fusion_visualization_) {
@@ -122,7 +122,7 @@ Status FusionInstructionMerger::FuseIntoAllUsers(HloInstruction* producer) {
 
   CHECK_EQ(0, producer->user_count()) << producer->ToString();
   TF_RETURN_IF_ERROR(computation_->RemoveInstruction(producer));
-  TF_RETURN_IF_ERROR(cost_analysis_->RemoveInstruction(producer));
+  TF_RETURN_IF_ERROR(gpu_performance_model_->RemoveInstruction(producer));
   fusion_info_cache_.Invalidate(producer);
   VLOG(2) << "Merged fusion instruction: " << producer->name()
           << " into users { "
@@ -256,26 +256,28 @@ FusionDecision FusionInstructionMerger::ShouldFuse(HloInstruction* producer) {
     }
   }
 
-  if (!cost_analysis_) {
+  if (!gpu_performance_model_) {
     VLOG(2) << "Running full HLO cost analysis for " << computation_->name();
-    cost_analysis_.emplace(
+    gpu_performance_model_.emplace(
         GpuHloCostAnalysis::Options{shape_size_function_,
                                     /*per_second_rates=*/{},
                                     /*count_multiple_input_accesses=*/true},
         &gpu_device_info_);
-    TF_CHECK_OK(computation_->Accept(&cost_analysis_.value()));
+
+    TF_CHECK_OK(gpu_performance_model_->Accept(computation_));
   }
 
   for (const HloInstruction* user : producer->users()) {
-    if (cost_analysis_->ProducerConsumerMergedTooLarge(*producer, *user)) {
+    if (gpu_performance_model_->ProducerConsumerMergedTooLarge(*producer,
+                                                               *user)) {
       ++num_fail_inefficient_fusion_emitter_;
       return FusionDecision{} << "if merged with " << user->name()
                               << " will generate huge IR";
     }
   }
 
-  GpuPerformanceModel::RunTimes t = GpuPerformanceModel::EstimateRunTimes(
-      producer, &*cost_analysis_, producer->users());
+  GpuPerformanceModel::RunTimes t =
+      gpu_performance_model_->EstimateRunTimes(producer, producer->users());
   if (t.time_fused > t.time_unfused) {
     ++num_fail_slower_if_fused_;
     return "will execute slower if fused";

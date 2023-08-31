@@ -3188,6 +3188,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -3207,6 +3208,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:status",
     ],
 )
 

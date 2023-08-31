@@ -54,7 +54,7 @@ class GpuPerformanceModelTest : public HloTestBase {
                                        /*count_multiple_input_accesses=*/true};
   // The reference times in the test cases below are measured
   // on A6000 by profiling the execution of the HLOs.
-  GpuHloCostAnalysis analysis_{options_, &dev_info_};
+  GpuPerformanceModel performance_model_{options_, &dev_info_};
   GpuPerformanceModelTest() : HloTestBase() {}
 };
 
@@ -74,10 +74,9 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
   HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+  ASSERT_IS_OK(performance_model_.Accept(module->entry_computation()));
 
-  GpuPerformanceModel::RunTimes t =
-      GpuPerformanceModel::EstimateRunTimes(root, &analysis_);
+  GpuPerformanceModel::RunTimes t = performance_model_.EstimateRunTimes(root);
   // Dominated by the DRAM bandwidth.
   EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 57, 10);
 }
@@ -101,14 +100,13 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
   HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_IS_OK(root->Accept(&analysis_));
+  ASSERT_IS_OK(performance_model_.Accept(module->entry_computation()));
 
-  GpuPerformanceModel::RunTimes t =
-      GpuPerformanceModel::EstimateRunTimes(root, &analysis_);
+  GpuPerformanceModel::RunTimes t = performance_model_.EstimateRunTimes(root);
   // Dominated by the kernel launch overhead.
   EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 2, 1);
 
-  GpuPerformanceModel::RecordEstimatedRunTime(root, &analysis_);
+  performance_model_.RecordEstimatedRunTime(root);
   double recorded_cycles = root->backend_config<FusionBackendConfig>()
                                ->reification_cost()
                                .end_to_end_cycles();
@@ -134,14 +132,13 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
   HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_IS_OK(root->Accept(&analysis_));
+  ASSERT_IS_OK(performance_model_.Accept(module->entry_computation()));
 
-  GpuPerformanceModel::RunTimes t =
-      GpuPerformanceModel::EstimateRunTimes(root, &analysis_);
+  GpuPerformanceModel::RunTimes t = performance_model_.EstimateRunTimes(root);
   // Dominated by the DRAM bandwidth.
   EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 175, 30);
 
-  GpuPerformanceModel::RecordEstimatedRunTime(root, &analysis_);
+  performance_model_.RecordEstimatedRunTime(root);
   double recorded_cycles = root->backend_config<FusionBackendConfig>()
                                ->reification_cost()
                                .end_to_end_cycles();
@@ -169,10 +166,9 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
   HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_IS_OK(root->Accept(&analysis_));
+  ASSERT_IS_OK(performance_model_.Accept(module->entry_computation()));
 
-  GpuPerformanceModel::RunTimes t =
-      GpuPerformanceModel::EstimateRunTimes(root, &analysis_);
+  GpuPerformanceModel::RunTimes t = performance_model_.EstimateRunTimes(root);
   // Parameter 0 read is accelerated by L1 cache even though the total data
   // volume is the same as in the test LargeReadWrite above.
   EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 118, 12);
@@ -199,10 +195,9 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string));
   HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_IS_OK(root->Accept(&analysis_));
+  ASSERT_IS_OK(performance_model_.Accept(module->entry_computation()));
 
-  GpuPerformanceModel::RunTimes t =
-      GpuPerformanceModel::EstimateRunTimes(root, &analysis_);
+  GpuPerformanceModel::RunTimes t = performance_model_.EstimateRunTimes(root);
   // Parameter 0 read is accelerated by L2 cache (does not fit in L1).
   EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 123, 12);
 }
@@ -232,10 +227,9 @@ TEST_F(GpuPerformanceModelTest, UnusedParameter) {
   module->AddEntryComputation(b.Build());
 
   HloInstruction* root = module->entry_computation()->root_instruction();
-  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+  ASSERT_IS_OK(performance_model_.Accept(module->entry_computation()));
 
-  GpuPerformanceModel::RunTimes t =
-      GpuPerformanceModel::EstimateRunTimes(root, &analysis_);
+  GpuPerformanceModel::RunTimes t = performance_model_.EstimateRunTimes(root);
   EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 2, 1);
 }
 
