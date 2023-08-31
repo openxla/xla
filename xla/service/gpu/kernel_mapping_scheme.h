@@ -182,7 +182,8 @@ class ReductionCodegenInfo {
         first_reduce_(first_reduce) {
     if (num_partial_results > 1) {
       CHECK_EQ(num_partial_results,
-               mapping_scheme.GetTileSizeFor(TilingScheme::DimX));
+               mapping_scheme.GetTileSizeFor(TilingScheme::DimX) /
+                   mapping_scheme.GetNumThreadsFor(TilingScheme::DimX));
     }
   }
 
