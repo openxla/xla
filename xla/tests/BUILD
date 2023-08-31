@@ -820,6 +820,8 @@ xla_test(
 xla_test(
     name = "fft_test",
     srcs = ["fft_test.cc"],
+    # TODO(b/298435899): fix and re-enable
+    backend_tags = {"ghostfish_iss": ["broken"]},
     deps = [
         ":hlo_test_base",
         ":test_macros_header",
