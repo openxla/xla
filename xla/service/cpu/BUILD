@@ -529,7 +529,6 @@ cc_library(
         ":runtime_key_value_sort",
         ":runtime_matmul",
         ":runtime_matmul_acl",
-        ":runtime_matmul_mkl",
         ":runtime_pow",
         ":runtime_single_threaded_conv2d",
         ":runtime_single_threaded_conv3d",
@@ -1043,18 +1042,6 @@ cc_library(
 )
 
 cc_library(
-    name = "runtime_matmul_mkl",
-    srcs = ["runtime_matmul_mkl.cc"],
-    hdrs = ["runtime_matmul_mkl.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla:executable_run_options",
-        "@eigen_archive//:eigen3",
-    ] + mkl_deps(),
-)
-
-cc_library(
     name = "runtime_matmul_acl",
     srcs = ["runtime_matmul_acl.cc"],
     hdrs = ["runtime_matmul_acl.h"],
@@ -1249,7 +1236,6 @@ xla_cc_test(
         ":runtime_custom_call_status",
         ":runtime_matmul",
         ":runtime_matmul_acl",
-        ":runtime_matmul_mkl",
         ":runtime_single_threaded_matmul",
         "//xla:array2d",
         "//xla:types",
