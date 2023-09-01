@@ -20,7 +20,6 @@ limitations under the License.
 #include <cstdlib>
 #include <functional>
 #include <limits>
-#include <list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -76,6 +75,10 @@ CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo) {
       return {HloOpcode::kAsyncDone, HloOpcode::kAllGather};
     case HloOpcode::kCollectivePermuteDone:
       return {HloOpcode::kAsyncDone, HloOpcode::kCollectivePermute};
+    case HloOpcode::kCopyStart:
+      return {HloOpcode::kAsyncStart, HloOpcode::kCopy};
+    case HloOpcode::kCopyDone:
+      return {HloOpcode::kAsyncDone, HloOpcode::kCopy};
     default:
       return {hlo.opcode(), hlo.opcode()};
   }
@@ -130,6 +133,7 @@ bool AsyncTracker::IsSupportedAsyncDone(const HloInstruction& hlo) const {
       case HloOpcode::kAllGather:
       case HloOpcode::kAllReduce:
       case HloOpcode::kCollectivePermute:
+      case HloOpcode::kCopy:
       case HloOpcode::kReduceScatter:
         return true;
       default:
@@ -157,6 +161,7 @@ bool AsyncTracker::IsSupportedAsyncStart(const HloInstruction& hlo) const {
       case HloOpcode::kAllGather:
       case HloOpcode::kAllReduce:
       case HloOpcode::kCollectivePermute:
+      case HloOpcode::kCopy:
       case HloOpcode::kReduceScatter:
         return true;
       default:
@@ -179,6 +184,8 @@ ResourcesVector AsyncTracker::GetResourcesFromInstruction(
         return ResourceType::kAllToAll;
       case HloOpcode::kCollectivePermute:
         return ResourceType::kCollectivePermute;
+      case HloOpcode::kCopy:
+        return ResourceType::kCopy;
       case HloOpcode::kReduceScatter:
         return ResourceType::kReduceScatter;
       default:
@@ -320,6 +327,8 @@ void AsyncTracker::SetConcurrentResourceLimits(
       config_.all_gather_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAllReduce)] =
       config_.all_reduce_overlap_limit;
+  max_concurrent_resource[ResourceTypeToIndex(ResourceType::kCopy)] =
+      config_.copy_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kReduceScatter)] =
       config_.reduce_scatter_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kSendRecv)] =
@@ -349,6 +358,8 @@ absl::string_view AsyncTracker::GetResourceName(int64_t resource_type) const {
       return "kAllReduce";
     case ResourceTypeToIndex(ResourceType::kCollectivePermute):
       return "kCollectivePermute";
+    case ResourceTypeToIndex(ResourceType::kCopy):
+      return "kCopy";
     case ResourceTypeToIndex(ResourceType::kSendRecv):
       return "kSendRecv";
     case ResourceTypeToIndex(ResourceType::kSendHost):
@@ -1756,6 +1767,7 @@ LatencyHidingScheduler::LatencyHidingStatistics(
     kAllGather,
     kAllReduce,
     kCollectivePermute,
+    kCopy,
     kAllToAll,
     kReduceScatter,
     kSend,
@@ -1769,6 +1781,8 @@ LatencyHidingScheduler::LatencyHidingStatistics(
         return AsyncKind::kAllReduce;
       case HloOpcode::kCollectivePermute:
         return AsyncKind::kCollectivePermute;
+      case HloOpcode::kCopy:
+        return AsyncKind::kCopy;
       case HloOpcode::kAllToAll:
         return AsyncKind::kAllToAll;
       case HloOpcode::kReduceScatter:
@@ -1859,6 +1873,8 @@ LatencyHidingScheduler::LatencyHidingStatistics(
       wasted_time_per_collective[AsyncKind::kAllReduce],
       /*collective_permute_wasted_cycles=*/
       wasted_time_per_collective[AsyncKind::kCollectivePermute],
+      /*copy_wasted_cycles=*/
+      wasted_time_per_collective[AsyncKind::kCopy],
       /*all_to_all_wasted_cycles=*/
       wasted_time_per_collective[AsyncKind::kAllToAll],
       /*reduce_scatter_wasted_cycles=*/
@@ -1885,6 +1901,7 @@ std::string LatencyHidingScheduler::SchedulerStatisticsString(
                   sched_stats.all_gather_wasted_cycles +
                       sched_stats.all_reduce_wasted_cycles +
                       sched_stats.collective_permute_wasted_cycles +
+                      sched_stats.copy_wasted_cycles +
                       sched_stats.all_to_all_wasted_cycles +
                       sched_stats.reduce_scatter_wasted_cycles +
                       sched_stats.send_wasted_cycles +
@@ -1896,6 +1913,9 @@ std::string LatencyHidingScheduler::SchedulerStatisticsString(
                   sched_stats.all_gather_wasted_cycles, "\n");
   absl::StrAppend(&result, "Wasted cycles for collective-permute: ",
                   sched_stats.collective_permute_wasted_cycles, "\n");
+  absl::StrAppend(&result,
+                  "Wasted cycles for copy: ", sched_stats.copy_wasted_cycles,
+                  "\n");
   absl::StrAppend(&result, "Wasted cycles for all-to-all: ",
                   sched_stats.all_to_all_wasted_cycles, "\n");
   absl::StrAppend(&result, "Wasted cycles for reduce-scatter: ",

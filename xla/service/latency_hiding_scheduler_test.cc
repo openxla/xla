@@ -20,7 +20,6 @@ limitations under the License.
 #include <cstdlib>
 #include <functional>
 #include <iterator>
-#include <list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -2873,5 +2872,47 @@ TEST_F(LatencyHidingSchedulerTest, DepthPressureReduction) {
   const HloInstruction* g = FindInstruction(hlo_module.get(), "g");
   EXPECT_LT(PositionInVector(new_instruction_sequence, g),
             PositionInVector(new_instruction_sequence, f));
+}
+
+TEST_F(LatencyHidingSchedulerTest, CopyAsyncOverlapped) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY %module {
+  %param = f32[4]{0} parameter(0)
+  %constant = f32[4]{0} constant({1.0, 2.0, 3.0, 4.0})
+  %copy-start = (f32[4]{0:S(5)}, f32[4]{0}, u32[]) copy-start(param)
+  %copy-done = f32[4]{0:S(5)} copy-done(copy-start)
+  %copy-start.1 = (f32[4]{0}, f32[4]{0:S(5)}, u32[]) copy-start(copy-done)
+  %copy-done.1 = f32[4]{0} copy-done(copy-start.1)
+  %add = f32[4]{0} add(constant, constant)
+  %mul = f32[4]{0} multiply(add, constant)
+  ROOT %div = f32[4]{0} divide(mul, copy-done.1)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  HloSchedule& module_schedule = hlo_module->schedule();
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  HloComputation* entry_computation = hlo_module->entry_computation();
+  std::vector<HloInstruction*> original_instruction_sequence =
+      module_schedule.sequence(entry_computation).instructions();
+
+  EXPECT_TRUE(RunScheduler(hlo_module.get()).ok());
+  std::vector<HloInstruction*> new_instruction_sequence =
+      module_schedule.sequence(entry_computation).instructions();
+
+  if (VLOG_IS_ON(1)) {
+    for (auto* new_i : new_instruction_sequence) {
+      VLOG(1) << new_i->ToString();
+    }
+  }
+
+  EXPECT_LT(GetIndex(new_instruction_sequence, "copy-start.1"),
+            GetIndex(new_instruction_sequence, "add"));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "add"),
+            GetIndex(new_instruction_sequence, "mul"));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "mul"),
+            GetIndex(new_instruction_sequence, "copy-done.1"));
 }
 }  // namespace xla

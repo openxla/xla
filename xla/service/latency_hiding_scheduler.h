@@ -55,11 +55,12 @@ enum class ResourceType {
   kAllGather = 2,
   kAllReduce = 3,
   kCollectivePermute = 4,
-  kReduceScatter = 5,
-  kSendRecv = 6,
-  kSendHost = 7,
-  kRecvHost = 8,
-  kNumResources = 9,
+  kCopy = 5,
+  kReduceScatter = 6,
+  kSendRecv = 7,
+  kSendHost = 8,
+  kRecvHost = 9,
+  kNumResources = 10,
   kTargetDefinedResourcesBound = 10000,
 };
 
@@ -94,6 +95,7 @@ struct SchedulerConfig {
   int64_t all_to_all_overlap_limit = 1;
   int64_t all_gather_overlap_limit = 1;
   int64_t all_reduce_overlap_limit = 1;
+  int64_t copy_overlap_limit = 1;
   int64_t reduce_scatter_overlap_limit = 1;
   int64_t send_recv_overlap_limit = 1;
   int64_t send_recv_host_overlap_limit = 1;
@@ -842,6 +844,7 @@ class LatencyHidingScheduler : public HloModulePass {
     double all_gather_wasted_cycles = 0;
     double all_reduce_wasted_cycles = 0;
     double collective_permute_wasted_cycles = 0;
+    double copy_wasted_cycles = 0;
     double all_to_all_wasted_cycles = 0;
     double reduce_scatter_wasted_cycles = 0;
     double send_wasted_cycles = 0;
