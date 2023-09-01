@@ -17,8 +17,8 @@ limitations under the License.
 #define XLA_MLIR_RUNTIME_TRANSFORMS_SPECIALIZATION_H_
 
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/FunctionInterfaces.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/Interfaces/FunctionInterfaces.h"  // from @llvm-project
 #include "xla/runtime/arguments.h"
 #include "xla/runtime/constraints.h"
 #include "xla/runtime/symbolic_shape.h"
