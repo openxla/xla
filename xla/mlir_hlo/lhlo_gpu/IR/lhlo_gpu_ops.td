@@ -337,9 +337,9 @@ def LHLOGPU_fusedMHAOp : LHLOGPU_Op<"fMHA", [AttrSizedOperandSegments]> {
     I64ArrayAttr:$intermediate_tensor_dimensions,
     I64ArrayAttr:$intermediate_tensor_layout,
     F64Attr:$fmha_scale,
-    OptionalAttr<F64Attr>:$dropout_rate,
     FusedMhaDagSignatureAttr:$fused_mha_dag,
     FusedMHAAlgorithmConfigAttr:$algorithm_config,
+    OptionalAttr<F64Attr>:$dropout_rate,
     OptionalAttr<I64Attr>:$seed
     );
 }
@@ -363,9 +363,9 @@ def LHLOGPU_fusedMHABackwardOp : LHLOGPU_Op<"fMHABackward", [AttrSizedOperandSeg
     MHLO_DotDimensionNumbers:$bmm2_grad_gemm1_dot_dimension_numbers,
     MHLO_DotDimensionNumbers:$bmm2_grad_gemm2_dot_dimension_numbers,
     F64Attr:$fmha_scale,
-    OptionalAttr<F64Attr>:$dropout_rate,
     FusedMhaBackwardDagSignatureAttr:$fused_mha_dag,
     FusedMHAAlgorithmConfigAttr:$algorithm_config,
+    OptionalAttr<F64Attr>:$dropout_rate,
     OptionalAttr<I64Attr>:$seed);
 }
 
