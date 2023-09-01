@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/stream_pool.h"
 #include "xla/statusor.h"
+#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
 #include "tsl/protobuf/dnn.pb.h"
 
@@ -426,6 +427,14 @@ Status GpuRuntimeExecutable::Execute(
   // the borrowed streams for executing kernels in concurrent regions.
   ConcurrentRegionStatus concurrent_region_status(run_options);
 
+  // Workspace memory for cublas calls during graph capture. We use DeviceMemory
+  // type instead of DeviceMemoryBase so that user data can tell the difference
+  // between temp_buffer and cublas workspace.
+  TF_ASSIGN_OR_RETURN(
+      se::OwningDeviceMemory cublas_workspace,
+      run_options->allocator()->Allocate(executor->device_ordinal(), 4000000));
+  se::DeviceMemory<uint8_t>* workspace = cublas_workspace.ptr();
+
   // State cached globally for gpu executable.
   GemmConfigs::Snapshot gemm_configs = gemm_configs_.snapshot();
   FftPlans::Snapshot fft_plans = fft_plans_.snapshot();
@@ -459,7 +468,7 @@ Status GpuRuntimeExecutable::Execute(
 #endif  // GOOGLE_CUDA
       &graph_instances, &execution_count,
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-      &concurrent_region_status,
+      &concurrent_region_status, workspace,
       // Null pointer will be interpreted as an absence of async collectives
       // support and custom calls will safely return an error.
       async_collectives.async_comm_stream(kAsyncStreamCollective)
@@ -493,7 +502,7 @@ Status GpuRuntimeExecutable::Execute(
     }
 
     if (auto instantiated = graph_instances_.InstantiateAllGraphs(
-            run_options, executable, user_data, device_ptr,
+            run_options, executable, user_data, device_ptr, workspace,
             debug_options_.xla_gpu_graph_eviction_timeout_seconds());
         !instantiated.ok()) {
       return InternalError("Failed to instantiate GPU graphs: %s",

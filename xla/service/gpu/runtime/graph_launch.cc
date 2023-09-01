@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/kernel_launch.h"
 #include "xla/service/gpu/runtime/support.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/stream_executor/blas.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
@@ -69,7 +70,8 @@ using se::gpu::OwnedGpuGraph;
 static absl::StatusOr<OwnedGpuGraph> CaptureGraph(
     const ServiceExecutableRunOptions* run_options,
     runtime::FunctionRef function_ref, Arguments<MemrefDesc>& args,
-    CustomCall::UserData user_data);
+    CustomCall::UserData user_data,
+    se::DeviceMemory<uint8_t>* cublas_workspace);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 //===----------------------------------------------------------------------===//
@@ -267,7 +269,8 @@ bool GraphInstances::InstantiatedAllGraphs(
 Status GraphInstances::InstantiateAllGraphs(
     const ServiceExecutableRunOptions* run_options,
     const Executable& executable, const CustomCall::UserData& user_data,
-    void* ptr, std::optional<uint64_t> eviction_timeout_seconds) {
+    void* ptr, se::DeviceMemory<uint8_t>* cublas_workspace,
+    std::optional<uint64_t> eviction_timeout_seconds) {
   // We have only "main" function in the executable.
   if (executable.num_functions() == 1) return OkStatus();
 
@@ -336,8 +339,8 @@ Status GraphInstances::InstantiateAllGraphs(
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     // Instantiate a Gpu graph with fake arguments.
     auto instantiate = [&]() -> absl::StatusOr<GraphInstance> {
-      TF_ASSIGN_OR_RETURN(
-          auto g, CaptureGraph(run_options, function_ref, args, user_data));
+      TF_ASSIGN_OR_RETURN(auto g, CaptureGraph(run_options, function_ref, args,
+                                               user_data, cublas_workspace));
       TF_ASSIGN_OR_RETURN(auto e, se::gpu::InstantiateGpuGraph(std::move(g)));
       return GraphInstance(0, std::move(e));
     };
@@ -428,19 +431,12 @@ static absl::Status ForwardArguments(CustomCall::RemainingArgs fwd_args,
 static absl::StatusOr<OwnedGpuGraph> CaptureGraph(
     const ServiceExecutableRunOptions* run_options,
     runtime::FunctionRef function_ref, Arguments<MemrefDesc>& args,
-    CustomCall::UserData user_data) {
+    CustomCall::UserData user_data,
+    se::DeviceMemory<uint8_t>* cublas_workspace) {
   // We capture graph on a borrowed stream because we do not want to
   // accidentally record any concurrent kernel launches from other XLA
   // executables.
   se::StreamExecutor* executor = run_options->stream()->parent();
-
-  // Initialize (with memoization) BlasSupport here because cublasCreate fails
-  // during gpu graph capturing.
-  if (function_ref.RequiresBlas()) {
-    if (!executor->AsBlas()) {
-      return absl::InternalError("Failed to initialize BLAS support");
-    }
-  }
 
   StatusOr<StreamPool::Ptr> capture_stream =
       run_options->BorrowStream(executor->device_ordinal());
@@ -449,6 +445,21 @@ static absl::StatusOr<OwnedGpuGraph> CaptureGraph(
     return absl::InternalError(
         absl::StrFormat("Failed to borrow a stream for graph capture: %s",
                         capture_stream.status().message()));
+
+  // Initialize (with memoization) BlasSupport here because cublasCreate fails
+  // during gpu graph capturing.
+  if (function_ref.RequiresBlas()) {
+    // Initialize BlasSupport if not yet initialized.
+    se::blas::BlasSupport* blas_support = executor->AsBlas();
+    if (!blas_support) {
+      return absl::InternalError("Failed to initialize BLAS support");
+    }
+
+    // Set stream for cublas here to avoid calling cublasSetStream for every
+    // gemm call.
+    blas_support->SetStream(capture_stream->get());
+    blas_support->SetWorkspace(*cublas_workspace);
+  }
 
   TraceMe trace([&] {
     return TraceMeEncode("gpu.graph.capture",
@@ -552,8 +563,9 @@ static absl::Status LaunchGraph(
     CapturedFunctionExecutionCount::Snapshot* counts,
     GemmConfigs::Snapshot* gemm_config, runtime::Executable* executable,
     NonAtomicallyUpgradeableRWLock* gpu_lock,
-    ConcurrentRegionStatus* region_status, CustomCall::RemainingArgs fwd_args,
-    CustomCall::FunctionOrdinal capture) {
+    ConcurrentRegionStatus* region_status,
+    se::DeviceMemory<uint8_t>* cublas_workspace,
+    CustomCall::RemainingArgs fwd_args, CustomCall::FunctionOrdinal capture) {
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   VLOG(1) << "Launch GPU Graph: ordinal = " << capture.ordinal;
 
@@ -593,8 +605,8 @@ static absl::Status LaunchGraph(
     Arguments<MemrefDesc> args(fwd_args.size());
     TF_RETURN_IF_ERROR(ForwardArguments(fwd_args, args));
 
-    TF_ASSIGN_OR_RETURN(
-        auto g, CaptureGraph(run_options, function_ref, args, user_data()));
+    TF_ASSIGN_OR_RETURN(auto g, CaptureGraph(run_options, function_ref, args,
+                                             user_data(), cublas_workspace));
 
     TF_ASSIGN_OR_RETURN(auto e, se::gpu::InstantiateGpuGraph(std::move(g)));
 
@@ -642,8 +654,8 @@ static absl::Status LaunchGraph(
   TF_RETURN_IF_ERROR(ForwardArguments(fwd_args, args));
 
   // Capture GPU graph by running capture function.
-  TF_ASSIGN_OR_RETURN(
-      auto g, CaptureGraph(run_options, function_ref, args, user_data()));
+  TF_ASSIGN_OR_RETURN(auto g, CaptureGraph(run_options, function_ref, args,
+                                           user_data(), cublas_workspace));
 
   // At this point we have to grab a writer lock, because we might potentially
   // have concurrent execution of the cached graph instance.
@@ -695,6 +707,7 @@ XLA_RUNTIME_DEFINE_CUSTOM_CALL(
         .UserData<Executable*>()
         .UserData<NonAtomicallyUpgradeableRWLock*>()
         .UserData<ConcurrentRegionStatus*>()
+        .UserData<se::DeviceMemory<uint8_t>*>()
         .RemainingArgs()
         .Attr<CustomCall::FunctionOrdinal>("capture"));
 

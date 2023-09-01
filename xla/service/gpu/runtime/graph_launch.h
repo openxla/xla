@@ -107,6 +107,7 @@ class GraphInstances {
       const ServiceExecutableRunOptions* run_options,
       const runtime::Executable& executable,
       const runtime::CustomCall::UserData& user_data, void* ptr,
+      se::DeviceMemory<uint8_t>* cublas_workspace,
       std::optional<uint64_t> eviction_timeout_seconds = std::nullopt);
 
   // Returns true if all Gpu graphs were already instantiated.
