@@ -30,7 +30,6 @@ def DeallocationDialect : Dialect {
   let cppNamespace = "::mlir::deallocation";
 
   let useDefaultTypePrinterParser = 1;
-  let usePropertiesForAttributes = 0;
 }
 
 def OwnershipIndicatorType : TypeDef<DeallocationDialect, "OwnershipIndicator"> {
