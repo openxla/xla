@@ -2522,11 +2522,11 @@ cc_library(
         ":instruction_fusion",
         ":ir_emission_utils",
         ":ir_emitter",
+        ":loop_double_buffer_transformer",
         ":matmul_utils",
         ":metrics",
         ":move_copy_to_users",
         ":multi_output_fusion",
-        ":test_double_buffer",
         ":priority_fusion",
         ":reduction_degenerate_dim_remover",
         ":reduction_dimension_grouper",
@@ -4447,9 +4447,9 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "test_double_buffer",
-    srcs = ["test_double_buffer.cc"],
-    hdrs = ["test_double_buffer.h"],
+    name = "loop_double_buffer_transformer",
+    srcs = ["loop_double_buffer_transformer.cc"],
+    hdrs = ["loop_double_buffer_transformer.h"],
     deps = [
         ":gpu_device_info",
         ":gpu_fusible",

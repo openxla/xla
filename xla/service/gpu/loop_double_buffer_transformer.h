@@ -12,8 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef XLA_SERVICE_GPU_TEST_DOUBLE_BUFFER_H_
-#define XLA_SERVICE_GPU_TEST_DOUBLE_BUFFER_H_
+#ifndef XLA_SERVICE_GPU_LOOP_DOUBLE_BUFFER_TRANSFORMER_H_
+#define XLA_SERVICE_GPU_LOOP_DOUBLE_BUFFER_TRANSFORMER_H_
 
 #include <utility>
 
@@ -26,12 +26,12 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-class TestDoubleBuffer : public HloModulePass {
+class LoopDoubleBufferTransformer : public HloModulePass {
  public:
-  TestDoubleBuffer() = default;
-  ~TestDoubleBuffer() override = default;
+  LoopDoubleBufferTransformer() = default;
+  ~LoopDoubleBufferTransformer() override = default;
   absl::string_view name() const override {
-    return "test-double-buffer";
+    return "loop-double-buffer-transformer";
   }
 
   using HloPassInterface::Run;
@@ -43,4 +43,4 @@ class TestDoubleBuffer : public HloModulePass {
 }  // end namespace gpu
 }  // end namespace xla
 
-#endif  // XLA_SERVICE_GPU_TEST_DOUBLE_BUFFER_H_
+#endif  // XLA_SERVICE_GPU_LOOP_DOUBLE_BUFFER_TRANSFORMER_H_
