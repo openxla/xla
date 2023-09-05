@@ -72,28 +72,12 @@ AutotunerCompileUtil::AutotunerCompileUtil(const AutotuneConfig& config,
                                            Compiler* compiler,
                                            se::StreamExecutor& stream_executor,
                                            se::Stream& stream,
-                                           se::DeviceMemoryAllocator& allocator,
-                                           const DebugOptions& opts)
+                                           se::DeviceMemoryAllocator& allocator)
     : config_(config),
       compiler_(compiler),
       stream_executor_(stream_executor),
       stream_(stream),
-      allocator_(allocator),
-      opts_(opts) {
-  // Avoid dumping compilation steps.
-  opts_.set_xla_dump_to("");
-  opts_.set_xla_gpu_dump_autotune_results_to("");
-  opts_.set_xla_gpu_load_autotune_results_from("");
-  opts_.set_xla_gpu_dump_llvmir(false);
-  // Avoid using another thread pool.
-  opts_.set_xla_gpu_force_compilation_parallelism(1);
-  // Avoid using GPU graphs as we don't want to measure graph construction time.
-  opts_.set_xla_gpu_graph_level(0);
-  // Disable experimental XLA:GPU runtime.
-  opts_.set_xla_gpu_enable_gpu2_runtime(false);
-  opts_.set_xla_embed_ir_in_executable(false);
-  opts_.set_xla_gpu_enable_persistent_temp_buffers(false);
-}
+      allocator_(allocator) {}
 
 StatusOr<std::optional<AutotunerCompileUtil::ProfilingOutput>>
 AutotunerCompileUtil::ProfileExecutable(
@@ -130,7 +114,6 @@ StatusOr<std::unique_ptr<Executable>> AutotunerCompileUtil::Compile(
   } else if (!new_hlo_module.status().ok()) {
     return new_hlo_module.status();
   }
-  (*new_hlo_module)->config().set_debug_options(opts_);
 
   StatusOr<std::unique_ptr<Executable>> out = compiler_->RunBackend(
       std::move(*new_hlo_module), &stream_executor_,
@@ -145,8 +128,7 @@ StatusOr<std::unique_ptr<Executable>> AutotunerCompileUtil::Compile(
 }
 
 /*static*/ StatusOr<std::optional<AutotunerCompileUtil>>
-AutotunerCompileUtil::Create(const AutotuneConfig& config,
-                             const DebugOptions& opts) {
+AutotunerCompileUtil::Create(const AutotuneConfig& config) {
   if (config.IsDeviceless()) {
     return std::nullopt;
   }
@@ -156,7 +138,7 @@ AutotunerCompileUtil::Create(const AutotuneConfig& config,
   TF_ASSIGN_OR_RETURN(Compiler * compiler,
                       Compiler::GetForPlatform(stream_exec->platform()));
   return AutotunerCompileUtil(config, compiler, *stream_exec, *stream,
-                              *allocator, opts);
+                              *allocator);
 }
 
 StatusOr<ExecutionOutput> AutotunerCompileUtil::Execute(

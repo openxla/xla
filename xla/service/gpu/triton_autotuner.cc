@@ -318,7 +318,8 @@ int GetLogEveryN() { return VLOG_IS_ON(1) ? 100 : 1000; }
 
 StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
     const AutotuneResult::TritonGemmKey& key,
-    const GpuDeviceInfo& gpu_device_info, const HloFusionInstruction* fusion) {
+    const GpuDeviceInfo& gpu_device_info, const HloFusionInstruction* fusion,
+    const DebugOptions& debug_options) {
   std::unique_ptr<HloModule> new_module =
       AutotunerUtil::ExtractInstructionIntoNewModule(*fusion);
   HloComputation* entry_computation = new_module->entry_computation();
@@ -351,11 +352,14 @@ StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
       TF_CHECK_OK(entry_computation->RemoveInstruction(init_value));
     }
   }
+
+  new_module->config().set_debug_options(debug_options);
   return new_module;
 }
 
 StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
-    const AutotuneConfig& config, const HloFusionInstruction* fusion) {
+    const AutotuneConfig& config, const HloFusionInstruction* fusion,
+    const DebugOptions& debug_options) {
   const HloComputation* fusion_computation =
       fusion->called_computations().at(0);
   std::unique_ptr<HloModule> new_module =
@@ -365,6 +369,8 @@ StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
                                    GetGpuDeviceInfo(config.GetExecutor()));
   TF_RETURN_IF_ERROR(rewriter.Run(new_module.get()).status());
   TF_RETURN_IF_ERROR(fusion_pass.Run(new_module.get()).status());
+
+  new_module->config().set_debug_options(debug_options);
   return new_module;
 }
 
@@ -372,6 +378,8 @@ StatusOr<absl::flat_hash_map<const HloFusionInstruction*, ExecutableSet>>
 CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
             tsl::thread::ThreadPool* thread_pool,
             const DebugOptions& debug_opts,
+            const DebugOptions& reference_module_opts,
+            const DebugOptions& candidate_module_opts,
             const absl::flat_hash_map<const HloFusionInstruction*,
                                       GemmConfigSet>& gemm_config_sets) {
   absl::Mutex executable_sets_mu;
@@ -413,9 +421,14 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
     CHECK(conf.block_m() <= kMaxTileSize);
     CHECK(conf.block_n() <= kMaxTileSize);
     CHECK(conf.block_k() <= kMaxTileSize);
+    // TODO(b/296884861): Reenable GPU runtime, when it will have much smaller
+    // memory overhead (regarding the size of the executables).
+    // We can also remove the force_disable_gpu_runtime argument at that
+    // point.
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<Executable> executable, util.Compile([&] {
-          return TritonGemmAutotuneExtractor(conf, gpu_device_info, fusion);
+          return TritonGemmAutotuneExtractor(conf, gpu_device_info, fusion,
+                                             candidate_module_opts);
         }));
 
     if (executable != nullptr) {
@@ -434,7 +447,8 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
       [&](const HloFusionInstruction* fusion) -> StatusOr<bool> {
     TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
                         util.Compile([&] {
-                          return CublasGemmAutotuneExtractor(config, fusion);
+                          return CublasGemmAutotuneExtractor(
+                              config, fusion, reference_module_opts);
                         }));
 
     if (executable != nullptr) {
@@ -662,11 +676,14 @@ StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
 
 Status DumpAutotunedFusions(const AutotuneConfig& config,
                             const AutotuneResult result,
-                            const HloFusionInstruction* fusion, int fusion_id) {
+                            const HloFusionInstruction* fusion,
+                            const DebugOptions& candidate_module_opts,
+                            int fusion_id) {
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<HloModule> module,
-      TritonGemmAutotuneExtractor(
-          result.triton(), GetGpuDeviceInfo(config.GetExecutor()), fusion));
+      TritonGemmAutotuneExtractor(result.triton(),
+                                  GetGpuDeviceInfo(config.GetExecutor()),
+                                  fusion, candidate_module_opts));
   module->set_name(std::string(fusion->name()));
   // Using the original module for its debug info and name in the first
   // parameter. It's better to include the name of both the original module
@@ -684,6 +701,8 @@ Status DumpAutotunedFusions(const AutotuneConfig& config,
 Status Autotune(const AutotuneConfig& config, AutotunerCompileUtil& util,
                 tsl::thread::ThreadPool* thread_pool,
                 const DebugOptions& debug_opts,
+                const DebugOptions& reference_module_opts,
+                const DebugOptions& candidate_module_opts,
                 const absl::flat_hash_map<const HloFusionInstruction*,
                                           GemmConfigSet>& gemm_config_sets,
                 int& fusion_id_for_dump) {
@@ -691,7 +710,8 @@ Status Autotune(const AutotuneConfig& config, AutotunerCompileUtil& util,
       executable_sets;
   TF_ASSIGN_OR_RETURN(
       executable_sets,
-      CompileMany(config, util, thread_pool, debug_opts, gemm_config_sets));
+      CompileMany(config, util, thread_pool, debug_opts, reference_module_opts,
+                  candidate_module_opts, gemm_config_sets));
 
   for (const auto& key_value : executable_sets) {
     const HloFusionInstruction* fusion = key_value.first;
@@ -701,8 +721,8 @@ Status Autotune(const AutotuneConfig& config, AutotunerCompileUtil& util,
                                                        fusion, executable_set));
 
     if (debug_opts.xla_gpu_dump_autotuned_triton_fusions()) {
-      TF_RETURN_IF_ERROR(
-          DumpAutotunedFusions(config, result, fusion, fusion_id_for_dump));
+      TF_RETURN_IF_ERROR(DumpAutotunedFusions(
+          config, result, fusion, candidate_module_opts, fusion_id_for_dump));
     }
 
     TF_RETURN_IF_ERROR(AutotunerUtil::AddResult(
@@ -751,9 +771,30 @@ StatusOr<bool> TritonAutotuner::Run(
     return false;
   }
 
+  DebugOptions reference_module_opts = debug_options;
+  // Avoid dumping compilation steps.
+  reference_module_opts.set_xla_dump_to("");
+  reference_module_opts.set_xla_gpu_dump_autotune_results_to("");
+  reference_module_opts.set_xla_gpu_load_autotune_results_from("");
+  reference_module_opts.set_xla_gpu_dump_llvmir(false);
+  // Avoid using another thread pool.
+  reference_module_opts.set_xla_gpu_force_compilation_parallelism(1);
+  // Avoid using GPU graphs as we don't want to measure graph construction time.
+  reference_module_opts.set_xla_gpu_graph_level(0);
+  // Disable experimental XLA:GPU runtime.
+  reference_module_opts.set_xla_gpu_enable_gpu2_runtime(false);
+  reference_module_opts.set_xla_embed_ir_in_executable(false);
+  reference_module_opts.set_xla_gpu_enable_persistent_temp_buffers(false);
+  DebugOptions candidate_module_opts = reference_module_opts;
+  // TODO(b/296884861): Reenable GPU runtime, when it will have much smaller
+  // memory overhead (regarding the size of the executables).
+  // We can also remove the force_disable_gpu_runtime argument at that
+  // point.
+  candidate_module_opts.set_xla_gpu_enable_xla_runtime_executable(false);
+
   if (!config_.IsDeviceless()) {
     TF_ASSIGN_OR_RETURN(std::optional<AutotunerCompileUtil> opt_compile_util,
-                        AutotunerCompileUtil::Create(config_, debug_options));
+                        AutotunerCompileUtil::Create(config_));
     TF_RET_CHECK(opt_compile_util.has_value());
     AutotunerCompileUtil& compile_util = opt_compile_util.value();
 
@@ -774,7 +815,8 @@ StatusOr<bool> TritonAutotuner::Run(
       if (debug_options.xla_gpu_single_wave_autotuning()) {
         // Tune all fusions at once to save time.
         TF_RETURN_IF_ERROR(Autotune(config_, compile_util, thread_pool_,
-                                    debug_options, gemm_config_sets,
+                                    debug_options, reference_module_opts,
+                                    candidate_module_opts, gemm_config_sets,
                                     fusion_id_for_dump));
       } else {
         // Tune each fusion separately to avoid running out of memory.
@@ -782,7 +824,8 @@ StatusOr<bool> TritonAutotuner::Run(
           absl::flat_hash_map<const HloFusionInstruction*, GemmConfigSet>
               single_element_map({key_value});
           TF_RETURN_IF_ERROR(Autotune(config_, compile_util, thread_pool_,
-                                      debug_options, single_element_map,
+                                      debug_options, reference_module_opts,
+                                      candidate_module_opts, single_element_map,
                                       fusion_id_for_dump));
         }
       }

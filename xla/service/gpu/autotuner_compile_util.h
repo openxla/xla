@@ -48,7 +48,7 @@ class AutotunerCompileUtil {
   // Returns an empty optional if the AutotuneConfig is deviceless, as
   // autotuning is impossible in that case.
   static StatusOr<std::optional<AutotunerCompileUtil>> Create(
-      const AutotuneConfig& config, const DebugOptions& opts);
+      const AutotuneConfig& config);
 
   struct ProfilingOutput {
     ProfilingOutput(absl::Duration duration, ScopedShapedBuffer&& buffer)
@@ -81,8 +81,7 @@ class AutotunerCompileUtil {
  private:
   AutotunerCompileUtil(const AutotuneConfig& config, Compiler* compiler,
                        se::StreamExecutor& stream_executor, se::Stream& stream,
-                       se::DeviceMemoryAllocator& allocator,
-                       const DebugOptions& opts);
+                       se::DeviceMemoryAllocator& allocator);
 
   StatusOr<ExecutionOutput> Execute(Executable& executable,
                                     std::vector<ExecutionInput> arguments);
@@ -92,7 +91,6 @@ class AutotunerCompileUtil {
   se::StreamExecutor& stream_executor_;
   se::Stream& stream_;
   se::DeviceMemoryAllocator& allocator_;
-  DebugOptions opts_;
 };
 
 }  // namespace gpu
