@@ -57,9 +57,14 @@ cc_library(
         "//xla/service/gpu:thunk",
         "//xla/stream_executor:event",
         "//xla/stream_executor:executor_cache",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-    ],
+        "@com_google_absl//absl/log",
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/gpu:asm_compiler",
+        "//xla/stream_executor/gpu:gpu_asm_opts",
+    ]),
 )
 
 cc_library(

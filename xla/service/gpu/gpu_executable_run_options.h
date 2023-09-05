@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_EXECUTABLE_RUN_OPTIONS_H_
 #define XLA_SERVICE_GPU_GPU_EXECUTABLE_RUN_OPTIONS_H_
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -90,14 +91,33 @@ class GpuExecutableRunOptions {
     return requires_exclusive_lock_on_gpu_;
   }
 
-  // Require writers lock on the GRPU.
+  // Require writers lock on the GPU.
   GpuExecutableRunOptions& set_requires_exclusive_lock_on_gpu() {
     requires_exclusive_lock_on_gpu_ = true;
     return *this;
   }
 
+  bool enable_mock_nccl_collectives() const {
+    return enable_mock_nccl_collectives_;
+  }
+
+  GpuExecutableRunOptions& set_mock_nccl_bandwidth(
+      int64_t mock_nccl_bandwidth) {
+    mock_nccl_bandwidth_ = mock_nccl_bandwidth;
+    return *this;
+  }
+  int mock_nccl_bandwidth() const { return mock_nccl_bandwidth_; }
+
+  // Enable mocking nccl collective operations on the GPU
+  GpuExecutableRunOptions& set_enable_mock_nccl_collectives() {
+    enable_mock_nccl_collectives_ = true;
+    return *this;
+  }
+
  private:
   bool requires_exclusive_lock_on_gpu_ = false;
+  bool enable_mock_nccl_collectives_ = false;
+  int mock_nccl_bandwidth_ = 0.0;
   std::optional<std::map<int, GlobalDeviceId>> gpu_global_device_ids_;
   NcclUniqueIdCallback nccl_unique_id_callback_;
 };

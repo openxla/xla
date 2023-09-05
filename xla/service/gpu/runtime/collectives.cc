@@ -15,11 +15,17 @@ limitations under the License.
 
 #include "xla/service/gpu/runtime/collectives.h"
 
+#include <sys/types.h>
+
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
+#include "absl/log/log.h"
 #include "xla/runtime/custom_call.h"
 #include "xla/runtime/executable.h"
 #include "xla/service/computation_placer.h"
@@ -35,7 +41,13 @@ limitations under the License.
 #include "xla/service/gpu/runtime/support.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/stream.h"
+
+#if XLA_ENABLE_XCCL
+#include "xla/stream_executor/gpu/asm_compiler.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
+#endif  // XLA_ENABLE_XCCL
 
 namespace xla {
 namespace gpu {
@@ -164,6 +176,252 @@ absl::Status AsyncDoneImpl(const ServiceExecutableRunOptions* run_options,
 #endif  // XLA_ENABLE_XCCL
 }
 
+#if XLA_ENABLE_XCCL
+// GPU kernels for sleeping a number of nano seconds to simulate a NCCL call:
+//
+// Generated from the following CUDA code.
+//
+// __global__ void mock_nccl_call(unsigned sleep_ns)
+// {
+//   __nanosleep(sleep_ns);
+// }
+constexpr const char* kMockNcclPtx = R"(
+.version 8.1
+.target sm_70
+.address_size 64
+
+        // .globl       _Z14mock_nccl_callj
+
+.visible .entry _Z14mock_nccl_callj(
+        .param .u32 _Z14mock_nccl_callj_param_0
+)
+{
+        .reg .b32       %r<2>;
+
+
+        ld.param.u32    %r1, [_Z14mock_nccl_callj_param_0];
+        // begin inline asm
+        nanosleep.u32 %r1;
+        // end inline asm
+        ret;
+
+}
+)";
+
+// The PTX in kMockNcclPtx has to be launched with specified types
+// in the specified order.
+using MockNcclKernelT = se::TypedKernel<uint32_t>;
+
+StatusOr<int> GetNcclDataTypeSize(ncclDataType_t dtype) {
+  switch (dtype) {
+    case ncclInt8:
+    case ncclUint8:
+      return 1;
+    case ncclInt32:
+    case ncclUint32:
+      return 4;
+    case ncclInt64:
+    case ncclUint64:
+      return 8;
+    case ncclFloat16:
+      return 2;
+    case ncclFloat32:
+      return 4;
+    case ncclFloat64:
+      return 8;
+#if defined(__CUDA_BF16_TYPES_EXIST__) || TENSORFLOW_USE_ROCM
+    case ncclBfloat16:
+      return 2;
+#endif
+    default:
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Unsupported nccl data type: %d", dtype));
+  }
+}
+
+StatusOr<int64_t> ComputeTotalDeviceBufferSize(
+    std::vector<DeviceBufferPair>& buffers, int num_participants,
+    Thunk::Kind reduce_op) {
+  int64_t total_device_buffer_size = 0;
+  for (size_t i = 0; i < buffers.size(); ++i) {
+    DeviceBufferPair& buffer = buffers[i];
+    TF_ASSIGN_OR_RETURN(auto dtype_and_multiplier,
+                        ToNcclDataTypeAndCountMultiplier(
+                            buffer.element_type, Thunk::kNcclAllReduce));
+    ncclDataType_t dtype = dtype_and_multiplier.first;
+    TF_ASSIGN_OR_RETURN(auto dtype_size, GetNcclDataTypeSize(dtype));
+
+    int64_t element_count = buffer.element_count * dtype_and_multiplier.second;
+    if (reduce_op == Thunk::kNcclReduceScatter) {
+      // use the recv_count for ncclReduceScatter
+      element_count = element_count / num_participants;
+    } else if (reduce_op == Thunk::kNcclAllToAll) {
+      // account of both send and recv
+      element_count *= 2;
+    }
+
+    total_device_buffer_size += element_count * dtype_size;
+  }
+  return total_device_buffer_size;
+}
+
+// Calculate the bus bandwidth factor based on formulas provided in
+// https://github.com/NVIDIA/nccl-tests/blob/master/doc/PERFORMANCE.md
+StatusOr<double> CalculateBusBandwidthFactor(int num_participants,
+                                             Thunk::Kind reduce_op) {
+  switch (reduce_op) {
+    case Thunk::kNcclAllGather:
+      return (num_participants - 1.0) / num_participants;
+    case Thunk::kNcclAllReduce:
+      return 2.0 * (num_participants - 1.0) / num_participants;
+    case Thunk::kNcclAllToAll:
+      return 1.0;
+    case Thunk::kNcclCollectivePermute:
+      return 1.0;
+    case Thunk::kNcclReduceScatter:
+      return (num_participants - 1.0) / num_participants;
+    default:
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Unsupported Thunk operation: %s",
+                          NcclCollectiveThunk::KindToString(reduce_op)));
+  }
+}
+
+absl::Status LaunchSleepKernel(se::Stream* stream, se::StreamExecutor* executor,
+                               uint32_t sleep_duration_ns) {
+  absl::Span<const uint8_t> compiled_ptx = {};
+  StatusOr<absl::Span<const uint8_t>> compiled_ptx_or =
+      se::CompileGpuAsmOrGetCached(executor->device_ordinal(), kMockNcclPtx,
+                                   se::GpuAsmOpts{});
+  if (compiled_ptx_or.ok()) {
+    compiled_ptx = compiled_ptx_or.value();
+  } else {
+    static absl::once_flag ptxas_not_found_logged;
+    absl::call_once(ptxas_not_found_logged, [&]() {
+      LOG(WARNING) << compiled_ptx_or.status()
+                   << "\nRelying on driver to perform ptx compilation. "
+                   << "\nModify $PATH to customize ptxas location."
+                   << "\nThis message will be only logged once.";
+    });
+  }
+
+  TF_ASSIGN_OR_RETURN(std::shared_ptr<MockNcclKernelT> mock_nccl_kernel,
+                      (executor->CreateTypedKernel<uint32_t>(
+                          "_Z14mock_nccl_callj", kMockNcclPtx, compiled_ptx)));
+
+  TF_RETURN_IF_ERROR(stream->ThenLaunch(se::ThreadDim(512, 1, 1),
+                                        se::BlockDim(1, 1, 1),
+                                        *mock_nccl_kernel, sleep_duration_ns));
+  return absl::OkStatus();
+}
+
+absl::Status MockNcclP2PImplCommon(
+    int mock_nccl_bandwidth, const ServiceExecutableRunOptions* run_options,
+    const DebugOptions* debug_options, se::Stream* stream,
+    CustomCall::RemainingArgs args, int64_t group_mode, int64_t op_id,
+    absl::Span<const int64_t> replica_group_offsets,
+    absl::Span<const int64_t> replica_group_values,
+    absl::Span<const int64_t> source_peers,
+    absl::Span<const int64_t> target_peers, uint64_t stream_id) {
+  se::StreamExecutor* executor = stream->parent();
+  NcclExecuteParams params(*run_options, executor);
+
+  TF_ASSIGN_OR_RETURN(GlobalDeviceId global_device_id,
+                      params.GetGlobalDeviceId());
+
+  TF_ASSIGN_OR_RETURN(DeviceAssignment::LogicalID current_logical_id,
+                      params.device_assn->LogicalIdForDevice(global_device_id));
+
+  const int64_t current_id = static_cast<CollectiveOpGroupMode>(group_mode) ==
+                                     CollectiveOpGroupMode::kCrossReplica
+                                 ? current_logical_id.replica_id
+                                 : current_logical_id.computation_id;
+
+  ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
+  if (device_buffers.size() != 1) {
+    return absl::InternalError(absl::StrFormat(
+        "Expected device buffer size: 1, got %d", device_buffers.size()));
+  }
+
+  ASSIGN_OR_RETURN(
+      auto total_device_buffer_size,
+      ComputeTotalDeviceBufferSize(device_buffers, /*num_participants=*/1,
+                                   Thunk::kNcclCollectivePermute));
+
+  NcclP2PConfig::IdToSourceTargetMap id_to_source_target;
+  for (int i = 0; i < source_peers.size(); ++i) {
+    id_to_source_target[target_peers[i]].source = source_peers[i];
+    id_to_source_target[source_peers[i]].target = target_peers[i];
+  }
+  const NcclP2PConfig::SourceTargetMapEntry source_target =
+      NcclP2PConfig::GetSourceTarget(id_to_source_target, current_id);
+
+  const std::optional<int64_t> source_id = source_target.source;
+  const std::optional<int64_t> target_id = source_target.target;
+  if (source_id && target_id) {
+    // account for both send and receive
+    total_device_buffer_size = total_device_buffer_size * 2;
+  }
+
+  se::DeviceMemoryBase dest_addr = device_buffers[0].destination_buffer;
+
+  if (!source_id) {
+    // If there is no source peer, i.e. no one send us any data, zero out dest
+    // buffer.
+    stream->ThenMemZero(&dest_addr, dest_addr.size());
+  }
+
+  uint32_t sleep_duration_ns =
+      ceil(total_device_buffer_size *
+           /*bus_bandwidth_factor=*/1.0 / mock_nccl_bandwidth);
+
+  return LaunchSleepKernel(stream, executor, sleep_duration_ns);
+}
+
+absl::Status MockNcclImplCommon(int mock_nccl_bandwidth,
+                                const ServiceExecutableRunOptions* run_options,
+                                const DebugOptions* debug_options,
+                                se::Stream* stream,
+                                CustomCall::RemainingArgs args,
+                                int64_t group_mode, int64_t op_id,
+                                absl::Span<const int64_t> replica_group_offsets,
+                                absl::Span<const int64_t> replica_group_values,
+                                bool is_async, Thunk::Kind reduce_op) {
+  se::StreamExecutor* executor = stream->parent();
+  NcclExecuteParams params(*run_options, executor);
+  TF_ASSIGN_OR_RETURN(GlobalDeviceId global_device_id,
+                      params.GetGlobalDeviceId());
+  // TODO(b/233930690): see GetNcclComm
+  std::vector<ReplicaGroup> replica_groups;
+  int i = 0;
+  for (int64_t replica_group_end : replica_group_offsets) {
+    ReplicaGroup replica_group;
+    while (i < replica_group_end)
+      replica_group.add_replica_ids(replica_group_values[i++]);
+    replica_groups.push_back(replica_group);
+  }
+
+  TF_ASSIGN_OR_RETURN(std::vector<GlobalDeviceId> participants,
+                      GetParticipatingDevices(
+                          global_device_id, *params.device_assn, replica_groups,
+                          static_cast<CollectiveOpGroupMode>(group_mode)));
+
+  TF_ASSIGN_OR_RETURN(
+      auto bus_bandwidth_factor,
+      CalculateBusBandwidthFactor(participants.size(), reduce_op));
+
+  ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
+  ASSIGN_OR_RETURN(auto total_device_buffer_size,
+                   ComputeTotalDeviceBufferSize(
+                       device_buffers, participants.size(), reduce_op));
+
+  uint32_t sleep_duration_ns = ceil(total_device_buffer_size *
+                                    bus_bandwidth_factor / mock_nccl_bandwidth);
+
+  return LaunchSleepKernel(stream, executor, sleep_duration_ns);
+}
+#endif  // XLA_ENABLE_XCCL
+
 //===----------------------------------------------------------------------===//
 // CollectivePermute.
 //===----------------------------------------------------------------------===//
@@ -243,15 +501,24 @@ absl::Status CollectivePermuteImpl(
     absl::Span<const int64_t> target_peers) {
 #if XLA_ENABLE_XCCL
   VLOG(3) << "Running CollectivePermute " << (is_async ? "(Async)" : "(Sync)");
-  return RunSyncOrAsync(run_options, collectives, async_collectives, uid,
-                        is_async, [&](se::Stream* stream) {
-                          return P2PImplCommon(
-                              run_options, debug_options, stream, args,
-                              group_mode, op_id, replica_group_offsets,
-                              replica_group_values, source_peers, target_peers,
-                              RunCollectivePermute, GetDeviceBufferPairs,
-                              GetStreamId(is_async));
-                        });
+  return RunSyncOrAsync(
+      run_options, collectives, async_collectives, uid, is_async,
+      [&](se::Stream* stream) {
+        const gpu::GpuExecutableRunOptions* gpu_opts =
+            run_options->run_options().gpu_executable_run_options();
+        if (gpu_opts && gpu_opts->enable_mock_nccl_collectives()) {
+          return MockNcclP2PImplCommon(gpu_opts->mock_nccl_bandwidth(),
+                                       run_options, debug_options, stream, args,
+                                       group_mode, op_id, replica_group_offsets,
+                                       replica_group_values, source_peers,
+                                       target_peers, GetStreamId(is_async));
+        }
+        return P2PImplCommon(run_options, debug_options, stream, args,
+                             group_mode, op_id, replica_group_offsets,
+                             replica_group_values, source_peers, target_peers,
+                             RunCollectivePermute, GetDeviceBufferPairs,
+                             GetStreamId(is_async));
+      });
 #else   // XLA_ENABLE_XCCL
   return absl::InternalError("NCCL disabled");
 #endif  // XLA_ENABLE_XCCL
@@ -411,13 +678,21 @@ absl::Status AllGatherImpl(const ServiceExecutableRunOptions* run_options,
                            absl::Span<const int64_t> replica_group_values) {
 #if XLA_ENABLE_XCCL
   VLOG(3) << "Running AllGather " << (is_async ? "(Async)" : "(Sync)");
-  return RunSyncOrAsync(run_options, collectives, async_collectives, uid,
-                        is_async, [&](se::Stream* stream) {
-                          return AllGatherImplCommon(
-                              run_options, debug_options, stream, args,
-                              group_mode, op_id, replica_group_offsets,
-                              replica_group_values, is_async);
-                        });
+  return RunSyncOrAsync(
+      run_options, collectives, async_collectives, uid, is_async,
+      [&](se::Stream* stream) {
+        const gpu::GpuExecutableRunOptions* gpu_opts =
+            run_options->run_options().gpu_executable_run_options();
+        if (gpu_opts && gpu_opts->enable_mock_nccl_collectives()) {
+          return MockNcclImplCommon(
+              gpu_opts->mock_nccl_bandwidth(), run_options, debug_options,
+              stream, args, group_mode, op_id, replica_group_offsets,
+              replica_group_values, is_async, Thunk::kNcclAllGather);
+        }
+        return AllGatherImplCommon(run_options, debug_options, stream, args,
+                                   group_mode, op_id, replica_group_offsets,
+                                   replica_group_values, is_async);
+      });
 #else   // XLA_ENABLE_XCCL
   return absl::InternalError("NCCL diasbled");
 #endif  // XLA_ENABLE_XCCL
@@ -478,14 +753,22 @@ absl::Status AllReduceImpl(const ServiceExecutableRunOptions* run_options,
                            absl::Span<const int64_t> replica_group_values) {
 #if XLA_ENABLE_XCCL
   VLOG(3) << "Running AllReduce " << (is_async ? "(Async)" : "(Sync)");
-  return RunSyncOrAsync(run_options, collectives, async_collectives, uid,
-                        is_async, [&](se::Stream* stream) {
-                          return AllReduceImplCommon(
-                              run_options, debug_options, stream, args,
-                              group_mode, op_id, reduction_kind,
-                              replica_group_offsets, replica_group_values,
-                              is_async);
-                        });
+  return RunSyncOrAsync(
+      run_options, collectives, async_collectives, uid, is_async,
+      [&](se::Stream* stream) {
+        const gpu::GpuExecutableRunOptions* gpu_opts =
+            run_options->run_options().gpu_executable_run_options();
+        if (gpu_opts && gpu_opts->enable_mock_nccl_collectives()) {
+          return MockNcclImplCommon(
+              gpu_opts->mock_nccl_bandwidth(), run_options, debug_options,
+              stream, args, group_mode, op_id, replica_group_offsets,
+              replica_group_values, is_async, Thunk::kNcclAllReduce);
+        }
+        return AllReduceImplCommon(run_options, debug_options, stream, args,
+                                   group_mode, op_id, reduction_kind,
+                                   replica_group_offsets, replica_group_values,
+                                   is_async);
+      });
 #else   // XLA_ENABLE_XCCL
   // NCCL disabled.
   return absl::InternalError("NCCL disabled");
@@ -550,14 +833,22 @@ absl::Status AllToAllImpl(const ServiceExecutableRunOptions* run_options,
                           absl::Span<const int64_t> replica_group_values) {
 #if XLA_ENABLE_XCCL
   VLOG(3) << "Running AllToAll " << (is_async ? "(Async)" : "(Sync)");
-  return RunSyncOrAsync(run_options, collectives, async_collectives, uid,
-                        is_async, [&](se::Stream* stream) {
-                          return AllToAllImplCommon(
-                              run_options, debug_options, stream, args,
-                              group_mode, has_split_dimension, op_id,
-                              replica_group_offsets, replica_group_values,
-                              is_async);
-                        });
+  return RunSyncOrAsync(
+      run_options, collectives, async_collectives, uid, is_async,
+      [&](se::Stream* stream) {
+        const gpu::GpuExecutableRunOptions* gpu_opts =
+            run_options->run_options().gpu_executable_run_options();
+        if (gpu_opts && gpu_opts->enable_mock_nccl_collectives()) {
+          return MockNcclImplCommon(
+              gpu_opts->mock_nccl_bandwidth(), run_options, debug_options,
+              stream, args, group_mode, op_id, replica_group_offsets,
+              replica_group_values, is_async, Thunk::kNcclAllToAll);
+        }
+        return AllToAllImplCommon(run_options, debug_options, stream, args,
+                                  group_mode, has_split_dimension, op_id,
+                                  replica_group_offsets, replica_group_values,
+                                  is_async);
+      });
 #else   // XLA_ENABLE_XCCL
   return absl::InternalError("NCCL disabled");
 #endif  // XLA_ENABLE_XCCL
@@ -619,14 +910,22 @@ absl::Status ReduceScatterImpl(const ServiceExecutableRunOptions* run_options,
                                absl::Span<const int64_t> replica_group_values) {
 #if XLA_ENABLE_XCCL
   VLOG(3) << "Running ReduceScatter " << (is_async ? "(Async)" : "(Sync)");
-  return RunSyncOrAsync(run_options, collectives, async_collectives, uid,
-                        is_async, [&](se::Stream* stream) {
-                          return ReduceScatterImplCommon(
-                              run_options, debug_options, stream, args,
-                              group_mode, op_id, reduction_kind,
-                              replica_group_offsets, replica_group_values,
-                              is_async);
-                        });
+  return RunSyncOrAsync(
+      run_options, collectives, async_collectives, uid, is_async,
+      [&](se::Stream* stream) {
+        const gpu::GpuExecutableRunOptions* gpu_opts =
+            run_options->run_options().gpu_executable_run_options();
+        if (gpu_opts && gpu_opts->enable_mock_nccl_collectives()) {
+          return MockNcclImplCommon(
+              gpu_opts->mock_nccl_bandwidth(), run_options, debug_options,
+              stream, args, group_mode, op_id, replica_group_offsets,
+              replica_group_values, is_async, Thunk::kNcclReduceScatter);
+        }
+        return ReduceScatterImplCommon(run_options, debug_options, stream, args,
+                                       group_mode, op_id, reduction_kind,
+                                       replica_group_offsets,
+                                       replica_group_values, is_async);
+      });
 #else   // XLA_ENABLE_XCCL
   return absl::InternalError("NCCL disabled");
 #endif  // XLA_ENABLE_XCCL

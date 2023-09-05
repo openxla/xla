@@ -207,6 +207,10 @@ class FunctionalHloRunner {
   // Create a PjRtClient which can run HLOs on GPU.
   static StatusOr<std::unique_ptr<PjRtClient>> CreateGpuClient();
 
+  // Create a PjRtClient which mocks multi-hosts GPU run
+  static StatusOr<std::unique_ptr<PjRtClient>> CreateMockGpuClient(
+      int mock_nccl_bandwidth, int num_nodes);
+
   // Loads an ExecutionOptions proto (which can be used in RawCompileOptions).
   static StatusOr<ExecutionOptions> LoadExecutionOptions(
       absl::string_view path);
