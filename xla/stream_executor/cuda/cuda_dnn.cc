@@ -5208,6 +5208,7 @@ GetCudnnFusedMHAOperationGraph(
   if (is_s_virtual) {
     if (use_bias) {
       // Create bias op and tensor
+      DCHECK(bias_descriptor != std::nullopt);
       TF_ASSIGN_OR_RETURN(
           auto bias_out,
           CreateCudnnBiasTensor(intermediate_ops, intermediate_bmm2_lhs_dims,

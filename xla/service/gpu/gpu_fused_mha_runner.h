@@ -142,18 +142,18 @@ struct GpufMHAParams {
                                      se::DeviceMemoryBase rhs_bmm1_buffer,
                                      se::DeviceMemoryBase rhs_bmm2_buffer,
                                      se::DeviceMemoryBase output_buffer,
-                                     se::DeviceMemoryBase mask_buffer,
-                                     se::DeviceMemoryBase bias_buffer,
-                                     se::DeviceMemoryBase activation_buffer);
+                                     std::optional<se::DeviceMemoryBase> mask_buffer,
+                                     std::optional<se::DeviceMemoryBase> bias_buffer,
+                                     std::optional<se::DeviceMemoryBase> activation_buffer);
 
   const GpufMHAConfig* config;  // Not owned
   se::DeviceMemoryBase lhs_bmm1_buffer;
   se::DeviceMemoryBase rhs_bmm1_buffer;
   se::DeviceMemoryBase rhs_bmm2_buffer;
   se::DeviceMemoryBase output_buffer;
-  se::DeviceMemoryBase activation_buffer;
-  se::DeviceMemoryBase mask_buffer;
-  se::DeviceMemoryBase bias_buffer;
+  std::optional<se::DeviceMemoryBase> activation_buffer;
+  std::optional<se::DeviceMemoryBase> mask_buffer;
+  std::optional<se::DeviceMemoryBase> bias_buffer;
 };
 
 struct GpufMHABackwardParams {
@@ -166,8 +166,8 @@ struct GpufMHABackwardParams {
       se::DeviceMemoryBase d_output_buffer,
       se::DeviceMemoryBase d_bmm1_lhs_buffer,
       se::DeviceMemoryBase d_bmm1_rhs_buffer,
-      se::DeviceMemoryBase d_bmm2_rhs_buffer, se::DeviceMemoryBase d_S_buffer,
-      se::DeviceMemoryBase mask_buffer, se::DeviceMemoryBase d_bias_buffer);
+      se::DeviceMemoryBase d_bmm2_rhs_buffer, se::DeviceMemoryBase d_s_buffer,
+      std::optional<se::DeviceMemoryBase> mask_buffer, std::optional<se::DeviceMemoryBase> d_bias_buffer);
 
   const GpufMHABackwardConfig* config;  // Not owned
   se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer;
@@ -179,8 +179,8 @@ struct GpufMHABackwardParams {
   se::DeviceMemoryBase d_bmm1_rhs_buffer;
   se::DeviceMemoryBase d_bmm2_rhs_buffer;
   se::DeviceMemoryBase d_s_buffer;
-  se::DeviceMemoryBase d_bias_buffer;
-  se::DeviceMemoryBase mask_buffer;
+  std::optional<se::DeviceMemoryBase> d_bias_buffer;
+  std::optional<se::DeviceMemoryBase> mask_buffer;
 };
 
 class FusedMultiHeadedAttentionRunner {
@@ -367,8 +367,8 @@ Status RunGpuFMHA(
     const GpufMHAConfig& fmha_config, se::DeviceMemoryBase lhs_bmm1_buffer,
     se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
     se::DeviceMemoryBase output_buffer, se::DeviceMemoryBase scratch_buffer,
-    se::DeviceMemoryBase mask_buffer, se::DeviceMemoryBase bias_buffer,
-    se::DeviceMemoryBase activation_buffer, se::Stream* stream,
+    std::optional<se::DeviceMemoryBase> mask_buffer, std::optional<se::DeviceMemoryBase> bias_buffer,
+    std::optional<se::DeviceMemoryBase> activation_buffer, se::Stream* stream,
     RunFusedMHAOptions = {});
 
 Status RunGpuFMHABackward(const GpufMHABackwardConfig& fmha_config,
@@ -381,9 +381,9 @@ Status RunGpuFMHABackward(const GpufMHABackwardConfig& fmha_config,
                           se::DeviceMemoryBase d_bmm1_lhs_buffer,
                           se::DeviceMemoryBase d_bmm1_rhs_buffer,
                           se::DeviceMemoryBase d_bmm2_rhs_buffer,
-                          se::DeviceMemoryBase d_S_buffer,
-                          se::DeviceMemoryBase mask_buffer,
-                          se::DeviceMemoryBase d_bias_buffer,
+                          se::DeviceMemoryBase d_s_buffer,
+                          std::optional<se::DeviceMemoryBase> mask_buffer,
+                          std::optional<se::DeviceMemoryBase> d_bias_buffer,
                           se::Stream* stream, RunFusedMHABackwardOptions = {});
 
 std::string ToString(const GpufMHAConfig& config);
