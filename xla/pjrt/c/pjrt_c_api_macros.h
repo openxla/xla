@@ -13,21 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PJRT_C_PJRT_C_API_GPU_H_
-#define XLA_PJRT_C_PJRT_C_API_GPU_H_
+#ifndef XLA_PJRT_C_PJRT_C_API_MACROS_H_
+#define XLA_PJRT_C_PJRT_C_API_MACROS_H_
 
-#include "xla/pjrt/c/pjrt_c_api.h"
-#include "xla/pjrt/c/pjrt_c_api_macros.h"
+#if defined(_WIN32)
+#define PJRT_CAPI_EXPORT __declspec(dllexport)
+#else
+#define PJRT_CAPI_EXPORT __attribute__((visibility("default")))
+#endif  // _WIN32
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-// Does not pass ownership of returned PJRT_Api* to caller.
-PJRT_CAPI_EXPORT const PJRT_Api* GetPjrtApi();
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif  // XLA_PJRT_C_PJRT_C_API_GPU_H_
+#endif  // XLA_PJRT_C_PJRT_C_API_MACROS_H_
