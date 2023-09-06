@@ -26,116 +26,7 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-namespace {
-// Structure to keep track of the subgraph to optimize
-// "Left" and "Right" are conceptual. The initial
-// reduce scatter is always considered "left" and "right"
-// points to the other side of subgraph ending in a binary op
 
-struct AllGatherReduceScatterSpec {
-  HloInstruction* all_gather_left;
-  HloInstruction* all_gather_right;
-  HloInstruction* right_source;
-  HloInstruction* binary_op;
-};
-
-std::optional<AllGatherReduceScatterSpec> MatchReduceScatter(
-    const HloReduceScatterInstruction* rs, int64_t min_rank = 1) {
-  if (!rs->shape().IsArray() || rs->constrain_layout() ||
-      (rs->IsCrossModuleAllReduce() &&
-       !rs->GetModule()->config().use_spmd_partitioning())) {
-    VLOG(2) << "Unsupported reduce-scatter: " << rs->ToString();
-    return std::nullopt;
-  }
-  if (rs->shape().rank() - absl::c_count(rs->shape().dimensions(), 1) <
-      min_rank) {
-    VLOG(2) << " Should be at least rank-" << min_rank
-            << " excluding trivial dimensions " << rs->ToString();
-    return std::nullopt;
-  }
-  if (rs->replica_groups().size() > 1) {
-    const int64_t size = rs->replica_groups()[0].replica_ids_size();
-    absl::Span<const ReplicaGroup> rgs = rs->replica_groups();
-    const bool has_uniform_size = absl::c_all_of(
-        rgs.subspan(1, size - 1), [size](const ReplicaGroup& group) {
-          return group.replica_ids_size() == size;
-        });
-    if (!has_uniform_size) {
-      VLOG(2) << "Unsupported non-uniform replica group size "
-              << rs->ToString();
-      return std::nullopt;
-    }
-  }
-
-  HloInstruction* user = rs->users()[0];
-  if (user->opcode() != HloOpcode::kAllGather) {
-    // ideally this should cover cases with other ops in between
-    VLOG(2) << "Reduce-Scatter is not followed by all-gather " << user->ToString();
-    return std::nullopt;
-  }
-  if (user->user_count() != 1) {
-    // all-gather is subject to removal. Should not have more than 1 user
-    VLOG(2) << "all-gather user_count > 1 " << user->ToString();
-    return std::nullopt;
-  }
-  HloInstruction* all_gather_left = user;
-  HloInstruction* binary_op;
-  user = user->users().front();
-  // the common node between the left and right branches
-  // needs to be a binary op
-  if (!HloOpcodeIsBinaryCommutative(user->opcode())) {
-    VLOG(2) << "There is no binary op in the pipeline path, "
-               "nothing to optimize: "
-            << user->ToString();
-    return std::nullopt;
-  }
-  binary_op = user;  // the end of "left" side branch
-  HloInstruction* all_gather_right = (user->mutable_operand(0) == all_gather_left)
-                                       ? user->mutable_operand(1)
-                                       : user->mutable_operand(0);
-  if (all_gather_right->opcode() != HloOpcode::kAllGather) {
-    VLOG(2) << "Binary op's right operand is not all-gather "
-            << all_gather_right->ToString();
-    return std::nullopt;
-  }
-  // right side all-gather is also subject to removal
-  // and should not contain more than 1 users
-  if (all_gather_right->user_count() != 1) {
-    VLOG(2) << "right side all-gather user_count > 1 "
-            << all_gather_right->ToString();
-    return std::nullopt;
-  }
-  HloInstruction* right_reduce_scatter = all_gather_right->mutable_operand(0);
-  
-  // we need to traverse the right branch backwards in search of 
-  // a reduce scatter collective
-  while (right_reduce_scatter->opcode() != HloOpcode::kReduceScatter &&
-             right_reduce_scatter->operand_count() > 0 ) {
-        right_reduce_scatter = right_reduce_scatter->mutable_operand(0);
-      }
-
-  if (right_reduce_scatter->opcode() != HloOpcode::kReduceScatter) {
-    VLOG(2)
-        << "Binary op's right operand path doesn not include reduce scatter "
-        << right_reduce_scatter->ToString();
-    return std::nullopt;
-  }
-  if (!ReplicaGroupsEqual(rs->replica_groups(),
-                          right_reduce_scatter->replica_groups())) {
-    VLOG(2)
-        << "Reduce-Scatters in two branches don't have similar replica groups"
-        << right_reduce_scatter->ToString();
-    return std::nullopt;
-  }
-  AllGatherReduceScatterSpec spec;
-  spec.all_gather_left = all_gather_left;
-  spec.all_gather_right = all_gather_right;
-  spec.binary_op = binary_op;
-  spec.right_source = all_gather_right->mutable_operand(0);
-
-  return spec;
-}
-}
 StatusOr<bool> AllGatherOptimizer::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -147,43 +38,71 @@ StatusOr<bool> AllGatherOptimizer::Run(
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
-      if (instruction->opcode() != HloOpcode::kReduceScatter ||
-          !instruction->shape().IsArray()) {
+      if (!HloOpcodeIsBinaryCommutative(instruction->opcode())) {
         continue;
       }
-      auto* rs = Cast<HloReduceScatterInstruction>(instruction);
-      // get the graph structure for which the all-gather ops
-      // are combined into a single call after the binary op
-      auto rs_spec = MatchReduceScatter(rs);
 
-      if (!rs_spec) {
-        VLOG(2) << "Cannot match all-gather combining optimization "
-                << rs->ToString();
+      HloInstruction* left_op = instruction->mutable_operand(0);
+      HloInstruction* right_op = instruction->mutable_operand(1);
+
+      // we need to traverse the right branch backwards in search of
+      // an all-gather collective
+      auto find_all_gather = [&](HloInstruction* base_op) {
+        while (base_op->opcode() != HloOpcode::kAllGather &&
+               base_op->operand_count() > 0) {
+          base_op = base_op->mutable_operand(0);
+        }
+      };
+      find_all_gather(right_op);
+      find_all_gather(left_op);
+
+      if (right_op->opcode() != HloOpcode::kAllGather ||
+          left_op->opcode() != HloOpcode::kAllGather) {
+        VLOG(2) << "Binary op's operands are not all-gather deduced types.";
+        continue;
+      }
+
+      auto* left_all_gather = Cast<HloAllGatherInstruction>(left_op);
+      auto* right_all_gather = Cast<HloAllGatherInstruction>(right_op);
+
+      if (right_all_gather->constrain_layout() !=
+              left_all_gather->constrain_layout() ||
+          right_all_gather->use_global_device_ids() !=
+              left_all_gather->use_global_device_ids() ||
+          !ReplicaGroupsEqual(right_all_gather->replica_groups(),
+                              left_all_gather->replica_groups())) {
+        VLOG(2) << "The right and left all-gather ops are not compatible "
+                   "to merge. ";
+        continue;
+      }
+
+      if (right_all_gather->user_count() != 1 ||
+          left_all_gather->user_count() != 1) {
+        VLOG(2) << "all-gather user_count > 1 ";
         continue;
       }
       auto index_in_full_shape =
           computation->AddInstruction(HloInstruction::CreateBinary(
-              rs->shape(), rs_spec->binary_op->opcode(), rs,
-              rs_spec->right_source));
+              right_all_gather->operand(0)->shape(), instruction->opcode(),
+              left_all_gather->mutable_operand(0),
+              right_all_gather->mutable_operand(0)));
 
       int64_t all_gather_dimension =
-          Cast<HloAllGatherInstruction>(rs_spec->all_gather_left)
+          Cast<HloAllGatherInstruction>(right_all_gather)
               ->all_gather_dimension();
 
       auto combined = HloInstruction::CreateAllGather(
-          rs_spec->all_gather_left->shape(), {index_in_full_shape},
-          all_gather_dimension, rs_spec->all_gather_left->replica_groups(),
-          /*constrain_layout=*/false, rs_spec->all_gather_left->channel_id(),
-          Cast<HloAllGatherInstruction>(rs_spec->all_gather_left)
+          left_all_gather->shape(), {index_in_full_shape}, all_gather_dimension,
+          left_all_gather->replica_groups(),
+          /*constrain_layout=*/false, left_all_gather->channel_id(),
+          Cast<HloAllGatherInstruction>(left_all_gather)
               ->use_global_device_ids());
 
       TF_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
-          rs_spec->binary_op, std::move(combined)));
+          instruction, std::move(combined)));
 
-      TF_RETURN_IF_ERROR(
-          computation->RemoveInstruction(rs_spec->all_gather_left));
-      TF_RETURN_IF_ERROR(
-          computation->RemoveInstruction(rs_spec->all_gather_right));
+      TF_RETURN_IF_ERROR(computation->RemoveInstruction(left_all_gather));
+      TF_RETURN_IF_ERROR(computation->RemoveInstruction(right_all_gather));
       changed = true;
     }
   }
