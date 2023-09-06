@@ -12,7 +12,21 @@ def _container_image_uri(container_name):
     container = containers[container_name]
     return "docker://%s/%s@%s" % (container["registry"], container["repository"], container["digest"])
 
-def _tensorflow_rbe_config(name, compiler, python_versions, os, rocm_version = None, cuda_version = None, cudnn_version = None, tensorrt_version = None, tensorrt_install_path = None, cudnn_install_path = None, compiler_prefix = None, sysroot = None, python_install_path = "/usr"):
+def _tensorflow_rbe_config(
+        name,
+        compiler,
+        python_versions,
+        os,
+        rocm_version = None,
+        cuda_version = None,
+        cudnn_version = None,
+        tensorrt_version = None,
+        tensorrt_install_path = None,
+        cudnn_install_path = None,
+        compiler_prefix = None,
+        sysroot = None,
+        python_install_path = "/usr",
+        hermetic = False):
     if cuda_version != None and rocm_version != None:
         fail("Specifying both cuda_version and rocm_version is not supported.")
 
@@ -121,11 +135,16 @@ def _tensorflow_rbe_config(name, compiler, python_versions, os, rocm_version = N
         remote_python_configure(
             name = "%s_config_python%s" % (name, version),
             environ = env,
+            hermetic = hermetic,
             exec_properties = exec_properties,
             platform_constraint = "@%s_config_platform//:platform_constraint" % name,
         )
 
-def _tensorflow_rbe_win_config(name, python_bin_path, container_name = "windows-1803"):
+def _tensorflow_rbe_win_config(
+        name,
+        python_bin_path,
+        container_name = "windows-1803",
+        hermetic = False):
     container_image = _container_image_uri(container_name)
     exec_properties = {
         "container-image": container_image,
@@ -146,10 +165,11 @@ def _tensorflow_rbe_win_config(name, python_bin_path, container_name = "windows-
         name = "%s_config_python" % name,
         exec_properties = exec_properties,
         environ = env,
+        hermetic = hermetic,
         platform_constraint = "@%s_config_platform//:platform_constraint" % name,
     )
 
-def _tensorflow_local_config(name):
+def _tensorflow_local_config(name, hermetic = False):
     remote_platform_configure(
         name = "%s_config_platform" % name,
         platform = "local",
@@ -158,6 +178,7 @@ def _tensorflow_local_config(name):
     local_python_configure(
         name = "%s_config_python" % name,
         platform_constraint = "@%s_config_platform//:platform_constraint" % name,
+        hermetic = hermetic,
     )
 
 tensorflow_rbe_config = _tensorflow_rbe_config
@@ -168,7 +189,7 @@ tensorflow_local_config = _tensorflow_local_config
 # See //tensorflow/tools/tf_sig_build_dockerfiles
 # These containers do not support ROCm and all have CUDA. We demand that the configuration
 # provide all the env variables to remove hidden logic.
-def sigbuild_tf_configs(name_container_map, env):
+def sigbuild_tf_configs(name_container_map, env, hermetic = False):  # buildifier: disable=function-docstring
     for name, container in name_container_map.items():
         exec_properties = {
             "container-image": container,
@@ -204,4 +225,5 @@ def sigbuild_tf_configs(name_container_map, env):
             environ = env,
             exec_properties = exec_properties,
             platform_constraint = "@%s_config_platform//:platform_constraint" % name,
+            hermetic = hermetic,
         )

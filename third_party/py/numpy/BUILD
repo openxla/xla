@@ -2,10 +2,9 @@ licenses(["restricted"])
 
 package(default_visibility = ["//visibility:public"])
 
-py_library(
+alias(
     name = "numpy",
-    srcs = ["tf_numpy_dummy.py"],
-    srcs_version = "PY3",
+    actual = "@local_config_python//:numpy",
 )
 
 alias(

@@ -17,16 +17,19 @@ export TF_PYTHON_VERSION=3.9
 def _python_repository_impl(repository_ctx):
     repository_ctx.file("BUILD", "")
     version = repository_ctx.os.environ.get("TF_PYTHON_VERSION", "")
+    hermetic = not repository_ctx.os.environ.get("TF_LOCAL_PYTHON", False)
     if version not in VERSIONS:
         print(WARNING)  # buildifier: disable=print
         version = DEFAULT_VERSION
     repository_ctx.file(
         "py_version.bzl",
-        "HERMETIC_PYTHON_VERSION = \"%s\"" %
-        version,
+        """
+HERMETIC_PYTHON_VERSION = \"%s\"
+HERMETIC_PYTHON = %r
+""" % (version, hermetic),
     )
 
 python_repository = repository_rule(
     implementation = _python_repository_impl,
-    environ = ["TF_PYTHON_VERSION"],
+    environ = ["TF_PYTHON_VERSION", "TF_LOCAL_PYTHON"],
 )

@@ -1,9 +1,4 @@
 """Repository rule for Python autoconfiguration.
-
-`python_configure` depends on the following environment variables:
-
-  * `PYTHON_BIN_PATH`: location of python binary.
-  * `PYTHON_LIB_PATH`: Location of python libraries.
 """
 
 load(
@@ -23,7 +18,7 @@ load(
     "read_dir",
 )
 
-def _genrule(src_dir, genrule_name, command, outs):
+def _genrule(genrule_name, command, outs):
     """Returns a string with a genrule.
 
     Genrule executes the given command and produces the given outputs.
@@ -81,7 +76,6 @@ def _symlink_genrule_for_dir(
             command.append(cmd + ' "%s" "%s"' % (src_files[i], dest))
             outs.append('        "' + dest_dir + dest_files[i] + '",')
     genrule = _genrule(
-        src_dir,
         genrule_name,
         " && ".join(command),
         "\n".join(outs),
@@ -197,13 +191,18 @@ def _get_numpy_include(repository_ctx, python_bin):
         error_details = "Is numpy installed?",
     ).stdout.splitlines()[0]
 
+def _create_remote_python_repository(repository_ctx, remote_config_repo):
+    """Creates pointers to a remotely configured repo set up to build with Python.
+    """
+    repository_ctx.template("BUILD", config_repo_label(remote_config_repo, ":BUILD"), {})
+
 def _create_local_python_repository(repository_ctx):
     """Creates the repository containing files set up to build with Python."""
 
     # Resolve all labels before doing any real work. Resolving causes the
     # function to be restarted with all previous state being lost. This
     # can easily lead to a O(n^2) runtime in the number of labels.
-    build_tpl = repository_ctx.path(Label("//third_party/py:BUILD.tpl"))
+    build_tpl = repository_ctx.path(Label("//third_party/py:BUILD_local_py.tpl"))
 
     python_bin = get_python_bin(repository_ctx)
     _check_python_bin(repository_ctx, python_bin)
@@ -252,18 +251,33 @@ def _create_local_python_repository(repository_ctx):
         "%{PLATFORM_CONSTRAINT}": platform_constraint,
     })
 
-def _create_remote_python_repository(repository_ctx, remote_config_repo):
-    """Creates pointers to a remotely configured repo set up to build with Python.
-    """
-    repository_ctx.template("BUILD", config_repo_label(remote_config_repo, ":BUILD"), {})
+def _create_hermetic_python_repository(repository_ctx):
+    """Creates the repository containing files set up to build with Python."""
+
+    # Resolve all labels before doing any real work. Resolving causes the
+    # function to be restarted with all previous state being lost. This
+    # can easily lead to a O(n^2) runtime in the number of labels.
+    build_tpl = repository_ctx.path(Label("//third_party/py:BUILD_hermetic.tpl"))
+    platform_constraint = ""
+    if repository_ctx.attr.platform_constraint:
+        platform_constraint = "\"%s\"" % repository_ctx.attr.platform_constraint
+    repository_ctx.template("BUILD", build_tpl, {"%{PLATFORM_CONSTRAINT}": platform_constraint})
 
 def _python_autoconf_impl(repository_ctx):
     """Implementation of the python_autoconf repository rule."""
-    if get_host_environ(repository_ctx, TF_PYTHON_CONFIG_REPO) != None:
+    if repository_ctx.attr.hermetic:
+        _create_hermetic_python_repository(repository_ctx)
+    elif get_host_environ(repository_ctx, TF_PYTHON_CONFIG_REPO) != None:
         _create_remote_python_repository(
             repository_ctx,
             get_host_environ(repository_ctx, TF_PYTHON_CONFIG_REPO),
         )
+    else:
+        _create_local_python_repository(repository_ctx)
+
+def _local_python_impl(repository_ctx):
+    if repository_ctx.attr.hermetic:
+        _create_hermetic_python_repository(repository_ctx)
     else:
         _create_local_python_repository(repository_ctx)
 
@@ -274,21 +288,23 @@ _ENVIRONS = [
 ]
 
 local_python_configure = repository_rule(
-    implementation = _create_local_python_repository,
+    implementation = _local_python_impl,
     environ = _ENVIRONS,
     attrs = {
         "environ": attr.string_dict(),
         "platform_constraint": attr.string(),
+        "hermetic": attr.bool(default = False),
     },
 )
 
 remote_python_configure = repository_rule(
-    implementation = _create_local_python_repository,
+    implementation = _local_python_impl,
     environ = _ENVIRONS,
     remotable = True,
     attrs = {
         "environ": attr.string_dict(),
         "platform_constraint": attr.string(),
+        "hermetic": attr.bool(default = False),
     },
 )
 
@@ -297,9 +313,10 @@ python_configure = repository_rule(
     environ = _ENVIRONS + [TF_PYTHON_CONFIG_REPO],
     attrs = {
         "platform_constraint": attr.string(),
+        "hermetic": attr.bool(default = False),
     },
 )
-"""Detects and configures the local Python.
+"""Detects and configures hermetic or local Python.
 
 Add the following to your WORKSPACE FILE:
 
@@ -309,4 +326,4 @@ python_configure(name = "local_config_python")
 
 Args:
   name: A unique name for this workspace rule.
-"""
+"""  # buildifier: disable=no-effect
