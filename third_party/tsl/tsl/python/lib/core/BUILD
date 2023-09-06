@@ -36,8 +36,8 @@ cc_library(
         "@ml_dtypes",
     ],
     deps = [
+        "//third_party/python_runtime:headers",  # build_cleaner: keep; DNR: b/35864863
         "//tsl/python/lib/core:numpy",
-        "@local_config_python//:python_headers",  # build_cleaner: keep; DNR: b/35864863
         "@pybind11",
     ],
 )
@@ -57,6 +57,7 @@ cc_shared_library(
         "@local_config_python//:__subpackages__",
         "@pybind11//:__subpackages__",
         "@nsync//:__subpackages__",
+        "//tsl:__subpackages__",
     ],
 )
 
@@ -71,7 +72,7 @@ tsl_pybind_extension(
     ],
     deps = [
         ":ml_dtypes_lib",
-        "@local_config_python//:python_headers",
+        "//third_party/python_runtime:headers",
         "@pybind11",
     ],
 )
@@ -81,8 +82,8 @@ cc_library(
     srcs = ["numpy.cc"],
     hdrs = ["numpy.h"],
     deps = [
-        "@local_config_python//:numpy_headers",
-        "@local_config_python//:python_headers",
+        "//third_party/py/numpy:headers",
+        "//third_party/python_runtime:headers",
     ],
 )
 

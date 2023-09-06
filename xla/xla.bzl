@@ -30,7 +30,7 @@ def clean_dep(target):
     """
 
     # A repo-relative label is resolved relative to the file in which the
-    # Label() call appears, i.e. @xla.
+    # Label() call appears, i.e. @org_tensorflow.
     return str(Label(target))
 
 def xla_py_proto_library(**kwargs):

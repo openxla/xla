@@ -8,23 +8,23 @@ package_group(
 package_group(
     name = "internal",
     packages = [
-        "//tensorflow/compiler/xla/backends/profiler/gpu/...",
         "//tensorflow/core/profiler/...",
         "//tensorflow/python/eager/...",
         "//tensorflow/python/profiler/...",
         "//tensorflow/python/tpu/profiler/...",
         "//tsl/profiler/...",
+        "//xla/backends/profiler/gpu/...",
     ],
 )
 
 package_group(
     name = "xla_profiler_backends",
-    packages = ["//tensorflow/compiler/xla/backends/profiler/..."],
+    packages = ["//xla/backends/profiler/..."],
 )
 
 package_group(
     name = "xla_internal",
     packages = [
-        "//tensorflow/compiler/xla/...",
+        "//xla/...",
     ],
 )
