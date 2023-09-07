@@ -23,6 +23,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+// placeholder for index annotation headers
 #include "absl/types/span.h"
 #include "pybind11/cast.h"  // from @pybind11
 #include "pybind11/numpy.h"  // from @pybind11
@@ -54,10 +55,7 @@ class Sharding {
   std::optional<int> num_devices_;
 };
 
-// Returns if the environment variable "JAX_ENABLE_MEMORY_KIND" has
-// a non-empty string, indicating that JAX should get the memory_kind from the
-// executable and apply it to output arrays from executions.
-bool GetJaxEnableMemoryKind();
+extern bool (*GetEnableMemories)();
 
 // Checks if the memory kind is valid, and canonicalizes the
 // memory kind to default memory on backends that support memories.
@@ -101,7 +99,7 @@ class NamedSharding : public XLACompatibleSharding {
     return type;
   }
 
-  std::shared_ptr<PyDeviceList> internal_device_list() {
+  std::shared_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
   }
 
@@ -132,7 +130,7 @@ class SingleDeviceSharding : public XLACompatibleSharding {
     return type;
   }
 
-  std::shared_ptr<PyDeviceList> internal_device_list() {
+  std::shared_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
   }
 
@@ -159,7 +157,7 @@ class PmapSharding : public XLACompatibleSharding {
     return type;
   }
 
-  std::shared_ptr<PyDeviceList> internal_device_list() {
+  std::shared_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
   }
 
@@ -216,7 +214,7 @@ class GSPMDSharding : public XLACompatibleSharding {
            this->memory_kind().equal(other.memory_kind());
   }
 
-  std::shared_ptr<PyDeviceList> internal_device_list() {
+  std::shared_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
   }
 
@@ -255,12 +253,6 @@ class GSPMDSharding : public XLACompatibleSharding {
   std::shared_ptr<PyDeviceList> internal_device_list_;
 };
 
-// pybind11-index-annotation BEGIN
-// refs {
-//   module_path: "tensorflow/compiler/xla/python/xla.cc"
-//   module_arg {}
-// }
-// pybind11-index-annotation END
 void RegisterSharding(pybind11::module& m);
 
 }  // namespace jax

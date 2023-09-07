@@ -488,28 +488,6 @@ cc_library(
 )
 
 cc_library(
-    name = "tpu_initializer_framework_helper",
-    srcs = ["tpu_initializer_framework_helper.cc"],
-    hdrs = [
-        "tpu_initializer_framework_helper.h",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":libtftpu_header",
-        ":tpu_api",
-        ":tpu_api_dlsym_set_fn",
-        ":tpu_executor_base",
-        ":tpu_executor_c_api_hdrs",
-        ":tpu_initialize_util",
-        ":tpu_library_init_fns",
-        ":tpu_ops_c_api_hdrs",
-        "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-    ],
-)
-
-cc_library(
     name = "tpu_initialize_util",
     srcs = ["tpu_initialize_util.cc"],
     hdrs = [
@@ -517,12 +495,11 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

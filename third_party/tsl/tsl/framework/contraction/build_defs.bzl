@@ -65,7 +65,7 @@ def cc_binary_disable_onednn(name, visibility = [], **kwargs):
     """A wrapper of cc_binary that disables the oneDNN contraction library.
 
     Using cc_binary_disable_onednn is equivalent to adding the build flag:
-    "--//tsl/framework/contraction:onednn_contraction_kernel=disable"
+    "--//third_party/tensorflow/tsl/framework/contraction:onednn_contraction_kernel=disable"
 
     Args:
       name: The name of the resulting binary.

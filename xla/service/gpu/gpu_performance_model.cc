@@ -88,14 +88,21 @@ absl::Duration ProducerInputAccessTime(
     }
   }
   for (int i = 0; i < producer->operand_count(); ++i) {
-    int64_t p_size_accessed =
+    // Information about data read taking into account utilization.
+    // If `operand_utilization` is 0, `operand_bytes_accessed` should be also 0.
+    const int64_t operand_bytes_accessed =
         cost_analysis->operand_bytes_accessed(*producer, i);
-    float operand_utilization =
+    const float operand_utilization =
         cost_analysis->operand_utilization(*producer, i);
-    int64_t p_size_net =
-        (operand_utilization == 0)
-            ? 0
-            : static_cast<float>(p_size_accessed) / operand_utilization;
+
+    // An estimate how much data would need to fit into L1/L2 cache to speed up
+    // the operand access.
+    // If `operand_utilization` < 1, only a part of the full operand size should
+    // be read. Otherwise, `operand_bytes_accessed / operand_utilization` is the
+    // size of the operand without reuse.
+    const int64_t n_bytes_read_net =
+        operand_bytes_accessed / std::max(operand_utilization, 1.f);
+
     // Look for common operands of producer and consumer that are accessed
     // more efficiently on merge:
     // 1) Producer has to use the common operand elementwise from its root if
@@ -124,9 +131,10 @@ absl::Duration ProducerInputAccessTime(
       }
     }
     CHECK_LE(common_utilization, producer_output_utilization);
-    ret += ReadTime(
-        gpu_device_info, std::min(p_size_net, p_size_accessed),
-        p_size_accessed * (producer_output_utilization - common_utilization));
+    ret += ReadTime(gpu_device_info, /*n_bytes_net=*/n_bytes_read_net,
+                    /*n_bytes_total=*/
+                    operand_bytes_accessed *
+                        (producer_output_utilization - common_utilization));
   }
   return ret;
 }
@@ -134,20 +142,14 @@ absl::Duration ProducerInputAccessTime(
 // Use HloFusionAnalysis for computing the actual number of threads that the
 // IR emitter will use. Return std::nullopt if this data is not available.
 std::optional<int64_t> EstimateThreadCount(
-    const HloInstruction* instr, const GpuDeviceInfo& gpu_device_info,
-    std::optional<se::CudaComputeCapability> cc) {
+    const HloInstruction* instr, const GpuDeviceInfo& gpu_device_info) {
   auto fusion = DynCast<const HloFusionInstruction>(instr);
-  if (fusion != nullptr && cc.has_value()) {
-    auto analysis =
-        HloFusionAnalysis::Create(fusion, &gpu_device_info, cc.value());
-    if (analysis.ok()) {
-      auto launch_dimensions = analysis->GetLaunchDimensions();
-      if (launch_dimensions.ok()) {
-        return launch_dimensions->launch_bound();
-      }
-    }
-  }
-  return std::nullopt;
+  if (fusion == nullptr) return std::nullopt;
+  auto analysis = HloFusionAnalysis::Create(fusion, &gpu_device_info);
+  if (!analysis.ok()) return std::nullopt;
+  auto launch_dimensions = analysis->GetLaunchDimensions();
+  if (!launch_dimensions.ok()) return std::nullopt;
+  return launch_dimensions->launch_bound();
 }
 
 absl::Duration ComputeTime(const GpuDeviceInfo& gpu_device_info,
@@ -199,7 +201,6 @@ EstimateRunTimeData EstimateRunTimeImpl(
 
 GpuPerformanceModel::RunTimes GpuPerformanceModel::EstimateRunTimes(
     const HloInstruction* producer, const GpuHloCostAnalysis* cost_analysis,
-    std::optional<se::CudaComputeCapability> cc,
     std::vector<HloInstruction*> fused_users, bool multi_output) {
   VLOG(8) << "Producer: " << producer->name();
   if (producer->opcode() == HloOpcode::kFusion) {
@@ -219,15 +220,15 @@ GpuPerformanceModel::RunTimes GpuPerformanceModel::EstimateRunTimes(
         cost_analysis->operand_utilization(*u, u->operand_index(producer));
     total_producer_utilization += utilization_by_this_consumer;
 
-    auto thread_count =
-        EstimateThreadCount(u, *cost_analysis->device_info_, cc);
-    int64_t upper_bound =
+    int64_t num_threads =
         producer_data.elements_out * utilization_by_this_consumer;
+    if (auto thread_count =
+            EstimateThreadCount(u, *cost_analysis->device_info_)) {
+      num_threads = std::min(*thread_count, num_threads);
+    }
     absl::Duration compute_time_by_this_consumer = ComputeTime(
         *cost_analysis->device_info_,
-        producer_data.flops * utilization_by_this_consumer,
-        thread_count.has_value() ? std::min(*thread_count, upper_bound)
-                                 : upper_bound);
+        producer_data.flops * utilization_by_this_consumer, num_threads);
     exec_time_fused +=
         std::max(compute_time_by_this_consumer,
                  ProducerInputAccessTime(

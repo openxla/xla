@@ -8,7 +8,7 @@ py_library(
         "//:ml_dtypes",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
-        "@xla//third_party/py/numpy",
+        "@tsl//third_party/py/numpy",
     ],
 )
 
@@ -55,6 +55,17 @@ cc_test(
         "//:float8",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@xla//third_party/eigen3",
+        "@tsl//third_party/eigen3",
+    ],
+)
+
+cc_test(
+    name = "int4_test_cc",
+    srcs = ["int4_test.cc"],
+    linkstatic = 1,
+    deps = [
+        "//:int4",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//third_party/eigen3",
     ],
 )

@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+// placeholder for index annotation headers
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
@@ -54,6 +55,7 @@ struct JitState {
 
   std::optional<bool> disable_jit;
   std::optional<bool> enable_x64;
+  std::optional<bool> enable_memories;
 
   // Used to manually set the default device jax should use. May be unset even
   // in global state, indicating there is no manual override.
@@ -79,6 +81,7 @@ JitState& ThreadLocalJitState();
 // fallback to global state.
 bool GetDisableJit();
 bool GetEnableX64();
+
 // TODO(skyewm): return a C++ type when all JAX backends support a single C++
 // device interface
 std::optional<pybind11::object> GetDefaultDevice();
@@ -126,6 +129,7 @@ struct CallSignature {
   // This is not the case for PMAP, and is set to `nullptr`.
   xla::PjRtDevice* device = nullptr;
   bool jax_enable_x64;
+  bool jax_enable_memories = false;
 
   // For JIT on PJIT, we need to fallback to python whenever default_device
   // changes.
@@ -223,13 +227,6 @@ xla::Status ParseArguments(absl::Span<PyObject* const> positional_args,
                            ParsedArgumentsAsBuffers& arguments);
 
 // The function to call in `xla.cc` to add the bindings for this module.
-//
-// pybind11-index-annotation BEGIN
-// refs {
-//   module_path: "tensorflow/compiler/xla/python/xla.cc"
-//   module_arg {}
-// }
-// pybind11-index-annotation END
 void BuildJaxjitSubmodule(pybind11::module& m);
 
 }  // namespace jax

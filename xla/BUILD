@@ -1,3 +1,4 @@
+# Placeholder: load py_proto_library
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
@@ -1201,3 +1202,8 @@ filegroup(
 #     deps = [":xla_proto"],
 # )
 # copybara:uncomment_end
+
+cc_library(
+    name = "empty",
+    visibility = ["//visibility:public"],
+)

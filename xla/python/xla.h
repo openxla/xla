@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PYTHON_XLA_H_
 #define XLA_PYTHON_XLA_H_
 
+// placeholder for index annotation headers
 #include "pybind11/pybind11.h"  // from @pybind11
 
 namespace xla {

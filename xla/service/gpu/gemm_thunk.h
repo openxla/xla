@@ -20,6 +20,7 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {
@@ -38,6 +39,8 @@ class GemmThunk : public Thunk {
   GemmThunk& operator=(const GemmThunk&) = delete;
 
   Status ExecuteOnStream(const ExecuteParams& params) override;
+  Status Initialize(const GpuExecutable& executable,
+                    se::StreamExecutor* executor) override;
 
  private:
   const GemmConfig config_;

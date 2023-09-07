@@ -33,7 +33,7 @@ bzl_library(
 )
 
 # Add
-# `--//tsl/framework/contraction:disable_onednn_contraction_kernel=True`
+# `--//third_party/tensorflow/tsl/framework/contraction:disable_onednn_contraction_kernel=True`
 # or use the `cc_binary_disable_onednn` build rule to disable the oneDNN
 # library for tensor contractions (new name of the MKL-DNN library).
 bool_flag(

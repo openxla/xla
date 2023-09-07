@@ -29,8 +29,6 @@ package(
 #     name = "passes",
 #     srcs = if_gpu2([
 #         "convert_to_runtime.cc",
-#         "create_graph_regions.cc",
-#         "finalize_graph_dispatches.cc",
 #         "passes.cc",
 #     ]),
 #     hdrs = ["passes.h"],
@@ -42,7 +40,6 @@ package(
 #         ":passes_inc_gen",
 #         "//xla/mlir/backends/gpu2/conversion:convert_case_op",
 #         "//xla/mlir/backends/gpu2/conversion:convert_compiled_ops",
-#         "//xla/mlir/backends/gpu2/conversion:convert_graph_region_op",
 #         "//xla/mlir/backends/gpu2/conversion:convert_library_ops",
 #         "//xla/mlir/backends/gpu2/conversion:convert_memref_ops",
 #         "//xla/mlir/backends/gpu2/conversion:convert_while_op",
@@ -60,7 +57,7 @@ package(
 #         "@llvm-project//mlir:Support",
 #         "@llvm-project//mlir:TensorDialect",
 #         "@llvm-project//mlir:Transforms",
-#     ] + if_gpu2(["//third_party/iree/llvm-external-projects/iree-dialects:IREEInputDialect"]),
+#     ] + if_gpu2(["//third_party/iree/llvm-external-projects/iree-dialects/google_internal:IREEInputDialect"]),
 # )
 #
 # copybara:uncomment_end_and_comment_begin

@@ -137,7 +137,8 @@ cc_library(
     name = "determinism_hdr_lib",
     hdrs = [":determinism_hdr"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//visibility:private"],
+    # TODO(b/298501506): narrow this in a way that won't break TAP
+    visibility = ["//visibility:public"],
 )
 
 # Note: This rule should not be used as a dependency for kernels. Use the
@@ -309,7 +310,7 @@ filegroup(
         "onednn_threadpool.h",
     ],
     visibility = set_external_visibility([
-        "//tensorflow/compiler/xla:__pkg__",
+        "//tensorflow/compiler/xla:__subpackages__",
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/framework:__pkg__",
         "//tensorflow/core/util:__pkg__",

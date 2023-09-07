@@ -373,8 +373,8 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
       /*pointer_primitive_type=*/PRIMITIVE_TYPE_INVALID, element_size_in_bits,
       memory_space,
       /*physical_shape=*/std::nullopt);
-  if (!ret.ok()) LOG(ERROR) << ret.status();
-  return ret.value();
+  TF_CHECK_OK(ret.status());
+  return *ret;
 }
 
 /* static */ Shape ShapeUtil::MakeShapeWithSparseLayout(
@@ -389,8 +389,8 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
       element_type, dimensions, minor_to_major, dim_level_types, dim_unique,
       dim_ordered, /*tiles=*/{}, index_primitive_type, pointer_primitive_type,
       element_size_in_bits, memory_space, std::move(physical_shape));
-  if (!ret.ok()) LOG(ERROR) << ret.status();
-  return ret.value();
+  TF_CHECK_OK(ret.status());
+  return *ret;
 }
 
 /* static */ Shape ShapeUtil::MoveDimToMajor(const Shape& shape, int64_t dim) {
@@ -843,6 +843,16 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
       .IgnoreDynamicDimension()
       .IgnoreFpPrecision()
       .IgnoreLayout()(lhs, rhs);
+}
+
+/* static */ DimensionVector ShapeUtil::CreateDimensionVectorFromShape(
+    const Shape& shape) {
+  DimensionVector dimensions;
+  dimensions.reserve(shape.dimensions_size());
+  for (int i = 0; i < shape.dimensions_size(); ++i) {
+    dimensions.push_back(shape.dimensions(i));
+  }
+  return dimensions;
 }
 
 /* static */ int64_t ShapeUtil::GetDimension(const Shape& shape,

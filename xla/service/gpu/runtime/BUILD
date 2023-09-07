@@ -95,6 +95,31 @@ cc_library(
 )
 
 cc_library(
+    name = "fused_attention",
+    srcs = ["fused_attention.cc"],
+    hdrs = ["fused_attention.h"],
+    deps = [
+        ":support",
+        "//xla:status",
+        "//xla:xla_proto_cc",
+        "//xla/mlir/runtime/transforms:custom_call_encoding",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/service:executable",
+        "//xla/service/gpu:gpu_asm_opts_util",
+        "//xla/service/gpu:gpu_fused_mha_runner",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/translate/mhlo_to_hlo:attribute_exporter",
+        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/synchronization",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
     name = "conv_reorder",
     srcs = ["conv_reorder.cc"],
     hdrs = ["conv_reorder.h"],
@@ -147,6 +172,7 @@ cc_library(
         ":cublas_lt_matmul",
         ":custom_call",
         ":fft",
+        ":fused_attention",
         ":gemm",
         ":graph_launch",
         ":io_feed",

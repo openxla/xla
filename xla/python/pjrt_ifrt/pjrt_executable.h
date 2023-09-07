@@ -16,21 +16,37 @@ limitations under the License.
 #ifndef XLA_PYTHON_PJRT_IFRT_PJRT_EXECUTABLE_H_
 #define XLA_PYTHON_PJRT_IFRT_PJRT_EXECUTABLE_H_
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "xla/client/xla_computation.h"
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/host_callback.h"
+#include "xla/python/ifrt/shape.h"
+#include "xla/python/ifrt/sharding.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
+#include "xla/status.h"
 #include "xla/statusor.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 
 namespace xla {
 namespace ifrt {
@@ -262,7 +278,8 @@ class PjRtLoadedExecutable final
   static StatusOr<std::unique_ptr<LoadedExecutable>> CreateInternal(
       PjRtCompatibleClient* client,
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
-      const xla::Shape& result_shape,
+      absl::Span<const xla::PrimitiveType> result_element_types,
+      absl::Span<const xla::DimensionVector> result_dimensions,
       const std::optional<xla::HloSharding>& result_hlo_sharding,
       const std::optional<std::vector<absl::string_view>>& result_memory_kinds,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks);

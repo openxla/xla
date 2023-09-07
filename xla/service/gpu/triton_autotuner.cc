@@ -62,6 +62,7 @@ limitations under the License.
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shaped_buffer.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/status_macros.h"
@@ -412,10 +413,17 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
     CHECK(conf.block_m() <= kMaxTileSize);
     CHECK(conf.block_n() <= kMaxTileSize);
     CHECK(conf.block_k() <= kMaxTileSize);
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<Executable> executable, util.Compile([&] {
-          return TritonGemmAutotuneExtractor(conf, gpu_device_info, fusion);
-        }));
+    // TODO(b/296884861): Reenable GPU runtime, when it will have much smaller
+    // memory overhead (regarding the size of the executables).
+    // We can also remove the force_disable_gpu_runtime argument at that
+    // point.
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
+                        util.Compile(
+                            [&] {
+                              return TritonGemmAutotuneExtractor(
+                                  conf, gpu_device_info, fusion);
+                            },
+                            /*force_disable_gpu_runtime=*/true));
 
     if (executable != nullptr) {
       absl::MutexLock lock(&executable_sets_mu);
@@ -431,10 +439,11 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
   // Returns true on success.
   auto compile_reference_executable =
       [&](const HloFusionInstruction* fusion) -> StatusOr<bool> {
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                        util.Compile([&] {
-                          return CublasGemmAutotuneExtractor(config, fusion);
-                        }));
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<Executable> executable,
+        util.Compile(
+            [&] { return CublasGemmAutotuneExtractor(config, fusion); },
+            /*force_disable_gpu_runtime=*/false));
 
     if (executable != nullptr) {
       absl::MutexLock lock(&executable_sets_mu);
@@ -525,10 +534,11 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
 // a reference output.
 StatusOr<ScopedShapedBuffer> RunMatmulWithCublas(
     AutotunerCompileUtil& util, se::Stream* stream, Executable& executable,
-    absl::Span<se::DeviceMemoryBase const> input_buffers) {
+    absl::Span<se::DeviceMemoryBase const> input_buffers,
+    absl::Span<Shape const> input_shapes) {
   TF_ASSIGN_OR_RETURN(
       std::optional<ProfilingOutput> output,
-      util.ProfileExecutable(&executable, stream, input_buffers));
+      util.ProfileExecutable(&executable, stream, input_buffers, input_shapes));
   TF_RET_CHECK(output.has_value());
   return std::move(output->output);
 }
@@ -561,6 +571,9 @@ StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
                               fusion_computation->parent()->config());
 
   std::vector<se::DeviceMemoryBase> inputs;
+  inputs.reserve(fusion_computation->parameter_instructions().size());
+  std::vector<Shape> input_shapes;
+  input_shapes.reserve(fusion_computation->parameter_instructions().size());
   int64_t rng_state = 0;
   for (const HloInstruction* param :
        fusion_computation->parameter_instructions()) {
@@ -568,13 +581,15 @@ StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
                         AutotunerUtil::CreateBuffer(
                             rz_allocator, param->shape(), config, rng_state));
     inputs.push_back(param_buffer);
+    input_shapes.push_back(param->shape());
   }
 
   if (config.should_check_correctness()) {
     TF_RET_CHECK(executable_set.reference != nullptr);
     TF_ASSIGN_OR_RETURN(
         reference_buffer,
-        RunMatmulWithCublas(util, stream, *executable_set.reference, inputs));
+        RunMatmulWithCublas(util, stream, *executable_set.reference, inputs,
+                            input_shapes));
   }
 
   const int log_every_n = GetLogEveryN();
@@ -590,9 +605,9 @@ StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
     AutotuneResult res;
     *res.mutable_triton() = candidate.config;
 
-    TF_ASSIGN_OR_RETURN(
-        std::optional<ProfilingOutput> profiling_output,
-        util.ProfileExecutable(candidate.executable.get(), stream, inputs));
+    TF_ASSIGN_OR_RETURN(std::optional<ProfilingOutput> profiling_output,
+                        util.ProfileExecutable(candidate.executable.get(),
+                                               stream, inputs, input_shapes));
     ran_so_far += 1;
     if (ran_so_far % log_every_n == 0) {
       LOG(INFO) << "Ran " << ran_so_far << " configs of " << executable_count

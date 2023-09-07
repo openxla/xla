@@ -20,7 +20,6 @@ py_strict_library(
         "//third_party/py/numpy",
         "//xla:xla_data_proto_py",
         "@ml_dtypes",
-        "@tsl//tsl/python/lib/core:pywrap_ml_dtypes",
     ],
 )
 

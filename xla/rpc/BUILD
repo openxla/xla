@@ -1,3 +1,4 @@
+# Placeholder: load py_proto_library
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load(

@@ -699,3 +699,37 @@ xla_test(
         "@tsl//tsl/platform:test",
     ],
 )
+
+cc_library(
+    name = "tuple",
+    srcs = ["tuple.cc"],
+    hdrs = ["tuple.h"],
+    deps = [
+        "//xla:shape_tree",
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla/client:xla_builder",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_test(
+    name = "tuple_test",
+    srcs = ["tuple_test.cc"],
+    deps = [
+        ":tuple",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_tree",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/client:global_data",
+        "//xla/client:xla_builder",
+        "//xla/tests:client_library_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+)

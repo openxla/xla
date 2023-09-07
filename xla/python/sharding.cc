@@ -38,7 +38,7 @@ namespace jax {
 
 namespace py = pybind11;
 
-bool GetJaxEnableMemoryKind() {
+bool (*GetEnableMemories)() = +[] {
   static bool fetch_memory_kind_on_executable = [] {
     char* v = getenv("JAX_ENABLE_MEMORY_KIND");
     if (v == nullptr || *v == '\0') {
@@ -47,7 +47,7 @@ bool GetJaxEnableMemoryKind() {
     return true;
   }();
   return fetch_memory_kind_on_executable;
-}
+};
 
 py::object CheckAndCanonicalizeMemoryKind(py::object memory_kind,
                                           PyDeviceList* device_list) {
@@ -228,8 +228,6 @@ NamedSharding::NamedSharding(py::object mesh, py::object spec,
   py::cast(this).attr("_preprocess")();
   internal_device_list_ = py::cast<std::shared_ptr<jax::PyDeviceList>>(
       mesh_.attr("_internal_device_list"));
-  py::tuple flat_devices =
-      py::cast<py::tuple>(mesh_.attr("_flat_devices_tuple"));
   memory_kind_ =
       CheckAndCanonicalizeMemoryKind(memory_kind_, internal_device_list_.get());
 }

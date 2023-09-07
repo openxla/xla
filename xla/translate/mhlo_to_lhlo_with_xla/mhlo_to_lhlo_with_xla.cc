@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -47,8 +48,12 @@ limitations under the License.
 #include "mlir/IR/OpDefinition.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/SymbolTable.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/ValueRange.h"  // from @llvm-project
 #include "mlir/IR/Verifier.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Tools/mlir-translate/Translation.h"  // from @llvm-project
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -1333,8 +1338,6 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnfMHABackward(
         builder_, config.bmm2_grad_gemm2_dot_dimension_numbers()));
 
     op.setFmhaScaleAttr(builder_.getF64FloatAttr(config.fmha_scale()));
-    op.setDropoutRateAttr(builder_.getF64FloatAttr(config.dropout_rate()));
-    op.setSeedAttr(builder_.getI64IntegerAttr(config.seed()));
 
     const auto& algorithm = config.algorithm();
     std::vector<int64_t> knob_ids;
@@ -1361,8 +1364,6 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnfMHABackward(
   switch (kind) {
     case xla::gpu::CudnnfMHAKind::kBackwardBmmBmm:
     case xla::gpu::CudnnfMHAKind::kBackwardSoftmax:
-    case xla::gpu::CudnnfMHAKind::kBackwardSoftmaxDropout:
-    case xla::gpu::CudnnfMHAKind::kBackwardScaleBiasSoftmaxDropout:
     case xla::gpu::CudnnfMHAKind::kBackwardScaleBiasSoftmax: {
       TF_RETURN_IF_ERROR(GetOrCreateView(custom_call, &operands));
       auto fmha_default_backward =
@@ -1370,10 +1371,21 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnfMHABackward(
                                                               operands);
       return set_common_fmha_backward_attributes(fmha_default_backward);
     }
+    case xla::gpu::CudnnfMHAKind::kBackwardSoftmaxDropout:
+    case xla::gpu::CudnnfMHAKind::kBackwardScaleBiasSoftmaxDropout: {
+      TF_RETURN_IF_ERROR(GetOrCreateView(custom_call, &operands));
+      auto fmha_default_backward =
+          CreateOpWithoutAttrs<lmhlo_gpu::fusedMHABackwardOp>(custom_call,
+                                                              operands);
+      fmha_default_backward.setDropoutRateAttr(
+          builder_.getF64FloatAttr(config.dropout_rate()));
+      fmha_default_backward.setSeedAttr(
+          builder_.getI64IntegerAttr(config.seed()));
+      return set_common_fmha_backward_attributes(fmha_default_backward);
+    }
+
     case xla::gpu::CudnnfMHAKind::kBackwardScaleMaskSoftmax:
-    case xla::gpu::CudnnfMHAKind::kBackwardScaleMaskSoftmaxDropout:
-    case xla::gpu::CudnnfMHAKind::kBackwardScaleBiasMaskSoftmax:
-    case xla::gpu::CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout: {
+    case xla::gpu::CudnnfMHAKind::kBackwardScaleBiasMaskSoftmax: {
       TF_RETURN_IF_ERROR(GetOrCreateView(custom_call->operand(5), &operands));
       TF_RETURN_IF_ERROR(GetOrCreateView(custom_call, &operands));
 
@@ -1383,6 +1395,23 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnfMHABackward(
       return set_common_fmha_backward_attributes(
           fmha_scale_mask_softmax_backward);
     }
+
+    case xla::gpu::CudnnfMHAKind::kBackwardScaleMaskSoftmaxDropout:
+    case xla::gpu::CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout: {
+      TF_RETURN_IF_ERROR(GetOrCreateView(custom_call->operand(5), &operands));
+      TF_RETURN_IF_ERROR(GetOrCreateView(custom_call, &operands));
+
+      auto fmha_scale_mask_softmax_backward =
+          CreateOpWithoutAttrs<lmhlo_gpu::fusedMHAWithMaskBackwardOp>(
+              custom_call, operands);
+      fmha_scale_mask_softmax_backward.setDropoutRateAttr(
+          builder_.getF64FloatAttr(config.dropout_rate()));
+      fmha_scale_mask_softmax_backward.setSeedAttr(
+          builder_.getI64IntegerAttr(config.seed()));
+      return set_common_fmha_backward_attributes(
+          fmha_scale_mask_softmax_backward);
+    }
+
     default:
       return xla::InternalError("Unknown backward fused MHA call.");
   }
@@ -1942,6 +1971,27 @@ tsl::StatusOr<lmhlo::RecvDoneOp> LhloDialectEmitter::EmitRecvDoneOp(
   return recv_done_op;
 }
 
+// Sets builder insertion point for a new `memref.view` operation in the parent
+// function. We create just one `memref.view` operation for every unique
+// subspan of allocation, and because first use of the slice can be inside a
+// block nested in a control flow operation, we have to find an insertion point
+// in the parent function. Returns insertion guard for the original insertion
+// point.
+static tsl::StatusOr<OpBuilder::InsertionGuard> SetArrayViewInsertionPoint(
+    OpBuilder& builder) {
+  OpBuilder::InsertionGuard guard(builder);
+
+  Operation* parent = builder.getInsertionBlock()->getParentOp();
+  while (!isa<func::FuncOp>(parent)) {
+    builder.setInsertionPoint(parent);
+    if ((parent = parent->getParentOp()) == nullptr)
+      return absl::InternalError(
+          "Can't find an insertion point for memref.view operation");
+  }
+
+  return guard;
+}
+
 tsl::StatusOr<Value> LhloDialectEmitter::GetOrCreateArrayView(
     const xla::HloInstruction* instr, const xla::Shape& current_shape,
     const xla::ShapeIndex& shape_index) {
@@ -1968,47 +2018,64 @@ tsl::StatusOr<Value> LhloDialectEmitter::GetOrCreateArrayView(
   // but static bounds in MLIR.
   xla::Shape static_shape = xla::ShapeUtil::MakeStaticShape(current_shape);
 
+  // Try to find allocation slice with the same physical shape so that we always
+  // have only one memref.view operation covering the same buffer subspan. All
+  // reinterpret casts into different layouts will use the same source memref.
+  xla::Shape physical_shape =
+      xla::ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+          static_shape);
+
+  // Initialize values in `allocation_slices_` before taking references,
+  // otherwise we can invalidate them and trigger asan errors below.
+  auto static_shape_key = std::make_pair(slice, static_shape);
+  auto physical_shape_key = std::make_pair(slice, physical_shape);
+  allocation_slices_[static_shape_key];
+  allocation_slices_[physical_shape_key];
+
   // Check if we already have a memref.view for a given slice and shape.
-  auto& allocation_slice =
-      allocation_slices_[std::make_pair(slice, static_shape)];
+  auto& allocation_slice = allocation_slices_[static_shape_key];
   if (allocation_slice) {
     return instr_slice = allocation_slice;
   }
 
-  // Because first use of the slice can be inside a block nested in a control
-  // flow operation, we have to find an insertion point at the top level block.
-  OpBuilder::InsertionGuard guard(builder_);
-  Operation* parent = builder_.getInsertionBlock()->getParentOp();
-  while (!isa<func::FuncOp>(parent)) {
-    builder_.setInsertionPoint(parent);
-    if ((parent = parent->getParentOp()) == nullptr)
-      return absl::InternalError(
-          "Can't find an insertion point for memref.view operation");
-  }
-
-  // TODO(timshen): revisit location handling.
-  Location loc = builder_.getUnknownLoc();
-
-  Value alloc = allocations_[slice.allocation()];
-  Value byte_shift =
-      builder_.create<arith::ConstantIndexOp>(alloc.getLoc(), slice.offset());
-
   TF_ASSIGN_OR_RETURN(Type out_type, xla::ConvertShapeToType<MemRefType>(
                                          static_shape, builder_));
-  xla::Shape physical_shape =
-      xla::ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
-          static_shape);
   TF_ASSIGN_OR_RETURN(
       Type physical_out_type,
       xla::ConvertShapeToType<MemRefType>(physical_shape, builder_));
 
-  // ViewOp only takes memrefs without affine maps (layouts). Let ViewOp
-  // produce the physical shape (where dimensions are ordered in major to
-  // minor) first, then follow up with a MemRefReinterpretCast to cast the
-  // resulting memref to the original layout.
-  Value result =
-      builder_.create<memref::ViewOp>(loc, physical_out_type, alloc, byte_shift,
-                                      /*sizes=*/ValueRange{});
+  // Try to find an insertion point for a new memref.view operation.
+  TF_ASSIGN_OR_RETURN(auto guard, SetArrayViewInsertionPoint(builder_));
+
+  // TODO(timshen): revisit location handling.
+  Location loc = builder_.getUnknownLoc();
+
+  // Creates new memref.view operation with a `physical_shape`.
+  auto create_physical_slice = [&]() -> Value {
+    Value alloc = allocations_[slice.allocation()];
+    Value byte_shift =
+        builder_.create<arith::ConstantIndexOp>(alloc.getLoc(), slice.offset());
+
+    // ViewOp only takes memrefs without affine maps (layouts). Let ViewOp
+    // produce the physical shape (where dimensions are ordered in major to
+    // minor) first, then follow up with a MemRefReinterpretCast to cast the
+    // resulting memref to the original layout.
+    return builder_.create<memref::ViewOp>(loc, physical_out_type, alloc,
+                                           byte_shift,
+                                           /*sizes=*/ValueRange());
+  };
+
+  // Reuse existing physical slice if it exists, otherwise build a new
+  // memref.view operation and cache it.
+  auto& physical_slice = allocation_slices_[physical_shape_key];
+  if (!physical_slice) {
+    physical_slice = create_physical_slice();
+  }
+
+  // Start from a physical slice as a result, and maybe reinterpret cast it into
+  // logical shape.
+  Value result = physical_slice;
+
   if (result.getType() != out_type) {
     int64_t out_offset;
     SmallVector<int64_t, 4> out_strides;
