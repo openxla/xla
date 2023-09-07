@@ -1,5 +1,5 @@
 load(
-    "@tsl//tensorflow/tsl/platform/default:cuda_build_defs.bzl",
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "cuda_rpath_flags"
 )
 
