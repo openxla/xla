@@ -54,14 +54,14 @@ class ReduceScatterAllGatherCombinerTest : public HloTestBase {
     return StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }
 
-  template <HloOpcode oc>
+  template <HloOpcode op>
   size_t CollectiveCount(std::unique_ptr<HloModule> &module) {
     return absl::c_count_if(module->entry_computation()->instructions(),
-                            HloPredicateIsOp<oc>);
+                            HloPredicateIsOp<op>);
   }
 };
 
-TEST_F(ReduceScatterAllGatherCombinerTest, BranchesOptimized) {
+TEST_F(ReduceScatterAllGatherCombinerTest, SimpleCombine) {
   absl::string_view hlo_string = R"(
 HloModule ReduceScatter
 
@@ -72,13 +72,9 @@ add {
 }
 
 ENTRY main {
-param.1 = bf16[8,128,1024]{2,1,0} parameter(0)
-param.2 = bf16[8,128,1024]{2,1,0} parameter(1)
-reduce-scatter.1 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
-all-gather.1 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
-reduce-scatter.2 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.2), channel_id=9, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
-all-gather.2 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.2), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
-add.1 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
+param.1 = bf16[8,128,1024] parameter(0)
+reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
+all-gather.1 = bf16[8,128,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
 }
 )";
 
@@ -88,7 +84,7 @@ add.1 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
                                                /*expect_change=*/true));
   EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 0);
   EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 0);
-  EXPECT_EQ(CollectiveCount<HloOpcode::kAllReduce>(module), 2);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllReduce>(module), 1);
 }
 
 TEST_F(ReduceScatterAllGatherCombinerTest, IncompatibleProperties) {
@@ -102,9 +98,9 @@ add {
 }
 
 ENTRY main {
-param.1 = bf16[8,128,1024]{2,1,0} parameter(0)
-reduce-scatter.1 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=false, dimensions={1}, to_apply=add
-all-gather.1 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
+param.1 = bf16[8,128,1024] parameter(0)
+reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=false, dimensions={1}, to_apply=add
+all-gather.1 = bf16[8,128,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
 }
 )";
 
@@ -112,6 +108,36 @@ all-gather.1 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.1), channel_id=
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/false));
+}
+
+TEST_F(ReduceScatterAllGatherCombinerTest, MultiplePatterns) {
+  absl::string_view hlo_string = R"(
+HloModule ReduceScatter
+
+add {
+  x = bf16[] parameter(0)
+  y = bf16[] parameter(1)
+  ROOT add = bf16[] add(x, y)
+}
+
+ENTRY main {
+param.1 = bf16[8,128,1024] parameter(0)
+param.2 = bf16[8,128,1024] parameter(1)
+reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
+all-gather.1 = bf16[8,128,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
+reduce-scatter.2 = bf16[8,64,1024] reduce-scatter(param.2), channel_id=9, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
+all-gather.2 = bf16[8,128,1024] all-gather(reduce-scatter.2), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
+add.1 = bf16[8,128,1024] add(all-gather.1, all-gather.2)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                               /*num_replicas=*/8,
+                                               /*num_partitions=*/1,
+                                               /*expect_change=*/true));
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 0);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 0);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllReduce>(module), 2);
 }
 
 TEST_F(ReduceScatterAllGatherCombinerTest, ReduceScatterWithMoreThanOneUser) {
@@ -136,15 +162,15 @@ add {
 }
 
 ENTRY main {
-param.1 = bf16[8,128,1024]{2,1,0} parameter(0)
-param.2 = bf16[8,128,1024]{2,1,0} parameter(1)
-reduce-scatter.1 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
-all-gather.1 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
-reduce-scatter.2 = bf16[8,64,1024]{2,1,0} reduce-scatter(param.2), channel_id=9, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
-all-gather.2 = bf16[8,128,1024]{2,1,0} all-gather(reduce-scatter.2), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
+param.1 = bf16[8,128,1024] parameter(0)
+param.2 = bf16[8,128,1024] parameter(1)
+reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
+all-gather.1 = bf16[8,128,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
+reduce-scatter.2 = bf16[8,64,1024] reduce-scatter(param.2), channel_id=9, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
+all-gather.2 = bf16[8,128,1024] all-gather(reduce-scatter.2), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
 
-add.1 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
-add.2 = bf16[8,64,1024]{2,1,0} add(reduce-scatter.1, reduce-scatter.2)
+add.1 = bf16[8,128,1024] add(all-gather.1, all-gather.2)
+add.2 = bf16[8,64,1024] add(reduce-scatter.1, reduce-scatter.2)
 }
 )";
 
