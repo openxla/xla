@@ -35,27 +35,29 @@ limitations under the License.
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
-#include "mlir/Dialect/Shape/IR/Shape.h"  // from @llvm-project
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Matchers.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
-#include "mlir/IR/UseDefLists.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"     // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"    // from @llvm-project
+#include "mlir/Dialect/MemRef/IR/MemRef.h"   // from @llvm-project
+#include "mlir/Dialect/Shape/IR/Shape.h"     // from @llvm-project
+#include "mlir/Dialect/Tensor/IR/Tensor.h"   // from @llvm-project
+#include "mlir/IR/Attributes.h"              // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"       // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"              // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"            // from @llvm-project
+#include "mlir/IR/Location.h"                // from @llvm-project
+#include "mlir/IR/MLIRContext.h"             // from @llvm-project
+#include "mlir/IR/Matchers.h"                // from @llvm-project
+#include "mlir/IR/Operation.h"               // from @llvm-project
+#include "mlir/IR/TypeUtilities.h"           // from @llvm-project
+#include "mlir/IR/UseDefLists.h"             // from @llvm-project
+#include "mlir/Pass/Pass.h"                  // from @llvm-project
+#include "mlir/Pass/PassManager.h"           // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Transforms/RegionUtils.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"      // from @llvm-project
+#include "mlir/Transforms/RegionUtils.h"     // from @llvm-project
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
+#include "tsl/platform/float8.h"
+#include "tsl/platform/statusor.h"
 #include "xla/client/lib/approx_topk.h"
 #include "xla/client/lib/approx_topk_shape.h"
 #include "xla/client/lib/matrix.h"
@@ -83,8 +85,6 @@ limitations under the License.
 #include "xla/translate/mhlo_to_hlo/stack_frame_index_builder.h"
 #include "xla/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/float8.h"
-#include "tsl/platform/statusor.h"
 
 using ::int64_t;
 using ::tsl::int16;
@@ -3486,6 +3486,11 @@ xla::Status ConvertMlirHloToHlo(mlir::ModuleOp module, xla::HloProto* hlo_proto,
   if (auto is_dynamic =
           module->getAttrOfType<mlir::BoolAttr>("mhlo.is_dynamic")) {
     hlo_module.set_is_dynamic(is_dynamic.getValue());
+  }
+  if (auto frontend_attributes =
+          module->getAttrOfType<DictionaryAttr>(kFrontendAttributesAttr)) {
+    ConstructFrontendAttributesFromAttribute(
+        frontend_attributes, *hlo_module.mutable_frontend_attributes());
   }
   if (auto use_auto_spmd_partitioning = module->getAttrOfType<mlir::BoolAttr>(
           "mhlo.use_auto_spmd_partitioning")) {

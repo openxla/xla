@@ -19,10 +19,10 @@ limitations under the License.
 #include <unordered_map>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/SymbolTable.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"              // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"            // from @llvm-project
+#include "mlir/IR/MLIRContext.h"           // from @llvm-project
+#include "mlir/IR/SymbolTable.h"           // from @llvm-project
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/status.h"
 #include "xla/xla_data.pb.h"
@@ -48,6 +48,9 @@ class HloModuleImporter {
   Status Import(const xla::HloModuleProto& module);
 
  private:
+  void ImportFrontendAttributes(const xla::HloModule& hlo_module,
+                                mlir::ModuleOp module);
+
   bool import_all_computation_;
   mlir::SymbolTable symbol_table_;
   mlir::Builder builder_;

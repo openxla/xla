@@ -15,17 +15,22 @@ limitations under the License.
 
 #include "xla/service/hlo_parser.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/status_matchers.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -35,10 +40,6 @@ limitations under the License.
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {
@@ -4463,6 +4464,25 @@ ENTRY TestComputation {
   auto result = ParseAndReturnVerifiedModule(hlo_string);
   TF_EXPECT_OK(result.status());
   EXPECT_TRUE(result.value()->config().alias_passthrough_params());
+}
+
+TEST_F(HloParserTest, CheckFrontendAttributes) {
+  const char* const hlo_string = R"(
+HloModule TestModule, frontend_attributes={attr_name="attr_value"}
+
+ENTRY TestComputation {
+    p0 = f16[2048,1024] parameter(0)
+    p1 = f16[2048,1024] parameter(1)
+    ROOT root = (f16[2048,1024], f16[2048,1024]) tuple(p0, p1)
+}
+)";
+  auto result = ParseAndReturnVerifiedModule(hlo_string);
+  TF_EXPECT_OK(result.status());
+  EXPECT_EQ(result.value()->frontend_attributes().map().size(), 1);
+  EXPECT_EQ(result.value()->frontend_attributes().map().begin()->first,
+            "attr_name");
+  EXPECT_EQ(result.value()->frontend_attributes().map().begin()->second,
+            "attr_value");
 }
 
 TEST_F(HloParserTest, CheckAllowSpmdShardingPropagationToOutput) {

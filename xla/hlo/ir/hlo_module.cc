@@ -33,6 +33,12 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -47,12 +53,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/gtl/map_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -368,6 +368,10 @@ void HloModule::Print(Printer* printer, const HloPrintOptions& options) const {
                });
     printer->Append("}");
   }
+  if (!frontend_attributes_.map().empty()) {
+    AppendCat(printer, ", frontend_attributes=",
+              FrontendAttributesToString(frontend_attributes_));
+  }
   printer->Append("\n\n");
   const auto& computations = options.canonicalize_computations()
                                  ? MakeComputationSorted()
@@ -438,6 +442,8 @@ HloModuleProto HloModule::ToProto() const {
   if (has_spmd_output_sharding()) {
     *proto.mutable_spmd_output_sharding() = spmd_output_sharding().ToProto();
   }
+
+  *proto.mutable_frontend_attributes() = frontend_attributes_;
 
   if (has_spmd_parameters_shardings()) {
     for (const auto& parameter_sharding : spmd_parameters_shardings()) {
@@ -603,6 +609,10 @@ StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
   }
 
   module->set_is_dynamic(proto.is_dynamic());
+
+  if (proto.has_frontend_attributes()) {
+    module->set_frontend_attributes(proto.frontend_attributes());
+  }
 
   if (proto.has_spmd_output_sharding()) {
     TF_ASSIGN_OR_RETURN(HloSharding hlo_sharding,
@@ -1020,11 +1030,14 @@ std::unique_ptr<HloModule> HloModule::Clone(const HloModuleConfig& config,
       std::make_unique<CompilationEnvironments>(*comp_envs_));
 
   HloCloneContext context(module.get(), suffix);
-  auto cloned_computation = entry_computation_->Clone(suffix, &context);
-  module->AddEntryComputation(std::move(cloned_computation));
+  if (entry_computation_) {
+    auto cloned_computation = entry_computation_->Clone(suffix, &context);
+    module->AddEntryComputation(std::move(cloned_computation));
+  }
   module->input_output_alias_config() = input_output_alias_config();
   module->buffer_donor_config() = buffer_donor_config();
   module->set_is_dynamic(is_dynamic());
+  module->set_frontend_attributes(frontend_attributes());
   if (has_schedule() && schedule().Verify().ok()) {
     HloSchedule clone_schedule(module.get());
     for (HloComputation* computation : computations()) {

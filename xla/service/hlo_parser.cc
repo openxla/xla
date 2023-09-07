@@ -41,6 +41,8 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/float8.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -58,8 +60,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/gtl/map_util.h"
-#include "tsl/platform/float8.h"
 
 namespace xla {
 
@@ -995,6 +995,7 @@ bool HloParserImpl::ParseHloModule(HloModule* module,
   std::optional<bool> alias_passthrough_params;
   absl::flat_hash_map<std::string, AttrConfig> attrs;
   std::optional<ComputationLayout> entry_computation_layout;
+  std::optional<FrontendAttributes> frontend_attributes;
   BoolList allow_spmd_sharding_propagation_to_output;
 
   attrs["is_scheduled"] = {/*required=*/false, AttrTy::kBool, &is_scheduled};
@@ -1007,6 +1008,8 @@ bool HloParserImpl::ParseHloModule(HloModule* module,
   attrs["entry_computation_layout"] = {/*required=*/false,
                                        AttrTy::kComputationLayout,
                                        &entry_computation_layout};
+  attrs["frontend_attributes"] = {
+      /*required=*/false, AttrTy::kFrontendAttributes, &frontend_attributes};
   attrs["allow_spmd_sharding_propagation_to_output"] = {
       /*required=*/false, AttrTy::kBracedBoolListOrBool,
       &allow_spmd_sharding_propagation_to_output};
@@ -1052,6 +1055,9 @@ bool HloParserImpl::ParseHloModule(HloModule* module,
   if (entry_computation_layout.has_value()) {
     *config.mutable_entry_computation_layout() = *entry_computation_layout;
     default_config = false;
+  }
+  if (frontend_attributes) {
+    module->set_frontend_attributes(frontend_attributes.value());
   }
   if (!allow_spmd_sharding_propagation_to_output.empty()) {
     config.set_allow_spmd_sharding_propagation_to_output(

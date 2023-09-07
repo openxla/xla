@@ -31,6 +31,8 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/lib/gtl/iterator_range.h"
+#include "tsl/platform/logging.h"
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -45,8 +47,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/xla.pb.h"
-#include "tsl/lib/gtl/iterator_range.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -174,6 +174,19 @@ class HloModule {
 
   const ComputationLayout& entry_computation_layout() const {
     return config_.entry_computation_layout();
+  }
+
+  void set_frontend_attributes(FrontendAttributes frontend_attributes) {
+    frontend_attributes_ = std::move(frontend_attributes);
+  }
+
+  void add_frontend_attributes(FrontendAttributes frontend_attributes) {
+    frontend_attributes_.mutable_map()->insert(
+        frontend_attributes.map().begin(), frontend_attributes.map().end());
+  }
+
+  const FrontendAttributes& frontend_attributes() const {
+    return frontend_attributes_;
   }
 
   void set_use_auto_spmd_partitioning(bool use) {
@@ -651,6 +664,10 @@ class HloModule {
   // buffer_donor_config_ indicates the donor information of input buffers that
   // are expected from the module.
   HloBufferDonorConfig buffer_donor_config_;
+
+  // Attributes passed from the frontend to give hints to the backend about
+  // how to compile this HLO.
+  FrontendAttributes frontend_attributes_;
 
   // The HLO shardings of the entry computation's parameters for
   // SPMD-partitioned programs.
