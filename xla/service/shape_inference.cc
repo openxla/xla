@@ -28,6 +28,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/layout_util.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/shape_util.h"
@@ -208,6 +210,17 @@ StatusOr<Shape> InferWindowOutputShape(const Shape& base_shape,
 }
 
 }  // namespace
+
+int64_t ResolveSymbolicAllGatherDimension(const Shape* operand_shape,
+                                          int64_t all_gather_dimension) {
+  // Resolve major-most layout dimension if possible.
+  if (all_gather_dimension ==
+          HloAllGatherInstruction::kMajorMostLayoutDimension &&
+      operand_shape->has_layout()) {
+    return LayoutUtil::Major(operand_shape->layout(), 0);
+  }
+  return all_gather_dimension;
+}
 
 /* static */ StatusOr<Shape> ShapeInference::InferUnaryOpShape(
     HloOpcode opcode, const HloInstruction* operand) {
@@ -2078,19 +2091,21 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferAllGatherShape(
     absl::Span<const Shape* const> operand_shapes, int64_t all_gather_dimension,
     int64_t shard_count) {
-  TF_RET_CHECK(all_gather_dimension >= 0);
   TF_RET_CHECK(shard_count > 0);
 
   std::vector<Shape> output_shapes;
   output_shapes.reserve(operand_shapes.size());
   for (const Shape* operand_shape : operand_shapes) {
-    TF_RET_CHECK(all_gather_dimension < operand_shape->rank());
+    int64_t operand_all_gather_dimension =
+        ResolveSymbolicAllGatherDimension(operand_shape, all_gather_dimension);
+    TF_RET_CHECK(operand_all_gather_dimension >= 0);
+    TF_RET_CHECK(operand_all_gather_dimension < operand_shape->rank());
     TF_RETURN_IF_ERROR(ExpectArray(*operand_shape, "operand of all-gather"));
-
     Shape output_shape = *operand_shape;
     output_shape.set_dimensions(
-        all_gather_dimension,
-        shard_count * output_shape.dimensions(all_gather_dimension));
+        operand_all_gather_dimension,
+        shard_count * output_shape.dimensions(operand_all_gather_dimension));
+
     output_shapes.push_back(output_shape);
   }
   if (output_shapes.size() == 1) {
