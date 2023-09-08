@@ -1,11 +1,11 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load(
     "//xla/python/tpu_driver:platform/external/tools.bzl",
     "external_deps",
     "go_grpc_library",
 )
+load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 licenses(["notice"])
 
@@ -75,26 +75,6 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "@tsl//tsl/platform:logging",
     ] + tsl_grpc_cc_dependencies() + external_deps(),
-    alwayslink = 1,
-)
-
-cc_library(
-    name = "direct_tpu_driver",
-    srcs = ["direct_tpu_driver.cc"],
-    compatible_with = [],
-    deps = [
-        ":tpu_driver",
-        ":tpu_driver_proto_cc",
-        ":tpu_service_proto_cc",
-        "//xla:status",
-        "//xla:statusor",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/python/tpu_driver/client:libtpu",
-        "//xla/service:hlo_proto_cc",
-        "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:logging",
-    ] + external_deps(),
     alwayslink = 1,
 )
 
