@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/dynamic_annotations.h"
+#include "absl/status/status.h"
 #include "absl/synchronization/barrier.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/notification.h"
@@ -38,9 +39,11 @@ limitations under the License.
 #include "xla/runtime/custom_call_registry.h"
 #include "xla/runtime/jit_executable.h"
 #include "xla/runtime/logical_result.h"
+#include "xla/runtime/memref_view.h"
 #include "xla/runtime/results.h"
 #include "xla/runtime/types.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/status_matchers.h"
 #include "tsl/platform/test.h"
 #include "tsl/platform/test_benchmark.h"
 #include "tsl/platform/threadpool.h"
@@ -49,6 +52,8 @@ namespace xla {
 namespace runtime {
 
 using absl::StatusOr;
+using ::testing::HasSubstr;
+using ::tsl::testing::StatusIs;
 
 //===----------------------------------------------------------------------===//
 // A helper function that compiles the given `module` to an XLA runtime
@@ -817,6 +822,37 @@ TEST(ExecutableTest, AsyncCustomCall) {
       CompileAndExecute(source, /*args=*/{}, converter, NoRunner(), registry)
           .ok());
   EXPECT_EQ(i32, 42);
+}
+
+TEST(ExecutableTest, AsyncCustomCallReturnError) {
+  absl::string_view source = R"(
+    func.func private @custom_call(%arg0: memref<4xf32>)
+      attributes { rt.dynamic, rt.custom_call = "test.return_error" }
+
+    async.func @test() -> !async.token {
+      %alloc = memref.alloc() {alignment = 64 : i64} : memref<4xf32>
+      func.call @custom_call(%alloc) : (memref<4xf32>) -> ()
+      memref.dealloc %alloc : memref<4xf32>
+      return
+    }
+  )";
+
+  auto f = [&](MemrefView arg) {
+    return absl::InternalError("custom call error");
+  };
+
+  CustomCallRegistry registry = {[&](DynamicCustomCallRegistry& registry) {
+    registry.Register(
+        CustomCall::Bind("test.return_error").Arg<MemrefView>().To(f));
+  }};
+
+  AsyncValueRef<Chain> result = MakeConstructedAsyncValueRef<Chain>();
+  ResultConverterSet converter(IgnoreError, ReturnAsyncToken{result.AsPtr()});
+
+  EXPECT_THAT(
+      CompileAndExecute(source, /*args=*/{}, converter, NoRunner(), registry),
+      StatusIs(absl::StatusCode::kInternal,
+               HasSubstr("'test.return_error' failed")));
 }
 
 TEST(ExecutableTest, AsyncExecute) {

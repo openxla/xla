@@ -1,8 +1,8 @@
-load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@tsl//tsl/platform:build_config.bzl", "if_llvm_system_z_available")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -117,6 +117,7 @@ cc_library(
         "@llvm-project//mlir:AsyncDialect",
         "@llvm-project//mlir:AsyncToLLVM",
         "@llvm-project//mlir:AsyncTransforms",
+        "@llvm-project//mlir:BufferizationTransforms",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:ComplexToLLVM",
         "@llvm-project//mlir:ControlFlowDialect",
@@ -165,6 +166,7 @@ cc_library(
         "@llvm-project//mlir:AsyncDialect",
         "@llvm-project//mlir:AsyncToLLVM",
         "@llvm-project//mlir:AsyncTransforms",
+        "@llvm-project//mlir:BufferizationTransforms",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:FuncDialect",

@@ -25,6 +25,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Async/IR/Async.h"  // from @llvm-project
 #include "mlir/Dialect/Async/Passes.h"  // from @llvm-project
+#include "mlir/Dialect/Bufferization/Transforms/Passes.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
 #include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
@@ -60,6 +61,7 @@ void CreateXlaRuntimeTestlibPipeline(PassManager& passes) {
 
   // Lower from high level async operations to async runtime.
   passes->addPass(mlir::createAsyncToAsyncRuntimePass());
+  passes->addPass(mlir::bufferization::createBufferDeallocationPass());
 
   // Add async.runtime reference counting operations.
   passes->addPass(mlir::createAsyncRuntimePolicyBasedRefCountingPass());

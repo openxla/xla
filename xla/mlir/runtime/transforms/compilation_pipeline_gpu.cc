@@ -25,6 +25,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Async/IR/Async.h"  // from @llvm-project
 #include "mlir/Dialect/Async/Passes.h"  // from @llvm-project
+#include "mlir/Dialect/Bufferization/Transforms/Passes.h"  // from @llvm-project
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
@@ -80,6 +81,7 @@ static void CreateDefaultXlaGpuRuntimeCompilationPipeline(
   if (add_async_passes) {
     // Lower from high level async operations to async runtime.
     pm.addPass(mlir::createAsyncToAsyncRuntimePass());
+    pm.addPass(mlir::bufferization::createBufferDeallocationPass());
 
     // Add async.runtime reference counting operations.
     pm.addPass(mlir::createAsyncRuntimePolicyBasedRefCountingPass());
