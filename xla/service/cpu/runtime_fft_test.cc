@@ -13,13 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/cpu/runtime_fft_impl.h"
+#include "xla/service/cpu/runtime_fft.h"
+
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/test.h"
 
 TEST(FftTypeTest, MatchesProto) {
-  EXPECT_EQ(::xla::FftType_ARRAYSIZE, 4);
-  EXPECT_EQ(::xla::internal::FftTypeArraySize(), 4);
   EXPECT_EQ(::xla::FftType::FFT,
             static_cast<int32_t>(::xla::internal::FftType::FFT));
   EXPECT_EQ(::xla::FftType::IFFT,

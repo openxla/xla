@@ -54,7 +54,6 @@ limitations under the License.
 #include "xla/service/cpu/runtime_pow.h"
 #include "xla/service/cpu/runtime_single_threaded_conv2d.h"
 #include "xla/service/cpu/runtime_single_threaded_conv3d.h"
-#include "xla/service/cpu/runtime_single_threaded_fft.h"
 #include "xla/service/cpu/runtime_single_threaded_matmul.h"
 #include "xla/service/cpu/runtime_topk.h"
 #include "xla/service/cpu/windows_compatibility.h"
@@ -493,7 +492,7 @@ bool RegisterKnownJITSymbols() {
   REGISTER_CPU_RUNTIME_SYMBOL(EigenConv2DF32);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenConv3DF16);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenConv3DF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenFft);
+  REGISTER_CPU_RUNTIME_SYMBOL(DuccFft);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulF16);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulF32);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulF64);
@@ -508,7 +507,7 @@ bool RegisterKnownJITSymbols() {
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv2DF32);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv3DF16);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv3DF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedFft);
+  REGISTER_CPU_RUNTIME_SYMBOL(DuccSingleThreadedFft);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF16);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF32);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF64);

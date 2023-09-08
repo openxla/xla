@@ -18,13 +18,31 @@ limitations under the License.
 
 #include <stdint.h>
 
+namespace xla {
+namespace internal {
+
+enum class FftType : int32_t {
+  FFT = 0,    // Forward FFT; complex in, complex out.
+  IFFT = 1,   // Inverse FFT; complex in, complex out.
+  RFFT = 2,   // Forward real FFT; real in, fft_length / 2 + 1 complex out
+  IRFFT = 3,  // Inverse real FFT; fft_length / 2 + 1 complex in,
+              //                   fft_length real out
+};
+
+}  // namespace internal
+}  // namespace xla
+
 extern "C" {
 
-extern void __xla_cpu_runtime_EigenFft(
+extern void __xla_cpu_runtime_DuccFft(
     const void* /* xla::ExecutableRunOptions* */ run_options_ptr, void* out,
     void* operand, int32_t fft_type, int32_t double_precision, int32_t fft_rank,
-    int64_t input_batch, int64_t fft_length0, int64_t fft_length1,
-    int64_t fft_length2);
+    int64_t input_batch, int64_t const* fft_lengths);
+
+extern void __xla_cpu_runtime_DuccSingleThreadedFft(
+    const void* /* xla::ExecutableRunOptions* */ run_options_ptr, void* out,
+    void* operand, int32_t fft_type, int32_t double_precision, int32_t fft_rank,
+    int64_t input_batch, int64_t const* fft_lengths);
 
 }  // extern "C"
 

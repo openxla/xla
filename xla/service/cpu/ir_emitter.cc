@@ -1117,23 +1117,27 @@ Status IrEmitter::HandleFft(HloInstruction* fft) {
   bool multi_threaded_eigen =
       hlo_module_config_.debug_options().xla_cpu_multi_thread_eigen();
   const char* fn_name = multi_threaded_eigen
-                            ? runtime::kEigenFftSymbolName
-                            : runtime::kEigenSingleThreadedFftSymbolName;
+                            ? runtime::kDuccFftSymbolName
+                            : runtime::kDuccSingleThreadedFftSymbolName;
   const int fft_rank = fft_length.size();
-  EmitCallToFunc(
-      fn_name,
-      {GetExecutableRunOptionsArgument(),
-       BitCast(GetEmittedValueFor(fft), int8_ptr_type),
-       BitCast(operand_address, int8_ptr_type), b_.getInt32(fft->fft_type()),
-       b_.getInt32(operand->shape().element_type() == F64 ||
-                   operand->shape().element_type() == C128),
-       b_.getInt32(fft_rank), b_.getInt64(input_batch),
-       b_.getInt64(fft_rank > 0 ? fft_length[0] : 0),
-       b_.getInt64(fft_rank > 1 ? fft_length[1] : 0),
-       b_.getInt64(fft_rank > 2 ? fft_length[2] : 0)},
-      b_.getVoidTy(), /*does_not_throw=*/true,
-      /*only_accesses_arg_memory=*/false,
-      /*only_accesses_inaccessible_mem_or_arg_mem=*/true);
+
+  auto* lengths =
+      EmitGlobalForLiteral(LiteralUtil::CreateR1<int64_t>(fft_length));
+  EmitCallToFunc(fn_name,
+                 {
+                     GetExecutableRunOptionsArgument(),
+                     BitCast(GetEmittedValueFor(fft), int8_ptr_type),
+                     BitCast(operand_address, int8_ptr_type),
+                     b_.getInt32(fft->fft_type()),
+                     b_.getInt32(operand->shape().element_type() == F64 ||
+                                 operand->shape().element_type() == C128),
+                     b_.getInt32(fft_rank),
+                     b_.getInt64(input_batch),
+                     lengths,
+                 },
+                 b_.getVoidTy(), /*does_not_throw=*/true,
+                 /*only_accesses_arg_memory=*/false,
+                 /*only_accesses_inaccessible_mem_or_arg_mem=*/true);
 
   return OkStatus();
 }

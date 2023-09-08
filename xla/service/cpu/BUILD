@@ -73,7 +73,6 @@ filegroup(
         "runtime_pow.cc",
         "runtime_single_threaded_conv2d.cc",
         "runtime_single_threaded_conv3d.cc",
-        "runtime_single_threaded_fft.cc",
         "runtime_single_threaded_matmul_c128.cc",
         "runtime_single_threaded_matmul_c64.cc",
         "runtime_single_threaded_matmul_common.h",
@@ -106,13 +105,11 @@ filegroup(
         # Single-threaded support.
         "runtime_custom_call_status.h",
         "runtime_conv_impl.h",
-        "runtime_fft_impl.h",
         "runtime_fp16.h",
         "runtime_key_value_sort.h",
         "runtime_pow.h",
         "runtime_single_threaded_conv2d.h",
         "runtime_single_threaded_conv3d.h",
-        "runtime_single_threaded_fft.h",
         "runtime_single_threaded_matmul.h",
         "runtime_topk.h",
         # Multi-threaded support.
@@ -532,7 +529,6 @@ cc_library(
         ":runtime_pow",
         ":runtime_single_threaded_conv2d",
         ":runtime_single_threaded_conv3d",
-        ":runtime_single_threaded_fft",
         ":runtime_single_threaded_matmul",
         ":runtime_topk",
         "//xla:types",
@@ -1000,10 +996,13 @@ cc_library(
     name = "runtime_fft",
     srcs = [
         "runtime_fft.cc",
-        "runtime_fft_impl.h",
     ],
     hdrs = ["runtime_fft.h"],
-    copts = runtime_copts(),
+    copts = runtime_copts() + [
+        "-fexceptions",
+        "-frtti",
+    ],
+    features = ["-use_header_modules"],
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
@@ -1011,6 +1010,7 @@ cc_library(
         "//xla:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@ducc//:fft",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:mutex",
     ],
@@ -1113,24 +1113,6 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/framework/contraction:eigen_contraction_kernel",
         "@tsl//tsl/framework/convolution:eigen_helpers",
-    ],
-)
-
-cc_library(
-    name = "runtime_single_threaded_fft",
-    srcs = [
-        "runtime_fft_impl.h",
-        "runtime_single_threaded_fft.cc",
-    ],
-    hdrs = ["runtime_single_threaded_fft.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla:types",
-        "//xla:xla_data_proto_cc",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:dynamic_annotations",
-        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1255,11 +1237,10 @@ xla_cc_test(
 xla_cc_test(
     name = "runtime_fft_test",
     srcs = [
-        "runtime_fft_impl.h",
         "runtime_fft_test.cc",
     ],
     deps = [
-        ":runtime_single_threaded_fft",
+        ":runtime_fft",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/tests:xla_internal_test_main",
