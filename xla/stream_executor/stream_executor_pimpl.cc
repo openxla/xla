@@ -218,18 +218,6 @@ int64_t StreamExecutor::GetDeviceLoad() const {
   return implementation_->GetDeviceLoad();
 }
 
-int StreamExecutor::PlatformDeviceCount() const {
-  return implementation_->PlatformDeviceCount();
-}
-
-bool StreamExecutor::SupportsBlas() const {
-  return implementation_->SupportsBlas();
-}
-
-bool StreamExecutor::SupportsDnn() const {
-  return implementation_->SupportsDnn();
-}
-
 tsl::Status StreamExecutor::GetConvolveRunners(
     bool use_cudnn_frontend, dnn::ConvolutionKind kind,
     dnn::DataType input_type, dnn::DataType output_type, Stream* stream,
@@ -531,22 +519,6 @@ void StreamExecutor::HostMemoryDeallocate(void* location) {
   return implementation_->HostMemoryDeallocate(location);
 }
 
-bool StreamExecutor::HostMemoryRegister(void* location, uint64_t size) {
-  VLOG(1) << "Called StreamExecutor::HostMemoryRegister(location=" << location
-          << ", size=" << size << ")" << StackTraceIfVLOG10();
-  if (location == nullptr || size == 0) {
-    LOG(WARNING) << "attempting to register null or zero-sized memory: "
-                 << location << "; size " << size;
-  }
-  return implementation_->HostMemoryRegister(location, size);
-}
-
-bool StreamExecutor::HostMemoryUnregister(void* location) {
-  VLOG(1) << "Called StreamExecutor::HostMemoryUnregister(location=" << location
-          << ")" << StackTraceIfVLOG10();
-  return implementation_->HostMemoryUnregister(location);
-}
-
 bool StreamExecutor::SynchronizeAllActivity() {
   VLOG(1) << "Called StreamExecutor::SynchronizeAllActivity()"
           << StackTraceIfVLOG10();
@@ -565,15 +537,6 @@ tsl::Status StreamExecutor::SynchronousMemZero(DeviceMemoryBase* location,
           << ", size=" << size << ")" << StackTraceIfVLOG10();
 
   return implementation_->SynchronousMemZero(location, size);
-}
-
-tsl::Status StreamExecutor::SynchronousMemSet(DeviceMemoryBase* location,
-                                              int value, uint64_t size) {
-  VLOG(1) << "Called StreamExecutor::SynchronousMemSet(location=" << location
-          << ", value=" << value << ", size=" << size << ")"
-          << StackTraceIfVLOG10();
-
-  return implementation_->SynchronousMemSet(location, value, size);
 }
 
 bool StreamExecutor::SynchronousMemcpy(DeviceMemoryBase* device_dst,
@@ -740,8 +703,6 @@ bool StreamExecutor::DeviceMemoryUsage(int64_t* free, int64_t* total) const {
 void StreamExecutor::EnqueueOnBackgroundThread(std::function<void()> task) {
   background_threads_->Schedule(std::move(task));
 }
-
-void StreamExecutor::EnableTracing(bool enabled) { tracing_enabled_ = enabled; }
 
 void StreamExecutor::RegisterTraceListener(TraceListener* listener) {
   {

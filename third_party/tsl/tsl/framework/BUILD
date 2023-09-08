@@ -253,7 +253,10 @@ cc_library(
         "//tsl/platform:macros",
         "//tsl/platform:mutex",
         "//tsl/platform:status",
+        "//tsl/platform:statusor",
         "//tsl/platform:types",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 

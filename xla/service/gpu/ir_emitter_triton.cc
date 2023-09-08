@@ -62,6 +62,7 @@ limitations under the License.
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
 #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
 #include "mlir/IR/Location.h"  // from @llvm-project
+#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
@@ -87,6 +88,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/primitive_util.h"
+#include "xla/service/dump.h"
 #include "xla/service/gpu/gemm_rewriter_triton.h"
 #include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -456,22 +458,58 @@ Value EmitConstant(ImplicitLocOpBuilder& b, const HloInstruction& constant) {
   return CreateConst(b, ty, ScalarConstantValue<double>(constant));
 }
 
-Value EmitBroadcast(ImplicitLocOpBuilder& b, const HloInstruction& broadcast,
-                    Value input, ArrayRef<int64_t> tile_shape) {
-  if (!input.dyn_cast<TensorValue>()) {
-    return Splat(b, input, tile_shape);
+struct DimProperties {
+  int64_t index;
+  Value offset;
+  int block_size;
+};
+
+Value EmitBroadcast(ImplicitLocOpBuilder& b,
+                    const TritonFusionAnalysis* analysis,
+                    TritonFusionAnalysis::Scope scope,
+                    absl::Span<const DimProperties> tiled_dimensions,
+                    const HloInstruction& broadcast, Value input) {
+  CHECK(analysis != nullptr);
+  std::vector<int64_t> out_shape;
+  for (const DimProperties& dim : tiled_dimensions) {
+    const TensorIterationSpec::DimIterationSpec* spec =
+        analysis->IterSpec(scope, &broadcast, dim.index);
+    if (spec != nullptr && spec->at(0).stride > 0) {
+      out_shape.push_back(dim.block_size);
+    }
   }
-  // The only other kind of broadcast that can happen currently is a
-  // broadcast into the split-K batch dimension which requires
-  // no action here.
-  return input;
+  auto tensor_input = input.dyn_cast<TensorValue>();
+  if (!tensor_input) {
+    // Input is scalar.
+    return Splat(b, input, out_shape);
+  }
+  if (tensor_input.getType().getRank() == out_shape.size()) {
+    // No dimensions to broadcast.
+    return input;
+  }
+  // Add broadcasted dimensions one by one.
+  Value expanded_input = tensor_input;
+  int dim_idx = 0;
+  for (const DimProperties& dim : tiled_dimensions) {
+    if (analysis->IterSpec(scope, &broadcast, dim.index) != nullptr &&
+        analysis->IterSpec(scope, &broadcast, dim.index)->at(0).stride > 0) {
+      if (analysis->IterSpec(scope, broadcast.operand(0), dim.index) ==
+          nullptr) {
+        // Broadcasted dimension.
+        expanded_input = b.create<mt::ExpandDimsOp>(expanded_input, dim_idx);
+      }
+      ++dim_idx;
+    }
+  }
+  return Broadcast(b, expanded_input.cast<TensorValue>(), out_shape);
 }
 
 StatusOr<Value> EmitScope(
     ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
+    const TritonFusionAnalysis* analysis, TritonFusionAnalysis::Scope scope,
+    absl::Span<const DimProperties> tiled_dimensions,
     absl::Span<const HloInstruction* const> instructions,
-    absl::flat_hash_map<const HloInstruction*, Value>& values,
-    ArrayRef<int64_t> tile_shape);
+    absl::flat_hash_map<const HloInstruction*, Value>& values);
 
 StatusOr<Value> EmitReduce(ImplicitLocOpBuilder& b,
                            absl::string_view libdevice_path,
@@ -540,8 +578,9 @@ StatusOr<Value> EmitReduce(ImplicitLocOpBuilder& b,
 
     b.setInsertionPointToStart(reducer);
     TF_ASSIGN_OR_RETURN(Value result,
-                        EmitScope(b, libdevice_path, to_emit, region_values,
-                                  /*tile_shape=*/{}));
+                        EmitScope(b, libdevice_path, /*analysis=*/nullptr,
+                                  TritonFusionAnalysis::Scope::OUTPUT, {},
+                                  to_emit, region_values));
     b.create<mt::ReduceReturnOp>(SmallVector<Value>({result}));
     b.setInsertionPointAfter(reduction);
   }
@@ -554,9 +593,10 @@ StatusOr<Value> EmitReduce(ImplicitLocOpBuilder& b,
 // before consumers.
 StatusOr<Value> EmitScope(
     ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
+    const TritonFusionAnalysis* analysis, TritonFusionAnalysis::Scope scope,
+    absl::Span<const DimProperties> tiled_dimensions,
     absl::Span<const HloInstruction* const> instructions,
-    absl::flat_hash_map<const HloInstruction*, Value>& values,
-    ArrayRef<int64_t> tile_shape) {
+    absl::flat_hash_map<const HloInstruction*, Value>& values) {
   for (const HloInstruction* hlo : instructions) {
     Value result;
     if (hlo->opcode() == HloOpcode::kParameter) {
@@ -566,7 +606,8 @@ StatusOr<Value> EmitScope(
     } else if (hlo->opcode() == HloOpcode::kConstant) {
       result = EmitConstant(b, *hlo);
     } else if (hlo->opcode() == HloOpcode::kBroadcast) {
-      result = EmitBroadcast(b, *hlo, values[hlo->operand(0)], tile_shape);
+      result = EmitBroadcast(b, analysis, scope, tiled_dimensions, *hlo,
+                             values[hlo->operand(0)]);
     } else if (hlo->opcode() == HloOpcode::kReduce) {
       TF_ASSIGN_OR_RETURN(
           result, EmitReduce(b, libdevice_path, *hlo, values[hlo->operand(0)]));
@@ -748,8 +789,10 @@ StatusOr<LaunchDimensions> MatMulImpl(
   CHECK_GE(block_n, 16);
 
   const DotDimensionNumbers& dims = dot_instr->dot_dimension_numbers();
-  TF_ASSIGN_OR_RETURN(const auto analysis,
-                      DotFusionAnalysis::Execute(dot_instr->parent(), split_k));
+  TF_ASSIGN_OR_RETURN(
+      const TritonFusionAnalysis analysis,
+      TritonFusionAnalysis::Execute(*dot_instr->parent(), split_k));
+  VLOG(6) << analysis.ToString();
 
   // Rely on dot decomposer: there is just one contracting and one
   // non-contracting dimension on each side + batch ones optionally.
@@ -803,7 +846,8 @@ StatusOr<LaunchDimensions> MatMulImpl(
   // LHS non-contracting dimension length.
   // LHS non-contracting can be split, this holds only its minor part.
   int m =
-      analysis.IterSpec(DotFusionAnalysis::Scope::OUTPUT, root, lhs_nc_out_idx)
+      analysis
+          .IterSpec(TritonFusionAnalysis::Scope::OUTPUT, root, lhs_nc_out_idx)
           ->at(0)
           .count;
 
@@ -818,9 +862,9 @@ StatusOr<LaunchDimensions> MatMulImpl(
   // non-contracting LHS dimension.
   int batch_size = 1;
   for (const HloInstruction* lhs_param :
-       analysis.ScopeParameters(DotFusionAnalysis::Scope::LHS)) {
+       analysis.ScopeParameters(TritonFusionAnalysis::Scope::LHS)) {
     const TensorIterationSpec::DimIterationSpec* lhs_nc_iter_spec =
-        analysis.IterSpec(DotFusionAnalysis::Scope::LHS, lhs_param,
+        analysis.IterSpec(TritonFusionAnalysis::Scope::LHS, lhs_param,
                           lhs_noncontracting_dim_idx);
     if (lhs_nc_iter_spec != nullptr && lhs_nc_iter_spec->size() > 1) {
       // For now split non-contracting and batch are not supported
@@ -848,7 +892,8 @@ StatusOr<LaunchDimensions> MatMulImpl(
   constexpr int group_m = 8;
 
   const int n =
-      analysis.IterSpec(DotFusionAnalysis::Scope::OUTPUT, root, rhs_nc_out_idx)
+      analysis
+          .IterSpec(TritonFusionAnalysis::Scope::OUTPUT, root, rhs_nc_out_idx)
           ->at(0)
           .count;
   CHECK_GE(n, 1);
@@ -901,12 +946,6 @@ StatusOr<LaunchDimensions> MatMulImpl(
   auto pid_k_offset =
       b.create<ma::MulIOp>(pid_k, CreateConst(b, i32_ty, block_k));
 
-  struct DimProperties {
-    int64_t index;
-    Value offset;
-    int block_size;
-  };
-
   std::vector<DimProperties> lhs_tiled_dims = {
       {lhs_noncontracting_dim_idx, pid_m_offset, block_m},
       {dims.lhs_contracting_dimensions(0), pid_k_offset, block_k}};
@@ -948,10 +987,10 @@ StatusOr<LaunchDimensions> MatMulImpl(
     // Load tiles of all parameters of LHS and RHS scopes and advance pointers.
     for (int i = 0; i < iter_args.size() - 1; ++i) {
       const bool is_lhs =
-          i < analysis.ScopeParameters(DotFusionAnalysis::Scope::LHS).size();
-      const DotFusionAnalysis::Scope scope =
-          is_lhs ? DotFusionAnalysis::Scope::LHS
-                 : DotFusionAnalysis::Scope::RHS;
+          i < analysis.ScopeParameters(TritonFusionAnalysis::Scope::LHS).size();
+      const TritonFusionAnalysis::Scope scope =
+          is_lhs ? TritonFusionAnalysis::Scope::LHS
+                 : TritonFusionAnalysis::Scope::RHS;
       absl::flat_hash_map<const HloInstruction*, Value>& values =
           is_lhs ? values_lhs : values_rhs;
       CHECK(values
@@ -987,16 +1026,18 @@ StatusOr<LaunchDimensions> MatMulImpl(
 
     // Emit all operations of LHS and RHS scopes.
     Value dot_input_lhs =
-        EmitScope(b, libdevice_path,
+        EmitScope(b, libdevice_path, &analysis,
+                  TritonFusionAnalysis::Scope::LHS, lhs_tiled_dims,
                   dot_instr->parent()->MakeInstructionPostOrderFrom(
                       const_cast<HloInstruction&>(*dot_instr->operand(0))),
-                  values_lhs, {block_m, block_k})
+                  values_lhs)
             .value();
     Value dot_input_rhs =
-        EmitScope(b, libdevice_path,
+        EmitScope(b, libdevice_path, &analysis,
+                  TritonFusionAnalysis::Scope::RHS, rhs_tiled_dims,
                   dot_instr->parent()->MakeInstructionPostOrderFrom(
                       const_cast<HloInstruction&>(*dot_instr->operand(1))),
-                  values_rhs, {block_k, block_n})
+                  values_rhs)
             .value();
 
     // Operation in the fusion before the dot can alter the elements of the
@@ -1049,11 +1090,11 @@ StatusOr<LaunchDimensions> MatMulImpl(
   // different pointers they have to be stored separately for each scope.
   SmallVector<Value> iter_args;
   iter_args.reserve(
-      analysis.ScopeParameters(DotFusionAnalysis::Scope::LHS).size() +
-      analysis.ScopeParameters(DotFusionAnalysis::Scope::RHS).size() + 1);
+      analysis.ScopeParameters(TritonFusionAnalysis::Scope::LHS).size() +
+      analysis.ScopeParameters(TritonFusionAnalysis::Scope::RHS).size() + 1);
 
   auto emit_tensor_pointer =
-      [&](const HloInstruction* hlo, const DotFusionAnalysis::Scope scope,
+      [&](const HloInstruction* hlo, const TritonFusionAnalysis::Scope scope,
           Value base, absl::Span<const DimProperties> tiled_dimensions,
           const int batch_dim_idx, std::vector<int32_t>& boundary_checks) {
         std::vector<Value> bounds;
@@ -1070,7 +1111,7 @@ StatusOr<LaunchDimensions> MatMulImpl(
           }
           const int64_t stride = spec->at(0).stride;
           int64_t count = spec->at(0).count;
-          if (scope == DotFusionAnalysis::Scope::OUTPUT &&
+          if (scope == TritonFusionAnalysis::Scope::OUTPUT &&
               properties.index == lhs_nc_out_idx && spec->size() == 1 &&
               lhs_nc_split) {
             // Dimension of the output produced by the non-contracting LHS one
@@ -1091,7 +1132,7 @@ StatusOr<LaunchDimensions> MatMulImpl(
         }
 
         IndexT stride_batch = 0;
-        if (scope != DotFusionAnalysis::Scope::RHS && lhs_nc_split) {
+        if (scope != TritonFusionAnalysis::Scope::RHS && lhs_nc_split) {
           const TensorIterationSpec::DimIterationSpec* spec =
               analysis.IterSpec(scope, hlo, tiled_dimensions[0].index);
           if (spec != nullptr) {
@@ -1124,7 +1165,7 @@ StatusOr<LaunchDimensions> MatMulImpl(
 
         if (have_split_k) {
           const TensorIterationSpec::DimIterationSpec* spec = analysis.IterSpec(
-              DotFusionAnalysis::Scope::OUTPUT, hlo, split_k_out_idx);
+              TritonFusionAnalysis::Scope::OUTPUT, hlo, split_k_out_idx);
           if (spec != nullptr) {
             IndexT stride_split_k = spec->at(0).stride;
             Value offset_split_k = b.create<ma::MulIOp>(
@@ -1143,18 +1184,18 @@ StatusOr<LaunchDimensions> MatMulImpl(
             .cast<Value>();
       };
   for (const HloInstruction* parameter :
-       analysis.ScopeParameters(DotFusionAnalysis::Scope::LHS)) {
+       analysis.ScopeParameters(TritonFusionAnalysis::Scope::LHS)) {
     CHECK(iter_args_to_parameters.insert({iter_args.size(), parameter}).second);
     iter_args.push_back(emit_tensor_pointer(
-        parameter, DotFusionAnalysis::Scope::LHS,
+        parameter, TritonFusionAnalysis::Scope::LHS,
         fn.getArgument(parameter->parameter_number()), lhs_tiled_dims,
         lhs_batch_dim_idx, iter_args_to_boundary_checks[iter_args.size()]));
   }
   for (const HloInstruction* parameter :
-       analysis.ScopeParameters(DotFusionAnalysis::Scope::RHS)) {
+       analysis.ScopeParameters(TritonFusionAnalysis::Scope::RHS)) {
     CHECK(iter_args_to_parameters.insert({iter_args.size(), parameter}).second);
     iter_args.push_back(emit_tensor_pointer(
-        parameter, DotFusionAnalysis::Scope::RHS,
+        parameter, TritonFusionAnalysis::Scope::RHS,
         fn.getArgument(parameter->parameter_number()), rhs_tiled_dims,
         rhs_batch_dim_idx, iter_args_to_boundary_checks[iter_args.size()]));
   }
@@ -1207,10 +1248,10 @@ StatusOr<LaunchDimensions> MatMulImpl(
   // Emit the output scope.
   if (!to_emit.empty()) {
     for (const HloInstruction* parameter :
-         analysis.ScopeParameters(DotFusionAnalysis::Scope::OUTPUT)) {
+         analysis.ScopeParameters(TritonFusionAnalysis::Scope::OUTPUT)) {
       std::vector<int32_t> boundary_checks;
       Value tensor_pointer =
-          emit_tensor_pointer(parameter, DotFusionAnalysis::Scope::OUTPUT,
+          emit_tensor_pointer(parameter, TritonFusionAnalysis::Scope::OUTPUT,
                               fn.getArgument(parameter->parameter_number()),
                               out_tiled_dims, batch_out_idx, boundary_checks);
       CHECK(values_out
@@ -1218,9 +1259,10 @@ StatusOr<LaunchDimensions> MatMulImpl(
                          EmitParameterLoad(b, tensor_pointer, boundary_checks)})
                 .second);
     }
-    TF_RETURN_IF_ERROR(
-        EmitScope(b, libdevice_path, to_emit, values_out, {block_m, block_n})
-            .status());
+    TF_RETURN_IF_ERROR(EmitScope(b, libdevice_path, &analysis,
+                                 TritonFusionAnalysis::Scope::OUTPUT,
+                                 out_tiled_dims, to_emit, values_out)
+                           .status());
   }
 
   // Emit tensor store operations for all outputs.
@@ -1230,7 +1272,7 @@ StatusOr<LaunchDimensions> MatMulImpl(
         root->shape().IsTuple() ? root->operand(i) : root;
     std::vector<int32_t> boundary_checks;
     Value tensor_pointer = emit_tensor_pointer(
-        producer, DotFusionAnalysis::Scope::OUTPUT,
+        producer, TritonFusionAnalysis::Scope::OUTPUT,
         fn.getArgument(i + dot_instr->parent()->num_parameters()),
         out_tiled_dims, batch_out_idx, boundary_checks);
     b.create<mt::StoreOp>(tensor_pointer, values_out[producer], boundary_checks,
@@ -1337,10 +1379,16 @@ StatusOr<LaunchDimensions> SoftMax(mlir::OpBuilder builder,
   }
   values_out[computation->parameter_instruction(0)] = EmitParameterLoad(
       b, make_tensor_pointer(fn.getArgument(0)), boundary_checks);
+  TF_ASSIGN_OR_RETURN(const auto analysis,
+                      TritonFusionAnalysis::Execute(*computation));
+  // Dimension 0 is the reduced one by construction and it's the only one
+  // present in the tile shapes.
+  std::vector<DimProperties> tiled_dims = {{0, row_index, block_row}};
   TF_ASSIGN_OR_RETURN(
       Value result,
-      EmitScope(b, libdevice_path, computation->MakeInstructionPostOrder(),
-                values_out, {block_row}));
+      EmitScope(b, libdevice_path, &analysis,
+                TritonFusionAnalysis::Scope::OUTPUT, tiled_dims,
+                computation->MakeInstructionPostOrder(), values_out));
 
   b.create<mt::StoreOp>(make_tensor_pointer(fn.getArgument(1)), result,
                         std::vector<int32_t>{0}, mt::CacheModifier::NONE,
@@ -1431,8 +1479,8 @@ StatusOr<LaunchDimensions> TritonWrapper(
   mlir_context.loadDialect<mt::TritonDialect>();
   mlir::OpBuilder b(&mlir_context);
   auto loc = mlir::NameLoc::get(b.getStringAttr(hlo_computation->name()));
-  auto triton_module = mlir::ModuleOp::create(loc);
-  b.setInsertionPointToEnd(triton_module.getBody());
+  mlir::OwningOpRef<mlir::ModuleOp> triton_module = mlir::ModuleOp::create(loc);
+  b.setInsertionPointToEnd(triton_module->getBody());
 
   VLOG(3) << hlo_computation->ToString(HloPrintOptions::ShortParsable());
   VLOG(2) << config.ShortDebugString();
@@ -1469,8 +1517,12 @@ StatusOr<LaunchDimensions> TritonWrapper(
                                 device_info.shared_memory_per_block_optin));
 
   b.create<mt::ReturnOp>(loc);
-  VLOG(6) << llvm_ir::DumpToString(triton_module);
-  CHECK(mlir::succeeded(mlir::verify(triton_module)));
+  if (DumpingEnabledForHloModule(*hlo_computation->parent())) {
+    DumpToFileInDirOrStdout(*hlo_computation->parent(), "triton_ir", "ttir",
+                            llvm_ir::DumpToString(*triton_module));
+  }
+
+  CHECK(mlir::succeeded(mlir::verify(*triton_module)));
 
   // Compile Triton kernel to LLVM.
   mlir::PassManager pm(&mlir_context);
@@ -1518,7 +1570,7 @@ StatusOr<LaunchDimensions> TritonWrapper(
   // llvm::Linker::linkModules() segfaults if we don't strip locations.
   pm.addPass(mlir::createStripDebugInfoPass());
 
-  bool succeeded = mlir::succeeded(pm.run(triton_module));
+  bool succeeded = mlir::succeeded(pm.run(*triton_module));
 
   if (log_stream.has_value()) {
     log_stream->flush();
@@ -1529,7 +1581,8 @@ StatusOr<LaunchDimensions> TritonWrapper(
   }
 
   const int shared_mem_bytes =
-      triton_module->getAttrOfType<mlir::IntegerAttr>("triton_gpu.shared")
+      (*triton_module)
+          ->getAttrOfType<mlir::IntegerAttr>("triton_gpu.shared")
           .getInt();
   VLOG(2) << "Shared memory usage: " << shared_mem_bytes << " B";
   if (shared_mem_bytes > device_info.shared_memory_per_block_optin) {
@@ -1539,7 +1592,7 @@ StatusOr<LaunchDimensions> TritonWrapper(
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<llvm::Module> ll_triton_module,
                       TranslateLLVMToLLVMIR(&llvm_module->getContext(),
-                                            triton_module, libdevice_path));
+                                            *triton_module, libdevice_path));
   LogAndVerify(ll_triton_module.get());
 
   // Integrate LLVM matmul kernel into XLA's LLVM module.

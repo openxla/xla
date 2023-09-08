@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+// placeholder for index annotation headers
 #include "llvm/Support/Casting.h"
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/python/ifrt/array.h"
@@ -92,13 +93,16 @@ class PyArray : public pybind11::object {
   struct DisableFastpath {};
   static void PyInit(pybind11::object self, DisableFastpath);
 
-  // Only used in C++
+  // Only used in C++. `skip_checks` should only be set for Arrays created by
+  // jax that cannot possibly have consistency issues (e.g. `sharding` devices
+  // different than `ifrt_array` devices). Arrays created by users should be
+  // checked.
   PyArray(pybind11::object aval, bool weak_type, pybind11::dtype dtype,
           std::vector<int64_t> shape, pybind11::object sharding,
           std::shared_ptr<PyClient> py_client,
           std::shared_ptr<Traceback> traceback,
-          tsl::RCReference<ifrt::Array> ifrt_array,
-          bool committed, bool skip_checks = true);
+          tsl::RCReference<ifrt::Array> ifrt_array, bool committed,
+          bool skip_checks);
 
   static PyArray MakeFromSingleDeviceArray(
       std::shared_ptr<PyClient> py_client, std::shared_ptr<Traceback> traceback,
@@ -107,14 +111,8 @@ class PyArray : public pybind11::object {
   static PyArray MakeFromIfrtArrayAndSharding(
       std::shared_ptr<PyClient> py_client, std::shared_ptr<Traceback> traceback,
       tsl::RCReference<ifrt::Array> ifrt_array, pybind11::object sharding,
-      bool weak_type, bool committed);
+      bool weak_type, bool committed, bool skip_checks);
 
-  // pybind11-index-annotation BEGIN
-  // refs {
-  //   module_path: "tensorflow/compiler/xla/python/xla.cc"
-  //   module_arg {}
-  // }
-  // pybind11-index-annotation END
   static Status RegisterTypes(pybind11::module& m);
 
   using Storage = PyArray_Storage;

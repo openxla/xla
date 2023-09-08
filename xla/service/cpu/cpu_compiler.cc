@@ -235,6 +235,10 @@ limitations under the License.
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#include "xla/service/cpu/onednn_rewriter.h"
+#endif
+
 namespace {
 
 // We need to explicitly load all the dialects we will involved in emitting the
@@ -622,7 +626,7 @@ void AddHloVerifier(HloPassPipeline* pipeline, bool allow_sparse_shapes,
 }  // namespace
 
 Status CpuCompiler::RunHloPassesThroughLayoutAssn(
-    HloModule* module, bool /*is_aot_compile*/,
+    HloModule* module, bool is_aot_compile,
     LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
   const int64_t num_partitions = module->config().num_partitions();
   if (num_partitions > 1) {
@@ -689,6 +693,15 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<CallInliner>(/*single_call_site=*/true);
   pipeline.AddPass<BatchDotSimplification>();
   pipeline.AddPass<DotDecomposer>();
+
+  // Rewrite to custom calls with target as oneDNN library calls.
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+  // AOT compiled code runs in single thread.
+  if (!is_aot_compile) {
+    pipeline.AddPass<OneDnnRewriter>();
+  }
+#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+
   // Promote BF16 all-reduce to F32.
   const std::pair<PrimitiveType, PrimitiveType> ar_promoted_types[] = {
       {BF16, F32}};
@@ -1445,9 +1458,12 @@ CpuCompiler::CompileLegacyCpuExecutable(std::unique_ptr<HloModule> module) {
                                                  std::move(llvm_context));
   cantFail((*jit)->AddModule(std::move(thread_safe_module)));
 
-  auto cpu_executable = std::make_unique<CpuExecutable>(
-      std::move(*jit), std::move(assignment), std::move(module), function_name,
-      std::move(hlo_profile_printer_data), std::move(hlo_profile_index_map));
+  TF_ASSIGN_OR_RETURN(
+      auto cpu_executable,
+      CpuExecutable::Create(std::move(*jit), std::move(assignment),
+                            std::move(module), function_name,
+                            std::move(hlo_profile_printer_data),
+                            std::move(hlo_profile_index_map)));
 
   if (embed_ir_in_executable) {
     cpu_executable->set_ir_module_string(ir_module_string);
@@ -1549,7 +1565,7 @@ CpuCompiler::CompileXlaRuntimeCpuExecutable(
                     obj_file);
   }
 
-  return std::make_unique<CpuExecutable>(
+  return CpuExecutable::Create(
       std::move(hlo_module), std::move(hlo_profile_printer_data),
       std::move(hlo_profile_index_map), std::move(assignment),
       std::move(xla_runtime_executable));

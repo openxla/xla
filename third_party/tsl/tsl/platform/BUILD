@@ -4,13 +4,13 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
-load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
     "//tsl:tsl.bzl",
     "if_not_fuchsia",
     "set_external_visibility",
     "tsl_copts",
 )
+load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config.bzl",
     "tf_cuda_libdevice_path_deps",
@@ -28,6 +28,7 @@ load(
     "tsl_cc_test",
     "tsl_protobuf_deps",
 )
+load("//tsl/platform:build_config_root.bzl", "if_static")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
@@ -36,7 +37,6 @@ load(
     "@bazel_skylib//:bzl_library.bzl",
     "bzl_library",
 )
-load("//tsl/platform:build_config_root.bzl", "if_static")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -904,6 +904,12 @@ filegroup(
 )
 
 cc_library(
+    name = "stacktrace_handler_hdrs_lib",
+    hdrs = ["stacktrace_handler.h"],
+    compatible_with = get_compatible_with_portable(),
+)
+
+cc_library(
     name = "stacktrace_handler",
     textual_hdrs = ["stacktrace_handler.h"],
     deps = tf_windows_aware_platform_deps("stacktrace_handler"),
@@ -1015,7 +1021,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":bfloat16",
-        ":float8",
+        ":ml_dtypes",
         ":platform",
         ":tstring",
     ] + tf_platform_deps("types"),
@@ -1054,11 +1060,23 @@ cc_library(
 )
 
 cc_library(
-    name = "float8",
-    hdrs = ["float8.h"],
+    name = "ml_dtypes",
+    hdrs = ["ml_dtypes.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         "@ml_dtypes//:float8",
+        "@ml_dtypes//:int4",
+    ],
+)
+
+cc_library(
+    name = "float8",
+    hdrs = ["float8.h"],
+    compatible_with = get_compatible_with_portable(),
+    # TODO - b/299180335: Add deprecation, update usages.
+    # deprecation = "Please use ml_dtypes.",
+    deps = [
+        ":ml_dtypes",
     ],
 )
 

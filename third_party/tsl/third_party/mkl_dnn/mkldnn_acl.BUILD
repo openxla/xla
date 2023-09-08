@@ -114,7 +114,7 @@ expand_template(
     name = "dnnl_config_h",
     out = "include/oneapi/dnnl/dnnl_config.h",
     substitutions = select({
-        "@xla//third_party/mkl_dnn:build_with_mkl_aarch64_openmp": _DNNL_RUNTIME_OMP,
+        "@tsl//third_party/mkl_dnn:build_with_mkl_aarch64_openmp": _DNNL_RUNTIME_OMP,
         "//conditions:default": _DNNL_RUNTIME_THREADPOOL,
     }),
     template = "include/oneapi/dnnl/dnnl_config.h.in",
@@ -145,7 +145,7 @@ cc_library(
         ],
     ),
     copts = select({
-        "@xla//third_party/mkl_dnn:build_with_mkl_aarch64_openmp": _DNNL_COPTS_OMP,
+        "@tsl//third_party/mkl_dnn:build_with_mkl_aarch64_openmp": _DNNL_COPTS_OMP,
         "//conditions:default": _DNNL_COPTS_THREADPOOL,
     }),
     defines = ["DNNL_AARCH64_USE_ACL=1"],

@@ -1,9 +1,10 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+# Placeholder: load py_proto_library
 load("//xla:xla.bzl", "xla_cc_test")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -232,17 +233,27 @@ cc_library(
     hdrs = ["pjrt_executable.h"],
     visibility = [":friends"],
     deps = [
+        ":compile_options_proto_cc",
         ":execute_options_proto_cc",
         ":pjrt_common",
+        "//xla:shape_util",
+        "//xla:status",
         "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -294,7 +305,9 @@ xla_cc_test(
     deps = [
         ":pjrt_client",
         ":pjrt_compiler",
+        ":pjrt_device_description",
         "//xla/client:xla_computation",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
     ],
@@ -422,37 +435,6 @@ xla_cc_test(
         "//xla/service:platform_util",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_library(
-    name = "tpu_client",
-    srcs = ["tpu_client.cc"],
-    hdrs = ["tpu_client.h"],
-    visibility = ["//xla:friends"],
-    deps = [
-        ":local_device_state",
-        ":pjrt_stream_executor_client",
-        ":utils",
-        "//xla:shape_util",
-        "//xla:status",
-        "//xla:statusor",
-        "//xla:util",
-        "//xla/client:client_library",
-        "//xla/service:computation_placer",
-        "//xla/service:tpu_computation_placer",
-        "//xla/stream_executor",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor/tpu:tpu_executable",
-        "//xla/stream_executor/tpu:tpu_executable_interface",
-        "//xla/stream_executor/tpu:tpu_executor",
-        "//xla/stream_executor/tpu:tpu_executor_interface",
-        "//xla/stream_executor/tpu:tpu_on_demand_compiler",
-        "//xla/stream_executor/tpu:tpu_platform_interface",
-        "//xla/stream_executor/tpu:tpu_topology_external",
-        "//xla/stream_executor/tpu:tpu_transfer_manager",
-        "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:errors",
     ],
 )
 

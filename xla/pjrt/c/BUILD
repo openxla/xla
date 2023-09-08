@@ -1,7 +1,11 @@
-load("//xla:xla.bzl", "xla_cc_test")
+load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
+)
+load(
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -10,6 +14,14 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 cc_library(
     name = "pjrt_c_api_hdrs",
     hdrs = ["pjrt_c_api.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "pjrt_c_api_macros",
+    hdrs = [
+        "pjrt_c_api_macros.h",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -131,7 +143,30 @@ cc_library(
     deps = [
         ":pjrt_c_api_gpu_internal",
         ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_macros",
     ],
+)
+
+# PJRT GPU plugin. Can be configured to be built for CUDA or ROCM.
+xla_cc_binary(
+    name = "pjrt_c_api_gpu_plugin.so",
+    linkopts = [
+        "-Wl,--version-script,$(location :pjrt_c_api_gpu_version_script.lds)",
+        "-Wl,--no-undefined",
+    ],
+    linkshared = True,
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        ":pjrt_c_api_gpu",
+        ":pjrt_c_api_gpu_version_script.lds",
+        "//xla/service:gpu_plugin",
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor:cuda_platform",
+    ]),
 )
 
 cc_library(

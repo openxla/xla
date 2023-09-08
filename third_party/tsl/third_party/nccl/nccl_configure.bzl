@@ -71,7 +71,7 @@ def _create_local_nccl_repository(repository_ctx):
     # function to be restarted with all previous state being lost. This
     # can easily lead to a O(n^2) runtime in the number of labels.
     # See https://github.com/tensorflow/tensorflow/commit/62bd3534525a036f07d9851b3199d68212904778
-    find_cuda_config_path = repository_ctx.path(Label("@xla//third_party/gpus:find_cuda_config.py.gz.base64"))
+    find_cuda_config_path = repository_ctx.path(Label("@tsl//third_party/gpus:find_cuda_config.py.gz.base64"))
 
     nccl_version = get_host_environ(repository_ctx, _TF_NCCL_VERSION, "")
     if nccl_version:

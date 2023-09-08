@@ -97,6 +97,9 @@ namespace wrap {
   __macro(hipGetDeviceCount)                        \
   __macro(hipGetDeviceProperties)                   \
   __macro(hipGetErrorString)                        \
+  __macro(hipGraphAddKernelNode)                    \
+  __macro(hipGraphAddMemcpyNode)                    \
+  __macro(hipGraphCreate)                           \
   __macro(hipGraphDebugDotPrint)                    \
   __macro(hipGraphDebugDotFlagsVerbose)             \
   __macro(hipGraphDestroy)                          \
@@ -104,9 +107,7 @@ namespace wrap {
   __macro(hipGraphExecUpdate)                       \
   __macro(hipGraphInstantiate)                      \
   __macro(hipGraphLaunch)                           \
-  __macro(hipGraphCreate)                           \
-  __macro(hipGraphAddKernelNode)                    \
-  __macro(hipGraphAddMemcpyNode)                    \
+  __macro(hipGraphNodeGetType)                      \
   __macro(hipHostFree)                              \
   __macro(hipHostMalloc)                            \
   __macro(hipHostRegister)                          \

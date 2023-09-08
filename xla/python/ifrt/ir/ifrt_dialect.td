@@ -28,6 +28,7 @@ def Ifrt_Dialect : Dialect {
   let useDefaultAttributePrinterParser = 1;
   let hasOperationAttrVerify = 1;
   let hasRegionArgAttrVerify = 1;
+  let usePropertiesForAttributes = 0;
 }
 
 def Ifrt_ShardingParameter :
@@ -59,6 +60,8 @@ def Ifrt_ShardingAttr : AttrDef<Ifrt_Dialect, "IfrtSharding"> {
 
   let parameters = (ins Ifrt_ShardingParameter:$sharding);
   let assemblyFormat = "`<` $sharding `>`";
+
+  let genVerifyDecl = 1;
 }
 
 def Ifrt_ArrayType : TypeDef<Ifrt_Dialect, "IfrtArray"> {
