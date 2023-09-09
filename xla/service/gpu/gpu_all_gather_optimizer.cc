@@ -45,17 +45,6 @@ StatusOr<bool> AllGatherOptimizer::Run(
       HloInstruction* left_op = instruction->mutable_operand(0);
       HloInstruction* right_op = instruction->mutable_operand(1);
 
-      // we need to traverse the right branch backwards in search of
-      // an all-gather collective
-      auto find_all_gather = [&](HloInstruction* base_op) {
-        while (base_op->opcode() != HloOpcode::kAllGather &&
-               base_op->operand_count() > 0) {
-          base_op = base_op->mutable_operand(0);
-        }
-      };
-      find_all_gather(right_op);
-      find_all_gather(left_op);
-
       if (right_op->opcode() != HloOpcode::kAllGather ||
           left_op->opcode() != HloOpcode::kAllGather) {
         VLOG(2) << "Binary op's operands are not all-gather deduced types.";

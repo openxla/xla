@@ -90,6 +90,7 @@ limitations under the License.
 #include "xla/service/gather_expander.h"
 #include "xla/service/gather_simplifier.h"
 #include "xla/service/gpu/alias_passthrough_params.h"
+#include "xla/service/gpu/gpu_all_gather_optimizer.h"
 #include "xla/service/gpu/all_reduce_blueconnect.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
