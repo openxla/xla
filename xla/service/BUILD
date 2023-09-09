@@ -2,8 +2,9 @@
 #   XLA service implementation.
 
 load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load(
     "//xla:xla.bzl",
     "xla_cc_binary",
@@ -11,26 +12,25 @@ load(
     "xla_py_proto_library",
     "xla_py_test_deps",
 )
-load(
-    "@tsl//tsl/platform:build_config.bzl",
-    "tf_proto_library",
-    "tf_pyclif_proto_library",
-)
-load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu")
-load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
+load("//xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gpu", "xla_aot_compile_gpu_runtime_autotuning")
+load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm",
     "if_rocm_is_configured",
 )
-load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("//xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gpu", "xla_aot_compile_gpu_runtime_autotuning")
-load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu")
+load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
+load(
+    "@tsl//tsl/platform:build_config.bzl",
+    "tf_proto_library",
+    "tf_pyclif_proto_library",
+)
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load(
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -3512,10 +3512,12 @@ cc_library(
     srcs = ["dynamic_dimension_inference.cc"],
     hdrs = ["dynamic_dimension_inference.h"],
     deps = [
+        ":call_inliner",
         ":dynamic_window_utils",
         ":hlo_creation_utils",
         ":tuple_util",
         ":while_util",
+        "//xla:comparison_util",
         "//xla:literal_util",
         "//xla:shape_tree",
         "//xla:shape_util",
@@ -3525,10 +3527,18 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla:window_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
     ],
 )
