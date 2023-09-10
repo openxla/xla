@@ -336,6 +336,9 @@ message DebugOptions {
   bool xla_tpu_detect_nan = 135;
   bool xla_tpu_detect_inf = 136;
 
+  // Temp option to allow enabling control dependencies for buffer aliasing.
+  bool xla_tpu_enabling_control_dependencies_for_buffer_alias = 246;
+
   // True if TraceMe annotations are enabled for XLA:CPU.
   bool xla_cpu_enable_xprof_traceme = 137;
 
@@ -615,7 +618,7 @@ message DebugOptions {
   // Replace custom calls with noop operations.
   bool xla_gpu_mock_custom_calls = 245;
 
-  // Next id: 246
+  // Next id: 247
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

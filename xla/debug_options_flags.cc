@@ -192,6 +192,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_single_wave_autotuning(true);
   opts.set_xla_gpu_enable_reduction_epilogue_fusion(true);
   opts.set_xla_gpu_enable_nccl_clique_optimization(false);
+  opts.set_xla_tpu_enabling_control_dependencies_for_buffer_alias(false);
   return opts;
 }
 
@@ -764,6 +765,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_tpu_detect_inf),
       debug_options->xla_tpu_detect_inf(),
       "Trigger error on execution on TPU if a INF value is detected"));
+  flag_list->push_back(tsl::Flag(
+      "xla_tpu_enabling_control_dependencies_for_buffer_alias",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_tpu_enabling_control_dependencies_for_buffer_alias),
+      debug_options->xla_tpu_enabling_control_dependencies_for_buffer_alias(),
+      "Enable control dependencies for buffer alias."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_enable_xprof_traceme",
       bool_setter_for(&DebugOptions::set_xla_cpu_enable_xprof_traceme),
