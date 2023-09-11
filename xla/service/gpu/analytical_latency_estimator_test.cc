@@ -100,7 +100,6 @@ class AnalyticalLatencyHidingSchedulerTest : public GpuCodegenTest {
 };
 
 TEST_F(AnalyticalLatencyHidingSchedulerTest, TestAnalyticalLatencyEstimator) {
-  // On pre-Ampere GPUs the test would use a different amount of shared memory.
   if (!GetCudaComputeCapability().IsAtLeast(
           se::CudaComputeCapability::PASCAL_)) {
     GTEST_SKIP() << "This test is for Pascal+ GPUs.";
@@ -108,6 +107,8 @@ TEST_F(AnalyticalLatencyHidingSchedulerTest, TestAnalyticalLatencyEstimator) {
   const GpuDeviceInfo dev_info =
       GetGpuDeviceInfo(backend().default_stream_executor());
 
+  // The test below has 2 allreduces, ar2 should be have the larger latency
+  // so we expect ar1 to be run first and ar2 to be overlapped with conv0.
   absl::string_view hlo_string = R"(
 HloModule module, is_scheduled=true
 

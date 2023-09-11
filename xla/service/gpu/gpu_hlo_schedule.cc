@@ -641,15 +641,7 @@ Status ScheduleGpuModule(HloModule* module, int64_t pointer_size,
       module->config()
           .debug_options()
           .xla_gpu_enable_analytical_latency_estimator();
-  if (enable_analytical_latency_estimator) {
-    latency_estimator = std::make_unique<AnalyticalLatencyEstimator>(
-        config, std::move(gpu_latency_estimator), gpu_device_info,
-        [input_pointer_size = pointer_size](const Shape& shape) {
-          return GetSizeOfShape(shape, input_pointer_size);
-        },
-        module->entry_computation());
-    LOG(INFO) << "Using analytical latency estimator";
-  } else if (profile.has_value()) {
+  if (profile.has_value()) {
     latency_estimator = std::make_unique<ProfileGuidedLatencyEstimator>(
         config, std::move(gpu_latency_estimator), profile.value());
     LOG(INFO) << "Found profile, using profile guided latency estimator";
@@ -659,6 +651,14 @@ Status ScheduleGpuModule(HloModule* module, int64_t pointer_size,
                    "still be used : "
                 << s.message();
     }
+  } else if (enable_analytical_latency_estimator) {
+    latency_estimator = std::make_unique<AnalyticalLatencyEstimator>(
+        config, std::move(gpu_latency_estimator), gpu_device_info,
+        [input_pointer_size = pointer_size](const Shape& shape) {
+          return GetSizeOfShape(shape, input_pointer_size);
+        },
+        module->entry_computation());
+    LOG(INFO) << "Using analytical latency estimator";
   } else {
     latency_estimator = std::move(gpu_latency_estimator);
   }

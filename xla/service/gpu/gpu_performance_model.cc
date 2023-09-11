@@ -74,7 +74,7 @@ absl::Duration ReadTime(const se::DeviceDescription& gpu_device_info,
   return absl::Seconds(n_bytes_total / bandwidth);
 }
 
-int64_t GetMaxNumberOfChannels(
+int64_t GetNcclMaxNumChannels(
     GpuPerformanceWithCollectiveModel::CollectiveAlgo algorithm) {
   int64_t max_nchannels = 0;
   switch (algorithm) {
@@ -136,39 +136,29 @@ int GetNumThreads(int warp_size, int min_num_threads, int max_num_threads,
   return num_threads;
 }
 
-float GetMaxSysBwFromGpu(const GpuDeviceInfo& gpu_device_info,
+float GetMaxSysBwFromGpu(const se::CudaComputeCapability cc,
                          const double* bandwidths_table) {
-  switch (gpu_device_info.cuda_comp_capability_major) {
-    // Volta
+  switch (cc.major) {
     case se::CudaComputeCapability::VOLTA:
       return bandwidths_table[0];
-    // Ampere
     case se::CudaComputeCapability::AMPERE:
       return bandwidths_table[1];
-    // Hopper
     case se::CudaComputeCapability::HOPPER:
       return bandwidths_table[2];
   }
   return -1;
 }
-
 // Use HloFusionAnalysis for computing the actual number of threads that the
 // IR emitter will use. Return std::nullopt if this data is not available.
 std::optional<int64_t> EstimateThreadCountForFusionOp(
-    const HloInstruction* instr, const GpuDeviceInfo& gpu_device_info,
-    std::optional<se::CudaComputeCapability> cc) {
+    const HloInstruction* instr, const GpuDeviceInfo& gpu_device_info) {
   auto fusion = DynCast<const HloFusionInstruction>(instr);
-  if (fusion != nullptr && cc.has_value()) {
-    auto analysis =
-        HloFusionAnalysis::Create(fusion, &gpu_device_info, cc.value());
-    if (analysis.ok()) {
-      auto launch_dimensions = analysis->GetLaunchDimensions();
-      if (launch_dimensions.ok()) {
-        return launch_dimensions->launch_bound();
-      }
-    }
-  }
-  return std::nullopt;
+  if (fusion == nullptr) return std::nullopt;
+  auto analysis = HloFusionAnalysis::Create(fusion, &gpu_device_info);
+  if (!analysis.ok()) return std::nullopt;
+  auto launch_dimensions = analysis->GetLaunchDimensions();
+  if (!launch_dimensions.ok()) return std::nullopt;
+  return launch_dimensions->launch_bound();
 }
 }  // namespace
 
@@ -435,29 +425,31 @@ float GpuPerformanceWithCollectiveModel::GetNvlinkBw(
 GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
     const HloInstruction& instr, const GpuHloCostAnalysis* cost_analysis,
     const GpuDeviceInfo& gpu_device_info) {
-  float elements_out = ShapeUtil::ElementsInRecursive(instr.shape());
   // We use nccl group call to launch multiple allreduces so launch overhead
   // only occurs once.
   absl::Duration total_time = kKernelLaunchOverhead;
+  auto* cc_ptr = std::get_if<stream_executor::CudaComputeCapability>(
+      &gpu_device_info.compute_capability);
+  CHECK(cc_ptr != nullptr);
 
-  int64_t size_of_speed_array = (sizeof(intra_node_speeds) / sizeof(double));
-  int64_t size_of_sm90_speed_array =
-      (sizeof(intra_node_speeds_sm90) / sizeof(double));
+  stream_executor::CudaComputeCapability compute_cap = {cc_ptr->major,
+                                                        cc_ptr->minor};
+  int64_t size_of_speed_array = intra_node_speeds.size();
+  int64_t size_of_sm90_speed_array = intra_node_speeds_sm90.size();
 
-  int num_speeds = gpu_device_info.cuda_comp_capability_major >=
-                               se::CudaComputeCapability::HOPPER &&
-                           gpu_device_info.cuda_comp_capability_minor >= 0
+  int num_speeds = compute_cap.major >= se::CudaComputeCapability::HOPPER &&
+                           compute_cap.minor >= 0
                        ? size_of_sm90_speed_array
                        : size_of_speed_array;
-  const double* speeds = gpu_device_info.cuda_comp_capability_major >=
-                                     se::CudaComputeCapability::HOPPER &&
-                                 gpu_device_info.cuda_comp_capability_minor >= 0
-                             ? intra_node_speeds_sm90
-                             : intra_node_speeds;
+  const double* speeds =
+      compute_cap.major >= se::CudaComputeCapability::HOPPER &&
+              compute_cap.minor >= 0
+          ? intra_node_speeds_sm90.data()
+          : intra_node_speeds.data();
 
   int speed_index = 0;
   float max_sys_bw =
-      GetMaxSysBwFromGpu(gpu_device_info, low_latency_max_bandwidths);
+      GetMaxSysBwFromGpu(compute_cap, low_latency_max_bandwidths.data());
 
   CHECK_GT(max_sys_bw, 0);
 
@@ -470,7 +462,7 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
   int64_t min_nchannels =
       std::max(num_devices, GetMinNumberOfChannels(CollectiveAlgo::RING));
   int64_t num_channels =
-      std::max(min_nchannels, GetMaxNumberOfChannels(CollectiveAlgo::RING));
+      std::max(min_nchannels, GetNcclMaxNumChannels(CollectiveAlgo::RING));
   int default_threads =
       (bw_intra_node * num_channels <= pci_bw) ? 256 : ll128_nthreads;
 
@@ -488,7 +480,7 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
 
   // Get per channel LL128 ring bandwidth
   double per_channel_ring_ll128_Bw = GetMaxSysBwFromGpu(
-      gpu_device_info, per_channel_max_ring_LL128_bandwidths);
+      compute_cap, per_channel_max_ring_LL128_bandwidths.data());
   ;
   bus_bandwidth = std::min(
       bus_bandwidth * ring_algo_factor /*discount factor for ring algo*/,

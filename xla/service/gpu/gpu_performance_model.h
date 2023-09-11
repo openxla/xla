@@ -68,17 +68,19 @@ class GpuPerformanceWithCollectiveModel : public GpuPerformanceModel {
     TREE,
   };
 
-  // Table for max system bandwidths.
-  // Index 1 is for well-known GPU link BWs, used for intra-node estimate.
-  static constexpr double low_latency_max_bandwidths[3] = {
-      39.0 /* Volta-N1 */, 87.7 /* Ampere-N1 */, 87.7 /* Hopper-N1 */
+  // Table for max system bandwidths for using NCCL's low latency algorithm.
+  // This is used for intra-node estimate.
+  static constexpr std::array<double, 3> low_latency_max_bandwidths = {
+      39.0 /* Volta*/, 87.7 /* Ampere*/, 87.7 /* Hopper*/
   };
 
-  static constexpr double per_channel_max_ring_LL128_bandwidths[3] = {
-      20.0 /* Volta (N1/N2/N4) */,
-      20.0 /* Ampere (N1/N2/N4) */,
-      36.7 /* Hopper (N1/N2/N4) */,
-  };
+  // Max bandwidth for ring algorithm per channel on a single-node
+  static constexpr std::array<double, 3> per_channel_max_ring_LL128_bandwidths =
+      {
+          20.0 /* Volta */,
+          20.0 /* Ampere */,
+          36.7 /* Hopper */,
+      };
 
   // Nvlink bandwidth for different compute cap.
   // Note this is per lane bandwidth.
@@ -94,10 +96,10 @@ class GpuPerformanceWithCollectiveModel : public GpuPerformanceModel {
   static constexpr double ring_algo_factor = 0.92;
 
   // Different tiers for intra-node bandwidth.
-  static constexpr double intra_node_speeds[13] = {
+  static constexpr std::array<double, 13> intra_node_speeds = {
       40.0, 30.0, 20.0, 18.0, 15.0, 12.0, 10.0, 9.0, 7.0, 6.0, 5.0, 4.0, 3.0};
   // SM90 has different bandwidths.
-  static constexpr double intra_node_speeds_sm90[9] = {
+  static constexpr std::array<double, 9> intra_node_speeds_sm90 = {
       60.0, 40.0, 30.0, 24.0, 20.0, 15.0, 12.0, 6.0, 3.0};
 
   // Maximum number of channels allowed by NCCL

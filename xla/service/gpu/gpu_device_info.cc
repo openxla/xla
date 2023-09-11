@@ -40,8 +40,6 @@ GpuDeviceInfo GetGpuDeviceInfo(
   device_info.l2_cache_size = device.l2_cache_size();
   device_info.clock_rate_ghz = device.clock_rate_ghz();
   device_info.device_memory_size = device.device_memory_size();
-  device_info.cuda_comp_capability_major = device.cuda_compute_capability().major;
-  device_info.cuda_comp_capability_minor = device.cuda_compute_capability().minor;
   return device_info;
 }
 

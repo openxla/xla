@@ -32,8 +32,8 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/hlo_op_profile.pb.h"
 #include "xla/service/gpu/hlo_op_profiles.h"
-#include "xla/stream_executor/device_description.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {
@@ -347,18 +347,13 @@ int64_t FlopsPerElement(const se::DeviceDescription* device_info,
 
 int64_t GetFlopsForElementwiseOp(const GpuDeviceInfo* gpu_device_info,
                                  const HloOpcode op_code, const Shape& shape) {
-  int64_t flop_per_element = FlopsPerElement(
-      gpu_device_info ? gpu_device_info->name : kDefaultDeviceName,
-      shape.element_type(), op_code);
+  int64_t flop_per_element =
+      FlopsPerElement(gpu_device_info, shape.element_type(), op_code);
   return flop_per_element * ShapeUtil::ElementsInRecursive(shape);
 }
 
 int64_t GetFlopsForElementwiseOp(const GpuDeviceInfo* gpu_device_info,
                                  const HloInstruction* instr) {
-  LOG(ERROR) << "#####ShapeUtil::ElementsInRecursive(instr->shape()) "
-             << ShapeUtil::ElementsInRecursive(instr->shape())
-             << " INSTR: " << instr->ToString();
-
   return GetFlopsForElementwiseOp(gpu_device_info, instr->opcode(),
                                   instr->shape());
 }
@@ -371,6 +366,9 @@ Status GpuHloCostAnalysis::HandleAllReduce(const HloInstruction* allreduce) {
   int64_t num_ranks = num_devices;
 
   int64_t output_bytes_accessed = 0;
+  // Since for allreduces, the input shape is the same as output shape and can
+  // be done in-place, we calcualte output_bytes_accessed based on just the
+  // output size.
   ShapeUtil::ForEachSubshape(
       allreduce->shape(), [&](const Shape& subshape, const ShapeIndex&) {
         if (subshape.IsArray()) {
@@ -390,13 +388,14 @@ Status GpuHloCostAnalysis::HandleAllReduce(const HloInstruction* allreduce) {
       device_info_, allreduce->to_apply()->root_instruction()->opcode(),
       allreduce->shape());
 
-  // Compute algorithmic scaling ratio, this can be used with link bandwidth
-  // to get the effective bandwidth of the algorithm.
   // TODO TJ support multi-node case, we need to know how many nodes there are.
   int num_intra_steps = 2 * (num_ranks - 1);
+  // Compute algorithmic scaling ratio, this can be used to be multiplied with
+  // bus bandwidth to get the effective bandwidth of the algorithm. The scaling
+  // ratio differs based on what algorithm NCCL chooses to use. This is the
+  // scaling factor for ring since NCCL will only use ring for single-node, need
+  // to add support for tree algo in multi-node case.
   float scaling_ratio = (1.0 * num_ranks) / num_intra_steps;
-  // This is the scaling factor for ring since NCCL will only use ring
-  // for single-node, need to add support for tree algo in multi-node case.
   current_properties_[kCollAlgoScaleRatioKey] = scaling_ratio;
 
   return OkStatus();
