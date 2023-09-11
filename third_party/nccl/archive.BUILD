@@ -8,7 +8,6 @@ exports_files(["LICENSE.txt"])
 load(
     "@local_config_cuda//cuda:build_defs.bzl",
     "cuda_library",
-    "if_cuda_clang",
 )
 load(
     "@local_config_nccl//:build_defs.bzl",
@@ -124,19 +123,54 @@ cc_library(
     ],
 )
 
-cc_library(
+alias(
     name = "enqueue",
+    actual = select({
+        "@local_config_cuda//cuda:using_clang": ":enqueue_clang",
+        "@local_config_cuda//cuda:using_nvcc": ":enqueue_nvcc",
+    }),
+)
+
+# enqueue.cc needs to be compiled as a `cuda_library` with clang to ensure
+# proper symbol names for the generated host stub functions due to
+# https://reviews.llvm.org/D68578.
+cuda_library(
+    name = "enqueue_clang",
     srcs = [
         "src/enqueue.cc",
     ],
     hdrs = ["src/nccl.h"],
-    copts = if_cuda_clang([
-        "-x",
-        "cuda",
-    ]),
+    copts = [
+        "--cuda-host-only",
+    ],
     include_prefix = "third_party/nccl",
     linkopts = ["-lrt"],
     strip_include_prefix = "src",
+    target_compatible_with = select({
+        "@local_config_cuda//cuda:using_clang": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":device",
+        ":include_hdrs",
+        ":src_hdrs",
+    ],
+)
+
+cc_library(
+    name = "enqueue_nvcc",
+    srcs = [
+        "src/enqueue.cc",
+    ],
+    hdrs = ["src/nccl.h"],
+    include_prefix = "third_party/nccl",
+    linkopts = ["-lrt"],
+    strip_include_prefix = "src",
+    target_compatible_with = select({
+        "@local_config_cuda//cuda:using_nvcc": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     visibility = ["//visibility:public"],
     deps = [
         ":device",
