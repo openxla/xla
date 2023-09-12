@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
-load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "gentbl_filegroup", "td_library")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "gentbl_filegroup", "td_library")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -726,6 +726,7 @@ cc_library(
         "mhlo/transforms/hlo_legalize_to_lhlo/hlo_legalize_to_lhlo.cc",
         "mhlo/transforms/hlo_legalize_to_memref/hlo_legalize_to_memref.cc",
         "mhlo/transforms/hlo_legalize_to_stablehlo/hlo_legalize_to_stablehlo_pass.cc",
+        "mhlo/transforms/legalize_broadcast_to_broadcast_in_dim/legalize_broadcast_to_broadcast_in_dim.cc",
         "mhlo/transforms/legalize_control_flow/legalize_control_flow.cc",
         "mhlo/transforms/legalize_create_token_to_after_all/legalize_create_token_to_after_all.cc",
         "mhlo/transforms/legalize_cross_replica_sum_to_all_reduce/legalize_cross_replica_sum_to_all_reduce.cc",
