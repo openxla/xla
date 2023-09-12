@@ -584,7 +584,6 @@ xla_test(
         "large",
         "no_oss",
         "nomac",
-        "notap",
         "requires-mem:16g",
     ],
     deps = [
