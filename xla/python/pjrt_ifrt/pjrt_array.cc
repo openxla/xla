@@ -15,24 +15,40 @@ limitations under the License.
 
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "./third_party/absl/log/check.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
+#include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/utils.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
+#include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
+#include "tfrt/concurrency/ref_count.h"  // from @tf_runtime
 
 namespace xla {
 namespace ifrt {
@@ -388,14 +404,11 @@ StatusOr<tsl::RCReference<Array>> PjRtArray::Reshard(
   PjRtBuffers buffers;
   buffers.reserve(pjrt_buffers_.size());
   for (int i = 0; i < pjrt_buffers_.size(); ++i) {
-    // TODO(yashkatariya): Remove the
-    // `pjrt_buffers_[i]->memory_space() != nullptr` check after PJRT C API
-    // populates memory space on PJRT_Buffer.
     bool memory_kind_equal =
         !new_sharding->memory_kind().memory_kind().has_value() ||
-        (pjrt_buffers_[i]->memory_space() != nullptr &&
-         pjrt_buffers_[i]->memory_space()->memory_space_kind() ==
-             new_sharding->memory_kind().memory_kind());
+        pjrt_buffers_[i]->memory_space() == nullptr ||
+        pjrt_buffers_[i]->memory_space()->memory_space_kind() ==
+            new_sharding->memory_kind().memory_kind();
     bool devices_equal =
         pjrt_buffers_[i]->device() == new_sharding->devices()[i];
 
