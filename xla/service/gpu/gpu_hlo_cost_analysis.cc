@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/map_util.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/elemental_ir_emitter.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
@@ -360,10 +361,27 @@ int64_t GetFlopsForElementwiseOp(const GpuDeviceInfo* gpu_device_info,
 
 Status GpuHloCostAnalysis::HandleAllReduce(const HloInstruction* allreduce) {
   const HloModuleConfig& config = allreduce->GetModule()->config();
+  TF_ASSIGN_OR_RETURN(
+      CollectiveOpGroupMode group_mode,
+      GetCollectiveOpGroupMode(
+          allreduce->channel_id().has_value(),
+          Cast<HloAllReduceInstruction>(allreduce)->use_global_device_ids()));
+
+  // Get number of ranks for this instruction based on replica groups and mode.
   int64_t num_devices = config.num_partitions();
   int64_t num_replicas = config.replica_count();
-  // Data parallel ranks
-  int64_t num_ranks = num_devices;
+  TF_ASSIGN_OR_RETURN(
+      std::vector<int64_t> participant_counts,
+      GetPariticipantCountsForReplicaGroups(
+          num_replicas, num_devices, allreduce->replica_groups(), group_mode));
+  int64_t num_ranks = 1;
+
+  for (auto count : participant_counts) {
+    num_ranks = std::max(num_ranks, count);
+  }
+
+  VLOG(5) << "Computing cost for " << num_ranks << " ranks in "
+          << allreduce->ToString();
 
   int64_t output_bytes_accessed = 0;
   // Since for allreduces, the input shape is the same as output shape and can

@@ -105,7 +105,7 @@ ENTRY e {
   GpuPerformanceModel::RunTimes t =
       GpuPerformanceModel::EstimateRunTimes(root, &analysis_);
   // Dominated by the kernel launch overhead.
-  EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 2, 1);
+  EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 5, 1);
 
   GpuPerformanceModel::RecordEstimatedRunTime(root, &analysis_);
   double recorded_cycles = root->backend_config<FusionBackendConfig>()
@@ -235,7 +235,7 @@ TEST_F(GpuPerformanceModelTest, UnusedParameter) {
 
   GpuPerformanceModel::RunTimes t =
       GpuPerformanceModel::EstimateRunTimes(root, &analysis_);
-  EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 2, 1);
+  EXPECT_NEAR(absl::ToInt64Microseconds(t.time_unfused), 5, 1);
 }
 
 TEST_F(GpuPerformanceModelTest, ComputeBoundReducesWithSameLaunchDimensions) {

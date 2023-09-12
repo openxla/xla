@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/functional/function_ref.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/blocking_counter.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -140,6 +141,12 @@ StatusOr<std::vector<ReplicaGroup>> GetParticipatingFlattenedIdGroups(
 // Figures out which devices are participating in the collective subgroup.
 StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
     GlobalDeviceId device_id, const DeviceAssignment& device_assignment,
+    absl::Span<const ReplicaGroup> replica_groups,
+    CollectiveOpGroupMode group_mode);
+
+// Figures out how many ranks are participating in each collective subgroup.
+StatusOr<std::vector<int64_t>> GetPariticipantCountsForReplicaGroups(
+    int64_t num_replicas, int64_t num_partitions,
     absl::Span<const ReplicaGroup> replica_groups,
     CollectiveOpGroupMode group_mode);
 

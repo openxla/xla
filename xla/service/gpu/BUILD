@@ -3255,6 +3255,7 @@ cc_library(
         ":hlo_op_profile_proto_cc",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:collective_ops_utils",
         "//xla/service:elemental_ir_emitter",
         "//xla/service:hlo_cost_analysis",
         "//xla/stream_executor:device_description",
