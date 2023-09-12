@@ -686,7 +686,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
-        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
     ],
