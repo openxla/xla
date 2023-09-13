@@ -68,13 +68,14 @@ class GpuPerformanceWithCollectiveModel : public GpuPerformanceModel {
     TREE,
   };
 
-  // Table for max system bandwidths for using NCCL's low latency algorithm.
-  // This is used for intra-node estimate.
+  // Table for max system bandwidths GB/s for using NCCL's low latency
+  // algorithm. This is used for intra-node estimate.
   static constexpr std::array<double, 3> low_latency_max_bandwidths = {
       39.0 /* Volta*/, 87.7 /* Ampere*/, 87.7 /* Hopper*/
   };
 
-  // Max bandwidth for ring algorithm per channel on a single-node
+  // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
+  // single-node
   static constexpr std::array<double, 3> per_channel_max_ring_LL128_bandwidths =
       {
           20.0 /* Volta */,
@@ -82,8 +83,8 @@ class GpuPerformanceWithCollectiveModel : public GpuPerformanceModel {
           36.7 /* Hopper */,
       };
 
-  // Nvlink bandwidth for different compute cap.
-  // Note this is per lane bandwidth.
+  // Nvlink unidirectional bandwidth for different compute cap. Note this is per
+  // lane bandwidth.
   static constexpr double sm60_nvlink_bw = 18.0;
   static constexpr double sm70_nvlink_bw = 20.0;
   static constexpr double sm80_nvlink_bw = 20.0;

@@ -15,6 +15,24 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_performance_model.h"
 
+#if GOOGLE_CUDA
+#include <dlfcn.h>
+
+#include "third_party/gpus/cuda/include/nvml.h"
+// Below is a list of function pointers to be used
+// for querying device properties through nvml library.
+#define NVML_FUNCTOR(name, rettype, args) rettype(*xla_##name) args = nullptr;
+
+NVML_FUNCTOR(nvmlInit, nvmlReturn_t, ())
+NVML_FUNCTOR(nvmlShutdown, nvmlReturn_t, ())
+NVML_FUNCTOR(nvmlDeviceGetHandleByIndex, nvmlReturn_t,
+             (unsigned int index, nvmlDevice_t* device))
+NVML_FUNCTOR(nvmlDeviceGetNvLinkCapability, nvmlReturn_t,
+             (nvmlDevice_t device, unsigned int link,
+              nvmlNvLinkCapability_t capability, unsigned int* capResult))
+
+#endif
+
 #include <algorithm>
 #include <cstdint>
 #include <optional>
@@ -98,7 +116,7 @@ int64_t GetMinNumberOfChannels(
     GpuPerformanceWithCollectiveModel::CollectiveAlgo algorithm) {
   int64_t min_nchannels = 0;
   switch (algorithm) {
-    // Tree and Ring algos share the same max channel number.
+    // Tree and Ring algos share the same min channel number.
     case GpuPerformanceWithCollectiveModel::RING:
     case GpuPerformanceWithCollectiveModel::TREE:
       min_nchannels = 1;
@@ -476,6 +494,62 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
       ComputeTime(gpu_device_info,
                   cost_analysis->flop_count(instr) / num_channels, num_threads);
   total_time += compute_time_per_channel;
+
+#if GOOGLE_CUDA
+  // We will use nvml library to detect nvlink capability
+  // to see if it supports p2p communication.
+  // We first load libnvidia-ml.so and assign symbols to function pointers
+  // to avoid linking errors.
+  // Then gpu 0 will be used to query for nvlink capability, note that
+  // we only look at link 0 of gpu 0 since all other links are assumed
+  // to have the same capability.
+  void* libhandle = dlopen("libnvidia-ml.so.1", RTLD_NOW);
+  if (libhandle == nullptr) {
+    VLOG(8) << "Failed to open libnvidia-ml.so.1";
+  } else {
+    struct SymbolEntry {
+      void** functor;
+      char const* name;
+    };
+
+    std::vector<SymbolEntry> symbols = {
+        {(void**)&xla_nvmlInit, "nvmlInit_v2"},
+        {(void**)&xla_nvmlShutdown, "nvmlShutdown"},
+        {(void**)&xla_nvmlDeviceGetHandleByIndex, "nvmlDeviceGetHandleByIndex"},
+        {(void**)&xla_nvmlDeviceGetNvLinkCapability,
+         "nvmlDeviceGetNvLinkCapability"},
+    };
+    for (SymbolEntry se : symbols) {
+      *se.functor = dlsym(libhandle, se.name);
+    }
+    nvmlReturn_t init_result = xla_nvmlInit();
+    CHECK(init_result == NVML_SUCCESS);
+
+    nvmlDevice_t nvml_device;
+    nvmlReturn_t get_device_result =
+        xla_nvmlDeviceGetHandleByIndex(0, &nvml_device);
+    CHECK(get_device_result == NVML_SUCCESS);
+
+    uint32_t supported_p2p = 0;
+    nvmlReturn_t nvlink_cap_result = xla_nvmlDeviceGetNvLinkCapability(
+        nvml_device, /*nvlink link number*/ 0, NVML_NVLINK_CAP_P2P_SUPPORTED,
+        &supported_p2p);
+    CHECK(nvlink_cap_result == NVML_SUCCESS);
+
+    if (supported_p2p == 0) {
+      VLOG(8) << "Nvlink doesn't support p2p communication. Model will "
+                 "continue using default system bandwidth.";
+    } else {
+      VLOG(8) << "Nvlink supports p2p communication, setting intra node "
+                 "bandwidth to nvlink bw.";
+      bw_intra_node = GetNvlinkBw(compute_cap);
+    }
+
+    nvmlReturn_t shutdown_result = xla_nvmlShutdown();
+    CHECK(shutdown_result == NVML_SUCCESS);
+  }
+#endif  // GOOGLE_CUDA
+
   double bus_bandwidth = bw_intra_node * num_channels;
 
   // Get per channel LL128 ring bandwidth
