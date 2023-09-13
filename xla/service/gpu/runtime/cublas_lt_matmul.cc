@@ -105,7 +105,8 @@ absl::Status DoMatmul(
         dot_dims.lhs_contract, dot_dims.rhs_batch, dot_dims.rhs_contract,
         precision.empty() ? se::blas::kDefaultComputePrecision
                           : *absl::c_max_element(precision),
-        c, bias));
+        c, bias,
+        /*grad_x=*/false, /*grad_y=*/false));
   }));
 
   // Get the matmul plan for this instance of matmul.
