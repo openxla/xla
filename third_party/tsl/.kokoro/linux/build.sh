@@ -49,6 +49,7 @@ docker run --name tsl -w /tf/tsl -itd --rm \
 
 # Build TSL
 docker exec tsl bazel build \
+    --config=release_cpu_linux \
     --output_filter="" \
     --keep_going \
     --build_tag_filters=$TAGS_FILTER  \
@@ -59,6 +60,7 @@ docker exec tsl bazel build \
 
 # Test TSL
 docker exec tsl bazel test \
+    --config=release_cpu_linux \
     --output_filter="" \
     --keep_going \
     --flaky_test_attempts=3 \
