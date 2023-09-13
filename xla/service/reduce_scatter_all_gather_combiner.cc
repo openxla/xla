@@ -30,14 +30,13 @@ StatusOr<bool> ReduceScatterAllGatherCombiner::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   const HloModuleConfig& config = module->config();
-  int64_t next_channel_id = hlo_query::NextChannelId(*module);
-
   bool changed = false;
-  const int64_t min_rank = 1;
+
   if (config.use_spmd_partitioning()) {
     VLOG(2) << "Unsupported module";
     return false;
   }
+  int64_t next_channel_id = hlo_query::NextChannelId(*module);
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instruction :
@@ -48,7 +47,7 @@ StatusOr<bool> ReduceScatterAllGatherCombiner::Run(
       }
 
       auto* rs = Cast<HloReduceScatterInstruction>(instruction);
-      if (rs->constrain_layout()  ) {
+      if (rs->constrain_layout()) {
         VLOG(2) << " The layout is enforced by the XLA client: " << rs->ToString();
         continue;
       }

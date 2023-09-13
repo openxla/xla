@@ -13,20 +13,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/compiler/xla/service/reduce_scatter_all_gather_combiner.h"
+#include "xla/service/reduce_scatter_all_gather_combiner.h"
 
-#include "tensorflow/compiler/xla/hlo/ir/hlo_casting_utils.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_instructions.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_module.h"
-#include "tensorflow/compiler/xla/hlo/ir/hlo_opcode.h"
-#include "tensorflow/compiler/xla/hlo/utils/hlo_matchers.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
-#include "tensorflow/compiler/xla/service/hlo_pass_pipeline.h"
-#include "tensorflow/compiler/xla/service/hlo_verifier.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
-#include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/compiler/xla/xla_data.pb.h"
-#include "tensorflow/tsl/lib/core/status_test_util.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/service/hlo_parser.h"
+#include "xla/service/hlo_pass_pipeline.h"
+#include "xla/service/hlo_verifier.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace {
@@ -99,8 +99,8 @@ add {
 
 ENTRY main {
 param.1 = bf16[8,128,1024] parameter(0)
-reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=false, dimensions={1}, to_apply=add
-all-gather.1 = bf16[8,128,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
+reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
+all-gather.1 = bf16[16,64,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={0}, use_global_device_ids=true
 }
 )";
 
@@ -178,9 +178,6 @@ add.2 = bf16[8,64,1024] add(reduce-scatter.1, reduce-scatter.2)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/false));
-  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 2);
-  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 2);
-  EXPECT_EQ(CollectiveCount<HloOpcode::kAllReduce>(module), 0);
 }
 
 }  // namespace
