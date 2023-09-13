@@ -1,11 +1,11 @@
 load("//tsl:tsl.default.bzl", "filegroup")
 load(
-    "//tsl/platform:rules_cc.bzl",
-    "cc_library",
-)
-load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
+)
+load(
+    "//tsl/platform:rules_cc.bzl",
+    "cc_library",
 )
 
 package(
@@ -21,6 +21,10 @@ cc_library(
     name = "histogram",
     srcs = ["histogram.cc"],
     hdrs = ["histogram.h"],
+    visibility = [
+        "//tensorflow/core/lib/histogram:__pkg__",
+        "//tsl/lib/monitoring:__pkg__",
+    ],
     deps = [
         "//tsl/platform:logging",
         "//tsl/platform:macros",
