@@ -555,7 +555,6 @@ build:release_cpu_linux --crosstool_top="@sigbuild-r2.14-clang_config_cuda//cros
 # offset of in the current version of ubp.
 # See https://github.com/protocolbuffers/upb/blob/9effcbcb27f0a665f9f345030188c0b291e32482/upb/upb.c#L183.
 build:release_cpu_linux --copt=-Wno-gnu-offsetof-extensions
-build:release_cpu_linux --copt=-Wno-error=array-parameter
 # Set lld as the linker.
 build:release_cpu_linux --linkopt="-fuse-ld=lld"
 build:release_cpu_linux --linkopt="-lm"
@@ -565,8 +564,6 @@ build:release_cpu_linux --action_env PYTHON_BIN_PATH="/usr/bin/python3"
 build:release_cpu_linux --action_env PYTHON_LIB_PATH="/usr/lib/tf_python"
 build:release_cpu_linux --python_path="/usr/bin/python3"
 # Set Clang as compiler. Use the actual path to clang installed in container.
-build:release_cpu_linux --repo_env=CC="/usr/lib/llvm-16/bin/clang"
-build:release_cpu_linux --repo_env=BAZEL_COMPILER="/usr/lib/llvm-16/bin/clang"
 # Store performance profiling log in the mounted artifact directory.
 # The profile can be viewed by visiting chrome://tracing in a Chrome browser.
 # See https://docs.bazel.build/versions/main/skylark/performance.html#performance-profiling
