@@ -22,6 +22,7 @@ limitations under the License.
 #include <string_view>
 #include <vector>
 
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -30,7 +31,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -48,7 +48,8 @@ class GpuHloScheduleTest : public HloTestBase {
         test_backend.default_stream_executor()->GetDeviceDescription();
     TF_CHECK_OK(ScheduleGpuModule(
         module, /*pointer_size=*/8,
-        /*memory_size=*/gpu_device_info.device_memory_size() * 8 / 10, gpu_device_info));
+        /*memory_size=*/gpu_device_info.device_memory_size() * 8 / 10,
+        gpu_device_info));
     return SequentialHloOrdering{module->schedule()};
   }
 

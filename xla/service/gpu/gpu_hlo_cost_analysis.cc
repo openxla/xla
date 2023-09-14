@@ -346,14 +346,14 @@ int64_t FlopsPerElement(const se::DeviceDescription* device_info,
   return FindOrDefault(dtype_profiles->get(), opcode, kDefaultFlopsPerElement);
 }
 
-int64_t GetFlopsForElementwiseOp(const GpuDeviceInfo* gpu_device_info,
+int64_t GetFlopsForElementwiseOp(const se::DeviceDescription* gpu_device_info,
                                  const HloOpcode op_code, const Shape& shape) {
   int64_t flop_per_element =
       FlopsPerElement(gpu_device_info, shape.element_type(), op_code);
   return flop_per_element * ShapeUtil::ElementsInRecursive(shape);
 }
 
-int64_t GetFlopsForElementwiseOp(const GpuDeviceInfo* gpu_device_info,
+int64_t GetFlopsForElementwiseOp(const se::DeviceDescription* gpu_device_info,
                                  const HloInstruction* instr) {
   return GetFlopsForElementwiseOp(gpu_device_info, instr->opcode(),
                                   instr->shape());

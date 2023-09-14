@@ -22,13 +22,31 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "xla/service/gpu/gpu_hlo_cost_analysis.h"
 
+#if GOOGLE_CUDA
+#include <dlfcn.h>
+
+#include "third_party/gpus/cuda/nvml/include/nvml.h"
+// Below is a list of function pointers to be used
+// for querying device properties through nvml library.
+#define NVML_FUNCTOR(name, rettype, args) rettype(*xla_##name) args = nullptr;
+
+NVML_FUNCTOR(nvmlInit, nvmlReturn_t, ())
+NVML_FUNCTOR(nvmlShutdown, nvmlReturn_t, ())
+NVML_FUNCTOR(nvmlDeviceGetHandleByIndex, nvmlReturn_t,
+             (unsigned int index, nvmlDevice_t* device))
+NVML_FUNCTOR(nvmlDeviceGetNvLinkCapability, nvmlReturn_t,
+             (nvmlDevice_t device, unsigned int link,
+              nvmlNvLinkCapability_t capability, unsigned int* capResult))
+
+#endif
+
 namespace xla {
 namespace gpu {
 
 struct EstimateRunTimeData {
   int64_t flops;
-  float bytes_written;
-  float elements_out;
+  int64_t bytes_written;
+  int64_t num_threads;
   absl::Duration write_time;
   absl::Duration exec_time;
 };
@@ -51,12 +69,14 @@ class GpuPerformanceModel {
   // Writes estimated execution time to FusionBackendConfig.reification_cost.
   static void RecordEstimatedRunTime(HloInstruction* instruction,
                                      const GpuHloCostAnalysis* cost_analysis);
-  static absl::Duration ComputeTime(const GpuDeviceInfo& gpu_device_info,
-                                    int64_t n_flops, int64_t n_threads);
+  static absl::Duration ComputeTime(
+      const se::DeviceDescription& gpu_device_info, int64_t n_flops,
+      int64_t n_threads);
 
   static absl::Duration ProducerInputAccessTime(
       const GpuHloCostAnalysis* cost_analysis,
-      const GpuDeviceInfo& gpu_device_info, const HloInstruction* producer,
+      const se::DeviceDescription& gpu_device_info,
+      const HloInstruction* producer,
       const HloInstruction* fused_consumer = nullptr);
 };
 
@@ -90,7 +110,7 @@ class GpuPerformanceWithCollectiveModel : public GpuPerformanceModel {
   static constexpr double sm80_nvlink_bw = 20.0;
   static constexpr double sm90_nvlink_bw = 20.0;
 
-  // PCIE bandwidth
+  // PCIE bandwidth for PCI Gen3 x16
   static constexpr double pci_bw = 12.0;
 
   // Discount factor for ring algorithm
@@ -112,14 +132,25 @@ class GpuPerformanceWithCollectiveModel : public GpuPerformanceModel {
 
   static absl::Duration ComputeCollectiveTime(
       const HloInstruction& instr, const GpuHloCostAnalysis* cost_analysis,
-      const GpuDeviceInfo& gpu_device_info);
+      const se::DeviceDescription& gpu_device_info);
+
   // Returns NVLink bw in GB/s
   static float GetNvlinkBw(se::CudaComputeCapability compute_capability);
+
+  // Initialize nvml library.
+  static bool InitNvml();
+
+  // Shut down nvml library.
+  static bool ShutdownNvml();
+
+  // This checks if the nvlink supports direct P2P communication,
+  // If not, we will use PCIE bandwidth to estimate latency.
+  static uint32_t CheckIfNvlinkSupportsP2P();
 
  private:
   static absl::Duration ComputeAllreduceTime(
       const HloInstruction& instr, const GpuHloCostAnalysis* cost_analysis,
-      const GpuDeviceInfo& gpu_device_info);
+      const se::DeviceDescription& gpu_device_info);
 };
 
 }  // namespace gpu

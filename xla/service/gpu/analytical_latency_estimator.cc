@@ -64,14 +64,13 @@ LatencyEstimator::TimeCost AnalyticalLatencyEstimator::NodeCost(
       absl::ToDoubleMicroseconds(total_estimated_time);
   VLOG(10) << "Analytical estimator calculated cost for: " << instr->name()
            << ". Cost: " << cost_in_us;
-  ;
   return cost_in_us;
 }
 
 AnalyticalLatencyEstimator::AnalyticalLatencyEstimator(
     const SchedulerConfig& config,
     std::unique_ptr<LatencyEstimator> latency_estimator,
-    const GpuDeviceInfo& gpu_info,
+    const se::DeviceDescription& gpu_info,
     HloCostAnalysis::ShapeSizeFunction shape_size_function,
     HloComputation* computation)
     : config_(config),

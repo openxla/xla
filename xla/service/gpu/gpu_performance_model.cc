@@ -15,24 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_performance_model.h"
 
-#if GOOGLE_CUDA
-#include <dlfcn.h>
-
-#include "third_party/gpus/cuda/nvml/include/nvml.h"
-// Below is a list of function pointers to be used
-// for querying device properties through nvml library.
-#define NVML_FUNCTOR(name, rettype, args) rettype(*xla_##name) args = nullptr;
-
-NVML_FUNCTOR(nvmlInit, nvmlReturn_t, ())
-NVML_FUNCTOR(nvmlShutdown, nvmlReturn_t, ())
-NVML_FUNCTOR(nvmlDeviceGetHandleByIndex, nvmlReturn_t,
-             (unsigned int index, nvmlDevice_t* device))
-NVML_FUNCTOR(nvmlDeviceGetNvLinkCapability, nvmlReturn_t,
-             (nvmlDevice_t device, unsigned int link,
-              nvmlNvLinkCapability_t capability, unsigned int* capResult))
-
-#endif
-
 #include <algorithm>
 #include <cstdint>
 #include <optional>
@@ -166,23 +148,40 @@ float GetMaxSysBwFromGpu(const se::CudaComputeCapability cc,
   }
   return -1;
 }
-// Use HloFusionAnalysis for computing the actual number of threads that the
-// IR emitter will use. Return std::nullopt if this data is not available.
-std::optional<int64_t> EstimateThreadCountForFusionOp(
-    const HloInstruction* instr, const GpuDeviceInfo& gpu_device_info) {
-  auto fusion = DynCast<const HloFusionInstruction>(instr);
-  if (fusion == nullptr) return std::nullopt;
-  auto analysis = HloFusionAnalysis::Create(fusion, &gpu_device_info);
-  if (!analysis.ok()) return std::nullopt;
-  auto launch_dimensions = analysis->GetLaunchDimensions();
-  if (!launch_dimensions.ok()) return std::nullopt;
-  return launch_dimensions->launch_bound();
+// Uses HloFusionAnalysis for computing the actual number of threads that the
+// IR emitter for the fusion of `producer` and `consumer` will use. Returns
+// std::nullopt if this data is not available.
+std::optional<int64_t> EstimateFusionThreadCount(
+    const HloInstruction& producer, const HloInstruction& consumer,
+    const se::DeviceDescription& device_info) {
+  auto roots = consumer.opcode() == HloOpcode::kFusion
+                   ? GetFusionRoots(*consumer.fused_instructions_computation())
+                   : std::vector<const HloInstruction*>{&consumer};
+  auto fusion_analysis = HloFusionAnalysis::Create(
+      FusionBackendConfig::default_instance(), std::move(roots),
+      MakeProducerConsumerFusion(producer, consumer), &device_info);
+  if (fusion_analysis.ok()) {
+    VLOG(10) << "Fusion analysis for " << producer.ToString() << " and "
+             << consumer.ToString() << " successful.";
+    auto launch_dimensions = fusion_analysis->GetLaunchDimensions();
+    if (launch_dimensions.ok()) {
+      VLOG(10) << "Launch dimensions for " << producer.ToString() << " and "
+               << consumer.ToString() << ": " << launch_dimensions->ToString()
+               << ".";
+      return launch_dimensions->launch_bound();
+    }
+  } else {
+    VLOG(10) << "Fusion analysis for " << producer.ToString() << " and "
+             << consumer.ToString() << " unsuccessful.";
+  }
+
+  return std::nullopt;
 }
 }  // namespace
 
 /*static*/ EstimateRunTimeData
 GpuPerformanceModel::EstimateRunTimeForInstruction(
-  const HloInstruction* instr, const GpuHloCostAnalysis* cost_analysis) {
+    const HloInstruction* instr, const GpuHloCostAnalysis* cost_analysis) {
   const se::DeviceDescription* device_info = cost_analysis->device_info_;
 
   int64_t flops = cost_analysis->flop_count(*instr);
@@ -225,8 +224,7 @@ GpuPerformanceModel::EstimateRunTimeForInstruction(
 /*static*/ absl::Duration GpuPerformanceModel::ProducerInputAccessTime(
     const GpuHloCostAnalysis* cost_analysis,
     const se::DeviceDescription& gpu_device_info,
-    const HloInstruction* producer,
-    const HloInstruction* fused_consumer = nullptr) {
+    const HloInstruction* producer, const HloInstruction* fused_consumer) {
   absl::Duration ret = absl::ZeroDuration();
   float producer_output_utilization = 1.f;
   ConstHloInstructionSet consumer_operands;
@@ -288,38 +286,9 @@ GpuPerformanceModel::EstimateRunTimeForInstruction(
   return ret;
 }
 
-// Uses HloFusionAnalysis for computing the actual number of threads that the
-// IR emitter for the fusion of `producer` and `consumer` will use. Returns
-// std::nullopt if this data is not available.
-std::optional<int64_t> EstimateFusionThreadCount(
-    const HloInstruction& producer, const HloInstruction& consumer,
-    const se::DeviceDescription& device_info) {
-  auto roots = consumer.opcode() == HloOpcode::kFusion
-                   ? GetFusionRoots(*consumer.fused_instructions_computation())
-                   : std::vector<const HloInstruction*>{&consumer};
-  auto fusion_analysis = HloFusionAnalysis::Create(
-      FusionBackendConfig::default_instance(), std::move(roots),
-      MakeProducerConsumerFusion(producer, consumer), &device_info);
-  if (fusion_analysis.ok()) {
-    VLOG(10) << "Fusion analysis for " << producer.ToString() << " and "
-             << consumer.ToString() << " successful.";
-    auto launch_dimensions = fusion_analysis->GetLaunchDimensions();
-    if (launch_dimensions.ok()) {
-      VLOG(10) << "Launch dimensions for " << producer.ToString() << " and "
-               << consumer.ToString() << ": " << launch_dimensions->ToString()
-               << ".";
-      return launch_dimensions->launch_bound();
-    }
-  } else {
-    VLOG(10) << "Fusion analysis for " << producer.ToString() << " and "
-             << consumer.ToString() << " unsuccessful.";
-  }
-
-  return std::nullopt;
-}
-
-absl::Duration GpuPerformanceModel::ComputeTime(const se::DeviceDescription& gpu_device_info,
-                           int64_t flops, int64_t num_threads) {
+absl::Duration GpuPerformanceModel::ComputeTime(
+    const se::DeviceDescription& gpu_device_info, int64_t flops,
+    int64_t num_threads) {
   int64_t fpu_count =
       gpu_device_info.core_count() * gpu_device_info.fpus_per_core();
   int64_t n_threads_active = std::min(num_threads, fpu_count);
@@ -439,31 +408,90 @@ float GpuPerformanceWithCollectiveModel::GetNvlinkBw(
              : sm80_nvlink_bw;
 }
 
+/*static*/ bool GpuPerformanceWithCollectiveModel::InitNvml() {
+#if GOOGLE_CUDA
+  void* libhandle = dlopen("libnvidia-ml.so.1", RTLD_NOW);
+  CHECK(libhandle != nullptr) << "Failed to open libnvidia-ml.so.1";
+
+  struct SymbolEntry {
+    void** functor;
+    char const* name;
+  };
+
+  std::vector<SymbolEntry> symbols = {
+      {(void**)&xla_nvmlInit, "nvmlInit_v2"},
+      {(void**)&xla_nvmlShutdown, "nvmlShutdown"},
+      {(void**)&xla_nvmlDeviceGetHandleByIndex, "nvmlDeviceGetHandleByIndex"},
+      {(void**)&xla_nvmlDeviceGetNvLinkCapability,
+       "nvmlDeviceGetNvLinkCapability"},
+  };
+  for (SymbolEntry se : symbols) {
+    *se.functor = dlsym(libhandle, se.name);
+  }
+  nvmlReturn_t init_result = xla_nvmlInit();
+  return init_result == NVML_SUCCESS;
+#else
+  return false;
+#endif  // GOOGLE_CUDA
+}
+
+/*static*/ bool GpuPerformanceWithCollectiveModel::ShutdownNvml() {
+#if GOOGLE_CUDA
+  nvmlReturn_t shutdown_result = xla_nvmlShutdown();
+  return shutdown_result == NVML_SUCCESS;
+#else
+  return false;
+#endif  // GOOGLE_CUDA
+}
+
+/*static*/ uint32_t
+GpuPerformanceWithCollectiveModel::CheckIfNvlinkSupportsP2P() {
+#if GOOGLE_CUDA
+  // We will use nvml library to detect nvlink capability
+  // to see if it supports p2p communication.
+  // We first load libnvidia-ml.so and assign symbols to function pointers
+  // to avoid linking errors.
+  // Then gpu 0 will be used to query for nvlink capability, note that
+  // we only look at link 0 of gpu 0 since all other links are assumed
+  // to have the same capability.
+  CHECK(InitNvml()) << "NVML init failed.";
+  nvmlDevice_t nvml_device;
+  nvmlReturn_t get_device_result =
+      xla_nvmlDeviceGetHandleByIndex(0, &nvml_device);
+  CHECK(get_device_result == NVML_SUCCESS);
+
+  uint32_t supported_p2p = 0;
+
+  nvmlReturn_t nvlink_cap_result = xla_nvmlDeviceGetNvLinkCapability(
+      nvml_device, /*nvlink link number*/ 0, NVML_NVLINK_CAP_P2P_SUPPORTED,
+      &supported_p2p);
+  CHECK(nvlink_cap_result == NVML_SUCCESS);
+  CHECK(ShutdownNvml()) << "NVML shutdown failed.";
+  return supported_p2p;
+#else
+  return 0;
+#endif  // GOOGLE_CUDA
+}
+
 /*static*/ absl::Duration
 GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
     const HloInstruction& instr, const GpuHloCostAnalysis* cost_analysis,
-    const GpuDeviceInfo& gpu_device_info) {
+    const se::DeviceDescription& gpu_device_info) {
   // We use nccl group call to launch multiple allreduces so launch overhead
   // only occurs once.
   absl::Duration total_time = kKernelLaunchOverhead;
-  auto* cc_ptr = std::get_if<stream_executor::CudaComputeCapability>(
-      &gpu_device_info.compute_capability);
-  CHECK(cc_ptr != nullptr);
+  stream_executor::CudaComputeCapability compute_cap =
+      gpu_device_info.cuda_compute_capability();
 
-  stream_executor::CudaComputeCapability compute_cap = {cc_ptr->major,
-                                                        cc_ptr->minor};
   int64_t size_of_speed_array = intra_node_speeds.size();
   int64_t size_of_sm90_speed_array = intra_node_speeds_sm90.size();
 
-  int num_speeds = compute_cap.major >= se::CudaComputeCapability::HOPPER &&
-                           compute_cap.minor >= 0
+  int num_speeds = compute_cap.major >= se::CudaComputeCapability::HOPPER
                        ? size_of_sm90_speed_array
                        : size_of_speed_array;
-  const double* speeds =
-      compute_cap.major >= se::CudaComputeCapability::HOPPER &&
-              compute_cap.minor >= 0
-          ? intra_node_speeds_sm90.data()
-          : intra_node_speeds.data();
+  const double* speeds = compute_cap.major >= se::CudaComputeCapability::HOPPER
+                             ? intra_node_speeds_sm90.data()
+                             : intra_node_speeds.data();
 
   int speed_index = 0;
   float max_sys_bw =
@@ -484,7 +512,7 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
   int default_threads =
       (bw_intra_node * num_channels <= pci_bw) ? 256 : ll128_nthreads;
 
-  int warp_size = gpu_device_info.threads_per_warp;
+  int warp_size = gpu_device_info.threads_per_warp();
   int num_threads = GetNumThreads(warp_size, ll128_nthreads / 4, ll128_nthreads,
                                   default_threads);
 
@@ -495,67 +523,23 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
                   cost_analysis->flop_count(instr) / num_channels, num_threads);
   total_time += compute_time_per_channel;
 
-#if GOOGLE_CUDA
-  // We will use nvml library to detect nvlink capability
-  // to see if it supports p2p communication.
-  // We first load libnvidia-ml.so and assign symbols to function pointers
-  // to avoid linking errors.
-  // Then gpu 0 will be used to query for nvlink capability, note that
-  // we only look at link 0 of gpu 0 since all other links are assumed
-  // to have the same capability.
-  void* libhandle = dlopen("libnvidia-ml.so.1", RTLD_NOW);
-  if (libhandle == nullptr) {
-    VLOG(8) << "Failed to open libnvidia-ml.so.1";
+  uint32_t supported_p2p = CheckIfNvlinkSupportsP2P();
+
+  if (supported_p2p == 0) {
+    VLOG(8) << "Nvlink doesn't support p2p communication. Model will "
+               "continue using default system bandwidth.";
   } else {
-    struct SymbolEntry {
-      void** functor;
-      char const* name;
-    };
-
-    std::vector<SymbolEntry> symbols = {
-        {(void**)&xla_nvmlInit, "nvmlInit_v2"},
-        {(void**)&xla_nvmlShutdown, "nvmlShutdown"},
-        {(void**)&xla_nvmlDeviceGetHandleByIndex, "nvmlDeviceGetHandleByIndex"},
-        {(void**)&xla_nvmlDeviceGetNvLinkCapability,
-         "nvmlDeviceGetNvLinkCapability"},
-    };
-    for (SymbolEntry se : symbols) {
-      *se.functor = dlsym(libhandle, se.name);
-    }
-    nvmlReturn_t init_result = xla_nvmlInit();
-    CHECK(init_result == NVML_SUCCESS);
-
-    nvmlDevice_t nvml_device;
-    nvmlReturn_t get_device_result =
-        xla_nvmlDeviceGetHandleByIndex(0, &nvml_device);
-    CHECK(get_device_result == NVML_SUCCESS);
-
-    uint32_t supported_p2p = 0;
-    nvmlReturn_t nvlink_cap_result = xla_nvmlDeviceGetNvLinkCapability(
-        nvml_device, /*nvlink link number*/ 0, NVML_NVLINK_CAP_P2P_SUPPORTED,
-        &supported_p2p);
-    CHECK(nvlink_cap_result == NVML_SUCCESS);
-
-    if (supported_p2p == 0) {
-      VLOG(8) << "Nvlink doesn't support p2p communication. Model will "
-                 "continue using default system bandwidth.";
-    } else {
-      VLOG(8) << "Nvlink supports p2p communication, setting intra node "
-                 "bandwidth to nvlink bw.";
-      bw_intra_node = GetNvlinkBw(compute_cap);
-    }
-
-    nvmlReturn_t shutdown_result = xla_nvmlShutdown();
-    CHECK(shutdown_result == NVML_SUCCESS);
+    VLOG(8) << "Nvlink supports p2p communication, setting intra node "
+               "bandwidth to nvlink bw.";
+    bw_intra_node = GetNvlinkBw(compute_cap);
   }
-#endif  // GOOGLE_CUDA
 
   double bus_bandwidth = bw_intra_node * num_channels;
 
   // Get per channel LL128 ring bandwidth
   double per_channel_ring_ll128_Bw = GetMaxSysBwFromGpu(
       compute_cap, per_channel_max_ring_LL128_bandwidths.data());
-  ;
+
   bus_bandwidth = std::min(
       bus_bandwidth * ring_algo_factor /*discount factor for ring algo*/,
       num_channels * per_channel_ring_ll128_Bw);
@@ -570,7 +554,7 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
 /*static*/ absl::Duration
 GpuPerformanceWithCollectiveModel::ComputeCollectiveTime(
     const HloInstruction& instr, const GpuHloCostAnalysis* cost_analysis,
-    const GpuDeviceInfo& gpu_device_info) {
+    const se::DeviceDescription& gpu_device_info) {
   if (cost_analysis->NumOfDevices(instr) == 1) {
     VLOG(8) << "Returning only kernel launch overhead for a single partition.";
     return kKernelLaunchOverhead;

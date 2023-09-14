@@ -104,8 +104,8 @@ TEST_F(AnalyticalLatencyHidingSchedulerTest, TestAnalyticalLatencyEstimator) {
           se::CudaComputeCapability::PASCAL_)) {
     GTEST_SKIP() << "This test is for Pascal+ GPUs.";
   }
-  const GpuDeviceInfo dev_info =
-      GetGpuDeviceInfo(backend().default_stream_executor());
+  const se::DeviceDescription dev_info =
+      backend().default_stream_executor()->GetDeviceDescription();
 
   // The test below has 2 allreduces, ar2 should be have the larger latency
   // so we expect ar1 to be run first and ar2 to be overlapped with conv0.

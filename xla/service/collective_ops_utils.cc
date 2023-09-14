@@ -483,9 +483,8 @@ StatusOr<std::vector<int64_t>> GetPariticipantCountsForReplicaGroups(
 
   switch (group_mode) {
     case CollectiveOpGroupMode::kCrossReplica: {
-      for (const auto& replica_group : participating_replica_groups) {
-        participant_counts.push_back(num_partitions);
-      }
+      participant_counts.resize(participating_replica_groups.size(),
+                                num_partitions);
       return participant_counts;
     }
     case CollectiveOpGroupMode::kCrossPartition: {

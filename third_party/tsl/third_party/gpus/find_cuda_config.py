@@ -177,6 +177,7 @@ def _header_paths():
       "extras/CUPTI/include",
       "include/cuda/CUPTI",
       "local/cuda/extras/CUPTI/include",
+      "targets/x86_64-linux/include",
   ]
 
 
@@ -575,7 +576,9 @@ def find_cuda_config():
   result = {}
   if "cuda" in libraries:
     cuda_paths = _list_from_env("CUDA_TOOLKIT_PATH", base_paths)
-    result.update(_find_cuda_config(cuda_paths, cuda_version))
+    res = _find_cuda_config(cuda_paths, cuda_version)
+
+    result.update(res)
 
     cuda_version = result["cuda_version"]
     cublas_paths = base_paths

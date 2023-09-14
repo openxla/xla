@@ -21,7 +21,6 @@ limitations under the License.
 #include <string>
 
 #include "absl/container/flat_hash_map.h"
-#include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/gpu_hlo_cost_analysis.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/xla.pb.h"
@@ -35,7 +34,7 @@ class AnalyticalLatencyEstimator : public LatencyEstimator {
   AnalyticalLatencyEstimator(
       const SchedulerConfig& config,
       std::unique_ptr<LatencyEstimator> latency_estimator,
-      const GpuDeviceInfo& gpu_info,
+      const se::DeviceDescription& gpu_info,
       HloCostAnalysis::ShapeSizeFunction shape_size_function,
       HloComputation* computation);
 
@@ -51,7 +50,7 @@ class AnalyticalLatencyEstimator : public LatencyEstimator {
 
  private:
   const SchedulerConfig config_;
-  const GpuDeviceInfo& gpu_info_;
+  const se::DeviceDescription& gpu_info_;
   std::optional<GpuHloCostAnalysis> cost_analysis_;
   std::unique_ptr<LatencyEstimator> latency_estimator_;
   HloCostAnalysis::ShapeSizeFunction shape_size_function_;

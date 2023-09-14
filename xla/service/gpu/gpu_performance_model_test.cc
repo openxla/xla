@@ -315,6 +315,23 @@ ENTRY fusion {
               2);
 }
 
+using GpuPerformanceWithCollectiveModelTest = GpuPerformanceModelTest;
+
+TEST_F(GpuPerformanceWithCollectiveModelTest, TestNvmlLibraryLoading) {
+#if GOOGLE_CUDA
+  EXPECT_TRUE(GpuPerformanceWithCollectiveModel::InitNvml());
+  // After successful init, we try to use one of the
+  // nvml functions to see if the result is good.
+  nvmlDevice_t nvml_device;
+  nvmlReturn_t get_device_result =
+      xla_nvmlDeviceGetHandleByIndex(0, &nvml_device);
+  EXPECT_TRUE(get_device_result == NVML_SUCCESS);
+
+  EXPECT_TRUE(GpuPerformanceWithCollectiveModel::InitNvml());
+
+#endif  // GOOGLE_CUDA
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
