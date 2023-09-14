@@ -104,8 +104,8 @@ void RegisterXlaGpuRuntimeCustomCalls(DirectCustomCallRegistry& registry) {
   RegisterSendRecvCustomCalls(registry);
   RegisterTopkCustomCall(registry);
 
-#if GOOGLE_CUDA
   RegisterMatmulCustomCalls(registry);
+#if GOOGLE_CUDA
   RegisterFusedAttentionCustomCalls(registry);
   RegisterFusedAttentionBackwardCustomCalls(registry);
 #endif  // GOOGLE_CUDA
