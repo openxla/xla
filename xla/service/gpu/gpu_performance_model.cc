@@ -18,7 +18,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 #include <dlfcn.h>
 
-#include "third_party/gpus/cuda/include/nvml.h"
+#include "third_party/gpus/cuda/nvml/include/nvml.h"
 // Below is a list of function pointers to be used
 // for querying device properties through nvml library.
 #define NVML_FUNCTOR(name, rettype, args) rettype(*xla_##name) args = nullptr;

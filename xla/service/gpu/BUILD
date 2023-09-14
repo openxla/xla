@@ -3320,7 +3320,9 @@ cc_library(
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/time",
-    ],
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:nvml_headers",
+    ]),
 )
 
 xla_cc_test(
