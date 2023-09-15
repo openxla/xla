@@ -2330,7 +2330,7 @@ AutoShardingSolverResult CallSolver(
   for (const auto& iter : cost_graph.edge_costs_) {
     request.e.push_back(iter.first);
     std::vector<double> rij;
-    Matrix edge_cost = iter.second;
+    const Matrix& edge_cost = iter.second;
     for (NodeStrategyIdx i = 0; i < edge_cost.n_; i++) {
       for (NodeStrategyIdx j = 0; j < edge_cost.m_; j++) {
         rij.push_back(edge_cost(i, j));
@@ -2344,19 +2344,20 @@ AutoShardingSolverResult CallSolver(
   const std::vector<HloInstruction*>& instructions = sequence.instructions();
 
   // Serialize node costs
-  for (NodeIdx i = 0; i < request.num_nodes; ++i) {
-    const StrategyVector* strategies = leaf_strategies[i];
-    request.instruction_names.push_back(absl::StrCat(
-        instructions.at(strategies->instruction_id)->name(), " (id: ", i, ")"));
+  for (NodeIdx node_idx = 0; node_idx < request.num_nodes; ++node_idx) {
+    const StrategyVector* strategies = leaf_strategies[node_idx];
+    request.instruction_names.push_back(
+        absl::StrCat(instructions.at(strategies->instruction_id)->name(),
+                     " (id: ", node_idx, ")"));
     std::vector<double> ci, di, mi, pi;
     for (NodeStrategyIdx j = 0; j < strategies->leaf_vector.size(); ++j) {
       const ShardingStrategy& strategy = strategies->leaf_vector[j];
       const HloSharding& sharding = strategy.output_sharding;
       ci.push_back(strategy.compute_cost);
       di.push_back(strategy.communication_cost +
-                   cost_graph.extra_node_costs_[i][j]);
+                   cost_graph.extra_node_costs_[node_idx][j]);
       mi.push_back(strategy.memory_cost);
-      // TOOD(moffitt): Revisit the default strategy below, which is currently
+      // TODO(moffitt): Revisit the default strategy below, which is currently
       // defined as the "trivial sharding" in hlo_sharding.h
       pi.push_back(sharding.IsReplicated() && !sharding.IsManual() ? 0.0 : 1.0);
     }
@@ -2436,24 +2437,29 @@ AutoShardingSolverResult CallSolver(
   }
 
   // Flatten the follower indices to remove any transitive arcs.
-  for (NodeIdx i = 0; i < request.num_nodes; ++i) {
-    if (s_follow[i] < 0) continue;
-    while (s_follow[s_follow[i]] >= 0) s_follow[i] = s_follow[s_follow[i]];
+  for (NodeIdx node_idx = 0; node_idx < request.num_nodes; ++node_idx) {
+    if (s_follow[node_idx] < 0) continue;
+    while (s_follow[s_follow[node_idx]] >= 0) {
+      s_follow[node_idx] = s_follow[s_follow[node_idx]];
+    }
   }
 
   // Serialize liveness_set
   request.live.resize(liveness_set.size());
-  for (LivenessIdx t = 0; t < liveness_set.size(); ++t) {
-    for (const HloValue* value : liveness_set[t]) {
+  for (LivenessIdx time_idx = 0; time_idx < liveness_set.size(); ++time_idx) {
+    for (const HloValue* value : liveness_set[time_idx]) {
       const HloInstruction* instruction = value->instruction();
       const ShapeIndex& index = value->index();
       if (instruction->shape().IsTuple() && index.empty()) continue;
       const StrategyVector* strategies = strategy_map.at(instruction).get();
       const NodeIdx node_idx =
           strategies->GetSubStrategyVector(index)->node_idx;
-      if (node_idx >= 0) request.live[t].push_back(node_idx);
+      if (node_idx >= 0) request.live[time_idx].push_back(node_idx);
     }
   }
+
+  PopulateTemporalValues(cost_graph, request);
+
   const AutoShardingSolverResult result = CallORToolsSolver(request);
   if (result.status.ok()) {
     const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -2470,9 +2476,13 @@ AutoShardingSolverResult CallSolver(
     LOG(INFO) << "Total Overbudget Cost: " << evaluation.total.overbudget_cost
               << " (lower bound: " << evaluation.lower_bound.overbudget_cost
               << ")";
+    LOG(INFO) << "Total Makespan Cost: " << evaluation.total.makespan_cost
+              << " (lower bound: " << evaluation.lower_bound.makespan_cost
+              << ")";
     LOG(INFO) << "Total Cost: " << evaluation.total.cost()
               << " (lower bound: " << evaluation.lower_bound.cost() << ")";
     LOG(INFO) << "Total Departures: " << evaluation.total_departures;
+    LOG(INFO) << "Total Makespan: " << evaluation.total_makespan;
     LOG(INFO) << "Total Violations: " << evaluation.violation_codes.size();
   }
   return result;
@@ -2482,7 +2492,7 @@ void CheckHloSharding(const HloInstructionSequence& sequence,
                       size_t total_num_devices) {
   const std::vector<HloInstruction*>& instructions = sequence.instructions();
   std::vector<std::pair<size_t, std::string>> size_string;
-  for (HloInstruction* ins : instructions) {
+  for (const HloInstruction* ins : instructions) {
     if (!ins->has_sharding()) {
       continue;
     }
@@ -2504,11 +2514,11 @@ void CheckHloSharding(const HloInstructionSequence& sequence,
           if (op->sharding().IsReplicated() || ins->sharding().IsReplicated()) {
             continue;
           }
-          std::vector<int64_t> ins_sharded_dims =
+          const std::vector<int64_t> ins_sharded_dims =
               VectorGreaterThanOneElementIndices(
                   ins->sharding().tile_assignment().dimensions(),
                   ins->sharding().ReplicateOnLastTileDim());
-          std::vector<int64_t> op_sharded_dims =
+          const std::vector<int64_t> op_sharded_dims =
               VectorGreaterThanOneElementIndices(
                   op->sharding().tile_assignment().dimensions(),
                   op->sharding().ReplicateOnLastTileDim());
@@ -2840,15 +2850,16 @@ void SetHloShardingPostProcessing(
 // Print liveness set for debugging.
 std::string PrintLivenessSet(const LivenessSet& liveness_set) {
   std::string str("Liveness Set\n");
-  for (LivenessIdx i = 0; i < liveness_set.size(); ++i) {
+  for (LivenessIdx time_idx = 0; time_idx < liveness_set.size(); ++time_idx) {
     std::vector<std::string> names;
-    names.reserve(liveness_set[i].size());
-    for (const HloValue* value : liveness_set[i]) {
+    names.reserve(liveness_set[time_idx].size());
+    for (const HloValue* value : liveness_set[time_idx]) {
       names.push_back(absl::StrCat(value->instruction()->name(),
                                    value->index().ToString()));
     }
     std::sort(names.begin(), names.end());
-    absl::StrAppend(&str, "Time ", i, ": ", absl::StrJoin(names, ", "), "\n");
+    absl::StrAppend(&str, "Time ", time_idx, ": ", absl::StrJoin(names, ", "),
+                    "\n");
   }
   return str;
 }
@@ -2890,19 +2901,21 @@ std::string PrintAutoShardingSolution(const HloInstructionSequence& sequence,
   size_t N = leaf_strategies.size();
 
   // Print the chosen strategy
-  for (NodeIdx i = 0; i < N; ++i) {
-    absl::StrAppend(&str, i, " ",
-                    instructions[leaf_strategies[i]->instruction_id]->ToString(
-                        HloPrintOptions::ShortParsable()),
-                    " ");
-    NodeStrategyIdx stra_idx = cost_graph.RemapIndex(i, s_val[i]);
-    if (cost_graph.follow_idx_[i] < 0) {
+  for (NodeIdx node_idx = 0; node_idx < N; ++node_idx) {
+    absl::StrAppend(
+        &str, node_idx, " ",
+        instructions[leaf_strategies[node_idx]->instruction_id]->ToString(
+            HloPrintOptions::ShortParsable()),
+        " ");
+    NodeStrategyIdx stra_idx = cost_graph.RemapIndex(node_idx, s_val[node_idx]);
+    if (cost_graph.follow_idx_[node_idx] < 0) {
       absl::StrAppend(
-          &str, leaf_strategies[i]->leaf_vector[stra_idx].ToString(), "\n");
+          &str, leaf_strategies[node_idx]->leaf_vector[stra_idx].ToString(),
+          "\n");
     } else {
-      absl::StrAppend(&str,
-                      leaf_strategies[i]->leaf_vector[stra_idx].ToString(),
-                      " follow ", cost_graph.follow_idx_[i], "\n");
+      absl::StrAppend(
+          &str, leaf_strategies[node_idx]->leaf_vector[stra_idx].ToString(),
+          " follow ", cost_graph.follow_idx_[node_idx], "\n");
     }
   }
 
@@ -2932,9 +2945,9 @@ std::string PrintSolutionMemoryUsage(const LivenessSet& liveness_set,
     const ShardingStrategy& strategy = strategies->leaf_vector[stra_idx];
     return strategy.memory_cost;
   };
-  for (LivenessIdx t = 0; t < liveness_set.size(); ++t) {
+  for (LivenessIdx time_idx = 0; time_idx < liveness_set.size(); ++time_idx) {
     double mem = 0.0;
-    for (const auto& val : liveness_set.at(t)) {
+    for (const auto& val : liveness_set.at(time_idx)) {
       const HloInstruction* ins = val->instruction();
       auto tmp = calculate_memory_usage(strategy_map.at(ins).get());
       mem += tmp;
@@ -2946,9 +2959,10 @@ std::string PrintSolutionMemoryUsage(const LivenessSet& liveness_set,
                         " MB; mem=", mem / (1024 * 1024), " MB\n");
       }
     }
-    time_memory_usage.push_back(std::make_pair(t, mem));
+    time_memory_usage.push_back(std::make_pair(time_idx, mem));
     if (VLOG_IS_ON(6)) {
-      absl::StrAppend(&str, "Time ", t, ": ", mem / (1024 * 1024), " MB\n");
+      absl::StrAppend(&str, "Time ", time_idx, ": ", mem / (1024 * 1024),
+                      " MB\n");
     }
   }
 
@@ -2970,8 +2984,8 @@ std::string PrintSolutionMemoryUsage(const LivenessSet& liveness_set,
   size_t k = 3;
   k = std::min(k, time_memory_usage.size());
   std::vector<std::pair<std::string, double>> instruction_mem;
-  for (size_t t = 0; t < k; t++) {
-    for (const auto& val : liveness_set[time_memory_usage.at(t).first]) {
+  for (LivenessIdx time_idx = 0; time_idx < k; time_idx++) {
+    for (const auto& val : liveness_set[time_memory_usage.at(time_idx).first]) {
       const HloInstruction* ins = val->instruction();
       auto mem = calculate_memory_usage(strategy_map.at(ins).get());
       if (mem > 100 * 1024 * 1024) {
@@ -3136,8 +3150,8 @@ int64_t MemoryBudgetLowerBound(const HloModule& module,
   // as aliasing HloValues are mapped to the same buffer.
   absl::flat_hash_map<HloBuffer::Id, const HloValue*>
       buffer_to_sharded_value_mapping;
-  for (LivenessIdx t = 0; t < liveness_set.size(); ++t) {
-    for (const HloValue* value : liveness_set[t]) {
+  for (LivenessIdx time_idx = 0; time_idx < liveness_set.size(); ++time_idx) {
+    for (const HloValue* value : liveness_set[time_idx]) {
       auto buffer = alias_analysis->GetBufferContainingValue(*value);
       if (value->instruction()->has_sharding()) {
         auto this_value_sharding = get_value_sharding(value);
@@ -3162,9 +3176,9 @@ int64_t MemoryBudgetLowerBound(const HloModule& module,
   }
 
   int64_t max_memory_usage = 0;
-  for (LivenessIdx t = 0; t < liveness_set.size(); ++t) {
+  for (LivenessIdx time_idx = 0; time_idx < liveness_set.size(); ++time_idx) {
     int64_t memory_usage = 0;
-    for (const HloValue* value : liveness_set[t]) {
+    for (const HloValue* value : liveness_set[time_idx]) {
       if (value->instruction()->shape().IsTuple() && value->index().empty()) {
         continue;
       }

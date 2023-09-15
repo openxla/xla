@@ -27,6 +27,9 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -39,6 +42,7 @@ limitations under the License.
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/pjrt/utils.h"
 #include "xla/stream_executor/device_memory.h"
+#include "tsl/framework/allocator.h"
 #include "tsl/framework/bfc_allocator.h"
 #include "tsl/lib/strings/proto_serialization.h"
 #include "tsl/platform/errors.h"
@@ -53,7 +57,6 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "xla/pjrt/gpu/nccl_id_store.h"
-#include "xla/stream_executor/cuda/cuda_activation.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #endif  // GOOGLE_CUDA
 
@@ -855,6 +858,25 @@ int StreamExecutorGpuDevice::slice_index() const { return slice_index_; }
 
 absl::string_view StreamExecutorGpuDevice::device_vendor() const {
   return device_vendor_;
+}
+
+absl::StatusOr<tsl::AllocatorStats> StreamExecutorGpuDevice::GetAllocatorStats()
+    const {
+  if (!IsAddressable()) {
+    return FailedPrecondition(
+        "GetAllocatorStats() is allowed only for addressable devices");
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      auto allocator,
+      tensorflow::down_cast<se::MultiDeviceAdapter*>(
+          tensorflow::down_cast<PjRtStreamExecutorClient*>(client())
+              ->allocator())
+          ->GetAllocator(local_hardware_id()));
+
+  auto stats = allocator->GetStats();
+  TF_RET_CHECK(stats.has_value());
+  return stats.value();
 }
 
 StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(

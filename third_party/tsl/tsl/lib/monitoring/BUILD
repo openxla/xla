@@ -93,7 +93,6 @@ cc_library(
     name = "metric_def",
     hdrs = ["metric_def.h"],
     visibility = set_external_visibility([
-        "//learning/brain/google/monitoring:__subpackages__",
         "//tensorflow/core:__subpackages__",
     ]),
     deps = [

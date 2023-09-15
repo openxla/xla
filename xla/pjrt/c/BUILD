@@ -3,11 +3,11 @@ load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
@@ -87,12 +87,19 @@ cc_library(
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_future",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -130,9 +137,14 @@ cc_library(
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
-        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -157,6 +169,7 @@ xla_cc_binary(
     linkshared = True,
     tags = [
         "noasan",
+        "nomac",  # No GPU on mac.
         "nomsan",
         "notsan",
     ],
@@ -194,10 +207,21 @@ xla_cc_test(
         ":pjrt_c_api_test_base",
         ":pjrt_c_api_test_common",
         ":pjrt_c_api_wrapper_impl",
+        "//xla:status",
+        "//xla:statusor",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/service:gpu_plugin",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -209,10 +233,21 @@ xla_cc_test(
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
         "//xla:shape_util",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

@@ -148,12 +148,8 @@ static Status LowerToXlaGpu2Runtime(mlir::ModuleOp module,
                                     const DebugOptions& debug_options) {
   mlir::PassManager pm(module->getName(), mlir::PassManager::Nesting::Implicit);
 
-  RuntimeBackend backend = debug_options.xla_gpu_enable_gpu2_hal()
-                               ? RuntimeBackend::kHAL
-                               : RuntimeBackend::kStreamExecutor;
-
   Gpu2PipelineOpts opts;
-  populateGpu2RuntimePasses(pm, thunk_sequence, backend, opts);
+  populateGpu2RuntimePasses(pm, thunk_sequence, opts);
 
   if (pm.run(module).failed()) {
     return InternalError(
@@ -403,11 +399,14 @@ Status CompileModuleToLlvmIrImpl(
     }
   }
 
-  HloPassPipeline pipeline("fusion-wrapper");
-  // Wrap remaining unfused ops that have no LHLO equivalent in single-op
-  // fusions. This needs to happen after rematerialization, because it will
-  // insert additional copies.
-  TF_RETURN_IF_ERROR(FusionWrapper().Run(hlo_module).status());
+  {
+    HloPassPipeline pipeline("fusion-wrapper");
+    pipeline.AddPass<FusionWrapper>();
+    // Wrap remaining unfused ops that have no LHLO equivalent in single-op
+    // fusions. This needs to happen after rematerialization, because that will
+    // insert additional copies.
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  }
 
   auto buffer_size_bytes_function =
       [pointer_size](const BufferValue& buffer_value) -> int64_t {

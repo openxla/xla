@@ -243,7 +243,6 @@ cc_library(
 
 cc_library(
     name = "plugin",
-    srcs = ["plugin.cc"],
     hdrs = ["plugin.h"],
 )
 

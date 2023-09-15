@@ -73,6 +73,23 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+bool HasDivisibleSuffixAllowingSplit(const absl::Span<int64_t const> span,
+                                     const int64_t divisor) {
+  CHECK_GE(divisor, 1);
+  int64_t product = 1;
+  // Note: Using reverse iterator.
+  for (auto it = span.crbegin(); it != span.crend(); ++it) {
+    product *= *it;
+    if (product % divisor == 0) {
+      return true;
+    }
+    if (divisor % product != 0) {
+      return false;
+    }
+  }
+  return false;
+}
+
 bool TensorIterationSpec::operator==(const TensorIterationSpec& other) const {
   VLOG(9) << this->ToString();
   VLOG(9) << other.ToString();
@@ -86,12 +103,7 @@ bool TensorIterationSpec::operator==(const TensorIterationSpec& other) const {
       return false;
     }
     for (int fragment = 0; fragment < it_this->second.size(); ++fragment) {
-      if (it_this->second.size() != it_other->second.size()) {
-        return false;
-      }
-      if (it_this->second[fragment].stride !=
-              it_other->second[fragment].stride ||
-          it_this->second[fragment].count != it_other->second[fragment].count) {
+      if (it_this->second[fragment] != it_other->second[fragment]) {
         return false;
       }
     }
@@ -192,12 +204,12 @@ class DimensionOrder {
             << "The split-K batch dimension has be preceded by the contracting "
                "dimension it originates from by construction.";
         target_dim_number =
-            dim_order.tensor_fragments_order_.back().dst_dim_number;
+            dim_order.tensor_fragments_order_.back().dst_dim_number();
       }
       dim_order.dim_fragments_orders_[target_dim_number].push_back(
           dim_order.tensor_fragments_order_.size());
       dim_order.tensor_fragments_order_.push_back(
-          {target_dim_number, hlo.shape().dimensions(i)});
+          Fragment{target_dim_number, hlo.shape().dimensions(i)});
     }
     return dim_order;
   }
@@ -208,27 +220,34 @@ class DimensionOrder {
     dim_order.dim_fragments_orders_[kSoftmaxReductionDimension].push_back(
         dim_order.tensor_fragments_order_.size());
     dim_order.tensor_fragments_order_.push_back(
-        {kSoftmaxReductionDimension, hlo.shape().dimensions_minor(0)});
+        Fragment{kSoftmaxReductionDimension, hlo.shape().dimensions_minor(0)});
     for (int i = 1; i < hlo.shape().rank(); ++i) {
       dim_order.dim_fragments_orders_[kSoftmaxBatchDimension].push_back(
           dim_order.tensor_fragments_order_.size());
       dim_order.tensor_fragments_order_.push_back(
-          {kSoftmaxBatchDimension, hlo.shape().dimensions_minor(i)});
+          Fragment{kSoftmaxBatchDimension, hlo.shape().dimensions_minor(i)});
     }
     return dim_order;
   }
 
   // Description of a continuous fragment of one dimension of a tensor.
-  struct Fragment {
-    // Label carrying the dimension number of an defining operation.
-    int dst_dim_number;
-    // Number of elements in the fragment.
-    int64_t size;
+  class Fragment {
+   public:
+    explicit Fragment(int dst_dim_number, int64_t size)
+        : dst_dim_number_(dst_dim_number), size_(size) {}
+
     std::string ToString() const {
-      return absl::StrCat(dst_dim_number, ":", size);
+      return absl::StrCat(dst_dim_number_, ":", size_);
     }
-    Fragment(int dst_dim_number, int64_t size)
-        : dst_dim_number(dst_dim_number), size(size) {}
+    // Label carrying the dimension number of an defining operation.
+    int dst_dim_number() const { return dst_dim_number_; }
+    // Total number of elements in the fragment ignoring slicing.
+    int64_t size() const { return size_; }
+    void set_size(int64_t size) { size_ = size; }
+
+   private:
+    const int dst_dim_number_;
+    int64_t size_;
   };
   using Fragments = std::vector<Fragment>;
   using FragmentOrders = absl::flat_hash_map<int, std::vector<int>>;
@@ -294,29 +313,30 @@ TensorIterationSpec DimensionOrderToTensorIterationSpec(
   for (int dim_order_index = 0; dim_order_index < dim_fragments.size();
        ++dim_order_index) {
     const DimensionOrder::Fragment& fragment = dim_fragments[dim_order_index];
-    VLOG(6) << fragment.dst_dim_number << "\t" << fragment.size;
+    VLOG(6) << fragment.dst_dim_number() << "\t" << fragment.size();
 
-    DimIterationSpec& dim_spec = tensor_spec[fragment.dst_dim_number];
-    if (last_dim == fragment.dst_dim_number) {
-      // Contiguous dimension, split only logically. Merge it back.
+    DimIterationSpec& dim_spec = tensor_spec[fragment.dst_dim_number()];
+    if (last_dim == fragment.dst_dim_number()) {
+      // Remove previous 1-sized subfragment if present.
       if (!dim_spec.empty() && !dim_spec.back().subfragments.empty() &&
           dim_spec.back().subfragments.back() == 1) {
-        // Remove previous 1-sized subfragment.
         dim_spec.back().subfragments.pop_back();
       }
-      if (fragment.size > 1) {
+      // Contiguous dimension, split only logically. Merge it back.
+      if (fragment.size() > 1) {
         CHECK(!dim_spec.empty());
-        dim_spec.back().count *= fragment.size;
-        dim_spec.back().subfragments.push_back(fragment.size);
+        dim_spec.back().count *= fragment.size();
+        dim_spec.back().subfragments.push_back(fragment.size());
       }
     } else {
       remove_last_fragment_if_degenerate(last_dim);
       // Add part of the dimension.
-      dim_spec.push_back({accumulated_stride, fragment.size, {fragment.size}});
+      dim_spec.push_back(TensorIterationSpec::IterationSpecFragment{
+          accumulated_stride, fragment.size(), {fragment.size()}});
     }
 
-    accumulated_stride *= fragment.size;
-    last_dim = fragment.dst_dim_number;
+    accumulated_stride *= fragment.size();
+    last_dim = fragment.dst_dim_number();
   }
   remove_last_fragment_if_degenerate(last_dim);
   tensor_spec.RemoveEmptyDimensions();
@@ -510,25 +530,26 @@ FusionDecision FusionContext::RequireSupportedDimOrder(
   const Fragments& tensor_dim_fragments = order.TensorFragmentsOrder();
   for (const auto& [dim_index, dim_fragments] : order.DimFragmentsOrders()) {
     int split_counter = -1;
-    auto fragment = dim_fragments.cbegin();
+    auto fragment_it = dim_fragments.cbegin();
     while (true) {
-      if (fragment == dim_fragments.cend()) {
+      if (fragment_it == dim_fragments.cend()) {
         break;
       }
-      int64_t grouped_size = tensor_dim_fragments[*fragment].size;
+      int64_t grouped_size = tensor_dim_fragments[*fragment_it].size();
       // Gather contiguous fragments.
-      while ((fragment + 1) != dim_fragments.cend() &&
-             *(fragment + 1) == *fragment + 1) {
-        ++fragment;
-        grouped_size *= tensor_dim_fragments[*fragment].size;
+      while ((fragment_it + 1) != dim_fragments.cend() &&
+             *(fragment_it + 1) == *fragment_it + 1) {
+        ++fragment_it;
+        grouped_size *= tensor_dim_fragments[*fragment_it].size();
       }
 
       if (grouped_size == 1) {
-        ++fragment;
+        ++fragment_it;
         continue;
       }
 
-      if (fragment != dim_fragments.cbegin() && *fragment < *(fragment - 1)) {
+      if (fragment_it != dim_fragments.cbegin() &&
+          *fragment_it < *(fragment_it - 1)) {
         return "Transpose within a dimension.";
       }
 
@@ -550,7 +571,7 @@ FusionDecision FusionContext::RequireSupportedDimOrder(
         }
       }
 
-      ++fragment;
+      ++fragment_it;
     }
   }
   return FusionDecision{};
@@ -623,7 +644,8 @@ DimOrderUpdatesOrError FusionContext::HandleBitcast(
   // Iterate in parallel over source dimension order and target dimensions
   // in minor_to_major order. Find groups of dimensions of equal size
   // and project the source dimension order onto the destination.
-  auto dst_dim_iter = dst_shape.layout().minor_to_major().cbegin();
+  auto dst_dim_it = dst_shape.layout().minor_to_major().cbegin();
+  const auto dst_dim_end = dst_shape.layout().minor_to_major().cend();
   for (auto src_dim = src_fragments_order.cbegin();
        src_dim != src_fragments_order.cend(); ++src_dim) {
     auto add_new_fragment = [&](const Fragment& fragment) {
@@ -631,7 +653,7 @@ DimOrderUpdatesOrError FusionContext::HandleBitcast(
       src_to_dst[&*src_dim].push_back(dst_fragments_order.size() - 1);
     };
     if (std::holds_alternative<SoftmaxProperties>(properties_) &&
-        src_dim->dst_dim_number ==
+        src_dim->dst_dim_number() ==
             std::get<SoftmaxProperties>(properties_).softmax_batch_dimension) {
       // Special handling for softmax batch dimension: allow arbitrary reshapes
       // on it because it's guaranteed by the construction of the fusion to have
@@ -639,22 +661,23 @@ DimOrderUpdatesOrError FusionContext::HandleBitcast(
       // Find a continuous group of fragments corresponding to this dimension in
       // the source and assign the corresponding size in fragments of the
       // destination ignoring the source ones.
-      dst_remaining_size = src_dim->size;
+      dst_remaining_size = src_dim->size();
       while (src_dim + 1 != src_fragments_order.cend() &&
-             (src_dim + 1)->dst_dim_number == src_dim->dst_dim_number) {
+             (src_dim + 1)->dst_dim_number() == src_dim->dst_dim_number()) {
         ++src_dim;
-        dst_remaining_size *= src_dim->size;
+        dst_remaining_size *= src_dim->size();
       }
       while (dst_remaining_size > 1) {
-        add_new_fragment(
-            {src_dim->dst_dim_number, dst_shape.dimensions(*dst_dim_iter)});
-        dst_remaining_size /= dst_shape.dimensions(*dst_dim_iter);
-        ++dst_dim_iter;
+        CHECK(dst_dim_it != dst_dim_end);
+        add_new_fragment(Fragment{src_dim->dst_dim_number(),
+                                  dst_shape.dimensions(*dst_dim_it)});
+        dst_remaining_size /= dst_shape.dimensions(*dst_dim_it);
+        ++dst_dim_it;
       }
       continue;
     }
-    if (dst_remaining_size >= src_dim->size) {
-      if (dst_remaining_size % src_dim->size) {
+    if (dst_remaining_size >= src_dim->size()) {
+      if (dst_remaining_size % src_dim->size()) {
         return "Unsupported bitcast";
       }
       // Source dimension fragment completely fits into the destination one:
@@ -662,12 +685,12 @@ DimOrderUpdatesOrError FusionContext::HandleBitcast(
       add_new_fragment(*src_dim);
       // Update the size of the remaining part of the destination that is
       // carried over to next source dimensions.
-      dst_remaining_size /= src_dim->size;
+      dst_remaining_size /= src_dim->size();
     } else {
       // Source is larger than destination.
       // Assign further destination dimensions.
       // Size of the not yet assigned part of the source dimension.
-      int64_t src_remaining_size = src_dim->size;
+      int64_t src_remaining_size = src_dim->size();
       // Handle dimension splits.
       if (dst_remaining_size > 1) {
         // If there is a remaining fragment of a previous destination dimension
@@ -675,14 +698,16 @@ DimOrderUpdatesOrError FusionContext::HandleBitcast(
         if (src_remaining_size % dst_remaining_size) {
           return "Unsupported bitcast";
         }
-        add_new_fragment({src_dim->dst_dim_number, dst_remaining_size});
+        add_new_fragment(
+            Fragment{src_dim->dst_dim_number(), dst_remaining_size});
         // Update the size of the fragment remaining to assign.
         src_remaining_size /= dst_remaining_size;
         dst_remaining_size = 1;
       }
       while (src_remaining_size > 1) {
         // Assign destination dimensions until the source remainder is covered.
-        int64_t dst_dim_size = dst_shape.dimensions(*dst_dim_iter);
+        CHECK(dst_dim_it != dst_dim_end);
+        int64_t dst_dim_size = dst_shape.dimensions(*dst_dim_it);
         int64_t new_fragment_size = dst_dim_size;
         if (dst_dim_size > src_remaining_size) {
           // If adding the next destination dimension exceeds source fragment
@@ -694,9 +719,10 @@ DimOrderUpdatesOrError FusionContext::HandleBitcast(
           dst_remaining_size = dst_dim_size / src_remaining_size;
           new_fragment_size = src_remaining_size;
         }
-        add_new_fragment({src_dim->dst_dim_number, new_fragment_size});
+        add_new_fragment(
+            Fragment{src_dim->dst_dim_number(), new_fragment_size});
         src_remaining_size /= new_fragment_size;
-        ++dst_dim_iter;
+        ++dst_dim_it;
       }
     }
   }
@@ -705,17 +731,17 @@ DimOrderUpdatesOrError FusionContext::HandleBitcast(
   // Handle remaining major dimensions of the destination. Call all degenerate
   // ones subdimensions of the most-major non-degenerate one. Otherwise
   // give up.
-  while (dst_dim_iter != dst_shape.layout().minor_to_major().cend()) {
-    if (dst_shape.dimensions(*dst_dim_iter) != 1) {
+  while (dst_dim_it != dst_dim_end) {
+    if (dst_shape.dimensions(*dst_dim_it) != 1) {
       return "Unsupported bitcast";
     }
     if (!dst_fragments_order.empty()) {
       dst_fragments_order.push_back(
-          {dst_fragments_order.back().dst_dim_number, 1});
+          Fragment{dst_fragments_order.back().dst_dim_number(), 1});
       src_to_dst[&src_fragments_order.back()].push_back(
           dst_fragments_order.size() - 1);
     }
-    ++dst_dim_iter;
+    ++dst_dim_it;
   }
 
   FragmentOrders& dst_dim_fragment_orders = dst_dim_order.DimFragmentsOrders();
@@ -760,15 +786,17 @@ DimOrderUpdatesOrError FusionContext::HandleDimensionAlteringOp(
   // full dimensions and matching by total size.
   std::vector<std::vector<const Fragment*>> src_physical;
   src_physical.reserve(src->shape().rank());
-  auto dim_order_it = src_fragments_order.cbegin();
+  auto src_fragment_it = src_fragments_order.cbegin();
+  const auto src_fragment_end = src_fragments_order.cend();
   for (int64_t dim_index : src->shape().layout().minor_to_major()) {
     const int64_t dim_size = src->shape().dimensions(dim_index);
     int64_t subdim_size_accumulator = 1;
     std::vector<const Fragment*> subdim_group;
     do {
-      subdim_size_accumulator *= dim_order_it->size;
-      subdim_group.push_back(&*dim_order_it);
-      ++dim_order_it;
+      CHECK(src_fragment_it != src_fragment_end);
+      subdim_size_accumulator *= src_fragment_it->size();
+      subdim_group.push_back(&*src_fragment_it);
+      ++src_fragment_it;
     } while (subdim_size_accumulator < dim_size);
     CHECK_EQ(subdim_size_accumulator, dim_size);
     src_physical.push_back(subdim_group);
@@ -784,7 +812,7 @@ DimOrderUpdatesOrError FusionContext::HandleDimensionAlteringOp(
   // Temporary storage for fragments of new dimensions created by reductions.
   std::list<Fragment> new_fragments;
   if (hlo->opcode() == HloOpcode::kTranspose) {
-    const auto transpose = Cast<HloTransposeInstruction>(hlo);
+    const auto* transpose = Cast<HloTransposeInstruction>(hlo);
     std::vector<int64_t> permutation(transpose->dimensions().cbegin(),
                                      transpose->dimensions().cend());
     if (direction == TransformDirection::kInputToOutput) {
@@ -795,17 +823,19 @@ DimOrderUpdatesOrError FusionContext::HandleDimensionAlteringOp(
       dst_logical[permutation[i]] = src_logical[i];
     }
   } else if (hlo->opcode() == HloOpcode::kBroadcast) {
-    const auto broadcast = Cast<HloBroadcastInstruction>(hlo);
+    const auto* broadcast = Cast<HloBroadcastInstruction>(hlo);
     dst_logical.resize(broadcast->dimensions().size());
     for (int i = 0; i < broadcast->dimensions().size(); ++i) {
       dst_logical[i] = src_logical[broadcast->dimensions()[i]];
     }
   } else if (hlo->opcode() == HloOpcode::kReduce) {
-    const auto reduce = Cast<HloReduceInstruction>(hlo);
+    const auto* reduce = Cast<HloReduceInstruction>(hlo);
     dst_logical.resize(src_logical.size() + reduce->dimensions().size());
-    auto reduce_dim_it = reduce->dimensions().cbegin();
+    if (reduce->dimensions().size() != 1) {
+      return FusionDecision("Unsupported reduction.");
+    }
     for (int i = 0; i < dst_logical.size(); ++i) {
-      if (i == *reduce_dim_it) {
+      if (i == reduce->dimensions().front()) {
         // This way to assign the reduction dimension will only work for
         // softmax fusions with known patterns for now. Generally a reduction
         // should create a new tiled dimension.
@@ -814,8 +844,7 @@ DimOrderUpdatesOrError FusionContext::HandleDimensionAlteringOp(
                 .softmax_reduction_dimension,
             reduce->operand(0)->shape().dimensions(i))};
       } else {
-        dst_logical[i] =
-            src_logical[i - (reduce_dim_it - reduce->dimensions().cbegin())];
+        dst_logical[i] = src_logical[i];
       }
     }
   } else if (hlo->opcode() == HloOpcode::kCopy) {
@@ -837,11 +866,11 @@ DimOrderUpdatesOrError FusionContext::HandleDimensionAlteringOp(
     for (const Fragment* subdim : dst_logical[dim_idx]) {
       dst_fragments_order.push_back(*subdim);
       src_to_dst[subdim] = dst_fragments_order.size() - 1;
-      dim_numbers_present_in_dst.insert(subdim->dst_dim_number);
+      dim_numbers_present_in_dst.insert(subdim->dst_dim_number());
       if (std::holds_alternative<SoftmaxProperties>(properties_) &&
-          subdim->dst_dim_number == std::get<SoftmaxProperties>(properties_)
-                                        .softmax_reduction_dimension) {
-        dst_dim_fragments_order[subdim->dst_dim_number].push_back(
+          subdim->dst_dim_number() == std::get<SoftmaxProperties>(properties_)
+                                          .softmax_reduction_dimension) {
+        dst_dim_fragments_order[subdim->dst_dim_number()].push_back(
             dst_fragments_order.size() - 1);
       }
     }
@@ -851,7 +880,7 @@ DimOrderUpdatesOrError FusionContext::HandleDimensionAlteringOp(
     for (const int fragment_number : dim_sequence) {
       const auto it = src_to_dst.find(&src_fragments_order[fragment_number]);
       if (it == src_to_dst.cend()) {
-        if (src_fragments_order[fragment_number].size > 1 &&
+        if (src_fragments_order[fragment_number].size() > 1 &&
             dim_numbers_present_in_dst.contains(dim_index)) {
           return FusionDecision("Unsupported broadcast");
         }
@@ -1096,9 +1125,6 @@ void FusionContext::TryToFuseWithInputsRecursively(
   // become parameters of the fusion. Used to track the number of parameters
   // of the fusion.
   absl::flat_hash_set<const HloInstruction*> inputs;
-  // Currently only one physically unique dim order per scope is supported.
-  // Let it change while the scope has one input; afterwards require all
-  // of them to be physically compatible.
   auto try_fuse_one = [&](HloInstruction& hlo) {
     const DimOrderUpdatesOrError result = AnalyzeForFusion(
         hlo, /*as_input=*/true, old_to_new_mapping, gpu_version);
@@ -1355,19 +1381,12 @@ StatusOr<HloInstruction*> MakeSplitKOperand(
     if (spec->size() != 1) {
       return UncompilableMatmul("Unsupported case.");
     }
-    auto fragment = spec->at(0).subfragments.crbegin();
-    int64_t size_to_split = tiling.split_k();
-    while (size_to_split > *fragment) {
-      if (size_to_split % *fragment) {
-        return UncompilableMatmul("Contracting dimension is too fragmented.");
-      }
-      size_to_split /= *fragment;
-      ++fragment;
-    }
-    if (*fragment % size_to_split) {
+    const TensorIterationSpec::IterationSpecFragment& fragment = spec->at(0);
+    if (!HasDivisibleSuffixAllowingSplit(fragment.subfragments,
+                                         tiling.split_k())) {
       return UncompilableMatmul("Contracting dimension is too fragmented.");
     }
-    if (tiling.split_k() > ceil(1.0 * spec->at(0).count / tiling.block_k())) {
+    if (tiling.split_k() > ceil(1.0 * fragment.count / tiling.block_k())) {
       return UncompilableMatmul(
           "Too small divisible part of the contracting dimension.");
     }
@@ -1878,6 +1897,11 @@ static std::string ScopeToString(TritonFusionAnalysis::Scope s) {  // NOLINT
 std::string TensorIterationSpec::IterationSpecFragment::ToString() const {
   return absl::StrCat("{stride=", stride, ", count=", count, ", subfragments=[",
                       absl::StrJoin(subfragments, ", "), "]}");
+}
+
+bool TensorIterationSpec::IterationSpecFragment::operator!=(
+    const IterationSpecFragment& other) const {
+  return stride != other.stride || count != other.count;
 }
 
 std::string TensorIterationSpec::ToString() const {

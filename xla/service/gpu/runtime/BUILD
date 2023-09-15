@@ -248,7 +248,9 @@ cuda_library(
     name = "topk_kernel_cuda",
     srcs = if_cuda_is_configured(
         [
-            "topk_kernel.cu.cc",
+            "topk_kernel_bfloat16.cu.cc",
+            "topk_kernel_float.cu.cc",
+            "topk_kernel.cu.h",
         ],
     ),
     hdrs = if_cuda_is_configured(["topk_kernel_common.h"]),
@@ -365,6 +367,7 @@ cc_library(
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/status",
     ] + if_cuda_is_configured([
         "//xla/service/gpu:gemm_algorithm_picker",
         "//xla/stream_executor/gpu:redzone_allocator",

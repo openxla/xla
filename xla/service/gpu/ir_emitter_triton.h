@@ -22,7 +22,9 @@ limitations under the License.
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/service/gpu/gemm_rewriter_triton.h"
 #include "xla/service/gpu/gpu_device_info.h"
+#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/statusor.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -30,36 +32,51 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Use tiling and execution parameters from 'config'.
-StatusOr<LaunchDimensions> MatMul(mlir::OpBuilder b,
-                                  absl::string_view libdevice_path,
-                                  const HloComputation* computation,
-                                  mlir::triton::FuncOp fn,
-                                  const AutotuneResult::TritonGemmKey& config,
-                                  int shmem_budget);
+struct TritonWrapperResult {
+  int64_t shmem_bytes;
+};
 
+// Compute the launch dimensions for the given Triton MatMul.
+LaunchDimensions GetMatMulLaunchDimensions(
+    const TritonFusionAnalysis& analysis,
+    absl::Span<const HloInstruction* const> roots,
+    const FusionBoundaryFn& fusion_boundary,
+    const AutotuneResult::TritonGemmKey& config);
+// Use tiling and execution parameters from 'config'.
+Status EmitMatMul(mlir::OpBuilder b, absl::string_view libdevice_path,
+                  const TritonFusionAnalysis& analysis,
+                  const HloComputation* computation, mlir::triton::FuncOp fn,
+                  const AutotuneResult::TritonGemmKey& config,
+                  int shmem_budget);
+
+// Compute the launch dimensions for the given Triton SoftMax.
+LaunchDimensions GetSoftMaxLaunchDimensions(
+    absl::Span<const HloInstruction* const> roots,
+    const FusionBoundaryFn& fusion_boundary,
+    const AutotuneResult::TritonGemmKey& config);
 // Generate Softmax in Triton IR inside 'fn'.
 // Use execution parameters from 'config'.
-StatusOr<LaunchDimensions> SoftMax(mlir::OpBuilder b,
-                                   absl::string_view libdevice_path,
-                                   const HloComputation* computation,
-                                   mlir::triton::FuncOp fn,
-                                   const AutotuneResult::TritonGemmKey& config,
-                                   int shmem_budget);
+Status EmitSoftMax(mlir::OpBuilder b, absl::string_view libdevice_path,
+                   const TritonFusionAnalysis& analysis,
+                   const HloComputation* computation, mlir::triton::FuncOp fn,
+                   const AutotuneResult::TritonGemmKey& config,
+                   int shmem_budget);
 
-using LaunchDimensionsGenerator = std::function<StatusOr<LaunchDimensions>(
-    mlir::OpBuilder, absl::string_view, const HloComputation*,
-    mlir::triton::FuncOp, const AutotuneResult::TritonGemmKey&, int)>;
+using TritonIrEmitter = std::function<Status(
+    mlir::OpBuilder, absl::string_view, const TritonFusionAnalysis& analysis,
+    const HloComputation*, mlir::triton::FuncOp,
+    const AutotuneResult::TritonGemmKey&, int)>;
 
-// Generate Triton IR by running the provided generator, compile it into LLVM IR
-// and return launch dimensions.
+// Generate Triton IR by running the provided generator and compile it into LLVM
+// IR.
 // MatMul and SoftMax above are some such IR generators.
-StatusOr<LaunchDimensions> TritonWrapper(
-    absl::string_view fn_name, const HloComputation* hlo_computation,
-    absl::string_view fusion_kind, const se::CudaComputeCapability& cc,
-    const GpuDeviceInfo& device_info,
+StatusOr<TritonWrapperResult> TritonWrapper(
+    const TritonFusionAnalysis& analysis, absl::string_view fn_name,
+    const HloComputation* hlo_computation, absl::string_view fusion_kind,
+    const se::CudaComputeCapability& cc, const GpuDeviceInfo& device_info,
     const AutotuneResult::TritonGemmKey& config, llvm::Module* llvm_module,
-    LaunchDimensionsGenerator generator, mlir::MLIRContext& mlir_context);
+    TritonIrEmitter ir_emitter, mlir::MLIRContext& mlir_context);
+
 }  // namespace gpu
 }  // namespace xla
 

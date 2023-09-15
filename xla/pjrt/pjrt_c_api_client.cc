@@ -1544,7 +1544,7 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
       pjrt_c_api()->PJRT_LoadedExecutable_Execute(&args), pjrt_c_api());
 
   if (fill_future) {
-    *returned_future = pjrt::ConvertCEventToCppFuture(
+    returned_future = pjrt::ConvertCEventToCppFuture(
         args.device_complete_events[0], pjrt_c_api());
   }
   return std::move(Convert2DCBuffersToCppBuffers(
@@ -1656,6 +1656,34 @@ bool PjRtCApiBuffer::has_dynamic_dimensions() const {
     return false;
   }
   return args.num_dynamic_dims > 0;
+}
+
+absl::Span<const bool> PjRtCApiBuffer::is_dynamic_dimension() const {
+  {
+    absl::MutexLock lock(&mu_);
+    if (!is_dynamic_dimension_.has_value()) {
+      absl::InlinedVector<bool, InlineRank()>& is_dynamic_dimension_value =
+          is_dynamic_dimension_.emplace();
+      is_dynamic_dimension_value.assign(dimensions().size(), false);
+
+      PJRT_Buffer_DynamicDimensionIndices_Args args;
+      args.struct_size = PJRT_Buffer_DynamicDimensionIndices_Args_STRUCT_SIZE;
+      args.priv = nullptr;
+      args.buffer = buffer_.get();
+      const PJRT_Api* api = pjrt_c_api();
+      std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error(
+          api->PJRT_Buffer_DynamicDimensionIndices(&args),
+          pjrt::MakeErrorDeleter(api));
+      if (error && pjrt::GetErrorCode(error.get(), api) ==
+                       PJRT_Error_Code_UNIMPLEMENTED) {
+        return *is_dynamic_dimension_;
+      }
+      for (int i = 0; i < args.num_dynamic_dims; ++i) {
+        is_dynamic_dimension_value[args.dynamic_dim_indices[i]] = true;
+      }
+    }
+  }
+  return *is_dynamic_dimension_;
 }
 
 StatusOr<std::vector<int64_t>> PjRtCApiBuffer::logical_dimensions() {
@@ -2054,8 +2082,10 @@ StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(
   PJRT_Client_Create_Args init_args;
   init_args.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
   init_args.priv = nullptr;
-  TF_ASSIGN_OR_RETURN(std::vector<PJRT_NamedValue> c_options,
-                      pjrt::ConvertToPjRtNamedValueList(create_options));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<PJRT_NamedValue> c_options,
+      pjrt::ConvertToPjRtNamedValueList(create_options,
+                                        c_api->pjrt_api_version.minor_version));
   init_args.create_options = c_options.data();
   init_args.num_options = c_options.size();
 
@@ -2093,8 +2123,10 @@ StatusOr<std::unique_ptr<PjRtTopologyDescription>> GetCApiTopology(
   PJRT_TopologyDescription_Create_Args init_args;
   init_args.struct_size = PJRT_TopologyDescription_Create_Args_STRUCT_SIZE;
   init_args.priv = nullptr;
-  TF_ASSIGN_OR_RETURN(std::vector<PJRT_NamedValue> c_options,
-                      pjrt::ConvertToPjRtNamedValueList(create_options));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<PJRT_NamedValue> c_options,
+      pjrt::ConvertToPjRtNamedValueList(create_options,
+                                        c_api->pjrt_api_version.minor_version));
   init_args.create_options = c_options.data();
   init_args.num_options = c_options.size();
   init_args.topology_name = topology_name.data();
