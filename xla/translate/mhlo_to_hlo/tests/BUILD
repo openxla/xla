@@ -3,9 +3,6 @@ load("//xla:glob_lit_test.bzl", "glob_lit_tests")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
-        "//xla:internal",
-    ],
     licenses = ["notice"],
 )
 
