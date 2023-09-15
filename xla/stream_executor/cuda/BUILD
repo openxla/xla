@@ -251,6 +251,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_timer",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/stream_executor/platform",
+        "//xla/stream_executor/gpu:gpu_blas_lt",
         "@tsl//tsl/cuda:cublas",
         "@tsl//tsl/cuda:cublas_lt",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
