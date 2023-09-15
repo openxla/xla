@@ -30,6 +30,9 @@ limitations under the License.
 
 namespace xla {
 
+int64_t ResolveSymbolicAllGatherDimension(const Shape* operand_shape,
+                                          int64_t all_gather_dimension);
+
 // For a given operation and input shapes, infers what the resulting shape is
 // for the operation. With this functionality, the user does not need to specify
 // the expected result type for computations that are built up via the API --

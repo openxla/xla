@@ -775,7 +775,10 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
     HloPassPipeline pipeline("post-fusion optimization");
     pipeline.AddPass<AllGatherCombiner>(
         debug_options.xla_gpu_all_gather_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256);
+        /*combine_threshold_count=*/256,
+        /*combine_major_most_layout_dim=*/
+        debug_options
+            .xla_gpu_enable_all_gather_combine_major_most_layout_dim());
     pipeline.AddPass<AllReduceCombiner>(
         debug_options.xla_gpu_all_reduce_combine_threshold_bytes(),
         /*combine_threshold_count=*/256);

@@ -380,6 +380,10 @@ message DebugOptions {
   int64 xla_gpu_all_gather_combine_threshold_bytes = 212;
   int64 xla_gpu_reduce_scatter_combine_threshold_bytes = 213;
 
+  // Combine all-gather ops with different dimensions if they are all the
+  // major-most dimension in their layout. This is supported by NCCL.
+  bool xla_gpu_enable_all_gather_combine_major_most_layout_dim = 247;
+
   // Combine GPU all-reduces into a single operation over a contiguous buffer.
   bool xla_gpu_all_reduce_contiguous = 158;
 
@@ -616,7 +620,7 @@ message DebugOptions {
   // Replace custom calls with noop operations.
   bool xla_gpu_mock_custom_calls = 245;
 
-  // Next id: 247
+  // Next id: 248
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
