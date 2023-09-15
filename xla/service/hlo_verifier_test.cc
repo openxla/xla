@@ -2953,5 +2953,50 @@ ENTRY entry {
   TF_ASSERT_OK(status);
 }
 
+TEST_F(HloVerifierTest, AllGatherMajorMostLayoutDimensionWithLayout) {
+  constexpr absl::string_view kHlo = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[10]{0} parameter(0)
+  p1 = bf16[10]{0} parameter(1)
+  ROOT ag = (f32[20]{0}, bf16[20]{0}) all-gather(p0, p1), dimensions={-1}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHlo));
+  Status status = verifier().Run(module.get()).status();
+
+  TF_ASSERT_OK(status);
+}
+
+TEST_F(HloVerifierTest, AllGatherMajorMostLayoutDimensionNoLayout) {
+  constexpr absl::string_view kHlo = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[10] parameter(0)
+  p1 = bf16[10] parameter(1)
+  ROOT ag = (f32[20], bf16[20]) all-gather(p0, p1), dimensions={-1}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHlo));
+
+  // Parser introduces default layout. Remove this manually to test the
+  // verifier.
+  auto* ag = module->entry_computation()->root_instruction();
+  for (int64_t i = 0; i < ag->operand_count(); ++i) {
+    ag->mutable_shape()->mutable_tuple_shapes(i)->clear_layout();
+    ag->mutable_operand(i)->mutable_shape()->clear_layout();
+  }
+
+  Status status = verifier().Run(module.get()).status();
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("concrete_all_gather_dimension >= 0"));
+}
+
 }  // namespace
 }  // namespace xla

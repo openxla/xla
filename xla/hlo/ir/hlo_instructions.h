@@ -635,6 +635,13 @@ class HloAllGatherInstruction : public HloCollectiveInstruction {
       absl::Span<HloInstruction* const> operands, int64_t all_gather_dimension,
       absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
       const std::optional<int64_t>& channel_id, bool use_global_device_ids);
+
+  // Define all-gather dimension based on the layout as the major-most
+  // dimension.
+  // TODO(frgossen): Remove this when we have a non-tuple way to represent
+  // combined all-gathers.
+  static constexpr int64_t kMajorMostLayoutDimension = -1;
+
   // Same as HloAllReduceInstruction::use_global_device_ids.
   bool use_global_device_ids() const { return use_global_device_ids_; }
 
