@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "base/examine_stack.h"
 #include "google/protobuf/any.pb.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/attributes.h"
@@ -186,6 +187,7 @@ void CompilationEnvironments::RegisterProcessNewEnvFn(
 
 Status CompilationEnvironments::AddEnv(
     std::unique_ptr<tsl::protobuf::Message> env) {
+  LOG(INFO) << CurrentStackTrace();
   if (!env) {
     return tsl::errors::InvalidArgument(
         "Can not add a null compilation environment.");
