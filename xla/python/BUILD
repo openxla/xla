@@ -749,6 +749,7 @@ cc_library(
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:all_passes",
         "//xla/pjrt:mlir_to_hlo",
+        "//xla/service/llvm_ir:llvm_util",
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
         "@tsl//tsl/platform:errors",
         "@llvm-project//llvm:Support",
