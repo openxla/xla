@@ -401,6 +401,7 @@ static std::vector<std::string> DumpHloModuleImpl(
     print_options.set_print_backend_config(true);
     print_options.set_print_metadata(opts.dump_hlo_metadata);
     print_options.set_print_name_after_closing_brace(true);
+    print_options.set_syntax_sugar_async_ops(false);
     file_paths.push_back(DumpToFileInDirOrStdoutImpl(
         StrCat(filename, ".txt"), module.ToString(print_options), opts));
     if (buffer_assn) {
