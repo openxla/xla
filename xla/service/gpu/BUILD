@@ -3247,8 +3247,10 @@ cc_library(
     deps = [
         ":gpu_device_info",
         ":hlo_op_profile_proto_cc",
+        "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/profiler/gpu:cupti_collector",
@@ -3261,6 +3263,7 @@ cc_library(
         "//xla/service:interpreter_plugin",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -3284,15 +3287,18 @@ xla_cc_test(
         ":hlo_op_profile_proto_cc",
         ":hlo_op_profiler_lib",
         "//xla:debug_options_flags",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_runner",
         "//xla/service:platform_util",
+        "//xla/stream_executor:stream_executor_headers",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/util:command_line_flags",
     ],
 )
