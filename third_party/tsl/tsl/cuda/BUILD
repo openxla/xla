@@ -14,25 +14,35 @@ load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
+load("//tsl/cuda:stub.bzl", "cuda_stub")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     licenses = ["notice"],
 )
 
+cuda_stub(
+    name = "cublas",
+    srcs = ["cublas.symbols"],
+)
+
 cc_library(
     name = "cublas_stub",
-    srcs = if_cuda_is_configured(["cublas_stub.cc"]),
+    srcs = if_cuda_is_configured(["cublas_stub.cc", "cublas.tramp.S"]),
     linkopts = if_cuda_is_configured(cuda_rpath_flags(
         "nvidia/cublas/lib",
     )),
-    textual_hdrs = glob(["cublas_*.inc"]),
+    textual_hdrs = ["cublas.inc"],
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
+        "@com_google_absl//absl/container:flat_hash_set",
         "@local_config_cuda//cuda:cuda_headers",
         "//tsl/platform:dso_loader",
         "//tsl/platform:env",
     ]),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
 )
 
 alias(
@@ -44,16 +54,24 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+cuda_stub(
+    name = "cublasLt",
+    srcs = ["cublasLt.symbols"],
+)
+
 cc_library(
     name = "cublas_lt_stub",
-    srcs = if_cuda_is_configured(["cublasLt_stub.cc"]),
-    textual_hdrs = glob(["cublasLt_*.inc"]),
+    srcs = if_cuda_is_configured(["cublasLt_stub.cc", "cublasLt.tramp.S"]),
+    textual_hdrs = ["cublasLt.inc"],
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "//tsl/platform:dso_loader",
         "//tsl/platform:env",
     ]),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
 )
 
 alias(
@@ -65,30 +83,46 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+cuda_stub(
+    name = "cuda",
+    srcs = ["cuda.symbols"],
+)
+
 cc_library(
     name = "cuda_stub",
-    srcs = if_cuda_is_configured(["cuda_stub.cc"]),
-    textual_hdrs = glob(["cuda_*.inc"]),
+    srcs = if_cuda_is_configured(["cuda_stub.cc", "cuda.tramp.S"]),
+    textual_hdrs = ["cuda.inc"],
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "//tsl/platform:dso_loader",
         "//tsl/platform:env",
     ]),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
+)
+
+cuda_stub(
+    name = "cudart",
+    srcs = ["cudart.symbols"],
 )
 
 cc_library(
     name = "cudart_stub",
     srcs = select({
         # include dynamic loading implementation only when if_cuda_is_configured and build dynamically
-        "//tsl:is_cuda_enabled_and_oss": ["cudart_stub.cc"],
+        "//tsl:is_cuda_enabled_and_oss": [
+            "cudart_stub.cc",
+            "cudart.tramp.S",
+        ],
         "//conditions:default": [],
     }),
     linkopts = select({
         "//tsl:is_cuda_enabled_and_oss": cuda_rpath_flags("nvidia/cuda_runtime/lib"),
         "//conditions:default": [],
     }),
-    textual_hdrs = glob(["cuda_runtime_*.inc"]),
+    textual_hdrs = ["cudart.inc"],
     visibility = ["//visibility:public"],
     deps = select({
         "//tsl:is_cuda_enabled_and_oss": [
@@ -99,6 +133,9 @@ cc_library(
         ],
         "//conditions:default": [],
     }),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
 )
 
 filegroup(
@@ -107,11 +144,16 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+cuda_stub(
+    name = "cudnn",
+    srcs = ["cudnn.symbols"],
+)
+
 cc_library(
     name = "cudnn_stub",
-    srcs = if_cuda_is_configured(["cudnn_stub.cc"]),
+    srcs = if_cuda_is_configured(["cudnn_stub.cc", "cudnn.tramp.S"]),
     linkopts = if_cuda_is_configured(cuda_rpath_flags("nvidia/cudnn/lib")),
-    textual_hdrs = glob(["cudnn_*.inc"]),
+    textual_hdrs = ["cudnn.inc"],
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         ":cudnn_version",
@@ -119,6 +161,9 @@ cc_library(
         "//tsl/platform:dso_loader",
         "//tsl/platform:env",
     ]),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
 )
 
 cc_library(
@@ -162,17 +207,25 @@ tsl_cc_test(
     ],
 )
 
+cuda_stub(
+    name = "cufft",
+    srcs = ["cufft.symbols"],
+)
+
 cc_library(
     name = "cufft_stub",
-    srcs = if_cuda_is_configured(["cufft_stub.cc"]),
+    srcs = if_cuda_is_configured(["cufft_stub.cc", "cufft.tramp.S"]),
     linkopts = if_cuda_is_configured(cuda_rpath_flags("nvidia/cufft/lib")),
-    textual_hdrs = glob(["cufft_*.inc"]),
+    textual_hdrs = ["cufft.inc"],
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "//tsl/platform:dso_loader",
         "//tsl/platform:env",
     ]),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
 )
 
 alias(
@@ -184,12 +237,18 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+
+cuda_stub(
+    name = "cupti",
+    srcs = ["cupti.symbols"],
+)
+
 cc_library(
     name = "cupti_stub",
-    srcs = if_cuda_is_configured(["cupti_stub.cc"]),
+    srcs = if_cuda_is_configured(["cupti_stub.cc", "cupti.tramp.S"]),
     data = if_cuda_is_configured(["@local_config_cuda//cuda:cupti_dsos"]),
     linkopts = if_cuda_is_configured(cuda_rpath_flags("nvidia/cuda_cupti/lib")),
-    textual_hdrs = glob(["cupti_*.inc"]),
+    textual_hdrs = ["cupti.inc"],
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
@@ -197,19 +256,30 @@ cc_library(
         "//tsl/platform:dso_loader",
         "//tsl/platform:env",
     ]),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
+)
+
+cuda_stub(
+    name = "cusolver",
+    srcs = ["cusolver.symbols"],
 )
 
 cc_library(
     name = "cusolver_stub",
-    srcs = if_cuda_is_configured(["cusolver_stub.cc"]),
+    srcs = if_cuda_is_configured(["cusolver_stub.cc", "cusolver.tramp.S"]),
     linkopts = if_cuda_is_configured(cuda_rpath_flags("nvidia/cusolver/lib")),
-    textual_hdrs = glob(["cusolver_dense_*.inc"]),
+    textual_hdrs = ["cusolver.inc"],
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "//tsl/platform:dso_loader",
         "//tsl/platform:env",
     ]),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
 )
 
 alias(
@@ -221,17 +291,25 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+cuda_stub(
+    name = "cusparse",
+    srcs = ["cusparse.symbols"],
+)
+
 cc_library(
     name = "cusparse_stub",
-    srcs = if_cuda_is_configured(["cusparse_stub.cc"]),
+    srcs = if_cuda_is_configured(["cusparse_stub.cc", "cusparse.tramp.S"]),
     linkopts = if_cuda_is_configured(cuda_rpath_flags("nvidia/cusparse/lib")),
-    textual_hdrs = glob(["cusparse_*.inc"]),
+    textual_hdrs = ["cusparse.inc"],
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "//tsl/platform:dso_loader",
         "//tsl/platform:env",
     ]),
+    local_defines=[
+        "IMPLIB_EXPORT_SHIMS=1",
+    ],
 )
 
 alias(
