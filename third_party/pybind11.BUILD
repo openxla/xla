@@ -1,5 +1,7 @@
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["LICENSE"])
+
 cc_library(
     name = "pybind11",
     hdrs = glob(
