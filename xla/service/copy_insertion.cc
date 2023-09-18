@@ -2041,6 +2041,16 @@ Status CopyInsertion::AddSpecialCaseCopies(
                     << ") has ambiguous or non-distinct buffer. Copying.";
             add_index_to_copy(root, index);
           }
+
+          // kAsyncDone operation doesn't define a value (in the dataflow
+          // analysis context), but it's required for the module output (root of
+          // the entry computation).
+          if (root->opcode() == HloOpcode::kAsyncDone &&
+              computation == module->entry_computation()) {
+            VLOG(2) << "Copying index " << index << " of computation "
+                    << computation->name() << " with async operation at root";
+            add_index_to_copy(root, index);
+          }
         });
 
     for (const auto& pair :

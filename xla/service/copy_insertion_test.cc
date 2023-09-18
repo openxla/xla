@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/copy_insertion.h"
 
 #include <memory>
-#include <set>
 
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
@@ -26,13 +25,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_matchers.h"
-#include "xla/literal.h"
+#include "xla/service/async_collective_creator.h"
 #include "xla/service/hlo_parser.h"
-#include "xla/service/hlo_runner.h"
 #include "xla/shape_util.h"
 #include "xla/test.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test_benchmark.h"
@@ -3491,6 +3490,38 @@ ENTRY %main {
   CopyInsertion copy_insertion(nullptr,
                                /*use_region_based_live_range_analysis=*/-1);
   ASSERT_IS_OK(copy_insertion.Run(module.get(), {"foobar"}).status());
+  VLOG(2) << module->ToString();
+  EXPECT_EQ(CountCopies(*module), 1);
+}
+
+TEST_F(CopyInsertionTest, AsyncCollectiveCreatorInterop) {
+  const char* const kModuleString = R"(
+HloModule async_at_root
+
+%called_computation {
+  %param.0 = f32[] parameter(0)
+  %param.1 = f32[] parameter(1)
+  ROOT %output = f32[] add(%param.0, %param.1)
+}
+
+ENTRY %main {
+  %input = f32[1] parameter(0)
+  ROOT %reduce-scatter = f32[1] reduce-scatter(%input), replica_groups={{0}}, dimensions={0}, to_apply=%called_computation
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+
+  // Run async collective creator that generates an embedded computation and
+  // replaces reduce-scatter with async-start/async-done pair.
+  AsyncCollectiveCreator::CollectiveCreatorConfig config;
+  config.convert_reduce_scatter = HloPredicateTrue;
+  AsyncCollectiveCreator async_creator(config);
+  ASSERT_IS_OK(async_creator.Run(module.get()).status());
+
+  CopyInsertion copy_insertion;
+  ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
   VLOG(2) << module->ToString();
   EXPECT_EQ(CountCopies(*module), 1);
 }
