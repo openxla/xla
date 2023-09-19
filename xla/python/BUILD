@@ -1,24 +1,24 @@
+load("//xla:pytype.default.bzl", "pytype_strict_library")
 load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load(
     "//xla:xla.bzl",
     "xla_cc_test",
     "xla_py_test_deps",
 )
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load(
     "@tsl//tsl:tsl.bzl",
     "if_cuda_or_rocm",
 )
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
-load("//xla:pytype.default.bzl", "pytype_strict_library")
+load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load(
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -1008,6 +1008,8 @@ tsl_pybind_extension(
 cc_library(
     name = "xla_extension_library",
     srcs = [
+        "logging.cc",
+        "logging.h",
         "xla.cc",
     ],
     hdrs = [
@@ -1046,6 +1048,7 @@ cc_library(
         ":weakref_lru_cache",
         ":xla_compiler",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/log:initialize",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -1070,6 +1073,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform/cloud:gcs_file_system",
         "@tsl//tsl/python/lib/core:numpy",
