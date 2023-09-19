@@ -1011,6 +1011,34 @@ XLA_TEST_F(CollectiveOpsTest, AllGather_Dim1) {
   }
 }
 
+XLA_TEST_F(CollectiveOpsTest, AllGather_SymDimMinus1) {
+  const char* const kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id2 = u32[2, 1]{1,0} broadcast(id), dimensions={}
+    a0 = u32[2, 1]{1,0} constant({{10}, {15}})
+    a1 = u32[2, 1]{1,0} add(id2, a0)
+    allgather = u32[2, 2]{1,0} all-gather(a1), dimensions={1}
+    ROOT out = u32[4]{0} reshape(allgather)
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), {}, kNumReplicas,
+                        /*use_threads=*/true, /*run_hlo_passes=*/true));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  for (const Literal& result : results) {
+    LiteralTestUtil::ExpectR1Equal<uint32_t>({10, 11, 15, 16}, result);
+  }
+}
+
 XLA_TEST_F(CollectiveOpsTest, AllReduce_TupleAllReduce) {
   if (IsMlirLoweringEnabled()) {
     // TupleAllReduce is not supported by MHLO. As of late 2022, there is no

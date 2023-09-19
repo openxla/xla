@@ -433,7 +433,9 @@ static Status CheckCommonAllGatherInvariants(HloInstruction* hlo,
                       GetCollectiveOpGroupMode(ag->channel_id().has_value(),
                                                ag->use_global_device_ids()));
   TF_RETURN_IF_ERROR(CheckReplicaGroups(ag, group_mode));
-  TF_RET_CHECK(ag->all_gather_dimension() >= 0);
+  TF_RET_CHECK(ag->all_gather_dimension() >= 0 ||
+               ag->all_gather_dimension() ==
+                   HloAllGatherInstruction::kMajorMostLayoutDimension);
 
   int64_t shard_count;
   for (int64_t i = 0; i < ag->operand_count(); ++i) {
@@ -449,11 +451,16 @@ static Status CheckCommonAllGatherInvariants(HloInstruction* hlo,
                          ? ag->shape().tuple_shapes(1)
                          : ag->shape().tuple_shapes(1).tuple_shapes(i);
     }
-    TF_RET_CHECK(ag->all_gather_dimension() < output_shape.rank());
+
+    int64_t concrete_all_gather_dimension = ResolveSymbolicAllGatherDimension(
+        &ag->operand(i)->shape(), ag->all_gather_dimension());
+    TF_RET_CHECK(concrete_all_gather_dimension >= 0);
+    TF_RET_CHECK(concrete_all_gather_dimension < output_shape.rank());
+
     if (i == 0) {
       shard_count = CeilOfRatio(
-          output_shape.dimensions(ag->all_gather_dimension()),
-          ag->operand(i)->shape().dimensions(ag->all_gather_dimension()));
+          output_shape.dimensions(concrete_all_gather_dimension),
+          ag->operand(i)->shape().dimensions(concrete_all_gather_dimension));
     }
   }
 
@@ -469,13 +476,13 @@ static Status CheckCommonAllGatherInvariants(HloInstruction* hlo,
 }
 
 Status ShapeVerifier::HandleAllGather(HloInstruction* hlo) {
-  auto ag = Cast<HloAllGatherInstruction>(hlo);
   int64_t shard_count;
   TF_RETURN_IF_ERROR(CheckCommonAllGatherInvariants(hlo, &shard_count));
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : hlo->operands()) {
     operand_shapes.push_back(&operand->shape());
   }
+  auto ag = Cast<HloAllGatherInstruction>(hlo);
   return CheckShape(
       ag, ShapeInference::InferAllGatherShape(
               operand_shapes, ag->all_gather_dimension(), shard_count));

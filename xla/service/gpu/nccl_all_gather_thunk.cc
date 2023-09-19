@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/strings/str_format.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/shape_inference.h"
 
 #if XLA_ENABLE_XCCL
 #include "xla/stream_executor/gpu/gpu_stream.h"
@@ -44,11 +45,12 @@ Status CheckImplementable(AllGatherStartOp op) {
   for (mlir::Value operand : op.getInputs()) {
     TF_RETURN_IF_ERROR(IsValidOperand(operand, Thunk::kNcclAllGather));
     Shape shape = GetShape(operand);
-    if (!ShapeUtil::IsEffectivelyMostMajorDimension(
-            shape, op.getAllGatherDimension())) {
+    int64_t gather_dim =
+        ResolveSymbolicAllGatherDimension(&shape, op.getAllGatherDimension());
+    if (!ShapeUtil::IsEffectivelyMostMajorDimension(shape, gather_dim)) {
       return tsl::errors::Unimplemented(absl::StrFormat(
           "all-gather dim %u is not the most major in input shape %s",
-          op.getAllGatherDimension(), shape.ToString(/*print_layout=*/true)));
+          gather_dim, shape.ToString(/*print_layout=*/true)));
     }
   }
   return OkStatus();
@@ -133,7 +135,6 @@ Status RunAllGather(std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
       "compiler, which is necessary to build the NCCL source library.");
 #endif  // XLA_ENABLE_XCCL
 }
-
 
 }  // namespace gpu
 }  // namespace xla

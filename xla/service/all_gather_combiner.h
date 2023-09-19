@@ -32,7 +32,8 @@ namespace xla {
 class AllGatherCombiner : public HloModulePass {
  public:
   AllGatherCombiner(int64_t combine_threshold_in_bytes,
-                    int64_t combine_threshold_count);
+                    int64_t combine_threshold_count,
+                    bool combine_major_most_layout_dim);
 
   absl::string_view name() const override { return "all-gather-combiner"; }
 
@@ -47,6 +48,10 @@ class AllGatherCombiner : public HloModulePass {
 
   // Combine all gather ops up to this threshold (number of operands).
   int64_t combine_threshold_count_;
+
+  // Combine all-gather ops with different dimensions if they are all the
+  // major-most dimension in their layout.
+  bool combine_major_most_layout_dim_;
 };
 
 }  // namespace xla

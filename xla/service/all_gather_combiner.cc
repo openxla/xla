@@ -15,8 +15,7 @@ limitations under the License.
 
 #include "xla/service/all_gather_combiner.h"
 
-#include <algorithm>
-#include <list>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,17 +23,21 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/service/collective_combiner_utils.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -42,10 +45,38 @@ limitations under the License.
 namespace xla {
 namespace {
 
+// Determine the preferred all-gather dimension.
+// In case we want to combine all-gathers with different dimensions, prefer the
+// symbolic representation for the case in which the major-most dimension of the
+// layout is gathered.
+int64_t PreferredAllGatherDim(const HloAllGatherInstruction* const all_gather,
+                              bool combine_major_most_layout_dim) {
+  if (!combine_major_most_layout_dim) {
+    return all_gather->all_gather_dimension();
+  }
+  if (all_gather->all_gather_dimension() ==
+      HloAllGatherInstruction::kMajorMostLayoutDimension) {
+    return HloAllGatherInstruction::kMajorMostLayoutDimension;
+  }
+
+  // If all operands gather the major-most dimension of the layout, use a
+  // symbolic dimension representation.
+  bool is_all_operands_major_most_layout_dim = absl::c_all_of(
+      all_gather->operands(), [&](const HloInstruction* operand) {
+        return operand->shape().has_layout() &&
+               LayoutUtil::Major(operand->shape().layout(), 0) ==
+                   all_gather->all_gather_dimension();
+      });
+  return is_all_operands_major_most_layout_dim
+             ? HloAllGatherInstruction::kMajorMostLayoutDimension
+             : all_gather->all_gather_dimension();
+}
+
 // Combines the elements of to_combine into a single AllGather op. All entries
 // in to_combine must be AllGather ops with exactly one operand and the same
-// all_gather_dimension.
-Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
+// preferred all_gather_dimension.
+Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine,
+                         bool combine_major_most_layout_dim) {
   if (to_combine.size() < 2) {
     return OkStatus();
   }
@@ -53,7 +84,8 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
 
   HloComputation& computation = *to_combine.back()->parent();
   int64_t all_gather_dimension =
-      Cast<HloAllGatherInstruction>(to_combine.front())->all_gather_dimension();
+      PreferredAllGatherDim(Cast<HloAllGatherInstruction>(to_combine.front()),
+                            combine_major_most_layout_dim);
 
   // Create a single bigger AllGather of the operands of the smaller AllGather.
   std::vector<HloInstruction*> operands;
@@ -63,8 +95,10 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
     VLOG(1) << "Set element: " << hlo->ToString();
     TF_RET_CHECK(hlo->opcode() == HloOpcode::kAllGather);
     TF_RET_CHECK(hlo->operands().size() == 1);
-    TF_RET_CHECK(Cast<HloAllGatherInstruction>(hlo)->all_gather_dimension() ==
+    TF_RET_CHECK(PreferredAllGatherDim(Cast<HloAllGatherInstruction>(hlo),
+                                       combine_major_most_layout_dim) ==
                  all_gather_dimension);
+
     TF_RET_CHECK(hlo->shape().IsArray());
     for (HloInstruction* operand : hlo->operands()) {
       operands.push_back(operand);
@@ -107,7 +141,8 @@ using GroupKey =
 // Returns a key that will be equal for instructions that might be combined, or
 // different if not.
 std::optional<GroupKey> CombineKey(const HloInstruction* instruction,
-                                   const HloDomainMap& domain_map) {
+                                   const HloDomainMap& domain_map,
+                                   bool combine_major_most_layout_dim) {
   if (instruction->opcode() != HloOpcode::kAllGather) {
     return std::nullopt;
   }
@@ -122,7 +157,7 @@ std::optional<GroupKey> CombineKey(const HloInstruction* instruction,
                              replica_group.replica_ids().end()));
   }
 
-  return GroupKey{ag->all_gather_dimension(),
+  return GroupKey{PreferredAllGatherDim(ag, combine_major_most_layout_dim),
                   domain_map.GetDomainMetadataId(ag),
                   ag->channel_id().has_value(), ag->use_global_device_ids(),
                   replica_groups};
@@ -131,9 +166,11 @@ std::optional<GroupKey> CombineKey(const HloInstruction* instruction,
 }  // namespace
 
 AllGatherCombiner::AllGatherCombiner(int64_t combine_threshold_in_bytes,
-                                     int64_t combine_threshold_count)
+                                     int64_t combine_threshold_count,
+                                     bool combine_major_most_layout_dim)
     : combine_threshold_in_bytes_(combine_threshold_in_bytes),
-      combine_threshold_count_(combine_threshold_count) {}
+      combine_threshold_count_(combine_threshold_count),
+      combine_major_most_layout_dim_(combine_major_most_layout_dim) {}
 
 StatusOr<bool> AllGatherCombiner::Run(
     HloModule* module,
@@ -158,15 +195,20 @@ StatusOr<bool> AllGatherCombiner::Run(
        module->MakeNonfusionComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(auto domain_map, HloDomainMap::Create(computation, ""));
 
-    auto key_fn = [&domain_map](const HloInstruction* instruction) {
-      return CombineKey(instruction, *domain_map);
+    auto key_fn = [&](const HloInstruction* instruction) {
+      return CombineKey(instruction, *domain_map,
+                        combine_major_most_layout_dim_);
+    };
+    auto combine_fn =
+        [&](absl::Span<HloInstruction* const> to_combine) -> Status {
+      return CombineAllGathers(to_combine, combine_major_most_layout_dim_);
     };
 
     TF_ASSIGN_OR_RETURN(
         bool computation_changed,
-        CombineInstructionsByKey<GroupKey>(
-            computation, key_fn, &CombineAllGathers,
-            combine_threshold_in_bytes_, combine_threshold_count_));
+        CombineInstructionsByKey<GroupKey>(computation, key_fn, combine_fn,
+                                           combine_threshold_in_bytes_,
+                                           combine_threshold_count_));
     changed |= computation_changed;
   }
 
