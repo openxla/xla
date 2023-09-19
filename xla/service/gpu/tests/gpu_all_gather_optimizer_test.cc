@@ -91,6 +91,26 @@ add.1 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
   EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 2);
 }
 
+TEST_F(GpuAllGatherOptimizerTest, DisbledSPMDPartitioningJAXBug) {
+  absl::string_view hlo_string = R"(
+HloModule pjit_f, entry_computation_layout={(f32[4,8]{1,0}, f32[4,8]{1,0})->f32[8,8]{1,0}}
+
+ENTRY %main.6_spmd (param: f32[4,8], param.1: f32[4,8]) -> f32[8,8] {
+  %param = f32[4,8]{1,0} parameter(0), sharding={devices=[2,1]<=[2]}
+  %all-gather = f32[8,8]{1,0} all-gather(f32[4,8]{1,0} %param), channel_id=1, replica_groups={{0,1}}, dimensions={0}, use_global_device_ids=true, metadata={op_name="pjit(f)/jit(main)/add" source_file="third_party/py/jax/tests/pjit_test.py" source_line=207}
+  %param.1 = f32[4,8]{1,0} parameter(1), sharding={devices=[2,1]<=[2]}
+  %all-gather.1 = f32[8,8]{1,0} all-gather(f32[4,8]{1,0} %param.1), channel_id=2, replica_groups={{0,1}}, dimensions={0}, use_global_device_ids=true, metadata={op_name="pjit(f)/jit(main)/add" source_file="third_party/py/jax/tests/pjit_test.py" source_line=207}
+  ROOT %add.0 = f32[8,8]{1,0} add(f32[8,8]{1,0} %all-gather, f32[8,8]{1,0} %all-gather.1), metadata={op_name="pjit(f)/jit(main)/add" source_file="third_party/py/jax/tests/pjit_test.py" source_line=207}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                               /*num_replicas=*/1,
+                                               /*num_partitions=*/2,
+                                               /*expect_change=*/true));
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 1);
+}
+
 TEST_F(GpuAllGatherOptimizerTest, MoreThanSingleUserForAllGather) {
   absl::string_view hlo_string = R"(
 HloModule ReduceScatter

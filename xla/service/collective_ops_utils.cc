@@ -473,9 +473,10 @@ bool ReplicaGroupsEqual(absl::Span<const ReplicaGroup> first,
     return false;
   }
   for (int64_t i = 0; i < first.size(); ++i) {
-    if (first[i].replica_ids_size() != second[i].replica_ids_size())
+    if (first[i].replica_ids_size() != second[i].replica_ids_size()) {
       return false;
-    for (int64_t j = 0; j < first[i].replica_ids_size(); ++j) {
+    }
+    for (int j = 0; j < first[i].replica_ids_size(); ++j) {
       if (first[i].replica_ids(j) != second[i].replica_ids(j)) {
         return false;
       }

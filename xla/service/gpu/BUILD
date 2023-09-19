@@ -2361,9 +2361,9 @@ cc_library(
     hdrs = ["gpu_all_gather_optimizer.h"],
     deps = [
         "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_pass",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:collective_ops_utils",
+        "//xla/service:hlo_pass",
         "//xla/service:reduce_scatter_utils",
     ],
 )

@@ -21,8 +21,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/hlo/utils/hlo_query.h"
-#include "xla/service/reduce_scatter_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -30,8 +28,6 @@ namespace gpu {
 StatusOr<bool> AllGatherOptimizer::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  const HloModuleConfig& config = module->config();
-  int64_t next_channel_id = hlo_query::NextChannelId(*module);
 
   bool changed = false;
   for (HloComputation* computation :
@@ -90,8 +86,15 @@ StatusOr<bool> AllGatherOptimizer::Run(
       TF_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
           instruction, std::move(combined)));
 
-      TF_RETURN_IF_ERROR(computation->RemoveInstruction(left_all_gather));
-      TF_RETURN_IF_ERROR(computation->RemoveInstruction(right_all_gather));
+      auto check_instruction = [&](HloInstruction* inst) {
+        return absl::c_linear_search(computation->instructions(), inst);
+      };
+      if (check_instruction(left_all_gather)) {
+        TF_RETURN_IF_ERROR(computation->RemoveInstruction(left_all_gather));
+      }
+      if (check_instruction(right_all_gather)) {
+        TF_RETURN_IF_ERROR(computation->RemoveInstruction(right_all_gather));
+      }
       changed = true;
     }
   }
