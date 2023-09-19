@@ -101,6 +101,15 @@ cc_library(
     }),
 )
 
+alias(
+    name = "cudart_lib",
+    actual = select({
+        "//tsl:oss": ":cudart_stub",
+        "//conditions:default": "@local_config_cuda//cuda:cudart_static",
+    }),
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "cudnn_stub",
     srcs = if_cuda_is_configured(["cudnn_stub.cc"]),
