@@ -688,7 +688,7 @@ class BufferAssigner {
 
   // Assigns a single hlo buffer to an HLO allocation.
   Status AssignSingleHloBuffer(
-      const HloBuffer* hlo_buffer, bool is_thread_local,
+      const HloBuffer* hlo_buffer, int64_t buffer_size, bool is_thread_local,
       absl::flat_hash_map<const HloComputation*,
                           absl::flat_hash_set<const HloValue*>>*
           buffers_to_assign_sequentially,
@@ -718,7 +718,7 @@ class BufferAssigner {
   // Tries to assign the given instruction to the given buffer. Returns if the
   // assignment was successful.
   bool MaybeAssignBuffer(BufferAllocation* allocation, const HloBuffer& buffer,
-                         BufferAssignment* assignment);
+                         int64_t hlo_buffer_size, BufferAssignment* assignment);
 
   // Split a set of buffers into several sets, each of which contains buffers
   // colored with the same color.

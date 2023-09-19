@@ -1142,12 +1142,12 @@ bool BufferAssigner::LiveRangeInterferes(const HloValue* buffer1,
 
 bool BufferAssigner::MaybeAssignBuffer(BufferAllocation* allocation,
                                        const HloBuffer& hlo_buffer,
+                                       int64_t hlo_buffer_size,
                                        BufferAssignment* assignment) {
   CHECK(!assignment->HasAllocation(hlo_buffer))
       << "buffer " << hlo_buffer << " already has an allocation assigned.";
 
-  VLOG(4) << "Trying to assign " << hlo_buffer << " size "
-          << assignment->HloBufferSize(hlo_buffer)
+  VLOG(4) << "Trying to assign " << hlo_buffer << " size " << hlo_buffer_size
           << " to allocation: " << *allocation;
 
   if (hlo_buffer.color() != allocation->color()) {
@@ -1156,10 +1156,9 @@ bool BufferAssigner::MaybeAssignBuffer(BufferAllocation* allocation,
     return false;
   }
 
-  if (assignment->HloBufferSize(hlo_buffer) > allocation->size()) {
+  if (hlo_buffer_size > allocation->size()) {
     VLOG(4) << "Can't assign: buffer is larger than allocation ("
-            << assignment->HloBufferSize(hlo_buffer) << " > "
-            << allocation->size() << ")";
+            << hlo_buffer_size << " > " << allocation->size() << ")";
     return false;
   }
 
@@ -1244,25 +1243,24 @@ bool BufferAssigner::MaybeAssignBuffer(BufferAllocation* allocation,
   // assigned a buffer which exactly fits the result to avoid wasting memory
   // (result buffers can have arbitrary lifetimes).
   if (assignment->alias_analysis().BufferLivesOut(hlo_buffer) &&
-      allocation->size() != assignment->HloBufferSize(hlo_buffer)) {
+      allocation->size() != hlo_buffer_size) {
     VLOG(4) << "Can't assign: buffer " << hlo_buffer
             << "is live out and size not the same as allocation";
     return false;
   }
 
   assignment->AddAssignment(allocation, hlo_buffer, /*offset=*/0,
-                            assignment->HloBufferSize(hlo_buffer));
+                            hlo_buffer_size);
   return true;
 }  // namespace xla
 
 Status BufferAssigner::AssignSingleHloBuffer(
-    const HloBuffer* hlo_buffer, bool is_thread_local,
+    const HloBuffer* hlo_buffer, int64_t buffer_size, bool is_thread_local,
     absl::flat_hash_map<const HloComputation*,
                         absl::flat_hash_set<const HloValue*>>*
         buffers_to_assign_sequentially,
     std::vector<BufferAllocation::Index>* allocation_indices,
     BufferAssignment* assignment) {
-  const int64_t buffer_size = assignment->HloBufferSize(*hlo_buffer);
   for (const HloValue* value : hlo_buffer->values()) {
     if (value->instruction()->opcode() == HloOpcode::kConstant) {
       if (allocate_buffers_for_constants_) {
@@ -1329,7 +1327,8 @@ Status BufferAssigner::AssignSingleHloBuffer(
              assignment->GetAllSlices(operand, /*index=*/{})) {
           BufferAllocation* allocation =
               assignment->GetMutableAllocation(operand_slice.index());
-          if (MaybeAssignBuffer(allocation, *hlo_buffer, assignment)) {
+          if (MaybeAssignBuffer(allocation, *hlo_buffer, buffer_size,
+                                assignment)) {
             VLOG(3) << "Reusing (operand) allocation #" << allocation->index()
                     << " for: " << *hlo_buffer;
             return OkStatus();
@@ -1345,7 +1344,7 @@ Status BufferAssigner::AssignSingleHloBuffer(
        allocation_index >= 0; allocation_index--) {
     BufferAllocation* allocation = assignment->GetMutableAllocation(
         allocation_indices->at(allocation_index));
-    if (MaybeAssignBuffer(allocation, *hlo_buffer, assignment)) {
+    if (MaybeAssignBuffer(allocation, *hlo_buffer, buffer_size, assignment)) {
       VLOG(3) << "Reusing allocation #" << allocation->index()
               << " for: " << *hlo_buffer;
       return OkStatus();
@@ -1403,7 +1402,7 @@ Status BufferAssigner::AssignBuffersForComputations(
   if (computations.empty()) {
     return OkStatus();
   }
-  std::vector<const HloBuffer*> sorted_buffers;
+  std::vector<std::pair<const HloBuffer*, int64_t>> sorted_buffers;
 
   // First assign the preset allocations.
   absl::flat_hash_set<const HloBuffer*> preset_assigned_buffers;
@@ -1422,7 +1421,7 @@ Status BufferAssigner::AssignBuffersForComputations(
     TF_RET_CHECK(!buffer.values().empty());
     const HloComputation* comp = buffer.values()[0]->instruction()->parent();
     if (absl::c_linear_search(computations, comp)) {
-      sorted_buffers.push_back(&buffer);
+      sorted_buffers.emplace_back(&buffer, assignment->HloBufferSize(buffer));
     }
   }
 
@@ -1466,11 +1465,16 @@ Status BufferAssigner::AssignBuffersForComputations(
   }
 
   absl::c_sort(
-      sorted_buffers, [&post_order_position, &alias_analysis, assignment](
-                          const HloBuffer* a, const HloBuffer* b) {
+      sorted_buffers,
+      [&post_order_position, &alias_analysis](
+          std::pair<const HloBuffer*, int64_t> a_buffer_and_size,
+          std::pair<const HloBuffer*, int64_t> b_buffer_and_size) {
         // Primary sort is by decreasing buffer size.
-        const int64_t a_size = assignment->HloBufferSize(*a);
-        const int64_t b_size = assignment->HloBufferSize(*b);
+        const HloBuffer* a = a_buffer_and_size.first;
+        const HloBuffer* b = b_buffer_and_size.first;
+
+        const int64_t a_size = a_buffer_and_size.second;
+        const int64_t b_size = b_buffer_and_size.second;
         if (a_size != b_size) {
           return a_size > b_size;  // use ">" for decreasing size.
         }
@@ -1501,12 +1505,14 @@ Status BufferAssigner::AssignBuffersForComputations(
 
   std::vector<BufferAllocation::Index> allocation_indices;
 
-  for (const HloBuffer* buffer : sorted_buffers) {
+  for (auto buffer_and_size : sorted_buffers) {
+    const HloBuffer* buffer = buffer_and_size.first;
+    int64_t buffer_size = buffer_and_size.second;
     VLOG(3) << "=================================================";
     VLOG(3) << "Assigning buffer for " << *buffer;
-    TF_RETURN_IF_ERROR(AssignSingleHloBuffer(buffer, is_thread_local,
-                                             buffers_to_assign_sequentially,
-                                             &allocation_indices, assignment));
+    TF_RETURN_IF_ERROR(AssignSingleHloBuffer(
+        buffer, buffer_size, is_thread_local, buffers_to_assign_sequentially,
+        &allocation_indices, assignment));
   }
   return OkStatus();
 }
