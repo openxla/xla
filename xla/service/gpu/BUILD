@@ -2373,6 +2373,7 @@ cc_library(
         "compile_module_to_llvm_ir.h",
     ],
     deps = [
+        ":buffer_sharing",
         ":executable_proto_cc",
         ":fusion_wrapper",
         ":gpu_constants",
