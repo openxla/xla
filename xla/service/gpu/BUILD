@@ -4451,16 +4451,13 @@ cc_library(
     srcs = ["loop_double_buffer_transformer.cc"],
     hdrs = ["loop_double_buffer_transformer.h"],
     deps = [
-        ":gpu_device_info",
         ":gpu_fusible",
         ":gpu_types",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:while_loop_analysis",
-        "//xla/service:fusion_node_indexing_evaluation",
-        "//xla/service:fusion_queue",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -4468,3 +4465,18 @@ cc_library(
         "@com_google_absl//absl/strings",
     ],
 )
+
+xla_cc_test(
+    name = "loop_double_buffer_transformer_test",
+    srcs = if_gpu_is_configured(["loop_double_buffer_transformer_test.cc"]),
+    tags = tf_cuda_tests_tags(),
+    deps = if_gpu_is_configured([
+        ":gpu_compiler",
+        ":loop_double_buffer_transformer",
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+    ]),
+)
+

@@ -1,4 +1,4 @@
-/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,6 +26,15 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// This pass performs the unrolling-by-2 loop transformation
+// to effectively achieve double buffering between inputs and outputs
+// of previously rolled iterations.
+// This pass only runs on loops with known trip counts.
+// For even number of iterations, unrolling-by-2 will be done directly.
+// For odd number of iterations, the first iteration of the loop will be
+// peeled outside of the while loop to make the trip count an even number,
+// then proceed to unroll by 2.
+// It also updates the trip count property of the loop to the correct one (n/2).
 class LoopDoubleBufferTransformer : public HloModulePass {
  public:
   LoopDoubleBufferTransformer() = default;
