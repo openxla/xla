@@ -191,7 +191,7 @@ cc_library(
     name = "test",
     testonly = 1,
     hdrs = ["test.h"],
-    visibility = [":friends"],
+    visibility = ["//visibility:public"],
     deps = [
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:test",
@@ -202,7 +202,7 @@ cc_library(
     name = "types",
     hdrs = ["types.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = [":friends"],
+    visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/strings:str_format",
         "@eigen_archive//:eigen3",
@@ -760,7 +760,7 @@ xla_cc_test(
 cc_library(
     name = "array4d",
     hdrs = ["array4d.h"],
-    visibility = [":friends"],
+    visibility = ["//visibility:public"],
     deps = [
         ":array",
         ":array2d",
@@ -1019,6 +1019,7 @@ cc_library(
     name = "parse_flags_from_env",
     srcs = ["parse_flags_from_env.cc"],
     hdrs = ["parse_flags_from_env.h"],
+    visibility = ["//visibility:public"],
     deps =
         [
             ":types",
@@ -1054,7 +1055,7 @@ cc_library(
     ],
     hdrs = ["debug_options_flags.h"],
     copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]),
-    visibility = [":friends"],
+    visibility = ["//visibility:public"],
     deps =
         [
             ":parse_flags_from_env",
@@ -1159,6 +1160,7 @@ tf_proto_library(
     srcs = ["autotuning.proto"],
     make_default_target_header_only = True,
     protodeps = ["@tsl//tsl/protobuf:dnn_proto"],
+    visibility = ["//visibility:public"],
 )
 
 cc_library(

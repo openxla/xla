@@ -52,6 +52,7 @@ cc_library(
         "hlo_sharding.h",
         "hlo_sharding_metadata.h",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":tile_assignment",
         "//xla:array",

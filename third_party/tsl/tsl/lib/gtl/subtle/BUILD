@@ -14,7 +14,6 @@ filegroup(
         "map_traits.h",
     ],
     visibility = [
-        "//tensorflow/core/lib/gtl/subtle:__pkg__",
-        "//tsl/lib/gtl:__pkg__",
+        "//visibility:public",
     ],
 )

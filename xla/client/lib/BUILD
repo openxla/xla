@@ -26,6 +26,7 @@ cc_library(
     name = "arithmetic",
     srcs = ["arithmetic.cc"],
     hdrs = ["arithmetic.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":constants",
         "//xla:shape_util",
@@ -96,6 +97,7 @@ cc_library(
     name = "constants",
     srcs = ["constants.cc"],
     hdrs = ["constants.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//xla:literal_util",
         "//xla:shape_util",
@@ -111,6 +113,7 @@ cc_library(
     name = "broadcast",
     srcs = ["broadcast.cc"],
     hdrs = ["broadcast.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//xla:shape_util",
         "//xla:status_macros",

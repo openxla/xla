@@ -1,8 +1,8 @@
+load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
-load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -26,6 +26,7 @@ package(
 cc_library(
     name = "exact_uniform_int",
     hdrs = ["exact_uniform_int.h"],
+    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -40,6 +41,7 @@ cc_library(
         "random_distributions.h",
         "simple_philox.h",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":exact_uniform_int",
         ":philox_random",
@@ -58,8 +60,7 @@ cc_library(
     hdrs = ["random_distributions_utils.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//tensorflow/core/lib/random:__pkg__",
-        "//tensorflow/lite:__subpackages__",
+        "//visibility:public",
     ],
     deps = [":philox_random"],
 )
@@ -69,9 +70,7 @@ cc_library(
     hdrs = ["philox_random.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/random:__pkg__",
-        "//tensorflow/lite:__subpackages__",
+        "//visibility:public",
     ],
 )
 
@@ -126,8 +125,7 @@ filegroup(
         "simple_philox.h",
     ],
     visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/random:__pkg__",
+        "//visibility:public",
     ],
 )
 
@@ -139,8 +137,7 @@ filegroup(
         "weighted_picker.h",
     ],
     visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/random:__pkg__",
+        "//visibility:public",
     ],
 )
 
@@ -168,8 +165,7 @@ filegroup(
         "weighted_picker.h",
     ],
     visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/random:__pkg__",
+        "//visibility:public",
     ],
 )
 

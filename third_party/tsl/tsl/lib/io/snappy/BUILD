@@ -32,6 +32,7 @@ cc_library(
     name = "snappy_inputbuffer",
     srcs = ["snappy_inputbuffer.cc"],
     hdrs = ["snappy_inputbuffer.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//tsl/lib/io:inputstream_interface",
         "//tsl/platform:env",
@@ -48,6 +49,7 @@ cc_library(
     name = "snappy_outputbuffer",
     srcs = ["snappy_outputbuffer.cc"],
     hdrs = ["snappy_outputbuffer.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//tsl/platform",
         "//tsl/platform:env",
@@ -63,6 +65,7 @@ cc_library(
     name = "snappy_inputstream",
     srcs = ["snappy_inputstream.cc"],
     hdrs = ["snappy_inputstream.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//tsl/lib/io:inputstream_interface",
         "//tsl/platform:errors",
@@ -75,6 +78,7 @@ cc_library(
 cc_library(
     name = "snappy_compression_options",
     hdrs = ["snappy_compression_options.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//tsl/platform:types",
     ],

@@ -1,12 +1,12 @@
 # Description:
 # C API for TensorFlow, for use by client language bindings.
 
-load("//tsl/platform:build_config.bzl", "tsl_cc_test")
-load("//tsl/platform:rules_cc.bzl", "cc_library")
 load("//tsl:tsl.bzl", "tsl_copts", "tsl_gpu_library")
 
 # buildifier: disable=same-origin-load
 load("//tsl:tsl.default.bzl", "filegroup")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -21,7 +21,7 @@ filegroup(
     srcs = [
         "tsl_status.h",
     ],
-    visibility = ["//tensorflow:__subpackages__"],
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -112,6 +112,6 @@ filegroup(
     name = "tsl_status_internal_headers",
     srcs = ["tsl_status_internal.h"],
     visibility = [
-        "//tensorflow/c:__subpackages__",
+        "//visibility:public",
     ],
 )

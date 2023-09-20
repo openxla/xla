@@ -31,6 +31,7 @@ cc_library(
     name = "alias_analysis",
     srcs = ["alias_analysis.cc"],
     hdrs = ["alias_analysis.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":ir_array",
         ":llvm_type_conversion_util",

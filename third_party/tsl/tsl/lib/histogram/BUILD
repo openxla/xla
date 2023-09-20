@@ -18,8 +18,7 @@ cc_library(
     srcs = ["histogram.cc"],
     hdrs = ["histogram.h"],
     visibility = [
-        "//tensorflow/core/lib/histogram:__pkg__",
-        "//tsl/lib/monitoring:__pkg__",
+        "//visibility:public",
     ],
     deps = [
         "//tsl/platform:logging",
@@ -47,7 +46,7 @@ filegroup(
     srcs = [
         "histogram.h",
     ],
-    visibility = ["//tensorflow/core/lib/histogram:__pkg__"],
+    visibility = ["//visibility:public"],
 )
 
 tsl_cc_test(

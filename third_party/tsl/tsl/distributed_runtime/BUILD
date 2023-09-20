@@ -19,6 +19,7 @@ cc_library(
     name = "call_options",
     srcs = ["call_options.cc"],
     hdrs = ["call_options.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//tsl/platform:macros",
         "//tsl/platform:mutex",

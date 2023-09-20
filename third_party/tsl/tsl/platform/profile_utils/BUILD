@@ -1,15 +1,15 @@
 # Description:
 # profile_utils targets.
 
-load("//tsl:tsl.bzl", "set_external_visibility")
+load(
+    "//tsl:tsl.bzl",
+    "set_external_visibility",
+    "tsl_copts",
+)
 load("//tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
-)
-load(
-    "//tsl:tsl.bzl",
-    "tsl_copts",
 )
 
 package(
@@ -40,8 +40,7 @@ filegroup(
         "clock_cycle_profiler.cc",
     ],
     visibility = [
-        "//tensorflow/core/platform:__subpackages__",
-        "//tsl/platform:__pkg__",
+        "//visibility:public",
     ],
 )
 

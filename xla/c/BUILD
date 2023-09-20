@@ -14,6 +14,7 @@ cc_library(
     hdrs = [
         "c_api_decl.h",
     ],
+    visibility = ["//visibility:public"],
     deps = [
     ],
 )

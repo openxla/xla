@@ -44,7 +44,7 @@ filegroup(
     srcs = [
         "proto_serialization.h",
     ],
-    visibility = ["//tensorflow/core/lib/strings:__pkg__"],
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -52,7 +52,7 @@ filegroup(
     srcs = [
         "proto_serialization.h",
     ],
-    visibility = ["//tensorflow/core/lib/strings:__pkg__"],
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -60,5 +60,5 @@ filegroup(
     srcs = [
         "proto_serialization.h",
     ],
-    visibility = ["//tensorflow/core/lib/strings:__pkg__"],
+    visibility = ["//visibility:public"],
 )

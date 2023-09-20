@@ -162,7 +162,7 @@ cc_library(
     name = "pjrt_client",
     srcs = ["pjrt_client.cc"],
     hdrs = ["pjrt_client.h"],
-    visibility = ["//xla:friends"],
+    visibility = ["//visibility:public"],
     deps = [
         ":pjrt_compiler",
         ":pjrt_device_description",
@@ -328,7 +328,7 @@ cc_library(
     name = "utils",
     srcs = ["utils.cc"],
     hdrs = ["utils.h"],
-    visibility = ["//xla:friends"],
+    visibility = ["//visibility:public"],
     deps = [
         "//xla:shape_util",
         "//xla:status",

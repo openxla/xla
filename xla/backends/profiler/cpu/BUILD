@@ -44,8 +44,7 @@ cc_library(
     name = "python_tracer",
     srcs = ["python_tracer_factory.cc"],
     visibility = [
-        "//xla/python:__pkg__",
-        # copybara:uncomment "//tensorflow/core/profiler:internal",
+        "//visibility:public",
     ],
     deps = [
         ":python_tracer_impl",

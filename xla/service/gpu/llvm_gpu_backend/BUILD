@@ -27,6 +27,7 @@ cc_library(
         "gpu_backend_lib.h",
         "utils.h",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         "//xla:status_macros",
         "//xla:statusor",

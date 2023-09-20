@@ -14,6 +14,7 @@ cc_library(
     srcs = ["error_util.cc"],
     hdrs = ["error_util.h"],
     compatible_with = get_compatible_with_portable(),
+    visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
