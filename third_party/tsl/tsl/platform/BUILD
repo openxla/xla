@@ -1081,13 +1081,6 @@ cc_library(
 )
 
 cc_library(
-    name = "cuda",
-    deps = [
-        "@local_config_cuda//cuda:cudart_static",
-    ],
-)
-
-cc_library(
     name = "dso_loader",
     hdrs = ["dso_loader.h"],
     deps = [
