@@ -789,6 +789,7 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
 
     if (debug_options.xla_gpu_enable_while_loop_double_buffering()) {
       pipeline.AddPass<LoopDoubleBufferTransformer>();
+      pipeline.AddPass<TupleSimplifier>();
       pipeline.AddPass<HloDCE>();
     }
 

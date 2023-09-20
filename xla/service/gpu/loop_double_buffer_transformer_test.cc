@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/hlo_dce.h"
+#include "xla/service/tuple_simplifier.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 
@@ -101,8 +102,9 @@ ENTRY main {
                           ParseAndReturnVerifiedModule(kModuleString));
   LoopDoubleBufferTransformer double_buffer;
   HloDCE dce;
-
+  TupleSimplifier tuple_simp;
   ASSERT_IS_OK(double_buffer.Run(module.get()).status());
+  ASSERT_IS_OK(tuple_simp.Run(module.get()).status());
   ASSERT_IS_OK(dce.Run(module.get()).status());
 
   HloInstruction* while_instruction;
@@ -171,8 +173,9 @@ ENTRY main {
                           ParseAndReturnVerifiedModule(kModuleString));
   LoopDoubleBufferTransformer double_buffer;
   HloDCE dce;
-
+  TupleSimplifier tuple_simp;
   ASSERT_IS_OK(double_buffer.Run(module.get()).status());
+  ASSERT_IS_OK(tuple_simp.Run(module.get()).status());
   ASSERT_IS_OK(dce.Run(module.get()).status());
 
   // We expect that for the while loop, no further copy needs to be added to the

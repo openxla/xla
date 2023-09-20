@@ -4475,6 +4475,7 @@ xla_cc_test(
         ":loop_double_buffer_transformer",
         "//xla:test",
         "//xla/hlo/ir:hlo",
+        "//xla/service:tuple_simplifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
     ]),
