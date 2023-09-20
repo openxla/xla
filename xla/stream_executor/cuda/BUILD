@@ -174,12 +174,6 @@ xla_cc_test(
     ],
 )
 
-alias(
-    name = "cudart_stub",
-    actual = "@tsl//tsl/cuda:cudart",
-    visibility = ["//visibility:public"],
-)
-
 # The activation library is tightly coupled to the executor library.
 # TODO(leary) split up cuda_gpu_executor.cc so that this can stand alone.
 cc_library(
@@ -218,18 +212,6 @@ cc_library(
     ]),
 )
 
-alias(
-    name = "cublas_stub",
-    actual = "@tsl//tsl/cuda:cublas",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cublas_lib",
-    actual = "@tsl//tsl/cuda:cublas",
-    visibility = ["//visibility:public"],
-)
-
 cc_library(
     name = "cublas_lt_header",
     hdrs = if_cuda_is_configured([
@@ -246,18 +228,6 @@ cc_library(
     ]) + ["@tsl//tsl/platform:errors"],
 )
 
-alias(
-    name = "cublas_lt_stub",
-    actual = "@tsl//tsl/cuda:cublas_lt",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cublas_lt_lib",
-    actual = "@tsl//tsl/cuda:cublas_lt",
-    visibility = ["//visibility:public"],
-)
-
 cc_library(
     name = "cublas_plugin",
     srcs = if_cuda_is_configured([
@@ -270,8 +240,6 @@ cc_library(
     ]),
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
-        ":cublas_lib",
-        ":cublas_lt_lib",
         ":cuda_activation",
         ":cuda_blas_utils",
         ":cuda_gpu_executor",
@@ -296,6 +264,8 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_timer",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/stream_executor/platform",
+        "@tsl//tsl/cuda:cublas",
+        "@tsl//tsl/cuda:cublas_lt",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
     ]) + if_static([
         "@tsl//tsl/platform:tensor_float_32_utils",
@@ -308,23 +278,11 @@ cc_library(
     srcs = if_cuda_is_configured(["cuda_blas_utils.cc"]),
     hdrs = if_cuda_is_configured(["cuda_blas_utils.h"]),
     deps = if_cuda_is_configured([
-        ":cublas_lib",
+        "@tsl//tsl/cuda:cublas",
         "@com_google_absl//absl/strings",
         "@local_config_cuda//cuda:cuda_headers",
         "//xla/stream_executor:stream_executor_headers",
     ]) + ["@tsl//tsl/platform:errors"],
-)
-
-alias(
-    name = "cufft_stub",
-    actual = "@tsl//tsl/cuda:cufft",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cufft_lib",
-    actual = "@tsl//tsl/cuda:cufft",
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -338,7 +296,6 @@ cc_library(
         ":cuda_platform_id",
         ":cuda_stream",
         ":cuda_helpers",
-        ":cufft_lib",
         "@local_config_cuda//cuda:cuda_headers",
         "//xla/stream_executor:event",
         "//xla/stream_executor:fft",
@@ -347,20 +304,9 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_helpers_header",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "@tsl//tsl/cuda:cufft",
     ]) + ["@tsl//tsl/platform:errors"],
     alwayslink = True,
-)
-
-alias(
-    name = "cudnn_stub",
-    actual = "@tsl//tsl/cuda:cudnn",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cudnn_lib",
-    actual = "@tsl//tsl/cuda:cudnn",
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -386,7 +332,6 @@ cc_library(
         ":cuda_gpu_executor",
         ":cuda_platform_id",
         ":cuda_stream",
-        ":cudnn_lib",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
@@ -394,6 +339,7 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudnn_header",
+        "@tsl//tsl/cuda:cudnn",
         "@tsl//tsl/cuda:cudnn_version",
         "@tsl//tsl/platform:tensor_float_32_utils",
         "//xla/stream_executor:dnn",
@@ -410,42 +356,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
     ],
     alwayslink = True,
-)
-
-alias(
-    name = "cupti_stub",
-    actual = "@tsl//tsl/cuda:cupti",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cusolver_stub",
-    actual = "@tsl//tsl/cuda:cusolver",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cusolver_lib",
-    actual = "@tsl//tsl/cuda:cusolver",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cusparse_stub",
-    actual = "@tsl//tsl/cuda:cusparse",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cusparse_lib",
-    actual = "@tsl//tsl/cuda:cusparse",
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "tensorrt_rpath_stub",
-    actual = "@tsl//tsl/cuda:tensorrt_rpath",
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -559,9 +469,9 @@ cc_library(
         ":cuda_platform",
         ":cudnn_plugin",
         ":cufft_plugin",
-        ":cusolver_lib",
-        ":cusparse_lib",
-        ":tensorrt_rpath_stub",
+        "@tsl//tsl/cuda:cusolver",
+        "@tsl//tsl/cuda:cusparse",
+        "@tsl//tsl/cuda:tensorrt_rpath",
     ],
     alwayslink = 1,
 )
@@ -587,7 +497,7 @@ cc_library(
             ],
         }),
         [
-            ":cudart_stub",
+            "@tsl//tsl/cuda:cudart",
         ] + select({
             "@tsl//tsl:macos": ["IOKit"],
             "//conditions:default": [],
