@@ -1032,7 +1032,6 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla/stream_executor",
-        "//xla/stream_executor:stream_executor_pimpl",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
@@ -1056,7 +1055,6 @@ cc_library(
         "//xla:util",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor:stream_executor_pimpl",
         "//xla/stream_executor/host:host_platform_id",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
@@ -1110,7 +1108,6 @@ cc_library(
         "//xla/hlo/ir:hlo_module_group",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor:stream_executor_pimpl",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
@@ -1510,7 +1507,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
-        "//xla/stream_executor:stream_executor_pimpl",
         "@tsl//tsl/platform:logging",
     ],
 )
@@ -3777,7 +3773,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
-        "//xla/stream_executor:stream_executor_pimpl",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
     ],
@@ -5227,7 +5222,6 @@ cc_library(
     hdrs = ["stream_pool.h"],
     deps = [
         "//xla/stream_executor",
-        "//xla/stream_executor:stream_executor_pimpl",
     ],
 )
 
