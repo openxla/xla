@@ -173,6 +173,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -187,6 +188,7 @@ cc_library(
     deps = [
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -238,6 +240,7 @@ cc_library(
     deps = [
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -267,6 +270,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
@@ -670,6 +674,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
