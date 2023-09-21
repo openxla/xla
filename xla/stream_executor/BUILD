@@ -7,7 +7,6 @@
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 load("@tsl//tsl:tsl.bzl", "set_external_visibility", "transitive_hdrs")
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
@@ -261,14 +260,6 @@ cc_library(
         "@tsl//tsl/framework:device_id",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/profiler/lib:traceme",
-    ],
-)
-
-filegroup(
-    name = "device_mem_allocator_headers",
-    srcs = [
-        "device_host_allocator.h",
-        "device_mem_allocator.h",
     ],
 )
 
