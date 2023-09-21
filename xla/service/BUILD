@@ -3725,7 +3725,7 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
-        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@tsl//tsl/platform:status",
     ],
