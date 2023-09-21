@@ -904,65 +904,6 @@ TEST_F(HloVerifierTestLayoutSensitive,
   ASSERT_TRUE(status.ok());
 }
 
-TEST_F(HloVerifierTest, AsyncStartAndAsyncDoneWrongType) {
-  const char* const hlo_string = R"(
-  HloModule Module
-
-  ENTRY AsyncStartAndAsyncDone {
-    p0 = f32[2,3] parameter(0)
-    async-start = ((f32[2,3]), f32[3,2], u32[]) custom-call-start(p0), custom_call_target="foo"
-    ROOT async-done = f32[2,3] custom-call-done(async-start), custom_call_target="foo"
-  }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnUnverifiedModule(hlo_string));
-
-  auto status = verifier().Run(module.get()).status();
-  ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.message(),
-              HasSubstr("async-done expects the async shape at index {1} to "
-                        "match the async computation root shape"));
-}
-
-TEST_F(HloVerifierTest, AsyncStartAndAsyncDoneWrongThreadName) {
-  const char* const hlo_string = R"(
-  HloModule Module
-
-  ENTRY AsyncStartAndAsyncDone {
-    p0 = f32[2,3] parameter(0)
-    async-start = ((f32[2,3]), f32[2,3], u32[]) custom-call-start(p0), async_execution_thread="parallel_thread", custom_call_target="foo"
-    ROOT async-done = f32[2,3] custom-call-done(async-start), async_execution_thread="main_thread", custom_call_target="bar"
-  }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnUnverifiedModule(hlo_string));
-
-  auto status = verifier().Run(module.get()).status();
-  ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.message(),
-              HasSubstr("thread name (main_thread vs parallel_thread)."));
-}
-
-TEST_F(HloVerifierTest, AsyncStartAndAsyncDoneWrongAttr) {
-  const char* const hlo_string = R"(
-  HloModule Module
-
-  ENTRY AsyncStartAndAsyncDone {
-    p0 = f32[2,3] parameter(0)
-    async-start = ((f32[2,3]), f32[2,3], u32[]) custom-call-start(p0), custom_call_target="foo"
-    ROOT async-done = f32[2,3] custom-call-done(async-start), custom_call_target="bar"
-  }
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnUnverifiedModule(hlo_string));
-
-  auto status = verifier().Run(module.get()).status();
-  ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.message(),
-              HasSubstr("async-done expects its wrapped async computation to "
-                        "be identical to its operand's"));
-}
-
 TEST_F(HloVerifierTest, AsyncStartMultipleAsyncDone) {
   const char* const hlo_string = R"(
   HloModule Module
@@ -2951,6 +2892,43 @@ ENTRY entry {
   Status status = verifier().Run(module.get()).status();
 
   TF_ASSERT_OK(status);
+}
+
+TEST_F(HloVerifierTest, ReduceScatterWrappedAsyncComputationMismatch) {
+  constexpr absl::string_view hlo = R"(
+    HloModule Module
+    add (lhs: u32[], rhs: u32[]) -> u32[] {
+       lhs = u32[] parameter(0)
+       rhs = u32[] parameter(1)
+       ROOT add = u32[] add(u32[] lhs, u32[] rhs)
+    }
+
+    async_wrapped (async_param: u32[8]) -> u32[4] {
+       async_param = u32[8]{0} parameter(0)
+       ROOT %reduce-scatter = u32[4]{0} reduce-scatter(u32[8]{0} async_param),
+         replica_groups={}, dimensions={0}, to_apply=add
+    }
+
+    async_wrapped.1 (async_param.1: u32[8]) -> u32[4] {
+       async_param.1 = u32[8]{0} parameter(0)
+       ROOT reduce-scatter.1 = u32[4]{0} reduce-scatter(u32[8]{0} async_param.1),
+         replica_groups={}, dimensions={0}, to_apply=add
+    }
+
+    ENTRY main (data: u32[8]) -> u32[4] {
+      data = u32[8]{0} parameter(0)
+      reduce-scatter-start = ((u32[8]{0}), u32[4]{0}) async-start(u32[8]{0} data),
+        calls=async_wrapped, backend_config={"is_sync":false}
+      ROOT r = u32[4]{0} async-done(((u32[8]{0}), u32[4]{0}) reduce-scatter-start),
+        calls=async_wrapped.1
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("expects its wrapped async computation to be identical"
+                        " to its operand's wrapped async computation "));
 }
 
 }  // namespace

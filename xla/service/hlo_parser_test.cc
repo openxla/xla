@@ -4717,6 +4717,88 @@ ENTRY %main {
             module->ToString(fp_options));
 }
 
+TEST_F(HloParserTest, AsyncStartAndAsyncDoneWrongType) {
+  const char* const original = R"(
+  HloModule Module
+
+  ENTRY AsyncStartAndAsyncDone {
+    p0 = f32[2,3] parameter(0)
+    async-start = ((f32[2,3]), f32[3,2], u32[]) custom-call-start(p0), custom_call_target="foo"
+    ROOT async-done = f32[2,3] custom-call-done(async-start), custom_call_target="foo"
+  }
+  )";
+
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(OkStatus(), result.status());
+  ExpectHasSubstr(result.status().message(),
+                  "expects the shape at async-update/done index {1} to match "
+                  "the async computation root shape");
+}
+
+TEST_F(HloParserTest, AsyncStartAndAsyncDoneWrongThreadName) {
+  const char* const original = R"(
+  HloModule Module
+
+  ENTRY AsyncStartAndAsyncDone {
+    p0 = f32[2,3] parameter(0)
+    async-start = ((f32[2,3]), f32[2,3], u32[]) custom-call-start(p0), async_execution_thread="parallel_thread", custom_call_target="foo"
+    ROOT async-done = f32[2,3] custom-call-done(async-start), async_execution_thread="main_thread", custom_call_target="foo"
+  }
+  )";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(OkStatus(), result.status());
+  ExpectHasSubstr(
+      result.status().message(),
+      "expects the same async thread name for async-start/update/done");
+}
+
+TEST_F(HloParserTest, AsyncStartAndAsyncDoneWrongAttr) {
+  const char* const original = R"(
+  HloModule Module
+
+  ENTRY AsyncStartAndAsyncDone {
+    p0 = f32[2,3] parameter(0)
+    async-start = ((f32[2,3]), f32[2,3], u32[]) custom-call-start(p0), custom_call_target="foo"
+    ROOT async-done = f32[2,3] custom-call-done(async-start), custom_call_target="bar"
+  }
+  )";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_NE(OkStatus(), result.status());
+  ExpectHasSubstr(
+      result.status().message(),
+      "expects the same wrapped computation name for async-start/update/done");
+}
+
+// Tests the parsing of wrapped async instructions. The initial input is without
+// syntax sugar and the roundtrip tests an input with syntax sugar.
+TEST_F(HloParserTest, ParseReduceScatterStartDone) {
+  const std::string original = R"(
+  HloModule module
+  add {
+    lhs = u32[] parameter(0)
+    rhs = u32[] parameter(1)
+    ROOT add = u32[] add(lhs, rhs)
+  }
+
+  ENTRY main {
+    data = u32[8] parameter(0)
+    reduce-scatter-start = ((u32[8]{0}), u32[4]{0})
+      reduce-scatter-start(u32[8]{0} data), replica_groups={}, dimensions={0},
+      to_apply=%add, backend_config="{\"is_sync\":false}"
+    ROOT r = u32[4]{0} reduce-scatter-done(((u32[8]{0}), u32[4]{0})
+      reduce-scatter-start), replica_groups={}, dimensions={0}, to_apply=%add
+  }
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(original));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto roundtrip_module,
+      ParseAndReturnVerifiedModule(module->ToString(
+          HloPrintOptions().set_syntax_sugar_async_ops(false))));
+  auto fp_options = HloPrintOptions::Fingerprint();
+  EXPECT_EQ(roundtrip_module->ToString(fp_options),
+            module->ToString(fp_options));
+}
+
 TEST_F(HloParserTest, LexesAsJsonDict) {
   EXPECT_TRUE(LexesAsJsonDict("{}"));
   EXPECT_TRUE(LexesAsJsonDict("{abc: 123}"));

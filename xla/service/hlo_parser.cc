@@ -1814,8 +1814,42 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         if (!root) {
           return nullptr;
         }
-        computations_.emplace_back(async_wrapped_builder.Build(root));
-        async_computation = computations_.back().get();
+
+        if ((opcode == HloOpcode::kAsyncUpdate ||
+             opcode == HloOpcode::kAsyncDone) &&
+            operands.size() == 1 && DynCast<HloAsyncInstruction>(operands[0])) {
+          async_computation = operands[0]->called_computations()[0];
+          std::unique_ptr<HloComputation> specified_computation =
+              async_wrapped_builder.Build(root);
+          // The execution thread of the computation is normally set when
+          // we create the async instruction below. Setting the execution
+          // thread here to support the equality comparison of the two
+          // computations.
+          specified_computation->SetExecutionThread(*async_execution_thread);
+          if (*specified_computation != *async_computation.value()) {
+            const char* error_message;
+            if (async_computation.value()->execution_thread() !=
+                *async_execution_thread) {
+              error_message =
+                  "expects the same async thread name for "
+                  "async-start/update/done";
+            } else if (async_computation.value()->root_instruction()->shape() !=
+                       specified_computation->root_instruction()->shape()) {
+              error_message =
+                  "expects the shape at async-update/done index {1} to match "
+                  "the async computation root shape";
+            } else {
+              error_message =
+                  "expects the same wrapped computation name for "
+                  "async-start/update/done";
+            }
+            TokenError(error_message);
+            return nullptr;
+          }
+        } else {
+          computations_.emplace_back(async_wrapped_builder.Build(root));
+          async_computation = computations_.back().get();
+        }
       } else {
         attrs["calls"] = {/*required=*/true, AttrTy::kHloComputation,
                           &async_computation};
