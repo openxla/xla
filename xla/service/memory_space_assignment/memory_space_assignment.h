@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_H_
-#define XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_H_
+#ifndef XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_MEMORY_SPACE_ASSIGNMENT_H_
+#define XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_MEMORY_SPACE_ASSIGNMENT_H_
 
 #include <cstdint>
 #include <functional>
@@ -42,8 +42,8 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
-#include "xla/service/memory_space_assignment.pb.h"
-#include "xla/service/memory_space_assignment_repacking.h"
+#include "xla/service/memory_space_assignment/memory_space_assignment.pb.h"
+#include "xla/service/memory_space_assignment/memory_space_assignment_repacking.h"
 #include "xla/shape.h"
 #include "xla/statusor.h"
 
@@ -682,7 +682,7 @@ class MemorySpaceAssignment {
       return *chunk_;
     }
     Chunk* mutable_chunk() { return &*chunk_; }
-    virtual void ReplaceOffset(int64_t offset);
+    void set_offset(int64_t offset);
     void set_start_time(int64_t start_time) { start_time_ = start_time; }
     void set_end_time(int64_t end_time) { end_time_ = end_time; }
     int64_t start_time() const { return start_time_; }
@@ -934,7 +934,12 @@ class MemorySpaceAssignment {
     // SlicedCopyAllocation, this is when all copies have ended.
     int64_t earliest_available_time() const override;
 
-    void ReplaceOffset(int64_t offset) override;
+    std::vector<int64_t> SliceOffsetsSortedByStartTime() const;
+    void AddDiffToAllSliceOffsets(int64_t diff);
+
+    // Used to update offsets and start times after repacking.
+    void ImportRepackedSliceData(
+        const MemorySpaceAssignmentRepacker::SlicedAllocationData& data);
 
     const std::vector<SliceDetail>& slice_details_sorted_by_start_time() const;
     std::vector<SliceDetail>& mutable_slice_details_sorted_by_start_time();
@@ -2500,6 +2505,9 @@ class AlternateMemoryBestFitHeap
   // Imports repacked allocations and updates the internal data structures
   // consistent with the new packing.
   void ImportRepackedAllocations();
+  // Helper functions to implement ImportRepackedAllocations.
+  void ImportRepackedNonSlicedAllocation(RepackAllocationBlock& block);
+  void ImportRepackedSlicedAllocation(RepackAllocationBlock& block);
 
   // Adds an asynchronous copy to allocations.
   void AddAsyncCopy(
@@ -2659,4 +2667,4 @@ class AlternateMemoryBestFitHeap
 }  // namespace memory_space_assignment
 }  // namespace xla
 
-#endif  // XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_H_
+#endif  // XLA_SERVICE_MEMORY_SPACE_ASSIGNMENT_MEMORY_SPACE_ASSIGNMENT_H_

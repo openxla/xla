@@ -95,6 +95,20 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_command_buffer",
+    srcs = if_gpu_is_configured(["gpu_command_buffer.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_command_buffer.h"]),
+    deps = [
+        ":gpu_driver_header",
+        ":gpu_executor_header",
+        ":gpu_stream",
+        "//xla/stream_executor:stream_executor_headers",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "gpu_event_header",
     hdrs = if_gpu_is_configured(["gpu_event.h"]),
     deps = if_gpu_is_configured([
@@ -126,6 +140,7 @@ cc_library(
         ":gpu_kernel_header",
         "//xla/stream_executor:event",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor:stream_executor_pimpl_header",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
@@ -194,8 +209,10 @@ cc_library(
     deps = [
         ":gpu_driver_header",
         "//xla/stream_executor:event",
+        "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor:stream_executor_pimpl_header",
         "//xla/stream_executor/platform",
+        "@tsl//tsl/platform:logging",
     ],
 )
 

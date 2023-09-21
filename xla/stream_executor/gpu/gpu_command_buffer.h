@@ -13,15 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "Eigen/Core"  // from @eigen_archive
-#include "xla/service/gpu/runtime/topk_kernel.cu.h"
+#ifndef XLA_STREAM_EXECUTOR_GPU_GPU_COMMAND_BUFFER_H_
+#define XLA_STREAM_EXECUTOR_GPU_GPU_COMMAND_BUFFER_H_
 
-namespace xla::gpu {
+#include "xla/stream_executor/stream_executor_internal.h"
 
-template void* GetTopKKernelForK<Eigen::bfloat16, 1>(int n);
-template void* GetTopKKernelForK<Eigen::bfloat16, 2>(int n);
-template void* GetTopKKernelForK<Eigen::bfloat16, 4>(int n);
-template void* GetTopKKernelForK<Eigen::bfloat16, 8>(int n);
-template void* GetTopKKernelForK<Eigen::bfloat16, 16>(int n);
+namespace stream_executor::gpu {
 
-}  // namespace xla::gpu
+// GpuCommandBuffer provides platform-specific CommandBufferInterface
+// implementation (it's backed by CUDA or HIP graphs on NVIDIA and AMD devices).
+class GpuCommandBuffer : public internal::CommandBufferInterface {};
+
+}  // namespace stream_executor::gpu
+
+#endif  // XLA_STREAM_EXECUTOR_GPU_GPU_COMMAND_BUFFER_H_

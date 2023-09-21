@@ -13,14 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/runtime/topk_kernel.cu.h"
+#ifndef XLA_PYTHON_LOGGING_H_
+#define XLA_PYTHON_LOGGING_H_
 
-namespace xla::gpu {
+namespace xla {
 
-template void* GetTopKKernelForK<float, 1>(int n);
-template void* GetTopKKernelForK<float, 2>(int n);
-template void* GetTopKKernelForK<float, 4>(int n);
-template void* GetTopKKernelForK<float, 8>(int n);
-template void* GetTopKKernelForK<float, 16>(int n);
+void InitializeAbslLogging();
 
-}  // namespace xla::gpu
+}  // namespace xla
+
+#endif  // XLA_PYTHON_LOGGING_H_

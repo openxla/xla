@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,11 +13,4 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_
-#define XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_
-
-// TODO(rspringer): Temporary redirection until all users - including gcudacc -
-// are using the new file.
-#include "xla/stream_executor/launch_dim.h"
-
-#endif  // XLA_STREAM_EXECUTOR_GPU_LAUNCH_DIM_H_
+#include "xla/stream_executor/gpu/gpu_command_buffer.h"

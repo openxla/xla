@@ -137,10 +137,10 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -796,6 +796,7 @@ cc_library(
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
@@ -811,6 +812,7 @@ xla_cc_test(
         ":pjrt_api",
         ":pjrt_c_api_client",
         ":pjrt_client",
+        ":pjrt_compiler",
         ":pjrt_executable",
         "//xla:shape_util",
         "//xla/client:xla_builder",

@@ -235,6 +235,38 @@ ENTRY entry {
   EXPECT_GT(result.shmem_bytes, dev_info.shared_memory_per_block);
 }
 
+TEST_F(TritonGemmTest, WorksWhenKIsDivisibleByBlockKButNotByBlockKTimesSplitK) {
+  // The condition mentioned in the test name is fulfilled by
+  // GemmKey(16, 64, 256, 8, 1, 4), which was part of the default configs for
+  // Ampere at the time of the addition of this test case.
+  constexpr absl::string_view kHloText = R"(
+HloModule extracted
+
+ENTRY e {
+  a = f16[16,5120]{1,0} parameter(0)
+  b = s8[5120,10240]{1,0} parameter(1)
+  converted_b = f16[5120,10240]{1,0} convert(b)
+  ROOT r = f16[16,10240]{1,0} dot(a, converted_b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  // This check tests if Triton is used at all plus it runs TritonAutotuner,
+  // which verifies if the generated kernels can run without errors such as
+  // CUDA_ERROR_ILLEGAL_ADDRESS.
+  MatchOptimizedHlo(kHloText, R"(
+; CHECK: ENTRY
+; CHECK-NEXT: parameter
+; CHECK-NEXT: parameter
+; CHECK-NEXT: fusion(
+; CHECK-SAME: kind=kCustom
+; CHECK-SAME: "block_m":
+  )");
+
+  // Not doing a comparison here, because the input matrices are quite big.
+  // If I reduce their size then they can no longer trigger the error, that I
+  // want to avoid with this test case.
+}
+
 TEST_F(TritonGemmTest, MultipleDims) {
   const std::string hlo_text = R"(
 HloModule t
@@ -369,25 +401,22 @@ TEST_F(TritonGemmTest, NondefaultOperandLayoutIsSupported) {
   GTEST_SKIP() << "This test times out when -UNDEBUG is set.";
 #endif
   const std::string kHloText = R"(
-HloModule m
-
 ENTRY r {
-  p1 = f16[9,1440,128]{2,1,0} parameter(1)
-  cp6 = f16[9,1440,128]{2,0,1} copy(p1)
-  cv4 = f32[9,1440,128]{2,0,1} convert(cp6)
-  p0 = f32[9,1440,1234]{2,1,0} parameter(0)
-  ROOT dot.10 = f32[9,128,1234]{2,1,0} dot(cv4, p0),
+  p1 = f16[9,140,128]{2,1,0} parameter(1)
+  cp = f16[9,140,128]{2,0,1} copy(p1)
+  cv = f32[9,140,128]{2,0,1} convert(cp)
+  p0 = f32[9,140,123]{2,1,0} parameter(0)
+  ROOT d = f32[9,128,123]{2,1,0} dot(cv, p0),
     lhs_batch_dims={0}, lhs_contracting_dims={1},
     rhs_batch_dims={0}, rhs_contracting_dims={1}
 })";
 
-  MatchOptimizedHlo(kHloText, R"(
-; CHECK: ENTRY
-; CHECK-NEXT: parameter
-; CHECK-NEXT: parameter
-; CHECK-NEXT: fusion
-; CHECK-SAME: kind=kCustom
-)");
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(kHloText));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }

@@ -1,11 +1,6 @@
 # Tools and utilities that aid in XLA development and usage.
 
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load(
-    "@tsl//tsl:tsl.bzl",
-    "if_cuda_or_rocm",
-)
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load(
     "//xla:xla.bzl",
@@ -14,10 +9,15 @@ load(
     "xla_py_proto_library",
 )
 load(
+    "@tsl//tsl:tsl.bzl",
+    "if_cuda_or_rocm",
+)
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
+load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
-load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -79,7 +79,6 @@ xla_cc_binary(
         "//xla/client:local_client",
         "//xla/service:hlo_proto_cc",
         "//xla/service:interpreter_plugin",
-        "//xla/stream_executor:stream_executor_pimpl",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
@@ -172,7 +171,6 @@ xla_cc_binary(
         "//xla/service",
         "//xla/service:hlo_proto_cc",
         "//xla/service:interpreter_plugin",
-        "//xla/stream_executor:stream_executor_pimpl",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
@@ -201,7 +199,6 @@ xla_cc_binary(
         "//xla/service",
         "//xla/service:hlo_proto_cc",
         "//xla/service:interpreter_plugin",
-        "//xla/stream_executor:stream_executor_pimpl",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
@@ -266,6 +263,69 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@tsl//tsl/platform:status",
+    ],
+)
+
+xla_cc_binary(
+    name = "hlo-expand",
+    testonly = True,
+    deps = [
+        ":hlo_expand_main",
+    ],
+)
+
+cc_library(
+    name = "hlo_expand_main",
+    testonly = True,
+    srcs = ["hlo_expand_main.cc"],
+    deps = [
+        ":hlo_expand_lib",
+        ":hlo_module_loader",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass_pipeline",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/util:command_line_flags",
+    ],
+)
+
+cc_library(
+    name = "hlo_expand_lib",
+    srcs = ["hlo_expand.cc"],
+    hdrs = ["hlo_expand.h"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/service:batchnorm_expander",
+        "//xla/service:cholesky_expander",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service:rng_bit_generator_expander",
+        "//xla/service:rng_expander",
+        "//xla/service:triangular_solve_expander",
+        "//xla/stream_executor:dnn",
+        "//xla/stream_executor:platform",
+        "@tsl//tsl/util:command_line_flags",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_expand_test",
+    srcs = ["tests/hlo_expand_test.cc"],
+    data = [
+        "tests/cholesky.hlo",
+    ],
+    deps = [
+        ":hlo-expand",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:subprocess",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 

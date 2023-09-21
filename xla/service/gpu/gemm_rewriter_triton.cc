@@ -820,6 +820,10 @@ DimOrderUpdatesOrError FusionContext::HandleDimensionAlteringOp(
   // Note: copying instead of using a const reference because
   // some operations (slice) will modify fragment properties in-place.
   Fragments src_fragments_order = dim_orders.at(src).TensorFragmentsOrder();
+  if (hlo->opcode() == HloOpcode::kSlice &&
+      ShapeUtil::IsEffectiveScalar(hlo->shape())) {
+    return FusionDecision("Slice to scalar is not implemented yet.");
+  }
   DimOrderUpdates result;
   if (hlo->opcode() == HloOpcode::kReduce || hlo->opcode() == HloOpcode::kPad) {
     // Operand 1 (the neutral value or padding value) has to be a scalar.
@@ -836,13 +840,12 @@ DimOrderUpdatesOrError FusionContext::HandleDimensionAlteringOp(
   std::vector<std::vector<Fragment*>> src_physical;
   src_physical.reserve(src->shape().rank());
   auto src_fragment_it = src_fragments_order.begin();
-  const auto src_fragment_end = src_fragments_order.end();
   for (int64_t dim_index : src->shape().layout().minor_to_major()) {
     const int64_t dim_size = src->shape().dimensions(dim_index);
     int64_t subdim_size_accumulator = 1;
     std::vector<Fragment*> subdim_group;
     do {
-      CHECK(src_fragment_it != src_fragment_end);
+      CHECK(src_fragment_it != src_fragments_order.end());
       subdim_size_accumulator *= src_fragment_it->full_size();
       subdim_group.push_back(&*src_fragment_it);
       ++src_fragment_it;
@@ -1231,49 +1234,60 @@ void FusionContext::TryToFuseWithInputsRecursively(
         old_to_new_mapping,
     std::vector<HloInstruction*>& fusion_inputs,
     HloComputation::Builder& builder) {
-  absl::flat_hash_set<const HloInstruction*> visited;
-  std::stack<HloInstruction*> to_fuse;
-  // Instructions at the edge of 'to_fuse' that can either get fused too or
-  // become parameters of the fusion. Used to track the number of parameters
-  // of the fusion.
+  // Instructions at the fusion edge that can either get fused too or
+  // become parameters of the fusion. Used to track the number of parameters.
   absl::flat_hash_set<const HloInstruction*> inputs;
-  auto try_fuse_one = [&](HloInstruction& hlo) {
+  // Traverse all connected instructions that could be fused, analyze them and
+  // collect ones that will be fused.
+  absl::flat_hash_set<const HloInstruction*> to_fuse_set;
+  std::list<HloInstruction*> to_fuse_list;
+  absl::flat_hash_set<const HloInstruction*> enqueued;
+  std::queue<HloInstruction*> to_visit;
+  to_visit.push(&root);
+  while (!to_visit.empty()) {
+    HloInstruction* hlo = to_visit.front();
+    to_visit.pop();
+    // Limit the total number of fusion parameters.
+    if (inputs.size() >= TritonFusionAnalysis::kMaxParameterPerScope &&
+        NumAddedParameters(*hlo) > 0) {
+      continue;
+    }
     const DimOrderUpdatesOrError result = AnalyzeForFusion(
-        hlo, /*as_input=*/true, old_to_new_mapping, gpu_version);
-    if (!std::holds_alternative<DimOrderUpdates>(result)) {
-      return false;
+        *hlo, /*as_input=*/true, old_to_new_mapping, gpu_version);
+    if (!std::holds_alternative<DimOrderUpdates>(result) ||
+        !MergeUpdates(std::get<DimOrderUpdates>(result))) {
+      continue;
     }
-
-    if (!MergeUpdates(std::get<DimOrderUpdates>(result))) {
-      return false;
+    if (hlo->opcode() != HloOpcode::kParameter) {
+      inputs.erase(hlo);
     }
-    to_fuse.push(&hlo);
-    if (hlo.opcode() != HloOpcode::kParameter) {
-      inputs.erase(&hlo);
-    }
-    inputs.insert(hlo.operands().cbegin(), hlo.operands().cend());
-    return true;
-  };
-  try_fuse_one(root);
-  visited.insert(&root);
-  while (!to_fuse.empty()) {
-    bool top_is_ready_to_fuse = true;
-    HloInstruction* hlo = to_fuse.top();
-    for (HloInstruction* operand : hlo->mutable_operands()) {
-      if (visited.insert(operand).second) {
-        // Stop adding new parameters.
-        if (inputs.size() >= TritonFusionAnalysis::kMaxParameterPerScope &&
-            NumAddedParameters(*operand) > 0) {
-          continue;
-        }
-        if (try_fuse_one(*operand)) {
-          top_is_ready_to_fuse = false;
-        }
+    inputs.insert(hlo->operands().cbegin(), hlo->operands().cend());
+    to_fuse_set.insert(hlo);
+    to_fuse_list.push_back(hlo);
+    for (HloInstruction* operand : hlo->operands()) {
+      if (enqueued.insert(operand).second) {
+        to_visit.push(operand);
       }
     }
-    if (top_is_ready_to_fuse) {
-      Fuse(*hlo, old_to_new_mapping, fusion_inputs, builder);
-      to_fuse.pop();
+  }
+  // Find one by one instructions that have no operands queued to be fused and
+  // fuse them.
+  while (!to_fuse_list.empty()) {
+    for (auto it = to_fuse_list.begin(); it != to_fuse_list.end();) {
+      bool ready_to_fuse = true;
+      for (const HloInstruction* operand : (*it)->operands()) {
+        if (to_fuse_set.contains(operand)) {
+          ready_to_fuse = false;
+          break;
+        }
+      }
+      if (ready_to_fuse) {
+        Fuse(**it, old_to_new_mapping, fusion_inputs, builder);
+        to_fuse_set.erase(*it);
+        it = to_fuse_list.erase(it);
+      } else {
+        ++it;
+      }
     }
   }
 }
