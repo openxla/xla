@@ -58,7 +58,6 @@ filegroup(
         "event.h",
         "executor_cache.h",
         "kernel.h",
-        "kernel_cache_config.h",
         "kernel_spec.h",
         "launch_dim.h",
         "module_spec.h",
@@ -153,6 +152,25 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "kernel",
+    srcs = ["kernel.cc"],
+    hdrs = ["kernel.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":device_memory",
+        ":platform",
+        ":stream_executor_headers",
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
 #===--------------------------------------------------------------------------------------------===#
 
 # The stream_executor_headers target does not prescribe an implementation.
@@ -171,7 +189,6 @@ cc_library(
         "executor_cache.h",
         "fft.h",
         "kernel.h",
-        "kernel_cache_config.h",
         "kernel_spec.h",
         "launch_dim.h",
         "numeric_options.h",
@@ -262,11 +279,6 @@ cc_library(
         "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:numbers",
     ],
-)
-
-cc_library(
-    name = "kernel_cache_config",
-    hdrs = ["kernel_cache_config.h"],
 )
 
 cc_library(
@@ -437,14 +449,12 @@ cc_library(
     hdrs = [
         "device_description.h",
         "kernel.h",
-        "kernel_cache_config.h",
         "stream_executor_pimpl.h",
     ],
     visibility = ["//visibility:public"],
     deps = [
         ":device_description",
         ":device_description_proto_cc",
-        ":kernel_cache_config",
         ":platform",
         ":stream_executor_headers",
         ":stream_executor_internal",
@@ -452,6 +462,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
@@ -483,6 +494,7 @@ cc_library(
         ":fft",
         ":host_or_device_scalar",
         ":kernel",
+        ":kernel_spec",
         ":launch_dim",
         ":platform",
         ":plugin_registry",
@@ -508,68 +520,6 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
         "@tsl//tsl/util:env_var",
-    ],
-)
-
-cc_library(
-    name = "kernel",
-    srcs = [
-        "fft.h",
-        "kernel.cc",
-        "plugin.h",
-        "stream.h",
-        "stream_executor_pimpl.h",
-        "temporary_device_memory.h",
-        "temporary_memory_manager.h",
-    ],
-    hdrs = [
-        "blas.h",
-        "device_description.h",
-        "device_options.h",
-        "event.h",
-        "kernel.h",
-        "kernel_spec.h",
-        "launch_dim.h",
-        "multi_platform_manager.h",
-        "platform.h",
-        "plugin_registry.h",
-        "stream_executor.h",
-        "stream_executor_internal.h",
-        "trace_listener.h",
-    ],
-    deps = [
-        ":allocator_stats",
-        ":data_type",
-        ":device_description",
-        ":device_description_proto_cc",
-        ":device_memory",
-        ":device_options",
-        ":fft",
-        ":kernel_cache_config",
-        ":kernel_spec",
-        ":launch_dim",
-        ":platform",
-        ":plugin",
-        ":plugin_registry",
-        ":stream_executor_headers",
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:optional",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -723,7 +673,6 @@ cc_library(
         "executor_cache.h",
         "fft.h",
         "kernel.h",
-        "kernel_cache_config.h",
         "kernel_spec.h",
         "launch_dim.h",
         "module_spec.h",
@@ -759,6 +708,7 @@ cc_library(
         ":dnn_proto_cc",
         ":event",
         ":kernel",
+        ":kernel_spec",
         ":launch_dim",
         ":multi_platform_manager",
         ":platform",

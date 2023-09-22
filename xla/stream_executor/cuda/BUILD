@@ -517,8 +517,6 @@ xla_cc_test(
         ":cuda_gpu_executor",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor:event",
-        "//xla/stream_executor:kernel",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "//xla/stream_executor/gpu:redzone_allocator",
         "@tsl//tsl/lib/core:status_test_util",
