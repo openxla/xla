@@ -207,6 +207,148 @@ ENTRY main {
               HloOpcode::kAllGatherDone);
 }
 
+TEST_F(GpuLoopDoubleBufferTransformerTest,
+       UnrolledLoopNoControlDepsForConstantAdd) {
+  const char* const kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+body {
+ input_tuple = (f32[], s32[]) parameter(0)
+ param_0 = f32[] get-tuple-element(input_tuple), index=0
+ cond = s32[] get-tuple-element(input_tuple), index=1
+ c2 = f32[] constant(2)
+ add = f32[] add(c2, param_0)
+ one = s32[] constant(1)
+ cond_plus_1 = s32[] add(cond, one)
+ ROOT output_tuple = (f32[], s32[]) tuple(add, cond_plus_1)
+}
+
+ENTRY main {
+ param_0 = f32[] parameter(0)
+ param_2 = s32[] constant(0)
+ tuple = (f32[], s32[]) tuple(param_0, param_2)
+ ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"11"}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  HloDCE dce;
+  TupleSimplifier tuple_simp;
+  ASSERT_IS_OK(double_buffer.Run(module.get()).status());
+  ASSERT_IS_OK(tuple_simp.Run(module.get()).status());
+  ASSERT_IS_OK(dce.Run(module.get()).status());
+
+  HloInstruction* while_instruction;
+  for (auto instr : module->entry_computation()->instructions()) {
+    if (instr->opcode() == HloOpcode::kWhile) {
+      while_instruction = instr;
+    }
+  }
+  TF_ASSERT_OK_AND_ASSIGN(
+      WhileLoopBackendConfig config,
+      while_instruction->backend_config<WhileLoopBackendConfig>());
+  int64_t exact_trip_count = config.known_trip_count().n();
+  // We expect that after unrolling, the total trip count is half of original
+  // count.
+  EXPECT_EQ(exact_trip_count, 5);
+
+  // We expect that after unrolling, there should be 4 adds
+  EXPECT_EQ(
+      CountInstructions((*while_instruction->while_body()), HloOpcode::kAdd),
+      4);
+
+  // We expect that after unrolling, the first operand of the output tuple
+  // should not have any control dependency since it's a elementwise add with a
+  // constant operand.
+  EXPECT_TRUE(while_instruction->while_body()
+                  ->root_instruction()
+                  ->operand(0)
+                  ->control_predecessors()
+                  .size() == 0);
+}
+
+TEST_F(GpuLoopDoubleBufferTransformerTest,
+       UnrolledLoopNoControlDepsForCollective) {
+  const char* const kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+ar_add {
+  Arg_1 = f32[] parameter(1)
+  Arg_0 = f32[] parameter(0)
+  ROOT add_ar = f32[] add(Arg_1, Arg_0)
+}
+
+body {
+ input_tuple = (f32[], s32[]) parameter(0)
+ param_0 = f32[] get-tuple-element(input_tuple), index=0
+ cond = s32[] get-tuple-element(input_tuple), index=1
+ all-reduce-start = f32[] all-reduce-start(param_0), channel_id=8, replica_groups={{0}}, to_apply=ar_add, backend_config="{\"is_sync\":false}"
+ one = s32[] constant(1)
+ all-reduce-done = f32[] all-reduce-done(all-reduce-start)
+ cond_plus_1 = s32[] add(cond, one)
+ ROOT output_tuple = (f32[], s32[]) tuple(all-reduce-done, cond_plus_1)
+}
+
+ENTRY main {
+ param_0 = f32[] parameter(0)
+ param_2 = s32[] constant(0)
+ tuple = (f32[], s32[]) tuple(param_0, param_2)
+ ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  HloDCE dce;
+  TupleSimplifier tuple_simp;
+  ASSERT_IS_OK(double_buffer.Run(module.get()).status());
+  ASSERT_IS_OK(tuple_simp.Run(module.get()).status());
+  ASSERT_IS_OK(dce.Run(module.get()).status());
+
+  HloInstruction* while_instruction;
+  for (auto instr : module->entry_computation()->instructions()) {
+    if (instr->opcode() == HloOpcode::kWhile) {
+      while_instruction = instr;
+    }
+  }
+  TF_ASSERT_OK_AND_ASSIGN(
+      WhileLoopBackendConfig config,
+      while_instruction->backend_config<WhileLoopBackendConfig>());
+  int64_t exact_trip_count = config.known_trip_count().n();
+  // We expect that after unrolling, the total trip count is half of original
+  // count.
+  EXPECT_EQ(exact_trip_count, 5);
+
+  // We expect that after unrolling, there should be 2 all-reduce-starts
+  EXPECT_EQ(CountInstructions((*while_instruction->while_body()),
+                              HloOpcode::kAllReduceStart),
+            2);
+  absl::flat_hash_set<int64_t> channel_ids;
+  for (HloInstruction* ar : while_instruction->while_body()->instructions()) {
+    if (ar->opcode() == HloOpcode::kAllReduceStart) {
+      // We expect that after unrolling, allreduces should not have any control
+      // deps.
+      EXPECT_TRUE(ar->control_predecessors().size() == 0);
+      channel_ids.insert(*(ar->channel_id()));
+    }
+  }
+  // we expect that all 2 allreduces will have different channel ids.
+  EXPECT_TRUE(channel_ids.size() == 2);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

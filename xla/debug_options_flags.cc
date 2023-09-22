@@ -1274,7 +1274,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_enable_while_loop_double_buffering),
       debug_options->xla_gpu_enable_while_loop_double_buffering(),
       "Enable double buffering for while loop"));
-
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

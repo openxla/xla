@@ -89,7 +89,6 @@ Status PeelInstructionsForOddTripCount(HloModule* module,
   CHECK(input_tuple->opcode() == HloOpcode::kTuple);
 
   auto old_loop_roots = while_body->root_instruction()->mutable_operands();
-  auto loop_inputs = input_tuple->mutable_operands();
   HloComputation* parent_comp = while_instr->parent();
   old_to_new_map[input_parameter] = input_tuple;
 
@@ -98,13 +97,13 @@ Status PeelInstructionsForOddTripCount(HloModule* module,
       continue;
     }
     VLOG(2) << "Peeling instruction " << old_instr->ToString();
-    HloInstruction* new_instr;
-    std::vector<HloInstruction*> new_operands;
-    for (HloInstruction* old_operand : old_instr->mutable_operands()) {
-      new_operands.push_back(old_to_new_map[old_operand]);
+    std::vector<HloInstruction*> new_operands(old_instr->operand_count());
+    for (int64_t i = 0; i < old_instr->operand_count(); i++) {
+      new_operands[i] = old_to_new_map[old_instr->mutable_operand(i)];
     }
-    new_instr = parent_comp->AddInstruction(old_instr->CloneWithNewOperands(
-        old_instr->shape(), new_operands, &context));
+    HloInstruction* new_instr =
+        parent_comp->AddInstruction(old_instr->CloneWithNewOperands(
+            old_instr->shape(), new_operands, &context));
 
     SetChannelIdForNewCollective(new_instr, module);
     old_to_new_map[old_instr] = new_instr;
@@ -117,7 +116,7 @@ Status PeelInstructionsForOddTripCount(HloModule* module,
     new_roots.push_back(old_to_new_map[instr]);
   }
   TF_RETURN_IF_ERROR(while_instr->ReplaceOperandWith(
-      0, parent_comp->AddInstruction(HloInstruction::CreateTuple(new_roots))));
+      0, old_to_new_map[while_body->root_instruction()]));
   VLOG(2) << "Replaced with new input tuple "
           << while_instr->operand(0)->ToString();
 
@@ -127,22 +126,18 @@ Status PeelInstructionsForOddTripCount(HloModule* module,
       HloInstruction* new_instr = old_to_new_map[old_instr];
       VLOG(2) << "Processing control predecessors for peeled instruction "
               << new_instr->ToString();
-      if (old_instr->control_predecessors().size() > 0) {
-        std::vector<HloInstruction*> new_control_pred(
-            old_instr->control_predecessors().size());
-        const std::vector<HloInstruction*>& preds =
-            old_instr->control_predecessors();
-        for (int64_t i = 0; i < preds.size(); i++) {
-          new_control_pred[i] = old_to_new_map[preds[i]];
-        }
+      std::vector<HloInstruction*> new_control_pred(
+          old_instr->control_predecessors().size());
+      for (HloInstruction* pred : old_instr->control_predecessors()) {
+        new_control_pred.push_back(old_to_new_map[pred]);
+      }
 
-        TF_RETURN_IF_ERROR(new_instr->DropAllControlDeps());
-        for (HloInstruction* new_pred : new_control_pred) {
-          TF_RETURN_IF_ERROR(new_pred->AddControlDependencyTo(new_instr));
-          VLOG(2) << "Adding " << new_pred->ToString()
-                  << " to control dependency of peeled instruction: "
-                  << new_instr->ToString();
-        }
+      TF_RETURN_IF_ERROR(new_instr->DropAllControlDeps());
+      for (HloInstruction* new_pred : new_control_pred) {
+        TF_RETURN_IF_ERROR(new_pred->AddControlDependencyTo(new_instr));
+        VLOG(2) << "Adding " << new_pred->ToString()
+                << " to control dependency of peeled instruction: "
+                << new_instr->ToString();
       }
     }
   }
@@ -155,10 +150,9 @@ StatusOr<bool> LoopDoubleBufferTransformer::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
   std::vector<HloInstruction*> while_instrs;
-  for (HloComputation* comp : module->computations(execution_threads)) {
-    absl::c_copy_if(comp->instructions(), std::back_inserter(while_instrs),
-                    HloPredicateIsOp<HloOpcode::kWhile>);
-  }
+  absl::c_copy_if(module->entry_computation()->instructions(),
+                  std::back_inserter(while_instrs),
+                  HloPredicateIsOp<HloOpcode::kWhile>);
   VLOG(2) << "Processing " << while_instrs.size() << " while loops.";
 
   for (HloInstruction* while_instr : while_instrs) {
@@ -185,17 +179,6 @@ StatusOr<bool> LoopDoubleBufferTransformer::Run(
     absl::flat_hash_map<HloInstruction*, HloInstruction*> old_to_new_map;
     absl::flat_hash_set<HloInstruction*> skip_control_dep_injection;
 
-    std::vector<HloInstruction*> input_consumers;
-    // This captures all functional nodes that consume the input tuple along
-    // with what operand index the GTE is feeding into and corresponding tuple
-    // index. We will need these to inject control deps later.
-    for (HloInstruction* user : input_parameter->users()) {
-      CHECK(user->opcode() == HloOpcode::kGetTupleElement);
-      for (HloInstruction* consumer : user->users()) {
-        input_consumers.push_back(consumer);
-      }
-    }
-
     if (exact_trip_count % 2) {
       VLOG(2) << "Found loops with odd trip count, 1 iteration will be peeled "
                  "outside of the main body.";
@@ -203,20 +186,19 @@ StatusOr<bool> LoopDoubleBufferTransformer::Run(
       exact_trip_count -= 1;
     }
     HloCloneContext context(module, "double_buffer_clone");
-    old_to_new_map[input_parameter] =
-        while_body->AddInstruction(HloInstruction::CreateTuple(old_loop_roots));
+    old_to_new_map[input_parameter] = while_body->root_instruction();
     for (HloInstruction* old_instr : while_body->MakeInstructionPostOrder()) {
       if (old_to_new_map.find(old_instr) != old_to_new_map.end()) {
         continue;
       }
-      HloInstruction* new_instr;
       VLOG(2) << "Cloning instruction " << old_instr->ToString();
       std::vector<HloInstruction*> new_operands;
       for (HloInstruction* old_operand : old_instr->mutable_operands()) {
         new_operands.push_back(old_to_new_map[old_operand]);
       }
-      new_instr = while_body->AddInstruction(old_instr->CloneWithNewOperands(
-          old_instr->shape(), new_operands, &context));
+      HloInstruction* new_instr =
+          while_body->AddInstruction(old_instr->CloneWithNewOperands(
+              old_instr->shape(), new_operands, &context));
 
       // If an elementwise instruction with constant operand is present, we
       // won't inject control dependency at the end to allow more constant
@@ -229,14 +211,8 @@ StatusOr<bool> LoopDoubleBufferTransformer::Run(
       VLOG(2) << "Added instruction " << new_instr->ToString();
     }
 
-    for (int64_t i = 0; i < old_loop_roots.size(); i++) {
-      TF_RETURN_IF_ERROR(old_to_new_map[input_parameter]->ReplaceOperandWith(
-          i, old_loop_roots[i]));
-    }
-
-    TF_RETURN_IF_ERROR(while_body->ReplaceInstruction(
-        while_body->root_instruction(),
-        old_to_new_map[while_body->root_instruction()]));
+    while_body->set_root_instruction(
+        old_to_new_map[while_body->root_instruction()]);
     VLOG(2) << "Replaced with new root "
             << while_body->root_instruction()->ToString();
 
@@ -246,31 +222,29 @@ StatusOr<bool> LoopDoubleBufferTransformer::Run(
         HloInstruction* new_instr = old_to_new_map[old_instr];
         VLOG(2) << "Processing control predecessors for "
                 << new_instr->ToString();
-        if (old_instr->control_predecessors().size() > 0) {
-          std::vector<HloInstruction*> new_control_pred(
-              old_instr->control_predecessors().size());
-          const std::vector<HloInstruction*>& preds =
-              old_instr->control_predecessors();
-          for (int64_t i = 0; i < preds.size(); i++) {
-            new_control_pred.push_back(old_to_new_map[preds[i]]);
-          }
+        std::vector<HloInstruction*> new_control_pred(
+            old_instr->control_predecessors().size());
+        for (HloInstruction* pred : old_instr->control_predecessors()) {
+          new_control_pred.push_back(old_to_new_map[pred]);
+        }
 
-          TF_RETURN_IF_ERROR(new_instr->DropAllControlDeps());
-          for (HloInstruction* new_pred : new_control_pred) {
-            TF_RETURN_IF_ERROR(new_pred->AddControlDependencyTo(new_instr));
-            VLOG(2) << "Adding " << new_pred->ToString()
-                    << " to control dependency of " << new_instr->ToString();
-          }
+        TF_RETURN_IF_ERROR(new_instr->DropAllControlDeps());
+        for (HloInstruction* new_pred : new_control_pred) {
+          TF_RETURN_IF_ERROR(new_pred->AddControlDependencyTo(new_instr));
+          VLOG(2) << "Adding " << new_pred->ToString()
+                  << " to control dependency of " << new_instr->ToString();
         }
       }
     }
-    for (HloInstruction* old_input : input_consumers) {
-      HloInstruction* new_input = old_to_new_map[old_input];
-      if (skip_control_dep_injection.find(old_input) ==
-              skip_control_dep_injection.end() &&
-          !IsCollective(old_input)) {
-        for (HloInstruction* old_root : old_loop_roots) {
-          TF_RETURN_IF_ERROR(old_root->AddControlDependencyTo(new_input));
+    for (HloInstruction* input_consumer : input_parameter->users()) {
+      for (HloInstruction* old_input : input_consumer->users()) {
+        HloInstruction* new_input = old_to_new_map[old_input];
+        if (skip_control_dep_injection.find(old_input) ==
+                skip_control_dep_injection.end() &&
+            !IsCollective(old_input)) {
+          for (HloInstruction* old_root : old_loop_roots) {
+            TF_RETURN_IF_ERROR(old_root->AddControlDependencyTo(new_input));
+          }
         }
       }
     }
