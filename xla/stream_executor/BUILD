@@ -89,12 +89,12 @@ filegroup(
 )
 
 #===--------------------------------------------------------------------------------------------===#
-# StreamExecutor platform-dependent implementation details
+# StreamExecutor platform-dependent interfaces
 #===--------------------------------------------------------------------------------------------===#
 
 # Only platform-dependent StreamExecutor implementations (e.g. StreamExecutor for GPUs) and targets
 # defined by StreamExecutor itself (e.g. `event`, `kernel`, etc.) can depend on internal
-# implementation details (interfaces that define platform-specific API).
+# interfaces (interfaces that define platform-specific API).
 #
 # External clients of StreamExecutor should depend on `stream_executor` target (links StreamExecutor
 # implementation in static build configuration), or a header only `stream_executor_headers`.
@@ -127,6 +127,30 @@ filegroup(
         "device_mem_allocator.h",
     ],
     visibility = ["//tensorflow/core:__pkg__"],
+)
+
+#===--------------------------------------------------------------------------------------------===#
+# StreamExecutor implementation
+#===--------------------------------------------------------------------------------------------===#
+
+# Targets that implement StreamExecutor APIs are private, and should not be used outside of
+# `stream_executor` package. Clients should depend on `stream_executor` (headers and
+# implementation) or `stream_executor_headers` (only headers, if there is a reason not to link
+# implementation) if they want to use StreamExecutor.
+
+cc_library(
+    name = "kernel_spec",
+    srcs = ["kernel_spec.cc"],
+    hdrs = ["kernel_spec.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:logging",
+    ],
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -174,6 +198,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
@@ -235,18 +260,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:numbers",
-    ],
-)
-
-cc_library(
-    name = "kernel_spec",
-    srcs = ["kernel_spec.cc"],
-    hdrs = ["kernel_spec.h"],
-    deps = [
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -341,6 +354,7 @@ cc_library(
         ":plugin",
         ":stream_executor_headers",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -419,6 +433,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -578,6 +593,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -763,6 +779,7 @@ cc_library(
     ],
     deps = [
         ":stream_executor_headers",
+        "@com_google_absl//absl/log:check",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
@@ -815,6 +832,7 @@ cc_library(
         ":stream_executor_headers",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -851,6 +869,7 @@ cc_library(
         ":device_memory_allocator",
         ":platform",
         ":stream_executor_headers",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:errors",
