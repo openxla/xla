@@ -2606,6 +2606,7 @@ cc_library(
         "//xla/service:executable",
         "//xla/service:flatten_call_graph",
         "//xla/service:float_normalization",
+        "//xla/service:float_support",
         "//xla/service:gather_expander",
         "//xla/service:gather_simplifier",
         "//xla/service:hlo_computation_deduplicator",
