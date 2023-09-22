@@ -2365,7 +2365,10 @@ cc_library(
     srcs = ["gpu_float_support.cc"],
     hdrs = ["gpu_float_support.h"],
     deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
         "//xla/service:float_support",
+        "@com_google_absl//absl/log:check",
     ],
 )
 
@@ -3572,8 +3575,13 @@ xla_test(
         "gpu",
     ],
     deps = [
+        "//xla:error_spec",
+        "//xla:xla_proto_cc",
+        "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
     ],
 )
 
