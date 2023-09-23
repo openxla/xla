@@ -18,6 +18,7 @@ limitations under the License.
 // TODO(b/142492876): Avoid depending on absl internal.
 #include "absl/base/internal/cycleclock.h"
 #include "absl/base/internal/sysinfo.h"
+#include "absl/strings/string_view.h"
 #include "tsl/platform/env_time.h"
 #include "tsl/platform/macros.h"
 #include "tsl/platform/mutex.h"
@@ -377,7 +378,7 @@ LogMessageFatal::~LogMessageFatal() {
 }
 
 void LogString(const char* fname, int line, int severity,
-               const string& message) {
+               absl::string_view message) {
   LogMessage(fname, line, severity) << message;
 }
 
