@@ -425,10 +425,10 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
   return context->context();
 }
 
-/* static */ tsl::Status GpuDriver::FuncGetAttribute(hipFuncAttribute attribute,
+/* static */ tsl::Status GpuDriver::FuncGetAttribute(hipFunction_attribute attribute,
                                                      hipFunction_t func,
                                                      int* attribute_value) {
-  RETURN_IF_ROCM_ERROR(hipFuncSetAttribute(func, attribute, *attribute_value),
+  RETURN_IF_ROCM_ERROR(wrap::hipFuncGetAttribute(attribute_value, attribute, func),
                        "Failed to query kernel attribute: ", attribute);
   return tsl::OkStatus();
 }
