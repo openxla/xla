@@ -473,8 +473,10 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
     ] + if_cuda_is_configured([
+        "@triton//:NVGPUToLLVM",
         "@triton//:TritonGPUToLLVM",
         "@triton//:TritonGPUTransforms",
+        "@triton//:TritonNvidiaGPUTransforms",
         "@triton//:TritonLLVMIR",
         "@triton//:TritonToTritonGPU",
     ]),
