@@ -85,16 +85,6 @@ StatusOr<bool> AllGatherOptimizer::Run(
 
       TF_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
           instruction, std::move(combined)));
-
-      auto check_instruction = [&](HloInstruction* inst) {
-        return absl::c_linear_search(computation->instructions(), inst);
-      };
-      if (check_instruction(left_all_gather)) {
-        TF_RETURN_IF_ERROR(computation->RemoveInstruction(left_all_gather));
-      }
-      if (check_instruction(right_all_gather)) {
-        TF_RETURN_IF_ERROR(computation->RemoveInstruction(right_all_gather));
-      }
       changed = true;
     }
   }

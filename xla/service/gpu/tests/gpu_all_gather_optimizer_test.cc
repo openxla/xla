@@ -87,7 +87,9 @@ add.1 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/true));
-  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 1);
+  // graph should contain 1 all-gather but since the node removal piece
+  // is diferred, they still exist at this stage
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 3);
   EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 2);
 }
 
@@ -140,6 +142,7 @@ add.2 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.2)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/false));
+  // see the comment for BranchesOptimized test
   EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 3);
   EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 3);
 }
@@ -172,7 +175,7 @@ add.2 = bf16[8,128,1024]{2,1,0} add(all-gather.1, all-gather.3)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/true));
-  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 1);
+  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 3);
   EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 3);
 }
 
