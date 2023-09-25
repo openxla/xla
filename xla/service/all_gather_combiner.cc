@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/service/collective_combiner_utils.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -45,7 +47,8 @@ namespace {
 // Combines the elements of to_combine into a single AllGather op. All entries
 // in to_combine must be AllGather ops with exactly one operand and the same
 // all_gather_dimension.
-Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
+Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine,
+                         absl::Span<HloInstruction* const> to_combine_ends) {
   if (to_combine.size() < 2) {
     return OkStatus();
   }

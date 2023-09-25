@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/mlir/backends/gpu2/transforms/passes.h"
 #include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
 #include "xla/mlir_hlo/transforms/gpu_passes.h"
+#include "xla/service/all_reduce_combiner.h"
 #include "xla/service/bitcast_dtypes_expander.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/dump.h"
@@ -347,6 +348,8 @@ Status CompileModuleToLlvmIrImpl(
     const HloDataflowAnalysis::CanShareBuffer& can_share_buffer_function,
     int pointer_size, CompileModuleResults* results,
     se::StreamExecutor* stream_exec) {
+  const DebugOptions& debug_options = hlo_module->config().debug_options();
+
   results->llvm_module = std::make_unique<llvm::Module>("", *llvm_context);
   results->llvm_module->setTargetTriple(target_triple);
   results->llvm_module->setDataLayout(data_layout);
@@ -355,6 +358,18 @@ Status CompileModuleToLlvmIrImpl(
       GetSchedulerMemoryLimit(hlo_module, gpu_device_info, pointer_size);
   TF_RETURN_IF_ERROR(
       ScheduleGpuModule(hlo_module, pointer_size, scheduler_mem_limit));
+  if (debug_options.xla_gpu_enable_postscheduling_combiners()) {
+    HloPassPipeline pipeline("post-scheduling-collectives-pipeline");
+    pipeline.AddPass<AsyncAllReduceCombiner>(
+        debug_options.xla_gpu_postscheduling_all_reduce_strategy());
+    // TODO(ecg): add AllGather and ReduceScatter async combiners.
+
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+    // The combiner might have modified op dependencies; re-run the scheduler.
+    TF_RETURN_IF_ERROR(
+        ScheduleGpuModule(hlo_module, pointer_size, scheduler_mem_limit));
+  }
+
   {
     HloPassPipeline pipeline("post-scheduling-passes");
 
