@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/all_reduce_combiner.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <list>
 #include <memory>
 #include <optional>
@@ -25,6 +26,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -35,9 +37,12 @@ limitations under the License.
 #include "xla/service/collective_combiner_utils.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -45,12 +50,14 @@ namespace {
 // Combines the elements of to_combine into a single AllReduce op. All
 // entries in to_combine must be AllReduce ops with exactly one operand
 // and the same reduction operation.
-Status CombineAllReduces(absl::Span<HloInstruction* const> to_combine) {
+Status CombineAllReduces(absl::Span<HloInstruction* const> to_combine,
+                         absl::Span<HloInstruction* const> to_combine_ends) {
   if (to_combine.size() < 2) {
     return OkStatus();
   }
   VLOG(1) << "Combined " << to_combine.size() << " CRS ops";
 
+  bool is_async = !to_combine_ends.empty();
   HloComputation& computation = *to_combine.back()->parent();
   HloComputation* reduction = to_combine[0]->to_apply();
   const HloOpcode type = reduction->root_instruction()->opcode();
@@ -62,7 +69,8 @@ Status CombineAllReduces(absl::Span<HloInstruction* const> to_combine) {
   VLOG(1) << "Combining set";
   for (HloInstruction* hlo : to_combine) {
     VLOG(1) << "Set element: " << hlo->ToString();
-    TF_RET_CHECK(hlo->opcode() == HloOpcode::kAllReduce);
+    TF_RET_CHECK(hlo->opcode() == (is_async ? HloOpcode::kAllReduceStart
+                                            : HloOpcode::kAllReduce));
     TF_RET_CHECK(hlo->operands().size() == 1);
     TF_RET_CHECK(hlo->to_apply() == reduction ||
                  (hlo->to_apply()->instruction_count() == 3 &&
@@ -78,49 +86,55 @@ Status CombineAllReduces(absl::Span<HloInstruction* const> to_combine) {
   HloInstruction* combined;
   // AllReduce ops with more than one operand produce a tuple.
   TF_RET_CHECK(operands.size() >= 2);
-  combined = computation.AddInstruction(HloInstruction::CreateAllReduce(
-      ShapeUtil::MakeTupleShapeWithPtrs(operand_shapes), operands, reduction,
-      to_combine.front()->replica_groups(),
-      /*constrain_layout=*/false, to_combine.front()->channel_id(),
-      Cast<HloAllReduceInstruction>(to_combine.front())
-          ->use_global_device_ids()));
-
+  auto create = [&](auto& f) {
+    return computation.AddInstruction(
+        f(ShapeUtil::MakeTupleShapeWithPtrs(operand_shapes), operands,
+          reduction, to_combine.front()->replica_groups(),
+          /*constrain_layout=*/false, to_combine.front()->channel_id(),
+          Cast<HloAllReduceInstruction>(to_combine.front())
+              ->use_global_device_ids()));
+  };
+  combined = is_async ? create(HloInstruction::CreateAllReduceStart)
+                      : create(HloInstruction::CreateAllReduce);
   // We have to propagate the sharding manually because Domain instructions are
   // not guaranteed to preserve it for side effecting instructions.
   combined->set_sharding(
       hlo_sharding_util::CreateTupleSharding(combined->shape(), to_combine));
   VLOG(1) << "Replacing with : " << combined->ToString();
 
-  // Replace all the smaller AllReduces with elements of the tuple output
-  // of the single bigger AllReduce.
-  for (int64_t i = 0; i < to_combine.size(); ++i) {
-    auto replace_with = HloInstruction::CreateGetTupleElement(
-        to_combine[i]->shape(), combined, i);
-    TF_RETURN_IF_ERROR(computation.ReplaceWithNewInstruction(
-        to_combine[i], std::move(replace_with)));
-  }
-  return OkStatus();
+  HloInstruction* combined_end =
+      is_async ? computation.AddInstruction(HloInstruction::CreateUnary(
+                     combined->shape(), HloOpcode::kAllReduceDone, combined))
+               : nullptr;
+
+  return CombineCollectives(&computation, combined, combined_end, to_combine,
+                            to_combine_ends, is_async);
 }
 }  // namespace
 
 AllReduceCombiner::AllReduceCombiner(int64_t combine_threshold_in_bytes,
-                                     int64_t combine_threshold_count)
+                                     int64_t combine_threshold_count,
+                                     bool is_async,
+                                     std::string_view async_strategy)
     : combine_threshold_in_bytes_(combine_threshold_in_bytes),
-      combine_threshold_count_(combine_threshold_count) {}
+      combine_threshold_count_(combine_threshold_count),
+      is_async_(is_async),
+      async_strategy_(async_strategy == "near" ? kNear : kTrivial) {}
 
 StatusOr<bool> AllReduceCombiner::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  VLOG(1) << "Running AllReduceCombiner with threshold of "
+  VLOG(1) << "Running " << name() << " with threshold of "
           << combine_threshold_in_bytes_ << " bytes";
 
   if (combine_threshold_in_bytes_ <= 0 || combine_threshold_count_ <= 0) {
-    VLOG(1) << "Skip AllReduceCombiner because the threshold is zero";
+    VLOG(1) << "Skip " << name() << " because the threshold is zero";
     return false;
   }
 
   if (hlo_query::ContainsLayoutConstrainedAllReduce(*module)) {
-    VLOG(1) << "Skip AllReduceCombiner because the module contains all-reduce "
+    VLOG(1) << "Skip " << name()
+            << " because the module contains all-reduce "
                "with constrained layouts";
     return false;
   }
@@ -128,12 +142,18 @@ StatusOr<bool> AllReduceCombiner::Run(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
+    HloModule* module = computation->parent();
+    if (is_async_) {
+      TF_RET_CHECK(module->has_schedule());
+    }
     TF_ASSIGN_OR_RETURN(auto domain_map, HloDomainMap::Create(computation, ""));
 
     auto key_fn =
-        [&domain_map](
+        [&domain_map, this](
             const HloInstruction* instruction) -> std::optional<AllReduceKey> {
-      if (instruction->opcode() != HloOpcode::kAllReduce) {
+      HloOpcode opcode =
+          is_async_ ? HloOpcode::kAllReduceStart : HloOpcode::kAllReduce;
+      if (instruction->opcode() != opcode) {
         return std::nullopt;
       }
       return GetAllReduceKey(instruction, domain_map.get());
@@ -143,7 +163,8 @@ StatusOr<bool> AllReduceCombiner::Run(
         bool computation_changed,
         CombineInstructionsByKey<AllReduceKey>(
             computation, key_fn, &CombineAllReduces,
-            combine_threshold_in_bytes_, combine_threshold_count_));
+            combine_threshold_in_bytes_, combine_threshold_count_, is_async_,
+            async_strategy_));
     changed |= computation_changed;
   }
 

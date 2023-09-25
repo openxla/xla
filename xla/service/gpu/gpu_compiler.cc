@@ -759,18 +759,20 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
 
   {
     HloPassPipeline pipeline("post-fusion optimization");
-    pipeline.AddPass<AllGatherCombiner>(
-        debug_options.xla_gpu_all_gather_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256);
-    pipeline.AddPass<AllReduceCombiner>(
-        debug_options.xla_gpu_all_reduce_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256);
-    pipeline.AddPass<ReduceScatterCombiner>(
-        debug_options.xla_gpu_reduce_scatter_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256);
+    if (debug_options.xla_gpu_enable_prescheduling_combiners()) {
+      pipeline.AddPass<AllGatherCombiner>(
+          debug_options.xla_gpu_all_gather_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256);
+      pipeline.AddPass<AllReduceCombiner>(
+          debug_options.xla_gpu_all_reduce_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256);
+      pipeline.AddPass<ReduceScatterCombiner>(
+          debug_options.xla_gpu_reduce_scatter_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256);
 
-    if (debug_options.xla_gpu_all_reduce_contiguous()) {
-      pipeline.AddPass<AllReduceContiguous>();
+      if (debug_options.xla_gpu_all_reduce_contiguous()) {
+        pipeline.AddPass<AllReduceContiguous>();
+      }
     }
 
     TF_RETURN_IF_ERROR(AddHloEmitterAutotuningPasses(

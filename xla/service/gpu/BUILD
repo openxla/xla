@@ -2409,6 +2409,7 @@ cc_library(
         "//xla/mlir/backends/gpu2/transforms:passes",
         "//xla/mlir/runtime/transforms:compilation_pipeline_gpu",
         "//xla/mlir_hlo:transforms_gpu_passes",
+        "//xla/service:all_reduce_combiner",
         "//xla/service:bitcast_dtypes_expander",
         "//xla/service:buffer_assignment",
         "//xla/service:dump",
