@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 
 namespace xla {
 
@@ -26,6 +27,7 @@ std::optional<AllReduceKey> GetAllReduceKey(const HloInstruction* instruction,
                                             const HloDomainMap* domain_map,
                                             bool ignore_replica_groups) {
   if (instruction->opcode() != HloOpcode::kAllReduce &&
+      instruction->opcode() != HloOpcode::kAllReduceStart &&
       instruction->opcode() != HloOpcode::kReduceScatter) {
     return std::nullopt;
   }

@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/service/collective_combiner_utils.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -45,12 +47,14 @@ namespace {
 // Combines the elements of to_combine into a single AllGather op. All entries
 // in to_combine must be AllGather ops with exactly one operand and the same
 // all_gather_dimension.
-Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
+Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine,
+                         absl::Span<HloInstruction* const> to_combine_ends) {
   if (to_combine.size() < 2) {
     return OkStatus();
   }
   VLOG(1) << "Combined " << to_combine.size() << " AllGather ops";
 
+  bool is_async = !to_combine_ends.empty();
   HloComputation& computation = *to_combine.back()->parent();
   int64_t all_gather_dimension =
       Cast<HloAllGatherInstruction>(to_combine.front())->all_gather_dimension();
@@ -61,26 +65,51 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
   VLOG(1) << "Combining set";
   for (HloInstruction* hlo : to_combine) {
     VLOG(1) << "Set element: " << hlo->ToString();
-    TF_RET_CHECK(hlo->opcode() == HloOpcode::kAllGather);
+    TF_RET_CHECK(hlo->opcode() == (is_async ? HloOpcode::kAllGatherStart
+                                            : HloOpcode::kAllGather));
     TF_RET_CHECK(hlo->operands().size() == 1);
     TF_RET_CHECK(Cast<HloAllGatherInstruction>(hlo)->all_gather_dimension() ==
                  all_gather_dimension);
-    TF_RET_CHECK(hlo->shape().IsArray());
+    const Shape* shape;
+    if (is_async) {
+      TF_RET_CHECK(hlo->shape().IsTuple());
+      TF_RET_CHECK(hlo->shape().tuple_shapes_size() == 2);
+      shape = &hlo->shape().tuple_shapes(1);
+    } else {
+      shape = &hlo->shape();
+    }
+    TF_RET_CHECK(shape->IsArray());
     for (HloInstruction* operand : hlo->operands()) {
       operands.push_back(operand);
-      output_shapes.push_back(&hlo->shape());
+      output_shapes.push_back(shape);
     }
   }
 
   HloInstruction* combined;
   // AllGather ops with more than one operand produce a tuple.
   TF_RET_CHECK(operands.size() >= 2);
-  combined = computation.AddInstruction(HloInstruction::CreateAllGather(
-      ShapeUtil::MakeTupleShapeWithPtrs(output_shapes), operands,
-      all_gather_dimension, to_combine.front()->replica_groups(),
-      /*constrain_layout=*/false, to_combine.front()->channel_id(),
-      Cast<HloAllGatherInstruction>(to_combine.front())
-          ->use_global_device_ids()));
+  auto create = [&](auto& f) {
+    Shape shape;
+    if (is_async) {
+      std::vector<const Shape*> operand_shapes;
+      for (HloInstruction* operand : operands) {
+        operand_shapes.push_back(&operand->shape());
+      }
+      shape = ShapeUtil::MakeTupleShape(
+          {ShapeUtil::MakeTupleShapeWithPtrs(operand_shapes),
+           ShapeUtil::MakeTupleShapeWithPtrs(output_shapes)});
+    } else {
+      shape = ShapeUtil::MakeTupleShapeWithPtrs(output_shapes);
+    }
+    return computation.AddInstruction(
+        f(shape, operands, all_gather_dimension,
+          to_combine.front()->replica_groups(),
+          /*constrain_layout=*/false, to_combine.front()->channel_id(),
+          Cast<HloAllGatherInstruction>(to_combine.front())
+              ->use_global_device_ids()));
+  };
+  combined = is_async ? create(HloInstruction::CreateAllGatherStart)
+                      : create(HloInstruction::CreateAllGather);
 
   // We have to propagate the sharding manually because Domain instructions are
   // not guaranteed to preserve it for side effecting instructions.
@@ -88,15 +117,14 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine) {
       hlo_sharding_util::CreateTupleSharding(combined->shape(), to_combine));
   VLOG(1) << "Replacing with : " << combined->ToString();
 
-  // Replace all the smaller AllGathers with elements of the tuple output
-  // of the single bigger AllGather.
-  for (int64_t i = 0; i < to_combine.size(); ++i) {
-    auto replace_with = HloInstruction::CreateGetTupleElement(
-        to_combine[i]->shape(), combined, i);
-    TF_RETURN_IF_ERROR(computation.ReplaceWithNewInstruction(
-        to_combine[i], std::move(replace_with)));
-  }
-  return OkStatus();
+  HloInstruction* combined_end =
+      is_async ? computation.AddInstruction(HloInstruction::CreateUnary(
+                     combined->shape().tuple_shapes(1),
+                     HloOpcode::kAllGatherDone, combined))
+               : nullptr;
+
+  return CombineCollectives(&computation, combined, combined_end, to_combine,
+                            to_combine_ends, is_async);
 }
 
 // The group key encapsulates all of the properties which must match for it to
@@ -107,8 +135,12 @@ using GroupKey =
 // Returns a key that will be equal for instructions that might be combined, or
 // different if not.
 std::optional<GroupKey> CombineKey(const HloInstruction* instruction,
-                                   const HloDomainMap& domain_map) {
-  if (instruction->opcode() != HloOpcode::kAllGather) {
+                                   const HloDomainMap& domain_map,
+                                   bool is_async) {
+  HloOpcode opcode =
+      is_async ? HloOpcode::kAllGatherStart : HloOpcode::kAllGather;
+
+  if (instruction->opcode() != opcode) {
     return std::nullopt;
   }
 
@@ -131,24 +163,29 @@ std::optional<GroupKey> CombineKey(const HloInstruction* instruction,
 }  // namespace
 
 AllGatherCombiner::AllGatherCombiner(int64_t combine_threshold_in_bytes,
-                                     int64_t combine_threshold_count)
+                                     int64_t combine_threshold_count,
+                                     bool is_async,
+                                     std::string_view async_strategy)
     : combine_threshold_in_bytes_(combine_threshold_in_bytes),
-      combine_threshold_count_(combine_threshold_count) {}
+      combine_threshold_count_(combine_threshold_count),
+      is_async_(is_async),
+      async_strategy_(async_strategy == "near" ? kNear : kTrivial) {}
 
 StatusOr<bool> AllGatherCombiner::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  VLOG(1) << "Running AllGatherCombiner with threshold of "
+  VLOG(1) << "Running " << name() << " with threshold of "
           << combine_threshold_in_bytes_ << " bytes";
 
   if (combine_threshold_in_bytes_ <= 0 || combine_threshold_count_ <= 0) {
-    VLOG(1) << "Skip AllGatherCombiner because the threshold is zero";
+    VLOG(1) << "Skip " << name() << " because the threshold is zero";
     return false;
   }
 
   if (hlo_query::ContainsLayoutConstrainedCollective(*module,
                                                      HloOpcode::kAllGather)) {
-    VLOG(1) << "Skip AllGatherCombiner because the module contains "
+    VLOG(1) << "Skip " << name()
+            << " because the module contains "
                "all-gather with constrained layouts";
     return false;
   }
@@ -156,17 +193,37 @@ StatusOr<bool> AllGatherCombiner::Run(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
+    HloModule* module = computation->parent();
+    if (is_async_) {
+      TF_RET_CHECK(module->has_schedule());
+    }
     TF_ASSIGN_OR_RETURN(auto domain_map, HloDomainMap::Create(computation, ""));
 
-    auto key_fn = [&domain_map](const HloInstruction* instruction) {
-      return CombineKey(instruction, *domain_map);
+    auto key_fn = [&domain_map, this](const HloInstruction* instruction) {
+      return CombineKey(instruction, *domain_map, is_async_);
+    };
+
+    auto size_fn =
+        [this](const HloInstruction* instruction) -> StatusOr<int64_t> {
+      if (!is_async_) {
+        return internal::SizeFromArrayShapedInstruction(instruction);
+      }
+      TF_RET_CHECK(instruction->opcode() == HloOpcode::kAllGatherStart);
+      // AllGatherStart has a tuple shape: (input_shape, output_shape). We are
+      // only interested in the output shape.
+      TF_RET_CHECK(instruction->shape().IsTuple());
+      TF_RET_CHECK(instruction->shape().tuple_shapes_size() == 2);
+      const Shape& output_shape = instruction->shape().tuple_shapes(1);
+      TF_RET_CHECK(output_shape.IsArray());
+      return ShapeUtil::ByteSizeOf(output_shape);
     };
 
     TF_ASSIGN_OR_RETURN(
         bool computation_changed,
         CombineInstructionsByKey<GroupKey>(
             computation, key_fn, &CombineAllGathers,
-            combine_threshold_in_bytes_, combine_threshold_count_));
+            combine_threshold_in_bytes_, combine_threshold_count_, is_async_,
+            async_strategy_, size_fn));
     changed |= computation_changed;
   }
 
