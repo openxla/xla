@@ -142,6 +142,16 @@ cc_library(
 )
 
 cc_library(
+    name = "device_id_utils",
+    hdrs = ["device_id_utils.h"],
+    deps = [
+        ":platform",
+        ":stream_executor",
+        "@tsl//tsl/framework:device_id_impl",
+    ],
+)
+
+cc_library(
     name = "host_or_device_scalar",
     hdrs = ["host_or_device_scalar.h"],
     deps = [":device_memory"],
