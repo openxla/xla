@@ -6749,12 +6749,14 @@ xla_cc_binary(
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:cpu_executable",
+        "//xla/tools:hlo_module_loader",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@stablehlo//:register",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/util:command_line_flags",
@@ -6789,6 +6791,13 @@ xla_aot_compile_gpu(
     autotune_results = "xla_aot_compile_test_autotune_results.prototxt",
     gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
     module = "xla_aot_compile_test.mlir",
+)
+
+xla_aot_compile_gpu(
+    name = "xla_aot_compile_test_gpu_executable_hlo",
+    autotune_results = "xla_aot_compile_test_autotune_results.prototxt",
+    gpu_target_config = "xla_aot_compile_test_gpu_target_config.prototxt",
+    module = "xla_aot_compile_test.hlo",
 )
 
 xla_aot_compile_gpu(
@@ -6873,6 +6882,7 @@ xla_cc_test(
     srcs = if_cuda_is_configured(["xla_aot_compile_gpu_test.cc"]),
     data = if_cuda_is_configured([
         ":xla_aot_compile_test_gpu_executable",
+        ":xla_aot_compile_test_gpu_executable_hlo",
         ":xla_aot_compile_test_gpu_executable_constant",
         ":xla_aot_compile_test_gpu_executable_gemm",
         ":xla_aot_compile_test_gpu_executable_gemm_runtime_autotuning",
