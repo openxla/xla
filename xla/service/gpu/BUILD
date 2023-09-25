@@ -2970,6 +2970,7 @@ cc_library(
     hdrs = ["xfeed_queue.h"],
     deps = [
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
     ],
 )
