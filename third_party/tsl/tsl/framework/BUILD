@@ -232,7 +232,7 @@ cc_library(
         "device_id_manager.h",
     ],
     deps = [
-        "//tsl/platform:types",
+        "//tsl/lib/gtl:int_type",
     ] + if_static([
         ":device_id_impl",
     ]),

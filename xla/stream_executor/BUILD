@@ -45,13 +45,14 @@ package_group(
 # a header-only dependency (this is a very rare exception when we are building dynamic librarires
 # for open source projects, e.g. Tensorflow, internally at Google we almost always link statically),
 # or usually on a `sream_executor` target that will also link implementation.
-
 filegroup(
     name = "stream_executor_public_headers",
     srcs = [
         "allocator_stats.h",
         "command_buffer.h",
+        "data_type.h",
         "device_description.h",
+        "device_id_utils.h",
         "device_memory.h",
         "device_memory_allocator.h",
         "device_options.h",
@@ -86,6 +87,95 @@ filegroup(
         "fft.h",
     ],
     visibility = ["//visibility:private"],
+)
+
+#===--------------------------------------------------------------------------------------------===#
+# StreamExecutor public libraries
+#===--------------------------------------------------------------------------------------------===#
+
+# Some of the StreamExecutor libraries that do not depend on StreamExecutor itself (Stream, Kernel,
+# Event, etc.) exported as standalone libraries (these libraries should not depend on
+# `stream_executor` and `stream_executor_headers` targets). This is mostly a historical artifact of
+# an era when StreamExecutor was a part of Tensorflow.
+
+# TODO(ezhulenev): Consider merging some (all?) of these libraries into StreamExecutor target, e.g.
+# does it really make sense to have a separate `device_memory` library which is not usable without
+# StreamExecutor.
+
+tf_proto_library(
+    name = "device_description_proto",
+    srcs = ["device_description.proto"],
+    cc_api_version = 2,
+    make_default_target_header_only = True,
+    protodeps = ["//xla:autotune_results_proto"],
+)
+
+cc_library(
+    name = "device_description",
+    srcs = ["device_description.cc"],
+    hdrs = ["device_description.h"],
+    deps = [
+        ":device_description_proto_cc",
+        ":launch_dim",
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/math:math_util",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "device_memory",
+    hdrs = ["device_memory.h"],
+    deps = ["//xla/stream_executor/platform"],
+)
+
+cc_library(
+    name = "device_options",
+    hdrs = ["device_options.h"],
+    deps = [
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "host_or_device_scalar",
+    hdrs = ["host_or_device_scalar.h"],
+    deps = [":device_memory"],
+)
+
+cc_library(
+    name = "launch_dim",
+    hdrs = ["launch_dim.h"],
+    deps = ["@com_google_absl//absl/strings"],
+)
+
+cc_library(
+    name = "numeric_options",
+    hdrs = ["numeric_options.h"],
+)
+
+cc_library(
+    name = "platform",
+    srcs = ["platform.cc"],
+    hdrs = ["platform.h"],
+    deps = [
+        ":device_description",
+        ":device_options",
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "plugin",
+    hdrs = ["plugin.h"],
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -166,6 +256,7 @@ cc_library(
         "device_memory.h",
         "device_memory_allocator.h",
         "device_options.h",
+        "device_id_utils.h",
         "dnn.h",
         "event.h",
         "executor_cache.h",
@@ -173,6 +264,7 @@ cc_library(
         "kernel.h",
         "kernel_cache_config.h",
         "kernel_spec.h",
+        "data_type.h",
         "launch_dim.h",
         "numeric_options.h",
         "module_spec.h",
@@ -205,8 +297,11 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/framework:device_id",
+        "@tsl//tsl/framework:device_type",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -220,114 +315,13 @@ transitive_hdrs(
 )
 
 cc_library(
-    name = "launch_dim",
-    hdrs = ["launch_dim.h"],
-    deps = ["@com_google_absl//absl/strings"],
-)
-
-cc_library(
-    name = "trace_listener",
-    hdrs = [
-        "trace_listener.h",
-    ],
-    deps = [
-        ":device_memory",
-        ":kernel",
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:status",
-    ],
-)
-
-tf_proto_library(
-    name = "device_description_proto",
-    srcs = ["device_description.proto"],
-    cc_api_version = 2,
-    make_default_target_header_only = True,
-    protodeps = [
-        "//xla:autotune_results_proto",
-    ],
-)
-
-cc_library(
-    name = "device_description",
-    srcs = ["device_description.cc"],
-    hdrs = ["device_description.h"],
-    deps = [
-        ":device_description_proto_cc",
-        ":launch_dim",
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/math:math_util",
-        "@tsl//tsl/platform:numbers",
-    ],
-)
-
-cc_library(
-    name = "kernel_cache_config",
-    hdrs = ["kernel_cache_config.h"],
-)
-
-cc_library(
-    name = "module_spec",
-    hdrs = ["module_spec.h"],
-    deps = [
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
-    ],
-)
-
-cc_library(
     name = "allocator_stats",
-    srcs = [
-        "allocator_stats.cc",
-    ],
+    srcs = ["allocator_stats.cc"],
     hdrs = ["allocator_stats.h"],
     deps = [
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:optional",
-    ],
-)
-
-cc_library(
-    name = "data_type",
-    hdrs = ["data_type.h"],
-    deps = [
-        ":dnn_proto_cc",
-        "@tsl//tsl/platform:float8",
-        "@tsl//tsl/protobuf:dnn_proto_cc",
-    ],
-)
-
-cc_library(
-    name = "device_id_utils",
-    hdrs = ["device_id_utils.h"],
-    deps = [
-        ":platform",
-        ":stream_executor",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/framework:device_id_impl",
-        "@tsl//tsl/lib/gtl:int_type",
-        "@tsl//tsl/platform:str_util",
-    ],
-)
-
-cc_library(
-    name = "device_memory",
-    hdrs = ["device_memory.h"],
-    deps = ["//xla/stream_executor/platform"],
-)
-
-cc_library(
-    name = "device_options",
-    hdrs = ["device_options.h"],
-    deps = [
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -345,33 +339,6 @@ cc_library(
     deps = [
         "//xla/stream_executor/platform",
     ],
-)
-
-cc_library(
-    name = "platform",
-    srcs = ["platform.cc"],
-    hdrs = ["platform.h"],
-    deps = [
-        ":plugin",
-        ":stream_executor_headers",
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-    ],
-)
-
-cc_library(
-    name = "plugin",
-    hdrs = ["plugin.h"],
-)
-
-cc_library(
-    name = "numeric_options",
-    hdrs = ["numeric_options.h"],
 )
 
 cc_library(
@@ -396,7 +363,7 @@ cc_library(
     hdrs = ["executor_cache.h"],
     deps = [
         ":platform",
-        ":stream_executor_pimpl_header",
+        ":stream_executor_headers",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:node_hash_map",
@@ -442,9 +409,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":device_description",
         ":device_description_proto_cc",
-        ":kernel_cache_config",
         ":platform",
         ":stream_executor_headers",
         ":stream_executor_internal",
@@ -483,7 +448,7 @@ cc_library(
         ":fft",
         ":host_or_device_scalar",
         ":kernel",
-        ":launch_dim",
+        ":kernel_spec",
         ":platform",
         ":plugin_registry",
         ":stream_executor_headers",
@@ -539,17 +504,14 @@ cc_library(
     ],
     deps = [
         ":allocator_stats",
-        ":data_type",
         ":device_description",
         ":device_description_proto_cc",
         ":device_memory",
         ":device_options",
         ":fft",
-        ":kernel_cache_config",
         ":kernel_spec",
         ":launch_dim",
         ":platform",
-        ":plugin",
         ":plugin_registry",
         ":stream_executor_headers",
         "//xla/stream_executor/platform",
@@ -578,23 +540,12 @@ cc_library(
     srcs = ["blas.cc"],
     hdrs = ["blas.h"],
     deps = [
-        ":data_type",
         ":stream_executor_headers",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
-    ],
-)
-
-cc_library(
-    name = "host_or_device_scalar",
-    hdrs = ["host_or_device_scalar.h"],
-    deps = [
-        ":data_type",
-        ":device_memory",
-        "//xla/stream_executor/platform",
     ],
 )
 
@@ -632,7 +583,6 @@ cc_library(
         ":fft",
         ":multi_platform_manager",
         ":platform",
-        ":plugin",
         ":stream_executor_headers",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
@@ -649,7 +599,6 @@ cc_library(
     srcs = ["dnn.cc"],
     hdrs = ["dnn.h"],
     deps = [
-        ":data_type",
         ":device_description_proto_cc",
         ":device_memory",
         ":dnn_proto_cc",
@@ -714,10 +663,12 @@ cc_library(
     name = "stream_executor",
     textual_hdrs = [
         "blas.h",
+        "data_type.h",
         "device_description.h",
         "device_memory.h",
         "device_memory_allocator.h",
         "device_options.h",
+        "device_id_utils.h",
         "dnn.h",
         "event.h",
         "executor_cache.h",
@@ -743,6 +694,8 @@ cc_library(
     deps = [
         ":stream_executor_headers",
         "@com_google_absl//absl/log:check",
+        "@tsl//tsl/framework:device_id",
+        "@tsl//tsl/framework:device_type",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
@@ -753,13 +706,12 @@ cc_library(
 cc_library(
     name = "stream_executor_impl",
     deps = [
-        ":device_description",
         ":device_memory",
         ":dnn",
         ":dnn_proto_cc",
         ":event",
         ":kernel",
-        ":launch_dim",
+        ":kernel_spec",
         ":multi_platform_manager",
         ":platform",
         ":stream_executor_headers",
