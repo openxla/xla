@@ -2077,35 +2077,6 @@ Status VerifyHloStructure(HloModule* module) {
 
 namespace {
 
-// Returns true if the given Shape has a TOKEN shape as any subshape.
-bool ShapeContainsToken(const Shape& shape) {
-  bool contains_token = false;
-  ShapeUtil::ForEachSubshape(
-      shape, [&contains_token](const Shape& subshape, const ShapeIndex&) {
-        if (subshape.IsToken()) {
-          contains_token = true;
-        }
-      });
-  return contains_token;
-}
-
-// Verifies that all types entering and exiting the entry computation are
-// legal.
-Status VerifyEntryAndExitShapes(const HloModule& module) {
-  // Tokens cannot be passed as entry parameters.
-  // TODO(b/80000000): Remove this constraint.
-  for (int i = 0; i < module.entry_computation()->num_parameters(); ++i) {
-    HloInstruction* param =
-        module.entry_computation()->parameter_instruction(i);
-    if (ShapeContainsToken(param->shape())) {
-      return InternalError(
-          "Entry parameter %d is or contains a token shape: %s", i,
-          ShapeUtil::HumanString(param->shape()));
-    }
-  }
-  return OkStatus();
-}
-
 // Checks if the given two instructions share the same channel id.
 Status CheckSameChannel(const HloInstruction* instr1,
                         const HloInstruction* instr2) {
@@ -2867,7 +2838,6 @@ StatusOr<bool> HloVerifier::Run(
     }
 
     TF_RETURN_IF_ERROR(shape_verifier->VerifyEntryComputationLayout(*module));
-    TF_RETURN_IF_ERROR(VerifyEntryAndExitShapes(*module));
 
     // If the module has a schedule, it must be valid.
     if (module->has_schedule()) {
