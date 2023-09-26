@@ -182,9 +182,10 @@ AutoShardingSolverResult SolveAndExtractSolution(
 
 AutoShardingSolverResult CallORToolsSolver(
     const AutoShardingSolverRequest& request) {
-  size_t num_edges = request.e.size();
+  const size_t num_edges = request.e.size();
 
-  int32_t num_workers = 32;
+  const int32_t num_workers = 32;
+  const int32_t mip_presolve_level = 0;  // Helps avoid floating point "issues".
   // SAT or SCIP
   std::unique_ptr<MPSolver> solver(std::make_unique<MPSolver>("", MPSolver::SAT_INTEGER_PROGRAMMING));
   CHECK(solver);
@@ -194,7 +195,9 @@ AutoShardingSolverResult CallORToolsSolver(
   if (solver->ProblemType() ==
       operations_research::MPSolver::SAT_INTEGER_PROGRAMMING) {
     // Set num_workers for parallelism.
-    solver_parameter_str = absl::StrCat("num_workers:", num_workers);
+    solver_parameter_str =
+        absl::StrCat("num_workers:", num_workers,
+                     ",mip_presolve_level:", mip_presolve_level);
     solver->SetSolverSpecificParametersAsString(solver_parameter_str);
   }
 #endif
