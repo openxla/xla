@@ -102,6 +102,10 @@ StatusOr<bool> FuseArgPrologueTransposeWithcuDNNFMHA(
   absl::Span<const int64_t> checked_dims;
   std::vector<int64_t> checked_dims_vec;
 
+  // should_contracting_be_fastest = true meaning contracting dim is the hidden dim
+  // fwd bmm1/bwd bmm2grad2 should set it to true
+  // should_contracting_be_fastest = false meaning non contracting dim is the hidden dim
+  // fwd bmm2/bwd bmm2grad1 bmm1grad1 bmm1grad2 should set it to false
   if (should_contracting_be_fastest) {
     checked_dims = is_lhs ? new_bmm_dot_dims.lhs_contracting_dimensions()
                           : new_bmm_dot_dims.rhs_contracting_dimensions();
@@ -137,9 +141,7 @@ StatusOr<bool> FuseArgPrologueTransposeWithcuDNNFMHA(
   absl::Span<const int64_t> minor_to_major_bmm =
       transpose_arg_operand->shape().layout().minor_to_major();
   if ((minor_to_major_bmm[0] != new_bmm_checked_dims[0]) &&
-      ((transpose_arg_operand->shape().dimensions().at(
-            new_bmm_checked_dims[0]) == 64) ||
-       (IsBwdCustomCallTofMHA(*fmha) && operand_index == 3))) {
+      !(IsBwdCustomCallTofMHA(*fmha) && operand_index == 3)) {
     return false;
   }
   if (should_contracting_be_fastest) {
@@ -198,8 +200,10 @@ StatusOr<bool> FuseArgPrologueTransposeWithcuDNNFMHA(
   }
   if (IsFwdCustomCallTofMHA(*fmha)) {
     if (operand_index == 0 || operand_index == 1) {
+      // Q or K
       *new_fmha_config.mutable_bmm1_dot_dimension_numbers() = new_bmm_dot_dims;
     } else {
+      // V
       *new_fmha_config.mutable_bmm2_dot_dimension_numbers() = new_bmm_dot_dims;
     }
   } else {
@@ -455,9 +459,14 @@ StatusOr<bool> FusePrologueTransposeWithcuDNNFMHA(HloComputation* comp) {
       }
       // D_output tensor in backward graph is lhs with constraint on
       // contracting dim.
-      TF_ASSIGN_OR_RETURN(changed, FuseArgPrologueTransposeWithcuDNNFMHA(
+      // make sure we dont change layout of dO in flash attention case as dO should have the same layout of O
+      TF_ASSIGN_OR_RETURN(CudnnfMHABackendConfig config,
+                                  fmha->backend_config<CudnnfMHABackendConfig>());
+      if(!config.is_flash_attention()) {
+        TF_ASSIGN_OR_RETURN(changed, FuseArgPrologueTransposeWithcuDNNFMHA(
                                        fmha, 4, true /*is_lhs*/,
                                        true /*should_contracting_be_fastest*/));
+      }
 
       if (changed && VLOG_IS_ON(2)) {
         VLOG(2) << "After CudnnFusedMHATransposeFusion Arg 4: \n"
@@ -489,16 +498,40 @@ Calling this function with 'result' shape as the input shape and the inverse
 perm as the permutation will generate an output shape whose dimensions match
 'FMHA_out' dimensions but the physical layout is equivalent to 'result'. This is
 exactly what we want.
+
+FMHA output should have exactly one gte instruction for a tuple index
+so we can safely fuse the transpose following that gte to FMHA
+
+FMHA_out = gte(FMHA, index=0)
+FMHA_out_t = transpose(FMHA_out)
+use(FMHA_out_t)
+
+after fusion:
+
+FMHA_out_t = gte(FMHA, index=0)
+use(FMHA_out_t)
 */
 
 StatusOr<bool> FuseEpilogueTransposeWithcuDNNFMHA(HloComputation* comp) {
   bool changed = false;
+
+  auto onlyOneGTEWithSpecIndex = [](const HloInstruction* instr, int64_t index) {
+    int count = 0;
+    for(auto user: instr->users()) {
+      if(user->opcode() == HloOpcode::kGetTupleElement && user->tuple_index() == index) {
+        count += 1;
+      }
+    }
+    return count == 1;
+  };
+
   for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* fmha;
     HloInstruction* transpose;
     HloInstruction* gte;
     auto fwd_tuple_elem =
-        m::GetTupleElement(m::Op(&fmha).WithPredicate(IsFwdFMHACustomCall), 0)
+        m::GetTupleElement(&gte,
+                          m::Op(&fmha).WithPredicate(IsFwdFMHACustomCall), 0)
             .WithOneUser();
     // Note that we don't match any specific tuple index in matcher for
     // backward.
@@ -510,6 +543,10 @@ StatusOr<bool> FuseEpilogueTransposeWithcuDNNFMHA(HloComputation* comp) {
     auto bwd_pattern = m::Transpose(&transpose, bwd_tuple_elem);
 
     if (Match(instr, fwd_pattern)) {
+      // check if only one gte with such index exist
+      int64_t tuple_index = gte->tuple_index();
+      if (!onlyOneGTEWithSpecIndex(fmha, tuple_index)) continue;
+
       std::vector<int64_t> inverse_perm =
           InversePermutation(transpose->dimensions());
 
@@ -558,9 +595,12 @@ StatusOr<bool> FuseEpilogueTransposeWithcuDNNFMHA(HloComputation* comp) {
       }
       changed |= true;
     } else if (Match(instr, bwd_pattern)) {
+      // check if only one gte with such index exist
+      int64_t operand_tuple_idx = gte->tuple_index();
+      if (!onlyOneGTEWithSpecIndex(fmha, operand_tuple_idx)) continue;
+
       std::vector<int64_t> inverse_perm =
           InversePermutation(transpose->dimensions());
-      int64_t operand_tuple_idx = gte->tuple_index();
 
       auto expected_fmha_shape =
           ShapeUtil::PermuteDimensions(inverse_perm, transpose->shape());

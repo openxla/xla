@@ -2893,6 +2893,582 @@ ENTRY main.146 {
   EXPECT_NEAR(config.dropout_rate(), 0.1, 1e-2);
 }
 
+
+// flash attention
+TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16TrainingBmm1CausalMaskSoftmaxBmm2Pattern) {
+  const char* module_str = R"(
+HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,2048,128]{3,2,1,0},bf16[2,6,128,2048]{3,2,1,0},bf16[2,6,2048,128]{3,2,1,0},bf16[2,6,2048,128]{3,2,1,0})->(bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,128,2048]{3,2,1,0}, bf16[2,6,2048,128]{3,2,1,0})}, allow_spmd_sharding_propagation_to_output={true,true,true,true}
+
+region_0.32 {
+  Arg_0.33 = bf16[] parameter(0)
+  Arg_1.34 = bf16[] parameter(1)
+  ROOT maximum = bf16[] maximum(Arg_0.33, Arg_1.34)
+}
+
+region_1.44 {
+  Arg_0.45 = f32[] parameter(0)
+  Arg_1.46 = f32[] parameter(1)
+  ROOT add = f32[] add(Arg_0.45, Arg_1.46)
+}
+
+region_2.66 {
+  Arg_0.67 = bf16[] parameter(0)
+  Arg_1.68 = bf16[] parameter(1)
+  ROOT add.1 = bf16[] add(Arg_0.67, Arg_1.68)
+}
+
+ENTRY main.92 {
+  Arg_0.1 = bf16[2,6,2048,128]{3,2,1,0} parameter(0), sharding={replicated}
+  Arg_1.2 = bf16[2,6,128,2048]{3,2,1,0} parameter(1), sharding={replicated}
+  dot.14 = bf16[2,6,2048,2048]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  constant.17 = bf16[] constant(2)
+  broadcast.29 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(constant.17), dimensions={}
+  multiply.2 = bf16[2,6,2048,2048]{3,2,1,0} multiply(dot.14, broadcast.29)
+  iota.2 = s32[2048,2048]{1,0} iota(), iota_dimension=0
+  iota.5 = s32[2048,2048]{1,0} iota(), iota_dimension=1
+  compare.1 = pred[2048,2048]{1,0} compare(iota.2, iota.5), direction=LT
+  constant.6 = bf16[] constant(-2.366e+38)
+  broadcast.16 = bf16[2048,2048]{1,0} broadcast(constant.6), dimensions={}
+  constant.16 = bf16[] constant(0)
+  broadcast.17 = bf16[2048,2048]{1,0} broadcast(constant.16), dimensions={}
+  select.2 = bf16[2048,2048]{1,0} select(compare.1, broadcast.16, broadcast.17)
+  broadcast.19 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(select.2), dimensions={2,3}
+  add.3 = bf16[2,6,2048,2048]{3,2,1,0} add(multiply.2, broadcast.19)
+  constant.10 = bf16[] constant(-inf)
+  reduce.36 = bf16[2,6,2048]{2,1,0} reduce(add.3, constant.10), dimensions={3}, to_apply=region_0.32
+  broadcast.21 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(reduce.36), dimensions={0,1,2}
+  subtract.1 = bf16[2,6,2048,2048]{3,2,1,0} subtract(add.3, broadcast.21)
+  exponential.1 = bf16[2,6,2048,2048]{3,2,1,0} exponential(subtract.1)
+  convert.5 = f32[2,6,2048,2048]{3,2,1,0} convert(exponential.1)
+  constant.14 = f32[] constant(0)
+  reduce.48 = f32[2,6,2048]{2,1,0} reduce(convert.5, constant.14), dimensions={3}, to_apply=region_1.44
+  convert.9 = bf16[2,6,2048]{2,1,0} convert(reduce.48)
+  broadcast.32 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(convert.9), dimensions={0,1,2}
+  divide.5 = bf16[2,6,2048,2048]{3,2,1,0} divide(exponential.1, broadcast.32)
+  Arg_2.3 = bf16[2,6,2048,128]{3,2,1,0} parameter(2), sharding={replicated}
+  dot.57 = bf16[2,6,2048,128]{3,2,1,0} dot(divide.5, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  Arg_3.4 = bf16[2,6,2048,128]{3,2,1,0} parameter(3), sharding={replicated}
+  dot.60 = bf16[2,6,2048,2048]{3,2,1,0} dot(Arg_3.4, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}
+  divide.4 = bf16[2,6,2048,2048]{3,2,1,0} divide(dot.60, broadcast.32)
+  constant.15 = bf16[] constant(1)
+  broadcast.25 = bf16[2,6,2048]{2,1,0} broadcast(constant.15), dimensions={}
+  multiply.3 = bf16[2,6,2048]{2,1,0} multiply(convert.9, convert.9)
+  divide.3 = bf16[2,6,2048]{2,1,0} divide(broadcast.25, multiply.3)
+  broadcast.26 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(divide.3), dimensions={0,1,2}
+  multiply.4 = bf16[2,6,2048,2048]{3,2,1,0} multiply(dot.60, broadcast.26)
+  multiply.5 = bf16[2,6,2048,2048]{3,2,1,0} multiply(multiply.4, exponential.1)
+  reduce.70 = bf16[2,6,2048]{2,1,0} reduce(multiply.5, constant.16), dimensions={3}, to_apply=region_2.66
+  negate.2 = bf16[2,6,2048]{2,1,0} negate(reduce.70)
+  broadcast.31 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(negate.2), dimensions={0,1,2}
+  add.5 = bf16[2,6,2048,2048]{3,2,1,0} add(divide.4, broadcast.31)
+  multiply.8 = bf16[2,6,2048,2048]{3,2,1,0} multiply(add.5, exponential.1)
+  multiply.9 = bf16[2,6,2048,2048]{3,2,1,0} multiply(multiply.8, broadcast.29)
+  dot.90 = bf16[2,6,2048,128]{3,2,1,0} dot(multiply.9, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}
+  dot = bf16[2,6,128,2048]{3,2,1,0} dot(Arg_0.1, multiply.9), lhs_batch_dims={0,1}, lhs_contracting_dims={2}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  dot.1 = bf16[2,6,2048,128]{3,2,1,0} dot(divide.5, Arg_3.4), lhs_batch_dims={0,1}, lhs_contracting_dims={2}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  ROOT tuple.91 = (bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,128,2048]{3,2,1,0}, bf16[2,6,2048,128]{3,2,1,0}) tuple(dot.57, dot.90, dot, dot.1)
+}
+
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  CudnnFusedMHARewriter fusedMhaRewriter{
+      GetCudaComputeCapability(),
+      GetCudnnVersionWithDbiasAndMaskBwdInputSupport()};
+  TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
+  HloDCE dce;
+  TF_ASSERT_OK(RunHloPass(&dce, m.get()).status());
+
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape());
+
+  const HloInstruction* fmha;
+  SCOPED_TRACE(m->ToString());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::Tuple(
+          m::GetTupleElement(
+              m::CustomCall(&fmha, {kCudnnfMHASoftmaxCallTarget}),
+              0)
+              .WithShape(BF16, {2, 6, 2048, 128}),
+          m::GetTupleElement(
+              m::CustomCall(&fmha,
+                            {kCudnnfMHASoftmaxBackwardCallTarget}),
+              0)
+              .WithShape(BF16, {2, 6, 2048, 128}),
+          m::Transpose(
+              m::GetTupleElement(
+                  m::CustomCall(
+                      {kCudnnfMHASoftmaxBackwardCallTarget}),
+                  1))
+              .WithShape(BF16, {2, 6, 128, 2048}),
+          m::GetTupleElement(
+              m::CustomCall({kCudnnfMHASoftmaxBackwardCallTarget}),
+              2)
+              .WithShape(BF16, {2, 6, 2048, 128}))));
+  TF_ASSERT_OK_AND_ASSIGN(auto config,
+                          fmha->backend_config<CudnnfMHABackendConfig>());
+  EXPECT_EQ(fmha->operands().size(), 6);
+  EXPECT_NEAR(config.dropout_rate(), 0, 1e-2);
+  EXPECT_EQ(config.is_flash_attention(), true);
+}
+
+// flash attention
+// GPT3 pattern
+TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16TrainingGPT3) {
+  const char* module_str = R"(
+HloModule jit__unnamed_wrapped_function_, entry_computation_layout={((s32[], bf16[4,2048,768]{2,1,0}, bf16[12,3072]{1,0}, bf16[12,768,3072]{2,1,0}, bf16[12,768]{1,0}, bf16[12,3072,768]{2,1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,3,12,64]{3,2,1,0}, bf16[12,3,768,12,64]{4,3,2,1,0}, bf16[12,768]{1,0}, bf16[12,768,12,64]{3,2,1,0}, bf16[12,3072]{1,0}, bf16[12,768,3072]{2,1,0}, bf16[12,3072,768]{2,1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,3,12,64]{3,2,1,0}, bf16[12,3,768,12,64]{4,3,2,1,0}, bf16[12,768]{1,0}, bf16[12,768,12,64]{3,2,1,0}, bf16[12,4,2048,768]{3,2,1,0}, bf16[4,1,2048,2048]{3,2,0,1}, bf16[4,2048]{1,0}))->(s32[], bf16[4,2048,768]{2,1,0}, bf16[12,3072]{1,0}, bf16[12,768,3072]{2,1,0}, bf16[12,768]{1,0}, bf16[12,3072,768]{2,1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,3,12,64]{3,2,1,0}, bf16[12,3,768,12,64]{4,3,2,1,0}, bf16[12,768]{1,0}, bf16[12,768,12,64]{3,2,1,0}, bf16[12,3072]{1,0}, bf16[12,768,3072]{2,1,0}, bf16[12,3072,768]{2,1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,3,12,64]{3,2,1,0}, bf16[12,3,768,12,64]{4,3,2,1,0}, bf16[12,768]{1,0}, bf16[12,768,12,64]{3,2,1,0}, bf16[12,4,2048,768]{3,2,1,0}, bf16[4,1,2048,2048]{3,2,0,1}, bf16[4,2048]{1,0})}
+
+region_8.643 {
+  Arg_0.644 = f32[] parameter(0)
+  Arg_1.645 = f32[] parameter(1)
+  ROOT add.646 = f32[] add(Arg_0.644, Arg_1.645)
+}
+
+region_23.860 {
+  Arg_0.861 = bf16[] parameter(0)
+  Arg_1.862 = bf16[] parameter(1)
+  ROOT add.863 = bf16[] add(Arg_0.861, Arg_1.862)
+}
+
+region_33.931 {
+  Arg_0.932 = f32[] parameter(0)
+  Arg_1.933 = f32[] parameter(1)
+  ROOT maximum.934 = f32[] maximum(Arg_0.932, Arg_1.933)
+}
+
+ENTRY main.92 {
+  arg_tuple.1060 = (s32[], bf16[4,2048,768]{2,1,0}, bf16[12,3072]{1,0}, bf16[12,768,3072]{2,1,0}, bf16[12,768]{1,0}, /*index=5*/bf16[12,3072,768]{2,1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, /*index=10*/bf16[12,3,12,64]{3,2,1,0}, bf16[12,3,768,12,64]{4,3,2,1,0}, bf16[12,768]{1,0}, bf16[12,768,12,64]{3,2,1,0}, bf16[12,3072]{1,0}, /*index=15*/bf16[12,768,3072]{2,1,0}, bf16[12,3072,768]{2,1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, /*index=20*/bf16[12,768]{1,0}, bf16[12,3,12,64]{3,2,1,0}, bf16[12,3,768,12,64]{4,3,2,1,0}, bf16[12,768]{1,0}, bf16[12,768,12,64]{3,2,1,0}, /*index=25*/bf16[12,4,2048,768]{3,2,1,0}, bf16[4,1,2048,2048]{3,2,0,1}, bf16[4,2048]{1,0}) parameter(0)
+  get-tuple-element.1061 = s32[] get-tuple-element(arg_tuple.1060), index=0
+  constant.1121 = s32[] constant(1)
+  add.1568 = s32[] add(get-tuple-element.1061, constant.1121)
+  get-tuple-element.1062 = bf16[4,2048,768]{2,1,0} get-tuple-element(arg_tuple.1060), index=1
+  get-tuple-element.1083 = bf16[12,3,768,12,64]{4,3,2,1,0} get-tuple-element(arg_tuple.1060), index=22
+  constant.178 = s32[] constant(11)
+  subtract.6 = s32[] subtract(constant.178, get-tuple-element.1061)
+  constant.1120 = s32[] constant(0)
+  compare.1161 = pred[] compare(subtract.6, constant.1120), direction=LT
+  constant.205 = s32[] constant(23)
+  subtract.10 = s32[] subtract(constant.205, get-tuple-element.1061)
+  select.1163 = s32[] select(compare.1161, subtract.10, subtract.6)
+  dynamic-slice.1164 = bf16[1,3,768,12,64]{4,3,2,1,0} dynamic-slice(get-tuple-element.1083, select.1163, constant.1120, constant.1120, constant.1120, /*index=5*/constant.1120), dynamic_slice_sizes={1,3,768,12,64}
+  reshape.1165 = bf16[3,768,12,64]{3,2,1,0} reshape(dynamic-slice.1164)
+  transpose.12 = bf16[3,12,64,768]{2,1,3,0} transpose(reshape.1165), dimensions={0,2,3,1}
+  reshape.35 = bf16[2304,768]{1,0} reshape(transpose.12)
+  get-tuple-element.1086 = bf16[12,4,2048,768]{3,2,1,0} get-tuple-element(arg_tuple.1060), index=25
+  dynamic-slice.1178 = bf16[1,4,2048,768]{3,2,1,0} dynamic-slice(get-tuple-element.1086, select.1163, constant.1120, constant.1120, constant.1120), dynamic_slice_sizes={1,4,2048,768}
+  reshape.1179 = bf16[4,2048,768]{2,1,0} reshape(dynamic-slice.1178)
+  convert.1196 = f32[4,2048,768]{2,1,0} convert(reshape.1179)
+  constant.1117 = f32[] constant(0)
+  reduce.1197 = f32[4,2048]{1,0} reduce(convert.1196, constant.1117), dimensions={2}, to_apply=region_8.643
+  constant.41 = f32[] constant(0.00130208337)
+  broadcast.367 = f32[4,2048]{1,0} broadcast(constant.41), dimensions={}
+  multiply.44 = f32[4,2048]{1,0} multiply(reduce.1197, broadcast.367)
+  broadcast.1211 = f32[4,2048,768]{2,1,0} broadcast(multiply.44), dimensions={0,1}
+  subtract.1212 = f32[4,2048,768]{2,1,0} subtract(convert.1196, broadcast.1211)
+  multiply.1204 = f32[4,2048,768]{2,1,0} multiply(subtract.1212, subtract.1212)
+  reduce.1206 = f32[4,2048]{1,0} reduce(multiply.1204, constant.1117), dimensions={2}, to_apply=region_8.643
+  multiply.45 = f32[4,2048]{1,0} multiply(reduce.1206, broadcast.367)
+  constant.1111 = f32[] constant(1e-05)
+  broadcast.469 = f32[4,2048]{1,0} broadcast(constant.1111), dimensions={}
+  add.92 = f32[4,2048]{1,0} add(multiply.45, broadcast.469)
+  reshape.779 = f32[4,2048,1]{1,0,2} reshape(add.92)
+  rsqrt.1214 = f32[4,2048,1]{1,0,2} rsqrt(reshape.779)
+  reshape.1218 = f32[4,2048]{1,0} reshape(rsqrt.1214)
+  broadcast.1219 = f32[4,2048,768]{2,1,0} broadcast(reshape.1218), dimensions={0,1}
+  multiply.1220 = f32[4,2048,768]{2,1,0} multiply(subtract.1212, broadcast.1219)
+  convert.1221 = bf16[4,2048,768]{2,1,0} convert(multiply.1220)
+  get-tuple-element.1081 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=20
+  dynamic-slice.1155 = bf16[1,768]{1,0} dynamic-slice(get-tuple-element.1081, select.1163, constant.1120), dynamic_slice_sizes={1,768}
+  constant.1090 = bf16[] constant(1)
+  broadcast.370 = bf16[1,768]{1,0} broadcast(constant.1090), dimensions={}
+  add.44 = bf16[1,768]{1,0} add(dynamic-slice.1155, broadcast.370)
+  reshape.1225 = bf16[768]{0} reshape(add.44)
+  broadcast.1226 = bf16[4,2048,768]{2,1,0} broadcast(reshape.1225), dimensions={2}
+  multiply.1227 = bf16[4,2048,768]{2,1,0} multiply(convert.1221, broadcast.1226)
+  get-tuple-element.1080 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=19
+  dynamic-slice.1151 = bf16[1,768]{1,0} dynamic-slice(get-tuple-element.1080, select.1163, constant.1120), dynamic_slice_sizes={1,768}
+  reshape.1230 = bf16[768]{0} reshape(dynamic-slice.1151)
+  broadcast.1231 = bf16[4,2048,768]{2,1,0} broadcast(reshape.1230), dimensions={2}
+  add.1232 = bf16[4,2048,768]{2,1,0} add(multiply.1227, broadcast.1231)
+  transpose.13 = bf16[768,4,2048]{0,2,1} transpose(add.1232), dimensions={2,0,1}
+  reshape.36 = bf16[768,8192]{0,1} reshape(transpose.13)
+  dot.6 = bf16[2304,8192]{1,0} dot(reshape.35, reshape.36), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  reshape.37 = bf16[3,12,64,4,2048]{4,2,1,3,0} reshape(dot.6)
+  get-tuple-element.1082 = bf16[12,3,12,64]{3,2,1,0} get-tuple-element(arg_tuple.1060), index=21
+  dynamic-slice.1160 = bf16[1,3,12,64]{3,2,1,0} dynamic-slice(get-tuple-element.1082, select.1163, constant.1120, constant.1120, constant.1120), dynamic_slice_sizes={1,3,12,64}
+  reshape.1237 = bf16[3,12,64]{2,1,0} reshape(dynamic-slice.1160)
+  broadcast.372 = bf16[3,12,64,4,2048]{4,2,1,3,0} broadcast(reshape.1237), dimensions={0,1,2}
+  add.45 = bf16[3,12,64,4,2048]{4,2,1,3,0} add(reshape.37, broadcast.372)
+  transpose.67 = bf16[3,4,2048,12,64]{2,4,3,1,0} transpose(add.45), dimensions={0,3,4,1,2}
+  // V
+  slice.1244 = bf16[1,4,2048,12,64]{2,4,3,1,0} slice(transpose.67), slice={[2:3], [0:4], [0:2048], [0:12], [0:64]}
+  reshape.1245 = bf16[4,2048,12,64]{1,3,2,0} reshape(slice.1244)
+  transpose.16 = bf16[4,12,64,2048]{3,2,1,0} transpose(reshape.1245), dimensions={0,2,3,1}
+  // Q
+  slice.1240 = bf16[1,4,2048,12,64]{2,4,3,1,0} slice(transpose.67), slice={[0:1], [0:4], [0:2048], [0:12], [0:64]}
+  constant.1105 = bf16[] constant(0.125)
+  broadcast.374 = bf16[1,4,2048,12,64]{2,4,3,1,0} broadcast(constant.1105), dimensions={}
+  multiply.42 = bf16[1,4,2048,12,64]{2,4,3,1,0} multiply(slice.1240, broadcast.374)
+  reshape.458 = bf16[4,2048,12,64]{1,3,2,0} reshape(multiply.42)
+  transpose.14 = bf16[4,12,2048,64]{2,3,1,0} transpose(reshape.458), dimensions={0,2,1,3}
+  copy = bf16[4,12,2048,64]{3,2,1,0} copy(transpose.14)
+  // K
+  slice.1242 = bf16[1,4,2048,12,64]{2,4,3,1,0} slice(transpose.67), slice={[1:2], [0:4], [0:2048], [0:12], [0:64]}
+  reshape.1243 = bf16[4,2048,12,64]{1,3,2,0} reshape(slice.1242)
+  transpose.15 = bf16[4,12,64,2048]{3,2,1,0} transpose(reshape.1243), dimensions={0,2,3,1}
+  // Q K -> S
+  dot.7 = bf16[4,12,2048,2048]{3,2,1,0} dot(copy, transpose.15), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  convert.1251 = f32[4,12,2048,2048]{3,2,1,0} convert(dot.7)
+  get-tuple-element.1087 = bf16[4,1,2048,2048]{3,2,0,1} get-tuple-element(arg_tuple.1060), index=26
+  // causal mask
+  iota.6 = s32[2048,2048]{1,0} iota(), iota_dimension=0
+  iota.9 = s32[2048,2048]{1,0} iota(), iota_dimension=1
+  compare.1188 = pred[2048,2048]{1,0} compare(iota.6, iota.9), direction=LT
+  constant.1118 = bf16[] constant(-2.366e+38)
+  broadcast.1119 = bf16[2048,2048]{1,0} broadcast(constant.1118), dimensions={}
+  constant.1089 = bf16[] constant(0)
+  broadcast.284 = bf16[2048,2048]{1,0} broadcast(constant.1089), dimensions={}
+  select.168 = bf16[2048,2048]{1,0} select(compare.1188, broadcast.1119, broadcast.284)
+  broadcast.1194 = bf16[4,1,2048,2048]{3,2,0,1} broadcast(select.168), dimensions={2,3}
+  minimum.1195 = bf16[4,1,2048,2048]{3,2,0,1} minimum(get-tuple-element.1087, broadcast.1194)
+  reshape.1247 = bf16[4,2048,2048]{2,1,0} reshape(minimum.1195)
+  convert.96 = f32[4,2048,2048]{2,1,0} convert(reshape.1247)
+  broadcast.1255 = f32[4,12,2048,2048]{3,2,1,0} broadcast(convert.96), dimensions={0,2,3}
+  add.1256 = f32[4,12,2048,2048]{3,2,1,0} add(convert.1251, broadcast.1255)
+  // softmax
+  constant.1104 = f32[] constant(-inf)
+  reduce.1257 = f32[4,12,2048]{2,1,0} reduce(add.1256, constant.1104), dimensions={3}, to_apply=region_33.931
+  broadcast.1261 = f32[4,12,2048,2048]{3,2,1,0} broadcast(reduce.1257), dimensions={0,1,2}
+  subtract.1262 = f32[4,12,2048,2048]{3,2,1,0} subtract(add.1256, broadcast.1261)
+  exponential.1263 = f32[4,12,2048,2048]{3,2,1,0} exponential(subtract.1262)
+  reduce.1264 = f32[4,12,2048]{2,1,0} reduce(exponential.1263, constant.1117), dimensions={3}, to_apply=region_8.643
+  broadcast.1268 = f32[4,12,2048,2048]{3,2,1,0} broadcast(reduce.1264), dimensions={0,1,2}
+  divide.1269 = f32[4,12,2048,2048]{3,2,1,0} divide(exponential.1263, broadcast.1268)
+  convert.1272 = bf16[4,12,2048,2048]{3,2,1,0} convert(divide.1269)
+  // V P -> O
+  dot.8 = bf16[4,12,64,2048]{3,2,1,0} dot(transpose.16, convert.1272), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}
+  transpose.18 = bf16[4,2048,64,12]{1,2,3,0} transpose(dot.8), dimensions={0,3,2,1}
+  reshape.44 = bf16[8192,768]{1,0} reshape(transpose.18)
+  get-tuple-element.1085 = bf16[12,768,12,64]{3,2,1,0} get-tuple-element(arg_tuple.1060), index=24
+  dynamic-slice.1173 = bf16[1,768,12,64]{3,2,1,0} dynamic-slice(get-tuple-element.1085, select.1163, constant.1120, constant.1120, constant.1120), dynamic_slice_sizes={1,768,12,64}
+  reshape.1174 = bf16[768,12,64]{2,1,0} reshape(dynamic-slice.1173)
+  transpose.19 = bf16[64,12,768]{0,1,2} transpose(reshape.1174), dimensions={2,1,0}
+  reshape.45 = bf16[768,768]{1,0} reshape(transpose.19)
+  dot.9 = bf16[8192,768]{1,0} dot(reshape.44, reshape.45), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  get-tuple-element.1084 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=23
+  dynamic-slice.1169 = bf16[1,768]{1,0} dynamic-slice(get-tuple-element.1084, select.1163, constant.1120), dynamic_slice_sizes={1,768}
+  reshape.1279 = bf16[768]{0} reshape(dynamic-slice.1169)
+  broadcast.383 = bf16[8192,768]{1,0} broadcast(reshape.1279), dimensions={1}
+  add.46 = bf16[8192,768]{1,0} add(dot.9, broadcast.383)
+  reshape.462 = bf16[4,2048,768]{2,1,0} reshape(add.46)
+  add.1283 = bf16[4,2048,768]{2,1,0} add(reshape.462, reshape.1179)
+  convert.1285 = f32[4,2048,768]{2,1,0} convert(add.1283)
+  reduce.1286 = f32[4,2048]{1,0} reduce(convert.1285, constant.1117), dimensions={2}, to_apply=region_8.643
+  multiply.46 = f32[4,2048]{1,0} multiply(reduce.1286, broadcast.367)
+  broadcast.1291 = f32[4,2048,768]{2,1,0} broadcast(multiply.46), dimensions={0,1}
+  subtract.1292 = f32[4,2048,768]{2,1,0} subtract(convert.1285, broadcast.1291)
+  multiply.1293 = f32[4,2048,768]{2,1,0} multiply(subtract.1292, subtract.1292)
+  reduce.1295 = f32[4,2048]{1,0} reduce(multiply.1293, constant.1117), dimensions={2}, to_apply=region_8.643
+  multiply.47 = f32[4,2048]{1,0} multiply(reduce.1295, broadcast.367)
+  add.93 = f32[4,2048]{1,0} add(multiply.47, broadcast.469)
+  reshape.785 = f32[4,2048,1]{1,0,2} reshape(add.93)
+  rsqrt.1303 = f32[4,2048,1]{1,0,2} rsqrt(reshape.785)
+  reshape.1307 = f32[4,2048]{1,0} reshape(rsqrt.1303)
+  broadcast.1308 = f32[4,2048,768]{2,1,0} broadcast(reshape.1307), dimensions={0,1}
+  multiply.1309 = f32[4,2048,768]{2,1,0} multiply(subtract.1292, broadcast.1308)
+  convert.1310 = bf16[4,2048,768]{2,1,0} convert(multiply.1309)
+  get-tuple-element.1079 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=18
+  dynamic-slice.1146 = bf16[1,768]{1,0} dynamic-slice(get-tuple-element.1079, select.1163, constant.1120), dynamic_slice_sizes={1,768}
+  add.47 = bf16[1,768]{1,0} add(dynamic-slice.1146, broadcast.370)
+  reshape.1314 = bf16[768]{0} reshape(add.47)
+  broadcast.1315 = bf16[4,2048,768]{2,1,0} broadcast(reshape.1314), dimensions={2}
+  multiply.1316 = bf16[4,2048,768]{2,1,0} multiply(convert.1310, broadcast.1315)
+  get-tuple-element.1078 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=17
+  dynamic-slice.1142 = bf16[1,768]{1,0} dynamic-slice(get-tuple-element.1078, select.1163, constant.1120), dynamic_slice_sizes={1,768}
+  reshape.1319 = bf16[768]{0} reshape(dynamic-slice.1142)
+  broadcast.1320 = bf16[4,2048,768]{2,1,0} broadcast(reshape.1319), dimensions={2}
+  add.1321 = bf16[4,2048,768]{2,1,0} add(multiply.1316, broadcast.1320)
+  reshape.47 = bf16[8192,768]{1,0} reshape(add.1321)
+  get-tuple-element.1076 = bf16[12,768,3072]{2,1,0} get-tuple-element(arg_tuple.1060), index=15
+  dynamic-slice.1132 = bf16[1,768,3072]{2,1,0} dynamic-slice(get-tuple-element.1076, select.1163, constant.1120, constant.1120), dynamic_slice_sizes={1,768,3072}
+  reshape.1133 = bf16[768,3072]{1,0} reshape(dynamic-slice.1132)
+  dot.10 = bf16[8192,3072]{1,0} dot(reshape.47, reshape.1133), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  get-tuple-element.1075 = bf16[12,3072]{1,0} get-tuple-element(arg_tuple.1060), index=14
+  dynamic-slice.1128 = bf16[1,3072]{1,0} dynamic-slice(get-tuple-element.1075, select.1163, constant.1120), dynamic_slice_sizes={1,3072}
+  reshape.1326 = bf16[3072]{0} reshape(dynamic-slice.1128)
+  broadcast.387 = bf16[8192,3072]{1,0} broadcast(reshape.1326), dimensions={1}
+  add.48 = bf16[8192,3072]{1,0} add(dot.10, broadcast.387)
+  reshape.469 = bf16[4,2048,3072]{2,1,0} reshape(add.48)
+  broadcast.389 = bf16[4,2048]{1,0} broadcast(constant.1090), dimensions={}
+  get-tuple-element.1088 = bf16[4,2048]{1,0} get-tuple-element(arg_tuple.1060), index=27
+  subtract.3 = bf16[4,2048]{1,0} subtract(broadcast.389, get-tuple-element.1088)
+  broadcast.1349 = bf16[4,2048,768]{2,1,0} broadcast(subtract.3), dimensions={0,1}
+  multiply.1350 = bf16[4,2048,768]{2,1,0} multiply(get-tuple-element.1062, broadcast.1349)
+  reshape.53 = bf16[8192,768]{1,0} reshape(multiply.1350)
+  get-tuple-element.1077 = bf16[12,3072,768]{2,1,0} get-tuple-element(arg_tuple.1060), index=16
+  dynamic-slice.1137 = bf16[1,3072,768]{2,1,0} dynamic-slice(get-tuple-element.1077, select.1163, constant.1120, constant.1120), dynamic_slice_sizes={1,3072,768}
+  reshape.1138 = bf16[3072,768]{1,0} reshape(dynamic-slice.1137)
+  dot.12 = bf16[8192,3072]{1,0} dot(reshape.53, reshape.1138), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  reshape.55 = bf16[4,2048,3072]{2,1,0} reshape(dot.12)
+  broadcast.1360 = bf16[4,2048,3072]{2,1,0} broadcast(subtract.3), dimensions={0,1}
+  multiply.1361 = bf16[4,2048,3072]{2,1,0} multiply(reshape.55, broadcast.1360)
+  multiply.1362 = bf16[4,2048,3072]{2,1,0} multiply(reshape.469, multiply.1361)
+  constant.1092 = bf16[] constant(0.5)
+  broadcast.1093 = bf16[4,2048,3072]{2,1,0} broadcast(constant.1092), dimensions={}
+  multiply.1363 = bf16[4,2048,3072]{2,1,0} multiply(multiply.1362, broadcast.1093)
+  broadcast.1095 = bf16[4,2048,3072]{2,1,0} broadcast(constant.1090), dimensions={}
+  multiply.1329 = bf16[4,2048,3072]{2,1,0} multiply(reshape.469, reshape.469)
+  multiply.1330 = bf16[4,2048,3072]{2,1,0} multiply(reshape.469, multiply.1329)
+  constant.1098 = bf16[] constant(0.04468)
+  broadcast.1099 = bf16[4,2048,3072]{2,1,0} broadcast(constant.1098), dimensions={}
+  multiply.1333 = bf16[4,2048,3072]{2,1,0} multiply(multiply.1330, broadcast.1099)
+  add.1334 = bf16[4,2048,3072]{2,1,0} add(reshape.469, multiply.1333)
+  constant.1096 = bf16[] constant(0.7969)
+  broadcast.1097 = bf16[4,2048,3072]{2,1,0} broadcast(constant.1096), dimensions={}
+  multiply.1335 = bf16[4,2048,3072]{2,1,0} multiply(add.1334, broadcast.1097)
+  tanh.1336 = bf16[4,2048,3072]{2,1,0} tanh(multiply.1335)
+  subtract.1337 = bf16[4,2048,3072]{2,1,0} subtract(broadcast.1095, tanh.1336)
+  multiply.1364 = bf16[4,2048,3072]{2,1,0} multiply(multiply.1363, subtract.1337)
+  multiply.1365 = bf16[4,2048,3072]{2,1,0} multiply(multiply.1364, tanh.1336)
+  add.1366 = bf16[4,2048,3072]{2,1,0} add(multiply.1364, multiply.1365)
+  multiply.1367 = bf16[4,2048,3072]{2,1,0} multiply(add.1366, broadcast.1097)
+  constant.66 = bf16[] constant(0.03564)
+  broadcast.289 = bf16[4,2048,3072]{2,1,0} broadcast(constant.66), dimensions={}
+  multiply.1368 = bf16[4,2048,3072]{2,1,0} multiply(add.1366, broadcast.289)
+  constant.1100 = bf16[] constant(3)
+  broadcast.1101 = bf16[4,2048,3072]{2,1,0} broadcast(constant.1100), dimensions={}
+  multiply.1332 = bf16[4,2048,3072]{2,1,0} multiply(multiply.1329, broadcast.1101)
+  multiply.1369 = bf16[4,2048,3072]{2,1,0} multiply(multiply.1368, multiply.1332)
+  add.1370 = bf16[4,2048,3072]{2,1,0} add(multiply.1367, multiply.1369)
+  add.1338 = bf16[4,2048,3072]{2,1,0} add(tanh.1336, broadcast.1095)
+  multiply.1339 = bf16[4,2048,3072]{2,1,0} multiply(add.1338, broadcast.1093)
+  multiply.1371 = bf16[4,2048,3072]{2,1,0} multiply(multiply.1361, multiply.1339)
+  add.1372 = bf16[4,2048,3072]{2,1,0} add(add.1370, multiply.1371)
+  reshape.59 = bf16[8192,3072]{1,0} reshape(add.1372)
+  dot.14 = bf16[8192,768]{1,0} dot(reshape.59, reshape.1133), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  reshape.61 = bf16[4,2048,768]{2,1,0} reshape(dot.14)
+  multiply.1390 = bf16[4,2048,768]{2,1,0} multiply(reshape.61, broadcast.1315)
+  convert.1391 = f32[4,2048,768]{2,1,0} convert(multiply.1390)
+  multiply.1392 = f32[4,2048,768]{2,1,0} multiply(subtract.1292, convert.1391)
+  reduce.1393 = f32[4,2048]{1,0} reduce(multiply.1392, constant.1117), dimensions={2}, to_apply=region_8.643
+  reshape.1394 = f32[4,2048,1]{1,0,2} reshape(reduce.1393)
+  divide.1304 = f32[4,2048,1]{1,0,2} divide(rsqrt.1303, reshape.785)
+  constant.1109 = f32[] constant(-0.5)
+  broadcast.1110 = f32[4,2048,1]{1,0,2} broadcast(constant.1109), dimensions={}
+  multiply.1305 = f32[4,2048,1]{1,0,2} multiply(divide.1304, broadcast.1110)
+  multiply.1395 = f32[4,2048,1]{1,0,2} multiply(reshape.1394, multiply.1305)
+  constant.206 = f32[] constant(0.00260416674)
+  broadcast.474 = f32[4,2048,1]{1,0,2} broadcast(constant.206), dimensions={}
+  multiply.48 = f32[4,2048,1]{1,0,2} multiply(multiply.1395, broadcast.474)
+  reshape.510 = f32[4,2048]{1,0} reshape(multiply.48)
+  broadcast.293 = f32[4,2048,768]{2,1,0} broadcast(reshape.510), dimensions={0,1}
+  multiply.1399 = f32[4,2048,768]{2,1,0} multiply(subtract.1292, broadcast.293)
+  multiply.1406 = f32[4,2048,768]{2,1,0} multiply(convert.1391, broadcast.1308)
+  add.1410 = f32[4,2048,768]{2,1,0} add(multiply.1399, multiply.1406)
+  negate.1400 = f32[4,2048,768]{2,1,0} negate(multiply.1399)
+  reduce.1401 = f32[4,2048]{1,0} reduce(negate.1400, constant.1117), dimensions={2}, to_apply=region_8.643
+  negate.1407 = f32[4,2048,768]{2,1,0} negate(multiply.1406)
+  reduce.1408 = f32[4,2048]{1,0} reduce(negate.1407, constant.1117), dimensions={2}, to_apply=region_8.643
+  add.49 = f32[4,2048]{1,0} add(reduce.1401, reduce.1408)
+  multiply.74 = f32[4,2048]{1,0} multiply(add.49, broadcast.367)
+  broadcast.1414 = f32[4,2048,768]{2,1,0} broadcast(multiply.74), dimensions={0,1}
+  add.1415 = f32[4,2048,768]{2,1,0} add(add.1410, broadcast.1414)
+  convert.1416 = bf16[4,2048,768]{2,1,0} convert(add.1415)
+  add.1417 = bf16[4,2048,768]{2,1,0} add(get-tuple-element.1062, convert.1416)
+  reshape.65 = bf16[8192,768]{1,0} reshape(add.1417)
+  reshape.66 = bf16[768,768]{1,0} reshape(dynamic-slice.1173)
+  dot.16 = bf16[8192,768]{1,0} dot(reshape.65, reshape.66), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  reshape.67 = bf16[4,2048,12,64]{3,1,2,0} reshape(dot.16)
+  transpose.34 = bf16[4,12,2048,64]{3,2,1,0} transpose(reshape.67), dimensions={0,2,1,3}
+  // dO V -> dP
+  dot.17 = bf16[4,12,2048,2048]{3,2,1,0} dot(transpose.34, transpose.16), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  convert.1427 = f32[4,12,2048,2048]{3,2,1,0} convert(dot.17)
+  constant.1102 = f32[] constant(1)
+  broadcast.495 = f32[4,12,2048]{2,1,0} broadcast(constant.1102), dimensions={}
+  multiply.73 = f32[4,12,2048]{2,1,0} multiply(reduce.1264, reduce.1264)
+  divide.3 = f32[4,12,2048]{2,1,0} divide(broadcast.495, multiply.73)
+  broadcast.1430 = f32[4,12,2048,2048]{3,2,1,0} broadcast(divide.3), dimensions={0,1,2}
+  multiply.1431 = f32[4,12,2048,2048]{3,2,1,0} multiply(convert.1427, broadcast.1430)
+  multiply.1432 = f32[4,12,2048,2048]{3,2,1,0} multiply(multiply.1431, exponential.1263)
+  reduce.1433 = f32[4,12,2048]{2,1,0} reduce(multiply.1432, constant.1117), dimensions={3}, to_apply=region_8.643
+  negate.38 = f32[4,12,2048]{2,1,0} negate(reduce.1433)
+  broadcast.1437 = f32[4,12,2048,2048]{3,2,1,0} broadcast(negate.38), dimensions={0,1,2}
+  divide.1441 = f32[4,12,2048,2048]{3,2,1,0} divide(convert.1427, broadcast.1268)
+  add.1442 = f32[4,12,2048,2048]{3,2,1,0} add(broadcast.1437, divide.1441)
+  multiply.1443 = f32[4,12,2048,2048]{3,2,1,0} multiply(add.1442, exponential.1263)
+  convert.1444 = bf16[4,12,2048,2048]{3,2,1,0} convert(multiply.1443)
+  copy.1 = bf16[4,12,2048,64]{3,2,1,0} copy(transpose.14)
+  // dS Q -> dK
+  dot.18 = bf16[4,12,2048,64]{3,2,1,0} dot(convert.1444, copy.1), lhs_batch_dims={0,1}, lhs_contracting_dims={2}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  transpose.1446 = bf16[4,2048,12,64]{3,1,2,0} transpose(dot.18), dimensions={0,2,1,3}
+  reshape.1448 = bf16[1,4,2048,12,64]{4,2,3,1,0} reshape(transpose.1446)
+  pad.1449 = bf16[3,4,2048,12,64]{4,2,3,1,0} pad(reshape.1448, constant.1089), padding=1_1x0_0x0_0x0_0x0_0
+  transpose.39 = bf16[4,12,2048,64]{2,3,1,0} transpose(reshape.1243), dimensions={0,2,1,3}
+  copy.2 = bf16[4,12,2048,64]{3,2,1,0} copy(transpose.39)
+  // dS K -> dQ
+  dot.19 = bf16[4,12,2048,64]{3,2,1,0} dot(convert.1444, copy.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  broadcast.395 = bf16[4,12,2048,64]{3,2,1,0} broadcast(constant.1105), dimensions={}
+  multiply.43 = bf16[4,12,2048,64]{3,2,1,0} multiply(dot.19, broadcast.395)
+  transpose.70 = bf16[4,2048,12,64]{3,1,2,0} transpose(multiply.43), dimensions={0,2,1,3}
+  reshape.1454 = bf16[1,4,2048,12,64]{4,2,3,1,0} reshape(transpose.70)
+  pad.1455 = bf16[3,4,2048,12,64]{4,2,3,1,0} pad(reshape.1454, constant.1089), padding=0_2x0_0x0_0x0_0x0_0
+  add.1456 = bf16[3,4,2048,12,64]{4,2,3,1,0} add(pad.1449, pad.1455)
+  transpose.1425 = bf16[4,12,64,2048]{2,3,1,0} transpose(reshape.67), dimensions={0,2,3,1}
+  copy.3 = bf16[4,12,64,2048]{3,2,1,0} copy(transpose.1425)
+  // dO P -> dV
+  dot.1457 = bf16[4,12,64,2048]{3,2,1,0} dot(copy.3, convert.1272), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  copy.4 = bf16[4,12,64,2048]{2,3,1,0} copy(dot.1457)
+  transpose.1458 = bf16[4,2048,12,64]{3,1,2,0} transpose(copy.4), dimensions={0,3,1,2}
+  reshape.1460 = bf16[1,4,2048,12,64]{4,2,3,1,0} reshape(transpose.1458)
+  pad.1461 = bf16[3,4,2048,12,64]{4,2,3,1,0} pad(reshape.1460, constant.1089), padding=2_0x0_0x0_0x0_0x0_0
+  add.1462 = bf16[3,4,2048,12,64]{4,2,3,1,0} add(add.1456, pad.1461)
+  transpose.40 = bf16[4,2048,3,12,64]{4,1,3,0,2} transpose(add.1462), dimensions={1,2,0,3,4}
+  reshape.77 = bf16[8192,2304]{1,0} reshape(transpose.40)
+  dot.20 = bf16[8192,768]{1,0} dot(reshape.77, reshape.35), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  reshape.79 = bf16[4,2048,768]{2,1,0} reshape(dot.20)
+  multiply.1478 = bf16[4,2048,768]{2,1,0} multiply(reshape.79, broadcast.1226)
+  convert.1479 = f32[4,2048,768]{2,1,0} convert(multiply.1478)
+  multiply.1480 = f32[4,2048,768]{2,1,0} multiply(subtract.1212, convert.1479)
+  reduce.1481 = f32[4,2048]{1,0} reduce(multiply.1480, constant.1117), dimensions={2}, to_apply=region_8.643
+  reshape.1482 = f32[4,2048,1]{1,0,2} reshape(reduce.1481)
+  divide.1215 = f32[4,2048,1]{1,0,2} divide(rsqrt.1214, reshape.779)
+  multiply.1216 = f32[4,2048,1]{1,0,2} multiply(divide.1215, broadcast.1110)
+  multiply.1483 = f32[4,2048,1]{1,0,2} multiply(reshape.1482, multiply.1216)
+  multiply.49 = f32[4,2048,1]{1,0,2} multiply(multiply.1483, broadcast.474)
+  reshape.515 = f32[4,2048]{1,0} reshape(multiply.49)
+  broadcast.298 = f32[4,2048,768]{2,1,0} broadcast(reshape.515), dimensions={0,1}
+  multiply.1487 = f32[4,2048,768]{2,1,0} multiply(subtract.1212, broadcast.298)
+  multiply.1494 = f32[4,2048,768]{2,1,0} multiply(convert.1479, broadcast.1219)
+  add.1498 = f32[4,2048,768]{2,1,0} add(multiply.1487, multiply.1494)
+  negate.1488 = f32[4,2048,768]{2,1,0} negate(multiply.1487)
+  reduce.1489 = f32[4,2048]{1,0} reduce(negate.1488, constant.1117), dimensions={2}, to_apply=region_8.643
+  negate.1495 = f32[4,2048,768]{2,1,0} negate(multiply.1494)
+  reduce.1496 = f32[4,2048]{1,0} reduce(negate.1495, constant.1117), dimensions={2}, to_apply=region_8.643
+  add.50 = f32[4,2048]{1,0} add(reduce.1489, reduce.1496)
+  multiply.75 = f32[4,2048]{1,0} multiply(add.50, broadcast.367)
+  broadcast.1502 = f32[4,2048,768]{2,1,0} broadcast(multiply.75), dimensions={0,1}
+  add.1503 = f32[4,2048,768]{2,1,0} add(add.1498, broadcast.1502)
+  convert.1504 = bf16[4,2048,768]{2,1,0} convert(add.1503)
+  add.1505 = bf16[4,2048,768]{2,1,0} add(add.1417, convert.1504)
+  get-tuple-element.1063 = bf16[12,3072]{1,0} get-tuple-element(arg_tuple.1060), index=2
+  reduce.1373 = bf16[3072]{0} reduce(add.1372, constant.1089), dimensions={0,1}, to_apply=region_23.860
+  reshape.1508 = bf16[1,3072]{1,0} reshape(reduce.1373)
+  dynamic-update-slice.1512 = bf16[12,3072]{1,0} dynamic-update-slice(get-tuple-element.1063, reshape.1508, select.1163, constant.1120)
+  get-tuple-element.1064 = bf16[12,768,3072]{2,1,0} get-tuple-element(arg_tuple.1060), index=3
+  transpose.26 = bf16[3072,4,2048]{0,2,1} transpose(add.1372), dimensions={2,0,1}
+  reshape.56 = bf16[3072,8192]{0,1} reshape(transpose.26)
+  dot.29 = bf16[768,3072]{1,0} dot(reshape.47, reshape.56), lhs_contracting_dims={0}, rhs_contracting_dims={1}
+  reshape.1513 = bf16[1,768,3072]{2,1,0} reshape(dot.29)
+  dynamic-update-slice.1517 = bf16[12,768,3072]{2,1,0} dynamic-update-slice(get-tuple-element.1064, reshape.1513, select.1163, constant.1120, constant.1120)
+  get-tuple-element.1065 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=4
+  reduce.1351 = bf16[768]{0} reduce(multiply.1350, constant.1089), dimensions={0,1}, to_apply=region_23.860
+  reshape.1518 = bf16[1,768]{1,0} reshape(reduce.1351)
+  dynamic-update-slice.1522 = bf16[12,768]{1,0} dynamic-update-slice(get-tuple-element.1065, reshape.1518, select.1163, constant.1120)
+  get-tuple-element.1066 = bf16[12,3072,768]{2,1,0} get-tuple-element(arg_tuple.1060), index=5
+  multiply.1340 = bf16[4,2048,3072]{2,1,0} multiply(reshape.469, multiply.1339)
+  multiply.1345 = bf16[4,2048,3072]{2,1,0} multiply(multiply.1340, broadcast.1360)
+  reshape.51 = bf16[8192,3072]{1,0} reshape(multiply.1345)
+  transpose.22 = bf16[768,4,2048]{0,2,1} transpose(multiply.1350), dimensions={2,0,1}
+  reshape.50 = bf16[768,8192]{0,1} reshape(transpose.22)
+  dot.30 = bf16[3072,768]{1,0} dot(reshape.51, reshape.50), lhs_contracting_dims={0}, rhs_contracting_dims={1}
+  reshape.1523 = bf16[1,3072,768]{2,1,0} reshape(dot.30)
+  dynamic-update-slice.1527 = bf16[12,3072,768]{2,1,0} dynamic-update-slice(get-tuple-element.1066, reshape.1523, select.1163, constant.1120, constant.1120)
+  get-tuple-element.1067 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=6
+  reduce.1380 = bf16[768]{0} reduce(dot.14, constant.1089), dimensions={0}, to_apply=region_23.860
+  reshape.1528 = bf16[1,768]{1,0} reshape(reduce.1380)
+  dynamic-update-slice.1532 = bf16[12,768]{1,0} dynamic-update-slice(get-tuple-element.1067, reshape.1528, select.1163, constant.1120)
+  get-tuple-element.1068 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=7
+  multiply.1383 = bf16[4,2048,768]{2,1,0} multiply(convert.1310, reshape.61)
+  reduce.1384 = bf16[768]{0} reduce(multiply.1383, constant.1089), dimensions={0,1}, to_apply=region_23.860
+  reshape.1533 = bf16[1,768]{1,0} reshape(reduce.1384)
+  dynamic-update-slice.1537 = bf16[12,768]{1,0} dynamic-update-slice(get-tuple-element.1068, reshape.1533, select.1163, constant.1120)
+  get-tuple-element.1069 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=8
+  reduce.1468 = bf16[768]{0} reduce(dot.20, constant.1089), dimensions={0}, to_apply=region_23.860
+  reshape.1538 = bf16[1,768]{1,0} reshape(reduce.1468)
+  dynamic-update-slice.1542 = bf16[12,768]{1,0} dynamic-update-slice(get-tuple-element.1069, reshape.1538, select.1163, constant.1120)
+  get-tuple-element.1070 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=9
+  multiply.1471 = bf16[4,2048,768]{2,1,0} multiply(convert.1221, reshape.79)
+  reduce.1472 = bf16[768]{0} reduce(multiply.1471, constant.1089), dimensions={0,1}, to_apply=region_23.860
+  reshape.1543 = bf16[1,768]{1,0} reshape(reduce.1472)
+  dynamic-update-slice.1547 = bf16[12,768]{1,0} dynamic-update-slice(get-tuple-element.1070, reshape.1543, select.1163, constant.1120)
+  get-tuple-element.1071 = bf16[12,3,12,64]{3,2,1,0} get-tuple-element(arg_tuple.1060), index=10
+  reduce.1463 = bf16[3,12,64]{2,1,0} reduce(add.1462, constant.1089), dimensions={1,2}, to_apply=region_23.860
+  reshape.1548 = bf16[1,3,12,64]{3,2,1,0} reshape(reduce.1463)
+  dynamic-update-slice.1552 = bf16[12,3,12,64]{3,2,1,0} dynamic-update-slice(get-tuple-element.1071, reshape.1548, select.1163, constant.1120, constant.1120, /*index=5*/constant.1120)
+  get-tuple-element.1072 = bf16[12,3,768,12,64]{4,3,2,1,0} get-tuple-element(arg_tuple.1060), index=11
+  transpose.42 = bf16[3,12,64,4,2048]{2,4,1,3,0} transpose(add.1462), dimensions={0,3,4,1,2}
+  reshape.80 = bf16[2304,8192]{1,0} reshape(transpose.42)
+  reshape.81 = bf16[8192,768]{1,0} reshape(add.1232)
+  dot.21 = bf16[2304,768]{1,0} dot(reshape.80, reshape.81), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  reshape.82 = bf16[3,12,64,768]{2,1,3,0} reshape(dot.21)
+  transpose.1507 = bf16[3,768,12,64]{3,2,1,0} transpose(reshape.82), dimensions={0,3,1,2}
+  reshape.1553 = bf16[1,3,768,12,64]{4,3,2,1,0} reshape(transpose.1507)
+  dynamic-update-slice.1557 = bf16[12,3,768,12,64]{4,3,2,1,0} dynamic-update-slice(get-tuple-element.1072, reshape.1553, select.1163, constant.1120, constant.1120, /*index=5*/constant.1120, constant.1120)
+  get-tuple-element.1073 = bf16[12,768]{1,0} get-tuple-element(arg_tuple.1060), index=12
+  reduce.1419 = bf16[768]{0} reduce(add.1417, constant.1089), dimensions={0,1}, to_apply=region_23.860
+  reshape.1558 = bf16[1,768]{1,0} reshape(reduce.1419)
+  dynamic-update-slice.1562 = bf16[12,768]{1,0} dynamic-update-slice(get-tuple-element.1073, reshape.1558, select.1163, constant.1120)
+  get-tuple-element.1074 = bf16[12,768,12,64]{3,2,1,0} get-tuple-element(arg_tuple.1060), index=13
+  transpose.30 = bf16[768,4,2048]{0,2,1} transpose(add.1417), dimensions={2,0,1}
+  reshape.62 = bf16[768,8192]{0,1} reshape(transpose.30)
+  transpose.31 = bf16[4,2048,12,64]{1,3,2,0} transpose(dot.8), dimensions={0,3,1,2}
+  reshape.63 = bf16[8192,768]{1,0} reshape(transpose.31)
+  dot.15 = bf16[768,768]{1,0} dot(reshape.62, reshape.63), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  reshape.1563 = bf16[1,768,12,64]{3,2,1,0} reshape(dot.15)
+  dynamic-update-slice.1567 = bf16[12,768,12,64]{3,2,1,0} dynamic-update-slice(get-tuple-element.1074, reshape.1563, select.1163, constant.1120, constant.1120, /*index=5*/constant.1120)
+  ROOT tuple.1569 = (s32[], bf16[4,2048,768]{2,1,0}, bf16[12,3072]{1,0}, bf16[12,768,3072]{2,1,0}, bf16[12,768]{1,0}, /*index=5*/bf16[12,3072,768]{2,1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, /*index=10*/bf16[12,3,12,64]{3,2,1,0}, bf16[12,3,768,12,64]{4,3,2,1,0}, bf16[12,768]{1,0}, bf16[12,768,12,64]{3,2,1,0}, bf16[12,3072]{1,0}, /*index=15*/bf16[12,768,3072]{2,1,0}, bf16[12,3072,768]{2,1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, bf16[12,768]{1,0}, /*index=20*/bf16[12,768]{1,0}, bf16[12,3,12,64]{3,2,1,0}, bf16[12,3,768,12,64]{4,3,2,1,0}, bf16[12,768]{1,0}, bf16[12,768,12,64]{3,2,1,0}, /*index=25*/bf16[12,4,2048,768]{3,2,1,0}, bf16[4,1,2048,2048]{3,2,0,1}, bf16[4,2048]{1,0}) tuple(add.1568, add.1505, dynamic-update-slice.1512, dynamic-update-slice.1517, dynamic-update-slice.1522, /*index=5*/dynamic-update-slice.1527, dynamic-update-slice.1532, dynamic-update-slice.1537, dynamic-update-slice.1542, dynamic-update-slice.1547, /*index=10*/dynamic-update-slice.1552, dynamic-update-slice.1557, dynamic-update-slice.1562, dynamic-update-slice.1567, get-tuple-element.1075, /*index=15*/get-tuple-element.1076, get-tuple-element.1077, get-tuple-element.1078, get-tuple-element.1079, get-tuple-element.1080, /*index=20*/get-tuple-element.1081, get-tuple-element.1082, get-tuple-element.1083, get-tuple-element.1084, get-tuple-element.1085, /*index=25*/get-tuple-element.1086, get-tuple-element.1087, get-tuple-element.1088)
+}
+
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  AlgebraicSimplifierOptions alg_sim_options;
+  alg_sim_options.set_supports_non_canonical_dots(false);
+  alg_sim_options.set_is_layout_sensitive(true);
+  alg_sim_options.set_enable_conv_operand_swap(false);
+  AlgebraicSimplifier alge_simp{alg_sim_options};
+  ReshapeDecomposer reshape_decomposer;
+  LayoutNormalization layout_normalizer;
+  HloCSE cse{/*is_layout_sensitive=*/true};
+  TF_ASSERT_OK(RunHloPass(&reshape_decomposer, m.get()).status());
+  TF_ASSERT_OK(RunHloPass(&layout_normalizer, m.get()).status());
+  // TF_ASSERT_OK(RunHloPass(&cse, m.get()).status());
+  TF_ASSERT_OK(RunHloPass(&alge_simp, m.get()).status());
+  TF_ASSERT_OK(RunHloPass(&cse, m.get()).status());
+  CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
+                                         GetCudnnVersion()};
+  TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
+
+  CudnnFusedMHATransposeFusion fmha_transpose_fusion;
+
+  HloDCE dce;
+  TF_ASSERT_OK(RunHloPass(&alge_simp, m.get()).status());
+  TF_ASSERT_OK(RunHloPass(&fmha_transpose_fusion, m.get()).status());
+
+  TF_ASSERT_OK(RunHloPass(&dce, m.get()).status());
+
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape());
+
+  HloInstruction* fwd_instruction = nullptr;
+  HloInstruction* bwd_instruction = nullptr;
+  SCOPED_TRACE(m->ToString());
+  for (HloInstruction* instr : m->entry_computation()->MakeInstructionPostOrder()) {
+    if (instr->opcode() == HloOpcode::kCustomCall && instr->custom_call_target() == kCudnnfMHASoftmaxCallTarget) {
+      fwd_instruction = instr;
+    }
+    if (instr->opcode() == HloOpcode::kCustomCall && instr->custom_call_target() == kCudnnfMHASoftmaxBackwardCallTarget) {
+      bwd_instruction = instr;
+    }
+  }
+  EXPECT_NE(fwd_instruction, nullptr);
+  EXPECT_NE(bwd_instruction, nullptr);
+  TF_ASSERT_OK_AND_ASSIGN(auto config,
+                          fwd_instruction->backend_config<CudnnfMHABackendConfig>());
+  EXPECT_EQ(config.is_flash_attention(), true);
+}
+
 }  // anonymous namespace
 }  // namespace gpu
 }  // namespace xla

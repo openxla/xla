@@ -915,6 +915,9 @@ XLA_RUNTIME_DEFINE_CUSTOM_CALL(
             .Value(std::optional<StridedMemrefView>())  // d_Q_accum
             .Arg<FlatMemrefView>()                      // scratch
             .Arg<StridedMemrefView>()                   // d_bias
+            .Value(std::optional<StridedMemrefView>())  // softmax_sum
+            .Value(std::optional<StridedMemrefView>())  // d_Q_accum
+            .Value(std::optional<StridedMemrefView>())  // fwd_output
         )
         .Value(std::optional<double>())   // dropout_rate
         .Value(std::optional<int64_t>())  // seed
@@ -937,6 +940,9 @@ XLA_RUNTIME_DEFINE_CUSTOM_CALL(
             .Value(std::optional<StridedMemrefView>())  // d_Q_accum
             .Arg<FlatMemrefView>()                      // scratch
             .Value(std::optional<StridedMemrefView>())  // d_bias
+            .Value(std::optional<StridedMemrefView>())  // softmax_sum
+            .Value(std::optional<StridedMemrefView>())  // d_Q_accum
+            .Value(std::optional<StridedMemrefView>())  // fwd_output
         )
         .Value(std::optional<double>())   // dropout_rate
         .Value(std::optional<int64_t>())  // seed
@@ -959,6 +965,9 @@ XLA_RUNTIME_DEFINE_CUSTOM_CALL(
             .Value(std::optional<StridedMemrefView>())  // d_Q_accum
             .Arg<FlatMemrefView>()                      // scratch
             .Arg<StridedMemrefView>()                   // d_bias
+            .Value(std::optional<StridedMemrefView>())  // softmax_sum
+            .Value(std::optional<StridedMemrefView>())  // d_Q_accum
+            .Value(std::optional<StridedMemrefView>())  // fwd_output
         )
         .Attr<double>("dropout_rate")  // dropout_rate
         .Attr<int64_t>("seed")         // seed
@@ -981,6 +990,9 @@ XLA_RUNTIME_DEFINE_CUSTOM_CALL(
             .Value(std::optional<StridedMemrefView>())  // d_Q_accum
             .Arg<FlatMemrefView>()                      // scratch
             .Value(std::optional<StridedMemrefView>())  // d_bias
+            .Value(std::optional<StridedMemrefView>())  // softmax_sum
+            .Value(std::optional<StridedMemrefView>())  // d_Q_accum
+            .Value(std::optional<StridedMemrefView>())  // fwd_output
         )
         .Attr<double>("dropout_rate")  // dropout_rate
         .Attr<int64_t>("seed")         // seed
@@ -1025,6 +1037,9 @@ XLA_RUNTIME_DEFINE_CUSTOM_CALL(
             .Value(std::optional<StridedMemrefView>())  // d_Q_accum
             .Arg<FlatMemrefView>()                      // scratch
             .Value(std::optional<StridedMemrefView>())  // d_bias
+            .Value(std::optional<StridedMemrefView>())  // softmax_sum
+            .Value(std::optional<StridedMemrefView>())  // d_Q_accum
+            .Value(std::optional<StridedMemrefView>())  // fwd_output
         )
         .Value(std::optional<double>())   // dropout_rate
         .Value(std::optional<int64_t>())  // seed
@@ -1069,6 +1084,9 @@ XLA_RUNTIME_DEFINE_CUSTOM_CALL(
             .Value(std::optional<StridedMemrefView>())  // d_Q_accum
             .Arg<FlatMemrefView>()                      // scratch
             .Value(std::optional<StridedMemrefView>())  // d_bias
+            .Value(std::optional<StridedMemrefView>())  // softmax_sum
+            .Value(std::optional<StridedMemrefView>())  // d_Q_accum
+            .Value(std::optional<StridedMemrefView>())  // fwd_output
         )
         .Attr<double>("dropout_rate")  // dropout_rate
         .Attr<int64_t>("seed")         // seed

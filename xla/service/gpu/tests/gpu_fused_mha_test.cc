@@ -2215,6 +2215,99 @@ class MultiHeadedAttentionBMMScaleBiasSoftmaxBMM
   }
 };
 
+class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
+    : public MultiHeadedAttentionTest {
+ protected:
+  const std::string                                                             // NOLINT
+  GetModuleFMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2_HloString_BF16() { // NOLINT
+    const std::string hlo_text = R"(
+    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,2048,128]{3,2,1,0},bf16[2,6,128,2048]{3,2,1,0},bf16[2,6,2048,128]{3,2,1,0})->bf16[2,6,2048,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_output={true}
+
+    region_0.28 {
+      Arg_0.29 = bf16[] parameter(0)
+      Arg_1.30 = bf16[] parameter(1)
+      ROOT maximum.31 = bf16[] maximum(Arg_0.29, Arg_1.30)
+    }
+
+    region_1.40 {
+      Arg_0.41 = f32[] parameter(0)
+      Arg_1.42 = f32[] parameter(1)
+      ROOT add.43 = f32[] add(Arg_0.41, Arg_1.42)
+    }
+
+    ENTRY main.52 {
+      Arg_0.1 = bf16[2,6,2048,128]{3,2,1,0} parameter(0), sharding={replicated}
+      Arg_1.2 = bf16[2,6,128,2048]{3,2,1,0} parameter(1), sharding={replicated}
+      dot.10 = bf16[2,6,2048,2048]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+      constant.6 = bf16[] constant(2)
+      broadcast.7 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(constant.6), dimensions={}
+      multiply.11 = bf16[2,6,2048,2048]{3,2,1,0} multiply(dot.10, broadcast.7)
+      iota.16 = s32[2048]{0} iota(), iota_dimension=0
+      reshape.17 = s32[1,2048,1]{2,1,0} reshape(iota.16)
+      broadcast.18 = s32[1,2048,2048,1]{3,2,1,0} broadcast(reshape.17), dimensions={0,1,3}
+      reshape.19 = s32[2048,2048]{1,0} reshape(broadcast.18)
+      iota.12 = s32[2048]{0} iota(), iota_dimension=0
+      reshape.13 = s32[1,1,2048]{2,1,0} reshape(iota.12)
+      broadcast.14 = s32[2048,1,1,2048]{3,2,1,0} broadcast(reshape.13), dimensions={1,2,3}
+      reshape.15 = s32[2048,2048]{1,0} reshape(broadcast.14)
+      compare.20 = pred[2048,2048]{1,0} compare(reshape.19, reshape.15), direction=LT
+      convert.21 = bf16[2048,2048]{1,0} convert(compare.20)
+      constant.4 = bf16[] constant(-2.366e+38)
+      broadcast.5 = bf16[2048,2048]{1,0} broadcast(constant.4), dimensions={}
+      multiply.22 = bf16[2048,2048]{1,0} multiply(convert.21, broadcast.5)
+      reshape.23 = bf16[1,1,2048,2048]{3,2,1,0} reshape(multiply.22)
+      broadcast.24 = bf16[1,1,2048,2048]{3,2,1,0} broadcast(reshape.23), dimensions={0,1,2,3}
+      reshape.25 = bf16[2048,2048]{1,0} reshape(broadcast.24)
+      broadcast.26 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(reshape.25), dimensions={2,3}
+      add.27 = bf16[2,6,2048,2048]{3,2,1,0} add(multiply.11, broadcast.26)
+      constant.9 = bf16[] constant(-inf)
+      reduce.32 = bf16[2,6,2048]{2,1,0} reduce(add.27, constant.9), dimensions={3}, to_apply=region_0.28
+      reshape.33 = bf16[2,6,2048,1]{3,2,1,0} reshape(reduce.32)
+      broadcast.34 = bf16[2,6,2048,1]{3,2,1,0} broadcast(reshape.33), dimensions={0,1,2,3}
+      reshape.35 = bf16[2,6,2048]{2,1,0} reshape(broadcast.34)
+      broadcast.36 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(reshape.35), dimensions={0,1,2}
+      subtract.37 = bf16[2,6,2048,2048]{3,2,1,0} subtract(add.27, broadcast.36)
+      exponential.38 = bf16[2,6,2048,2048]{3,2,1,0} exponential(subtract.37)
+      convert.39 = f32[2,6,2048,2048]{3,2,1,0} convert(exponential.38)
+      constant.8 = f32[] constant(0)
+      reduce.44 = f32[2,6,2048]{2,1,0} reduce(convert.39, constant.8), dimensions={3}, to_apply=region_1.40
+      reshape.45 = f32[2,6,2048,1]{3,2,1,0} reshape(reduce.44)
+      convert.46 = bf16[2,6,2048,1]{3,2,1,0} convert(reshape.45)
+      broadcast.47 = bf16[2,6,2048,1]{3,2,1,0} broadcast(convert.46), dimensions={0,1,2,3}
+      reshape.48 = bf16[2,6,2048]{2,1,0} reshape(broadcast.47)
+      broadcast.49 = bf16[2,6,2048,2048]{3,2,1,0} broadcast(reshape.48), dimensions={0,1,2}
+      divide.50 = bf16[2,6,2048,2048]{3,2,1,0} divide(exponential.38, broadcast.49)
+      Arg_2.3 = bf16[2,6,2048,128]{3,2,1,0} parameter(2), sharding={replicated}
+      ROOT dot.51 = bf16[2,6,2048,128]{3,2,1,0} dot(divide.50, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+    }
+  )";
+    return hlo_text;
+  }
+
+  template <typename T>
+  void TestImpl_FMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2() {
+    stream_executor::CudaComputeCapability cc = GetCudaComputeCapability();
+    se::dnn::VersionInfo real_cudnn_version = GetCudnnVersion();
+    if (!(cc.IsAtLeast(se::CudaComputeCapability::AMPERE) && cc.minor == 0 && real_cudnn_version >= se::dnn::VersionInfo(8, 9, 0))) {
+      GTEST_SKIP() << "Flash Attention is supported with the Nvidia AMPERE+ GPUs and cuDNN >= 8.9.0.";
+    }
+    XlaBuilder builder(TestName());
+    auto lhs_bmm1_literal = GetInput4DLiteral<T>({2, 6, 2048, 128}, {3, 2, 1, 0});
+    auto rhs_bmm1_literal = GetInput4DLiteral<T>({2, 6, 128, 2048}, {3, 2, 1, 0});
+    auto rhs_bmm2_literal = GetInput4DLiteral<T>({2, 6, 2048, 128}, {3, 2, 1, 0});
+    std::string hlo_string = "";
+    if (std::is_same<T, Eigen::half>::value) {
+      //
+    } else if (std::is_same<T, bfloat16>::value) {
+      hlo_string =
+          GetModuleFMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2_HloString_BF16();
+    }
+
+    ExecuteAndCompare(hlo_string, {&lhs_bmm1_literal,
+                                       &rhs_bmm1_literal, &rhs_bmm2_literal});
+  }
+};
+
 // BMM1 - BMM2
 XLA_TEST_F(MultiHeadedAttentionBMMBMM, FMHABMM_BMM_vanilla_F16) {
   TestImpl_FMHABMM_BMM_vanilla<Eigen::half>();
@@ -2345,5 +2438,12 @@ XLA_TEST_F(MultiHeadedAttentionBMMScaleBiasSoftmaxBMM,
            FMHA_Training_BMM1_Scale_Bias_Softmax_BMM2_vanilla_BF16) {
   TestImpl_FMHA_Training_BMM1_Scale_Bias_Softmax_BMM2_vanilla<bfloat16>();
 }
+
+// flash attention
+XLA_TEST_F(FlashAttentionBMMScaleCausalMaskSoftmaxBMM,
+           FMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2_BF16) {
+  TestImpl_FMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2<bfloat16>();
+}
+
 }  // namespace gpu
 }  // namespace xla
