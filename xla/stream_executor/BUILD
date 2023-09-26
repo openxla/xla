@@ -417,7 +417,7 @@ cc_library(
         "kernel_cache_config.h",
         "stream_executor_pimpl.h",
     ],
-    visibility = ["//visibility:public"],
+    visibility = ["//visibility:private"],
     deps = [
         ":device_description_proto_cc",
         ":platform",
@@ -448,6 +448,7 @@ cc_library(
         "stream_executor_pimpl.cc",
     ],
     hdrs = ["stream_executor_pimpl.h"],
+    visibility = ["//visibility:private"],
     deps = [
         ":blas",
         ":command_buffer",
@@ -576,8 +577,8 @@ cc_library(
     srcs = ["event.cc"],
     hdrs = ["event.h"],
     deps = [
+        ":stream_executor_headers",
         ":stream_executor_internal",
-        ":stream_executor_pimpl_header",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:status",
     ],
@@ -637,7 +638,6 @@ cc_library(
     deps = [
         ":device_memory",
         ":stream_executor_headers",
-        ":stream_executor_pimpl_header",
         ":temporary_device_memory",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
@@ -672,6 +672,7 @@ cc_library(
 cc_library(
     name = "stream_executor",
     textual_hdrs = [
+        "allocator_stats.h",
         "blas.h",
         "data_type.h",
         "device_description.h",
@@ -716,6 +717,8 @@ cc_library(
 cc_library(
     name = "stream_executor_impl",
     deps = [
+        ":allocator_stats",
+        ":device_description",
         ":device_memory",
         ":dnn",
         ":dnn_proto_cc",
