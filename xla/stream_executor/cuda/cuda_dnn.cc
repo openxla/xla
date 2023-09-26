@@ -5189,7 +5189,7 @@ GetCudnnFusedMHAOperationGraph(
   RETURN_MSG_IF_CUDNN_ERROR(bmm1_op);
 
   VLOG(4) << "\nTensor_s: " << tensor_s.describe()
-            << "\nBMM1_op: " << bmm1_op.describe();
+          << "\nBMM1_op: " << bmm1_op.describe();
 
   cudnn_frontend::Tensor bmm2_input_tensor = std::move(tensor_s);
   intermediate_ops.push_back(std::move(bmm1_op));
