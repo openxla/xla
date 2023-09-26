@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/pjrt/pjrt_executable.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <variant>
@@ -24,6 +25,7 @@ limitations under the License.
 #include "xla/client/executable_build_options.h"
 #include "xla/pjrt/compile_options.pb.h"
 #include "xla/shape_util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/status_matchers.h"
 
@@ -113,5 +115,30 @@ TEST(ExecuteOptionsTest, ApplyOptionsCanParseStrings) {
       debug_options.xla_gpu_auto_spmd_partitioning_memory_budget_ratio(), 0.9);
   EXPECT_EQ(debug_options.xla_gpu_pgle_profile_file_or_directory_path(), "abc");
 }
+
+TEST(ExecuteOptionsTest, GPUCompEnvOverridesDebugOptions) {
+  GpuCompilationEnvironment gce;
+  gce.set_xla_gpu_graph_level(7);
+  CompileOptions src;
+  auto status = src.executable_build_options.mutable_comp_envs()->AddEnv(
+      std::make_unique<GpuCompilationEnvironment>(gce));
+  ASSERT_TRUE(status.ok());
+
+  auto s = src.ApplyGpuCompEnvOverrides();
+
+  auto& debug_options = src.executable_build_options.debug_options();
+  EXPECT_EQ(debug_options.xla_gpu_graph_level(), 7);
+}
+
+TEST(ExecuteOptionsTest, GPUCompEnvDoesNotExist) {
+  CompileOptions src;
+  *(src.executable_build_options.mutable_debug_options()) = DebugOptions();
+
+  auto s = src.ApplyGpuCompEnvOverrides();
+
+  auto& debug_options = src.executable_build_options.debug_options();
+  EXPECT_EQ(debug_options.xla_gpu_graph_level(), 0);
+}
+
 }  // namespace
 }  // namespace xla
