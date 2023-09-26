@@ -368,16 +368,29 @@ cc_library(
     ],
 )
 
+tf_proto_library(
+    name = "stream_executor_unloaded_executable_proto",
+    srcs = ["stream_executor_unloaded_executable.proto"],
+    cc_api_version = 2,
+    protodeps = [
+        ":compile_options_proto",
+        "//xla:xla_proto",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "stream_executor_unloaded_executable",
     srcs = ["stream_executor_unloaded_executable.cc"],
     hdrs = ["stream_executor_unloaded_executable.h"],
     deps = [
         ":pjrt_executable",
+        ":stream_executor_unloaded_executable_proto_cc",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
