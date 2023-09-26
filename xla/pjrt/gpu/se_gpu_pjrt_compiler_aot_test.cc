@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_compiler.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/service/gpu/gpu_target_config.h"
 #include "xla/service/hlo_parser.h"
@@ -191,6 +192,35 @@ TEST(StreamExecutorGpuCompilerTest, SuccessLoadFromSerializedExecutable) {
       se_client->LoadSerializedExecutable(serialized_executable, std::nullopt,
                                           LoadOptions()));
 
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto result, loaded_executable->Execute(/*argument_handles=*/{{}}, {}));
+  ValidateResult(result);
+}
+
+TEST(StreamExecutorGpuCompilerTest, SuccessCrossCompileAndLoad) {
+  ASSERT_OK_AND_ASSIGN(const gpu::GpuTargetConfig gpu_config,
+                       GetGpuTargetConfig());
+  CompileOptions options = xla::CompileOptions();
+  StreamExecutorGpuCompiler compiler(gpu_config);
+  TF_ASSERT_OK_AND_ASSIGN(auto computation, GetXlaComputation(kProgram));
+
+  // Create topology w/o instantiating client. Set compiler in topology for
+  // cross-compiling.
+  xla::StreamExecutorGpuTopologyDescription topology(
+      xla::GpuId(), xla::GpuName(), "fake_device", {0}, &compiler);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      xla::PjRtCompile(options, computation, topology, /*client=*/nullptr));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto client, GetStreamExecutorGpuClient(true, /*allocator_config=*/{},
+                                              /*node_id=*/0));
+  auto se_client = absl::WrapUnique(
+      tensorflow::down_cast<StreamExecutorGpuClient*>(client.release()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto loaded_executable,
+                          se_client->Load(std::move(executable)));
   TF_ASSERT_OK_AND_ASSIGN(
       auto result, loaded_executable->Execute(/*argument_handles=*/{{}}, {}));
   ValidateResult(result);

@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/gpu/gpu_topology.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/statusor.h"
@@ -46,25 +47,29 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
   static StreamExecutorGpuTopologyDescription Create(
       const PjRtPlatformId platform_id, const absl::string_view platform_name,
       const absl::string_view platform_version,
-      const std::vector<PjRtDevice*>& devices) {
+      const std::vector<PjRtDevice*>& devices,
+      PjRtCompiler* compiler = nullptr) {
     std::vector<int> device_ids;
     device_ids.reserve(devices.size());
     for (PjRtDevice* device : devices) {
       device_ids.push_back(device->id());
     }
-    return StreamExecutorGpuTopologyDescription(platform_id, platform_name,
-                                                platform_version, device_ids);
+
+    return StreamExecutorGpuTopologyDescription(
+        platform_id, platform_name, platform_version, device_ids, compiler);
   }
   // `gpu_device_ids` is the list of logical device ids for the GPU devices and
   // will be used to initialize the GPU topology.
   StreamExecutorGpuTopologyDescription(const PjRtPlatformId platform_id,
                                        const absl::string_view platform_name,
                                        const absl::string_view platform_version,
-                                       const std::vector<int>& gpu_device_ids)
+                                       const std::vector<int>& gpu_device_ids,
+                                       PjRtCompiler* compiler = nullptr)
       : platform_id_(platform_id),
         platform_name_(platform_name),
         platform_version_(platform_version),
-        gpu_topology_(gpu_device_ids) {}
+        gpu_topology_(gpu_device_ids),
+        compiler_(compiler) {}
 
   bool operator==(const StreamExecutorGpuTopologyDescription& other) const {
     return this->platform_id() == other.platform_id() &&
@@ -80,6 +85,13 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
 
   absl::string_view platform_version() const override {
     return platform_version_;
+  }
+
+  std::optional<PjRtCompiler*> compiler() const override {
+    if (compiler_ == nullptr) {
+      return std::nullopt;
+    }
+    return compiler_;
   }
 
   std::vector<std::unique_ptr<const PjRtDeviceDescription>> DeviceDescriptions()
@@ -132,6 +144,7 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
   const std::string platform_version_;
   const GpuTopology gpu_topology_;
   absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute> attributes_;
+  PjRtCompiler* compiler_;
 };
 
 class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
