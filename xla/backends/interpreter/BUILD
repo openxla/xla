@@ -94,7 +94,6 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
-        "//xla/stream_executor:event",
         "@tsl//tsl/platform:statusor",
     ],
 )
