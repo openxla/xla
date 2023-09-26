@@ -143,7 +143,6 @@ cc_library(
     hdrs = if_gpu_is_configured(["gpu_executor.h"]),
     deps = [
         ":gpu_kernel_header",
-        "//xla/stream_executor:event",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor:stream_executor_internal",
@@ -213,7 +212,6 @@ cc_library(
     hdrs = if_gpu_is_configured(["gpu_kernel.h"]),
     deps = [
         ":gpu_driver_header",
-        "//xla/stream_executor:event",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor/platform",
