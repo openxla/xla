@@ -89,8 +89,6 @@ StatusOr<bool> ReduceScatterAllGatherCombiner::Run(
       TF_RETURN_IF_ERROR(
           computation->ReplaceWithNewInstruction(user, std::move(combined)));
 
-      TF_RETURN_IF_ERROR(computation->RemoveInstruction(rs));
-
       changed = true;
     }
   }

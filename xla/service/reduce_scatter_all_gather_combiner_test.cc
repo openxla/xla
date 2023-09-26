@@ -82,8 +82,6 @@ all-gather.1 = bf16[8,128,1024] all-gather(reduce-scatter.1), channel_id=5, repl
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/true));
-  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 0);
-  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 0);
   EXPECT_EQ(CollectiveCount<HloOpcode::kAllReduce>(module), 1);
 }
 
@@ -101,6 +99,52 @@ ENTRY main {
 param.1 = bf16[8,128,1024] parameter(0)
 reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
 all-gather.1 = bf16[16,64,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,1},{2,3},{4,5},{6,7}}, dimensions={0}, use_global_device_ids=true
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                               /*num_replicas=*/8,
+                                               /*num_partitions=*/1,
+                                               /*expect_change=*/false));
+}
+
+TEST_F(ReduceScatterAllGatherCombinerTest, IncompatibleReplicaGroups) {
+  absl::string_view hlo_string = R"(
+HloModule ReduceScatter
+
+add {
+  x = bf16[] parameter(0)
+  y = bf16[] parameter(1)
+  ROOT add = bf16[] add(x, y)
+}
+
+ENTRY main {
+param.1 = bf16[8,128,1024] parameter(0)
+reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
+all-gather.1 = bf16[8,128,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,2},{1,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=true
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, RunPass(hlo_string,
+                                               /*num_replicas=*/8,
+                                               /*num_partitions=*/1,
+                                               /*expect_change=*/false));
+}
+
+TEST_F(ReduceScatterAllGatherCombinerTest, IncompatibleDeviceIds) {
+  absl::string_view hlo_string = R"(
+HloModule ReduceScatter
+
+add {
+  x = bf16[] parameter(0)
+  y = bf16[] parameter(1)
+  ROOT add = bf16[] add(x, y)
+}
+
+ENTRY main {
+param.1 = bf16[8,128,1024] parameter(0)
+reduce-scatter.1 = bf16[8,64,1024] reduce-scatter(param.1), channel_id=8, replica_groups={{0,1},{2,3},{4,5},{6,7}}, use_global_device_ids=true, dimensions={1}, to_apply=add
+all-gather.1 = bf16[8,128,1024] all-gather(reduce-scatter.1), channel_id=5, replica_groups={{0,2},{1,3},{4,5},{6,7}}, dimensions={1}, use_global_device_ids=false
 }
 )";
 
@@ -135,8 +179,6 @@ add.1 = bf16[8,128,1024] add(all-gather.1, all-gather.2)
                                                /*num_replicas=*/8,
                                                /*num_partitions=*/1,
                                                /*expect_change=*/true));
-  EXPECT_EQ(CollectiveCount<HloOpcode::kAllGather>(module), 0);
-  EXPECT_EQ(CollectiveCount<HloOpcode::kReduceScatter>(module), 0);
   EXPECT_EQ(CollectiveCount<HloOpcode::kAllReduce>(module), 2);
 }
 
