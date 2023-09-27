@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -624,6 +625,10 @@ class HloParserImpl : public HloParser {
 
   // Used to generate names for anonymous instructions.
   NameUniquer name_uniquer_{/*separator=*/"."};
+
+  // Wrapped computations corresponding to an async instruction.
+  absl::flat_hash_map<HloInstruction*, HloComputation*>
+      async_wrapped_computations_;
 };
 
 bool SplitToInt64s(absl::string_view s, char delim, std::vector<int64_t>* out) {
@@ -1814,8 +1819,16 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         if (!root) {
           return nullptr;
         }
-        computations_.emplace_back(async_wrapped_builder.Build(root));
-        async_computation = computations_.back().get();
+        // Avoid creating multiple async wrapped computations.
+        bool async_comp_already_created =
+            operands.size() == 1 &&
+            async_wrapped_computations_.contains(operands.at(0));
+        if (async_comp_already_created) {
+          async_computation = async_wrapped_computations_[operands.at(0)];
+        } else {
+          computations_.emplace_back(async_wrapped_builder.Build(root));
+          async_computation = computations_.back().get();
+        }
       } else {
         attrs["calls"] = {/*required=*/true, AttrTy::kHloComputation,
                           &async_computation};
@@ -1823,19 +1836,29 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           return nullptr;
         }
       }
+      HloInstruction* async_instruction = nullptr;
       if (opcode == HloOpcode::kAsyncStart) {
-        return builder->AddInstruction(HloInstruction::CreateAsyncStart(
-            *shape, operands, *async_computation, async_group_id,
-            *async_execution_thread));
+        async_instruction =
+            builder->AddInstruction(HloInstruction::CreateAsyncStart(
+                *shape, operands, *async_computation, async_group_id,
+                *async_execution_thread));
+      } else if (opcode == HloOpcode::kAsyncUpdate) {
+        async_instruction =
+            builder->AddInstruction(HloInstruction::CreateAsyncUpdate(
+                *shape, operands[0], *async_computation, async_group_id,
+                *async_execution_thread));
+      } else {
+        async_instruction =
+            builder->AddInstruction(HloInstruction::CreateAsyncDone(
+                *shape, operands[0], *async_computation, async_group_id,
+                *async_execution_thread));
       }
-      if (opcode == HloOpcode::kAsyncUpdate) {
-        return builder->AddInstruction(HloInstruction::CreateAsyncUpdate(
-            *shape, operands[0], *async_computation, async_group_id,
-            *async_execution_thread));
+
+      if (async_computation.has_value()) {
+        async_wrapped_computations_.insert(
+            {async_instruction, async_computation.value()});
       }
-      return builder->AddInstruction(HloInstruction::CreateAsyncDone(
-          *shape, operands[0], *async_computation, async_group_id,
-          *async_execution_thread));
+      return async_instruction;
     }
     case HloOpcode::kCopyStart: {
       optional<int> cross_program_prefetch_index = std::nullopt;

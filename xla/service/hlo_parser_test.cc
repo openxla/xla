@@ -4734,5 +4734,62 @@ TEST_F(HloParserTest, LexesAsJsonDict) {
   EXPECT_FALSE(LexesAsJsonDict("{{{{}}}"));
 }
 
+TEST_F(HloParserTest,
+       AsyncStartWithCorrectComputationCountForGivenAsyncGroupdId) {
+  const std::string original = R"(
+  HloModule async_start_with_correct_computation_count
+
+  called_computation {
+    p0 = s32[24,216] parameter(0)
+    p1 = s32[24,216] parameter(1)
+    output1 = s32[24,216] negate(p0)
+    output2 = s32[24,216] negate(p1)
+    ROOT tuple = (s32[24,216], s32[24,216]) tuple(output1, output2)
+  }, execution_thread="foo"
+
+  ENTRY main {
+    p0 = s32[24,216] parameter(0)
+    p1 = s32[24,216] parameter(1)
+    call_start = ((s32[24,216], s32[24,216]), (s32[24,216], s32[24,216]), u32[]) call-start(p0, p1), async_group_id=0, async_execution_thread="foo", to_apply=called_computation
+    ROOT call_done = (s32[24,216], s32[24,216]) call-done(call_start), async_group_id=0, async_execution_thread="foo", to_apply=called_computation
+  }
+    )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(original));
+  // 1) Entry computation.
+  // 2) called_computation.
+  // 3) async wrapped computation.
+  EXPECT_EQ(module->computation_count(), 3);
+}
+
+TEST_F(HloParserTest, AsyncStartWithCorrectComputationCountNoAsyncGroupId) {
+  const std::string original = R"(
+  HloModule async_start_with_correct_computation_count
+
+  called_computation {
+    p0 = s32[24,216] parameter(0)
+    p1 = s32[24,216] parameter(1)
+    output1 = s32[24,216] negate(p0)
+    output2 = s32[24,216] negate(p1)
+    ROOT tuple = (s32[24,216], s32[24,216]) tuple(output1, output2)
+  }, execution_thread="foo"
+
+  ENTRY main {
+    p0 = s32[24,216] parameter(0)
+    p1 = s32[24,216] parameter(1)
+    call_start = ((s32[24,216], s32[24,216]), (s32[24,216], s32[24,216]), u32[]) call-start(p0, p1), async_execution_thread="foo", to_apply=called_computation
+    ROOT call_done = (s32[24,216], s32[24,216]) call-done(call_start), async_execution_thread="foo", to_apply=called_computation
+  }
+    )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(original));
+  // 1) Entry computation.
+  // 2) called_computation.
+  // 3) async wrapped computation.
+  EXPECT_EQ(module->computation_count(), 3);
+}
+
 }  // namespace
 }  // namespace xla
