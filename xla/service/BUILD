@@ -3325,6 +3325,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
     ],
@@ -5678,7 +5679,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",  # fixdeps: keep
         "@tsl//tsl/platform:protobuf",
