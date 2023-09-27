@@ -108,6 +108,7 @@ cc_library(
     deps = [
         "//xla:statusor",
         "//xla:types",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
@@ -119,7 +120,15 @@ cc_library(
     hdrs = ["memory_space_assignment_best_fit_repacker.h"],
     deps = [
         ":memory_space_assignment_repacking",
+        "//xla:comparison_util",
+        "//xla:statusor",
         "//xla/service:heap_simulator",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -149,7 +158,10 @@ xla_cc_test(
     srcs = ["memory_space_assignment_best_fit_repacker_test.cc"],
     deps = [
         ":memory_space_assignment_best_fit_repacker",
+        "//xla:comparison_util",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:test",
     ],
 )
