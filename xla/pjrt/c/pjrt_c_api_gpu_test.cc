@@ -154,6 +154,34 @@ TEST_F(PjrtCApiGpuTest, CreateViewOfDeviceBuffer) {
       xla::LiteralUtil::CreateR1<float>(float_data), *literal));
 }
 
+TEST_F(PjrtCApiGpuTest, ReleaseDeviceMemoryAndDestroy) {
+  PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args release_args;
+  release_args.struct_size =
+      PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args_STRUCT_SIZE;
+  release_args.priv = nullptr;
+  release_args.wait_for_operations_to_complete = true;
+  std::unique_ptr<PJRT_Buffer, ::pjrt::PJRT_BufferDeleter> buffer =
+      create_buffer().first;
+  release_args.buffer = buffer.get();
+
+  PJRT_Error* release_error =
+      api_->PJRT_Buffer_ReleaseDeviceMemoryOwnership(&release_args);
+
+  ASSERT_EQ(release_error, nullptr);
+
+  PJRT_Buffer_DestroyReleasedDeviceMemory_Args destroy_args;
+  destroy_args.struct_size =
+      PJRT_Buffer_DestroyReleasedDeviceMemory_Args_STRUCT_SIZE;
+  destroy_args.priv = nullptr;
+  destroy_args.client = client_;
+  destroy_args.device_memory_ptr = release_args.device_memory_ptr;
+
+  PJRT_Error* destroy_error =
+      api_->PJRT_Buffer_DestroyReleasedDeviceMemory(&destroy_args);
+
+  ASSERT_EQ(destroy_error, nullptr);
+}
+
 std::unique_ptr<::pjrt::PJRT_KeyValueCallbackData> CreateTestCKVCallback(
     absl::flat_hash_map<std::string, std::string>* kv_store, absl::Mutex& mu) {
   xla::PjRtClient::KeyValueGetCallback kv_get =

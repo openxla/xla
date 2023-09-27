@@ -1999,10 +1999,50 @@ PjRtCApiBuffer::AcquireExternalReference() {
   void* device_memory_ptr =
       opaque_device_memory_data_pointer_args.device_memory_ptr;
   return std::make_unique<PjRtCApiExternalReference>(client_, this,
-                                                     device_memory_ptr);
+                                                     device_memory_ptr,
+                                                     /*is_released=*/false);
+}
+
+StatusOr<std::unique_ptr<PjRtBuffer::ExternalReference>>
+PjRtCApiBuffer::ReleaseDeviceMemoryOwnership(
+    bool wait_for_operations_to_complete) {
+  // TODO(jieying): To be removed after 01/10/2024.
+  if (pjrt_c_api()->pjrt_api_version.minor_version < 34) {
+    return Unimplemented(
+        "The plugin does not support ReleaseDeviceMemoryOwnership");
+  }
+
+  PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args args;
+  args.struct_size = PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.wait_for_operations_to_complete = wait_for_operations_to_complete;
+  args.buffer = c_buffer();
+  RETURN_STATUS_IF_PJRT_ERROR(
+      pjrt_c_api()->PJRT_Buffer_ReleaseDeviceMemoryOwnership(&args),
+      pjrt_c_api());
+  return std::make_unique<PjRtCApiExternalReference>(client_, this,
+                                                     args.device_memory_ptr,
+                                                     /*is_released=*/true);
 }
 
 PjRtCApiExternalReference::~PjRtCApiExternalReference() {
+  if (is_released_) {
+    // TODO(jieying): To be removed after 01/10/2024.
+    if (client_->pjrt_c_api()->pjrt_api_version.minor_version < 34) {
+      LOG(FATAL) << "The plugin does not support DestroyReleasedDeviceMemory";
+    }
+
+    PJRT_Buffer_DestroyReleasedDeviceMemory_Args args;
+    args.struct_size = PJRT_Buffer_DestroyReleasedDeviceMemory_Args_STRUCT_SIZE;
+    args.priv = nullptr;
+    args.client = client_->pjrt_c_client();
+    args.device_memory_ptr = data_ptr_;
+    pjrt::LogFatalIfPjrtError(
+        client_->pjrt_c_api()->PJRT_Buffer_DestroyReleasedDeviceMemory(&args),
+        client_->pjrt_c_api());
+    return;
+  }
+
   PJRT_Buffer_DecreaseExternalReferenceCount_Args args;
   args.struct_size =
       PJRT_Buffer_DecreaseExternalReferenceCount_Args_STRUCT_SIZE;

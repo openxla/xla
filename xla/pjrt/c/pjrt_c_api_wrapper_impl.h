@@ -62,6 +62,10 @@ struct PJRT_Client {
   // `owned_memories`.
   absl::flat_hash_map<xla::PjRtMemorySpace*, PJRT_Memory*>
       c_memory_from_cpp_memory;
+  // Manages, holds, and takes ownership of external references.
+  absl::flat_hash_map<void*,
+                      std::unique_ptr<xla::PjRtBuffer::ExternalReference>>
+      released_device_memory_external_references;
 };
 
 // PJRT_DeviceDescriptions are owned by their corresponding PJRT_Device.
@@ -315,6 +319,10 @@ PJRT_Error* PJRT_Buffer_DecreaseExternalReferenceCount(
     PJRT_Buffer_DecreaseExternalReferenceCount_Args* args);
 PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
     PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args* args);
+PJRT_Error* PJRT_Buffer_ReleaseDeviceMemoryOwnership(
+    PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args* args);
+PJRT_Error* PJRT_Buffer_DestroyReleasedDeviceMemory(
+    PJRT_Buffer_DestroyReleasedDeviceMemory_Args* args);
 
 PJRT_Error* PJRT_CopyToDeviceStream_Destroy(
     PJRT_CopyToDeviceStream_Destroy_Args* args);
@@ -563,6 +571,10 @@ constexpr PJRT_Api CreatePjrtApi(
       pjrt::PJRT_Buffer_CopyToMemory,
       /*PJRT_Client_CreateViewOfDeviceBuffer=*/
       pjrt::PJRT_Client_CreateViewOfDeviceBuffer,
+      /*PJRT_Buffer_ReleaseDeviceMemoryOwnership=*/
+      pjrt::PJRT_Buffer_ReleaseDeviceMemoryOwnership,
+      /*PJRT_Buffer_DestroyReleasedDeviceMemory=*/
+      pjrt::PJRT_Buffer_DestroyReleasedDeviceMemory,
   };
 }
 

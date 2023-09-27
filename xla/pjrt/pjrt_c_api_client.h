@@ -408,10 +408,7 @@ class PjRtCApiBuffer : public PjRtBuffer {
   void Delete() override;
 
   StatusOr<std::unique_ptr<ExternalReference>> ReleaseDeviceMemoryOwnership(
-      bool wait_for_operations_to_complete) override {
-    return Unimplemented(
-        "PJRT C API does not support ReleaseDeviceMemoryOwnership");
-  }
+      bool wait_for_operations_to_complete) override;
 
   bool IsDeleted() override;
 
@@ -471,8 +468,8 @@ class PjRtCApiBuffer : public PjRtBuffer {
 class PjRtCApiExternalReference : public PjRtBuffer::ExternalReference {
  public:
   PjRtCApiExternalReference(PjRtCApiClient* client, PjRtCApiBuffer* buffer,
-                            void* data_ptr)
-      : client_(client), buffer_(buffer) {
+                            void* data_ptr, bool is_released)
+      : client_(client), buffer_(buffer), is_released_(is_released) {
     data_ptr_ = data_ptr;
   }
   ~PjRtCApiExternalReference() override;
@@ -480,6 +477,7 @@ class PjRtCApiExternalReference : public PjRtBuffer::ExternalReference {
  private:
   PjRtCApiClient* client_;
   PjRtCApiBuffer* buffer_;
+  bool is_released_;
 };
 
 class PjRtCApiExecutable : public PjRtExecutable {

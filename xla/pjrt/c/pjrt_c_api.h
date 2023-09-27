@@ -53,7 +53,7 @@ extern "C" {
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 33
+#define PJRT_API_MINOR 34
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1734,6 +1734,37 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args,
 typedef PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
     PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args* args);
 
+struct PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args {
+  size_t struct_size;
+  void* priv;
+  bool wait_for_operations_to_complete;
+  PJRT_Buffer* buffer;
+  void* device_memory_ptr;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args,
+                          device_memory_ptr);
+
+// Releases device memory ownership so that another framework can take ownership
+// of it. Drops the buffer's reference to its associated device memory but does
+// not free the device memory. The caller needs to call
+// PJRT_Buffer_DestroyReleasedDeviceMemory to free the device memory.
+typedef PJRT_Error* PJRT_Buffer_ReleaseDeviceMemoryOwnership(
+    PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args* args);
+
+struct PJRT_Buffer_DestroyReleasedDeviceMemory_Args {
+  size_t struct_size;
+  void* priv;
+  PJRT_Client* client;
+  void* device_memory_ptr;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_DestroyReleasedDeviceMemory_Args,
+                          device_memory_ptr);
+
+// Destroys a released device memory created by calling
+// PJRT_Buffer_ReleaseDeviceMemoryOwnership.
+typedef PJRT_Error* PJRT_Buffer_DestroyReleasedDeviceMemory(
+    PJRT_Buffer_DestroyReleasedDeviceMemory_Args* args);
+
 // ---------------------------- CopyToDeviceStream -----------------------------
 
 struct PJRT_CopyToDeviceStream_Destroy_Args {
@@ -2089,10 +2120,13 @@ typedef struct {
   _PJRT_API_STRUCT_FIELD(PJRT_Buffer_CopyToMemory);
 
   _PJRT_API_STRUCT_FIELD(PJRT_Client_CreateViewOfDeviceBuffer);
+
+  _PJRT_API_STRUCT_FIELD(PJRT_Buffer_ReleaseDeviceMemoryOwnership);
+  _PJRT_API_STRUCT_FIELD(PJRT_Buffer_DestroyReleasedDeviceMemory);
 } PJRT_Api;
 
 const size_t PJRT_Api_STRUCT_SIZE =
-    PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Client_CreateViewOfDeviceBuffer);
+    PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Buffer_DestroyReleasedDeviceMemory);
 
 #undef _PJRT_API_STRUCT_FIELD
 

@@ -1789,6 +1789,44 @@ PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Buffer_ReleaseDeviceMemoryOwnership(
+    PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args",
+      PJRT_Buffer_ReleaseDeviceMemoryOwnership_Args_STRUCT_SIZE,
+      args->struct_size));
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference,
+      args->buffer->buffer->ReleaseDeviceMemoryOwnership(
+          args->wait_for_operations_to_complete));
+  args->device_memory_ptr = external_reference->OpaqueDeviceMemoryDataPointer();
+  args->buffer->client
+      ->released_device_memory_external_references[args->device_memory_ptr] =
+      std::move(external_reference);
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Buffer_DestroyReleasedDeviceMemory(
+    PJRT_Buffer_DestroyReleasedDeviceMemory_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Buffer_DestroyReleasedDeviceMemory_Args",
+      PJRT_Buffer_DestroyReleasedDeviceMemory_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  absl::flat_hash_map<void*,
+                      std::unique_ptr<xla::PjRtBuffer::ExternalReference>>&
+      reference_map = args->client->released_device_memory_external_references;
+  auto iter = reference_map.find(args->device_memory_ptr);
+  if (iter != reference_map.end()) {
+    reference_map.erase(iter);
+    return nullptr;
+  }
+  xla::Status status = xla::InvalidArgument(
+      "Attempting to destroy a released memory external reference that was not "
+      "tracked by the PJRT client.");
+  PJRT_Error* error = new PJRT_Error{std::move(status)};
+  return error;
+}
 // ---------------------------- CopyToDeviceStream -----------------------------
 
 PJRT_Error* PJRT_CopyToDeviceStream_Destroy(

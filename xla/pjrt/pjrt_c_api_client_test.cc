@@ -149,5 +149,22 @@ TEST(PjRtClientTest, CreateViewAndCopyToDeviceAsyncExternalCpuOnly) {
                                      *literal));
 }
 
+TEST(PjRtClientTest, ReleaseDeviceMemoryOwnership) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+  // Prepare input buffer and executable.
+  std::vector<int32_t> data0{1, 2, 3, 4, 5, 6};
+  Shape shape = ShapeUtil::MakeShape(S32, {2, 3});
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data0.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->addressable_devices()[0]));
+  auto ref = buffer->ReleaseDeviceMemoryOwnership(true);
+}
+
 }  // namespace
 }  // namespace xla
