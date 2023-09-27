@@ -107,6 +107,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_headers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",

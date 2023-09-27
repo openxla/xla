@@ -208,6 +208,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
@@ -242,11 +243,13 @@ cc_library(
     name = "command_buffer",
     srcs = ["command_buffer.cc"],
     hdrs = ["command_buffer.h"],
-    visibility = ["//visibility:private"],
     deps = [
+        ":stream_executor_headers",
         ":stream_executor_internal",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
 )

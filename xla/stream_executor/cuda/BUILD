@@ -369,12 +369,34 @@ cc_library(
     ]),
 )
 
+cc_library(
+    name = "cuda_test_kernels",
+    testonly = 1,
+    hdrs = ["cuda_test_kernels.h"],
+)
+
 xla_test(
     name = "cuda_kernel_test",
     srcs = ["cuda_kernel_test.cc"],
     backends = ["gpu"],
     deps = [
-        ":cuda_kernel",
+        ":cuda_platform",
+        ":cuda_test_kernels",
+        "//xla/stream_executor",
+        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:platform",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_test(
+    name = "cuda_command_buffer_test",
+    srcs = ["cuda_command_buffer_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":cuda_platform",
+        ":cuda_test_kernels",
         "//xla/stream_executor",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
