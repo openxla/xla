@@ -242,7 +242,7 @@ GpuXlaRuntimeAotCompilationResult::LoadExecutable(
       std::unique_ptr<HloModule> hlo_module,
       HloModule::CreateFromProto(xla_runtime_executable.hlo_module_proto(),
                                  hlo_module_config));
-  auto gpu_compiler = tensorflow::down_cast<GpuCompiler*>(compiler);
+  auto gpu_compiler = tsl::down_cast<GpuCompiler*>(compiler);
 
   std::vector<GpuExecutable::ConstantInfo> constants;
   for (auto& cst : xla_runtime_gpu_executable_.constants()) {
@@ -1587,7 +1587,7 @@ StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     gpu_executable->set_debug_info(buffer_assignment->GetStats().ToString());
   }
 
-  return static_cast<std::unique_ptr<Executable>>(std::move(gpu_executable));
+  return gpu_executable;
 }
 
 StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
@@ -1728,7 +1728,7 @@ HloCostAnalysis::ShapeSizeFunction GpuCompiler::ShapeSizeBytesFunction() const {
 
 StatusOr<std::unique_ptr<AotCompilationResult>> GpuCompiler::Export(
     Executable* executable) const {
-  auto* gpu_executable = tensorflow::down_cast<GpuExecutable*>(executable);
+  auto* gpu_executable = tsl::down_cast<GpuExecutable*>(executable);
   if (!gpu_executable) return Internal("GpuExecutable is null");
   HloModuleProto module_proto = gpu_executable->module().ToProto();
   TF_ASSIGN_OR_RETURN(auto obj_file, gpu_executable->GetObjFile());

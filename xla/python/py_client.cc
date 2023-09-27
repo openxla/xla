@@ -169,7 +169,7 @@ Status PyClient::Defragment() {
     // continue if we fail to reconstitute device buffers.
     for (const auto& it : pjrt_buf_to_tmp_buffer) {
       PjRtBuffer* pjrt_buf = it.first;
-      TF_CHECK_OK(tensorflow::down_cast<PjRtStreamExecutorBuffer*>(pjrt_buf)
+      TF_CHECK_OK(tsl::down_cast<PjRtStreamExecutorBuffer*>(pjrt_buf)
                       ->Release(/*wait_for_operations_to_complete=*/true)
                       .status());
     }

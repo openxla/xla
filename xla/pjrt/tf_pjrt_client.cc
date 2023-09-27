@@ -57,7 +57,7 @@ TfPjRtExecutable::Execute(
     unwrapped_handles.reserve(handles.size());
     for (PjRtBuffer* buffer : handles) {
       unwrapped_handles.push_back(
-          tensorflow::down_cast<TfPjRtBuffer*>(buffer)->wrapped());
+          tsl::down_cast<TfPjRtBuffer*>(buffer)->wrapped());
     }
   }
   TF_ASSIGN_OR_RETURN(auto out, wrapped_->Execute(unwrapped_argument_handles,
@@ -79,7 +79,7 @@ TfPjRtExecutable::ExecuteSharded(
   unwrapped_argument_handles.reserve(argument_handles.size());
   for (PjRtBuffer* buffer : argument_handles) {
     unwrapped_argument_handles.push_back(
-        tensorflow::down_cast<TfPjRtBuffer*>(buffer)->wrapped());
+        tsl::down_cast<TfPjRtBuffer*>(buffer)->wrapped());
   }
   TF_ASSIGN_OR_RETURN(auto out, wrapped_->ExecuteSharded(
                                     unwrapped_argument_handles, device, options,
@@ -98,7 +98,7 @@ TfPjRtExecutable::ExecutePortable(
   unwrapped_argument_handles.reserve(argument_handles.size());
   for (PjRtBuffer* buffer : argument_handles) {
     unwrapped_argument_handles.push_back(
-        tensorflow::down_cast<TfPjRtBuffer*>(buffer)->wrapped());
+        tsl::down_cast<TfPjRtBuffer*>(buffer)->wrapped());
   }
   TF_ASSIGN_OR_RETURN(auto out, wrapped_->ExecutePortable(
                                     unwrapped_argument_handles, device, options,

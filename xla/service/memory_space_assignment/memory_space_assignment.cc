@@ -426,7 +426,7 @@ std::tuple<int64_t, bool, int64_t> GetAllocationSortTuple(
   int64_t scheduled_on_or_after = allocation->start_time();
   if (allocation->is_copy_allocation()) {
     auto copy_allocation =
-        tensorflow::down_cast<MemorySpaceAssignment::CopyAllocation*>(
+        tsl::down_cast<MemorySpaceAssignment::CopyAllocation*>(
             allocation.get());
     scheduled_on_or_before = copy_allocation->copy_done_schedule_before();
     scheduled_on_or_after = copy_allocation->copy_start_schedule_after();
@@ -485,7 +485,7 @@ void EnsureParentAllocationIsAvailableForCopy(
   parent_allocation.Extend(copy_allocation->copy_done_schedule_before());
   if (parent_allocation.is_copy_allocation()) {
     auto parent_copy_allocation =
-        tensorflow::down_cast<MemorySpaceAssignment::CopyAllocation*>(
+        tsl::down_cast<MemorySpaceAssignment::CopyAllocation*>(
             &parent_allocation);
     parent_copy_allocation->set_copy_done_schedule_before(
         std::min(parent_copy_allocation->copy_done_schedule_before(),
@@ -529,8 +529,7 @@ void ProcessPrefetchesToAlternateMemory(
     if (allocation->is_copy_allocation() && allocation->is_in_alternate_mem() &&
         !allocation->uses().empty()) {
       MemorySpaceAssignment::CopyAllocation* prefetch =
-          tensorflow::down_cast<MemorySpaceAssignment::CopyAllocation*>(
-              allocation);
+          tsl::down_cast<MemorySpaceAssignment::CopyAllocation*>(allocation);
       std::vector<HloUse> uses = prefetch->uses();  // Create a copy of uses.
       prefetch->clear_uses();                       // Clear old uses.
       // For every prefetch, update prefetch to serve earliest use just in time.
@@ -574,8 +573,7 @@ GetEvictionsMap(std::vector<MemorySpaceAssignment::Allocation*>& allocations) {
   for (auto& allocation : allocations) {
     if (allocation->is_copy_allocation() && allocation->is_in_default_mem()) {
       auto eviction =
-          tensorflow::down_cast<MemorySpaceAssignment::CopyAllocation*>(
-              allocation);
+          tsl::down_cast<MemorySpaceAssignment::CopyAllocation*>(allocation);
       MemorySpaceAssignment::Allocation& parent_allocation =
           eviction->mutable_prev_allocation();
       if (!parent_allocation.is_copy_allocation()) {

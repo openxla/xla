@@ -123,8 +123,7 @@ class AsyncHostToDeviceTransferManager
       // buffers, because the invariants of this class ensure that the buffer
       // definition event will not fire until after all of this class' uses of
       // the TrackedDeviceBuffer have completed.
-      auto* se_buffer =
-          tensorflow::down_cast<PjRtStreamExecutorBuffer*>(buffer.get());
+      auto* se_buffer = tsl::down_cast<PjRtStreamExecutorBuffer*>(buffer.get());
       DCHECK(se_buffer);
       auto hold = se_buffer->GetBufferWithUsageHold();
       buffer_ptrs.push_back(hold.buffer());
@@ -190,7 +189,7 @@ class AsyncHostToDeviceTransferManager
         "AsyncHostToDeviceTransferManager::TransferLiteralToBuffer");
     auto* stream = device_->local_device_state()->host_to_device_stream();
     auto* se_client =
-        tensorflow::down_cast<PjRtStreamExecutorClient*>(device_->client());
+        tsl::down_cast<PjRtStreamExecutorClient*>(device_->client());
     DCHECK(se_client);
 
     TransferManager* transfer_manager =
@@ -426,7 +425,7 @@ StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
 StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
     absl::Span<const Shape> shapes, PjRtDevice* device) {
   auto* stream_executor_device =
-      tensorflow::down_cast<PjRtStreamExecutorDevice*>(device);
+      tsl::down_cast<PjRtStreamExecutorDevice*>(device);
   return xla::AsyncHostToDeviceTransferManager::Create(
       shapes, stream_executor_device, this);
 }
@@ -448,7 +447,7 @@ StreamExecutorGpuClient::GetDefaultDeviceAssignment(int num_replicas,
 
 PjRtFuture<absl::Status> StreamExecutorGpuClient::CopyRawSubBufferToHost(
     PjRtBuffer* pjrt_buffer, void* dst, int64_t offset, int64_t transfer_size) {
-  auto* buffer = tensorflow::down_cast<PjRtStreamExecutorBuffer*>(pjrt_buffer);
+  auto* buffer = tsl::down_cast<PjRtStreamExecutorBuffer*>(pjrt_buffer);
   DCHECK(buffer);
   PjRtStreamExecutorDevice* device = buffer->device();
   LocalDeviceState* local_device = device->local_device_state();
@@ -595,9 +594,8 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
 
 StatusOr<std::unique_ptr<PjRtLoadedExecutable>> StreamExecutorGpuClient::Load(
     std::unique_ptr<PjRtExecutable> executable) {
-  auto se_executable =
-      absl::WrapUnique(tensorflow::down_cast<StreamExecutorUnloadedExecutable*>(
-          executable.release()));
+  auto se_executable = absl::WrapUnique(
+      tsl::down_cast<StreamExecutorUnloadedExecutable*>(executable.release()));
 
   CompileOptions compile_options = se_executable->compile_options();
   TF_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
@@ -968,9 +966,8 @@ absl::StatusOr<tsl::AllocatorStats> StreamExecutorGpuDevice::GetAllocatorStats()
 
   TF_ASSIGN_OR_RETURN(
       auto allocator,
-      tensorflow::down_cast<se::MultiDeviceAdapter*>(
-          tensorflow::down_cast<PjRtStreamExecutorClient*>(client())
-              ->allocator())
+      tsl::down_cast<se::MultiDeviceAdapter*>(
+          tsl::down_cast<PjRtStreamExecutorClient*>(client())->allocator())
           ->GetAllocator(local_hardware_id()));
 
   auto stats = allocator->GetStats();

@@ -84,7 +84,7 @@ xla::Status TpuOpExecutable::LoadProgramAndEnqueueToStream(
     c_dev_assign.size = dev_assign_serialized.size;
   }
 
-  auto platform = down_cast<tpu::TpuPlatform*>(
+  auto platform = tsl::down_cast<tpu::TpuPlatform*>(
       tpu::TpuPlatformInterface::GetRegisteredPlatform());
   auto stream = platform->LookupStream(
       run_options.run_options().stream()->implementation());

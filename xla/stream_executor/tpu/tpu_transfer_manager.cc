@@ -271,8 +271,8 @@ StatusOr<xla::Shape> TpuTransferManager::ChooseCompactLayoutForShape(
 bool TpuTransferManager::CanShapedBufferBeAccessedNow(
     stream_executor::StreamExecutor* executor,
     const xla::ShapedBuffer& device_buffer) const {
-  auto* tpu_executor =
-      down_cast<stream_executor::tpu::TpuExecutor*>(executor->implementation());
+  auto* tpu_executor = tsl::down_cast<stream_executor::tpu::TpuExecutor*>(
+      executor->implementation());
   XLA_ShapedBuffer c_device_buffer;
   ApiConverter::ToC(device_buffer, &c_device_buffer);
   absl::Cleanup cleanup = [&c_device_buffer]() {
@@ -286,8 +286,8 @@ bool TpuTransferManager::CanShapedBufferBeAccessedNow(
 bool TpuTransferManager::CanBufferBeAccessedNow(
     se::StreamExecutor* executor,
     const se::DeviceMemoryBase& device_buffer) const {
-  auto* tpu_executor =
-      down_cast<stream_executor::tpu::TpuExecutor*>(executor->implementation());
+  auto* tpu_executor = tsl::down_cast<stream_executor::tpu::TpuExecutor*>(
+      executor->implementation());
   SE_DeviceMemoryBase c_device_buffer{const_cast<void*>(device_buffer.opaque()),
                                       device_buffer.size(),
                                       device_buffer.payload()};

@@ -124,7 +124,7 @@ TEST(StreamExecutorGpuCompilerTest, SuccessAotCompileMlirAndLoad) {
       auto client, GetStreamExecutorGpuClient(true, /*allocator_config=*/{},
                                               /*node_id=*/0));
   auto se_client = absl::WrapUnique(
-      tensorflow::down_cast<StreamExecutorGpuClient*>(client.release()));
+      tsl::down_cast<StreamExecutorGpuClient*>(client.release()));
   mlir::MLIRContext context;
   context.loadDialect<mlir::mhlo::MhloDialect, mlir::func::FuncDialect>();
   auto mlir_module =
@@ -151,7 +151,7 @@ TEST(StreamExecutorGpuCompilerTest, SuccessAotCompileXlaAndLoad) {
       auto client, GetStreamExecutorGpuClient(true, /*allocator_config=*/{},
                                               /*node_id=*/0));
   auto se_client = absl::WrapUnique(
-      tensorflow::down_cast<StreamExecutorGpuClient*>(client.release()));
+      tsl::down_cast<StreamExecutorGpuClient*>(client.release()));
 
   TF_ASSERT_OK_AND_ASSIGN(auto computation, GetXlaComputation(kProgram));
   TF_ASSERT_OK_AND_ASSIGN(auto topology, se_client->GetTopologyDescription());
@@ -175,7 +175,7 @@ TEST(StreamExecutorGpuCompilerTest, SuccessLoadFromSerializedExecutable) {
       auto client, GetStreamExecutorGpuClient(true, /*allocator_config=*/{},
                                               /*node_id=*/0));
   auto se_client = absl::WrapUnique(
-      tensorflow::down_cast<StreamExecutorGpuClient*>(client.release()));
+      tsl::down_cast<StreamExecutorGpuClient*>(client.release()));
 
   TF_ASSERT_OK_AND_ASSIGN(auto computation, GetXlaComputation(kProgram));
   TF_ASSERT_OK_AND_ASSIGN(auto topology, se_client->GetTopologyDescription());
