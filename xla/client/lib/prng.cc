@@ -512,11 +512,16 @@ XlaOp ConvertRandomBitsToUniformFloatingPoint(XlaOp bits, XlaOp minval,
     auto is_f32_or_f64 = (value_type == F32 && bit_type == U32) ||
                          (value_type == F64 && bit_type == U64);
     auto is_f16 = value_type == F16 && bit_type == U16;
-    if (!(is_f32_or_f64 || is_f16)) {
+    // PrimitiveType enum values 19 to 25 are reserved for FP8 types.
+    auto is_f8 = (19 <= static_cast<int>(value_type) &&
+                  static_cast<int>(value_type) <= 25) &&
+                 bit_type == U8;
+    if (!(is_f32_or_f64 || is_f16 || is_f8)) {
       return InvalidArgument(
           "In ConvertRandomBitsToUniformFloatingPoint, value_type and bit_type "
-          "can only be one of those combinations: (float16, uint16), (float32, "
-          "uint32) and (float64, uint64). Got combination: (%s, %s).",
+          "can only be one of those combinations: (float8, uint8), (float16, "
+          "uint16), (float32, uint32) and (float64, uint64). Got combination: "
+          "(%s, %s).",
           primitive_util::LowercasePrimitiveTypeName(value_type),
           primitive_util::LowercasePrimitiveTypeName(bit_type));
     }
@@ -558,6 +563,34 @@ XlaOp ConvertRandomBitsToUniformFloatingPoint(XlaOp bits, XlaOp minval,
       auto exponent = ScalarLike(bits, static_cast<uint16_t>(15) << 10);
       auto u16_result = exponent | mantissa;
       auto result = BitcastConvertType(u16_result, F16);
+      return result - ScalarLike(result, 1.0);
+    } else if (is_f8) {
+      // FP8 dtypes, as described in this paper:
+      // https://arxiv.org/abs/2206.02915
+      //
+      // F8E5M2 has 5 exponent bits and 2 mantissa bits, and is similar to the
+      // existing IEEE types.
+      //
+      // F8E4M3FN has 4 exponent bits and 3 mantissa bits. The "FN" means only
+      // Finite and NaN values are supported.
+      XlaOp result;
+      if (value_type == F8E5M2) {
+        auto mantissa = bits & ScalarLike(bits, 0x3u);
+        auto exponent = ScalarLike(bits, static_cast<uint16_t>(15) << 2);
+        auto u8_result = exponent | mantissa;
+        result = BitcastConvertType(u8_result, F8E5M2);
+      } else if (value_type == F8E4M3FN) {
+        auto mantissa = bits & ScalarLike(bits, 0x7u);
+        auto exponent = ScalarLike(bits, static_cast<uint16_t>(7) << 3);
+        auto u8_result = exponent | mantissa;
+        result = BitcastConvertType(u8_result, F8E4M3FN);
+      } else {
+        return InvalidArgument(
+            "Currently support F8E5M2 and F8E4M3FN in "
+            "ConvertRandomBitsToUniformFloatingPoint as valid float8 types. "
+            "Got value type: (%s).",
+            primitive_util::LowercasePrimitiveTypeName(value_type));
+      }
       return result - ScalarLike(result, 1.0);
     } else {
       return InternalError("This point shouldn't have been reached.");
