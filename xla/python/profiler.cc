@@ -17,9 +17,11 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
+#include "xla/python/aggregate_profile.h"
 #include "xla/python/profiler/internal/traceme_wrapper.h"
 #include "xla/python/status_casters.h"
 #include "xla/python/types.h"
@@ -132,6 +134,16 @@ void BuildProfilerSubmodule(py::module* m) {
         return profile_proto.SerializeAsString();
       },
       py::arg("tensorboard_dir"));
+
+  profiler.def(
+      "profiled_instructions_protos_mean",
+      [](std::vector<std::string> protos) -> pybind11::bytes {
+        tensorflow::profiler::ProfiledInstructionsProto mean_proto;
+        xla::ThrowIfError(
+            xla::AggregateProfiledInstructionsProto(protos, &mean_proto));
+        return mean_proto.SerializeAsString();
+      },
+      py::arg("profile_protos"));
 }
 
 }  // namespace xla

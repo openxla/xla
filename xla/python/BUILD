@@ -857,6 +857,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":aggregate_profile",
         ":status_casters",
         ":types",
         ":xplane_to_profile_instructions",
@@ -1193,5 +1194,28 @@ xla_cc_test(
         "@tsl//tsl/profiler/utils:file_system_utils",
         "@tsl//tsl/profiler/utils:xplane_builder",
         "@tsl//tsl/profiler/utils:xplane_schema",
+    ],
+)
+
+cc_library(
+    name = "aggregate_profile",
+    srcs = ["aggregate_profile.cc"],
+    hdrs = ["aggregate_profile.h"],
+    deps = [
+        ":xplane_to_profile_instructions",
+        "//xla:status",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
+    ],
+)
+
+xla_cc_test(
+    name = "aggregate_profile_test",
+    srcs = ["aggregate_profile_test.cc"],
+    deps = [
+        ":aggregate_profile",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
     ],
 )

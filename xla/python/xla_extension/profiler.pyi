@@ -14,7 +14,7 @@
 # ==============================================================================
 
 from types import TracebackType
-from typing import Any, Optional, Type
+from typing import Any, Optional, List, Type
 
 _Status = Any
 
@@ -47,3 +47,5 @@ class TraceMe:
   def set_metadata(self, **kwargs): ...
   @staticmethod
   def is_enabled() -> bool: ...
+ 
+def profiled_instructions_protos_mean(profile_protos: List[bytes]) -> bytes: ...
