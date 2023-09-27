@@ -119,7 +119,7 @@ cc_library(
     deps = if_gpu_is_configured([
         ":gpu_driver_header",
         ":gpu_stream_header",
-        "//xla/stream_executor:event",
+        "//xla/stream_executor:stream_executor_headers",
         "@tsl//tsl/platform:status",
     ]),
 )
@@ -213,7 +213,6 @@ cc_library(
     deps = [
         ":gpu_driver_header",
         "//xla/stream_executor:stream_executor_headers",
-        "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:logging",
     ],
@@ -224,7 +223,7 @@ cc_library(
     hdrs = if_gpu_is_configured(["gpu_stream.h"]),
     deps = [
         ":gpu_types_header",
-        "//xla/stream_executor:stream_executor_internal",
+        "//xla/stream_executor:stream_executor_headers",
         "@com_google_absl//absl/base:core_headers",
     ],
 )
@@ -247,7 +246,7 @@ cc_library(
     deps = [
         ":gpu_driver_header",
         ":gpu_executor_header",
-        "//xla/stream_executor:stream_executor_internal",
+        "//xla/stream_executor:stream_executor_headers",
     ],
 )
 
