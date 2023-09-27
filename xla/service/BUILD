@@ -1199,10 +1199,16 @@ cc_library(
     hdrs = ["p2p_schedule_preparation.h"],
     deps = [
         ":hlo_pass",
+        "//xla:status",
         "//xla:statusor",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -1212,13 +1218,14 @@ xla_cc_test(
     deps = [
         ":hlo_parser",
         ":p2p_schedule_preparation",
-        "//xla:test",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
-        "//xla/tests:test_utils",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )
