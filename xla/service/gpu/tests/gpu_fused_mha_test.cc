@@ -2218,8 +2218,8 @@ class MultiHeadedAttentionBMMScaleBiasSoftmaxBMM
 class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
     : public MultiHeadedAttentionTest {
  protected:
-  const std::string                                                             // NOLINT
-  GetModuleFMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2_HloString_BF16() { // NOLINT
+  const std::string  // NOLINT
+  GetModuleFMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2_HloString_BF16() {  // NOLINT
     const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,2048,128]{3,2,1,0},bf16[2,6,128,2048]{3,2,1,0},bf16[2,6,2048,128]{3,2,1,0})->bf16[2,6,2048,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_output={true}
 
@@ -2288,13 +2288,18 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
   void TestImpl_FMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2() {
     stream_executor::CudaComputeCapability cc = GetCudaComputeCapability();
     se::dnn::VersionInfo real_cudnn_version = GetCudnnVersion();
-    if (!(cc.IsAtLeast(se::CudaComputeCapability::AMPERE) && cc.minor == 0 && real_cudnn_version >= se::dnn::VersionInfo(8, 9, 0))) {
-      GTEST_SKIP() << "Flash Attention is supported with the Nvidia AMPERE+ GPUs and cuDNN >= 8.9.0.";
+    if (!(cc.IsAtLeast(se::CudaComputeCapability::AMPERE) && cc.minor == 0 &&
+          real_cudnn_version >= se::dnn::VersionInfo(8, 9, 0))) {
+      GTEST_SKIP() << "Flash Attention is supported with the Nvidia AMPERE+ "
+                      "GPUs and cuDNN >= 8.9.0.";
     }
     XlaBuilder builder(TestName());
-    auto lhs_bmm1_literal = GetInput4DLiteral<T>({2, 6, 2048, 128}, {3, 2, 1, 0});
-    auto rhs_bmm1_literal = GetInput4DLiteral<T>({2, 6, 128, 2048}, {3, 2, 1, 0});
-    auto rhs_bmm2_literal = GetInput4DLiteral<T>({2, 6, 2048, 128}, {3, 2, 1, 0});
+    auto lhs_bmm1_literal =
+        GetInput4DLiteral<T>({2, 6, 2048, 128}, {3, 2, 1, 0});
+    auto rhs_bmm1_literal =
+        GetInput4DLiteral<T>({2, 6, 128, 2048}, {3, 2, 1, 0});
+    auto rhs_bmm2_literal =
+        GetInput4DLiteral<T>({2, 6, 2048, 128}, {3, 2, 1, 0});
     std::string hlo_string = "";
     if (std::is_same<T, Eigen::half>::value) {
       //
@@ -2303,8 +2308,8 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
           GetModuleFMHA_Flash_Attention_BMM1_CausalMask_Softmax_BMM2_HloString_BF16();
     }
 
-    ExecuteAndCompare(hlo_string, {&lhs_bmm1_literal,
-                                       &rhs_bmm1_literal, &rhs_bmm2_literal});
+    ExecuteAndCompare(
+        hlo_string, {&lhs_bmm1_literal, &rhs_bmm1_literal, &rhs_bmm2_literal});
   }
 };
 

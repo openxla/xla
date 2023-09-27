@@ -428,9 +428,9 @@ StatusOr<bool> isFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
       GetDimensionVector(bmm_1->operand(1)->shape().dimensions(), seq_k_dims);
 
   // flash attention TODO: check contracting dim here
-  std::vector<int64_t> contracting_dims_bmm1 =
-      GetDimensionVector(bmm_1->operand(0)->shape().dimensions(),
-                         bmm_1->dot_dimension_numbers().lhs_contracting_dimensions());
+  std::vector<int64_t> contracting_dims_bmm1 = GetDimensionVector(
+      bmm_1->operand(0)->shape().dimensions(),
+      bmm_1->dot_dimension_numbers().lhs_contracting_dimensions());
   // for now, seq_q and seq_k should be equal for flash attention to work
   // flash attention only supports fixed topology so we check if custom call is
   // such topology by checking custom_call_name
@@ -444,46 +444,31 @@ StatusOr<bool> isFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
             custom_call_name == kCudnnfMHAScaleMaskSoftmaxCallTarget);
   };
 
-  // flash attention TODO: make sure fwd act (bmm_2->operand[0]) is only used by bmm2 and bwd bmm2_grad1
+  // flash attention TODO: make sure fwd act (bmm_2->operand[0]) is only used by
+  // bmm2 and bwd bmm2_grad1
   return (seq_q[0] == seq_k[0] && seq_q[0] > 512 && seq_q[0] % 128 == 0 &&
           is_fixed_topology());
 }
 
 bool IsCausalMaskPattern(HloInstruction* mask) {
-  auto causal_mask_pattern_fwd_remat =
-    m::Broadcast(
-      OptionalBitcast(
-        m::Select(
-          m::Compare(
-            m::Iota(),
-            m::Iota()),
-          m::Broadcast(m::Constant()),
-          m::Broadcast(m::Constant())
-        )));
+  auto causal_mask_pattern_fwd_remat = m::Broadcast(OptionalBitcast(
+      m::Select(m::Compare(m::Iota(), m::Iota()), m::Broadcast(m::Constant()),
+                m::Broadcast(m::Constant()))));
   auto causal_mask_pattern_bwd =
-    m::Broadcast(
-      m::Convert(
-        OptionalBitcast(
-            m::Minimum(
-              m::Op(),
-              m::Broadcast(
-                OptionalBitcast(
-                  m::Select(
-                    m::Compare(
-                      m::Iota(),
-                      m::Iota()),
-                    m::Broadcast(m::Constant()),
-                    m::Broadcast(m::Constant())
-                  )))))));
-  HloInstruction *param = nullptr;
-  HloInstruction *gte = nullptr;
+      m::Broadcast(m::Convert(OptionalBitcast(m::Minimum(
+          m::Op(),
+          m::Broadcast(OptionalBitcast(m::Select(
+              m::Compare(m::Iota(), m::Iota()), m::Broadcast(m::Constant()),
+              m::Broadcast(m::Constant()))))))));
+  HloInstruction* param = nullptr;
+  HloInstruction* gte = nullptr;
   auto causal_mask_pattern_fwd =
-    m::Broadcast(
-      m::Bitcast(
-        m::GetTupleElement(&gte, m::Parameter(&param))));
-  auto causal_mask_pattern = m::AnyOf<HloInstruction>(causal_mask_pattern_fwd_remat, causal_mask_pattern_fwd, causal_mask_pattern_bwd);
-  if(Match(mask, causal_mask_pattern)) {
-    if(param != nullptr) {
+      m::Broadcast(m::Bitcast(m::GetTupleElement(&gte, m::Parameter(&param))));
+  auto causal_mask_pattern = m::AnyOf<HloInstruction>(
+      causal_mask_pattern_fwd_remat, causal_mask_pattern_fwd,
+      causal_mask_pattern_bwd);
+  if (Match(mask, causal_mask_pattern)) {
+    if (param != nullptr) {
       // need to track to outside of the while loop to find the real mask
       // while body computation
       auto mask_index = gte->tuple_index();
@@ -492,27 +477,20 @@ bool IsCausalMaskPattern(HloInstruction* mask) {
       auto name = comp->name();
       auto entry_computation = mod->entry_computation();
       bool is_causal_mask = true;
-      for (HloInstruction* instr : entry_computation->MakeInstructionPostOrder()) {
-        if (instr->opcode() == HloOpcode::kWhile && instr->while_body()->name() == name) {
+      for (HloInstruction* instr :
+           entry_computation->MakeInstructionPostOrder()) {
+        if (instr->opcode() == HloOpcode::kWhile &&
+            instr->while_body()->name() == name) {
           DCHECK(instr->operand(0)->opcode() == HloOpcode::kTuple);
-          auto actual_mask = instr->mutable_operand(0)->mutable_operand(mask_index);
+          auto actual_mask =
+              instr->mutable_operand(0)->mutable_operand(mask_index);
           auto causal_mask_pattern_fwd =
-            OptionalBitcast(
-              m::Convert(
-                m::MinimumAnyOrder(
-                    m::Op(),
-                    OptionalBitcast(
-                      m::MinimumAnyOrder(
-                        m::Op(),
-                        m::Broadcast(
-                          OptionalBitcast(
-                            m::Select(
-                              m::Compare(
-                                m::Iota(),
-                                m::Iota()),
-                              m::Broadcast(m::Constant()),
-                              m::Broadcast(m::Constant())
-                            ))))))));
+              OptionalBitcast(m::Convert(m::MinimumAnyOrder(
+                  m::Op(), OptionalBitcast(m::MinimumAnyOrder(
+                               m::Op(), m::Broadcast(OptionalBitcast(m::Select(
+                                            m::Compare(m::Iota(), m::Iota()),
+                                            m::Broadcast(m::Constant()),
+                                            m::Broadcast(m::Constant())))))))));
           is_causal_mask &= Match(actual_mask, causal_mask_pattern_fwd);
         }
       }
@@ -1134,7 +1112,8 @@ MatchBwdResult MatchBwdMHAPatternsForCanonicalization(
 
 StatusOr<bool> IsMHABlockSupported(HloInstruction* bmm_1, HloInstruction* bmm_2,
                                    bool need_canonicalization, bool is_training,
-                                   bool is_causal_mask, bool& is_flash_attention,
+                                   bool is_causal_mask,
+                                   bool& is_flash_attention,
                                    std::string& custom_call_name,
                                    const DebugOptions& debug_options) {
   if (MHACallHasDropout(custom_call_name) &&
@@ -1169,7 +1148,9 @@ StatusOr<bool> IsMHABlockSupported(HloInstruction* bmm_1, HloInstruction* bmm_2,
       is_flash_attention,
       isFlashAttention(bmm_1, is_causal_mask, custom_call_name));
   if (is_flash_attention) {
-    custom_call_name = MHACallHasDropout(custom_call_name) ? kCudnnfMHASoftmaxDropoutCallTarget : kCudnnfMHASoftmaxCallTarget;
+    custom_call_name = MHACallHasDropout(custom_call_name)
+                           ? kCudnnfMHASoftmaxDropoutCallTarget
+                           : kCudnnfMHASoftmaxCallTarget;
     return true;
   }
 
@@ -1246,22 +1227,22 @@ StatusOr<HloInstruction*> ChangeCheckedDimToFastest(
                                             batch_dims, contracting_dims));
   CHECK_EQ(non_contracting_dims.size(), 1);
   HloInstruction* operand_bmm = bmm->mutable_operand(bmm_operand);
-  int64_t hidden_dim = should_contracting_be_fastest
-                                         ? contracting_dims[0]
-                                         : non_contracting_dims[0];
+  int64_t hidden_dim = should_contracting_be_fastest ? contracting_dims[0]
+                                                     : non_contracting_dims[0];
   int64_t minor_dim = minor_to_major_to_check[0];
-  // If the hidden dim of the target operand is not the fastest moving dimension, make it so.
+  // If the hidden dim of the target operand is not the fastest moving
+  // dimension, make it so.
   if (minor_dim != hidden_dim) {
     std::vector<int64_t> perm(bmm->shape().dimensions_size());
     std::iota(perm.begin(), perm.end(), 0);
     std::swap(perm[hidden_dim], perm[minor_dim]);
 
     if (is_lhs) {
-      new_dot_dims_bmm.set_lhs_contracting_dimensions(
-          0, non_contracting_dims[0]);
+      new_dot_dims_bmm.set_lhs_contracting_dimensions(0,
+                                                      non_contracting_dims[0]);
     } else {
-      new_dot_dims_bmm.set_rhs_contracting_dimensions(
-          0, non_contracting_dims[0]);
+      new_dot_dims_bmm.set_rhs_contracting_dimensions(0,
+                                                      non_contracting_dims[0]);
     }
 
     operand_bmm = comp->AddInstruction(
@@ -1280,10 +1261,11 @@ StatusOr<HloInstruction*> ChangeCheckedDimToFastest(
 
 StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
     HloComputation* comp, HloInstruction* bmm_1, HloInstruction* bmm_2,
-    HloInstruction* bias, HloInstruction* mask, HloInstruction* scale, HloInstruction* reduce_sum,
-    double dropout_rate, std::string& custom_call_name,
-    stream_executor::CudaComputeCapability cc, bool is_training, bool& changed,
-    bool& v_transposed, bool is_causal_mask, bool is_flash_attention) {
+    HloInstruction* bias, HloInstruction* mask, HloInstruction* scale,
+    HloInstruction* reduce_sum, double dropout_rate,
+    std::string& custom_call_name, stream_executor::CudaComputeCapability cc,
+    bool is_training, bool& changed, bool& v_transposed, bool is_causal_mask,
+    bool is_flash_attention) {
   double scale_value = 1.0;
   HloInstruction* lhs_bmm1;
   HloInstruction* rhs_bmm1;
@@ -1309,7 +1291,8 @@ StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
       bmm_1->dot_dimension_numbers();
   *fmha_config.mutable_bmm2_dot_dimension_numbers() =
       bmm_2->dot_dimension_numbers();
-  *((DynCast<HloDotInstruction>(bmm_1))->mutable_dot_dimension_numbers()) = bmm1dot;
+  *((DynCast<HloDotInstruction>(bmm_1))->mutable_dot_dimension_numbers()) =
+      bmm1dot;
   TF_RET_CHECK((dropout_rate >= 0.0 && dropout_rate <= 1.0));
 
   // If scale node is assigned, extract value from it.
@@ -1366,12 +1349,12 @@ StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
       HloInstruction* producer = activation_output->mutable_operand(0);
       TF_RET_CHECK(producer->user_count() == 2);
       HloInstruction* bmm2_grad2_user = producer->UserId(activation_output) == 0
-                              ? producer->users()[1]
-                              : producer->users()[0];
+                                            ? producer->users()[1]
+                                            : producer->users()[0];
       // might be (transpose) - bmm2_grad2
-      if(IsBatchedMatmul(bmm2_grad2_user)) {
+      if (IsBatchedMatmul(bmm2_grad2_user)) {
         activation_output = producer;
-      } else if(bmm2_grad2_user->opcode() == HloOpcode::kTranspose) {
+      } else if (bmm2_grad2_user->opcode() == HloOpcode::kTranspose) {
         activation_output = bmm2_grad2_user;
       } else {
         return InternalError("Unexpected activation patterns");
@@ -1380,7 +1363,8 @@ StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
     // if it is flash attention, should output softmax stats to the bwd
     if (is_flash_attention) {
       TF_RET_CHECK(reduce_sum != nullptr);
-      output_shapes.push_back(ShapeUtil::MakeShape(F32, reduce_sum->shape().dimensions()));
+      output_shapes.push_back(
+          ShapeUtil::MakeShape(F32, reduce_sum->shape().dimensions()));
     } else {
       output_shapes.push_back(activation_output->shape());
     }
@@ -1525,7 +1509,9 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // else it is the softmax_stats
   if (fwd_config.is_flash_attention()) {
     auto fwd_act_index = 2;
-    fwd_act = comp->AddInstruction(HloInstruction::CreateGetTupleElement(fwd_fmha_call->shape().tuple_shapes(fwd_act_index), fwd_fmha_call, fwd_act_index));
+    fwd_act = comp->AddInstruction(HloInstruction::CreateGetTupleElement(
+        fwd_fmha_call->shape().tuple_shapes(fwd_act_index), fwd_fmha_call,
+        fwd_act_index));
   } else {
     fwd_act = lhs_bmm2_grad_gemm1;
   }
@@ -1540,18 +1526,21 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // constraint
   // -> the contracting dimension of the lhs of bmm_2_grad_2 needs to be the
   // fastest moving dimension.
-  TF_ASSIGN_OR_RETURN(d_output_grad, ChangeCheckedDimToFastest(
-                                         comp, bmm_2_grad_2, true /*is_lhs*/,
-                                         true /*should_contracting_be_fastest*/));
+  TF_ASSIGN_OR_RETURN(
+      d_output_grad,
+      ChangeCheckedDimToFastest(comp, bmm_2_grad_2, true /*is_lhs*/,
+                                true /*should_contracting_be_fastest*/));
   // d output to bmm2_grad1
-  // we don't use this value but we call this to make sure dot number is being set correctly
-  TF_ASSIGN_OR_RETURN(HloInstruction* bmm_2_grad_1_rhs, ChangeCheckedDimToFastest(
-                                         comp, bmm_2_grad_1, false /*is_lhs*/,
-                                         false /*should_contracting_be_fastest*/));
+  // we don't use this value but we call this to make sure dot number is being
+  // set correctly
+  TF_ASSIGN_OR_RETURN(
+      HloInstruction * bmm_2_grad_1_rhs,
+      ChangeCheckedDimToFastest(comp, bmm_2_grad_1, false /*is_lhs*/,
+                                false /*should_contracting_be_fastest*/));
   // Operand order: {Q, K, V, Fwd act, d_o, mask*, O*}
   std::vector<HloInstruction*> operands = {
-      rhs_bmm1_grad_gemm1, lhs_bmm1_grad_gemm2, rhs_bmm2_grad_gemm2,
-      fwd_act, d_output_grad};
+      rhs_bmm1_grad_gemm1, lhs_bmm1_grad_gemm2, rhs_bmm2_grad_gemm2, fwd_act,
+      d_output_grad};
   if (mask) {
     HloInstruction* converted_mask = comp->AddInstruction(
         HloInstruction::CreateConvert(bmm_2_grad_2->shape(), mask));
@@ -1560,10 +1549,11 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
 
   // Fwd act is different shape and datatype for flash attention
   // if is flash attention, add fwd output to input list
-  if(fwd_config.is_flash_attention()) {
+  if (fwd_config.is_flash_attention()) {
     HloInstruction* fwd_output;
-    for (auto user: fwd_fmha_call->users()) {
-      if (user->opcode() == HloOpcode::kGetTupleElement && user->tuple_index() == 0) {
+    for (auto user : fwd_fmha_call->users()) {
+      if (user->opcode() == HloOpcode::kGetTupleElement &&
+          user->tuple_index() == 0) {
         fwd_output = user;
       }
     }
@@ -1609,7 +1599,7 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   }
 
   // Output order:
- // {dQ(bmm_1_grad_2), dK(bmm_1_grad_1), dV(bmm_2_grad_1),
+  // {dQ(bmm_1_grad_2), dK(bmm_1_grad_1), dV(bmm_2_grad_1),
   // d_intermediate_tensor*, softmax_sum*, d_Q_accum*, scratch, dbias*}
   std::vector<Shape> output_shapes = {
       bmm_1_grad_2->shape(), bmm_1_grad_1->shape(), bmm_2_grad_1->shape()};
@@ -1620,9 +1610,9 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
     // add softmax sum here and change the data type
     // softmax sum and d_Q_accum should both be fp32 datatype
     output_shapes.push_back(
-      ShapeUtil::MakeShape(F32, fwd_act->shape().dimensions()));
+        ShapeUtil::MakeShape(F32, fwd_act->shape().dimensions()));
     output_shapes.push_back(
-      ShapeUtil::MakeShape(F32, bmm_1_grad_2->shape().dimensions()));
+        ShapeUtil::MakeShape(F32, bmm_1_grad_2->shape().dimensions()));
   }
   // Reserved placeholder for workspace
   output_shapes.push_back(ShapeUtil::MakeShape(
@@ -1744,7 +1734,8 @@ StatusOr<bool> CudnnFusedMHARewriter::Run(
               matched_result.matched_dropout_rate,
               matched_result.matched_custom_call_name, compute_capability_,
               matched_result.is_training, changed, v_transposed,
-              matched_result.is_causal_mask, matched_result.is_flash_attention));
+              matched_result.is_causal_mask,
+              matched_result.is_flash_attention));
       any_changed |= changed;
 
       if (matched_result.is_training) {
@@ -1806,15 +1797,14 @@ StatusOr<bool> CudnnFusedMHARewriter::Run(
 
         // Fuse the corresponding gradient graph to an fMHA fused call.s
         TF_ASSIGN_OR_RETURN(
-            changed,
-            FuseBwdMultiHeadedAttentionBlock(
-                comp, matched_bwd_result.matched_bmm_1_grad_1,
-                matched_bwd_result.matched_bmm_1_grad_2,
-                matched_bwd_result.matched_bmm_2_grad_1,
-                matched_bwd_result.matched_bmm_2_grad_2, fwd_fmha_call,
-                matched_bwd_result.matched_d_intermediate,
-                matched_result.matched_mask,
-                matched_bwd_result.matched_custom_call_name));
+            changed, FuseBwdMultiHeadedAttentionBlock(
+                         comp, matched_bwd_result.matched_bmm_1_grad_1,
+                         matched_bwd_result.matched_bmm_1_grad_2,
+                         matched_bwd_result.matched_bmm_2_grad_1,
+                         matched_bwd_result.matched_bmm_2_grad_2, fwd_fmha_call,
+                         matched_bwd_result.matched_d_intermediate,
+                         matched_result.matched_mask,
+                         matched_bwd_result.matched_custom_call_name));
         any_changed |= changed;
       }
     }

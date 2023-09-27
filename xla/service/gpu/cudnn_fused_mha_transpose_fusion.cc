@@ -102,10 +102,11 @@ StatusOr<bool> FuseArgPrologueTransposeWithcuDNNFMHA(
   absl::Span<const int64_t> checked_dims;
   std::vector<int64_t> checked_dims_vec;
 
-  // should_contracting_be_fastest = true meaning contracting dim is the hidden dim
-  // fwd bmm1/bwd bmm2grad2 should set it to true
-  // should_contracting_be_fastest = false meaning non contracting dim is the hidden dim
-  // fwd bmm2/bwd bmm2grad1 bmm1grad1 bmm1grad2 should set it to false
+  // should_contracting_be_fastest = true meaning contracting dim is the hidden
+  // dim fwd bmm1/bwd bmm2grad2 should set it to true
+  // should_contracting_be_fastest = false meaning non contracting dim is the
+  // hidden dim fwd bmm2/bwd bmm2grad1 bmm1grad1 bmm1grad2 should set it to
+  // false
   if (should_contracting_be_fastest) {
     checked_dims = is_lhs ? new_bmm_dot_dims.lhs_contracting_dimensions()
                           : new_bmm_dot_dims.rhs_contracting_dimensions();
@@ -459,13 +460,15 @@ StatusOr<bool> FusePrologueTransposeWithcuDNNFMHA(HloComputation* comp) {
       }
       // D_output tensor in backward graph is lhs with constraint on
       // contracting dim.
-      // make sure we dont change layout of dO in flash attention case as dO should have the same layout of O
+      // make sure we dont change layout of dO in flash attention case as dO
+      // should have the same layout of O
       TF_ASSIGN_OR_RETURN(CudnnfMHABackendConfig config,
-                                  fmha->backend_config<CudnnfMHABackendConfig>());
-      if(!config.is_flash_attention()) {
-        TF_ASSIGN_OR_RETURN(changed, FuseArgPrologueTransposeWithcuDNNFMHA(
-                                       fmha, 4, true /*is_lhs*/,
-                                       true /*should_contracting_be_fastest*/));
+                          fmha->backend_config<CudnnfMHABackendConfig>());
+      if (!config.is_flash_attention()) {
+        TF_ASSIGN_OR_RETURN(changed,
+                            FuseArgPrologueTransposeWithcuDNNFMHA(
+                                fmha, 4, true /*is_lhs*/,
+                                true /*should_contracting_be_fastest*/));
       }
 
       if (changed && VLOG_IS_ON(2)) {
@@ -515,10 +518,12 @@ use(FMHA_out_t)
 StatusOr<bool> FuseEpilogueTransposeWithcuDNNFMHA(HloComputation* comp) {
   bool changed = false;
 
-  auto onlyOneGTEWithSpecIndex = [](const HloInstruction* instr, int64_t index) {
+  auto onlyOneGTEWithSpecIndex = [](const HloInstruction* instr,
+                                    int64_t index) {
     int count = 0;
-    for(auto user: instr->users()) {
-      if(user->opcode() == HloOpcode::kGetTupleElement && user->tuple_index() == index) {
+    for (auto user : instr->users()) {
+      if (user->opcode() == HloOpcode::kGetTupleElement &&
+          user->tuple_index() == index) {
         count += 1;
       }
     }
@@ -531,7 +536,7 @@ StatusOr<bool> FuseEpilogueTransposeWithcuDNNFMHA(HloComputation* comp) {
     HloInstruction* gte;
     auto fwd_tuple_elem =
         m::GetTupleElement(&gte,
-                          m::Op(&fmha).WithPredicate(IsFwdFMHACustomCall), 0)
+                           m::Op(&fmha).WithPredicate(IsFwdFMHACustomCall), 0)
             .WithOneUser();
     // Note that we don't match any specific tuple index in matcher for
     // backward.

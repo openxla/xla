@@ -2895,7 +2895,8 @@ ENTRY main.146 {
 
 
 // flash attention
-TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16TrainingBmm1CausalMaskSoftmaxBmm2Pattern) {
+TEST_F(CudnnFusedMhaRewriterTestHloTest,
+       BF16TrainingBmm1CausalMaskSoftmaxBmm2Pattern) {
   const char* module_str = R"(
 HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,2048,128]{3,2,1,0},bf16[2,6,128,2048]{3,2,1,0},bf16[2,6,2048,128]{3,2,1,0},bf16[2,6,2048,128]{3,2,1,0})->(bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,128,2048]{3,2,1,0}, bf16[2,6,2048,128]{3,2,1,0})}, allow_spmd_sharding_propagation_to_output={true,true,true,true}
 
@@ -2988,23 +2989,17 @@ ENTRY main.92 {
       m->entry_computation()->root_instruction(),
       GmockMatch(m::Tuple(
           m::GetTupleElement(
-              m::CustomCall(&fmha, {kCudnnfMHASoftmaxCallTarget}),
-              0)
+              m::CustomCall(&fmha, {kCudnnfMHASoftmaxCallTarget}), 0)
               .WithShape(BF16, {2, 6, 2048, 128}),
           m::GetTupleElement(
-              m::CustomCall(&fmha,
-                            {kCudnnfMHASoftmaxBackwardCallTarget}),
-              0)
+              m::CustomCall(&fmha, {kCudnnfMHASoftmaxBackwardCallTarget}), 0)
               .WithShape(BF16, {2, 6, 2048, 128}),
           m::Transpose(
               m::GetTupleElement(
-                  m::CustomCall(
-                      {kCudnnfMHASoftmaxBackwardCallTarget}),
-                  1))
+                  m::CustomCall({kCudnnfMHASoftmaxBackwardCallTarget}), 1))
               .WithShape(BF16, {2, 6, 128, 2048}),
           m::GetTupleElement(
-              m::CustomCall({kCudnnfMHASoftmaxBackwardCallTarget}),
-              2)
+              m::CustomCall({kCudnnfMHASoftmaxBackwardCallTarget}), 2)
               .WithShape(BF16, {2, 6, 2048, 128}))));
   TF_ASSERT_OK_AND_ASSIGN(auto config,
                           fmha->backend_config<CudnnfMHABackendConfig>());
@@ -3454,18 +3449,21 @@ ENTRY main.92 {
   HloInstruction* fwd_instruction = nullptr;
   HloInstruction* bwd_instruction = nullptr;
   SCOPED_TRACE(m->ToString());
-  for (HloInstruction* instr : m->entry_computation()->MakeInstructionPostOrder()) {
-    if (instr->opcode() == HloOpcode::kCustomCall && instr->custom_call_target() == kCudnnfMHASoftmaxCallTarget) {
+  for (HloInstruction* instr :
+       m->entry_computation()->MakeInstructionPostOrder()) {
+    if (instr->opcode() == HloOpcode::kCustomCall &&
+        instr->custom_call_target() == kCudnnfMHASoftmaxCallTarget) {
       fwd_instruction = instr;
     }
-    if (instr->opcode() == HloOpcode::kCustomCall && instr->custom_call_target() == kCudnnfMHASoftmaxBackwardCallTarget) {
+    if (instr->opcode() == HloOpcode::kCustomCall &&
+        instr->custom_call_target() == kCudnnfMHASoftmaxBackwardCallTarget) {
       bwd_instruction = instr;
     }
   }
   EXPECT_NE(fwd_instruction, nullptr);
   EXPECT_NE(bwd_instruction, nullptr);
-  TF_ASSERT_OK_AND_ASSIGN(auto config,
-                          fwd_instruction->backend_config<CudnnfMHABackendConfig>());
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto config, fwd_instruction->backend_config<CudnnfMHABackendConfig>());
   EXPECT_EQ(config.is_flash_attention(), true);
 }
 

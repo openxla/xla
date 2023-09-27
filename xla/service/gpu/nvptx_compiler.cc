@@ -29,6 +29,11 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/util/env_var.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/call_inliner.h"
@@ -73,7 +78,6 @@ limitations under the License.
 #include "xla/service/reshape_decomposer.h"
 #include "xla/service/reshape_mover.h"
 #include "xla/service/tuple_simplifier.h"
-#include "xla/service/reshape_decomposer.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_description.h"
@@ -83,11 +87,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/util/env_var.h"
 
 namespace xla {
 namespace gpu {

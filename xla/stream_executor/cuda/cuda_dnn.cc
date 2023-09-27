@@ -7352,9 +7352,9 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionBiasFwdTensor(
     absl::Span<const int64_t> strides, dnn::DataType dtype,
     cudnn_frontend::Tensor& input_tensor) {
   // Create the bias tensor.
-  TF_ASSIGN_OR_RETURN(
-      auto bias_tensor,
-      CreateCudnnTensor(dims, strides, CudnnfMHAUid::BIAS_ID, dnn::DataType::kFloat, 1, -1));
+  TF_ASSIGN_OR_RETURN(auto bias_tensor,
+                      CreateCudnnTensor(dims, strides, CudnnfMHAUid::BIAS_ID,
+                                        dnn::DataType::kFloat, 1, -1));
 
   // Create the bias output tensor
   TF_ASSIGN_OR_RETURN(
@@ -7438,10 +7438,10 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionCausalMaskTensor(
                         /*is_virtual=*/true));
 
   auto gen_index_row_desc = cudnn_frontend::PointWiseDescBuilder()
-                            .setMode(CUDNN_POINTWISE_GEN_INDEX)
-                            .setAxis(2)
-                            .setComputeType(CUDNN_DATA_FLOAT)
-                            .build();
+                                .setMode(CUDNN_POINTWISE_GEN_INDEX)
+                                .setAxis(2)
+                                .setComputeType(CUDNN_DATA_FLOAT)
+                                .build();
   RETURN_MSG_IF_CUDNN_ERROR(gen_index_row_desc);
 
   TF_ASSIGN_OR_RETURN(
@@ -7467,10 +7467,12 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionCausalMaskTensor(
 
   TF_ASSIGN_OR_RETURN(
       auto row_greater_than_column_op,
-      CreateBinaryPwOp(row_index_tensor, column_index_tensor, causal_mask_tensor, row_greater_than_column_desc));
+      CreateBinaryPwOp(row_index_tensor, column_index_tensor,
+                       causal_mask_tensor, row_greater_than_column_desc));
 
-  TF_ASSIGN_OR_RETURN(auto mask_desc,
-                       CreatePwDesc(dnn::DataType::kFloat, CUDNN_POINTWISE_BINARY_SELECT));
+  TF_ASSIGN_OR_RETURN(
+      auto mask_desc,
+      CreatePwDesc(dnn::DataType::kFloat, CUDNN_POINTWISE_BINARY_SELECT));
 
   // Create the mask op.
   TF_ASSIGN_OR_RETURN(
@@ -7585,7 +7587,8 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionSoftmaxFwdTensor(
   TF_ASSIGN_OR_RETURN(
       auto log_tensor,
       CreateCudnnTensor(reduction_output_dim, reduction_output_stride,
-                        CudnnfMHAUid::VIRTUAL_ID + 504, dnn::DataType::kFloat, 1, -1,
+                        CudnnfMHAUid::VIRTUAL_ID + 504, dnn::DataType::kFloat,
+                        1, -1,
                         /*is_virtual*/ true));
 
   // Create the log descriptor
@@ -7597,12 +7600,12 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionSoftmaxFwdTensor(
                                                    log_tensor, log_desc));
 
   // Create output tensor of the add op.
-  auto ID = is_virtual ? CudnnfMHAUid::VIRTUAL_ID + 505
-                       : CudnnfMHAUid::P_ID;
+  auto ID = is_virtual ? CudnnfMHAUid::VIRTUAL_ID + 505 : CudnnfMHAUid::P_ID;
   TF_ASSIGN_OR_RETURN(
       auto softmax_stats_tensor,
       CreateCudnnTensor(reduction_output_dim, reduction_output_stride, ID,
-                        dnn::DataType::kFloat, 1, -1, /*is_virtual*/ is_virtual));
+                        dnn::DataType::kFloat, 1, -1,
+                        /*is_virtual*/ is_virtual));
 
   // Create the add descriptor
   TF_ASSIGN_OR_RETURN(auto add_desc,
@@ -7617,7 +7620,8 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionSoftmaxFwdTensor(
   TF_ASSIGN_OR_RETURN(
       auto divide_output_tensor,
       CreateCudnnTensor(
-          dims, strides, CudnnfMHAUid::VIRTUAL_ID + 506, dnn::DataType::kFloat, 1, -1,
+          dims, strides, CudnnfMHAUid::VIRTUAL_ID + 506, dnn::DataType::kFloat,
+          1, -1,
           /*is_virtual*/ true,
           /*cudnn_tensor_order_type*/ CUDNN_TENSOR_REORDERING_F16x16));
   // Create the divide descriptor
@@ -7720,8 +7724,8 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionDropoutFwdTensor(
   TF_ASSIGN_OR_RETURN(
       auto dropout_scale_tensor,
       CreateCudnnTensor(
-          scale_dims, scale_strides, CudnnfMHAUid::DROPOUT_SCALE_ID, dnn::DataType::kFloat, 1,
-          -1,
+          scale_dims, scale_strides, CudnnfMHAUid::DROPOUT_SCALE_ID,
+          dnn::DataType::kFloat, 1, -1,
           /*is_virtual*/ false,
           /*cudnn_tensor_order_type*/ CUDNN_TENSOR_REORDERING_NONE,
           /*is_value*/ true));
@@ -7760,8 +7764,9 @@ GetCudnnFlashAttentionOperationGraph(
     std::optional<dnn::TensorDescriptor> bias_descriptor,
     std::optional<dnn::TensorDescriptor> activation_descriptor,
     dnn::FusedMHAKind kind, std::optional<double> dropout_rate,
-    std::optional<int64_t> seed, CudnnHandle& cudnn, double scale, std::vector<int64_t>& intermediate_shape,
-    bool use_dropout = false, bool use_mask = false, bool use_bias = false) {
+    std::optional<int64_t> seed, CudnnHandle& cudnn, double scale,
+    std::vector<int64_t>& intermediate_shape, bool use_dropout = false,
+    bool use_mask = false, bool use_bias = false) {
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\n bmm1_lhs(q): " << bmm1_lhs_descriptor.ToString()
             << "\n bmm1_rhs(k): " << bmm1_rhs_descriptor.ToString()
@@ -7793,9 +7798,10 @@ GetCudnnFlashAttentionOperationGraph(
           << "\n cuDNN compatible bmm1_lhs_strides: "
           << absl::StrJoin(bmm1_lhs_strides, ",");
 
-  TF_ASSIGN_OR_RETURN(auto tensor_q,
-                      CreateCudnnTensor(bmm1_lhs_dims, bmm1_lhs_strides, CudnnfMHAUid::Q_ID,
-                                        bmm1_lhs_descriptor.type(), 1, -1));
+  TF_ASSIGN_OR_RETURN(
+      auto tensor_q,
+      CreateCudnnTensor(bmm1_lhs_dims, bmm1_lhs_strides, CudnnfMHAUid::Q_ID,
+                        bmm1_lhs_descriptor.type(), 1, -1));
 
   std::vector<int64_t> bmm1_rhs_dims =
       bmm1_rhs_descriptor.GetCudnnCompatibleDimensions(false);
@@ -7807,9 +7813,10 @@ GetCudnnFlashAttentionOperationGraph(
           << "\n cuDNN compatible bmm1_rhs_strides: "
           << absl::StrJoin(bmm1_rhs_strides, ",");
 
-  TF_ASSIGN_OR_RETURN(auto tensor_k,
-                      CreateCudnnTensor(bmm1_rhs_dims, bmm1_rhs_strides, CudnnfMHAUid::K_ID,
-                                        bmm1_rhs_descriptor.type(), 1, -1));
+  TF_ASSIGN_OR_RETURN(
+      auto tensor_k,
+      CreateCudnnTensor(bmm1_rhs_dims, bmm1_rhs_strides, CudnnfMHAUid::K_ID,
+                        bmm1_rhs_descriptor.type(), 1, -1));
 
   std::vector<int64_t> intermediate_bmm2_lhs_dims =
       intermediate_bmm2_lhs_descriptor.GetCudnnCompatibleDimensions(true);
@@ -7823,11 +7830,12 @@ GetCudnnFlashAttentionOperationGraph(
   intermediate_shape = intermediate_bmm2_lhs_dims;
   bool has_activation = activation_descriptor != std::nullopt;
 
-  TF_ASSIGN_OR_RETURN(
-      auto tensor_s,
-      CreateCudnnTensor(intermediate_bmm2_lhs_dims,
-                        intermediate_bmm2_lhs_strides, CudnnfMHAUid::VIRTUAL_ID + 100, dnn::DataType::kFloat, 1, -1,
-                        /*is_virtual=*/true));
+  TF_ASSIGN_OR_RETURN(auto tensor_s,
+                      CreateCudnnTensor(intermediate_bmm2_lhs_dims,
+                                        intermediate_bmm2_lhs_strides,
+                                        CudnnfMHAUid::VIRTUAL_ID + 100,
+                                        dnn::DataType::kFloat, 1, -1,
+                                        /*is_virtual=*/true));
 
   auto bmm1_desc = cudnn_frontend::MatMulDescBuilder()
                        .setComputeType(CUDNN_DATA_FLOAT)
@@ -7846,7 +7854,8 @@ GetCudnnFlashAttentionOperationGraph(
   // Create scale op and tensor
   TF_ASSIGN_OR_RETURN(
       auto alpha_scale_out,
-      CreateCudnnScaleTensor(intermediate_ops, intermediate_bmm2_lhs_dims, intermediate_bmm2_lhs_strides,
+      CreateCudnnScaleTensor(intermediate_ops, intermediate_bmm2_lhs_dims,
+                             intermediate_bmm2_lhs_strides,
                              dnn::DataType::kFloat, tensor_s));
 
   auto bmm2_input_tensor = std::move(alpha_scale_out);
@@ -7855,7 +7864,8 @@ GetCudnnFlashAttentionOperationGraph(
   //   // Create bias op and tensor
   //   TF_ASSIGN_OR_RETURN(
   //       auto bias_out,
-  //       CreateCudnnFlashAttentionBiasFwdTensor(intermediate_ops, intermediate_bmm2_lhs_dims,
+  //       CreateCudnnFlashAttentionBiasFwdTensor(intermediate_ops,
+  //       intermediate_bmm2_lhs_dims,
   //                             intermediate_bmm2_lhs_strides,
   //                             bias_descriptor.type(), bmm2_input_tensor));
   //   bmm2_input_tensor = std::move(bias_out);
@@ -7864,16 +7874,16 @@ GetCudnnFlashAttentionOperationGraph(
   // Create mask op and tensor
   TF_ASSIGN_OR_RETURN(
       auto mask_out,
-      CreateCudnnFlashAttentionCausalMaskTensor(intermediate_ops, intermediate_bmm2_lhs_dims,
-                            intermediate_bmm2_lhs_strides,
-                            intermediate_bmm2_lhs_descriptor.type(),
-                            bmm2_input_tensor));
+      CreateCudnnFlashAttentionCausalMaskTensor(
+          intermediate_ops, intermediate_bmm2_lhs_dims,
+          intermediate_bmm2_lhs_strides,
+          intermediate_bmm2_lhs_descriptor.type(), bmm2_input_tensor));
   bmm2_input_tensor = std::move(mask_out);
-
 
   // Create Softmax tensor
   // The output is always a virtual for inference mode.
-  // The output is always non virtual for training mode. cuz we recompute dropout in bwd.;
+  // The output is always non virtual for training mode. cuz we recompute
+  // dropout in bwd.;
   bool should_output_softmax = has_activation;
   TF_ASSIGN_OR_RETURN(auto softmax_fwd_out,
                       CreateCudnnFlashAttentionSoftmaxFwdTensor(
@@ -7886,15 +7896,13 @@ GetCudnnFlashAttentionOperationGraph(
 
   // Create dropout tensor
   // dropout is always virtual in inference or training for flash attention
-  TF_ASSIGN_OR_RETURN(
-      auto dropout_out,
-      CreateCudnnFlashAttentionDropoutFwdTensor(
-          intermediate_ops, intermediate_bmm2_lhs_dims,
-          intermediate_bmm2_lhs_strides,
-          intermediate_bmm2_lhs_descriptor.type(),
-          /*input_tensor*/ softmax_fwd_out, *dropout_rate));
+  TF_ASSIGN_OR_RETURN(auto dropout_out,
+                      CreateCudnnFlashAttentionDropoutFwdTensor(
+                          intermediate_ops, intermediate_bmm2_lhs_dims,
+                          intermediate_bmm2_lhs_strides,
+                          intermediate_bmm2_lhs_descriptor.type(),
+                          /*input_tensor*/ softmax_fwd_out, *dropout_rate));
   bmm2_input_tensor = std::move(dropout_out);
-
 
   std::vector<int64_t> bmm2_rhs_dims =
       bmm2_rhs_descriptor.GetCudnnCompatibleDimensions(false);
@@ -7906,9 +7914,10 @@ GetCudnnFlashAttentionOperationGraph(
           << "\n cuDNN compatible bmm2_rhs_strides: "
           << absl::StrJoin(bmm2_rhs_strides, ",");
 
-  TF_ASSIGN_OR_RETURN(auto tensor_v,
-                      CreateCudnnTensor(bmm2_rhs_dims, bmm2_rhs_strides, CudnnfMHAUid::V_ID,
-                                        bmm2_rhs_descriptor.type(), 1, -1));
+  TF_ASSIGN_OR_RETURN(
+      auto tensor_v,
+      CreateCudnnTensor(bmm2_rhs_dims, bmm2_rhs_strides, CudnnfMHAUid::V_ID,
+                        bmm2_rhs_descriptor.type(), 1, -1));
 
   std::vector<int64_t> output_dims = output_descriptor.dimensions();
   std::vector<int64_t> output_strides = output_descriptor.GetLogicalStrides();
@@ -7916,9 +7925,10 @@ GetCudnnFlashAttentionOperationGraph(
   VLOG(2) << "\n Out Dims: " << absl::StrJoin(output_dims, ",")
           << "\n Out Strides: " << absl::StrJoin(output_strides, ",");
 
-  TF_ASSIGN_OR_RETURN(auto tensor_o,
-                      CreateCudnnTensor(output_dims, output_strides, CudnnfMHAUid::O_ID,
-                                        output_descriptor.type(), 1, -1));
+  TF_ASSIGN_OR_RETURN(
+      auto tensor_o,
+      CreateCudnnTensor(output_dims, output_strides, CudnnfMHAUid::O_ID,
+                        output_descriptor.type(), 1, -1));
   auto bmm2_desc = cudnn_frontend::MatMulDescBuilder()
                        .setComputeType(CUDNN_DATA_FLOAT)
                        .build();
@@ -7959,8 +7969,8 @@ GetCudnnFlashAttentionOperationGraph(
 tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionDropoutBwdTensor(
     std::vector<cudnn_frontend::Operation>& ops, absl::Span<const int64_t> dims,
     absl::Span<const int64_t> strides, dnn::DataType dtype,
-    cudnn_frontend::Tensor& input_tensor,
-    cudnn_frontend::Tensor& mask_tensor, double dropout_rate) {
+    cudnn_frontend::Tensor& input_tensor, cudnn_frontend::Tensor& mask_tensor,
+    double dropout_rate) {
   // Create scale tensor
   std::vector<int64_t> scale_dims(dims.size(), 1);
   std::vector<int64_t> scale_strides(strides.size(), 1);
@@ -8026,8 +8036,8 @@ tsl::StatusOr<cudnn_frontend::Tensor> CreateCudnnFlashAttentionDropoutBwdTensor(
   TF_ASSIGN_OR_RETURN(
       auto dropout_scale_tensor,
       CreateCudnnTensor(
-          scale_dims, scale_strides, CudnnfMHAUid::DROPOUT_SCALE_ID, dnn::DataType::kFloat, 1,
-          -1,
+          scale_dims, scale_strides, CudnnfMHAUid::DROPOUT_SCALE_ID,
+          dnn::DataType::kFloat, 1, -1,
           /*is_virtual*/ false,
           /*cudnn_tensor_order_type*/ CUDNN_TENSOR_REORDERING_NONE,
           /*is_value*/ true));
@@ -8066,8 +8076,8 @@ GetCudnnFlashAttentionBackwardOperationGraph(
     const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
     const dnn::TensorDescriptor& d_bmm2_rhs_descriptor, dnn::FusedMHAKind kind,
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
-    CudnnHandle& cudnn, double scale, std::vector<int64_t>& intermediate_shape, bool use_dropout = false,
-    bool use_mask = false, bool use_bias = false) {
+    CudnnHandle& cudnn, double scale, std::vector<int64_t>& intermediate_shape,
+    bool use_dropout = false, bool use_mask = false, bool use_bias = false) {
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\n bmm1_grad_gemm1_rhs(q): "
             << bmm1_grad_gemm1_rhs_descriptor.ToString()
@@ -8121,9 +8131,9 @@ GetCudnnFlashAttentionBackwardOperationGraph(
           << "\n cuDNN compatible bmm1_grad_gemm2_rhs_strides: "
           << absl::StrJoin(k_transpose_strides, ",");
 
-  TF_ASSIGN_OR_RETURN(
-      auto tensor_kt,
-      CreateCudnnTensor(k_transpose_dims, k_transpose_strides, CudnnfMHAUid::K_ID, dtype, 1, -1));
+  TF_ASSIGN_OR_RETURN(auto tensor_kt,
+                      CreateCudnnTensor(k_transpose_dims, k_transpose_strides,
+                                        CudnnfMHAUid::K_ID, dtype, 1, -1));
 
   std::vector<int64_t> p_dims =
       bmm2_grad_gemm1_lhs_descriptor.GetCudnnCompatibleDimensions(true);
@@ -8147,9 +8157,9 @@ GetCudnnFlashAttentionBackwardOperationGraph(
           << "\n cuDNN compatible bmm2_grad_gemm2_rhs_strides: "
           << absl::StrJoin(v_transpose_strides, ",");
 
-  TF_ASSIGN_OR_RETURN(
-      auto tensor_vt,
-      CreateCudnnTensor(v_transpose_dims, v_transpose_strides, CudnnfMHAUid::V_ID, dtype, 1, -1));
+  TF_ASSIGN_OR_RETURN(auto tensor_vt,
+                      CreateCudnnTensor(v_transpose_dims, v_transpose_strides,
+                                        CudnnfMHAUid::V_ID, dtype, 1, -1));
 
   // create input tensor dO
   // FLASH ATTENTION TODO: be really careful here about dim
@@ -8268,10 +8278,9 @@ GetCudnnFlashAttentionBackwardOperationGraph(
 
   TF_ASSIGN_OR_RETURN(
       auto tensor_softmax_sum,
-      CreateCudnnTensor(
-          do_reduction_dims, do_reduction_strides, CudnnfMHAUid::S_SUM_ID,
-          dnn::DataType::kFloat, 1, -1,
-          /*is_virtual*/ false));
+      CreateCudnnTensor(do_reduction_dims, do_reduction_strides,
+                        CudnnfMHAUid::S_SUM_ID, dnn::DataType::kFloat, 1, -1,
+                        /*is_virtual*/ false));
 
   TF_ASSIGN_OR_RETURN(
       auto mul_0_op,
@@ -8332,10 +8341,10 @@ GetCudnnFlashAttentionBackwardOperationGraph(
       CreateCudnnTensor(p_dims, p_strides, CudnnfMHAUid::VIRTUAL_ID + 104,
                         dnn::DataType::kFloat, 1, -1,
                         /*is_virtual*/ true));
-  TF_ASSIGN_OR_RETURN(auto tensor_softmax_stats,
-                      CreateCudnnTensor(do_reduction_dims, do_reduction_strides,
-                                        CudnnfMHAUid::P_ID,
-                                        dnn::DataType::kFloat, 1, -1));
+  TF_ASSIGN_OR_RETURN(
+      auto tensor_softmax_stats,
+      CreateCudnnTensor(do_reduction_dims, do_reduction_strides,
+                        CudnnfMHAUid::P_ID, dnn::DataType::kFloat, 1, -1));
 
   TF_ASSIGN_OR_RETURN(auto sub_desc,
                       CreatePwDesc(dnn::DataType::kFloat, CUDNN_POINTWISE_SUB));
@@ -8397,11 +8406,11 @@ GetCudnnFlashAttentionBackwardOperationGraph(
   RETURN_MSG_IF_CUDNN_ERROR(bmm2_grad_gemm1_desc);
   auto bmm2_grad_gemm1_op = cudnn_frontend::OperationBuilder(
                                 CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                           .setaMatDesc(tensor_s_transpose)
-                           .setbMatDesc(tensor_do)
-                           .setcMatDesc(tensor_dv)
-                           .setmatmulDesc(bmm2_grad_gemm1_desc)
-                           .build();
+                                .setaMatDesc(tensor_s_transpose)
+                                .setbMatDesc(tensor_do)
+                                .setcMatDesc(tensor_dv)
+                                .setmatmulDesc(bmm2_grad_gemm1_desc)
+                                .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm2_grad_gemm1_op);
   intermediate_ops.push_back(std::move(bmm2_grad_gemm1_op));
 
@@ -8418,11 +8427,11 @@ GetCudnnFlashAttentionBackwardOperationGraph(
   RETURN_MSG_IF_CUDNN_ERROR(bmm2_grad_gemm2_desc);
   auto bmm2_grad_gemm2_op = cudnn_frontend::OperationBuilder(
                                 CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                           .setaMatDesc(tensor_do)
-                           .setbMatDesc(tensor_vt)
-                           .setcMatDesc(tensor_ds)
-                           .setmatmulDesc(bmm2_grad_gemm2_desc)
-                           .build();
+                                .setaMatDesc(tensor_do)
+                                .setbMatDesc(tensor_vt)
+                                .setcMatDesc(tensor_ds)
+                                .setmatmulDesc(bmm2_grad_gemm2_desc)
+                                .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm2_grad_gemm2_op);
   intermediate_ops.push_back(std::move(bmm2_grad_gemm2_op));
 
@@ -8471,7 +8480,7 @@ GetCudnnFlashAttentionBackwardOperationGraph(
                         dnn::DataType::kFloat, 1, -1,
                         /*is_virtual*/ true));
 
-TF_ASSIGN_OR_RETURN(
+  TF_ASSIGN_OR_RETURN(
       auto tensor_dropout_scale,
       CreateCudnnTensor(
           scale_dims, scale_strides, CudnnfMHAUid::DROPOUT_SCALE_ID,
@@ -8481,9 +8490,8 @@ TF_ASSIGN_OR_RETURN(
           /*is_value*/ true));
 
   TF_ASSIGN_OR_RETURN(
-      auto mul_4_op,
-      CreateBinaryPwOp(tensor_dp, tensor_dropout_scale,
-                       tensor_dp_after_dropout_scale, mul_desc));
+      auto mul_4_op, CreateBinaryPwOp(tensor_dp, tensor_dropout_scale,
+                                      tensor_dp_after_dropout_scale, mul_desc));
   intermediate_ops.push_back(std::move(mul_4_op));
 
   // dP_after_dropout_scale * alpha_scale -> dP_scaled
@@ -8507,27 +8515,29 @@ TF_ASSIGN_OR_RETURN(
 
   TF_ASSIGN_OR_RETURN(
       auto tensor_k,
-      CreateCudnnTensor(k_dims, k_strides, CudnnfMHAUid::VIRTUAL_ID + 114, dtype, 1, -1, /*is_virtual*/ true));
+      CreateCudnnTensor(k_dims, k_strides, CudnnfMHAUid::VIRTUAL_ID + 114,
+                        dtype, 1, -1, /*is_virtual*/ true));
   auto reshape_1_op = cudnn_frontend::OperationBuilder(
-                        CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
-                        .setxDesc(tensor_kt)
-                        .setyDesc(tensor_k)
-                        .build();
+                          CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
+                          .setxDesc(tensor_kt)
+                          .setyDesc(tensor_k)
+                          .build();
   RETURN_MSG_IF_CUDNN_ERROR(reshape_1_op);
   intermediate_ops.push_back(std::move(reshape_1_op));
 
   // dP_scaled @ K -> d_Q_accum
-  auto tensor_d_Q_accum = cudnn_frontend::TensorBuilder()
-                    .setDim(dq_dims.size(), dq_dims.data())
-                    .setStride(dq_strides.size(), dq_strides.data())
-                    .setId(CudnnfMHAUid::d_Q_accum_ID)
-                    .setAlignment(16)
-                    .setDataType(ToCudnnDataType(dnn::DataType::kFloat))
-                    .setVectorCountAndDimension(1, -1)
-                    .setVirtual(false)
-                    .setReorderType(CUDNN_TENSOR_REORDERING_F16x16)
-                    .setByValue(false)
-                    .build();
+  auto tensor_d_Q_accum =
+      cudnn_frontend::TensorBuilder()
+          .setDim(dq_dims.size(), dq_dims.data())
+          .setStride(dq_strides.size(), dq_strides.data())
+          .setId(CudnnfMHAUid::d_Q_accum_ID)
+          .setAlignment(16)
+          .setDataType(ToCudnnDataType(dnn::DataType::kFloat))
+          .setVectorCountAndDimension(1, -1)
+          .setVirtual(false)
+          .setReorderType(CUDNN_TENSOR_REORDERING_F16x16)
+          .setByValue(false)
+          .build();
   RETURN_MSG_IF_CUDNN_ERROR(tensor_d_Q_accum);
 
   auto bmm1_grad_gemm1_desc = cudnn_frontend::MatMulDescBuilder()
@@ -8535,30 +8545,32 @@ TF_ASSIGN_OR_RETURN(
                                   .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm1_grad_gemm1_desc);
   auto bmm1_grad_gemm1_op = cudnn_frontend::OperationBuilder(
-    CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                           .setaMatDesc(tensor_dp_scaled)
-                           .setbMatDesc(tensor_k)
-                           .setcMatDesc(tensor_d_Q_accum)
-                           .setmatmulDesc(bmm1_grad_gemm1_desc)
-                           .build();
+                                CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
+                                .setaMatDesc(tensor_dp_scaled)
+                                .setbMatDesc(tensor_k)
+                                .setcMatDesc(tensor_d_Q_accum)
+                                .setmatmulDesc(bmm1_grad_gemm1_desc)
+                                .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm1_grad_gemm1_op);
   intermediate_ops.push_back(std::move(bmm1_grad_gemm1_op));
 
   // dP_scaled.T @ Q -> dK
   TF_ASSIGN_OR_RETURN(
       auto tensor_dp_scaled_transpose,
-      CreateCudnnTensor(p_transpose_dims, p_transpose_strides, CudnnfMHAUid::VIRTUAL_ID + 115, dnn::DataType::kFloat, 1, -1, /*is_virtual*/ true));
+      CreateCudnnTensor(p_transpose_dims, p_transpose_strides,
+                        CudnnfMHAUid::VIRTUAL_ID + 115, dnn::DataType::kFloat,
+                        1, -1, /*is_virtual*/ true));
   auto reshape_2_op = cudnn_frontend::OperationBuilder(
-                        CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
-                        .setxDesc(tensor_dp_scaled)
-                        .setyDesc(tensor_dp_scaled_transpose)
-                        .build();
+                          CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
+                          .setxDesc(tensor_dp_scaled)
+                          .setyDesc(tensor_dp_scaled_transpose)
+                          .build();
   RETURN_MSG_IF_CUDNN_ERROR(reshape_2_op);
   intermediate_ops.push_back(std::move(reshape_2_op));
 
   auto bmm1_grad_gemm2_desc = cudnn_frontend::MatMulDescBuilder()
-                             .setComputeType(CUDNN_DATA_FLOAT)
-                             .build();
+                                  .setComputeType(CUDNN_DATA_FLOAT)
+                                  .build();
   RETURN_MSG_IF_CUDNN_ERROR(bmm1_grad_gemm2_desc);
   auto bmm1_grad_gemm2_op = cudnn_frontend::OperationBuilder(
                                 CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -8571,10 +8583,12 @@ TF_ASSIGN_OR_RETURN(
   intermediate_ops.push_back(std::move(bmm1_grad_gemm2_op));
 
   // d_Q_accum @ identity -> dQ
-  TF_ASSIGN_OR_RETURN(auto identity_desc,
-                      CreatePwDesc(dnn::DataType::kFloat, CUDNN_POINTWISE_IDENTITY));
-  TF_ASSIGN_OR_RETURN(auto identity_op, CreateUnaryPwOp(tensor_d_Q_accum,
-                                                      tensor_dq, identity_desc));
+  TF_ASSIGN_OR_RETURN(
+      auto identity_desc,
+      CreatePwDesc(dnn::DataType::kFloat, CUDNN_POINTWISE_IDENTITY));
+  TF_ASSIGN_OR_RETURN(
+      auto identity_op,
+      CreateUnaryPwOp(tensor_d_Q_accum, tensor_dq, identity_desc));
   intermediate_ops.push_back(std::move(identity_op));
 
   for (auto& intermediate_op : intermediate_ops) {
@@ -10647,8 +10661,8 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
   TF_ASSIGN_OR_RETURN(
       auto runner,
       CudnnExecutionPlanRunner<dnn::FusedMHABackwardSignature>::Create(
-          parent_, cudnn_.get(), std::move(execution_plan),
-          uids, /*need_side_input*/ true, /*has_activation_output*/ false,
+          parent_, cudnn_.get(), std::move(execution_plan), uids,
+          /*need_side_input*/ true, /*has_activation_output*/ false,
           scalar_uids, scalar_values, dropout_rng_seed,
           /*dropout_rng_offset*/ dropout_rng_offset,
           /*is_flash_attention*/ is_flash_attention));
