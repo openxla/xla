@@ -20,11 +20,14 @@ limitations under the License.
 
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
+#include "xla/backends/profiler/plugin/plugin_tracer.h"
+#include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/python/profiler/internal/traceme_wrapper.h"
 #include "xla/python/status_casters.h"
 #include "xla/python/types.h"
 #include "xla/python/xplane_to_profile_instructions.h"
 #include "xla/status.h"
+#include "tsl/profiler/lib/profiler_factory.h"
 #include "tsl/profiler/lib/profiler_session.h"
 #include "tsl/profiler/rpc/client/capture_profile.h"
 #include "tsl/profiler/rpc/profiler_server.h"
@@ -61,6 +64,22 @@ void BuildProfilerSubmodule(py::module* m) {
         auto server = std::make_unique<tsl::profiler::ProfilerServer>();
         server->StartProfilerServer(port);
         return server;
+      },
+      py::arg("port"));
+  profiler.def(
+      "register_plugin_profiler",
+      [](py::capsule c_api) -> void {
+        if (absl::string_view(c_api.name()) != "pjrt_c_api") {
+          throw xla::XlaRuntimeError("mismatch input name");
+        }
+        std::function<std::unique_ptr<tsl::profiler::ProfilerInterface>(
+            const tensorflow::ProfileOptions&)>
+            create_func =
+                [c_api = static_cast<const PJRT_Api*>(c_api)](
+                    const tensorflow::ProfileOptions& options) mutable {
+                  return std::make_unique<xla::profiler::PluginTracer>(c_api);
+                };
+        tsl::profiler::RegisterProfilerFactory(std::move(create_func));
       },
       py::arg("port"));
 
@@ -107,6 +126,11 @@ void BuildProfilerSubmodule(py::module* m) {
           "repository_path", &tensorflow::ProfileOptions::repository_path,
           [](tensorflow::ProfileOptions* options, const std::string& path) {
             options->set_repository_path(path);
+          })
+      .def_property(
+          "backend_name", &tensorflow::ProfileOptions::backend_name,
+          [](tensorflow::ProfileOptions* options, const std::string& name) {
+            options->set_backend_name(name);
           });
 
   py::class_<TraceMeWrapper> traceme_class(profiler, "TraceMe",

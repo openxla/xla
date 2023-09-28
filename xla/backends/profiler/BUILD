@@ -20,9 +20,11 @@ tsl_gpu_library(
     deps = [
         "//xla/backends/profiler/cpu:host_tracer",
         "//xla/backends/profiler/cpu:metadata_collector",
+        "//xla/backends/profiler/plugin:plugin_tracer",
     ] + if_with_tpu_support(
         [
-            "//xla/backends/profiler/tpu:tpu_tracer",
+            # comment out for testing purpose
+            # "//xla/backends/profiler/tpu:tpu_tracer",
         ],
     ),
     alwayslink = True,
