@@ -20,6 +20,7 @@ limitations under the License.
 #include <queue>
 #include <utility>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -93,11 +94,6 @@ std::optional<bool> FusionCanShareBufferHint(const HloInstruction* user,
     q.pop();
     if (hlo_operand == output) {
       found_path_to_output = true;
-      // The output should have at most 1 user: the tuple op (in case of a
-      // multi-output fusion)
-      if (hlo_operand->user_count() > 1) {
-        return false;
-      }
       continue;
     }
     for (HloInstruction* hlo : hlo_operand->users()) {
@@ -146,6 +142,33 @@ std::optional<bool> FusionCanShareBufferHint(const HloInstruction* user,
         q.push(hlo);
       }
     }
+  }
+
+  // If there is more than one output user, the subtrees other than the tuple
+  // may end in a reduction.
+  if (found_path_to_output && output->user_count() > 1) {
+    int buffer_use_count =
+        absl::c_count_if(output->users(), [&](HloInstruction* output_user) {
+          std::queue<HloInstruction*> q;
+          q.push(output_user);
+          while (!q.empty()) {
+            HloInstruction* hlo = q.front();
+            q.pop();
+            if (hlo == user->fused_expression_root()) {
+              return true;
+            }
+            if (hlo->opcode() == HloOpcode::kReduce) {
+              continue;
+            }
+            for (HloInstruction* u : hlo->users()) {
+              if (visited.insert(u).second) {
+                q.push(u);
+              }
+            }
+          }
+          return false;
+        });
+    found_path_to_output = buffer_use_count == 1;
   }
   return found_path_to_output;
 }
