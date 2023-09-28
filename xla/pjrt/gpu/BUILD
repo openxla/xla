@@ -4,6 +4,7 @@ load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("@tsl//tsl:tsl.bzl", "if_nccl")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
+load("@tsl//tsl/platform:build_config_root.bzl", "tf_cuda_tests_tags")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
@@ -233,7 +234,6 @@ cc_library(
         "//xla/service/gpu:gpu_target_config",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
     ] + if_cuda([
         ":nccl_id_store_cuda",
@@ -254,12 +254,7 @@ cc_library(
 xla_cc_test(
     name = "se_gpu_pjrt_compiler_test",
     srcs = if_gpu_is_configured(["se_gpu_pjrt_compiler_test.cc"]),
-    tags = [
-        "config-cuda-only",
-        "gpu",
-        "no_oss",
-        "requires-gpu-nvidia",
-    ],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler",
@@ -282,6 +277,7 @@ xla_cc_test(
 xla_cc_test(
     name = "se_gpu_pjrt_compiler_aot_test",
     srcs = if_gpu_is_configured(["se_gpu_pjrt_compiler_aot_test.cc"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = [
         "config-cuda-only",
         "gpu",
@@ -303,7 +299,6 @@ xla_cc_test(
         "//xla/service:gpu_plugin",
         "//xla/service:hlo_parser",
         "//xla/service/gpu:gpu_target_config",
-        "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/stream_executor/cuda:cublas_plugin",
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/memory",
@@ -314,8 +309,18 @@ xla_cc_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
-    ],
+    ] + if_cuda([
+        ":nccl_id_store_cuda",
+        "@local_config_cuda//cuda:cuda_headers",
+        "//xla/stream_executor/cuda:cuda_activation_header",
+        "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
+    ]) + if_rocm([
+        ":nccl_id_store_rocm",
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
