@@ -906,3 +906,16 @@ xla_cc_test(
         "@tsl//tsl/platform:test",
     ],
 )
+
+xla_cc_test(
+    name = "simplify_fp_conversions_test",
+    srcs = ["simplify_fp_conversions_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        "//xla:xla_proto_cc",
+        "//xla/service:gpu_plugin",
+        "//xla/tests:hlo_test_base",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
