@@ -5677,6 +5677,7 @@ xla_cc_test(
     name = "while_loop_constant_sinking_test",
     srcs = ["while_loop_constant_sinking_test.cc"],
     deps = [
+        ":hlo_pass",
         ":while_loop_constant_sinking",
         "//xla:test",
         "//xla/hlo/utils:hlo_matchers",
