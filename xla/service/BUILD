@@ -6739,6 +6739,39 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "dynamic_slice_to_slice",
+    srcs = ["dynamic_slice_to_slice.cc"],
+    hdrs = ["dynamic_slice_to_slice.h"],
+    deps = [
+        ":hlo_pass",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+xla_cc_test(
+    name = "dynamic_slice_to_slice_test",
+    srcs = ["dynamic_slice_to_slice_test.cc"],
+    deps = [
+        ":dynamic_slice_to_slice",
+        ":pattern_matcher",
+        ":pattern_matcher_gmock",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
 xla_cc_test(
     name = "gather_simplifier_test",
     srcs = ["gather_simplifier_test.cc"],
