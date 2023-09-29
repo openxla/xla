@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/execute_options.pb.h"
 #include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/utils.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -202,16 +203,6 @@ absl::StatusOr<ExecuteOptions> ExecuteOptions::FromProto(
       proto.non_donatable_input_indices().end());
 
   return options;
-}
-
-void GetOpSharding(std::vector<OpSharding>& out, const OpSharding& sharding) {
-  if (sharding.type() == OpSharding::TUPLE) {
-    for (const OpSharding& s : sharding.tuple_shardings()) {
-      GetOpSharding(out, s);
-    }
-  } else {
-    out.push_back(sharding);
-  }
 }
 
 std::optional<std::vector<OpSharding>> PjRtExecutable::GetOutputShardings()

@@ -86,6 +86,9 @@ Status TestBufferDonationClashes(
     absl::flat_hash_map<const void*, std::pair<bool, int>>& donation_clashes,
     bool is_donated, int arg_idx, int replica, int partition);
 
+// Extracts a flat list of OpShardings from a potentially nested OpSharding.
+void GetOpSharding(std::vector<OpSharding>& out, const OpSharding& sharding);
+
 }  // namespace xla
 
 #endif  // XLA_PJRT_UTILS_H_

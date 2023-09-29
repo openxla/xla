@@ -237,6 +237,7 @@ cc_library(
         ":compile_options_proto_cc",
         ":execute_options_proto_cc",
         ":pjrt_common",
+        ":utils",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",

@@ -388,4 +388,14 @@ Status TestBufferDonationClashes(
   return absl::OkStatus();
 }
 
+void GetOpSharding(std::vector<OpSharding>& out, const OpSharding& sharding) {
+  if (sharding.type() == OpSharding::TUPLE) {
+    for (const OpSharding& s : sharding.tuple_shardings()) {
+      GetOpSharding(out, s);
+    }
+  } else {
+    out.push_back(sharding);
+  }
+}
+
 }  // namespace xla
