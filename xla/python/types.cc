@@ -245,6 +245,16 @@ StatusOr<pybind11::dtype> IfrtDtypeToDtype(ifrt::DType dtype) {
   }
 }
 
+StatusOr<pybind11::dtype> IfrtDtypeToDtypeWithTokenCanonicalization(
+    ifrt::DType dtype) {
+  if (dtype.kind() == ifrt::DType::kToken) {
+    // Treat token as bool.
+    return py::dtype::of<bool>();
+  } else {
+    return IfrtDtypeToDtype(dtype);
+  }
+}
+
 const NumpyScalarTypes& GetNumpyScalarTypes() {
   static const NumpyScalarTypes* singleton = []() {
     NumpyScalarTypes* dtypes = new NumpyScalarTypes();

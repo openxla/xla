@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/python/sharding.h"
 #include "xla/python/status_casters.h"
 #include "xla/python/transfer_guard_lib.h"
+#include "xla/python/types.h"
 #include "xla/python/util.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
@@ -256,7 +257,7 @@ py::object MakeShapedArrayCached(const ShapedArrayCacheKey& key) {
       });
 
   if (!value->has_value()) {
-    auto dtype = IfrtDtypeToDtype(key.dtype).value();
+    auto dtype = IfrtDtypeToDtypeWithTokenCanonicalization(key.dtype).value();
     py::object aval = (*shaped_array)(
         SpanToTuple(absl::Span<const int64_t>(key.dims)), dtype, key.weak_type);
     *value = aval;
@@ -333,7 +334,7 @@ PyArray PyArray::MakeFromSingleDeviceArray(
   key.dtype = ifrt_array->dtype();
   key.weak_type = weak_type;
   auto aval = MakeShapedArrayCached(key);
-  auto dtype = IfrtDtypeToDtype(key.dtype).value();
+  auto dtype = IfrtDtypeToDtypeWithTokenCanonicalization(key.dtype).value();
   const ifrt::MemoryKind memory_kind = ifrt_array->sharding().memory_kind();
   auto py_memory_kind =
       (jax::GetEnableMemories() && memory_kind.memory_kind().has_value())

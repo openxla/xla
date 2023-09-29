@@ -361,10 +361,13 @@ PjRtLoadedExecutable::CreateInternal(
         /*shard_shape=*/ifrt::Shape(tile_shape_dimensions)));
     return OkStatus();
   };
-  auto append_token = [&] {
+  auto append_token = [&](MemoryKind memory_kind) {
     output_dtypes.push_back(DType(DType::kToken));
     output_shapes.push_back(Shape({}));
-    output_shardings.push_back(OpaqueSharding::Create(devices, MemoryKind()));
+    output_shardings.push_back(
+        ifrt::ConcreteEvenSharding::Create(devices, memory_kind,
+                                           /*shape=*/ifrt::Shape({}),
+                                           /*shard_shape=*/ifrt::Shape({})));
   };
   auto check_output_sharding_condition =
       [](absl::Span<const xla::PrimitiveType> element_types,
@@ -400,6 +403,10 @@ PjRtLoadedExecutable::CreateInternal(
   output_shardings.reserve(result_element_types.size());
   for (int i = 0; i < result_element_types.size(); ++i) {
     const auto& element_type = result_element_types[i];
+    MemoryKind element_memory_kind;
+    if (result_memory_kinds.has_value()) {
+      element_memory_kind = MemoryKind((*result_memory_kinds)[i]);
+    }
     if (xla::primitive_util::IsArrayType(element_type)) {
       const xla::HloSharding* element_hlo_sharding = nullptr;
       if (result_hlo_sharding.has_value()) {
@@ -411,14 +418,10 @@ PjRtLoadedExecutable::CreateInternal(
               "Nested-tupled output sharding is not supported");
         }
       }
-      MemoryKind element_memory_kind;
-      if (result_memory_kinds.has_value()) {
-        element_memory_kind = MemoryKind((*result_memory_kinds)[i]);
-      }
       TF_RETURN_IF_ERROR(append_arg(element_type, result_dimensions[i],
                                     element_hlo_sharding, element_memory_kind));
     } else if (element_type == TOKEN) {
-      append_token();
+      append_token(element_memory_kind);
     } else {
       return FailedPrecondition(
           "The element type is not a supported type (array, token)");

@@ -48,6 +48,12 @@ StatusOr<pybind11::dtype> PrimitiveTypeToDtype(PrimitiveType type);
 // Converts an IFRT dtype to a NumPy dtype.
 StatusOr<pybind11::dtype> IfrtDtypeToDtype(ifrt::DType dtype);
 
+// Converts an IFRT dtype to a NumPy dtype. It specially converts `kToken` into
+// bool to avoid exposing the token type to the JAX dtype system, expecting JAX
+// internals to use a bool array to express a token input/output.
+StatusOr<pybind11::dtype> IfrtDtypeToDtypeWithTokenCanonicalization(
+    ifrt::DType dtype);
+
 // Returns a Python buffer protocol (PEP 3118) format descriptor string for
 // `type`. Return nullptr if there is no suitable choice of format string.
 const char* PEP3118FormatDescriptorForPrimitiveType(PrimitiveType type);
