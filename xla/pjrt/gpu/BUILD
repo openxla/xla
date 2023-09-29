@@ -86,6 +86,7 @@ cc_library(
         "@tsl//tsl/lib/strings:proto_serialization",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/util:env_var",
     ] + if_cuda([
@@ -261,6 +262,7 @@ xla_cc_test(
         "//xla/client:xla_computation",
         "//xla/mlir_hlo",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_compiler",
         "//xla/service:gpu_plugin",
         "//xla/service:hlo_parser",
         "//xla/stream_executor/cuda:cublas_plugin",
