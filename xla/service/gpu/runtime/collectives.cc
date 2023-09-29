@@ -207,12 +207,10 @@ absl::Status NcclMockImplCommon(se::Stream* stream) {
   hipDeviceProp_t prop{};
   CHK(hipGetDevice(&devID));
   CHK(hipGetDeviceProperties(&prop, devID));
-
   void* kernel_args[] = {&sleep_duration_ns, &prop.clockRate};
   CHK(hipLaunchKernel(kernel, gridDim, blockDim, kernel_args, 0, gpu_stream));
-
 #undef CHK
-#endif 
+#endif // TENSORFLOW_USE_ROCM
   return absl::OkStatus();
 }
 #endif  // XLA_ENABLE_XCCL

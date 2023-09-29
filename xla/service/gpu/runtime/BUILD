@@ -10,10 +10,7 @@ load(
 )
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
-load(
-    "@tsl//tsl:tsl.bzl",
-    "if_cuda_or_rocm",
-)
+load("@tsl//tsl:tsl.bzl", "if_cuda_or_rocm")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -61,20 +58,6 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
-
-# rocm_library(
-#     name = "sleep_kernel_rocm",
-#     srcs = if_rocm_is_configured(
-#         [
-#             "sleep_kernel.cu.cc",
-#         ],
-#     ),
-#     hdrs = if_rocm_is_configured(["sleep_kernel.h"]),
-#     compatible_with = [],
-#     deps = [
-#         "@local_config_rocm//rocm:rocm_headers",
-#     ],
-# )
 
 cc_library(
     name = "collectives",
