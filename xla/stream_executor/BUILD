@@ -264,6 +264,8 @@ cc_library(
         ":stream_executor_headers",
         ":stream_executor_internal",
         "//xla/stream_executor/platform",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
