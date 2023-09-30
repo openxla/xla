@@ -53,7 +53,7 @@ extern "C" {
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 32
+#define PJRT_API_MINOR 33
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1345,6 +1345,24 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_OutputMemoryKinds_Args,
 typedef PJRT_Error* PJRT_Executable_OutputMemoryKinds(
     PJRT_Executable_OutputMemoryKinds_Args* args);
 
+struct PJRT_Executable_OutputShardings_Args {
+  size_t struct_size;
+  void* priv;
+  PJRT_Executable* executable;
+  size_t num_outputs;
+  bool has_shardings;
+  // Has length `num_outputs`.
+  const char** output_shardings;  // out
+  // Has length `num_outputs`.
+  const size_t* output_sharding_sizes;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_OutputShardings_Args,
+                          output_sharding_sizes);
+
+// Returns a list of sharding strings for outputs.
+typedef PJRT_Error* PJRT_Executable_OutputShardings(
+    PJRT_Executable_OutputShardings_Args* args);
+
 typedef struct PJRT_SerializedExecutable PJRT_SerializedExecutable;
 
 struct PJRT_Executable_Serialize_Args {
@@ -2050,10 +2068,12 @@ typedef struct {
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_OutputDimensions);
 
   _PJRT_API_STRUCT_FIELD(PJRT_Buffer_CopyToMemory);
+
+  _PJRT_API_STRUCT_FIELD(PJRT_Executable_OutputShardings);
 } PJRT_Api;
 
 const size_t PJRT_Api_STRUCT_SIZE =
-    PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Buffer_CopyToMemory);
+    PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Executable_OutputShardings);
 
 #undef _PJRT_API_STRUCT_FIELD
 
