@@ -341,7 +341,7 @@ cc_library(
     copts = tsl_copts(),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     visibility = set_external_visibility([
-        "//third_party/py/jax/jaxlib:__subpackages__",
+        "//third_party/py/jax:__subpackages__",
         "//tensorflow/compiler/mlir/tools/kernel_gen:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
