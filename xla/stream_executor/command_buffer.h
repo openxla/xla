@@ -113,7 +113,8 @@ class CommandBuffer {
  private:
   std::unique_ptr<internal::CommandBufferInterface> implementation_;
 
-  SE_DISALLOW_COPY_AND_ASSIGN(CommandBuffer);
+  CommandBuffer(const CommandBuffer&) = delete;
+  void operator=(const CommandBuffer&) = delete;
 };
 
 //===----------------------------------------------------------------------===//

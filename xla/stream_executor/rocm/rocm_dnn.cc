@@ -820,7 +820,8 @@ class ScopedTensorDescriptor {
  private:
   miopenTensorDescriptor_t handle_;  // Owned.
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedTensorDescriptor);
+  ScopedTensorDescriptor(const ScopedTensorDescriptor&) = delete;
+  void operator=(const ScopedTensorDescriptor&) = delete;
 };
 
 // Turns a FilterDescriptor structure into a miopen filter handle within a
@@ -917,7 +918,8 @@ class ScopedFilterDescriptor {
   // miopen filter descriptor this object creates. Owned.
   miopenTensorDescriptor_t handle_;
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedFilterDescriptor);
+  ScopedFilterDescriptor(const ScopedFilterDescriptor&) = delete;
+  void operator=(const ScopedFilterDescriptor&) = delete;
 };
 
 // Turns a ConvolutionDescriptor structure into a miopen convolution handle
@@ -994,7 +996,8 @@ class ScopedConvolutionDescriptor {
  private:
   miopenConvolutionDescriptor_t handle_;  // Owned.
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedConvolutionDescriptor);
+  ScopedConvolutionDescriptor(const ScopedConvolutionDescriptor&) = delete;
+  void operator=(const ScopedConvolutionDescriptor&) = delete;
 };
 
 // Turns a PoolingDescriptor structure into a miopen pooling descriptor handle
@@ -1055,7 +1058,8 @@ class ScopedPoolingDescriptor {
  private:
   miopenPoolingDescriptor_t handle_;  // Owned.
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedPoolingDescriptor);
+  ScopedPoolingDescriptor(const ScopedPoolingDescriptor&) = delete;
+  void operator=(const ScopedPoolingDescriptor&) = delete;
 };
 
 // Turns a NormalizeDescriptor structure into a miopen LRN descriptor handle.
@@ -1109,7 +1113,8 @@ class ScopedNormalizeDescriptor {
  private:
   miopenLRNDescriptor_t handle_;  // Owned.
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedNormalizeDescriptor);
+  ScopedNormalizeDescriptor(const ScopedNormalizeDescriptor&) = delete;
+  void operator=(const ScopedNormalizeDescriptor&) = delete;
 };
 
 // Turns a activation mode into a miopen activation mode descriptor with a scope
@@ -1187,7 +1192,8 @@ class ScopedActivationDescriptor {
  private:
   miopenActivationDescriptor_t handle_;  // Owned.
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedActivationDescriptor);
+  ScopedActivationDescriptor(const ScopedActivationDescriptor&) = delete;
+  void operator=(const ScopedActivationDescriptor&) = delete;
 
  public:
   // caching these values here to avoid calling miopenGetActivationDescriptor
@@ -1399,7 +1405,8 @@ class ScopedFusionPlanBase {
   miopenOperatorArgs_t fusion_args_;  // Owned.
   bool fusion_plan_compiled_;
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedFusionPlanBase);
+  ScopedFusionPlanBase(const ScopedFusionPlanBase&) = delete;
+  void operator=(const ScopedFusionPlanBase&) = delete;
 };
 
 // class to represent the Convolution+Bias+Activation fusion plan
@@ -1511,7 +1518,9 @@ class ScopedFusionPlanConvolutionBiasActivation : public ScopedFusionPlanBase {
   const int k_bias_op_idx = 1;
   const int k_actv_op_idx = 2;
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedFusionPlanConvolutionBiasActivation);
+  ScopedFusionPlanConvolutionBiasActivation(
+      const ScopedFusionPlanConvolutionBiasActivation&) = delete;
+  void operator=(const ScopedFusionPlanConvolutionBiasActivation&) = delete;
 };
 
 // class to represent the BatchNorm+Activation (inference) fusion plan
@@ -1611,7 +1620,9 @@ class ScopedFusionPlanBatchNormActivationInference
   const int k_batchnorm_op_idx = 0;
   const int k_actv_op_idx = 1;
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedFusionPlanBatchNormActivationInference);
+  ScopedFusionPlanBatchNormActivationInference(
+      const ScopedFusionPlanBatchNormActivationInference&) = delete;
+  void operator=(const ScopedFusionPlanBatchNormActivationInference&) = delete;
 };
 
 // class to represent the BatchNorm+Activation (training-forward) fusion plan
@@ -1710,7 +1721,9 @@ class ScopedFusionPlanBatchNormActivationForward : public ScopedFusionPlanBase {
   const int k_batchnorm_op_idx = 0;
   const int k_actv_op_idx = 1;
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedFusionPlanBatchNormActivationForward);
+  ScopedFusionPlanBatchNormActivationForward(
+      const ScopedFusionPlanBatchNormActivationForward&) = delete;
+  void operator=(const ScopedFusionPlanBatchNormActivationForward&) = delete;
 };
 
 // class to represent the BatchNorm+Activation (training-backward) fusion plan
@@ -1811,7 +1824,9 @@ class ScopedFusionPlanBatchNormActivationBackward
   const int k_batchnorm_op_idx = 0;
   const int k_actv_op_idx = 1;
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ScopedFusionPlanBatchNormActivationBackward);
+  ScopedFusionPlanBatchNormActivationBackward(
+      const ScopedFusionPlanBatchNormActivationBackward&) = delete;
+  void operator=(const ScopedFusionPlanBatchNormActivationBackward&) = delete;
 };
 
 namespace {
@@ -1930,7 +1945,8 @@ class MIOpenRnnParamsDescriptor : public MIOpenDescriptorCommon<void> {
   ParamsRegions weights_;
   ParamsRegions biases_;
   tsl::Status status_;
-  SE_DISALLOW_COPY_AND_ASSIGN(MIOpenRnnParamsDescriptor);
+  MIOpenRnnParamsDescriptor(const MIOpenRnnParamsDescriptor&) = delete;
+  void operator=(const MIOpenRnnParamsDescriptor&) = delete;
 };
 
 class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
@@ -2014,7 +2030,8 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
   // no dropout in MIOpen.
   // std::unique_ptr<miopenDropoutDescriptor> miopen_dropout_desc_;
   std::unique_ptr<MIOpenRnnParamsDescriptor> miopen_params_desc_;
-  SE_DISALLOW_COPY_AND_ASSIGN(MIOpenRnnDescriptor);
+  MIOpenRnnDescriptor(const MIOpenRnnDescriptor&) = delete;
+  void operator=(const MIOpenRnnDescriptor&) = delete;
 };
 
 // Get ID of the internal parameter tensor.
@@ -2086,7 +2103,9 @@ class MIOpenRnnSequenceTensorDescriptor
   miopenDataType_t data_type_;
   std::vector<miopenTensorDescriptor_t> handles_;
   tsl::Status status_;
-  SE_DISALLOW_COPY_AND_ASSIGN(MIOpenRnnSequenceTensorDescriptor);
+  MIOpenRnnSequenceTensorDescriptor(const MIOpenRnnSequenceTensorDescriptor&) =
+      delete;
+  void operator=(const MIOpenRnnSequenceTensorDescriptor&) = delete;
 };
 
 class MIOpenRnnStateTensorDescriptor
@@ -2130,7 +2149,9 @@ class MIOpenRnnStateTensorDescriptor
   int data_size_;
   tsl::Status status_;
   miopenDataType_t data_type_;
-  SE_DISALLOW_COPY_AND_ASSIGN(MIOpenRnnStateTensorDescriptor);
+  MIOpenRnnStateTensorDescriptor(const MIOpenRnnStateTensorDescriptor&) =
+      delete;
+  void operator=(const MIOpenRnnStateTensorDescriptor&) = delete;
 };
 
 namespace {
@@ -2559,7 +2580,8 @@ class MIOpenCTCLossDescriptor {
  private:
   miopenCTCLossDescriptor_t handle_;  // Owned
 
-  SE_DISALLOW_COPY_AND_ASSIGN(MIOpenCTCLossDescriptor);
+  MIOpenCTCLossDescriptor(const MIOpenCTCLossDescriptor&) = delete;
+  void operator=(const MIOpenCTCLossDescriptor&) = delete;
 };
 
 tsl::Status MIOpenSupport::DoPrepareForCtcLoss(
