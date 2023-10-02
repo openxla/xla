@@ -1323,7 +1323,7 @@ cc_library(
     name = "gpu_plugin_impl",
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "//xla/stream_executor:stream_executor_impl",
+        "//xla/stream_executor",
     ] + if_gpu_is_configured([
         ":service",
         "//xla/service/gpu:gpu_compiler",
