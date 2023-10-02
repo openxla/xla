@@ -4086,6 +4086,7 @@ cc_library(
     hdrs = ["metrics.h"],
     deps = [
         "@tsl//tsl/lib/monitoring:counter",
+        "@tsl//tsl/lib/monitoring:gauge",
         "@tsl//tsl/lib/monitoring:sampler",
     ],
 )
