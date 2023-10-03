@@ -460,12 +460,12 @@ Status GpuRuntimeExecutable::Execute(
 #if GOOGLE_CUDA || TF_HIPBLASLT
       &matmul_plans,
 #endif
-
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
       // Auxiliary data that is available only if compiled with CUDA support
       // only.
       &fused_attention_runners, &fused_attention_backward_runners,
 #endif  // GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       &graph_instances, &execution_count, &ordinal_to_fallback,
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       &concurrent_region_status,
