@@ -1723,7 +1723,7 @@ StatusOr<TritonWrapperResult> TritonWrapper(
                          config, ir_emitter, mlir_context));
 
   VLOG(3) << hlo_computation->ToString(HloPrintOptions::ShortParsable());
-  VLOG(2) << config.ShortDebugString();
+  VLOG(2) << tsl::protobuf::ShortFormat(config);
 
   // Compile Triton kernel to LLVM.
   mlir::PassManager pm(&mlir_context);

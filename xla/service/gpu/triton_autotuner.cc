@@ -138,7 +138,7 @@ class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
                 }
                 return InternalError("Expect autotune result cache hit.");
               }));
-      VLOG(4) << "Result: " << autotune_result.ShortDebugString();
+      VLOG(4) << "Result: " << tsl::protobuf::ShortFormat(autotune_result);
 
       if (autotune_result.has_triton()) {
         *backend_config.mutable_triton_gemm_config() = autotune_result.triton();
@@ -632,7 +632,8 @@ StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
   VLOG(2) << "Running " << executable_count << " configs for " << fusion->name()
           << ".";
   for (const ExecutableCandidate& candidate : executable_set.candidates) {
-    VLOG(5) << "Trying triton tiling: " << candidate.config.ShortDebugString();
+    VLOG(5) << "Trying triton tiling: "
+            << tsl::protobuf::ShortFormat(candidate.config);
 
     AutotuneResult res;
     *res.mutable_triton() = candidate.config;
@@ -654,8 +655,8 @@ StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
     VLOG(5) << "Running the kernel took: " << profiling_output->duration;
     if (profiling_output->duration >= absl::Seconds(1)) {
       LOG(WARNING) << "Slow kernel for " << fusion->name()
-                   << " took: " << profiling_output->duration
-                   << ". config: " << candidate.config.ShortDebugString();
+                   << " took: " << profiling_output->duration << ". config: "
+                   << tsl::protobuf::ShortFormat(candidate.config);
     }
     *res.mutable_run_time() =
         tsl::proto_utils::ToDurationProto(profiling_output->duration);

@@ -33,15 +33,12 @@ namespace {
 
 using se::DeviceMemory;
 using se::DeviceMemoryBase;
-using se::Stream;
-using se::dnn::AlgorithmConfig;
 using se::dnn::BatchDescriptor;
 using se::dnn::ConvolutionDescriptor;
 using se::dnn::DataLayout;
 using se::dnn::DimIndex;
 using se::dnn::FilterDescriptor;
 using se::dnn::FilterLayout;
-using se::dnn::ProfileResult;
 
 template <typename ElementType, typename OutputType>
 Status RunGpuConvUnfused(const GpuConvParams& params, se::Stream* stream,
@@ -382,8 +379,8 @@ StatusOr<GpuConvConfig> GetGpuConvConfig(
           << ShapeUtil::HumanStringWithLayout(config.filter_shape);
   VLOG(3) << "Output shape: "
           << ShapeUtil::HumanStringWithLayout(config.output_shape);
-  VLOG(3) << "Window: { " << window.ShortDebugString() << " }";
-  VLOG(3) << "Dim nums: { " << dnums.ShortDebugString() << " }";
+  VLOG(3) << "Window: { " << tsl::protobuf::ShortFormat(window) << " }";
+  VLOG(3) << "Dim nums: { " << tsl::protobuf::ShortFormat(dnums) << " }";
   if (backend_config.reordered_int8_nchw_vect()) {
     VLOG(3) << "Filter and bias (if present) must be reordered with "
             << "cudnnReorderFilterAndBias";

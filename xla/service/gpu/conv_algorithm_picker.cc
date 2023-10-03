@@ -674,7 +674,7 @@ StatusOr<AutotuneResult> GpuConvAlgorithmPicker::AutotuneOneConvRunner(
                     "proto to the denylist file pointed by XLA_FLAGS "
                     "--xla_gpu_algorithm_denylist_path="
                  << GetDebugOptionsFromFlags().xla_gpu_algorithm_denylist_path()
-                 << " : " << proto.ShortDebugString();
+                 << " : " << tsl::protobuf::ShortFormat(proto);
     }
 
     // CheckRedzones has modified the result in-place to include a failure.
@@ -852,7 +852,7 @@ StatusOr<AutotuneResult> GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
     *log.mutable_cudnn_version() = GetCudnnVersion(stream_exec);
     log.set_device_pci_bus_id(stream_exec->GetDeviceDescription().pci_bus_id());
     log.set_blas_version(blas_version);
-    VLOG(2) << "Autotuning result: " << log.ShortDebugString();
+    VLOG(2) << "Autotuning result: " << tsl::protobuf::ShortFormat(log);
     // If we crash on checking failure, we are in a testing/benchmark mode, thus
     // omitting logging through the logger.
     if (!crash_on_checking_failure) {
@@ -863,7 +863,7 @@ StatusOr<AutotuneResult> GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
         if (profile.has_failure() &&
             profile.failure().kind() != AutotuneResult::DISQUALIFIED) {
           LOG(FATAL) << "crash_on_checking_failure encountered errors:\n\n"
-                     << log.DebugString();
+                     << log;
         }
       }
     }

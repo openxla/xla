@@ -112,13 +112,13 @@ ConvolutionMatch MatchBackwardFilter(HloInstruction* conv) {
   for (const WindowDimension& window_dim : conv->window().dimensions()) {
     if (window_dim.stride() != 1) {
       VLOG(1) << "Forward convolution's window "
-              << conv->window().ShortDebugString()
+              << tsl::protobuf::ShortFormat(conv->window())
               << " should have stride of 1.";
       return std::nullopt;
     }
     if (window_dim.base_dilation() != 1) {
       VLOG(1) << "Forward convolution's window "
-              << conv->window().ShortDebugString()
+              << tsl::protobuf::ShortFormat(conv->window())
               << " should have no base (LHS) dilation.";
       return std::nullopt;
     }
@@ -325,13 +325,13 @@ ConvolutionMatch MatchBackwardInput(HloInstruction* conv) {
   for (const WindowDimension& window_dim : conv->window().dimensions()) {
     if (window_dim.stride() != 1) {
       VLOG(1) << "Forward convolution's window "
-              << conv->window().ShortDebugString()
+              << tsl::protobuf::ShortFormat(conv->window())
               << " should have stride of 1.";
       return std::nullopt;
     }
     if (window_dim.window_dilation() != 1) {
       VLOG(1) << "Forward convolution's window "
-              << conv->window().ShortDebugString()
+              << tsl::protobuf::ShortFormat(conv->window())
               << " should have no window dilation.";
       return std::nullopt;
     }
