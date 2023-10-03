@@ -766,18 +766,20 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
 
   {
     HloPassPipeline pipeline("post-fusion optimization");
-    pipeline.AddPass<AllGatherCombiner>(
-        debug_options.xla_gpu_all_gather_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256);
-    pipeline.AddPass<AllReduceCombiner>(
-        debug_options.xla_gpu_all_reduce_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256);
-    pipeline.AddPass<ReduceScatterCombiner>(
-        debug_options.xla_gpu_reduce_scatter_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256);
+    if (debug_options.xla_gpu_enable_prescheduling_combiners()) {
+      pipeline.AddPass<AllGatherCombiner>(
+          debug_options.xla_gpu_all_gather_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256);
+      pipeline.AddPass<AllReduceCombiner>(
+          debug_options.xla_gpu_all_reduce_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256);
+      pipeline.AddPass<ReduceScatterCombiner>(
+          debug_options.xla_gpu_reduce_scatter_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256);
 
-    if (debug_options.xla_gpu_all_reduce_contiguous()) {
-      pipeline.AddPass<AllReduceContiguous>();
+      if (debug_options.xla_gpu_all_reduce_contiguous()) {
+        pipeline.AddPass<AllReduceContiguous>();
+      }
     }
 
     TF_RETURN_IF_ERROR(AddHloEmitterAutotuningPasses(
@@ -1758,6 +1760,22 @@ Status GpuCompiler::RunPostSchedulingPipelines(
     HloModule* module, int64_t scheduler_mem_limit) const {
   TF_RETURN_IF_ERROR(
       RunPostSchedulingCopyInsertion(module, GetCanShareBuffer()));
+
+  const DebugOptions& debug_options = module->config().debug_options();
+  if (debug_options.xla_gpu_enable_postscheduling_combiners()) {
+    HloPassPipeline pipeline("post-scheduling-collectives-pipeline");
+    pipeline.AddPass<AsyncAllReduceCombiner>(
+        debug_options.xla_gpu_postscheduling_all_reduce_strategy());
+    pipeline.AddPass<AsyncAllGatherCombiner>(
+        debug_options.xla_gpu_postscheduling_all_gather_strategy());
+    // TODO(ecg): add ReduceScatter async combiner.
+
+    TF_RETURN_IF_ERROR(pipeline.Run(module).status());
+    // The combiner might have modified op dependencies; re-run the scheduler.
+    TF_RETURN_IF_ERROR(
+        ScheduleGpuModule(module, pointer_size_, scheduler_mem_limit));
+  }
+
   {
     HloPassPipeline pipeline("post-scheduling-passes");
 

@@ -379,6 +379,11 @@ message DebugOptions {
   bool xla_gpu_enable_async_reduce_scatter = 200;
   bool xla_gpu_enable_async_all_to_all = 201;
 
+  bool xla_gpu_enable_prescheduling_combiners = 254;
+  bool xla_gpu_enable_postscheduling_combiners = 255;
+  string xla_gpu_postscheduling_all_reduce_strategy = 256;
+  string xla_gpu_postscheduling_all_gather_strategy = 257;
+
   // Size threshold (in bytes) for the GPU collective combiners.
   int64 xla_gpu_all_reduce_combine_threshold_bytes = 157;
   int64 xla_gpu_all_gather_combine_threshold_bytes = 212;
@@ -637,7 +642,7 @@ message DebugOptions {
   // Maximum number of buffers to print when debugging buffer assignment.
   int64 xla_debug_buffer_assignment_show_max = 251;
 
-  // Next id: 254
+  // Next id: 258
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

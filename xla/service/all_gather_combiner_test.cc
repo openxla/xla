@@ -39,7 +39,8 @@ int64_t AllGatherCount(const HloModule& module) {
       continue;
     }
     for (HloInstruction* hlo : computation->instructions()) {
-      if (hlo->opcode() == HloOpcode::kAllGather) {
+      if (hlo->opcode() == HloOpcode::kAllGather ||
+          hlo->opcode() == HloOpcode::kAllGatherStart) {
         ++count;
       }
     }
@@ -64,7 +65,6 @@ ENTRY entry {
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string));
-
   AllGatherCombiner combine(1024 * 1024, kMaxCombineCount);
   ASSERT_EQ(AllGatherCount(*module), 2);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
@@ -317,6 +317,40 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
   EXPECT_EQ(AllGatherCount(*module), 2);
   EXPECT_FALSE(changed);
+}
+
+using AsyncAllGatherCombinerTest = HloTestBase;
+
+TEST_F(AsyncAllGatherCombinerTest, TwoGroups) {
+  const char* const hlo_string = R"(
+HloModule Module, is_scheduled=true
+
+ENTRY entry {
+  param0 = u32[32] parameter(0)
+  param1 = u32[32] parameter(1)
+  param2 = u32[32] parameter(2)
+  param3 = u32[32] parameter(3)
+  ag0 = (u32[32], u32[128]) all-gather-start(param0), replica_groups={}, dimensions={0}
+  ag0d = u32[128] all-gather-done(ag0)
+  ag1 = (u32[32], u32[128]) all-gather-start(param1), replica_groups={}, dimensions={0}
+  ag1d = u32[128] all-gather-done(ag1)
+  foo = u32[128] add(ag0d, ag1d)
+  ag2 = (u32[32], u32[128]) all-gather-start(param2), replica_groups={}, dimensions={0}
+  ag2d = u32[128] all-gather-done(ag2)
+  ag3 = (u32[32], u32[128]) all-gather-start(param3), replica_groups={}, dimensions={0}
+  ag3d = u32[128] all-gather-done(ag3)
+
+  ROOT tuple = (u32[128], u32[128], u32[128], u32[128]) tuple(ag0d, ag1d, ag2d, ag3d)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  VLOG(2) << "before: " << module->ToString();
+  AsyncAllGatherCombiner combine;
+  ASSERT_EQ(AllGatherCount(*module), 4);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  VLOG(1) << "after: " << module->ToString();
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(AllGatherCount(*module), 2);
 }
 
 }  // namespace
