@@ -107,6 +107,12 @@ struct PJRT_Executable {
   std::vector<const char*> memory_kinds;
   std::vector<size_t> memory_kind_sizes;
 
+  bool out_sharding_ran ABSL_GUARDED_BY(mutex) = false;
+  bool has_shardings;
+  std::vector<std::string> out_shardings_storage;
+  std::vector<const char*> out_shardings;
+  std::vector<size_t> out_sharding_sizes;
+
   bool out_type_ran ABSL_GUARDED_BY(mutex) = false;
   std::vector<PJRT_Buffer_Type> out_types;
 
@@ -268,6 +274,8 @@ PJRT_Error* PJRT_Executable_OutputDimensions(
     PJRT_Executable_OutputDimensions_Args* args);
 PJRT_Error* PJRT_Executable_OutputMemoryKinds(
     PJRT_Executable_OutputMemoryKinds_Args* args);
+PJRT_Error* PJRT_Executable_OutputShardings(
+    PJRT_Executable_OutputShardings_Args* args);
 PJRT_Error* PJRT_Executable_OptimizedProgram(
     PJRT_Executable_OptimizedProgram_Args* args);
 PJRT_Error* PJRT_Executable_Serialize(PJRT_Executable_Serialize_Args* args);
@@ -559,6 +567,8 @@ constexpr PJRT_Api CreatePjrtApi(
       pjrt::PJRT_Executable_OutputDimensions,
       /*PJRT_Buffer_CopyToMemory=*/
       pjrt::PJRT_Buffer_CopyToMemory,
+      /*PJRT_Executable_OutputShardings=*/
+      pjrt::PJRT_Executable_OutputShardings,
   };
 }
 

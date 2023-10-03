@@ -224,6 +224,32 @@ static xla::Status PopulateExecutableOutputMemoryKinds(
   return xla::OkStatus();
 }
 
+static xla::Status PopulateExecutableOutputShardings(
+    PJRT_Executable* executable) {
+  std::optional<std::vector<xla::OpSharding>> output_shardings =
+      executable->get()->GetOutputShardings();
+  if (!output_shardings.has_value()) {
+    executable->has_shardings = false;
+    return xla::OkStatus();
+  }
+
+  executable->has_shardings = true;
+  std::vector<std::string>& out_shardings_storage =
+      executable->out_shardings_storage;
+  std::vector<const char*>& out_shardings = executable->out_shardings;
+  std::vector<size_t>& out_sharding_sizes = executable->out_sharding_sizes;
+  out_shardings_storage.reserve(output_shardings->size());
+  out_shardings.reserve(output_shardings->size());
+  out_sharding_sizes.reserve(output_shardings->size());
+  for (auto& sharding : *output_shardings) {
+    out_shardings_storage.emplace_back(sharding.SerializeAsString());
+    out_shardings.push_back(out_shardings_storage.back().data());
+    out_sharding_sizes.push_back(out_shardings_storage.back().size());
+  }
+
+  return xla::OkStatus();
+}
+
 xla::PjRtClient::KeyValueGetCallback ToCppKeyValueGetCallback(
     PJRT_KeyValueGetCallback c_callback, void* user_arg) {
   if (c_callback == nullptr) {
@@ -1172,6 +1198,27 @@ PJRT_Error* PJRT_Executable_OutputMemoryKinds(
   args->num_outputs = args->executable->memory_kinds.size();
   args->memory_kinds = args->executable->memory_kinds.data();
   args->memory_kind_sizes = args->executable->memory_kind_sizes.data();
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Executable_OutputShardings(
+    PJRT_Executable_OutputShardings_Args* args) {
+  PJRT_RETURN_IF_ERROR(CheckMatchingStructSizes(
+      "PJRT_Executable_OutputShardings_Args",
+      PJRT_Executable_OutputShardings_Args_STRUCT_SIZE, args->struct_size));
+
+  {
+    absl::MutexLock lock(&args->executable->mutex);
+    if (!args->executable->out_sharding_ran) {
+      PJRT_RETURN_IF_ERROR(PopulateExecutableOutputShardings(args->executable));
+      args->executable->out_sharding_ran = true;
+    }
+  }
+
+  args->has_shardings = args->executable->has_shardings;
+  args->num_outputs = args->executable->out_shardings.size();
+  args->output_shardings = args->executable->out_shardings.data();
+  args->output_sharding_sizes = args->executable->out_sharding_sizes.data();
   return nullptr;
 }
 

@@ -516,6 +516,8 @@ class PjRtCApiExecutable : public PjRtExecutable {
   StatusOr<std::vector<std::vector<absl::string_view>>> GetOutputMemoryKinds()
       const override;
 
+  std::optional<std::vector<OpSharding>> GetOutputShardings() const override;
+
   const PJRT_Api* pjrt_c_api() const { return c_api_; }
   PJRT_Executable* c_executable() const { return executable_.get(); }
 
@@ -584,6 +586,10 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   StatusOr<std::vector<std::vector<absl::string_view>>> GetOutputMemoryKinds()
       const override {
     return executable_->GetOutputMemoryKinds();
+  }
+
+  std::optional<std::vector<OpSharding>> GetOutputShardings() const override {
+    return executable_->GetOutputShardings();
   }
 
   StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
