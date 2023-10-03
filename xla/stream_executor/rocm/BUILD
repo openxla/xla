@@ -95,7 +95,6 @@ cc_library(
 cc_library(
     name = "rocm_gpu_executor",
     srcs = if_rocm_is_configured(["rocm_gpu_executor.cc"]),
-    hdrs = if_rocm_is_configured(["rocm_gpu_executor.h"]),
     deps = if_rocm_is_configured([
         ":rocm_diagnostics",
         ":rocm_driver",
@@ -117,18 +116,6 @@ cc_library(
         "@tsl//tsl/platform:env",
     ]),
     alwayslink = True,
-)
-
-cc_library(
-    name = "rocm_gpu_executor_header",
-    textual_hdrs = if_rocm_is_configured(["rocm_gpu_executor.h"]),
-    visibility = ["//visibility:public"],
-    deps = if_rocm_is_configured([
-        ":rocm_kernel",
-        "//xla/stream_executor",
-        "//xla/stream_executor/gpu:gpu_executor_header",
-        "//xla/stream_executor/platform",
-    ]),
 )
 
 cc_library(

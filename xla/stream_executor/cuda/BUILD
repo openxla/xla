@@ -201,18 +201,6 @@ cc_library(
 )
 
 cc_library(
-    name = "cuda_executor_header",
-    textual_hdrs = if_cuda_is_configured(["cuda_executor.h"]),
-    visibility = ["//visibility:public"],
-    deps = if_cuda_is_configured([
-        ":cuda_kernel",
-        "//xla/stream_executor:stream_executor_headers",
-        "//xla/stream_executor/gpu:gpu_executor_header",
-        "//xla/stream_executor/platform",
-    ]),
-)
-
-cc_library(
     name = "cublas_lt_header",
     hdrs = if_cuda_is_configured([
         "cuda_blas_lt.h",
@@ -292,7 +280,6 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = if_cuda_is_configured([
         ":cuda_activation_header",
-        ":cuda_executor_header",
         ":cuda_platform_id",
         ":cuda_stream",
         ":cuda_helpers",
@@ -419,7 +406,6 @@ cc_library(
     hdrs = if_cuda_is_configured(["cuda_event.h"]),
     deps = if_cuda_is_configured([
         ":cuda_driver",
-        ":cuda_executor_header",
         ":cuda_stream",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_event",
@@ -433,7 +419,6 @@ cc_library(
     hdrs = if_cuda_is_configured(["cuda_stream.h"]),
     deps = if_cuda_is_configured([
         ":cuda_driver",
-        ":cuda_executor_header",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/stream_executor/platform",
@@ -458,7 +443,6 @@ cc_library(
 cc_library(
     name = "cuda_executor",
     srcs = if_cuda_is_configured(["cuda_executor.cc"]),
-    hdrs = if_cuda_is_configured(["cuda_executor.h"]),
     deps = if_cuda_is_configured([
         ":cuda_activation",
         ":cuda_asm_compiler",
