@@ -169,8 +169,9 @@ tsl::Status BlasLt::Init() {
       AsHipblasDataType(scale_type)));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
   BlasLt::MatmulDesc desc(hip_desc);
-  if (pointer_mode != PointerMode::kHost)
+  if (pointer_mode != PointerMode::kHost) {
     return tsl::errors::Internal("hipblaslt does not support device pointers");
+  }
   TF_RETURN_IF_ERROR(SetAttr(hip_desc, HIPBLASLT_MATMUL_DESC_TRANSA,
                              AsHipblasOperation(trans_a)));
   TF_RETURN_IF_ERROR(SetAttr(hip_desc, HIPBLASLT_MATMUL_DESC_TRANSB,
@@ -384,15 +385,18 @@ tsl::Status BlasLt::MatmulPlan::DoMatmul(Stream* stream, const void* alpha,
     }
 
     if ((a_scale != nullptr) || (b_scale != nullptr) || (c_scale != nullptr) ||
-        (d_scale != nullptr))
+        (d_scale != nullptr)) {
       return tsl::errors::Internal("hipblaslt does not support scale");
+    }
 
-    if (d_amax != nullptr)
+    if (d_amax != nullptr) {
       return tsl::errors::Internal("hipblaslt does not support amax");
+    }
 
-    if (aux != nullptr)
+    if (aux != nullptr) {
       return tsl::errors::Internal(
           "hipblaslt does not support auxiliary inputs / outputs");
+    }
 
     gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
 

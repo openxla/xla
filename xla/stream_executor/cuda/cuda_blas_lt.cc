@@ -36,9 +36,6 @@ limitations under the License.
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 
-// TODO 
-// #if GOOGLE_CUDA ??
-
 #define SET_ATTR(setter, handle, attr, value) \
   ToStatus(setter(handle, attr, &value, sizeof(decltype(value))), #setter)
 
@@ -142,9 +139,6 @@ tsl::Status BlasLt::Init() {
 
   TF_ASSIGN_OR_RETURN(auto type, gpu::AsBlasDataType(m.dtype));      
 
-  // if (!leading_dim_stride) {
-  //   leading_dim_stride = (order == Order::kRowMajor) ? num_cols : num_rows;
-  // }
   cublasLtMatrixLayout_t cu_layout;
   SE_CUBLAS_RETURN_IF_ERROR(
       cublasLtMatrixLayoutCreate(&cu_layout, AsCudaDataType(type), m.num_rows,
@@ -158,9 +152,6 @@ tsl::Status BlasLt::Init() {
   TF_RETURN_IF_ERROR(SetAttr(cu_layout, CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
                              static_cast<int32_t>(m.batch_size)));
 
-  // if (!batch_stride) {
-  //   batch_stride = (batch_size > 1) ? num_rows * num_cols : 0;
-  // }
   TF_RETURN_IF_ERROR(SetAttr(
       cu_layout, CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, m.batch_stride));
   return std::move(layout);

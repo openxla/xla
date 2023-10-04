@@ -90,8 +90,9 @@ bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
     rhs.Transpose();
     lhs.Transpose();
     // prevent pC and output from being swapped two times if they are equal!
-    if(pC != nullptr && pC != &output)
+    if(pC != nullptr && pC != &output) {
       pC->Transpose();
+    }
     output.Transpose();
   }
   return swap_operands;
@@ -101,8 +102,9 @@ bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
         Epilogue epilogue) -> tsl::StatusOr< MatmulPlanPtr >
 {
   auto blas = Get(stream);
-  if(blas == nullptr) 
+  if(blas == nullptr) {
     return xla::InternalError("BlasLt is unavailable");
+  }
   return blas->GetMatmulPlan(cfg, epilogue);
 }            
 
