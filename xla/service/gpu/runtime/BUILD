@@ -2,7 +2,7 @@ load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library", "cuda_default_co
 load("//xla:xla.bzl", "xla_cc_test")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
-    "if_rocm_is_configured", "rocm_default_copts", "if_rocm"
+    "if_rocm_is_configured", "rocm_default_copts"
 )
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
