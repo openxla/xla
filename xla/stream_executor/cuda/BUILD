@@ -326,7 +326,6 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudnn_header",
         "@tsl//tsl/cuda:cudnn",
-        "@tsl//tsl/cuda:cudnn_version",
         "@tsl//tsl/platform:tensor_float_32_utils",
         "//xla/stream_executor",
         "//xla/stream_executor:dnn",
