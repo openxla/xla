@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/python/ifrt/support/sharding_param_to_op_sharding.h"
+#include "xla/python/ifrt/support/sharding_conversions.h"
 
 #include <memory>
 #include <vector>
@@ -24,10 +24,13 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/ir/sharding_param.h"
+#include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/sharding_test_util.h"
+#include "xla/shape.h"
 #include "xla/statusor.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
