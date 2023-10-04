@@ -1395,10 +1395,11 @@ bool InferUnspecifiedDimsFromUsers(HloInstruction* annotate_op,
 
 // Returns whether an op is a target for CSE prevention.
 bool IsCSEPreventionTarget(const HloInstruction* instruction) {
-  // Scalar broadcasts are the most common CSE target that causes cross-layer
-  // propagation on unrelated subgraphs.
-  return instruction->opcode() == HloOpcode::kBroadcast &&
-         instruction->operand(0)->shape().rank() == 0;
+  // Scalar broadcast and iota are the most common CSE target that causes
+  // cross-layer propagation on unrelated subgraphs.
+  return (instruction->opcode() == HloOpcode::kBroadcast &&
+          instruction->operand(0)->shape().rank() == 0) ||
+         instruction->opcode() == HloOpcode::kIota;
 }
 
 // Marks a sharding as for CSE prevention/

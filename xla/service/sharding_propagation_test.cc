@@ -9414,7 +9414,7 @@ ENTRY %entry {
   EXPECT_THAT(convert_instr, op::Sharding("{devices=[4,1]0,1,2,3}"));
 }
 
-TEST_F(ShardingPropagationTest, CSEPreventionOnly) {
+TEST_F(ShardingPropagationTest, CSEPreventionOnlyScalarBroadcast) {
   const char* const hlo_string = R"(
 HloModule module
 
@@ -9447,7 +9447,7 @@ ENTRY %entry {
   EXPECT_FALSE(FindInstruction(module.get(), "add")->has_sharding());
 }
 
-TEST_F(ShardingPropagationTest, RemoveCSEPrevention) {
+TEST_F(ShardingPropagationTest, RemoveCSEPreventionScalarBroadcast) {
   const char* const hlo_string = R"(
 HloModule module
 
@@ -9470,6 +9470,65 @@ ENTRY %entry {
   EXPECT_TRUE(changed);
   // Test that the CSE prevention sharding is replaced with the new sharding.
   EXPECT_THAT(FindInstruction(module.get(), "br"),
+              op::Sharding("{devices=[4]3,2,1,0}"));
+  EXPECT_THAT(FindInstruction(module.get(), "add"),
+              op::Sharding("{devices=[4]3,2,1,0}"));
+}
+
+TEST_F(ShardingPropagationTest, CSEPreventionOnlyIota) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY %entry {
+  %iota = s32[4] iota(), iota_dimension=0
+  %add = s32[4] add(%iota, %iota)
+  %annotate = s32[4] custom-call(%add), custom_call_target="Sharding",
+    backend_config="unspecified_dims=[0]", sharding={replicated}
+  ROOT %copy = s32[4] copy(%annotate), sharding={devices=[4]0,1,2,3}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(
+          /*is_spmd=*/true, /*propagate_metadata=*/true,
+          /*allow_spmd_sharding_propagation_to_output=*/{false},
+          /*allow_spmd_sharding_propagation_to_parameters=*/{false},
+          /*cse_prevention_only=*/true)
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  auto* iota = FindInstruction(module.get(), "iota");
+  EXPECT_THAT(iota, op::Sharding("{devices=[4]0,1,2,3}"));
+  EXPECT_THAT(iota->sharding(), ShardingMetadata({CreateMetadata(
+                                    "_sharding_propagation_cse_prevention")}));
+  EXPECT_THAT(FindInstruction(module.get(), "annotate"),
+              AllOf(op::Sharding("{replicated}"), op::CustomCall()));
+  EXPECT_FALSE(FindInstruction(module.get(), "add")->has_sharding());
+}
+
+TEST_F(ShardingPropagationTest, RemoveCSEPreventionIota) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY %entry {
+  %iota = s32[4] iota(), iota_dimension=0,
+    sharding={devices=[4]0,1,2,3 metadata={op_name="_sharding_propagation_cse_prevention"}}
+  %add = s32[4] add(%iota, %iota)
+  %annotate = s32[4] custom-call(%add), custom_call_target="Sharding",
+    backend_config="unspecified_dims=[0]", sharding={replicated}
+  ROOT %copy = s32[4] copy(%annotate), sharding={devices=[4]3,2,1,0}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  // Test that the CSE prevention sharding is replaced with the new sharding.
+  EXPECT_THAT(FindInstruction(module.get(), "iota"),
               op::Sharding("{devices=[4]3,2,1,0}"));
   EXPECT_THAT(FindInstruction(module.get(), "add"),
               op::Sharding("{devices=[4]3,2,1,0}"));
