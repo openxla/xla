@@ -314,7 +314,6 @@ tsl::Status GpuExecutor::Submit(Stream* stream,
     return absl::InvalidArgumentError(
         "Can't submit non-primary command buffer for execution");
   }
-  VLOG(-1) << "Calling Submit function!";
 
   auto exec = GpuCommandBuffer::Cast(&command_buffer)->executable();
   VLOG(3) << "Launch command buffer execuable graph " << exec
