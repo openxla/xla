@@ -316,21 +316,12 @@ TEST_F(InstructionFusionTest, AddIntoBitcast) {
     })")
                     .value();
 
-  EXPECT_FALSE(duplicating_instruction_fusion_.Run(module.get()).value());
-}
+  EXPECT_TRUE(duplicating_instruction_fusion_.Run(module.get()).value());
 
-TEST_F(InstructionFusionTest, ConvertIntoBitcastBothConsumedByTuple) {
-  auto module = ParseAndReturnVerifiedModule(R"(
-  HloModule test
-
-  ENTRY main {
-    param_0 = f32[2048,16000]{1,0} parameter(0)
-    convert = bf16[2048,16000]{1,0} convert(param_0)
-    bitcast = bf16[16000,1,2048]{2,1,0} bitcast(convert)
-    ROOT tuple.143 = (bf16[16000,1,2048]{2,1,0}, bf16[2048,16000]{1,0}) tuple(bitcast, convert)
-  })")
-                    .value();
-  EXPECT_FALSE(duplicating_instruction_fusion_.Run(module.get()).value());
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Fusion()));
+  EXPECT_THAT(root->fused_expression_root(),
+              GmockMatch(m::Bitcast(m::Add(m::Parameter(), m::Parameter()))));
 }
 
 TEST_F(InstructionFusionTest, DontFuseGTE) {
@@ -862,8 +853,8 @@ ENTRY main {
 
   EXPECT_TRUE(duplicating_instruction_fusion_.Run(module.get()).value());
 
-  const HloInstruction* fused_convert_fusion =
-      module->entry_computation()->root_instruction()->operand(0);
+  HloInstruction* fused_convert_fusion =
+      module->entry_computation()->root_instruction();
 
   ASSERT_THAT(fused_convert_fusion, GmockMatch(m::Fusion()));
   SCOPED_TRACE(module->ToString());

@@ -110,12 +110,6 @@ TEST_F(PriorityFusionTest, FusionFusionWithDuplication) {
 }
 
 TEST_F(PriorityFusionTest, FuseWideningConvertIntoConsumers) {
-  // Because of the bitcast consumer, the convert is currently fused only with
-  // the log, resulting in three fusions:
-  //   1. log + convert
-  //   2. multiply
-  //   3. bitcast
-  // This is a bug.
   absl::string_view kHlo = R"(
     HloModule test_module
 
@@ -131,10 +125,10 @@ TEST_F(PriorityFusionTest, FuseWideningConvertIntoConsumers) {
   RunAndFilecheckHloRewrite(kHlo, std::move(priority_fusion_), R"(
 CHECK:      ENTRY
 CHECK-NEXT: %[[PARAM:.*]] = f16[512]{0} parameter(0)
-CHECK-NEXT: %[[FUSION:.*]] = f32[512]{0} fusion(%[[PARAM]])
-CHECK-NEXT: %[[MUL:.*]] = f32[512]{0} multiply(%[[FUSION]], %[[FUSION]])
-CHECK-NEXT: %[[BITCAST:.*]] = s32[512]{0} bitcast(%[[FUSION]])
-CHECK-NEXT: ROOT %{{.*}} = (f32[512]{0}, s32[512]{0}) tuple(%[[MUL]], %[[BITCAST]])
+CHECK-NEXT: %[[LOG:.*]] = f16[512]{0} log(%[[PARAM]])
+CHECK-NEXT: %[[FUSION:.*]] = f32[512]{0} fusion(%[[LOG]])
+CHECK-NEXT: %[[FUSION2:.*]] = s32[512]{0} fusion(%[[LOG]])
+CHECK-NEXT: ROOT %{{.*}} = (f32[512]{0}, s32[512]{0}) tuple(%[[FUSION]], %[[FUSION2]])
   )");
 }
 

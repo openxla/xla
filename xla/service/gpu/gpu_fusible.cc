@@ -130,9 +130,6 @@ bool IsNestableVariadicReduction(const HloInstruction& instr) {
 }
 
 bool IsInputFusibleTranspose(const HloInstruction& instr) {
-  if (instr.opcode() == HloOpcode::kBitcast) {
-    return false;
-  }
   auto& hero = FindNonTrivialHero(instr);
   if (GetDescriptionForTiledTransposeEmitter(instr, hero).has_value()) {
     return true;
@@ -359,11 +356,6 @@ bool IsLoopFusibleAsConsumer(const HloInstruction& instr,
                              const HloInstruction& hero) {
   // Instr should be fusible.
   if (!instr.IsFusible()) return false;
-
-  // An optimization for instruction fusion. Bitcast as a consumer means that it
-  // will be a root of a fusion. This just adds indexing overhead without any
-  // benefit.
-  if (instr.opcode() == HloOpcode::kBitcast) return false;
 
   // Any reduction can be fused as a consumer.
   if (instr.opcode() == HloOpcode::kReduce) return true;

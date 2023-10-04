@@ -708,8 +708,7 @@ ENTRY e {
 
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: ENTRY
-; CHECK: transpose(
-; CHECK: bitcast(
+; CHECK: kLoop
 ; CHECK: kCustom
 )");
 
