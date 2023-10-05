@@ -323,6 +323,10 @@ StatusOr<bool> WhileLoopUnroller::Run(
     VLOG(3) << "Unrolling while instruction " << while_op->ToShortString()
             << " with body instruction count "
             << while_op->while_body()->instruction_count();
+
+    std::cout << "Unrolling while instruction " << while_op->ToShortString()
+              << " with body instruction count "
+              << while_op->while_body()->instruction_count() << std::endl;
     HloComputation* computation = while_op->parent();
     HloInstruction* unrolled_body_call_op;
     std::vector<HloInstruction*> call_operands;
