@@ -471,6 +471,38 @@ TEST_F(HloCostAnalysisTest, Reduce) {
   EXPECT_EQ(analysis.output_bytes_accessed(*root), sizeof(float) * 10);
 }
 
+TEST_F(HloCostAnalysisTest, ReduceOfReduce) {
+  absl::string_view hlo_text = R"(
+HloModule testmodule
+
+max {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT max = f32[] maximum(p0, p1)
+}
+
+ENTRY fusion {
+  c = f32[] constant(-inf)
+  p0 = f32[2,3,1024,1024]{3,2,1,0} parameter(0)
+  reduce.1 = f32[2,3,1024]{2,1,0} reduce(p0, c), dimensions={3}, to_apply=max
+  ROOT reduce.2 = f32[2,3]{1,0} reduce(reduce.1, c), dimensions={2}, to_apply=max
+}
+)";
+  auto hlo_module = ParseAndReturnUnverifiedModule(hlo_text).value();
+  HloCostAnalysis::Options options;
+  options.shape_size = ShapeSize;
+  options.count_multiple_input_accesses = true;
+  HloCostAnalysis analysis(options);
+  ASSERT_IS_OK(hlo_module->entry_computation()->Accept(&analysis));
+  // This is incorrect; the emitter will recompute the first reduction within
+  // the second, leading to way more memory accesses.
+  // The expectation here is the entire parameter (once), the first reduce
+  // once as an input and once as an output, the second reduce as an output
+  // and the constant twice.
+  EXPECT_EQ(analysis.bytes_accessed(),
+            sizeof(float) * (2 * 3 * 1024 * 1024 + 2 * 2 * 3 * 1024 + 6 + 2));
+}
+
 TEST_F(HloCostAnalysisTest, ReduceWindow) {
   XlaBuilder builder("reduce_window");
   auto input =
