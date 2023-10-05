@@ -3064,6 +3064,7 @@ PjRtStreamExecutorClient::Compile(const XlaComputation& computation,
   auto input_options = options;
 
   TF_RETURN_IF_ERROR(options.ApplyAllOptionOverrides());
+  TF_RETURN_IF_ERROR(options.ApplyGpuCompEnvOverrides());
 
   TF_ASSIGN_OR_RETURN(ExecutableExtras extras, GetExecutableExtras(&options));
   std::shared_ptr<DeviceAssignment>& device_assignment =

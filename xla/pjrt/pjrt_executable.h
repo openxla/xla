@@ -107,6 +107,11 @@ struct CompileOptions {
   // Applies env_option_overrides to executable_build_options.debug_options().
   Status ApplyAllOptionOverrides();
 
+  // Override DebugOptions as per the received GpuCompilationEnvironment proto.
+  // Temporary function until we migrate usage of GPU flags to use
+  // GpuCompilationEnvironment.
+  Status ApplyGpuCompEnvOverrides();
+
   // Applies a single option to executable_build_options.debug_options().
   Status ApplyOption(const std::string& key, const OptionOverride& value);
 

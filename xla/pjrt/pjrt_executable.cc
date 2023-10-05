@@ -441,6 +441,48 @@ Status CompileOptions::ApplyAllOptionOverrides() {
   return OkStatus();
 }
 
+Status CompileOptions::ApplyGpuCompEnvOverrides() {
+  if (!executable_build_options.has_comp_envs()) {
+    return OkStatus();
+  }
+  const auto& gpu_comp_env = executable_build_options.mutable_comp_envs()
+                                 ->GetEnv<xla::GpuCompilationEnvironment>();
+  auto descriptor = gpu_comp_env.GetDescriptor();
+  auto reflection = gpu_comp_env.GetReflection();
+  int field_count = descriptor->field_count();
+  std::vector<std::pair<std::string, OptionOverride>> gce_overrides;
+  for (int i = 0; i < field_count; i++) {
+    const tsl::protobuf::FieldDescriptor* field = descriptor->field(i);
+    OptionOverride option;
+    switch (field->type()) {
+      case tsl::protobuf::FieldDescriptor::TYPE_STRING:
+        option = OptionOverride(reflection->GetString(gpu_comp_env, field));
+        break;
+      case tsl::protobuf::FieldDescriptor::TYPE_INT32:
+        option = OptionOverride(
+            static_cast<int64_t>(reflection->GetInt32(gpu_comp_env, field)));
+        break;
+      case tsl::protobuf::FieldDescriptor::TYPE_INT64:
+        option = OptionOverride(reflection->GetInt64(gpu_comp_env, field));
+        break;
+      case tsl::protobuf::FieldDescriptor::TYPE_FLOAT:
+        option = OptionOverride(reflection->GetFloat(gpu_comp_env, field));
+        break;
+      case tsl::protobuf::FieldDescriptor::TYPE_BOOL:
+        option = OptionOverride(reflection->GetBool(gpu_comp_env, field));
+        break;
+      default:
+        return InvalidArgument("While setting option %s, invalid type %s.",
+                               field->name(), field->type_name());
+    }
+    gce_overrides.push_back(std::make_pair(field->name(), option));
+  }
+  for (auto& option : gce_overrides) {
+    TF_RETURN_IF_ERROR(ApplyOption(option.first, option.second));
+  }
+  return OkStatus();
+}
+
 Status CompileOptions::ApplyOptionFromString(
     const tsl::protobuf::FieldDescriptor* field, const std::string& value) {
   xla::DebugOptions& debug_options =
