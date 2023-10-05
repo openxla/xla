@@ -105,6 +105,7 @@ cc_library(
         ":gpu_stream",
         ":gpu_types_header",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:stream_executor_internal",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -217,6 +218,7 @@ cc_library(
     deps = [
         ":gpu_driver_header",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:logging",
     ],
@@ -228,6 +230,7 @@ cc_library(
     deps = [
         ":gpu_types_header",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:stream_executor_internal",
         "@com_google_absl//absl/base:core_headers",
     ],
 )
@@ -240,6 +243,7 @@ cc_library(
         ":gpu_executor_header",
         ":gpu_types_header",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:stream_executor_internal",
         "@tsl//tsl/platform:status",
     ],
 )
@@ -251,6 +255,7 @@ cc_library(
         ":gpu_driver_header",
         ":gpu_executor_header",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:stream_executor_internal",
     ],
 )
 
@@ -263,6 +268,7 @@ cc_library(
         ":gpu_executor_header",
         ":gpu_stream",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:stream_executor_internal",
         "@tsl//tsl/platform:status",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_driver",

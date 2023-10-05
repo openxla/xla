@@ -1,8 +1,8 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
 )
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -154,6 +154,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
+        "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor/host:host_stream",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/types:span",
