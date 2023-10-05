@@ -386,6 +386,7 @@ xla_test(
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
         "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
 )
