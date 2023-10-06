@@ -775,6 +775,7 @@ HloComputationProto HloComputation::ToProto() const {
   proto.set_root_id(root_instruction()->unique_id());
   *proto.mutable_program_shape() = ComputeProgramShape().ToProto();
   proto.set_is_fusion_computation(is_fusion_computation_);
+  proto.set_is_collective_called_computation(is_collective_called_computation_);
   proto.set_execution_thread(IsMainThread() ? ""
                                             : std::string(execution_thread()));
   return proto;
@@ -840,6 +841,9 @@ HloComputation::CreateFromProto(
                          /*fusion_instruction=*/nullptr));
   computation->unique_id_ = proto.id();
   computation->is_fusion_computation_ = proto.is_fusion_computation();
+  computation->is_collective_called_computation_ =
+      proto.is_collective_called_computation();
+
   if (!proto.execution_thread().empty()) {
     computation->SetExecutionThread(proto.execution_thread());
   }

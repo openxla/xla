@@ -397,6 +397,12 @@ message HloComputationProto {
 
   // The name of execution thread this computation belongs to.
   string execution_thread = 8;
+
+  // Whether this is subcomputation called by a collective call.
+  // This is needed for serialization so CreateFromProto can
+  // set this field correctly.
+  bool is_collective_called_computation = 9;
+
 }
 
 // Serialization of an HLO schedule. An HLO schedule contains a total order of
