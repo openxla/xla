@@ -3,6 +3,10 @@ load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load(
+    "//tensorflow:tensorflow.bzl",
+    "tf_gen_op_wrapper_py",
+)
+load(
     "//xla:xla.bzl",
     "xla_cc_test",
     "xla_py_test_deps",
@@ -1193,5 +1197,34 @@ xla_cc_test(
         "@tsl//tsl/profiler/utils:file_system_utils",
         "@tsl//tsl/profiler/utils:xplane_builder",
         "@tsl//tsl/profiler/utils:xplane_schema",
+    ],
+)
+
+tf_gen_op_wrapper_py(
+    name = "gen_xla_ops",
+    out = "gen_xla_ops.py",
+    op_allowlist = [
+        "ConvertToCooTensor",
+        "GetMinibatchesInCsrWithPhysicalReplica",
+        "GetMinibatchSplitsWithPhysicalReplica",
+        "TPUCopyWithDynamicShape",
+        "TPUAnnotateTensorsWithDynamicShape",
+        "XlaSparseDenseMatmul",
+        "XlaSparseDenseMatmulWithCsrInput",
+        "XlaSparseDenseMatmulGrad",
+        "XlaSparseDenseMatmulGradWithSgdAndCsrInput",
+        "XlaSparseDenseMatmulGradWithAdagradAndCsrInput",
+        "XlaSparseDenseMatmulGradWithAdagradMomentumAndCsrInput",
+        "XlaSparseDenseMatmulGradWithAdamAndCsrInput",
+        "XlaSparseDenseMatmulGradWithFtrlAndCsrInput",
+        "XlaSparseCoreSgd",
+        "XlaSparseCoreAdagrad",
+        "XlaSparseCoreAdagradMomentum",
+        "XlaSparseCoreAdam",
+        "XlaSparseCoreFtrl",
+    ],
+    deps = [
+        "//tensorflow/core/tpu/ops:sparse_core_ops",
+        "//tensorflow/core/tpu/ops:sparse_core_preprocess_ops",
     ],
 )
