@@ -56,31 +56,14 @@ std::optional<ReductionKind> MatchReductionInstruction(
   }
 }
 
-template <typename Pattern>
-auto OptionalConvert(Pattern pattern) {
-  namespace m = match;
-  auto shared = m::SharedSubpattern(pattern);
-  return m::AnyOf<HloInstruction>(m::Convert(shared), shared);
-}
-
 std::optional<ReductionKind> MatchReductionComputation(
     const HloComputation* computation) {
   namespace m = match;
-  HloInstruction* root = computation->root_instruction();
-  if (root->opcode() == HloOpcode::kFusion) {
-    HloInstruction* fusion_root =
-        root->fused_instructions_computation()->root_instruction();
-    root = fusion_root->opcode() == HloOpcode::kConvert
-               ? fusion_root->mutable_operand(0)
-               : fusion_root;
-    VLOG(5) << "Found fused computation in to_apply region with root: "
-            << root->ToString();
-  }
+  const HloInstruction* root = computation->root_instruction();
   auto kind = MatchReductionInstruction(root);
   if (kind && !Match(root, m::Op()
-                               .WithBinaryOperandsAnyOrder(
-                                   OptionalConvert(m::Parameter(0)),
-                                   OptionalConvert(m::Parameter(1)))
+                               .WithBinaryOperandsAnyOrder(m::Parameter(0),
+                                                           m::Parameter(1))
                                .WithShape(m::Shape().IsEffectiveScalar()))) {
     kind = std::nullopt;
   }
