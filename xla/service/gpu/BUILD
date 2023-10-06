@@ -3,7 +3,7 @@
 
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library", "if_cuda")
 load("//xla:xla.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -353,6 +353,7 @@ cc_library(
     ] + if_gpu_is_configured([
         ":triangular_solve_thunk",
         ":cholesky_thunk",
+        ":cub_sort_thunk",
         ":cublas_lt_matmul_thunk",
         ":ir_emitter_triton",
     ]),
@@ -1136,6 +1137,283 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor/gpu:gpu_asm_opts",
     ]) + ["@tsl//tsl/platform:status"],
+)
+
+cc_library(
+    name = "cub_sort_thunk",
+    srcs = if_gpu_is_configured(["cub_sort_thunk.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_thunk.h"]),
+    deps = if_gpu_is_configured([
+        ":buffer_allocations",
+        ":cub_sort_kernel_f16",
+        ":cub_sort_kernel_f32",
+        ":cub_sort_kernel_f64",
+        ":cub_sort_kernel_s8",
+        ":cub_sort_kernel_s16",
+        ":cub_sort_kernel_s32",
+        ":cub_sort_kernel_s64",
+        ":cub_sort_kernel_u8",
+        ":cub_sort_kernel_u16",
+        ":cub_sort_kernel_u32",
+        ":cub_sort_kernel_u64",
+        ":cub_sort_kernel_u16_b16",
+        ":cub_sort_kernel_u16_b32",
+        ":cub_sort_kernel_u16_b64",
+        ":cub_sort_kernel_u32_b16",
+        ":cub_sort_kernel_u32_b32",
+        ":cub_sort_kernel_u32_b64",
+        ":cub_sort_kernel_u64_b16",
+        ":cub_sort_kernel_u64_b32",
+        ":cub_sort_kernel_u64_b64",
+        ":thunk",
+        "@com_google_absl//absl/log:check",
+        "@local_config_cuda//cuda:cuda_headers",
+        "//xla/service:buffer_assignment",
+        "//xla:shape_util",
+        "//xla/stream_executor:device_memory",
+        "//xla:status",
+        "//xla:xla_data_proto_cc",
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_f16",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_F16"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_f32",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_F32"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_f64",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_F64"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u8",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U8"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u16",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U16"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u32",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U32"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u64",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U64"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_s8",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_S8"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_s16",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_S16"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_s32",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_S32"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_s64",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_S64"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u16_b16",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U16_B16"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u16_b32",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U16_B32"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u16_b64",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U16_B64"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u32_b16",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U32_B16"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u32_b32",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U32_B32"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u32_b64",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U32_B64"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u64_b16",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U64_B16"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u64_b32",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U64_B32"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
+)
+
+cuda_library(
+    name = "cub_sort_kernel_u64_b64",
+    srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
+    hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
+    local_defines = ["CUB_TYPE_U64_B64"],
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",  #cub
+    ]),
 )
 
 cc_library(

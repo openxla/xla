@@ -180,6 +180,23 @@ cc_library(
 )
 
 cc_library(
+    name = "cub_sort",
+    srcs = ["cub_sort.cc"],
+    hdrs = ["cub_sort.h"],
+    deps = [
+        ":support",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/runtime:memref_view",
+        "//xla/service:executable",
+        "//xla/service/gpu:cub_sort_thunk",
+        "//xla/stream_executor:device_memory",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     hdrs = ["custom_call.h"],
@@ -215,6 +232,7 @@ cc_library(
         ":concurrent_region",
         ":conv",
         ":conv_reorder",
+        ":cub_sort",
         ":cublas_lt_matmul",
         ":custom_call",
         ":fft",

@@ -64,6 +64,7 @@ class Thunk {
     kConvolution,
     kConvolutionReorder,
     kCopy,
+    kCubSort,
     kCublasLtMatmul,
     kCustomCall,
     kFft,

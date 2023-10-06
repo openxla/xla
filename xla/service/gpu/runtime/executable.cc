@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/concurrent_region.h"
 #include "xla/service/gpu/runtime/conv.h"
 #include "xla/service/gpu/runtime/conv_reorder.h"
+#include "xla/service/gpu/runtime/cub_sort.h"
 #include "xla/service/gpu/runtime/cublas_lt_matmul.h"
 #include "xla/service/gpu/runtime/custom_call.h"
 #include "xla/service/gpu/runtime/fft.h"
@@ -98,6 +99,7 @@ void RegisterXlaGpuRuntimeCustomCalls(DirectCustomCallRegistry& registry) {
   RegisterGemmCustomCalls(registry);
   RegisterConvCustomCalls(registry);
   RegisterConvReorderCustomCalls(registry);
+  RegisterCubSortCustomCalls(registry);
   RegisterMemcpyCustomCalls(registry);
   RegisterIoFeedCustomCalls(registry);
   RegisterMemsetCustomCalls(registry);
