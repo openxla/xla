@@ -3271,8 +3271,10 @@ cc_library(
     hdrs = ["gpu_performance_model.h"],
     deps = [
         ":backend_configs_cc",
+        ":gpu_fusible",
         ":gpu_hlo_cost_analysis",
         ":hlo_fusion_analysis",
+        ":hlo_traversal",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/log",
