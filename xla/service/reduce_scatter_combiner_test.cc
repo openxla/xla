@@ -176,5 +176,36 @@ ENTRY entry{
                           RunPass(hlo_string, /*expect_change=*/false));
 }
 
+TEST_F(ReduceScatterCombinerTest, FusedToApplyShouldBeCombined) {
+  absl::string_view hlo_string = R"(
+HloModule TestModule
+
+fused_computation {
+  param_1.2 = bf16[] parameter(1)
+  convert.2468 = f32[] convert(param_1.2)
+  param_0.2 = bf16[] parameter(0)
+  convert.2466 = f32[] convert(param_0.2)
+  add.896 = f32[] add(convert.2468, convert.2466)
+  ROOT convert.2465 = bf16[] convert(add.896)
+}
+
+region_0 {
+  Arg_1.938 = bf16[] parameter(1)
+  Arg_0.937 = bf16[] parameter(0)
+  ROOT fusion = bf16[] fusion(Arg_1.938, Arg_0.937), kind=kLoop, calls=fused_computation
+}
+
+ENTRY entry{
+ param0 = bf16[64,128]{1,0} parameter(0)
+ param1 = bf16[256,1024]{1,0} parameter(1)
+ reduce-scatter.0 = bf16[64,128]{1,0} reduce-scatter(param0), replica_groups={{0}}, dimensions={0}, to_apply=region_0
+ reduce-scatter.1 = bf16[256,1024]{1,0} reduce-scatter(param1), replica_groups={{0}}, dimensions={0}, to_apply=region_0
+ ROOT add.0 = tuple(reduce-scatter.0, reduce-scatter.1)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          RunPass(hlo_string, /*expect_change=*/true));
+}
+
 }  // namespace
 }  // namespace xla
