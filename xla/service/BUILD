@@ -6989,3 +6989,12 @@ tf_proto_library(
     cc_api_version = 2,
     make_default_target_header_only = True,
 )
+
+cc_library(
+    name = "export_hlo",
+    hdrs = ["export_hlo.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description_proto_cc",
+    ],
+)
