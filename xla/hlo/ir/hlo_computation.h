@@ -834,7 +834,7 @@ class HloComputation {
   bool is_custom_call_computation_;
 
   // If this computation is a collective sub-computation, this field points to
-  // the corresponding to_apply instruction. Otherwise, this is null.
+  // the corresponding collective instruction. Otherwise, this is null.
   HloInstruction* collective_call_instruction_;
 
   // Determines whether this computation is a collective sub-computation.
