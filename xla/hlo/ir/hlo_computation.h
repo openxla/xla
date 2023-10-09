@@ -673,6 +673,7 @@ class HloComputation {
   HloInstruction* CollectiveCallInstruction() const {
     return collective_call_instruction_;
   }
+
   void SetCollectiveCallInstruction(
       HloInstruction* collective_call_instruction) {
     CHECK(!IsFusionComputation() && !IsAsyncComputation() &&

@@ -76,6 +76,8 @@ class TestFloatSupport : public FloatSupport {
   }
 };
 
+// The test float class that doesn't support any compute ops for low-precision
+// but supports some collectives.
 class TestFloatNoComputeSupport : public FloatSupport {
  public:
   explicit TestFloatNoComputeSupport(PrimitiveType low_precision_type)
@@ -91,27 +93,15 @@ class TestFloatNoComputeSupport : public FloatSupport {
         hlo.opcode() == HloOpcode::kReduceScatter) {
       return true;
     }
-    if (hlo.opcode() == HloOpcode::kDot) {
-      // Test that only the first operand of kDot supports low-precision.
-      return operand_index == 0;
-    }
     return false;
   }
 
   bool SupportsLowPrecisionOutput(const HloInstruction& hlo) const override {
-    if (hlo.opcode() == HloOpcode::kDot || hlo.opcode() == HloOpcode::kTuple ||
+    if (hlo.opcode() == HloOpcode::kTuple ||
         hlo.opcode() == HloOpcode::kGetTupleElement ||
         hlo.opcode() == HloOpcode::kAllToAll ||
         hlo.opcode() == HloOpcode::kAllReduce ||
         hlo.opcode() == HloOpcode::kReduceScatter) {
-      return true;
-    }
-    return false;
-  }
-
-  bool SupportsMixedPrecisions(const HloInstruction& hlo) const override {
-    if (hlo.opcode() == HloOpcode::kTuple ||
-        hlo.opcode() == HloOpcode::kGetTupleElement) {
       return true;
     }
     return false;
