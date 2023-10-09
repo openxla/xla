@@ -67,6 +67,7 @@ cc_library(
     visibility = set_external_visibility([
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_profiler_backends",
+        "//tensorflow/compiler/xla/python:__pkg__",
     ]),
     deps = [
         ":profiler_interface",
