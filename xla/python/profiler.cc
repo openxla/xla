@@ -112,14 +112,21 @@ void BuildProfilerSubmodule(py::module* m) {
       .def(py::init([](const tensorflow::ProfileOptions& options) {
         return tsl::ProfilerSession::Create(options);
       }))
-      .def("stop_and_export",
-           [](tsl::ProfilerSession* sess,
-              const std::string& tensorboard_dir) -> void {
+      .def("stop",
+           [](tsl::ProfilerSession* sess) -> pybind11::bytes {
              tensorflow::profiler::XSpace xspace;
              // Disables the ProfilerSession
              xla::ThrowIfError(sess->CollectData(&xspace));
+             return xspace.SerializeAsString();
+           })
+      .def("export",
+           [](tsl::ProfilerSession* sess, const std::string& xspace,
+              const std::string& tensorboard_dir) -> void {
+             tensorflow::profiler::XSpace xspace_proto;
+             xspace_proto.ParseFromString(xspace);
              xla::ThrowIfError(tsl::profiler::ExportToTensorBoard(
-                 xspace, tensorboard_dir, /* also_export_trace_json= */ true));
+                 xspace_proto, tensorboard_dir,
+                 /* also_export_trace_json= */ true));
            });
 
   py::class_<tensorflow::ProfileOptions> profile_options_class(
