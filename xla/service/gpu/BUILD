@@ -2454,6 +2454,7 @@ cc_library(
     srcs = ["command_buffer_scheduling.cc"],
     hdrs = ["command_buffer_scheduling.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:statusor",
         "//xla:util",
         "//xla/hlo/ir:hlo",
