@@ -118,7 +118,6 @@ cc_library(
         "@tsl//tsl/cuda",
         "@tsl//tsl/cuda:cudart",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:static_threadlocal",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:str_format",
