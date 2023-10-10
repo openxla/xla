@@ -4,7 +4,7 @@
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("//xla:xla.bzl", "xla_cc_test", "xla_export_hlo_deps")
+load("//xla:xla.bzl", "xla_cc_test", "xla_export_hlo_deps", "xla_nvml_deps")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
@@ -2014,6 +2014,52 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "analytical_latency_estimator",
+    srcs = ["analytical_latency_estimator.cc"],
+    hdrs = ["analytical_latency_estimator.h"],
+    deps = [
+        ":gpu_hlo_cost_analysis",
+        ":gpu_performance_model",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service:latency_hiding_scheduler",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+xla_test(
+    name = "analytical_latency_estimator_test",
+    srcs = ["analytical_latency_estimator_test.cc"],
+    backend_tags = {"gpu": [
+        "requires-gpu-sm70",
+    ]},
+    backends = [
+        "gpu",
+    ],
+    deps = [
+        ":analytical_latency_estimator",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_parser",
+        "//xla/service:latency_hiding_scheduler",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
     name = "gpu_sanitize_constant_names",
     srcs = ["gpu_sanitize_constant_names.cc"],
     hdrs = ["gpu_sanitize_constant_names.h"],
@@ -3111,6 +3157,7 @@ cc_library(
     srcs = ["gpu_hlo_schedule.cc"],
     hdrs = ["gpu_hlo_schedule.h"],
     deps = [
+        ":analytical_latency_estimator",
         ":backend_configs_cc",
         ":cublas_cudnn",
         "//xla/hlo/ir:hlo",
@@ -3221,10 +3268,13 @@ cc_library(
         ":backend_configs_cc",
         ":cublas_cudnn",
         ":hlo_op_profile_proto_cc",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:collective_ops_utils",
         "//xla/service:elemental_ir_emitter",
         "//xla/service:hlo_cost_analysis",
+        "//xla/service:hlo_module_config",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
@@ -3276,17 +3326,20 @@ cc_library(
     name = "gpu_performance_model",
     srcs = ["gpu_performance_model.cc"],
     hdrs = ["gpu_performance_model.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":backend_configs_cc",
         ":gpu_fusible",
         ":gpu_hlo_cost_analysis",
         ":hlo_fusion_analysis",
         ":hlo_traversal",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_dataflow_analysis",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/time",
-    ],
+    ] + if_cuda_is_configured(xla_nvml_deps()),
 )
 
 xla_cc_test(
