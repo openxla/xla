@@ -7055,3 +7055,14 @@ cc_library(
         "//xla/stream_executor:device_description_proto_cc",
     ],
 )
+
+cc_library(
+    name = "gpu_compilation_environment",
+    srcs = ["gpu_compilation_environment.cc"],
+    hdrs = ["gpu_compilation_environment.h"],
+    deps = [
+        ":compilation_environments",
+        "//xla:xla_proto_cc",
+        "@tsl//tsl/platform:protobuf",
+    ],
+)
