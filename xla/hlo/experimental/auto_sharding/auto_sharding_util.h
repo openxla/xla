@@ -52,11 +52,29 @@ inline constexpr absl::string_view kIdentityMarker = "identity";
 inline constexpr absl::string_view kPipelineMarkerStartType = "start";
 inline constexpr absl::string_view kPipelineMarkerEndType = "end";
 
+inline bool IsManualShardingBoundaryCustomCall(const HloInstruction* ins) {
+  return ins->IsCustomCall("SPMDFullToShardShape") ||
+         ins->IsCustomCall("SPMDShardToFullShape");
+}
+
 inline std::pair<int, int> ParseMeshDims(const std::string& strategy_name) {
   if (absl::StrContains(strategy_name, "{0,1}")) {
     return {0, 1};
   }
   return {1, 0};
+}
+
+inline std::string ToAdaptiveString(const HloInstruction* ins) {
+  bool is_large_instruction =
+      ins->shape().IsTuple() && ins->shape().tuple_shapes_size() > 500;
+  if (!is_large_instruction) {
+    for (const auto& operand : ins->operands()) {
+      is_large_instruction =
+          is_large_instruction || (operand->shape().IsTuple() &&
+                                   operand->shape().tuple_shapes_size() > 500);
+    }
+  }
+  return is_large_instruction ? ins->ToShortString() : ins->ToString();
 }
 
 // Return whether the tensor shape is divisible by
@@ -167,18 +185,18 @@ inline bool DimensionsEqual(const Shape& a, const Shape& b) {
  * HloInstruction Utility
  */
 // Get the space dimensions of a dot instruction.
-inline std::pair<std::vector<int64_t>, std::vector<int64_t>> GetSpaceDims(
-    const Shape& lhs_shape, const Shape& rhs_shape,
-    const DotDimensionNumbers& dnums) {
-  std::vector<int64_t> lhs_space_dims;
-  std::vector<int64_t> rhs_space_dims;
+inline std::pair<tsl::protobuf::RepeatedField<int64_t>,
+                 tsl::protobuf::RepeatedField<int64_t>>
+GetSpaceDims(const Shape& lhs_shape, const Shape& rhs_shape,
+             const DotDimensionNumbers& dnums) {
+  tsl::protobuf::RepeatedField<int64_t> lhs_space_dims, rhs_space_dims;
 
   for (int64_t i = 0; i < lhs_shape.rank(); ++i) {
     if (absl::c_linear_search(dnums.lhs_batch_dimensions(), i) ||
         absl::c_linear_search(dnums.lhs_contracting_dimensions(), i)) {
       continue;
     }
-    lhs_space_dims.push_back(i);
+    lhs_space_dims.Add(i);
   }
 
   for (int64_t i = 0; i < rhs_shape.rank(); ++i) {
@@ -186,7 +204,7 @@ inline std::pair<std::vector<int64_t>, std::vector<int64_t>> GetSpaceDims(
         absl::c_linear_search(dnums.rhs_contracting_dimensions(), i)) {
       continue;
     }
-    rhs_space_dims.push_back(i);
+    rhs_space_dims.Add(i);
   }
   return std::make_pair(std::move(lhs_space_dims), std::move(rhs_space_dims));
 }
@@ -507,8 +525,8 @@ inline std::vector<const HloInstruction*> GetGradientComputationInstructions(
 std::vector<int64_t> GetDimensionMapping(
     absl::Span<const int64_t> reduced_dimensions, int64_t op_count);
 
-// Checks whether denominator is divisible by numerator.
-bool IsDivisible(int64_t denominator, int64_t numerator);
+// Checks whether numerator is divisible by denominator.
+bool IsDivisible(int64_t numerator, int64_t denominator);
 
 // Generate all replica groups along one device_mesh dimension. Device_mesh can
 // be any number of dimensions. |communication_dim| has to be one of

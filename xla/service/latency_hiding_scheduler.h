@@ -71,7 +71,8 @@ enum class ResourceUsageType {
 
 enum class ResourceHazardType {
   kShareable = 0,
-  kUnshareable = 1,
+  kSerial = 1,
+  kUnshareable = 2,
 };
 
 constexpr int64_t ResourceTypeToIndex(ResourceType resource_type) {
@@ -880,7 +881,6 @@ class LatencyHidingScheduler : public HloModulePass {
   virtual void LogScheduleStatistics(const HloComputation* computation);
 
  private:
-  SchedulerConfig config_;
   std::unique_ptr<LatencyEstimator> latency_estimator_;
   std::unique_ptr<AsyncTracker> async_tracker_;
   std::unique_ptr<SchedulerCore> scheduler_core_;

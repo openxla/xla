@@ -40,18 +40,18 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
-#include "xla/stream_executor/platform/logging.h"
+#include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/platform/port.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 #include "tsl/platform/stacktrace.h"
-#include "tsl/platform/static_threadlocal.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/threadpool.h"
 
-bool FLAGS_gpuexec_cuda_driver_inject_init_error = false;
-bool FLAGS_gpuexec_cuda_sync_around_driver_calls = false;
-bool FLAGS_gpuexec_cuda_device_0_only = false;
+static constexpr bool FLAGS_gpuexec_cuda_driver_inject_init_error = false;
+static constexpr bool FLAGS_gpuexec_cuda_sync_around_driver_calls = false;
+static constexpr bool FLAGS_gpuexec_cuda_device_0_only = false;
 
 #define RETURN_IF_CUDA_RES_ERROR(expr, ...)                                   \
   do {                                                                        \
@@ -134,20 +134,18 @@ void SynchronizeOrDie() {
                          "Synchronize fail: ", tsl::CurrentStackTrace());
 }
 
-struct ThreadLocalData {
+thread_local struct ThreadLocalData {
   int64_t id;
   GpuContext* context;  // Only valid if id == a known good context.
   int depth;
-};
-
-TSL_STATIC_THREAD_LOCAL_POD(ThreadLocalData, tls_data);
+} tls_data = {};
 
 }  // namespace
 
 ScopedActivateContext::ScopedActivateContext(GpuContext* cuda_context) {
   if (FLAGS_gpuexec_cuda_sync_around_driver_calls) SynchronizeOrDie();
 
-  auto* tls = &tls_data.get();
+  auto* tls = &tls_data;
 
   // If this is an outermost scope, we must not assume that the CUDA context has
   // been left in the same state we left it. Other code may have run on this
@@ -186,7 +184,7 @@ ScopedActivateContext::ScopedActivateContext(GpuContext* cuda_context) {
 ScopedActivateContext::~ScopedActivateContext() {
   if (FLAGS_gpuexec_cuda_sync_around_driver_calls) SynchronizeOrDie();
 
-  auto* tls = &tls_data.get();
+  auto* tls = &tls_data;
 
   if (kVerifyGpuContext) {
     // Note that if kVerifyGpuContext is used, and contexts are deleted, it's
@@ -606,13 +604,16 @@ static std::string_view StreamCaptureModeToString(
     case CU_GRAPH_EXEC_UPDATE_ERROR_NOT_SUPPORTED:
       result->result = GraphExecUpdateResult::kNotSupported;
       break;
+#if CUDA_VERSION >= 12000
     case CU_GRAPH_EXEC_UPDATE_ERROR_UNSUPPORTED_FUNCTION_CHANGE:
       result->result = GraphExecUpdateResult::kUnsupportedFunctionChange;
       break;
-
     case CU_GRAPH_EXEC_UPDATE_ERROR_ATTRIBUTES_CHANGED:
       result->result = GraphExecUpdateResult::kAttributesChanged;
       break;
+#endif  // CUDA_VERSION >= 12000
+    default:
+      return tsl::errors::Internal("Unknown graph update result");
   }
 
   RETURN_IF_CUDA_RES_ERROR(err_code, "Failed to update CUDA graph");
@@ -639,6 +640,7 @@ GpuDriver::GraphNodeGetType(CUgraphNode node) {
       return GraphNodeType::kGraph;
     case CU_GRAPH_NODE_TYPE_EMPTY:
       return GraphNodeType::kEmpty;
+#if CUDA_VERSION >= 12000
     case CU_GRAPH_NODE_TYPE_WAIT_EVENT:
       return GraphNodeType::kWaitEvent;
     case CU_GRAPH_NODE_TYPE_EVENT_RECORD:
@@ -653,6 +655,9 @@ GpuDriver::GraphNodeGetType(CUgraphNode node) {
       return GraphNodeType::kMemFree;
     case CU_GRAPH_NODE_TYPE_BATCH_MEM_OP:
       return GraphNodeType::kBatchMemOp;
+#endif  // CUDA_VERSION >= 12000
+    default:
+      return tsl::errors::Internal("Unknown graph node type");
   }
 
   return tsl::Status(absl::StatusCode::kInternal,
@@ -662,7 +667,7 @@ GpuDriver::GraphNodeGetType(CUgraphNode node) {
 /* static */ tsl::Status GpuDriver::DestroyGraphExec(CUgraphExec exec) {
   VLOG(2) << "Destroying CUDA executable graph " << exec;
   RETURN_IF_CUDA_RES_ERROR(cuGraphExecDestroy(exec),
-                           "Failed to destroy CUDA graph");
+                           "Failed to destroy CUDA executable graph");
   return ::tsl::OkStatus();
 }
 
@@ -736,6 +741,47 @@ GpuDriver::GraphNodeGetType(CUgraphNode node) {
   RETURN_IF_CUDA_RES_ERROR(
       cuGraphAddKernelNode(node, graph, deps.data(), deps.size(), &params),
       "Failed to add kernel node to a CUDA graph");
+
+  return ::tsl::OkStatus();
+}
+
+/*static*/ tsl::Status GpuDriver::GraphExecKernelNodeSetParams(
+    GpuGraphExecHandle exec, GpuGraphNodeHandle node,
+    absl::string_view kernel_name, GpuFunctionHandle function,
+    unsigned int grid_dim_x, unsigned int grid_dim_y, unsigned int grid_dim_z,
+    unsigned int block_dim_x, unsigned int block_dim_y,
+    unsigned int block_dim_z, unsigned int shared_mem_bytes,
+    void** kernel_params, void** extra) {
+  VLOG(2) << "Set kernel node params " << node << " in graph executabe " << exec
+          << "; kernel: " << kernel_name << "; gdx: " << grid_dim_x
+          << " gdy: " << grid_dim_y << " gdz: " << grid_dim_z
+          << " bdx: " << block_dim_x << " bdy: " << block_dim_y
+          << " bdz: " << block_dim_z << "; shmem: " << shared_mem_bytes;
+
+  CUDA_KERNEL_NODE_PARAMS params;
+  memset(&params, 0, sizeof(params));
+
+  params.func = function;
+  params.gridDimX = grid_dim_x;
+  params.gridDimY = grid_dim_y;
+  params.gridDimZ = grid_dim_z;
+  params.blockDimX = block_dim_x;
+  params.blockDimY = block_dim_y;
+  params.blockDimZ = block_dim_z;
+  params.sharedMemBytes = shared_mem_bytes;
+  params.kernelParams = kernel_params;
+  params.extra = extra;
+
+  if (shared_mem_bytes != 0) {
+    RETURN_IF_CUDA_RES_ERROR(
+        cuFuncSetAttribute(function,
+                           CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                           shared_mem_bytes),
+        "Failed to set shared memory size");
+  }
+
+  RETURN_IF_CUDA_RES_ERROR(cuGraphExecKernelNodeSetParams(exec, node, &params),
+                           "Failed to set CUDA graph kernel node params");
 
   return ::tsl::OkStatus();
 }

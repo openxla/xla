@@ -16,19 +16,22 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/hlo_op_profile.pb.h"
 #include "xla/service/gpu/hlo_op_profiler.h"
 #include "xla/service/hlo_runner.h"
 #include "xla/service/platform_util.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/init_main.h"
 #include "tsl/platform/path.h"
+#include "tsl/platform/status.h"
 #include "tsl/util/command_line_flags.h"
 
 namespace xla {
@@ -74,9 +77,9 @@ int RunProfiler(int argc, char** argv) {
 
   HloRunner runner(PlatformUtil::GetPlatform("cuda").value());
   HloOpProfiler profiler(runner);
-  const gpu::GpuDeviceInfo dev_info =
-      gpu::GetGpuDeviceInfo(runner.backend().stream_executors()[0]);
-  VLOG(0) << dev_info.name << " @ " << dev_info.clock_rate_ghz << " GHz";
+  const se::DeviceDescription& dev_info =
+      runner.backend().stream_executors()[0]->GetDeviceDescription();
+  VLOG(0) << dev_info.name() << " @ " << dev_info.clock_rate_ghz() << " GHz";
 
   const std::vector<PrimitiveType> dtypes = {
       S8, S16, S32, S64, U8, U16, U32, U64, F16, F32, F64, C64, C128,
@@ -119,7 +122,7 @@ int RunProfiler(int argc, char** argv) {
   VLOG(1) << "\n" << instr_profiles.DebugString();
 
   DeviceHloInstructionProfiles device_profiles;
-  device_profiles.mutable_entries()->insert({dev_info.name, instr_profiles});
+  device_profiles.mutable_entries()->insert({dev_info.name(), instr_profiles});
   if (!output_file.empty()) {
     WriteOutput(device_profiles, output_file);
   }

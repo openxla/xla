@@ -70,9 +70,6 @@ struct RocBlasTypeConversionHelper<std::complex<double>> {
   using mapped_type = rocblas_double_complex;
 };
 
-// Opaque and unique identifier for the rocBLAS plugin.
-extern const PluginId kRocBlasPlugin;
-
 class GpuExecutor;
 
 // BLAS plugin for ROCM platform via rocBLAS library.
@@ -204,7 +201,8 @@ class ROCMBlas : public blas::BlasSupport {
   rocm::BlasLt blas_lt_;
 #endif
 
-  SE_DISALLOW_COPY_AND_ASSIGN(ROCMBlas);
+  ROCMBlas(const ROCMBlas &) = delete;
+  void operator=(const ROCMBlas &) = delete;
 };
 
 }  // namespace gpu

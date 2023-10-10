@@ -1,8 +1,8 @@
+load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:build_config_root.bzl", "if_static")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 load("//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
-load("//tsl/platform:build_config.bzl", "tsl_cc_test")
-load("//tsl:tsl.bzl", "set_external_visibility")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -424,11 +424,10 @@ cc_library(
         ":trace_utils",
         ":xplane_builder",
         ":xplane_schema",
-        "//tsl/profiler/lib:connected_traceme",
         "//tsl/profiler/lib:context_types",
         "//tsl/profiler/protobuf:xplane_proto_cc",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",

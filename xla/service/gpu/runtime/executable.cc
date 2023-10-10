@@ -54,9 +54,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "tsl/protobuf/dnn.pb.h"
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/stream_executor/gpu/gpu_stream.h"
-#endif  // #if GOOGLE_CUDA
+#endif  // #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 namespace xla {
 namespace gpu {
@@ -75,7 +75,7 @@ using ::xla::runtime::ffi::ExportFfiModules;
 using ::xla::runtime::ffi::FfiStateVector;
 using ::xla::runtime::ffi::RegisterXlaFfiStreamProvider;
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 static XLA_FFI_Stream* GetXlaFfiGpuStream(const CustomCall::UserData* user_data,
                                           const DiagnosticEngine* diagnostic) {
   auto run_opts = user_data->getIfExists<const ServiceExecutableRunOptions>();
@@ -83,12 +83,12 @@ static XLA_FFI_Stream* GetXlaFfiGpuStream(const CustomCall::UserData* user_data,
   auto stream = se::gpu::AsGpuStreamValue(run_opts->stream());
   return reinterpret_cast<XLA_FFI_Stream*>(stream);
 }
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 void RegisterXlaGpuRuntimeCustomCalls(DirectCustomCallRegistry& registry) {
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   RegisterXlaFfiStreamProvider(GetXlaFfiGpuStream);
-#endif  // GOOGLE_CUDA
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
   RegisterKernelLaunchCustomCalls(registry);
   RegisterTracingCustomCalls(registry);
@@ -104,8 +104,10 @@ void RegisterXlaGpuRuntimeCustomCalls(DirectCustomCallRegistry& registry) {
   RegisterSendRecvCustomCalls(registry);
   RegisterTopkCustomCall(registry);
 
-#if GOOGLE_CUDA
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   RegisterMatmulCustomCalls(registry);
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
   RegisterFusedAttentionCustomCalls(registry);
   RegisterFusedAttentionBackwardCustomCalls(registry);
 #endif  // GOOGLE_CUDA
@@ -230,7 +232,7 @@ GpuRuntimeExecutable::Create(std::string module_name,
 
   // Do not run expensive optimization passes because we do not expect any
   // non-trivial host code in XLA:GPU host executables.
-  opts.compiler.jit_code_opt_level = llvm::CodeGenOpt::None;
+  opts.compiler.jit_code_opt_level = llvm::CodeGenOptLevel::None;
 
   // Instantiate new JitExecutable from the MLIR source.
   auto jit_executable =
@@ -418,6 +420,8 @@ Status GpuRuntimeExecutable::Execute(
       executor_graphs->snapshot();
   CapturedFunctionExecutionCount::Snapshot execution_count =
       captured_function_counts_(executor)->snapshot();
+  OrdinalToFallback::Snapshot ordinal_to_fallback =
+      ordinal_to_fallback_.snapshot();
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
   // Kernels in concurrent regions should be launched on borrowed stream, so
@@ -457,7 +461,7 @@ Status GpuRuntimeExecutable::Execute(
       // only.
       &fused_attention_runners, &fused_attention_backward_runners,
 #endif  // GOOGLE_CUDA
-      &graph_instances, &execution_count,
+      &graph_instances, &execution_count, &ordinal_to_fallback,
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
       &concurrent_region_status,
       // Null pointer will be interpreted as an absence of async collectives
@@ -494,6 +498,7 @@ Status GpuRuntimeExecutable::Execute(
 
     if (auto instantiated = graph_instances_.InstantiateAllGraphs(
             run_options, executable, user_data, device_ptr,
+            &ordinal_to_fallback,
             debug_options_.xla_gpu_graph_eviction_timeout_seconds());
         !instantiated.ok()) {
       return InternalError("Failed to instantiate GPU graphs: %s",

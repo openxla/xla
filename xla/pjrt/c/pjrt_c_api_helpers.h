@@ -159,6 +159,7 @@ xla::Status CheckMatchingStructSizes(absl::string_view struct_name,
                                      size_t expected_size, size_t actual_size);
 
 absl::string_view GetPlatformVersion(PJRT_Client* client, const PJRT_Api* api);
+absl::string_view GetPlatformName(PJRT_Client* client, const PJRT_Api* api);
 
 // Releases `chunk`.
 PJRT_Chunk ConvertFromCppChunk(xla::PjRtChunk chunk);
@@ -227,6 +228,11 @@ absl::Span<const int64_t> GetDimensions(const PJRT_Api* api,
                                         PJRT_Buffer* buffer);
 PJRT_Buffer_MemoryLayout GetMemoryLayout(const PJRT_Api* api,
                                          PJRT_Buffer* buffer);
+
+xla::StatusOr<xla::Shape> BuildXlaShapeFromC(PJRT_Buffer_Type element_type,
+                                             const int64_t* dims,
+                                             size_t num_dims,
+                                             PJRT_Buffer_MemoryLayout* layout);
 
 }  // namespace pjrt
 

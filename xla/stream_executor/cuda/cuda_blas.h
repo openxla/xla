@@ -38,9 +38,6 @@ class GpuExecutor;
 
 namespace cuda {
 
-// Opaque and unique identifier for the cuBLAS plugin.
-extern const PluginId kCuBlasPlugin;
-
 // BLAS plugin for CUDA platform via cuBLAS library.
 //
 // This satisfies the platform-agnostic BlasSupport interface.
@@ -124,7 +121,8 @@ class CUDABlas : public blas::BlasSupport {
 
   BlasLt blas_lt_;
 
-  SE_DISALLOW_COPY_AND_ASSIGN(CUDABlas);
+  CUDABlas(const CUDABlas &) = delete;
+  void operator=(const CUDABlas &) = delete;
 };
 
 }  // namespace cuda

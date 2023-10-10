@@ -297,7 +297,12 @@ xla_cc_test(
     srcs = ["ir_array_test.cc"],
     deps = [
         ":ir_array",
+        ":llvm_util",
         "//xla:test",
+        "//xla/tests:filecheck",
         "//xla/tests:xla_internal_test_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+        "@tsl//tsl/platform:statusor",
     ],
 )
