@@ -485,6 +485,7 @@ cc_library(
         "@dlpack",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@pybind11",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
