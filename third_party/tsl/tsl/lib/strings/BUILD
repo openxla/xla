@@ -18,6 +18,7 @@ cc_library(
         "//tensorflow/compiler/xla/stream_executor:__pkg__",
         "//tensorflow/core/lib/strings:__pkg__",
         "//tensorflow/compiler/tf2xla/kernels:__pkg__",
+        "//tensorflow/core/util/autotune_maps:__pkg__",
     ]),
     deps = [
         "//tsl/lib/gtl:inlined_vector",
