@@ -276,7 +276,6 @@ xla_cc_binary(
 
 cc_library(
     name = "hlo_expand_main",
-    testonly = True,
     srcs = ["hlo_expand_main.cc"],
     deps = [
         ":hlo_expand_lib",
@@ -307,8 +306,6 @@ cc_library(
         "//xla/service:rng_bit_generator_expander",
         "//xla/service:rng_expander",
         "//xla/service:triangular_solve_expander",
-        "//xla/stream_executor:dnn",
-        "//xla/stream_executor:platform",
         "@tsl//tsl/util:command_line_flags",
     ],
 )
@@ -318,9 +315,12 @@ xla_cc_test(
     srcs = ["tests/hlo_expand_test.cc"],
     data = [
         "tests/cholesky.hlo",
+        ":hlo-expand",
+    ],
+    tags = [
+        "nomsan",  # No msan for precompiled Nvidia binaries.
     ],
     deps = [
-        ":hlo-expand",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:subprocess",

@@ -24,6 +24,7 @@ package(
         "//tensorflow/compiler/xla/service:__subpackages__",
         "//tsl/framework:__subpackages__",
         "//tsl/distributed_runtime:__subpackages__",
+        "//tensorflow/compiler/mlir/tf2xla:__subpackages__",
     ]),
     licenses = ["notice"],
 )

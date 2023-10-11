@@ -1,6 +1,6 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -71,10 +71,10 @@ cc_library(
         "//xla/mlir_hlo:lhlo_gpu",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_executable",
-        "//xla/service/gpu:gpu_types",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:nccl_collective_thunks",
         "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_description",
         "//xla/translate/mhlo_to_hlo:location_exporter",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",

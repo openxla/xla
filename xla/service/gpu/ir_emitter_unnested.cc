@@ -97,7 +97,6 @@ limitations under the License.
 #include "xla/service/gpu/gemm_thunk.h"
 #include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
-#include "xla/service/gpu/gpu_device_info.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_fused_mha_runner.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -131,6 +130,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/translate/mhlo_to_hlo/location_exporter.h"
@@ -150,7 +150,7 @@ limitations under the License.
 #endif  // GOOGLE_CUDA || TF_HIPBLASLT
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#include "xla/service/gpu/cholesky_thunk.h"
+#include "xla/service/gpu/runtime3/cholesky_thunk.h"
 #include "xla/service/gpu/triangular_solve_thunk.h"
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
@@ -1735,7 +1735,6 @@ Status IrEmitterUnnested::EmitTritonFusion(
     }
     impl_fn->eraseFromParent();
 
-    LogAndVerify(module_);
     return {{kernel->getName().str(), launch_dimensions,
              triton_wrapper_result.shmem_bytes}};
   };
@@ -1777,7 +1776,8 @@ Status IrEmitterUnnested::EmitFusion(
   auto* fused_computation = fusion->fused_instructions_computation();
 
   // Create HloFusionAnalysis instance.
-  GpuDeviceInfo device_info = ir_emitter_context_->gpu_device_info();
+  const se::DeviceDescription& device_info =
+      ir_emitter_context_->gpu_device_info();
   TF_ASSIGN_OR_RETURN(auto fusion_analysis,
                       HloFusionAnalysis::Create(fusion, &device_info));
 
@@ -2497,17 +2497,17 @@ Status IrEmitterUnnested::EmitSort(
   }
   bool no_tiling =
       kThreadsPerBlock >
-          ir_emitter_context_->gpu_device_info().threads_per_block_limit ||
+          ir_emitter_context_->gpu_device_info().threads_per_block_limit() ||
       total_shared_memory_needed >
-          ir_emitter_context_->gpu_device_info().shared_memory_per_block;
+          ir_emitter_context_->gpu_device_info().shared_memory_per_block();
   VLOG(2) << absl::StreamFormat(
       "%s %s use tiling. No tiling if any of the following is true: "
       "kThreadsPerBlock=%d > threads_per_block_limit=%d, "
       "total_shared_memory_needed=%d > shared_memory_per_block=%d",
       op_name, (no_tiling ? "won't" : "will"), kThreadsPerBlock,
-      ir_emitter_context_->gpu_device_info().threads_per_block_limit,
+      ir_emitter_context_->gpu_device_info().threads_per_block_limit(),
       total_shared_memory_needed,
-      ir_emitter_context_->gpu_device_info().shared_memory_per_block);
+      ir_emitter_context_->gpu_device_info().shared_memory_per_block());
 
   uint64_t num_blocks = CeilOfRatio(num_iterations, kThreadsPerBlock);
   LaunchDimensions tiled_launch_dimensions(num_blocks, kThreadsPerBlock);

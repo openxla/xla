@@ -18,7 +18,7 @@ package_group(
     name = "friends",
     includes = ["//xla:internal"],
     packages = [
-        # copybara:uncomment "//learning/infra/mira/...",
+        # copybara:uncomment "//learning/...",
         "//third_party/australis/...",
         "//third_party/iree/...",
         "//third_party/mira/...",
@@ -141,7 +141,6 @@ cc_library(
         ":xla_data_proto_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:float8",
         "@tsl//tsl/platform:logging",
@@ -311,12 +310,14 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/gtl:iterator_range",
         "@tsl//tsl/lib/math:math_util",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -1139,9 +1140,8 @@ tf_proto_library(
     name = "autotune_results_proto",
     srcs = ["autotune_results.proto"],
     cc_api_version = 2,
-    protodeps = [
-        ":autotuning_proto",
-    ],
+    make_default_target_header_only = True,
+    protodeps = [":autotuning_proto"],
     visibility = ["//visibility:public"],
 )
 

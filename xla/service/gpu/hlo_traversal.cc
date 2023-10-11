@@ -66,6 +66,13 @@ FusionBoundaryFn MakeProducerConsumerFusion(
   };
 }
 
+FusionBoundaryFn MakeSingleInstructionFusion(const HloInstruction& root) {
+  if (root.opcode() == HloOpcode::kFusion) {
+    return DefaultFusionBoundaryFn;
+  }
+  return [](const HloInstruction&, const HloInstruction&) { return true; };
+}
+
 void HloBfsConsumersFirstTraversal(
     absl::Span<const HloInstruction* const> roots,
     const FusionBoundaryFn& boundary,
@@ -119,7 +126,7 @@ void HloBfsConsumersFirstTraversal(
   }
 }
 
-void FindFusionParameters(
+void FindFusionArguments(
     absl::Span<const HloInstruction* const> roots,
     const FusionBoundaryFn& boundary,
     const std::function<void(const HloInstruction& param)>& visit) {

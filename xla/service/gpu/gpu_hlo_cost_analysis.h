@@ -19,8 +19,9 @@ limitations under the License.
 #include <memory>
 
 #include "absl/strings/string_view.h"
-#include "xla/service/gpu/gpu_device_info.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {
@@ -33,11 +34,15 @@ class GpuHloCostAnalysis : public HloCostAnalysis {
   static constexpr int64_t kMaxIRSize = 10000;
 
  public:
-  explicit GpuHloCostAnalysis(const Options& options,
-                              const GpuDeviceInfo* device_info = nullptr)
+  explicit GpuHloCostAnalysis(
+      const Options& options,
+      const se::DeviceDescription* device_info = nullptr)
       : HloCostAnalysis(options), device_info_(device_info) {}
 
   Status Preprocess(const HloInstruction* hlo) override;
+
+  float ScalingRatio(const HloInstruction& hlo) const;
+  int64_t NumOfDevices(const HloInstruction& hlo) const;
 
   Status HandleCustomCall(const HloInstruction* call) override;
 
@@ -46,6 +51,8 @@ class GpuHloCostAnalysis : public HloCostAnalysis {
   Status HandleElementwiseOp(const HloInstruction* hlo);
   Status HandleElementwiseUnary(const HloInstruction* hlo) override;
   Status HandleElementwiseBinary(const HloInstruction* hlo) override;
+
+  Status HandleAllReduce(const HloInstruction* allreduce) override;
 
   // Estimate the total size of IR accounting for both duplication
   // of producer code by consumer and the total number of basic blocks.
@@ -65,7 +72,7 @@ class GpuHloCostAnalysis : public HloCostAnalysis {
   float CommonElementwiseUtilization(const HloInstruction* a,
                                      const HloInstruction* b) const;
 
-  const GpuDeviceInfo* device_info_;
+  const se::DeviceDescription* device_info_;
 
  protected:
   std::unique_ptr<HloCostAnalysis> CreateNestedCostAnalysis() override;

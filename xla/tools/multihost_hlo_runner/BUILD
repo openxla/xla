@@ -1,10 +1,10 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("@tsl//tsl:tsl.bzl", "if_cuda_or_rocm")
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//xla:xla.bzl", "xla_cc_binary")
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("//xla:xla.bzl", "xla_cc_binary")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@tsl//tsl:tsl.bzl", "if_cuda_or_rocm")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -36,6 +36,9 @@ xla_cc_binary(
         ":hlo_runner_flags",
         "//xla:debug_options_flags",
         "//xla:status",
+        "//xla:statusor",
+        "//xla/pjrt:pjrt_client",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
@@ -64,6 +67,7 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt:pjrt_future",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_pass_pipeline",
