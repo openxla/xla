@@ -303,6 +303,7 @@ cc_library(
         "//xla/service:cholesky_expander",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_proto_cc",
+        "//xla/service:hlo_verifier",
         "//xla/service:rng_bit_generator_expander",
         "//xla/service:rng_expander",
         "//xla/service:triangular_solve_expander",
@@ -315,6 +316,7 @@ xla_cc_test(
     srcs = ["tests/hlo_expand_test.cc"],
     data = [
         "tests/cholesky.hlo",
+        "tests/invalid_concat.hlo",
         ":hlo-expand",
     ],
     tags = [
