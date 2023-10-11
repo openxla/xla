@@ -26,7 +26,6 @@ cc_library(
     deps = [
         ":profiler_c_api_hdrs",
         "//xla:status",
-        "//xla/pjrt/c:pjrt_c_api_helpers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
