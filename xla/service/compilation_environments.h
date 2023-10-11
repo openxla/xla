@@ -138,7 +138,7 @@ T& CompilationEnvironments::GetMutableEnv() {
     DefaultEnvCreatedByCompilationEnvironments(descriptor->full_name());
     it = environments_.find(descriptor);
   }
-  return tensorflow::down_cast<T&>(*it->second);
+  return tsl::protobuf::DownCastToGenerated<T>(*it->second);
 }
 
 template <typename T>
