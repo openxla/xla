@@ -188,8 +188,8 @@ StatusOr<Shape> GetBatchRowColumnShape(const Shape& shape,
 
   if (batch_size == 1) batch_stride = 0;
   return MatrixLayout{
-      shape.element_type(), num_rows,   num_cols,     order,
-      leading_dim_stride,   batch_size, batch_stride,
+      shape.element_type(), num_rows, num_cols, order,
+      batch_size, leading_dim_stride, batch_stride,
   };
 }
 
@@ -412,8 +412,8 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
       output_layout,
       {alpha_real, alpha_imag},
       beta,
-      algorithm,
       compute_precision,
+      algorithm,
   };
 }
 
@@ -494,8 +494,8 @@ MatrixDescriptor GetMatrixDesc(const MatrixLayout& layout,
                                se::DeviceMemoryBase data) {
   return MatrixDescriptor{
       data,
-      layout.leading_dim_stride,
-      layout.batch_stride,
+      *layout.leading_dim_stride,
+      *layout.batch_stride,
       AsBlasTranspose(layout.order),
   };
 }

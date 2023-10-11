@@ -49,6 +49,33 @@ tsl::StatusOr<blas::DataType> AsBlasDataType(xla::PrimitiveType dtype) {
   }
 }
 
+tsl::StatusOr<xla::PrimitiveType> AsXlaPrimitiveType(blas::DataType dtype) {
+  switch (dtype) {
+    case blas::DataType::kF8E5M2:
+      return xla::PrimitiveType::F8E5M2;
+    case blas::DataType::kF8E4M3FN:
+      return xla::PrimitiveType::F8E4M3FN;
+    case blas::DataType::kInt8:  
+      return xla::PrimitiveType::S8;
+    case blas::DataType::kHalf:  
+      return xla::PrimitiveType::F16;
+    case blas::DataType::kBF16:  
+      return xla::PrimitiveType::BF16;
+    case blas::DataType::kFloat:  
+      return xla::PrimitiveType::F32;
+    case blas::DataType::kInt32:  
+      return xla::PrimitiveType::S32;
+    case blas::DataType::kDouble:  
+      return xla::PrimitiveType::F64;
+    case blas::DataType::kComplexFloat:  
+      return xla::PrimitiveType::C64;
+    case blas::DataType::kComplexDouble:  
+      return xla::PrimitiveType::C128;
+    default:
+      return xla::InternalError("AsXlaPrimitiveType: unsupported dtype");
+  }
+}
+
 tsl::StatusOr<blas::ComputationType> GetBlasComputationType(
     xla::PrimitiveType lhs_dtype, xla::PrimitiveType output_dtype,
     int64_t compute_precision) {

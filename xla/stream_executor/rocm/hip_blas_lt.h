@@ -104,14 +104,16 @@ class BlasLt : public gpu::BlasLt {
         ScratchAllocator& scratch_allocator,
         blas::ProfileResult* profile_result = nullptr) const override;
 
-    tsl::StatusOr<std::vector<MatmulAlgorithm>> 
-              GetAlgorithms(size_t max_algorithm_count) const override;
+    tsl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
+              size_t max_algorithm_count,
+              size_t max_workspace_size) const override;
 
   protected:
 
     tsl::Status ValidateInputs(blas::DataType scale_type,
         bool alpha_on_device, bool beta_on_device, blas::DataType A_type, 
-        blas::DataType B_type, blas::DataType C_type, blas::DataType D_type) const override;
+        blas::DataType B_type, blas::DataType C_type, 
+        blas::DataType D_type) const override;
 
     tsl::Status DoMatmul(Stream* stream, const void* alpha, DeviceMemoryBase a,
                        DeviceMemoryBase b, const void* beta, DeviceMemoryBase c,

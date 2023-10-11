@@ -137,12 +137,18 @@ tsl::Status BlasLt::Init() {
 /*static*/ tsl::StatusOr<BlasLt::MatrixLayout> BlasLt::MatrixLayout::Create(
       const gpu::MatrixLayout& m) {
 
-  TF_ASSIGN_OR_RETURN(auto type, gpu::AsBlasDataType(m.dtype));      
+  TF_ASSIGN_OR_RETURN(auto type, gpu::AsBlasDataType(m.dtype));   
+
+  auto leading_dim_stride = m.leading_dim_stride;
+  if (!leading_dim_stride) {
+    leading_dim_stride = (m.order == gpu::MatrixLayout::Order::kRowMajor) ? 
+        m.num_cols : m.num_rows;
+  }   
 
   cublasLtMatrixLayout_t cu_layout;
   SE_CUBLAS_RETURN_IF_ERROR(
       cublasLtMatrixLayoutCreate(&cu_layout, AsCudaDataType(type), m.num_rows,
-                                 m.num_cols, m.leading_dim_stride));
+                                 m.num_cols, *leading_dim_stride));
   // Wrap cublas handle immediately, so it is cleaned up if an error occurs.
   BlasLt::MatrixLayout layout(cu_layout);
   TF_RETURN_IF_ERROR(
@@ -152,8 +158,18 @@ tsl::Status BlasLt::Init() {
   TF_RETURN_IF_ERROR(SetAttr(cu_layout, CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
                              static_cast<int32_t>(m.batch_size)));
 
+  auto batch_stride = m.batch_stride;
+  if (!batch_stride) {
+    batch_stride = (m.batch_size > 1) ? m.num_rows * m.num_cols : 0;
+  }
+
+  VLOG(2) << "MatrixLayout::Create: num_rows: " << m.num_rows << " num_cols:"
+     << (int)m.num_cols << ", order: " << (int)m.order << "," 
+     << " batchsz " << m.batch_size << " leaddimstride: " << *leading_dim_stride
+     << " batch_stride: " << *batch_stride;
+
   TF_RETURN_IF_ERROR(SetAttr(
-      cu_layout, CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, m.batch_stride));
+      cu_layout, CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, *batch_stride));
   return std::move(layout);
 }
 
@@ -166,6 +182,11 @@ cudaDataType_t BlasLt::MatrixLayout::type() const {
     blas::ComputationType compute_type, blas::DataType scale_type,
     blas::Transpose trans_a, blas::Transpose trans_b, gpu::BlasLt::Epilogue epilogue,
     PointerMode pointer_mode) {
+
+  VLOG(2) << "MatmulDesc::Create: compute_type: " << (int)compute_type << " scale:"
+      << (int)scale_type << " trans a/b: " << (int)trans_a << "," << (int)trans_b <<
+      " epilogue:" << (int)epilogue << " pointer: " << (int)pointer_mode;
+
   cublasLtMatmulDesc_t cu_desc;
   SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmulDescCreate(
       &cu_desc, AsCublasComputeType(compute_type), AsCudaDataType(scale_type)));
@@ -199,10 +220,10 @@ cublasLtPointerMode_t BlasLt::MatmulDesc::pointer_mode() const {
           .value());
 }
 
-auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count) const ->
+auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count, 
+      size_t max_workspace_size) const ->
       tsl::StatusOr<std::vector<MatmulAlgorithm>> {
 
-  size_t max_workspace_size = 1ll << 32; // 4GB    
   max_algorithm_count = std::min(max_algorithm_count, size_t{INT_MAX});
   std::vector<cublasLtMatmulHeuristicResult_t> results(max_algorithm_count);
   {
@@ -255,15 +276,17 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg,
   bool must_swap_operands =
       MakeOutputColumnMajor(lhs_layout, rhs_layout, output_layout, &c_layout);
 
-  // Do not transopse either input. Note the cuBLASLt documentation somewhat
+  // Do not transpose either input. Note the cuBLASLt documentation somewhat
   // incorrectly claims "A must be transposed and B non-transposed" when A and B
   // are FP8 (https://docs.nvidia.com/cuda/cublas/#cublasltmatmul). In reality,
   // this is only true if A and B are column-major. If A is row-major, A must
   // *not* be transposed, and if B is row-major, B must be transposed. We never
   // transpose A or B, and expect the caller to ensure A is row-major and B is
   // column when A and B are FP8.
-  const auto trans_a = blas::Transpose::kNoTranspose,
-             trans_b = blas::Transpose::kNoTranspose;
+  auto trans_a = lhs_layout.transpose ? *lhs_layout.transpose : 
+                 blas::Transpose::kNoTranspose;
+  auto trans_b = rhs_layout.transpose ? *rhs_layout.transpose : 
+                 blas::Transpose::kNoTranspose;
 
   if (xla::primitive_util::IsF8Type(lhs_layout.dtype) &&
       lhs_layout.order == gpu::MatrixLayout::Order::kColumnMajor) {
@@ -276,14 +299,17 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg,
 
   TF_ASSIGN_OR_RETURN(auto output_dtype,
                       gpu::AsBlasDataType(output_layout.dtype));
-  TF_ASSIGN_OR_RETURN(
-      auto computation_type,
-      gpu::GetBlasComputationType(lhs_layout.dtype, output_layout.dtype,
-                             cfg.compute_precision));
+
+  auto compute_type = cfg.compute_type;
+  if(!compute_type) {  // obtain compute_type unless provided by the user
+    TF_ASSIGN_OR_RETURN(compute_type,
+        gpu::GetBlasComputationType(lhs_layout.dtype, output_layout.dtype,
+                                 cfg.compute_precision));
+  }
 
   TF_ASSIGN_OR_RETURN(
       auto op_desc, MatmulDesc::Create(
-          computation_type, gpu::GetScaleType(output_dtype, computation_type),
+          *compute_type, gpu::GetScaleType(output_dtype, *compute_type),
           trans_a, trans_b, epilogue));
 
   TF_ASSIGN_OR_RETURN(auto a_desc, MatrixLayout::Create(lhs_layout));

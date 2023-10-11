@@ -34,6 +34,8 @@ namespace stream_executor::gpu {
 
 tsl::StatusOr<blas::DataType> AsBlasDataType(xla::PrimitiveType dtype);
 
+tsl::StatusOr<xla::PrimitiveType> AsXlaPrimitiveType(blas::DataType dtype);
+
 tsl::StatusOr<blas::ComputationType> GetBlasComputationType(
     xla::PrimitiveType lhs_dtype, xla::PrimitiveType output_dtype,
     int64_t compute_precision);
@@ -60,9 +62,11 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create funct
   int64_t num_rows;
   int64_t num_cols;
   Order order;
-  int64_t leading_dim_stride;
   int64_t batch_size;
-  int64_t batch_stride;  // `batch_stride` is set to `0` when `batch_size == 1`.
+  std::optional<int64_t> leading_dim_stride;
+  // `batch_stride` is set to `0` when `batch_size == 1`.
+  std::optional<int64_t> batch_stride;  
+  std::optional<blas::Transpose> transpose;
 };    
 
 
@@ -78,8 +82,9 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   MatrixLayout output_layout;
   xla::complex128 alpha;
   double beta;
-  std::optional<int64_t> algorithm;
   int64_t compute_precision;
+  std::optional<int64_t> algorithm;
+  std::optional<blas::ComputationType> compute_type;
 };
 
 // template < cudaDataType_t What, cudaDataType_t SrcT, class Z, class... T>
@@ -136,7 +141,8 @@ struct BlasLt {
     {
       TF_RETURN_IF_ERROR(ValidateInputs(blas::ToDataType<Scale>::value,
             alpha.on_device(), beta.on_device(), blas::ToDataType<A>::value, 
-            blas::ToDataType<B>::value, blas::ToDataType<C>::value, blas::ToDataType<D>::value));
+            blas::ToDataType<B>::value, blas::ToDataType<C>::value, 
+            blas::ToDataType<D>::value));
 
       return DoMatmul(stream, alpha.opaque(), a, b, beta.opaque(), c, d,
                     algorithm, scratch_allocator, bias, aux, a_scale, b_scale,
@@ -174,7 +180,9 @@ struct BlasLt {
     // Returns a list of supported algorithms for DoMatmul. The algorithms are
     // returned in the order of increasing estimated compute time according to an
     // internal heuristic.
-    virtual tsl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(size_t max_algorithm_count = 128) const = 0;
+    virtual tsl::StatusOr<std::vector<MatmulAlgorithm>> GetAlgorithms(
+      size_t max_algorithm_count = 128, 
+      size_t max_workspace_size = 1ll << 32) const = 0;
 
     virtual ~MatmulPlan() {}
 
