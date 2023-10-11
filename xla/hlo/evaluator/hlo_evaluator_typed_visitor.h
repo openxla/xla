@@ -716,11 +716,6 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     const Shape& result_shape = conv->shape();
     const Shape& lhs_shape = lhs_literal.shape();
     const Shape& rhs_shape = rhs_literal.shape();
-    const auto packed_nibble_count =
-        absl::c_count(conv->precision_config().operand_precision(),
-                      PrecisionConfig::PACKED_NIBBLE);
-    CHECK_NE(packed_nibble_count, 1);
-    const bool is_packed_nibble = packed_nibble_count == 2;
 
     TF_CHECK_OK(ShapeUtil::ValidateShape(lhs_shape));
     TF_CHECK_OK(ShapeUtil::ValidateShape(rhs_shape));
@@ -757,9 +752,9 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
 
     auto func = [&window_shape, &dnums, &lhs_shape, &rhs_shape, &window,
                  &lhs_dim_multipliers, &rhs_dim_multipliers, lhs_literal_data,
-                 rhs_literal_data, feature_group_count, batch_group_count,
-                 is_packed_nibble](const absl::Span<const int64_t> out_index,
-                                   int /*thread_id*/) {
+                 rhs_literal_data, feature_group_count,
+                 batch_group_count](const absl::Span<const int64_t> out_index,
+                                    int /*thread_id*/) {
       // Dimension number applicable for input (lhs).
       const int64_t input_batch_dim = dnums.input_batch_dimension();
       const int64_t input_z_dim = dnums.input_feature_dimension();
@@ -881,15 +876,8 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
               static_cast<ElementwiseT>(lhs_literal_data[lhs_linear_index]);
           auto rhs =
               static_cast<ElementwiseT>(rhs_literal_data[rhs_linear_index]);
-          if (is_packed_nibble) {
-            auto lhs_n0 = ToArithmeticSafeType(Nibble0(lhs));
-            auto lhs_n1 = ToArithmeticSafeType(Nibble1(lhs));
-            auto rhs_n0 = ToArithmeticSafeType(Nibble0(rhs));
-            auto rhs_n1 = ToArithmeticSafeType(Nibble1(rhs));
-            result_val += (lhs_n0 * rhs_n0) + (lhs_n1 * rhs_n1);
-          } else {
-            result_val += ToArithmeticSafeType(lhs) * ToArithmeticSafeType(rhs);
-          }
+
+          result_val += ToArithmeticSafeType(lhs) * ToArithmeticSafeType(rhs);
         }
       cnt: {}
       } while (IndexUtil::BumpIndices(window_shape,
@@ -1061,11 +1049,6 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     CHECK(ShapeUtil::SameElementType(lhs_literal.shape(), rhs_literal.shape()));
     CHECK(ShapeUtil::SameElementType(lhs_literal.shape(), dot->shape()));
 
-    const auto packed_nibble_count =
-        absl::c_count(dot->precision_config().operand_precision(),
-                      PrecisionConfig::PACKED_NIBBLE);
-    CHECK_NE(packed_nibble_count, 1);
-    const bool is_packed_nibble = packed_nibble_count == 2;
     CHECK_EQ(dnums.lhs_batch_dimensions_size(),
              dnums.rhs_batch_dimensions_size());
 
@@ -1127,16 +1110,7 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
                 static_cast<ElementwiseT>(lhs_literal.Get<ReturnT>(lhs_index));
             const auto rhs =
                 static_cast<ElementwiseT>(rhs_literal.Get<ReturnT>(rhs_index));
-            if (is_packed_nibble) {
-              auto lhs_n0 = ToArithmeticSafeType(Nibble0(lhs));
-              auto lhs_n1 = ToArithmeticSafeType(Nibble1(lhs));
-              auto rhs_n0 = ToArithmeticSafeType(Nibble0(rhs));
-              auto rhs_n1 = ToArithmeticSafeType(Nibble1(rhs));
-              result_val += (lhs_n0 * rhs_n0) + (lhs_n1 * rhs_n1);
-            } else {
-              result_val +=
-                  ToArithmeticSafeType(lhs) * ToArithmeticSafeType(rhs);
-            }
+            result_val += ToArithmeticSafeType(lhs) * ToArithmeticSafeType(rhs);
 
             // If there are no contracting dimensions, do not try to count down
             // from -1 to 0; that's an infinite loop.

@@ -509,7 +509,7 @@ message DeviceAssignmentProto {
   int32 computation_count = 2;
 
   // Each logical computation runs on replica_count physical devices.
-  // ComputationDevice represents the device ids assinged to the replicas.
+  // ComputationDevice represents the device ids assigned to the replicas.
   message ComputationDevice {
     repeated int32 replica_device_ids = 1;
   }
@@ -823,7 +823,7 @@ message OpSharding {
   // last dimension. (Experimental)
   bool replicate_on_last_tile_dim = 6;
   // This field is used to track the source of this sharding, usually derived
-  // from instructions. Multple metadata may be populated if sharding is
+  // from instructions. Multiple metadata may be populated if sharding is
   // combined with other shardings.  Metadata are to not be populated when
   // type == TUPLE and instead metadata should be set on individual tuple
   // elements.
@@ -889,8 +889,7 @@ message PrecisionConfig {
     DEFAULT = 0;
     HIGH = 1;
     HIGHEST = 2;
-    // Each U8/S8 value in a tensor actually represents 2 nibble values.
-    PACKED_NIBBLE = 3;
+    reserved 3;
 
     // Next: 4
   }

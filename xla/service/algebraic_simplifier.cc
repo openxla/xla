@@ -3218,12 +3218,9 @@ Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
         dot, HloInstruction::CreateBroadcast(dot->shape(), zero, {}));
   }
 
-  const bool is_packed_nibble =
-      absl::c_linear_search(dot->precision_config().operand_precision(),
-                            PrecisionConfig::PACKED_NIBBLE);
   // If there are no contracting dimensions, a dot can be rewritten as
   // mul(broadcast(transpose(x)),broadcast(transpose(y)))
-  if (!is_packed_nibble && options_.enable_dot_to_multiply_rewrite() &&
+  if (options_.enable_dot_to_multiply_rewrite() &&
       dnums.lhs_contracting_dimensions_size() == 0) {
     TF_ASSIGN_OR_RETURN(HloInstruction * new_lhs,
                         NormalizeDotOperandToBatchMajorAndContractingMinor(
@@ -3634,7 +3631,7 @@ Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
 
   // If the lhs or rhs have only batch and contracting dimensions, a dot can be
   // rewritten as reduce(mul(broadcast(transpose(x)),broadcast(transpose(y))))
-  if (!is_packed_nibble && options_.enable_dot_strength_reduction() &&
+  if (options_.enable_dot_strength_reduction() &&
       DotHasOnlyBatchAndContractingOnOneOperand(lhs->shape().rank(),
                                                 rhs->shape().rank(), dnums) &&
       ShouldStrengthReduceDotToReduce(dot)) {
@@ -8226,9 +8223,7 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
 
 StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToMultiply(
     HloInstruction* convolution) {
-  if (options_.is_layout_sensitive() ||
-      absl::c_linear_search(convolution->precision_config().operand_precision(),
-                            PrecisionConfig::PACKED_NIBBLE)) {
+  if (options_.is_layout_sensitive()) {
     return false;
   }
 

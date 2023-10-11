@@ -77,14 +77,6 @@ bool hasPrivateFeaturesNotInStablehlo(HloOpTy hloOp) {
   return false;
 }
 
-bool hasPackedNibble(std::optional<ArrayAttr> precisionConfigAttr) {
-  if (!precisionConfigAttr) return false;
-  return llvm::any_of(*precisionConfigAttr, [&](Attribute attr) {
-    auto precisionAttr = attr.cast<mhlo::PrecisionAttr>();
-    return precisionAttr.getValue() == mhlo::Precision::PACKED_NIBBLE;
-  });
-}
-
 // EXPERIMENTAL MHLO features are being explored by ML frontends but do not have
 // any agreed upon compatibility guarantees. By default, these features cannot
 // be converted to StableHLO, although the allow-experimental-features flag can
@@ -102,27 +94,12 @@ bool hasExperimentalFeaturesNotInStablehlo(HloOpTy hloOp) {
     // Proposal: https://github.com/openxla/stablehlo/issues/574.
     if (hloOp.getNumOperands() != 1) return true;
   }
-  if constexpr (std::is_same<HloOpTy, mhlo::ConvolutionOp>::value) {
-    // StableHLO ConvolutionOp doesn't support PACKED_NIBBLE yet.
-    // Proposal: https://github.com/openxla/stablehlo/issues/742.
-    if (hasPackedNibble(hloOp.getPrecisionConfig())) return true;
-  }
   if constexpr (std::is_same<HloOpTy, mhlo::CustomCallOp>::value) {
     // StableHLO CustomCall doesn't support API_VERSION_TYPED_FFI yet.
     // Proposal: https://github.com/openxla/stablehlo/issues/637.
     if (hloOp.getApiVersion() ==
         mhlo::CustomCallApiVersion::API_VERSION_TYPED_FFI)
       return true;
-  }
-  if constexpr (std::is_same<HloOpTy, mhlo::DotGeneralOp>::value) {
-    // StableHLO DotGeneral doesn't support PACKED_NIBBLE yet.
-    // Proposal: https://github.com/openxla/stablehlo/issues/742.
-    if (hasPackedNibble(hloOp.getPrecisionConfig())) return true;
-  }
-  if constexpr (std::is_same<HloOpTy, mhlo::DotOp>::value) {
-    // StableHLO Dot doesn't support PACKED_NIBBLE yet.
-    // Proposal: https://github.com/openxla/stablehlo/issues/742.
-    if (hasPackedNibble(hloOp.getPrecisionConfig())) return true;
   }
   return false;
 }
@@ -196,12 +173,6 @@ Attribute convertAttr(Attribute hloAttr) {
     return stablehlo::OutputOperandAliasAttr::get(
         attr.getContext(), attr.getOutputTupleIndices(), attr.getOperandIndex(),
         attr.getOperandTupleIndices());
-  }
-  if (auto attr = hloAttr.dyn_cast<mhlo::PrecisionAttr>()) {
-    // StableHLO Precision doesn't support PACKED_NIBBLE yet.
-    // Proposal: https://github.com/openxla/stablehlo/issues/742.
-    if (attr.getValue() == mhlo::Precision::PACKED_NIBBLE) return {};
-    RETURN_CONVERTED_ENUM_ATTR(Precision);
   }
   if (auto attr = hloAttr.dyn_cast<mhlo::RngAlgorithmAttr>()) {
     RETURN_CONVERTED_ENUM_ATTR(RngAlgorithm);
