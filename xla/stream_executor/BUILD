@@ -181,6 +181,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/math:math_util",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
     ],
 )
