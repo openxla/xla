@@ -1387,6 +1387,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "//xla:autotuning_proto_cc",
         "@tsl//tsl/util/proto:proto_utils",
+        "//xla:statusor",
     ]),
 )
 
