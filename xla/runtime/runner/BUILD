@@ -1,6 +1,6 @@
-load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")  # maybe @unused in OSS
 load("//xla:xla.bzl", "xla_py_proto_library")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],

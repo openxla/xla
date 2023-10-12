@@ -1,5 +1,5 @@
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
-load("//xla:glob_lit_test.bzl", "glob_lit_tests")
+load("//xla:glob_lit_test.bzl", "glob_lit_tests")  # maybe @unused in OSS
+load("@tsl//tsl:tsl.default.bzl", "filegroup")  # maybe @unused in OSS
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
