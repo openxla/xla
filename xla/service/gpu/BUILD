@@ -1878,11 +1878,19 @@ xla_cc_test(
     ],
 )
 
+tf_proto_library(
+    name = "fusion_process_dump_proto",
+    srcs = ["fusion_process_dump.proto"],
+    cc_api_version = 2,
+    protodeps = [],
+)
+
 cc_library(
     name = "priority_fusion",
     srcs = ["priority_fusion.cc"],
     hdrs = ["priority_fusion.h"],
     deps = [
+        ":fusion_process_dump_proto_cc",
         ":gpu_fusible",
         ":gpu_hlo_cost_analysis",
         ":gpu_performance_model",
@@ -1890,6 +1898,7 @@ cc_library(
         "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:dump",
         "//xla/service:fusion_node_indexing_evaluation",
         "//xla/service:fusion_queue",
         "//xla/service:hlo_cost_analysis",
