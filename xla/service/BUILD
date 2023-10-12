@@ -7081,3 +7081,7 @@ cc_library(
         "@tsl//tsl/platform:protobuf",
     ],
 )
+
+exports_files(
+    srcs = ["xla_aot_compile_test_gpu_target_config.prototxt"],
+)
