@@ -42,6 +42,8 @@ namespace {
 
 const char kPathSep[] = "/";
 
+// This currently doesn't change the path, because kPathSep is always "/".
+// See cl/296005736. We should consider removing this.
 bool FixBazelEnvPath(const char* path, string* out) {
   if (path == nullptr) return false;
   if (out == nullptr) return true;
