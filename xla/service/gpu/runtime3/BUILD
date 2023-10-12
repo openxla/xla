@@ -1,10 +1,5 @@
-# Description:
-#   GPU-specific thunk components in XLA service implementation.
-
-load(
-    "//xla/stream_executor:build_defs.bzl",
-    "if_gpu_is_configured",
-)
+load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -14,10 +9,52 @@ package(
 
 package_group(
     name = "friends",
-    includes = [
-        "//xla:friends",
+    includes = ["//xla:friends"],
+)
+
+#===-------------------------------------------------------------------------------------------===//
+# Command Buffer Integration
+#===-------------------------------------------------------------------------------------------===//
+
+cc_library(
+    name = "command_buffer_cmd",
+    srcs = ["command_buffer_cmd.cc"],
+    hdrs = ["command_buffer_cmd.h"],
+    deps = [
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:types",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor",
+        "@com_google_absl//absl/log",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
+
+xla_test(
+    name = "command_buffer_cmd_test",
+    srcs = ["command_buffer_cmd_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":command_buffer_cmd",
+        "//xla:types",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor",
+        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:platform",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+#===-------------------------------------------------------------------------------------------===//
+# XLA Thunks Runtime
+#===-------------------------------------------------------------------------------------------===//
 
 cc_library(
     name = "cholesky_thunk",
