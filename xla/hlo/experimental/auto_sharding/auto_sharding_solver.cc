@@ -481,6 +481,7 @@ AutoShardingSolverResult CallORToolsSolver(
   if (request.solver_timeout_in_seconds) {
     solver->SetTimeLimit(absl::Seconds(*request.solver_timeout_in_seconds));
   }
+  // solver->EnableOutput();
   VLOG(0) << "Starting solver " << solver->ProblemType() << "\n"
           << "Solver parameter string: " << solver_parameter_str << "\n"
           << "Number of workers: " << num_workers << "\n"
