@@ -362,7 +362,7 @@ cc_library(
     hdrs = ["metrics.h"],
     deps = [
         "//xla/stream_executor",
-        "//xla/stream_executor/gpu:gpu_init",
+        "//xla/stream_executor/gpu:gpu_init_impl",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
