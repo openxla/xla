@@ -1,5 +1,6 @@
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
+load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -120,5 +121,25 @@ xla_test(
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
+    name = "custom_call_thunk",
+    srcs = ["custom_call_thunk.cc"],
+    hdrs = ["custom_call_thunk.h"],
+    local_defines = if_cuda_is_configured([
+        "GOOGLE_CUDA=1",
+    ]),
+    deps = [
+        "//xla:util",
+        "//xla/service:buffer_assignment",
+        "//xla/service:custom_call_status_internal",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/service/gpu:thunk",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:errors",
     ],
 )
