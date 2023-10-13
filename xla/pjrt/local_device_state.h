@@ -227,7 +227,7 @@ class LocalDeviceState {
   // preventing the device-side stream from doing useful work.
   absl::Mutex callback_stream_map_mu_;
   std::optional<absl::flat_hash_map<se::Stream*, std::unique_ptr<se::Stream>>>
-      callback_stream_map_ ABSL_GUARDED_BY(callback_stream_map_mu_);
+      callback_stream_map_;
 
   // A worker thread, used for replicated computation launches.
   std::unique_ptr<WorkerThread> execute_thread_;

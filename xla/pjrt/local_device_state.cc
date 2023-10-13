@@ -118,6 +118,7 @@ Status LocalDeviceState::SynchronizeAllActivity() {
   // fixed, we could remove the BlockHostUntilDone call.
   status.Update(compute_stream_->BlockHostUntilDone());
   if (callback_stream_map_.has_value()) {
+    absl::MutexLock lock(&callback_stream_map_mu_);
     for (auto& callback_stream : callback_stream_map_.value()) {
       status.Update(callback_stream.second->BlockHostUntilDone());
     }
