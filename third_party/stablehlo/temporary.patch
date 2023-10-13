@@ -244,7 +244,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/CMakeLists.txt b/stablehlo/stablehlo/di
 diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stablehlo/dialect/ExperimentalOps.cpp
 --- stablehlo/stablehlo/dialect/ExperimentalOps.cpp
 +++ stablehlo/stablehlo/dialect/ExperimentalOps.cpp
-@@ -0,0 +1,504 @@
+@@ -0,0 +1,709 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -274,6 +274,209 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +
 +namespace mlir {
 +namespace stablehlo {
++namespace {
++
++bool isDynamicDimSize(int64_t val) { return ShapedType::isDynamic(val); }
++
++bool isStaticDimSize(int64_t val) { return !isDynamicDimSize(val); }
++
++bool verifyCompatibleDims(int64_t dimSize1, int64_t dimSize2) {
++  return isDynamicDimSize(dimSize1) || isDynamicDimSize(dimSize2) ||
++         dimSize1 == dimSize2;
++}
++
++}  // namespace
++
++LogicalResult DynamicFftOpAdaptor::verify() {
++  // Before checking the constraints inherited from FftOp, make sure that the
++  // operands and the attributes of the underlying custom call make sense.
++  if (op_->getNumOperands() != 2)
++    return op_.emitError("expects size(operands) = 2");
++  if (op_->getNumResults() != 1)
++    return op_.emitError("expects size(results) = 1");
++  for (const auto& attr : op_->getAttrs()) {
++    // api_version and backend_config have default values.
++    // call_target_name should be "stablehlo.dynamic_fft".
++    // fft_type comes from the operation.
++    if (attr.getName() != "api_version" && attr.getName() != "backend_config" &&
++        attr.getName() != "call_target_name" && attr.getName() != "fft_type")
++      return op_.emitError()
++             << attr.getName() << " is not a supported attribute";
++  }
++  if (!op_.getBackendConfig().empty())
++    return op_.emitError() << "expects an empty backend_config";
++  if (op_.getCallTargetName() != "stablehlo.dynamic_fft")
++    return op_.emitError() << "expects @stablehlo.dynamic_fft";
++
++  // Unpack operands and attributes of the underlying custom call into
++  // operation-specific inputs.
++  auto operand = getOperand();
++  auto isFftTypeRfft = getFftType() == FftType::RFFT;
++  auto isFftTypeIrfft = getFftType() == FftType::IRFFT;
++  auto fftLength = getFftLength();
++  auto fftLengthType = fftLength.getType().cast<ShapedType>();
++
++  // fft_i1
++  // TODO might need to check unranked separately
++  auto type = operand.getType().dyn_cast<ShapedType>();
++  if (!type || (!type.getElementType().isa<FloatType>() &&
++                !type.getElementType().isa<ComplexType>()))
++    return op_.emitError()
++           << "expects operand to be a tensor of float or complex type";
++
++  // fft_i2 is already covered since all enumeration of FftType are valid.
++
++  // fft_i3
++  if (fftLengthType.getRank() != 1 ||
++      !fftLengthType.getElementType().isInteger(64))
++    return op_.emitError()
++           << "expects fft_length to be rank 1 tensor of type si64";
++
++  // auto fftLengthValues = fftLength.getValues<int64_t>();
++  auto fftRank = fftLength.getType().cast<ShapedType>().getShape()[0];
++
++  // fft_c2
++  // FFT : C -> C
++  // IFFT : C -> C
++  // RFFT : R -> C
++  // IRFFT : C -> R
++  auto operandType = operand.getType().cast<ShapedType>();
++  Type operandElementType = operandType.getElementType();
++  // Check the input element type and infer return element type
++  if (isFftTypeRfft) {
++    if (!operandElementType.isF32() && !operandElementType.isF64())
++      return op_.emitError()
++             << "RFFT requires f32 or f64 input type, but is given "
++             << operandElementType << ".";
++  } else {
++    if (!operandElementType.isa<ComplexType>())
++      return op_.emitError() << "FFT/IFFT/IRFFT"
++                             << " take a complex tensor as input, but is given "
++                             << operandType << ".";
++  }
++  // Generate the output element type
++  Type resultElementType = operandElementType;
++  if (isFftTypeRfft)  // RFFT : R -> C
++    resultElementType = ComplexType::get(resultElementType);
++  else if (isFftTypeIrfft)  // IRFFT : C -> R
++    resultElementType = operandElementType.cast<ComplexType>().getElementType();
++
++  // fft_c3
++  if (fftRank > 3 || fftRank < 1)
++    return op_.emitError() << "rank must be between 1 and 3, but got "
++                           << fftRank << ".";
++
++  auto operandRankedType = operandType.dyn_cast<RankedTensorType>();
++  if (operandRankedType) {
++    // fft_c1
++    if (operandType.getRank() < fftRank)
++      return op_.emitError()
++             << "operand rank must not be less than fft rank of " << fftRank
++             << " for operand of type " << operandType << ".";
++
++    // fft_c4
++    SmallVector<int64_t> fftLengthValues;
++    if (succeeded(hlo::matchInts(getFftLength(), fftLengthValues))) {
++      auto operandShape = operandType.getShape();
++      if (isFftTypeRfft) {
++        auto shapeBack = operandShape.take_back(fftRank);
++        for (auto [operandDim, fftDim] : llvm::zip(shapeBack, fftLengthValues))
++          if (!verifyCompatibleDims(operandDim, fftDim))
++            return op_.emitError()
++                   << "RFFT requires innermost dimensions to be compatible with"
++                      "fft_length. Operand shape: "
++                   << operandShape << ", fft_length: " << fftLengthValues
++                   << ".";
++      }
++    }
++  }
++
++  auto resultRankedType = getResult().getType().dyn_cast<RankedTensorType>();
++  if (resultRankedType) {
++    auto resultShape = resultRankedType.getShape();
++    // fft_c4
++    if (isFftTypeIrfft) {
++      SmallVector<int64_t> fftLengthValues;
++      if (succeeded(hlo::matchInts(getFftLength(), fftLengthValues))) {
++        auto shapeBack = resultShape.take_back(fftRank);
++        for (auto [resultDim, fftDim] : llvm::zip(shapeBack, fftLengthValues))
++          if (!verifyCompatibleDims(resultDim, fftDim))
++            return op_.emitError()
++                   << "IRFFT requires innermost dimensions to be compatible "
++                      "with fft_length. Result shape: "
++                   << resultShape << ", fft_length: " << fftLengthValues << ".";
++      }
++    }
++  }
++
++  if (!operandRankedType || !resultRankedType) return success();
++
++  // fft_c5
++  auto operandShape = operandRankedType.getShape();
++  auto resultShape = resultRankedType.getShape();
++  auto rank = operandRankedType ? operandRankedType.getRank()
++                                : resultRankedType.getRank();
++  auto operandLastDim = operandShape[rank - 1];
++  auto resultLastDim = resultShape[rank - 1];
++  if (isFftTypeRfft) {
++    if (isStaticDimSize(operandLastDim) && isStaticDimSize(resultLastDim)) {
++      if ((operandLastDim == resultLastDim && operandLastDim != 0) ||
++          (operandLastDim != resultLastDim &&
++           operandLastDim / 2 + 1 != resultLastDim))
++        return op_.emitError()
++               << "RFFT requires resultShape's innermost dimension to be "
++                  "zero "
++                  "or operandShape[-1]/2+1. Operand shape: "
++               << operandShape << ", resultShape: " << resultShape << ".";
++    }
++
++    for (auto [operandDim, resultDim] :
++         llvm::zip(operandShape.drop_back(), resultShape.drop_back()))
++      if (!verifyCompatibleDims(operandDim, resultDim))
++        return op_.emitError()
++               << "RFFT requires non-final dimensions to be compatible with "
++                  "non-final dimensions of result. Operand shape: "
++               << operandShape << ", result shape: " << resultShape << ".";
++  }
++
++  // fft_c5
++  if (isFftTypeIrfft) {
++    if (isStaticDimSize(operandLastDim) && isStaticDimSize(resultLastDim)) {
++      if ((operandLastDim == resultLastDim && operandLastDim != 0) ||
++          (operandLastDim != resultLastDim &&
++           resultLastDim / 2 + 1 != operandLastDim))
++        return op_.emitError()
++               << "IRFFT requires operandShape's innermost dimension to be "
++                  "zero or resultShape[-1]/2+1. Operand shape: "
++               << operandShape << ", resultShape: " << resultShape << ".";
++    }
++
++    for (auto [operandDim, resultDim] :
++         llvm::zip(operandShape.drop_back(), resultShape.drop_back()))
++      if (!verifyCompatibleDims(operandDim, resultDim))
++        return op_.emitError()
++               << "IRFFT requires non-final dimensions to be compatible with "
++                  "non-final dimensions of result. Operand shape: "
++               << operandShape << ", result shape: " << resultShape << ".";
++  }
++  return success();
++}
++
++Value DynamicFftOpAdaptor::getOperand() {
++  return op_.getInputs()[0].cast<Value>();
++}
++
++FftType DynamicFftOpAdaptor::getFftType() {
++  return op_->getAttrOfType<FftTypeAttr>("fft_type").getValue();
++}
++
++Value DynamicFftOpAdaptor::getFftLength() {
++  return op_.getInputs()[1].cast<Value>();
++}
++
++Value DynamicFftOpAdaptor::getResult() {
++  return op_.getResults()[0].cast<Value>();
++}
 +
 +LogicalResult DynamicReduceWindowOpAdaptor::verify() {
 +  // Before checking the constraints inherited from ReduceWindowOp,
@@ -287,8 +490,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +    // api_version and backend_config have default values.
 +    // call_target_name should be "stablehlo.dynamic_reduce_window".
 +    // called_computations carries the body.
-+    if (attr.getName() != "api_version" &&
-+        attr.getName() != "backend_config" &&
++    if (attr.getName() != "api_version" && attr.getName() != "backend_config" &&
 +        attr.getName() != "call_target_name" &&
 +        attr.getName() != "called_computations")
 +      return op_.emitError()
@@ -593,9 +795,9 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +
 +  // dynamic_rng_bit_generator_c1
 +  if (!hlo::isCompatibleForHloTypeInference(initialStateType, outputStateType))
-+    return op_.emitError()
-+           << "expects initial_state (operand #0) and output_state (result #0) "
-+           << "to have compatible shapes";
++    return op_.emitError() << "expects initial_state (operand #0) and "
++                              "output_state (result #0) "
++                           << "to have compatible shapes";
 +
 +  // dynamic_rng_bit_generator_c2
 +  // TODO(#486): Verify rng_algorithm in RngBitGeneratorOp.
@@ -626,6 +828,11 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +
 +TypedValue<ShapedType> DynamicRngBitGeneratorOpAdaptor::getOutput() {
 +  return op_.getResults()[1].cast<TypedValue<ShapedType>>();
++}
++
++std::optional<DynamicFftOpAdaptor> getDynamicFftOp(CustomCallOp op) {
++  if (op.getCallTargetName() != "stablehlo.dynamic_fft") return {};
++  return DynamicFftOpAdaptor(op);
 +}
 +
 +std::optional<DynamicRngBitGeneratorOpAdaptor> getDynamicRngBitGeneratorOp(
@@ -669,8 +876,8 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +
 +  // dynamic_top_k_i2
 +  auto kType = k.getType().dyn_cast<ShapedType>();
-+  if (!kType || !kType.hasRank() ||
-+      kType.getRank() != 0 || !kType.getElementType().isIntOrIndex())
++  if (!kType || !kType.hasRank() || kType.getRank() != 0 ||
++      !kType.getElementType().isIntOrIndex())
 +    return op_.emitError()
 +           << "expects k (operand #1) "
 +           << "to be a 0-dimensional tensor of integer or index type";
@@ -702,9 +909,9 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +
 +  // dynamic_top_k_c2
 +  if (valuesType.getElementType() != operandType.getElementType())
-+    return op_.emitError()
-+           << "expects the values element type to be the same as the operand "
-+           << "element type";
++    return op_.emitError() << "expects the values element type to be the "
++                              "same as the operand "
++                           << "element type";
 +
 +  // dynamic_top_k_c3
 +  if (!operandType.isDynamicDim(operandLastDim) &&
@@ -732,7 +939,6 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +  return op_.getInputs()[1].cast<TypedValue<ShapedType>>();
 +}
 +
-+
 +TypedValue<ShapedType> DynamicTopKOpAdaptor::getValues() {
 +  return op_.getResults()[0].cast<TypedValue<ShapedType>>();
 +}
@@ -741,8 +947,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 +  return op_.getResults()[1].cast<TypedValue<ShapedType>>();
 +}
 +
-+std::optional<DynamicTopKOpAdaptor> getDynamicTopKOp(
-+    CustomCallOp op) {
++std::optional<DynamicTopKOpAdaptor> getDynamicTopKOp(CustomCallOp op) {
 +  if (op.getCallTargetName() != "stablehlo.dynamic_top_k") return {};
 +  return DynamicTopKOpAdaptor(op);
 +}
@@ -752,7 +957,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.cpp b/stablehlo/stableh
 diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.h b/stablehlo/stablehlo/dialect/ExperimentalOps.h
 --- stablehlo/stablehlo/dialect/ExperimentalOps.h
 +++ stablehlo/stablehlo/dialect/ExperimentalOps.h
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,313 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -789,6 +994,92 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.h b/stablehlo/stablehlo
 +
 +namespace mlir {
 +namespace stablehlo {
++
++// The DynamicFftOp experiment provides a dynamic version of FftOp. Once the
++// dynamism RFC is figured out, we expect to have an upstream representation for
++// this notion.
++//
++// Within this experiment, DynamicFftOp is represented via the
++// `stablehlo.custom_call @stablehlo.dynamic_fft` custom call.
++// This custom call has the regular operands of FftOp plus an additional
++// `fft_length` operand that determines the shape of the output, which is an
++// an attribute in FftOp. This custom call keeps `fft_type` as an attribute, but
++//  has the following operands which represent a dynamic version of operand and
++//  fft_length of FftOp:
++//   * [0] => operand
++//   * [1] => fft_length
++//
++// Semantics of DynamicFftOp are inherited from semantics of
++// https://github.com/openxla/stablehlo/blob/main/docs/spec.md#reduce_window
++// with the following difference:
++//   * `fft_length` is now an input argument to the op vs previously being an
++//     attribute. This allows specifying dynamic values to `fft_length` which
++//     was previously not possible.
++//   * It is infeasible to verify (C4) which requires knowing the actual values
++//     of `fft_length` which is not known statically now that it is an input
++//     argument.
++//
++// #### Inputs
++//
++// | Label | Name         | Type                                         |
++// |-------|--------------|----------------------------------------------|
++// | (I1)  | `operand`    | tensor of floating-point or complex type     |
++// | (I2)  | `fft_type`   | enum of `FFT`, `IFFT`, `RFFT`, and `IRFFT`   |
++// | (I3)  | `fft_length` | 1-dimensional tensor of signed integer type  |
++//
++// #### Outputs
++//
++// | Name     | Type                                     |
++// |----------|------------------------------------------|
++// | `result` | tensor of floating-point or complex type |
++//
++// #### Constraints
++//
++// * (C1) `size(fft_length) <= rank(operand)`.
++// * (C2) The relationship between `operand` and `result` element types varies:
++//   * If `fft_type = FFT`, `element_type(operand)` and `element_type(result)`
++//     have the same complex type.
++//   * If `fft_type = IFFT`, `element_type(operand)` and `element_type(result)`
++//     have the same complex type.
++//   * If `fft_type = RFFT`, `element_type(operand)` is a floating-point type
++//     and `element_type(result)` is a complex type of the same floating-point
++//     semantics.
++//   * If `fft_type = IRFFT`, `element_type(operand)` is a complex type and
++//     `element_type(result)` is a floating-point type of the same
++//     floating-point semantics.
++// * (C3) `1 <= size(fft_length) <= 3`.
++// * (C4) If among `operand` and `result`, there is a tensor `real` of a
++// floating-point type, then `shape(real)[-size(fft_length):] = fft_length`.
++// * (C5) `shape(result) = shape(operand)` except for:
++//   * If `fft_type = RFFT`,
++//     `dim(result, -1) = dim(operand, -1) = 0 ? 0 : dim(operand, -1) / 2 + 1`.
++//   * If `fft_type = IRFFT`,
++//     `dim(operand, -1) = dim(result, -1) = 0 ? 0 : dim(result, -1) / 2 + 1`.
++class DynamicFftOpAdaptor {
++ public:
++  DynamicFftOpAdaptor(CustomCallOp op) : op_(op) {}
++  operator Operation*() { return op_; }
++  Operation* operator->() { return op_; }
++
++  // These accessors assume that the operation is well-formed (i.e. that it
++  // can pass verification).
++  Value getOperand();
++  FftType getFftType();
++  Value getFftLength();
++  Value getResult();
++
++  // Verifies the constraints documented above.
++  // Emits errors if errors are detected.
++  LogicalResult verify();
++
++ private:
++  CustomCallOp op_;
++};
++
++// Wraps a custom call in a DynamicFftOpAdaptor.
++// Fails if the call_target_name of the custom call doesn't match
++// "stablehlo.dynamic_fft".
++std::optional<DynamicFftOpAdaptor> getDynamicFftOp(CustomCallOp op);
 +
 +// The DynamicReduceWindowOp experiment provides a dynamic version of
 +// ReduceWindowOp. Once the dynamism RFC is figured out, we expect to have an
@@ -983,7 +1274,44 @@ diff --ruN a/stablehlo/stablehlo/dialect/ExperimentalOps.h b/stablehlo/stablehlo
 diff --ruN a/stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir b/stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir
 --- stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir
 +++ stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir
-@@ -426,6 +426,172 @@
+@@ -269,6 +269,36 @@
+ 
+ // -----
+ 
++// CHECK-LABEL: func @dynamic_fft_success_static_fft_length
++func.func @dynamic_fft_success_static_fft_length() -> tensor<2x3xcomplex<f32>> {
++  //  CHECK-NOT: stablehlo.dynamic_fft
++  //      CHECK: stablehlo.fft %0, type =  RFFT, length = [2, 4] : (tensor<2x4xf32>) -> tensor<2x3xcomplex<f32>>
++  %0 = stablehlo.constant dense<[[1.0, 2.0, 2.0, 1.0],
++                                 [2.0, 1.0, 1.0, 2.0]]> : tensor<2x4xf32>
++  %1 = stablehlo.constant dense<[2, 4]> : tensor<2xi64>
++  %2 = stablehlo.custom_call @stablehlo.dynamic_fft(%0, %1) {
++    fft_type = #stablehlo<fft_type RFFT>
++  } : (tensor<2x4xf32>, tensor<2xi64>) -> tensor<2x3xcomplex<f32>>
++  return %2 : tensor<2x3xcomplex<f32>>
++}
++
++// TODO(gunhyun): Implement tests for verification failures for dynamic_fft.
++
++// -----
++
++// CHECK-LABEL: func @dynamic_fft_inapplicable_dynamic_fft_length
++func.func @dynamic_fft_inapplicable_dynamic_fft_length(%arg0: tensor<2xi64>) -> tensor<2x3xcomplex<f32>> {
++  // CHECK: stablehlo.dynamic_fft
++  %0 = stablehlo.constant dense<[[1.0, 2.0, 2.0, 1.0],
++                                 [2.0, 1.0, 1.0, 2.0]]> : tensor<2x4xf32>
++  %1 = stablehlo.custom_call @stablehlo.dynamic_fft(%0, %arg0) {
++    fft_type = #stablehlo<fft_type RFFT>
++  } : (tensor<2x4xf32>, tensor<2xi64>) -> tensor<2x3xcomplex<f32>>
++  return %1 : tensor<2x3xcomplex<f32>>
++}
++
++// -----
++
+ // CHECK-LABEL: @dynamic_gather_success_static_result_type
+ func.func @dynamic_gather_success_static_result_type(%arg0 : tensor<2x4x9xi32>, %arg1 : tensor<1x5x2xi32>) -> tensor<1x5x8xi32> {
+   //  CHECK-NOT: stablehlo.dynamic_gather
+@@ -426,6 +456,172 @@
  
  // -----
  
@@ -1156,7 +1484,7 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir b/st
  // CHECK-LABEL: func @dynamic_reshape_success
  func.func @dynamic_reshape_success(%arg0: tensor<4xf32>) -> tensor<1x4xf32> {
    // CHECK-NOT: stablehlo.dynamic_reshape
-@@ -452,6 +618,185 @@
+@@ -452,6 +648,185 @@
    %0 = stablehlo.constant dense<[1, 4]> : tensor<2xi64>
    %1 = stablehlo.dynamic_reshape %arg0, %0 : (tensor<4xf32>, tensor<2xi64>) -> tensor<1x?xf32>
    return %1 : tensor<1x?xf32>
@@ -1345,7 +1673,28 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_canonicalize_dynamism.mlir b/st
 diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
 --- stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
 +++ stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
-@@ -607,12 +607,55 @@
+@@ -567,6 +567,20 @@
+ 
+ // -----
+ 
++// CHECK-LABEL: @refine_dynamic_fft
++func.func @refine_dynamic_fft() -> tensor<*xcomplex<f32>> {
++  // CHECK: stablehlo.dynamic_fft{{.*}} -> tensor<2x3xcomplex<f32>>
++  %0 = stablehlo.constant dense<[[1.0, 2.0, 2.0, 1.0],
++                                 [2.0, 1.0, 1.0, 2.0]]> : tensor<2x4xf32>
++  %1 = stablehlo.constant dense<[2, 4]> : tensor<2xi64>
++  %2 = stablehlo.custom_call @stablehlo.dynamic_fft(%0, %1) {
++    fft_type = #stablehlo<fft_type RFFT>
++  } : (tensor<2x4xf32>, tensor<2xi64>) -> tensor<*xcomplex<f32>>
++  func.return %2 : tensor<*xcomplex<f32>>
++}
++
++// -----
++
+ // CHECK-LABEL: @refine_dynamic_gather
+ func.func @refine_dynamic_gather(%arg0 : tensor<2x4x9xi32>, %arg1 : tensor<1x5x2xi32>, %arg2 : tensor<3xi32>) -> tensor<*xi32> {
+   // CHECK: stablehlo.dynamic_gather{{.*}} -> tensor<1x5x8xi32>
+@@ -607,12 +621,55 @@
  
  // -----
  
@@ -1401,6 +1750,21 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/
  }
  
  // -----
+@@ -768,14 +825,6 @@
+ 
+ // -----
+ 
+-// TODO: Implement support for these ops.
+-// * dynamic_conv (#867).
+-// * dynamic_fft (#1366).
+-// * dynamic_reduce_window (#1258).
+-// * dynamic_rng_bit_generator (#1344).
+-
+-// -----
+-
+ // CHECK-LABEL: func @update_function_type
+ // CHECK-SAME: (%arg0: tensor<4xf32>) -> tensor<4xf32>
+ func.func @update_function_type(%arg0: tensor<4xf32>) -> tensor<*xf32> {
 diff --ruN a/stablehlo/stablehlo/transforms/Passes.td b/stablehlo/stablehlo/transforms/Passes.td
 --- stablehlo/stablehlo/transforms/Passes.td
 +++ stablehlo/stablehlo/transforms/Passes.td
@@ -1424,7 +1788,36 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/
  #include "stablehlo/dialect/StablehloOps.h"
  #include "stablehlo/transforms/Passes.h"
  
-@@ -198,6 +200,54 @@
+@@ -140,6 +142,28 @@
+   }
+ };
+ 
++struct CanonicalizeDynamicFftOpPattern : public OpRewritePattern<CustomCallOp> {
++  using OpRewritePattern::OpRewritePattern;
++  LogicalResult matchAndRewrite(CustomCallOp impl,
++                                PatternRewriter& rewriter) const override {
++    auto maybeOp = getDynamicFftOp(impl);
++    if (!maybeOp || failed(maybeOp->verify())) return failure();
++    DynamicFftOpAdaptor op = *maybeOp;
++
++    // FftOp supports dynamic shapes for operand and result, so we don't check
++    // for that here unlike in some other patterns in this pass.
++    SmallVector<int64_t> fftLength;
++    if (!succeeded(hlo::matchInts(op.getFftLength(), fftLength)))
++      return rewriter.notifyMatchFailure(op, "expected static fft_length");
++    op->dump();
++    rewriter.create<FftOp>(op->getLoc(), op.getOperand(), op.getFftType(),
++                          rewriter.getI64TensorAttr(fftLength)).dump();
++    rewriter.replaceOpWithNewOp<FftOp>(op, op.getOperand(), op.getFftType(),
++                                       rewriter.getI64TensorAttr(fftLength));
++    return success();
++  }
++};
++
+ struct CanonicalizeDynamicGatherOpPattern
+     : public OpRewritePattern<DynamicGatherOp> {
+   using OpRewritePattern::OpRewritePattern;
+@@ -198,6 +222,54 @@
    }
  };
  
@@ -1479,7 +1872,7 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/
  struct CanonicalizeDynamicReshapeOpPattern
      : public OpRewritePattern<DynamicReshapeOp> {
    using OpRewritePattern::OpRewritePattern;
-@@ -210,6 +260,56 @@
+@@ -210,6 +282,55 @@
      if (!op.getType().hasStaticShape())
        return rewriter.notifyMatchFailure(op, "expected static result type");
      rewriter.replaceOpWithNewOp<ReshapeOp>(op, op.getType(), op.getOperand());
@@ -1524,19 +1917,22 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/
 +    // We rely on many of the properties checked by verification.
 +    auto valuesType = op.getValues().getType().cast<ShapedType>();
 +    auto valuesLastDimSize = valuesType.getShape()[valuesType.getRank() - 1];
-+    if (hlo::isDynamicDimSize(valuesLastDimSize) ||
-+        valuesLastDimSize != k[0])
++    if (hlo::isDynamicDimSize(valuesLastDimSize) || valuesLastDimSize != k[0])
 +      return rewriter.notifyMatchFailure(
 +          op,
 +          "expected value of k to match the values last dimension size of "
 +          "static values type (result #0)");
 +
-+    rewriter.replaceOpWithNewOp<chlo::TopKOp>(
-+        op, op->getResultTypes(), op.getOperand(), k[0]);
++    rewriter.replaceOpWithNewOp<chlo::TopKOp>(op, op->getResultTypes(),
++                                              op.getOperand(), k[0]);
      return success();
    }
  };
-@@ -320,7 +420,10 @@
+@@ -317,10 +438,14 @@
+     patterns.add<CanonicalizeCustomCallOpPattern>(&getContext());
+     patterns.add<CanonicalizeDynamicBroadcastInDimOpPattern>(&getContext());
+     patterns.add<CanonicalizeDynamicConvOpPattern>(&getContext());
++    patterns.add<CanonicalizeDynamicFftOpPattern>(&getContext());
      patterns.add<CanonicalizeDynamicGatherOpPattern>(&getContext());
      patterns.add<CanonicalizeDynamicIotaOpPattern>(&getContext());
      patterns.add<CanonicalizeDynamicPadOpPattern>(&getContext());
@@ -1558,7 +1954,39 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehl
  #include "stablehlo/dialect/StablehloOps.h"
  #include "stablehlo/dialect/TypeInference.h"
  #include "stablehlo/transforms/Passes.h"
-@@ -844,12 +845,97 @@
+@@ -806,6 +807,31 @@
+   }
+ };
+ 
++struct RefineDynamicFftOpPattern : public OpRewritePattern<CustomCallOp> {
++  using OpRewritePattern::OpRewritePattern;
++  LogicalResult matchAndRewrite(CustomCallOp impl,
++                                PatternRewriter& rewriter) const override {
++    auto maybeOp = getDynamicFftOp(impl);
++    if (!maybeOp || failed(maybeOp->verify())) return failure();
++    DynamicFftOpAdaptor op = *maybeOp;
++
++    // At the moment, we only support refining return types using fully static
++    // fft_length values. Investigations into supporting partially static
++    // fft_length values is left for future work.
++    SmallVector<int64_t> fftLength;
++    if (failed(hlo::matchInts(op.getFftLength(), fftLength)))
++      return rewriter.notifyMatchFailure(op, "expected constant fft_length");
++
++    SmallVector<ShapedTypeComponents> inferredReturnTypes;
++    if (failed(hlo::inferFftOp(
++            /*location=*/{}, op.getOperand(), op.getFftType() == FftType::RFFT,
++            op.getFftType() == FftType::IRFFT,
++            rewriter.getI64TensorAttr(fftLength), inferredReturnTypes)))
++      return rewriter.notifyMatchFailure(op, "inferFftOp failed");
++    return refineReturnTypes(rewriter, op, inferredReturnTypes);
++  }
++};
++
+ struct RefineDynamicIotaOpPattern : public OpRewritePattern<DynamicIotaOp> {
+   using OpRewritePattern::OpRewritePattern;
+   LogicalResult matchAndRewrite(DynamicIotaOp op,
+@@ -844,12 +870,97 @@
    }
  };
  
@@ -1656,8 +2084,11 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehl
    }
  };
  
-@@ -1181,7 +1267,10 @@
+@@ -1179,9 +1290,13 @@
+     patterns.add<RefineDotGeneralOpPattern>(&getContext());
+     patterns.add<RefineDynamicBroadcastInDimOpPattern>(&getContext());
      patterns.add<RefineDynamicConvOpPattern>(&getContext());
++    patterns.add<RefineDynamicFftOpPattern>(&getContext());
      patterns.add<RefineDynamicIotaOpPattern>(&getContext());
      patterns.add<RefineDynamicPadOpPattern>(&getContext());
 +    patterns.add<RefineDynamicReduceWindowOpPattern>(&getContext());
