@@ -339,7 +339,7 @@ xla_cc_test(
     name = "topk_kernel_test",
     srcs = if_cuda_is_configured(["topk_kernel_test.cc"]),
     linkstatic = 1,
-    tags = ["no_rocm"] + tf_cuda_tests_tags(),
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":topk_kernel",
         "//xla:xla_data_proto_cc",
