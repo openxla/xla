@@ -2339,7 +2339,7 @@ class HloInstruction {
   };
 
   // Change instruction's name to have a given suffix.
-  void AddSuffixToInstructionName(const std::string& suffix);
+  void AddSuffixToInstructionName(const absl::string_view suffix);
 
  private:
   friend class HloComputation;

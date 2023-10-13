@@ -45,13 +45,6 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/lib/gtl/iterator_range.h"
-#include "tsl/lib/gtl/map_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/human_readable_json.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -82,6 +75,13 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/lib/gtl/iterator_range.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/human_readable_json.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -2074,12 +2074,12 @@ bool HloInstruction::HasSideEffect() const {
          execution_threads_set.contains(execution_thread);
 }
 
-void HloInstruction::AddSuffixToInstructionName(const std::string& suffix) {
+void HloInstruction::AddSuffixToInstructionName(const absl::string_view suffix) {
   // If an instruction is cloned multiple times avoid names like
   // foo.suffix.suffix.suffix. Instead of repeating the suffix add a numeric
   // suffix. Specifically, the clone of foo.suffix is named foo.suffix2, the
   // clone of foo.suffix2 is named foo.suffix3 and so on.
-  const std::string dot_suffix = "." + suffix;
+  const std::string dot_suffix = absl::StrCat(".", suffix);
   size_t index = name().rfind(dot_suffix);
   if (index == std::string::npos) {
     // Existing name does not include ".suffix".
