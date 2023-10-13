@@ -68,7 +68,12 @@ struct MatchFwdResult {
   double matched_dropout_rate = 0.0;
   bool need_canonicalization = false;
   bool is_training = false;
+  // We use this to keep track of whether the bias or the mask that is being
+  // applied to the bmm1 is a causal mask, cuDNN can generate causal mask inside
+  // the attention kernel to save I/O.
   bool is_causal_mask = false;
+  // We use this to keep track of whether the attention block should be lowered
+  // to flash attention or regular fused attention in cuDNN.
   bool is_flash_attention = false;
   bool has_match = false;
   std::string matched_custom_call_name;
@@ -405,8 +410,8 @@ StatusOr<bool> IsSupportedBMM2(const HloInstruction* bmm_2,
   return true;
 }
 
-StatusOr<bool> isFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
-                                std::string& custom_call_name) {
+StatusOr<bool> IsFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
+                                absl::string_view custom_call_name) {
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> seq_q_dims,
       GetNonContractingDims(
@@ -427,8 +432,7 @@ StatusOr<bool> isFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
   std::vector<int64_t> seq_k =
       GetDimensionVector(bmm_1->operand(1)->shape().dimensions(), seq_k_dims);
 
-  // flash attention TODO: check contracting dim here
-  std::vector<int64_t> contracting_dims_bmm1 = GetDimensionVector(
+  std::vector<int64_t> hidden_dim = GetDimensionVector(
       bmm_1->operand(0)->shape().dimensions(),
       bmm_1->dot_dimension_numbers().lhs_contracting_dimensions());
   // for now, seq_q and seq_k should be equal for flash attention to work
@@ -436,18 +440,20 @@ StatusOr<bool> isFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
   // such topology by checking custom_call_name
   TF_RET_CHECK(seq_q.size() == 1);
   TF_RET_CHECK(seq_k.size() == 1);
-  auto is_fixed_topology = [=]() {
-    return is_causal_mask &&
-           (custom_call_name == kCudnnfMHAScaleBiasSoftmaxDropoutCallTarget ||
-            custom_call_name == kCudnnfMHAScaleBiasSoftmaxCallTarget ||
-            custom_call_name == kCudnnfMHAScaleMaskSoftmaxDropoutCallTarget ||
-            custom_call_name == kCudnnfMHAScaleMaskSoftmaxCallTarget);
-  };
+  TF_RET_CHECK(hidden_dim.size() == 1);
+  auto is_fixed_topology =
+      is_causal_mask &&
+      (custom_call_name == kCudnnfMHAScaleBiasSoftmaxDropoutCallTarget ||
+       custom_call_name == kCudnnfMHAScaleBiasSoftmaxCallTarget ||
+       custom_call_name == kCudnnfMHAScaleMaskSoftmaxDropoutCallTarget ||
+       custom_call_name == kCudnnfMHAScaleMaskSoftmaxCallTarget);
 
+  auto is_seqlen_supported =
+      seq_q[0] == seq_k[0] && seq_q[0] > 512 && seq_q[0] % 64 == 0;
+  auto is_hidden_dim_supported = hidden_dim[0] == 64 || hidden_dim[0] == 128;
   // flash attention TODO: make sure fwd act (bmm_2->operand[0]) is only used by
   // bmm2 and bwd bmm2_grad1
-  return (seq_q[0] == seq_k[0] && seq_q[0] > 512 && seq_q[0] % 128 == 0 &&
-          is_fixed_topology());
+  return is_seqlen_supported && is_hidden_dim_supported && is_fixed_topology;
 }
 
 bool IsCausalMaskPattern(HloInstruction* mask) {
@@ -480,8 +486,8 @@ bool IsCausalMaskPattern(HloInstruction* mask) {
       for (HloInstruction* instr :
            entry_computation->MakeInstructionPostOrder()) {
         if (instr->opcode() == HloOpcode::kWhile &&
-            instr->while_body()->name() == name) {
-          DCHECK(instr->operand(0)->opcode() == HloOpcode::kTuple);
+            instr->while_body()->name() == name &&
+            instr->operand(0)->opcode() == HloOpcode::kTuple) {
           auto actual_mask =
               instr->mutable_operand(0)->mutable_operand(mask_index);
           auto causal_mask_pattern_fwd =
@@ -1142,11 +1148,10 @@ StatusOr<bool> IsMHABlockSupported(HloInstruction* bmm_1, HloInstruction* bmm_2,
     return false;
   }
 
-  // check if it is supported by flash attention
-  // Flash Attention TODO: enhance check here, should also check contracting dim
+  // check if matched attention block is supported by cuDNN flash attention.
   TF_ASSIGN_OR_RETURN(
       is_flash_attention,
-      isFlashAttention(bmm_1, is_causal_mask, custom_call_name));
+      IsFlashAttention(bmm_1, is_causal_mask, custom_call_name));
   if (is_flash_attention) {
     custom_call_name = MHACallHasDropout(custom_call_name)
                            ? kCudnnfMHASoftmaxDropoutCallTarget
@@ -1547,7 +1552,6 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
     operands.push_back(converted_mask);
   }
 
-  // Fwd act is different shape and datatype for flash attention
   // if is flash attention, add fwd output to input list
   if (fwd_config.is_flash_attention()) {
     HloInstruction* fwd_output;
@@ -1558,9 +1562,9 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
       }
     }
     // should be able to find the instruction
-    DCHECK(fwd_output != nullptr);
+    TF_RET_CHECK(fwd_output != nullptr);
     // check dO and O have the same layout as it is required by cuDNN
-    DCHECK(fwd_output->shape() == d_output_grad->shape());
+    TF_RET_CHECK(fwd_output->shape() == d_output_grad->shape());
     operands.push_back(fwd_output);
   }
 

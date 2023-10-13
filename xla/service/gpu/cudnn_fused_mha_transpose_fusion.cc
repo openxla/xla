@@ -102,11 +102,9 @@ StatusOr<bool> FuseArgPrologueTransposeWithcuDNNFMHA(
   absl::Span<const int64_t> checked_dims;
   std::vector<int64_t> checked_dims_vec;
 
-  // should_contracting_be_fastest = true meaning contracting dim is the hidden
-  // dim fwd bmm1/bwd bmm2grad2 should set it to true
-  // should_contracting_be_fastest = false meaning non contracting dim is the
-  // hidden dim fwd bmm2/bwd bmm2grad1 bmm1grad1 bmm1grad2 should set it to
-  // false
+  // `should_contracting_be_fastest` means if contracting dim is the hidden
+  // dim. cuDNN requires hidden dim to be the fastest dim. fwd bmm1 and bwd
+  // bmm2grad1 should set this value to true.
   if (should_contracting_be_fastest) {
     checked_dims = is_lhs ? new_bmm_dot_dims.lhs_contracting_dimensions()
                           : new_bmm_dot_dims.rhs_contracting_dimensions();
