@@ -565,7 +565,6 @@ cc_library(
         "//xla/service:executable",
         "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor",
-        "//xla/stream_executor/cuda:cublas_lt_header",
         "@tsl//tsl/platform:status",
     ] + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",

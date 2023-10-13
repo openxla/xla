@@ -1325,12 +1325,8 @@ cc_library(
 
 cc_library(
     name = "gpublas_lt_matmul_thunk",
-    srcs = if_cuda_is_configured(["gpublas_lt_matmul_thunk.cc"]) + if_rocm_is_configured([
-        "gpublas_lt_matmul_thunk.cc",
-    ]),
-    hdrs = if_cuda_is_configured(["gpublas_lt_matmul_thunk.h"]) + if_rocm_is_configured([
-        "gpublas_lt_matmul_thunk.h",
-    ]),
+    srcs = if_gpu_is_configured(["gpublas_lt_matmul_thunk.cc"]),
+    hdrs = if_gpu_is_configured(["gpublas_lt_matmul_thunk.h"]),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
@@ -1343,12 +1339,7 @@ cc_library(
         "//xla/stream_executor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
-    ]) + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cublas_lt_header",
-        "//xla/stream_executor/cuda:cublas_plugin",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor/rocm:hipblas_lt_header",
-    ]),
+    ])
 )
 
 cc_library(
