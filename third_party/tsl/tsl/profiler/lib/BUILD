@@ -334,6 +334,7 @@ cc_library(
     name = "profiler_collection",
     srcs = ["profiler_collection.cc"],
     hdrs = ["profiler_collection.h"],
+    visibility = set_external_visibility(["//tensorflow/compiler/xla/backends/profiler/plugin:__pkg__"]),
     deps = [
         ":profiler_interface",
         "//tsl/platform:status",

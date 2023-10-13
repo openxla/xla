@@ -1,3 +1,7 @@
+load(
+    "//xla:xla.bzl",
+    "xla_cc_test",
+)
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
@@ -48,4 +52,43 @@ cc_library(
         "@tsl//tsl/platform:logging",
     ],
     alwayslink = True,
+)
+
+cc_library(
+    name = "plugin_tracer_impl",
+    srcs = ["plugin_tracer_impl.cc"],
+    hdrs = ["plugin_tracer_impl.h"],
+    visibility = ["//xla/pjrt/c:__pkg__"],
+    deps = [
+        ":profiler_c_api_hdrs",
+        ":profiler_error",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/profiler/lib:profiler_collection",
+        "@tsl//tsl/profiler/lib:profiler_factory",
+        "@tsl//tsl/profiler/lib:profiler_factory_impl",
+        "@tsl//tsl/profiler/lib:profiler_interface",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+    alwayslink = True,
+)
+
+xla_cc_test(
+    name = "plugin_tracer_impl_test",
+    srcs = ["plugin_tracer_impl_test.cc"],
+    deps = [
+        ":plugin_tracer",
+        ":plugin_tracer_impl",
+        ":profiler_c_api_hdrs",
+        ":profiler_error",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/profiler/lib:profiler_factory",
+        "@tsl//tsl/profiler/lib:profiler_interface",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/profiler/utils:xplane_builder",
+        "@tsl//tsl/profiler/utils:xplane_visitor",
+    ],
 )
