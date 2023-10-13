@@ -225,6 +225,7 @@ cc_library(
         ":logging",
         ":mutex",
         ":scanner",
+        ":str_util",
         ":strcat",
         ":stringpiece",
         ":types",
@@ -1311,7 +1312,10 @@ tsl_cc_test(
     size = "small",
     srcs = ["path_test.cc"],
     deps = [
+        ":env",
+        ":env_impl",
         ":path",
+        ":stringpiece",
         ":test",
         ":test_main",
     ],
