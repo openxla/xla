@@ -421,39 +421,31 @@ tsl::Status BlasLt::MatmulPlan::DoMatmul(
 
 namespace {
 
-using cudaDataType_t = hipblasDatatype_t;
-#define CUDA_R_16BF HIPBLAS_R_16B
-#define CUDA_R_16F HIPBLAS_R_16F
-#define CUDA_R_32F HIPBLAS_R_32F
-#define CUDA_R_64F HIPBLAS_R_64F
-#define CUDA_C_32F HIPBLAS_C_32F
-#define CUDA_C_64F HIPBLAS_C_64F
-
-template <cudaDataType_t CudaT>
-struct CudaToNativeT;
+template <hipblasltDatatype_t>
+struct HipToNativeT;
 
 template <>
-struct CudaToNativeT<CUDA_R_16BF> {
+struct HipToNativeT<HIPBLASLT_R_16B> {
   using type = Eigen::bfloat16;
 };
 template <>
-struct CudaToNativeT<CUDA_R_16F> {
+struct HipToNativeT<HIPBLASLT_R_16F> {
   using type = Eigen::half;
 };
 template <>
-struct CudaToNativeT<CUDA_R_32F> {
+struct HipToNativeT<HIPBLASLT_R_32F> {
   using type = float;
 };
 template <>
-struct CudaToNativeT<CUDA_R_64F> {
+struct HipToNativeT<HIPBLASLT_R_64F> {
   using type = double;
 };
 template <>
-struct CudaToNativeT<CUDA_C_32F> {
+struct HipToNativeT<HIPBLASLT_C_32F> {
   using type = complex64;
 };
 template <>
-struct CudaToNativeT<CUDA_C_64F> {
+struct HipToNativeT<HIPBLASLT_C_64F> {
   using type = complex128;
 };
 
@@ -476,22 +468,22 @@ tsl::Status BlasLt::MatmulPlan::ExecuteOnStream(
 #define TYPED_MATMUL(SCALENTYPE, ATYPE, BTYPE, CTYPE, DTYPE)                \
   if (operand_types == std::make_tuple(ATYPE, BTYPE, CTYPE, DTYPE)) {       \
     return gpu::BlasLt::MatmulPlan::DoMatmul<                               \
-        SCALENTYPE, CudaToNativeT<ATYPE>::type, CudaToNativeT<BTYPE>::type, \
-        CudaToNativeT<CTYPE>::type, CudaToNativeT<DTYPE>::type>(            \
+        SCALENTYPE, HipToNativeT<ATYPE>::type, HipToNativeT<BTYPE>::type, \
+        HipToNativeT<CTYPE>::type, HipToNativeT<DTYPE>::type>(            \
         stream, alpha_, a, b, beta_, c, d, bias, aux, a_scale, b_scale,     \
         c_scale, d_scale, d_amax, algorithm, scratch_allocator,             \
         profile_result);                                                    \
   }
 
   // Other data types:
-  TYPED_MATMUL(float, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_16BF)
-  TYPED_MATMUL(float, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_16F)
-  TYPED_MATMUL(float, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_32F, CUDA_R_32F)
-  TYPED_MATMUL(float, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F, CUDA_R_32F)
-  TYPED_MATMUL(float, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F)
-  TYPED_MATMUL(double, CUDA_R_64F, CUDA_R_64F, CUDA_R_64F, CUDA_R_64F)
-  TYPED_MATMUL(complex64, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F, CUDA_C_32F)
-  TYPED_MATMUL(complex128, CUDA_C_64F, CUDA_C_64F, CUDA_C_64F, CUDA_C_64F)
+  TYPED_MATMUL(float, HIPBLASLT_R_16B, HIPBLASLT_R_16B, HIPBLASLT_R_16B, HIPBLASLT_R_16B)
+  TYPED_MATMUL(float, HIPBLASLT_R_16F, HIPBLASLT_R_16F, HIPBLASLT_R_16F, HIPBLASLT_R_16F)
+  TYPED_MATMUL(float, HIPBLASLT_R_16B, HIPBLASLT_R_16B, HIPBLASLT_R_32F, HIPBLASLT_R_32F)
+  TYPED_MATMUL(float, HIPBLASLT_R_16F, HIPBLASLT_R_16F, HIPBLASLT_R_32F, HIPBLASLT_R_32F)
+  TYPED_MATMUL(float, HIPBLASLT_R_32F, HIPBLASLT_R_32F, HIPBLASLT_R_32F, HIPBLASLT_R_32F)
+  TYPED_MATMUL(double, HIPBLASLT_R_64F, HIPBLASLT_R_64F, HIPBLASLT_R_64F, HIPBLASLT_R_64F)
+  TYPED_MATMUL(complex64, HIPBLASLT_C_32F, HIPBLASLT_C_32F, HIPBLASLT_C_32F, HIPBLASLT_C_32F)
+  TYPED_MATMUL(complex128, HIPBLASLT_C_64F, HIPBLASLT_C_64F, HIPBLASLT_C_64F, HIPBLASLT_C_64F)
 
 #undef TYPED_MATMUL
 

@@ -242,7 +242,7 @@ cc_library(
         ":conv",
         ":conv_reorder",
         ":cub_sort",
-        ":cublas_lt_matmul",
+        ":gpublas_lt_matmul",
         ":custom_call",
         ":custom_call_registry",
         ":fft",
@@ -339,7 +339,7 @@ xla_cc_test(
     name = "topk_kernel_test",
     srcs = if_cuda_is_configured(["topk_kernel_test.cc"]),
     linkstatic = 1,
-    tags = tf_cuda_tests_tags(),
+    tags = ["no_rocm"] + tf_cuda_tests_tags(),
     deps = [
         ":topk_kernel",
         "//xla:xla_data_proto_cc",
@@ -549,9 +549,9 @@ cc_library(
 )
 
 cc_library(
-    name = "cublas_lt_matmul",
-    srcs = ["cublas_lt_matmul.cc"],
-    hdrs = ["cublas_lt_matmul.h"],
+    name = "gpublas_lt_matmul",
+    srcs = ["gpublas_lt_matmul.cc"],
+    hdrs = ["gpublas_lt_matmul.h"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM"]),
     deps = [
         ":support",

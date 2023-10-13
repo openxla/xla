@@ -343,7 +343,7 @@ cc_library(
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ] + if_gpu_is_configured([
         ":cub_sort_thunk",
-        ":cublas_lt_matmul_thunk",
+        ":gpublas_lt_matmul_thunk",
         ":ir_emitter_triton",
         "//xla/service/gpu/runtime3:cholesky_thunk",
         "//xla/service/gpu/runtime3:triangular_solve_thunk",
@@ -1324,12 +1324,12 @@ cc_library(
 )
 
 cc_library(
-    name = "cublas_lt_matmul_thunk",
-    srcs = if_cuda_is_configured(["cublas_lt_matmul_thunk.cc"]) + if_rocm_is_configured([
-        "cublas_lt_matmul_thunk.cc",
+    name = "gpublas_lt_matmul_thunk",
+    srcs = if_cuda_is_configured(["gpublas_lt_matmul_thunk.cc"]) + if_rocm_is_configured([
+        "gpublas_lt_matmul_thunk.cc",
     ]),
-    hdrs = if_cuda_is_configured(["cublas_lt_matmul_thunk.h"]) + if_rocm_is_configured([
-        "cublas_lt_matmul_thunk.h",
+    hdrs = if_cuda_is_configured(["gpublas_lt_matmul_thunk.h"]) + if_rocm_is_configured([
+        "gpublas_lt_matmul_thunk.h",
     ]),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",

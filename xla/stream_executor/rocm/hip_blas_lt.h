@@ -24,7 +24,6 @@ limitations under the License.
 
 #include "rocm/rocm_config.h"
 #include "xla/stream_executor/rocm/hip_blas_utils.h"
-#include "xla/stream_executor/rocm/hipblaslt_wrapper.h"
 
 namespace stream_executor {
 
@@ -43,7 +42,7 @@ class BlasLt : public gpu::BlasLt {
   struct MatrixLayout {
     static tsl::StatusOr<MatrixLayout> Create(const gpu::MatrixLayout& m);
 
-    hipblasDatatype_t type() const { return HIPBLAS_R_32F; }
+    hipblasltDatatype_t type() const { return HIPBLASLT_R_32F; }
     hipblasLtMatrixLayout_t get() const { return handle_.get(); }
 
    private:
@@ -65,7 +64,7 @@ class BlasLt : public gpu::BlasLt {
     hipblasLtComputeType_t compute_type() const {
       return HIPBLASLT_COMPUTE_F32;
     }
-    hipblasDatatype_t scale_type() const { return HIPBLAS_R_32F; }
+    hipblasltDatatype_t scale_type() const { return HIPBLASLT_R_32F; }
     hipblasPointerMode_t pointer_mode() const {
       return HIPBLAS_POINTER_MODE_HOST;
     }
