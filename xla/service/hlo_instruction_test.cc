@@ -749,8 +749,13 @@ TEST_F(HloInstructionTest, PreserveMetadataInFusionAndClone) {
   EXPECT_TRUE(protobuf_util::ProtobufEquals(
       metadata, fusion->fused_expression_root()->operand(0)->metadata()));
 
-  auto cloned = fusion->CloneWithNewOperands(fusion->shape(), {});
+  std::string new_name = "foobarfoo";
+  HloCloneContext context(module.get(), new_name);
+  auto cloned = fusion->CloneWithNewOperands(fusion->shape(), {}, &context);
   EXPECT_TRUE(protobuf_util::ProtobufEquals(metadata, fusion->metadata()));
+
+  size_t index = cloned->name().rfind(new_name);
+  EXPECT_TRUE(index != std::string::npos);
 }
 
 TEST_F(HloInstructionTest, BinaryCallOp) {

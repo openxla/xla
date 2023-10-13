@@ -45,6 +45,13 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/lib/gtl/iterator_range.h"
+#include "tsl/lib/gtl/map_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/human_readable_json.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -75,13 +82,6 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/gtl/iterator_range.h"
-#include "tsl/lib/gtl/map_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/human_readable_json.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -2074,6 +2074,38 @@ bool HloInstruction::HasSideEffect() const {
          execution_threads_set.contains(execution_thread);
 }
 
+void HloInstruction::AddSuffixToInstructionName(const std::string& suffix) {
+  // If an instruction is cloned multiple times avoid names like
+  // foo.suffix.suffix.suffix. Instead of repeating the suffix add a numeric
+  // suffix. Specifically, the clone of foo.suffix is named foo.suffix2, the
+  // clone of foo.suffix2 is named foo.suffix3 and so on.
+  const std::string dot_suffix = "." + suffix;
+  size_t index = name().rfind(dot_suffix);
+  if (index == std::string::npos) {
+    // Existing name does not include ".suffix".
+    this->name_ = absl::StrCat(name(), dot_suffix);
+  } else {
+    // Existing name includes ".suffix". Determine if substring after
+    // ".suffix" is numeric and should be replaced with an incremented number.
+    auto after_suffix = name().substr(index + dot_suffix.size());
+    if (after_suffix.empty()) {
+      // Existing name ends in ".suffix". New name should end in ".suffix2".
+      this->name_ = absl::StrCat(name(), "2");
+    } else {
+      // If names ends with .suffix[0-9]+ then replace with a suffix with the
+      // numeric value incremented.
+      int64_t numeric_suffix;
+      if (absl::SimpleAtoi(after_suffix, &numeric_suffix)) {
+        this->name_ =
+            StrCat(name().substr(0, index), dot_suffix, numeric_suffix + 1);
+      } else {
+        // Substring after ".suffix" is non-numeric.
+        this->name_ = absl::StrCat(name(), dot_suffix);
+      }
+    }
+  }
+}
+
 std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* context) const {
@@ -2281,6 +2313,9 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
                  ? context->module()->DeepCloneComputation(callee, context)
                  : callee;
     });
+    if (!context->suffix().empty()) {
+      clone->AddSuffixToInstructionName(context->suffix());
+    }
   }
   return clone;
 }
@@ -2321,35 +2356,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewShape(
   if (suffix.empty()) {
     clone->name_.assign(name().begin(), name().end());
   } else {
-    // If an instruction is cloned multiple times avoid names like
-    // foo.suffix.suffix.suffix. Instead of repeating the suffix add a numeric
-    // suffix. Specifically, the clone of foo.suffix is named foo.suffix2, the
-    // clone of foo.suffix2 is named foo.suffix3 and so on.
-    const std::string dot_suffix = "." + suffix;
-    size_t index = name().rfind(dot_suffix);
-    if (index == std::string::npos) {
-      // Existing name does not include ".suffix".
-      clone->name_ = absl::StrCat(name(), dot_suffix);
-    } else {
-      // Existing name includes ".suffix". Determine if substring after
-      // ".suffix" is numeric and should be replaced with an incremented number.
-      auto after_suffix = name().substr(index + dot_suffix.size());
-      if (after_suffix.empty()) {
-        // Existing name ends in ".suffix". New name should end in ".suffix2".
-        clone->name_ = absl::StrCat(name(), "2");
-      } else {
-        // If names ends with .suffix[0-9]+ then replace with a suffix with the
-        // numeric value incremented.
-        int64_t numeric_suffix;
-        if (absl::SimpleAtoi(after_suffix, &numeric_suffix)) {
-          clone->name_ =
-              StrCat(name().substr(0, index), dot_suffix, numeric_suffix + 1);
-        } else {
-          // Substring after ".suffix" is non-numeric.
-          clone->name_ = absl::StrCat(name(), dot_suffix);
-        }
-      }
-    }
+    clone->AddSuffixToInstructionName(suffix);
   }
   return clone;
 }
