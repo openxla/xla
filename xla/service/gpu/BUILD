@@ -739,6 +739,7 @@ cc_library(
         "//xla/stream_executor",
         "//xla/translate/mhlo_to_hlo:location_exporter",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status",
     ],
