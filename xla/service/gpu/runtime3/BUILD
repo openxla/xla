@@ -154,3 +154,24 @@ cc_library(
         "@tsl//tsl/platform:errors",
     ],
 )
+
+cc_library(
+    name = "triangular_solve_thunk",
+    srcs = if_gpu_is_configured(["triangular_solve_thunk.cc"]),
+    hdrs = if_gpu_is_configured(["triangular_solve_thunk.h"]),
+    deps = if_gpu_is_configured([
+        "@com_google_absl//absl/strings:str_format",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/service/gpu:precompiled_kernels",
+        "//xla/service/gpu:thunk",
+        "//xla:types",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:buffer_assignment",
+        "//xla/hlo/ir:hlo",
+        "@tsl//tsl/platform:logging",
+        "//xla/stream_executor",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor/gpu:gpu_asm_opts",
+    ]) + ["@tsl//tsl/platform:status"],
+)
