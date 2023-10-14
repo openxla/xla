@@ -338,7 +338,7 @@ class ShapeIndex:
 """
 
 
-def shape_from_pyval(pyval, layout: Sequence[int] | None = None):
+def shape_from_pyval(pyval, layout: Optional[Sequence[int]] = None):
   """Returns a Shape that describes a tuple-tree of Numpy arrays."""
 
   def convert(pyval):
