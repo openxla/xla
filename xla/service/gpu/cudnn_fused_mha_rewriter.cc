@@ -577,6 +577,14 @@ MatchFwdResult MatchSoftmaxDropoutBmm(MatchFwdResult previous_result,
                   m::Broadcast(m::Constant(&dropout).WithPredicate(IsScalar)),
                   m::Op())))))))));
 
+  // Form3 -> softmax - mul(dropout) - mul(scale) - BMM2
+  auto dropout_softmax_pattern_form_3 = m::MultiplyAnyOrder(
+      m::MultiplyAnyOrder(
+          OptionalConvert(GetUnfusedReduceMaxSumSoftmaxPattern(
+              &softmax_input, &softmax_reduce_sum, &softmax_reduce_sum_bcast)),
+          m::Op()),
+      m::Broadcast(m::Constant(&dropout).WithPredicate(IsScalar)));
+
   // Try matching BMM1 - (Scale) - (Bias) - (Mask) - Softmax - (Dropout) -
   // BMM2 Dropout with non-zero drop rate has select(divide(softmax_output,
   // broadcast(1-dropout_rate)))
@@ -590,7 +598,8 @@ MatchFwdResult MatchSoftmaxDropoutBmm(MatchFwdResult previous_result,
                                    &softmax_input, &softmax_reduce_sum,
                                    &softmax_reduce_sum_bcast))),
                            dropout_softmax_pattern_form_1,
-                           dropout_softmax_pattern_form_2));
+                           dropout_softmax_pattern_form_2,
+                           dropout_softmax_pattern_form_3));
 
   if (!Match(instr, softmax_dropout_bmm2_pattern) ||
       !IsSupportedPrimitiveType(bmm_2)) {
@@ -925,8 +934,16 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
                         m::Broadcast(OptionalConvert(
                             m::Constant().WithPredicate(IsScalar))),
                         m::Op()))))))));
+  auto bwd_dropout_pattern_form_3 = OptionalConvert(m::MultiplyAnyOrder(
+      m::MultiplyAnyOrder(
+          m::Op().WithPredicate([&](const HloInstruction* instr) {
+            return instr == match_result.matched_bmm_2_grad_2;
+          }),
+          m::Broadcast(m::Constant().WithPredicate(IsScalar))),
+      m::Op()));
   auto bwd_dropout_pattern = m::AnyOf<HloInstruction>(
-      bwd_dropout_pattern_form_1, bwd_dropout_pattern_form_2);
+      bwd_dropout_pattern_form_1, bwd_dropout_pattern_form_2,
+      bwd_dropout_pattern_form_3);
   // Backward softmax pattern
   HloInstruction* bwd_softmax_input = nullptr;
   HloInstruction* exp_1;
