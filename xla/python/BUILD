@@ -879,7 +879,12 @@ cc_library(
         "@tsl//tsl/profiler/rpc/client:capture_profile",
         "@tsl//tsl/profiler/rpc/client:profiler_client_impl",
         "@pybind11",
-    ],
+    ] + select({
+        ":gpu_enabled": [
+            "//xla/backends/profiler/gpu:device_tracer",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 cc_library(
