@@ -534,39 +534,6 @@ cc_library(
 )
 
 cc_library(
-    name = "stream_executor_pimpl_header",
-    hdrs = [
-        "device_description.h",
-        "kernel.h",
-        "kernel_cache_config.h",
-        "stream_executor_pimpl.h",
-    ],
-    visibility = ["//visibility:private"],
-    deps = [
-        ":device_description_proto_cc",
-        ":platform",
-        ":stream_executor_headers",
-        ":stream_executor_internal",
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:optional",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/protobuf:dnn_proto_cc",
-    ],
-)
-
-# It implements :stream_executor_pimpl_header
-cc_library(
     name = "stream_executor_pimpl",
     srcs = [
         "stream.cc",
