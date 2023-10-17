@@ -69,7 +69,7 @@ ENTRY TestComputation {
 }
 
 // Size of the radix sort tests.
-static constexpr int kRadixSortTestSize = 100;
+static constexpr int kRadixSortTestSize = 100000;
 
 template <typename T>
 bool CheckOrder(T lhs, T rhs, bool asc, int pos) {
@@ -106,9 +106,9 @@ HloModule TestModule
 
 ENTRY %main {
   %input = $0[$1] parameter(0)
-  %sort = ($0[$1], u8[1000]) custom-call(%input),
+  %sort = ($0[$1], u8[$2]) custom-call(%input),
       custom_call_target="__cub$$DeviceRadixSort",
-      backend_config="{\"descending\": $2}"
+      backend_config="{\"descending\": $3}"
   ROOT %gte = get-tuple-element(%sort), index=0
 }
 )";
@@ -117,7 +117,9 @@ ENTRY %main {
   std::string hlo = absl::Substitute(
       kHloTemplate,
       GetTypeName(std::get<0>(GetParam())->shape().element_type()),
-      kRadixSortTestSize, ascending ? "false" : "true");
+      kRadixSortTestSize, 
+      kRadixSortTestSize*10,  // added scratch buffer size
+      ascending ? "false" : "true");
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
   std::vector<Literal*> literals = {std::get<0>(GetParam()).get()};
@@ -143,9 +145,9 @@ HloModule TestModule
 ENTRY %main {
   %keys = $0[$2] parameter(0)
   %values = $1[$2] convert(%keys)
-  ROOT %sort = ($0[$2], $1[$2], u8[1000]) custom-call(%keys, %values),
+  ROOT %sort = ($0[$2], $1[$2], u8[$3]) custom-call(%keys, %values),
       custom_call_target="__cub$$DeviceRadixSort",
-      backend_config="{\"descending\": $3}"
+      backend_config="{\"descending\": $4}"
 }
 )";
 
@@ -154,6 +156,7 @@ ENTRY %main {
       kHloTemplate,
       GetTypeName(std::get<0>(GetParam())->shape().element_type()),
       GetTypeName(std::get<1>(GetParam())), kRadixSortTestSize,
+      kRadixSortTestSize * 20,  // added scratch buffer size
       ascending ? "false" : "true");
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
@@ -186,9 +189,11 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(
         ::testing::Values(
             // TODO(b/300112551): upgrade CUB to version 1.13
-            // CreateRandomLiteral<BF16, bfloat16>(
-            //   bfloat16(),
-            //   Eigen::bfloat16_impl::float_to_bfloat16_rtne<true>(1)),
+// #if TENSORFLOW_USE_ROCM
+//             CreateRandomLiteral<BF16, bfloat16>(
+//               bfloat16(),
+//               Eigen::bfloat16_impl::float_to_bfloat16_rtne<true>(1)),
+// #endif              
             CreateRandomLiteral<F16, half>(
                 half(), Eigen::half_impl::float_to_half_rtne(1)),
             CreateRandomLiteral<F32, float>(0, 1),
