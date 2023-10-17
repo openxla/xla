@@ -83,10 +83,12 @@ StatusOr<bool> HloComputationDeduplicator::Run(
     // Ignore entry computation since it is called from outside and computations
     // with large number of instructions or large-size constants due to increase
     // in time taken to stringify.
+    // Also ignore computations that are associated with collective instructions.
     if (comp->IsEntryComputation() || comp->instruction_count() > 128 ||
-        ContainsLargeConstants(comp)) {
+        ContainsLargeConstants(comp) || comp->IsCollectiveCalledComputation()) {
       continue;
     }
+
     std::string comp_str = comp->ToString(options);
     auto poss_dup = unique_comps.find(comp_str);
     if (poss_dup != unique_comps.end() &&
