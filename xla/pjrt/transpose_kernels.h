@@ -705,12 +705,12 @@ struct TransposeMicroKernel {
         return AvxRectangularTransposeMicroKernelImpl<T, bs>::Apply(a, lda, b,
                                                                     ldb);
       }
-#endif
 #ifdef XLA_HAS_VEC128
       if constexpr (sizeof(T) * bs <= sizeof(__m128i)) {
         return Vec128RectangularTransposeMicroKernelImpl<T, bs>::Apply(a, lda,
                                                                        b, ldb);
       }
+#endif
 #endif
     }
     for (int i = 0; i < bs; ++i) {

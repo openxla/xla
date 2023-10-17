@@ -58,7 +58,10 @@ cc_library(
     name = "plugin_tracer_impl",
     srcs = ["plugin_tracer_impl.cc"],
     hdrs = ["plugin_tracer_impl.h"],
-    visibility = ["//xla/pjrt/c:__pkg__"],
+    visibility = [
+        "//learning/brain/research/pjrt:__pkg__",
+        "//xla/pjrt/c:__pkg__",
+    ],
     deps = [
         ":profiler_c_api_hdrs",
         ":profiler_error",
