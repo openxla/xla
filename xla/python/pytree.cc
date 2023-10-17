@@ -475,7 +475,7 @@ py::list PyTreeDef::FlattenUpTo(py::handle xs) const {
           // Convert to a py::list for py::repr to avoid having to stringify a
           // vector. This is error path so it is fine to pay conversion cost.
           throw std::invalid_argument(absl::StrFormat(
-              "Dict key mismatch; expected keys: %s; dict: %s.",
+              "Dict key mismatch; expected keys: %s; \n\n got dict: %s.",
               py::repr(py::cast(node.sorted_dict_keys)), py::repr(object)));
         }
         for (py::handle key : keys) {
