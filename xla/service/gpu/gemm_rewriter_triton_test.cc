@@ -23,13 +23,17 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
+#include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/xla.pb.h"
@@ -50,6 +54,18 @@ class GemmRewriterTritonTest : public HloTestBase {
   GemmRewriterTritonTest()
       : HloTestBase(/*verifier_layout_sensitive=*/true,
                     /*allow_mixed_precision_in_hlo_verifier=*/false) {}
+
+  DebugOptions GetDebugOptionsForTest() override {
+    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_triton_gemm_any(true);
+    return debug_options;
+  }
+
+  void CheckModule(HloModule& module, absl::string_view pattern) {
+    StatusOr<bool> filecheck_result = RunFileCheck(module.ToString(), pattern);
+    ASSERT_OK(filecheck_result.status());
+    EXPECT_TRUE(filecheck_result.value());
+  }
 
   se::GpuComputeCapability gpu_version_{
       se::CudaComputeCapability{se::CudaComputeCapability::AMPERE, 0}};
@@ -79,7 +95,8 @@ ENTRY e {
 }
 
 TEST_F(GemmRewriterTritonTest, UnsupportedTransposeIsNotFused) {
-  auto module = ParseAndReturnVerifiedModule(R"(
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
 ENTRY e {
   p0 = f16[1,512,8,1024]{3,1,0,2} parameter(0)
   c = f16[1,512,8,1024]{3,2,1,0} copy(p0)
@@ -87,9 +104,16 @@ ENTRY e {
   p1 = f16[128,1024]{1,0} parameter(1)
   ROOT d = f16[4096,128]{1,0} dot(b, p1),
     lhs_contracting_dims={1}, rhs_contracting_dims={1}
-})")
-                    .value();
-  EXPECT_FALSE(GemmRewriterTriton(gpu_version_).Run(module.get()).value());
+})"));
+
+  ASSERT_TRUE(GemmRewriterTriton(gpu_version_).Run(module.get()).value());
+
+  CheckModule(*module, R"(
+; CHECK: computation
+; CHECK-NOT: copy
+; CHECK-NOT: transpose
+; CHECK: ENTRY
+)");
 }
 
 TEST_F(GemmRewriterTritonTest, BitcastChain) {
@@ -145,7 +169,14 @@ ENTRY e {
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
   ROOT c = u8[128,512] convert(r)
 })"));
-  EXPECT_FALSE(GemmRewriterTriton(gpu_version_).Run(module.get()).value());
+
+  ASSERT_TRUE(GemmRewriterTriton(gpu_version_).Run(module.get()).value());
+
+  CheckModule(*module, R"(
+; CHECK: computation
+; CHECK-NOT: convert
+; CHECK: ENTRY
+)");
 }
 
 using TritonDotAnalysisTest = HloTestBase;
@@ -739,6 +770,8 @@ ENTRY e {
           module->entry_computation()->root_instruction()),
       cc));
   EXPECT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
 }
 
 TEST_F(GemmRewriterTritonTest, FuseSliceOfParameterWithOtherUsers) {
@@ -756,6 +789,12 @@ ENTRY e {
 
   const se::CudaComputeCapability cc{se::CudaComputeCapability::VOLTA, 0};
   EXPECT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+
+  CheckModule(*module, R"(
+; CHECK: computation
+; CHECK: slice
+; CHECK: ENTRY
+)");
 }
 
 TEST_F(GemmRewriterTritonTest, DoNotFuseSliceOfMixedDimensions) {
@@ -772,7 +811,13 @@ ENTRY e {
 })"));
 
   const se::CudaComputeCapability cc{se::CudaComputeCapability::AMPERE, 0};
-  EXPECT_FALSE(GemmRewriterTriton(cc).Run(module.get()).value());
+  ASSERT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+
+  CheckModule(*module, R"(
+; CHECK: computation
+; CHECK-NOT: slice
+; CHECK: ENTRY
+)");
 }
 
 TEST_F(GemmRewriterTritonTest, DoNotFuseSlicesOfNonMajorFragments) {
@@ -792,7 +837,13 @@ ENTRY e {
 })"));
 
   const se::CudaComputeCapability cc{se::CudaComputeCapability::AMPERE, 0};
-  EXPECT_FALSE(GemmRewriterTriton(cc).Run(module.get()).value());
+  ASSERT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+
+  CheckModule(*module, R"(
+; CHECK: computation
+; CHECK-NOT: slice
+; CHECK: ENTRY
+)");
 }
 
 TEST_F(GemmRewriterTritonTest, SliceToDegenerateIsSkipped) {
@@ -807,8 +858,15 @@ ENTRY e {
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 )"));
+
   const se::CudaComputeCapability cc{se::CudaComputeCapability::AMPERE, 0};
-  EXPECT_FALSE(GemmRewriterTriton(cc).Run(module.get()).value());
+  ASSERT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+
+  CheckModule(*module, R"(
+; CHECK: computation
+; CHECK-NOT: slice
+; CHECK: ENTRY
+)");
 }
 
 TEST_F(GemmRewriterTritonTest, MultipleUsesAreHandled) {
@@ -868,14 +926,23 @@ ENTRY e {
   ROOT r = f32[8192,768] dot(a, p1),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })"));
+
   const se::CudaComputeCapability cc{se::CudaComputeCapability::AMPERE, 0};
-  EXPECT_FALSE(GemmRewriterTriton(cc).Run(module.get()).value());
+  ASSERT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+
+  CheckModule(*module, R"(
+; CHECK: computation
+; CHECK-NOT: broadcast
+; CHECK-NOT: add
+; CHECK: ENTRY
+)");
 }
 
 class GemmRewriterTritonLevel2Test : public GemmRewriterTritonTest {
  public:
   DebugOptions GetDebugOptionsForTest() override {
-    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
+    DebugOptions debug_options =
+        GemmRewriterTritonTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_triton_fusion_level(2);
     return debug_options;
   }
@@ -1168,10 +1235,15 @@ ENTRY e {
 
   ROOT a = f16[400,400] add(dot0, dot1)
 })"));
-  EXPECT_FALSE(GemmRewriterTriton(se::CudaComputeCapability{
-                                      se::CudaComputeCapability::AMPERE, 0})
-                   .Run(module.get())
-                   .value());
+
+  const se::CudaComputeCapability cc{se::CudaComputeCapability::AMPERE, 0};
+  ASSERT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+
+  CheckModule(*module, R"(
+; CHECK: computation
+; CHECK-NOT: convert
+; CHECK: ENTRY
+)");
 }
 
 TEST_F(GemmRewriterTritonLevel2Test, NarrowingConversionIsAlwaysBetterToFuse) {
