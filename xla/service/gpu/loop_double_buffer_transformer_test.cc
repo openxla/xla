@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/container/flat_hash_set.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -356,9 +356,9 @@ ENTRY main {
   EXPECT_EQ(channel_ids.size(), 2);
 }
 
+// The following 2 tests also address the regression described here:
+// https://github.com/openxla/xla/issues/6353
 TEST_F(GpuLoopDoubleBufferTransformerTest, NestedWhileLoopRemainsFlattened) {
-  // TODO(https://github.com/openxla/xla/issues/6353): remove tuple root
-  // workaround in the body computation.
   const char* const kModuleString = R"(
 HloModule loop_unrolling_nested_while_loop_remains_flattened
 
@@ -386,9 +386,7 @@ condition {
 
 body {
   input_tuple = (s32[]) parameter(0)
-  nested_loop_result = (s32[]) while(input_tuple), condition=condition_nested, body=body_nested
-  tuple_element = s32[] get-tuple-element(nested_loop_result), index=0
-  ROOT output = (s32[]) tuple(tuple_element)
+  ROOT output = (s32[]) while(input_tuple), condition=condition_nested, body=body_nested
 }
 
 ENTRY main {
@@ -420,8 +418,105 @@ ENTRY main {
   // We expect that the nested while loop has been duplicated, along with its
   // associated computations.
   EXPECT_EQ(while_loops_callees.size(), 6);
+
+  HloInstruction* entry_while_instruction =
+      module->entry_computation()->root_instruction();
+  TF_ASSERT_OK_AND_ASSIGN(
+      WhileLoopBackendConfig config,
+      entry_while_instruction->backend_config<WhileLoopBackendConfig>());
+  int64_t exact_trip_count = config.known_trip_count().n();
+  // We expect that after unrolling, the total trip count is half of original
+  // count.
+  EXPECT_EQ(exact_trip_count, 5);
+  // We expect that after unrolling, there should be
+  // 2 whiles in the outter level loop.
+  EXPECT_EQ(CountInstructions((*entry_while_instruction->while_body()),
+                              HloOpcode::kWhile),
+            2);
 }
 
+TEST_F(GpuLoopDoubleBufferTransformerTest,
+       NestedWhileLoopRemainsFlattenedOddTripCount) {
+  const char* const kModuleString = R"(
+HloModule loop_unrolling_nested_while_loop_remains_flattened
+
+condition_nested {
+  input_tuple = (s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=0
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+body_nested {
+ input_tuple = (s32[]) parameter(0)
+ cond = s32[] get-tuple-element(input_tuple), index=0
+ one = s32[] constant(1)
+ cond_plus_1 = s32[] add(cond, one)
+ ROOT output = (s32[]) tuple(cond_plus_1)
+}
+
+condition {
+  input_tuple = (s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=0
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+body {
+  input_tuple = (s32[]) parameter(0)
+  ROOT output = (s32[]) while(input_tuple), condition=condition_nested, body=body_nested
+}
+
+ENTRY main {
+ param_0 = (s32[]) parameter(0)
+ ROOT while = (s32[]) while(param_0), condition=condition, body=body, backend_config={"known_trip_count":{"n":"11"}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  HloDCE dce;
+  TupleSimplifier tuple_simp;
+  ASSERT_IS_OK(double_buffer.Run(module.get()).status());
+  ASSERT_IS_OK(tuple_simp.Run(module.get()).status());
+  ASSERT_IS_OK(dce.Run(module.get()).status());
+
+  absl::flat_hash_set<const HloComputation*> while_loops_callees;
+
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instr : computation->instructions()) {
+      if (instr->opcode() == HloOpcode::kWhile) {
+        EXPECT_TRUE(
+            while_loops_callees.insert(instr->while_condition()).second);
+        EXPECT_TRUE(while_loops_callees.insert(instr->while_body()).second);
+      }
+    }
+  }
+
+  // We expect that the nested while loop has been duplicated, along with its
+  // associated computations.
+  EXPECT_EQ(while_loops_callees.size(), 8);
+
+  HloInstruction* entry_while_instruction =
+      module->entry_computation()->root_instruction();
+  TF_ASSERT_OK_AND_ASSIGN(
+      WhileLoopBackendConfig config,
+      entry_while_instruction->backend_config<WhileLoopBackendConfig>());
+  int64_t exact_trip_count = config.known_trip_count().n();
+  // We expect that after unrolling, the total trip count is half of original
+  // count.
+  EXPECT_EQ(exact_trip_count, 5);
+  // We expect that after unrolling, there should be
+  // 2 whiles in the outter level loop.
+  EXPECT_EQ(CountInstructions((*entry_while_instruction->while_body()),
+                              HloOpcode::kWhile),
+            2);
+
+  // We expect that after unrolling, there should be 2 whiles
+  // in the main computation.
+  EXPECT_EQ(
+      CountInstructions((*module->entry_computation()), HloOpcode::kWhile), 2);
+}
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
