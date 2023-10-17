@@ -1,5 +1,17 @@
 # PJRT C API changelog
 
+## 1.0 (Oct 17, 2023)
+
+* Bumping version to 1.0 to signify beginning of ABI compatibility guarantees
+  (although we are unofficially best-effort honoring previous changes as
+  well). See
+  https://docs.google.com/document/d/1TKB5NyGtdzrpgw5mpyFjVAhJjpSNdF31T6pjPl_UT2o/edit
+  for ABI compatibility details. No other changes.
+
+## 0.35 (Oct 17, 2023)
+
+* Added const to a bunch of lists and value types.
+
 ## 0.34 (Oct 9, 2023)
 
 * Added PJRT_Structure_Type::PJRT_Structure_Type_Profiler.

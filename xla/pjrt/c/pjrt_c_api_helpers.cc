@@ -480,7 +480,8 @@ xla::StatusOr<std::vector<PJRT_NamedValue>> ConvertToPjRtNamedValueList(
 }
 
 absl::flat_hash_map<std::string, xla::PjRtValueType>
-ConvertFromPjRtNamedValueList(PJRT_NamedValue* c_value_list, size_t list_size) {
+ConvertFromPjRtNamedValueList(const PJRT_NamedValue* c_value_list,
+                              size_t list_size) {
   absl::flat_hash_map<std::string, xla::PjRtValueType> cpp_value_map;
   for (int i = 0; i < list_size; ++i) {
     const PJRT_NamedValue& c_value = c_value_list[i];
@@ -651,8 +652,8 @@ PJRT_DeviceDescription* GetDeviceDescription(const PJRT_Api* api,
   return args.device_description;
 }
 
-absl::Span<PJRT_Memory*> GetAddressableMemories(const PJRT_Api* api,
-                                                PJRT_Device* device) {
+absl::Span<PJRT_Memory* const> GetAddressableMemories(const PJRT_Api* api,
+                                                      PJRT_Device* device) {
   PJRT_Device_AddressableMemories_Args args;
   args.struct_size = PJRT_Device_AddressableMemories_Args_STRUCT_SIZE;
   args.priv = nullptr;

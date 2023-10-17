@@ -128,6 +128,27 @@ static bool IsPjRtCompatibilityEnabled() {
   return enabled;
 }
 
+static Status CheckVersionCompatibility(int framework_major,
+                                        int framework_minor, int plugin_major,
+                                        int plugin_minor) {
+  if (plugin_major != framework_major &&
+      // Special case: we allow frameworks at 1.x to work with 0.y plugins
+      // TODO(b/XXX): remove when we roll past this special case, i.e. when
+      // kMinPjRtMinor refers to a 1.x version
+      !(plugin_major == 0 && framework_major == 1)) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Mismatched PJRT plugin PJRT API major version (", plugin_major,
+        ") and framework PJRT API major version ", framework_major, ")."));
+  }
+  if (plugin_minor < kMinPjRtMinor) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Plugin PJRT API version ", plugin_major, ".", plugin_minor,
+        " is older than the minimum supported version ", framework_major, ".",
+        kMinPjRtMinor));
+  }
+  return Status::OK();
+}
+
 xla::Status InitializePjrtPlugin(absl::string_view device_type) {
   std::string canonicalize_device_type = CanonicalizeDeviceType(device_type);
   auto iter = pjrt_apis->find(canonicalize_device_type);
@@ -151,19 +172,10 @@ xla::Status InitializePjrtPlugin(absl::string_view device_type) {
   // TODO(b/305096260): improve the error message to something that the user can
   // act upon.
   if (IsPjRtCompatibilityEnabled()) {
-    if (pjrt_api->pjrt_api_version.major_version != PJRT_API_MAJOR) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Mismatched PJRT plugin PJRT API major version (",
-          pjrt_api->pjrt_api_version.major_version,
-          ") and framework PJRT API major version ", PJRT_API_MAJOR, ")."));
-    }
-    if (pjrt_api->pjrt_api_version.minor_version < kMinPjRtMinor) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Plugin PJRT API version ", pjrt_api->pjrt_api_version.major_version,
-          ".", pjrt_api->pjrt_api_version.minor_version,
-          " is older than the minimum supported version ", PJRT_API_MAJOR, ".",
-          kMinPjRtMinor));
-    }
+    TF_RETURN_IF_ERROR(
+        CheckVersionCompatibility(PJRT_API_MAJOR, PJRT_API_MINOR,
+                                  pjrt_api->pjrt_api_version.major_version,
+                                  pjrt_api->pjrt_api_version.minor_version));
   } else {
     if (pjrt_api->pjrt_api_version.major_version != PJRT_API_MAJOR ||
         pjrt_api->pjrt_api_version.minor_version != PJRT_API_MINOR) {
