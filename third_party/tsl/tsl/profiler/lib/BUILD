@@ -68,6 +68,7 @@ cc_library(
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_profiler_backends",
         "//tensorflow/compiler/xla/python:__pkg__",
+        "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),
     deps = [
         ":profiler_interface",
@@ -86,6 +87,7 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = set_external_visibility([
         "//tsl/profiler:internal",
+        "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),
     deps = [
         ":profiler_interface",
@@ -334,7 +336,10 @@ cc_library(
     name = "profiler_collection",
     srcs = ["profiler_collection.cc"],
     hdrs = ["profiler_collection.h"],
-    visibility = set_external_visibility(["//tensorflow/compiler/xla/backends/profiler/plugin:__pkg__"]),
+    visibility = set_external_visibility([
+        "//tensorflow/compiler/xla/backends/profiler/plugin:__pkg__",
+        "//learning/brain/tfrc/executor/stream_executor:__pkg__",
+    ]),
     deps = [
         ":profiler_interface",
         "//tsl/platform:status",
