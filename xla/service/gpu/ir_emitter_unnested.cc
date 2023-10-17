@@ -29,10 +29,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "lhlo/IR/lhlo_ops_structs.h"
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -40,6 +44,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Argument.h"
@@ -51,7 +56,9 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"  // from @llvm-project
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
@@ -61,10 +68,12 @@ limitations under the License.
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/IR/ValueRange.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from @llvm-project
@@ -76,6 +85,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
@@ -83,15 +93,20 @@ limitations under the License.
 #include "xla/mlir_hlo/transforms/gpu_passes.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/conditional_thunk.h"
 #include "xla/service/gpu/convolution_thunk.h"
 #include "xla/service/gpu/copy_thunk.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/fft_thunk.h"
 #include "xla/service/gpu/for_thunk.h"
 #include "xla/service/gpu/fused_mha_thunk.h"
+#include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/fusions/thunk_util.h"
+#include "xla/service/gpu/gemm_rewriter_triton.h"
 #include "xla/service/gpu/gemm_thunk.h"
 #include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
@@ -100,9 +115,11 @@ limitations under the License.
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/infeed_thunk.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/ir_emitter.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/ir_emitter_nested.h"
 #include "xla/service/gpu/kernel_arguments.h"
+#include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/kernel_thunk.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -119,11 +136,12 @@ limitations under the License.
 #include "xla/service/gpu/sequential_thunk.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/gpu/while_thunk.h"
-#include "xla/service/llvm_ir/buffer_assignment_util.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/kernel_support_library.h"
+#include "xla/service/llvm_ir/llvm_loop.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/service/llvm_ir/sort_util.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
@@ -132,16 +150,15 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
 #include "xla/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/translate/mhlo_to_hlo/location_exporter.h"
-#include "xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 #include "xla/translate/mhlo_to_lhlo_with_xla/mhlo_to_lhlo_with_xla.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/human_readable_json.h"
-#include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/protobuf/dnn.pb.h"
 
@@ -897,6 +914,23 @@ Status IrEmitterUnnested::EmitConvolutionThunk(mlir::Operation* op) {
   return OkStatus();
 }
 
+void SchedulePrefetchFor(GemmThunk* thunk,
+                         const ThunkSequence& thunk_sequence) {
+  // Scan the sequence of already scheduled thunks before this one to attach
+  // the prefetch kernel to.
+  auto prefetcher = thunk_sequence.crbegin();
+  while (prefetcher != thunk_sequence.crend() &&
+         prefetcher->get()->kind() != Thunk::kNcclAllReduceStart) {
+    ++prefetcher;
+  }
+  if (prefetcher != thunk_sequence.crend()) {
+    prefetcher->get()->buffer_to_prefetch_ = thunk->lhs_buffer();
+    // Schedule cache policy reset after the kernel for which prefetch is done.
+    thunk->buffer_to_reset_ = thunk->lhs_buffer();
+    VLOG(1) << "Prefetch scheduled.";
+  }
+}
+
 Status IrEmitterUnnested::EmitGemmThunk(mlir::Operation* op) {
   auto gemm = mlir::dyn_cast<mlir::lmhlo_gpu::GEMMOp>(op);
   TF_RET_CHECK(gemm != nullptr);
@@ -913,6 +947,11 @@ Status IrEmitterUnnested::EmitGemmThunk(mlir::Operation* op) {
       deterministic_ops);
 
   AddThunkToThunkSequence(std::move(thunk));
+  if (absl::StartsWith(mlir::mhlo::GetDebugNameFromLocation(op->getLoc()),
+                       "prefetch_target")) {
+    SchedulePrefetchFor(static_cast<GemmThunk*>(&*thunk_sequence_.back()),
+                        thunk_sequence_);
+  }
   return OkStatus();
 }
 

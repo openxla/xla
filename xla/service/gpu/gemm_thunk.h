@@ -41,6 +41,7 @@ class GemmThunk : public Thunk {
   Status ExecuteOnStream(const ExecuteParams& params) override;
   Status Initialize(se::StreamExecutor* executor,
                     ExecutableSource src) override;
+  const BufferAllocation::Slice& lhs_buffer() const { return lhs_buffer_; }
 
  private:
   const GemmConfig config_;

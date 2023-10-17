@@ -25,14 +25,18 @@ limitations under the License.
 #include <string_view>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/shape.h"
+#include "xla/status.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {
@@ -178,6 +182,9 @@ class Thunk {
   virtual void ClearCompileTimeInfo() { op_ = nullptr; }
 
   static absl::string_view KindToString(Thunk::Kind kind);
+
+  BufferAllocation::Slice buffer_to_prefetch_;
+  BufferAllocation::Slice buffer_to_reset_;
 
  private:
   Kind kind_;

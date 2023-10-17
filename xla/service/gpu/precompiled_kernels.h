@@ -55,6 +55,9 @@ Status MakeBatchPointers(se::Stream* stream, const se::GpuAsmOpts& asm_opts,
                          se::DeviceMemoryBase base_ptr, int stride_bytes, int n,
                          se::DeviceMemoryBase ptrs_out);
 
+Status Prefetch(se::Stream* stream, se::DeviceMemoryBase base_ptr,
+                bool do_reset = false);
+
 }  // namespace gpu
 }  // namespace xla
 #endif  // XLA_SERVICE_GPU_PRECOMPILED_KERNELS_H_

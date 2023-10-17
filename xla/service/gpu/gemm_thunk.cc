@@ -18,6 +18,7 @@ limitations under the License.
 #include <utility>
 
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/precompiled_kernels.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status.h"
 #include "xla/stream_executor/device_memory.h"
@@ -41,10 +42,23 @@ GemmThunk::GemmThunk(ThunkInfo thunk_info, GemmConfig config,
 Status GemmThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Running GEMM thunk";
   const BufferAllocations& allocs = *params.buffer_allocations;
-  return RunGemm(config_, allocs.GetDeviceAddress(lhs_buffer_),
-                 allocs.GetDeviceAddress(rhs_buffer_),
-                 allocs.GetDeviceAddress(output_buffer_), deterministic_,
-                 params.stream);
+  TF_RETURN_IF_ERROR(RunGemm(config_, allocs.GetDeviceAddress(lhs_buffer_),
+                             allocs.GetDeviceAddress(rhs_buffer_),
+                             allocs.GetDeviceAddress(output_buffer_),
+                             deterministic_, params.stream));
+  // Cache policy reset is executed after the thunk, which it is attached to,
+  // simultaneously with the next one.
+  if (buffer_to_reset_.allocation() != nullptr) {
+    se::Event event(params.stream->parent());
+    TF_RET_CHECK(event.Init());
+    params.stream->ThenRecordEvent(&event);
+    params.async_comms_streams[0]->ThenWaitFor(&event);
+    TF_RETURN_IF_ERROR(
+        Prefetch(params.async_comms_streams[0],
+                 params.buffer_allocations->GetDeviceAddress(buffer_to_reset_),
+                 /*do_reset=*/true));
+  }
+  return OkStatus();
 }
 
 Status GemmThunk::Initialize(se::StreamExecutor* executor,

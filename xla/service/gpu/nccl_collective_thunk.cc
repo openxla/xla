@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/global_device_id.h"
+#include "xla/service/gpu/precompiled_kernels.h"
 #include "xla/stream_executor/gpu/gpu_activation.h"
 #include "xla/util.h"
 
@@ -238,14 +239,25 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
   // Run the collective on main stream or using the async executor.
   Status status = [&]() {
     if (!IsAsync()) {
+      if (buffer_to_prefetch_.allocation() != nullptr) {
+        TF_RETURN_IF_ERROR(Prefetch(
+            params.async_comms_streams[GetAsyncStreamKind()],
+            params.buffer_allocations->GetDeviceAddress(buffer_to_prefetch_)));
+      }
       return RunNcclCollective(params, *params.stream, *comm);
     }
-    return async_->Execute(
+    TF_RETURN_IF_ERROR(async_->Execute(
         [this](const ExecuteParams& params, se::Stream& stream,
                ncclComm_t comm) {
           return RunNcclCollective(params, stream, comm);
         },
-        params, *comm, GetAsyncStreamKind());
+        params, *comm, GetAsyncStreamKind()));
+    if (buffer_to_prefetch_.allocation() != nullptr) {
+      return Prefetch(
+          params.stream,
+          params.buffer_allocations->GetDeviceAddress(buffer_to_prefetch_));
+    }
+    return OkStatus();
   }();
   TF_RETURN_IF_ERROR(status);
 
