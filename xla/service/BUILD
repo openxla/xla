@@ -1227,17 +1227,20 @@ cc_library(
     srcs = ["p2p_schedule_preparation.cc"],
     hdrs = ["p2p_schedule_preparation.h"],
     deps = [
+        ":collective_ops_utils",
         ":hlo_pass",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
+        "//xla/hlo/utils:hlo_query",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
