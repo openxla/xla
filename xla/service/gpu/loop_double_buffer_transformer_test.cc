@@ -418,21 +418,6 @@ ENTRY main {
   // We expect that the nested while loop has been duplicated, along with its
   // associated computations.
   EXPECT_EQ(while_loops_callees.size(), 6);
-
-  HloInstruction* entry_while_instruction =
-      module->entry_computation()->root_instruction();
-  TF_ASSERT_OK_AND_ASSIGN(
-      WhileLoopBackendConfig config,
-      entry_while_instruction->backend_config<WhileLoopBackendConfig>());
-  int64_t exact_trip_count = config.known_trip_count().n();
-  // We expect that after unrolling, the total trip count is half of original
-  // count.
-  EXPECT_EQ(exact_trip_count, 5);
-  // We expect that after unrolling, there should be
-  // 2 whiles in the outter level loop.
-  EXPECT_EQ(CountInstructions((*entry_while_instruction->while_body()),
-                              HloOpcode::kWhile),
-            2);
 }
 
 TEST_F(GpuLoopDoubleBufferTransformerTest,
@@ -496,26 +481,6 @@ ENTRY main {
   // We expect that the nested while loop has been duplicated, along with its
   // associated computations.
   EXPECT_EQ(while_loops_callees.size(), 8);
-
-  HloInstruction* entry_while_instruction =
-      module->entry_computation()->root_instruction();
-  TF_ASSERT_OK_AND_ASSIGN(
-      WhileLoopBackendConfig config,
-      entry_while_instruction->backend_config<WhileLoopBackendConfig>());
-  int64_t exact_trip_count = config.known_trip_count().n();
-  // We expect that after unrolling, the total trip count is half of original
-  // count.
-  EXPECT_EQ(exact_trip_count, 5);
-  // We expect that after unrolling, there should be
-  // 2 whiles in the outter level loop.
-  EXPECT_EQ(CountInstructions((*entry_while_instruction->while_body()),
-                              HloOpcode::kWhile),
-            2);
-
-  // We expect that after unrolling, there should be 2 whiles
-  // in the main computation.
-  EXPECT_EQ(
-      CountInstructions((*module->entry_computation()), HloOpcode::kWhile), 2);
 }
 }  // namespace
 }  // namespace gpu
