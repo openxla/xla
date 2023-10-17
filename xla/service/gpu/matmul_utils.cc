@@ -901,12 +901,16 @@ StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
       se::blas::ComputationType computation_type,
       GetBlasComputationType(lhs_layout.dtype, output_layout.dtype,
                              config.compute_precision));
-
+  // For FP8 matmuls, fast acumulation is only turned on when both operands's
+  // precision are DEFAULT.
+  bool fast_accum = (primitive_util::IsF8Type(lhs_layout.dtype) ||
+                     primitive_util::IsF8Type(rhs_layout.dtype)) &&
+                    config.compute_precision == 0;
   TF_ASSIGN_OR_RETURN(
       se::gpu::BlasLt::MatmulDesc op_desc,
       se::gpu::BlasLt::MatmulDesc::Create(
           computation_type, GetScaleType(output_dtype, computation_type),
-          trans_a, trans_b, epilogue));
+          trans_a, trans_b, epilogue, fast_accum));
 
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::MatrixLayout a_desc,
                       AsBlasLtMatrixLayout(lhs_layout));
