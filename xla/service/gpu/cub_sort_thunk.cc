@@ -124,10 +124,6 @@ Status CubSortPairsImpl::Run(const Thunk::ExecuteParams& params,
 std::unique_ptr<CubSortRunnerInterface> CreateCubSortRunner(
     PrimitiveType type) {
   switch (type) {
-// #if TENSORFLOW_USE_ROCM    
-//     case BF16:
-//       return std::make_unique<CubSortKeysImpl>(CubSortKeys_bf16, BF16);
-// #endif 
     case F16:
       return std::make_unique<CubSortKeysImpl>(CubSortKeys_f16, F16);
     case F32:

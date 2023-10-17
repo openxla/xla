@@ -31,8 +31,6 @@ def get_cub_sort_kernel_types(name = ""):
         "u64_b32",
         "u64_b64",
     ]
-    # TODO reimplement this using a custom rule in order to include
-    # + if_rocm_is_configured(["bf16"])
 
 def build_cub_sort_kernels(name, types, **kwargs):
     """ Create build rules for all CUB sort kernels.
