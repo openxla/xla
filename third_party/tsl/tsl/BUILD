@@ -465,3 +465,27 @@ cc_library(
     }),
 )
 # copybara:comment_end
+
+# The following concurrency library aliases are a work around Tensorflow+TFRT OSS build set up. TFRT
+# currently has its own BUILD file for TSL, and here we define targets that match TFRT.
+
+# copybara:comment_begin(oss-only)
+alias(
+    name = "concurrency_async_value",
+    actual = "//tsl/concurrency:async_value",
+)
+# copybara:comment_end
+
+# copybara:comment_begin(oss-only)
+alias(
+    name = "concurrency_concurrent_vector",
+    actual = "//tsl/concurrency:concurrent_vector",
+)
+# copybara:comment_end
+
+# copybara:comment_begin(oss-only)
+alias(
+    name = "concurrency_ref_count",
+    actual = "//tsl/concurrency:ref_count",
+)
+# copybara:comment_end
