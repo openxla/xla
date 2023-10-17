@@ -42,6 +42,7 @@ pytype_strict_library(
     deps = [
         ":xla_extension",  # buildcleaner: keep
         "@ml_dtypes",
+        "@pypi_ml_dtypes//:pkg",
     ],
 )
 
