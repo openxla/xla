@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
 
@@ -34,16 +35,22 @@ struct ModuleAnnotation {
 
   std::string_view longest_op_name_prefix() const { return longest_prefix; }
   explicit operator std::string_view() const { return title_str; }
+  static uint64_t NvtxSchemaId();
+  int32_t common_stack_frames() const { return common_stack_frames_; }
 
  private:
   friend void RangePush(nvtxDomainHandle_t domain,
                         const ModuleAnnotation& annotation) {
-    tsl::profiler::RangePush(domain, annotation.title);
+    tsl::profiler::RangePush(domain, annotation.title, annotation);
   }
 
   std::string longest_prefix;
   std::string title_str;
   nvtxStringHandle_t title;
+  nvtxStringHandle_t module_name;
+  nvtxStringHandle_t common_src_locations{};
+  int32_t module_id{-1};
+  int32_t common_stack_frames_{};
 };
 
 // Prepared information for a kernel/thunk/fusion/... within an HloModule
@@ -52,15 +59,19 @@ struct KernelAnnotation {
                    const HloInstruction& inst);
 
   explicit operator std::string_view() const { return title_str; }
+  static uint64_t NvtxSchemaId();
 
  private:
   friend void RangePush(nvtxDomainHandle_t domain,
                         const KernelAnnotation& annotation) {
-    tsl::profiler::RangePush(domain, annotation.title);
+    tsl::profiler::RangePush(domain, annotation.title, annotation);
   }
 
   std::string title_str;
   nvtxStringHandle_t title;
+  nvtxStringHandle_t hlo_dump;
+  nvtxStringHandle_t src_locations;
+  nvtxStringHandle_t called_hlo_dump;
 };
 
 // Parsed/prepared information for an HloModule that gets propagated to NVTX
@@ -87,6 +98,9 @@ class ScopedModuleAnnotations {
 };
 
 const ModuleAnnotations* GetCurrentModuleAnnotations();
+
+std::optional<tsl::profiler::ScopedAnnotation> GetKernelAnnotation(
+    const ModuleAnnotations* annotations, std::string_view profile_annotation);
 
 }  // namespace xla::gpu
 

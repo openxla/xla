@@ -313,7 +313,8 @@ absl::Status ExecuteThunks(
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations, bool block_host_until_done,
     bool use_highest_priority_for_async_stream,
-    const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids) {
+    const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids,
+    const ModuleAnnotations& module_annotations) {
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();
   stream_executor::StreamPriority stream_priority =
@@ -424,7 +425,8 @@ absl::Status ExecuteThunks(
     // Annotate execution of this op if tracing was enabled when we started
     // running this module.  If tracing is enabled *while* we're running the
     // module, we won't get any data, but that's probably an OK trade-off.
-    tsl::profiler::ScopedAnnotation annotation(thunk->profile_annotation());
+    auto annotation =
+        GetKernelAnnotation(&module_annotations, thunk->profile_annotation());
     VLOG(3) << "Executing the thunk for " << thunk->profile_annotation();
     if (NeedsAsyncCommsStream(*thunk)) {
       for (se::Stream* async_stream : async_comms_streams) {
@@ -954,7 +956,7 @@ absl::Status GpuExecutable::ExecuteThunksOrXlaRuntime(
                            .debug_options()
                            .xla_gpu_enable_highest_priority_async_stream()
                      : false,
-        execution_stream_ids_);
+        execution_stream_ids_, module_annotations_);
   }
 
   return FailedPrecondition("Expected XLA gpu executable is not supplied.");
