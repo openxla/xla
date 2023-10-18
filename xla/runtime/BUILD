@@ -45,8 +45,8 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tf_runtime//:async_value",
-        "@tf_runtime//:ref_count",
+        "@tsl//tsl/concurrency:async_value",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -57,7 +57,7 @@ xla_cc_test(
     srcs = ["async_runtime_test.cc"],
     deps = [
         ":async_runtime",
-        "@tf_runtime//:async_value",
+        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -139,7 +139,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@llvm-project//llvm:Support",
-        "@tf_runtime//:async_value",
+        "@tsl//tsl/concurrency:async_value",
     ],
 )
 
@@ -319,7 +319,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Support",
-        "@tf_runtime//:async_value",
+        "@tsl//tsl/concurrency:async_value",
     ],
 )
 
