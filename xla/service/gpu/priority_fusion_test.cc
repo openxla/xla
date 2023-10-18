@@ -526,5 +526,34 @@ TEST_F(PriorityFusionTest, DontFuseIntoFirstOperandOfScatter) {
               GmockMatch(m::Scatter(m::Parameter(), m::Add(), m::Add())));
 }
 
+TEST_F(PriorityFusionTest, DoNotFuseTransposeIntoReduceEvenIfSmall) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test_module
+
+    max {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add.3303 = f32[] maximum(lhs, rhs)
+    }
+
+    ENTRY main {
+      p0 = f32[1,4,2047,8,8]{4,3,2,1,0} parameter(0)
+      p1 = f32[1,4,401,8,8]{4,3,2,1,0} parameter(1)
+      transpose = f32[1,4,401,8,8]{4,3,2,1,0} transpose(p1), dimensions={0,1,2,4,3}
+      concatenate = f32[1,4,2448,8,8]{4,3,2,1,0} concatenate(p0, transpose), dimensions={2}
+      bitcast = f32[4,2448,8,8]{3,2,1,0} bitcast(concatenate)
+      c = f32[] constant(-inf)
+      ROOT reduce.1870 = f32[4,8,8]{2,1,0} reduce(bitcast, c), dimensions={1}, to_apply=max
+    })";
+
+  RunAndFilecheckHloRewrite(kHlo, std::move(priority_fusion_), R"(
+CHECK-NOT: transpose
+CHECK: ROOT {{.*}} reduce(
+CHECK: ENTRY
+CHECK: %[[T:.*]] = {{.*}} transpose
+CHECK: fusion{{.*}}%[[T]]
+  )");
+}
+
 }  // namespace gpu
 }  // namespace xla

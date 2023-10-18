@@ -78,7 +78,10 @@ absl::Duration ReadTime(const se::DeviceDescription& gpu_device_info,
     if (n_bytes_net < kL1CacheSizePerSM * gpu_device_info.core_count()) {
       bandwidth *= kL1CacheSpeedup;
     }
-  } else if (!coalesced) {
+  }
+
+  int64_t waste_factor = 1;
+  if (!coalesced) {
     int64_t element_size_bytes =
         element_type == PrimitiveType::TUPLE ||
                 element_type == PrimitiveType::TOKEN
@@ -88,14 +91,15 @@ absl::Duration ReadTime(const se::DeviceDescription& gpu_device_info,
     // Assume we use one element from the cache line and waste the remaining
     // bandwidth. For example, if we're reading f32s, we use 1/32nd of the cache
     // line.
-    bandwidth /= kCacheLineSizeBytes / element_size_bytes;
+    waste_factor = kCacheLineSizeBytes / element_size_bytes;
   }
+
   // Limit the bandwidth for low occupancy cases. Each SM can issue at most one
   // 32B memory transaction per clock. H100 needs at least 56.8 active SMs
   // (1830 MHz) to saturate the memory bandwidth (3.35 TB/s).
   float per_block_bandwidth = gpu_device_info.clock_rate_ghz() * 1.0e9f * 32;
   bandwidth = std::min(bandwidth, num_blocks * per_block_bandwidth);
-  return absl::Seconds(n_bytes_total / bandwidth);
+  return absl::Seconds(n_bytes_total / bandwidth * waste_factor);
 }
 
 int64_t GetNcclMaxNumChannels(
