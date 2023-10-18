@@ -18,7 +18,7 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//mlir:mlir_async_runtime_api",
-        "@tf_runtime//:async_value",
+        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/platform:platform_port",
     ],
 )

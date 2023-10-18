@@ -239,7 +239,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
-        "@tf_runtime//:ref_count",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],

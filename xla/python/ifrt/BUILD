@@ -1,5 +1,5 @@
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 
 package_group(
     name = "friends",
@@ -85,7 +85,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@tf_runtime//:ref_count",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:logging",
     ],
 )
@@ -182,7 +182,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tf_runtime//:ref_count",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -265,7 +265,7 @@ cc_library(
         ":ifrt",
         ":test_util",
         "@com_google_absl//absl/types:span",
-        "@tf_runtime//:ref_count",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -297,7 +297,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@tf_runtime//:ref_count",
+        "@tsl//tsl/concurrency:ref_count",
     ],
 )
 
