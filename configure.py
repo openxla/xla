@@ -17,6 +17,7 @@
 import argparse
 import glob
 import os
+import pathlib
 import platform
 import re
 import subprocess
@@ -854,12 +855,13 @@ def validate_cuda_config(environ_cp):
     if environ_cp.get('TF_NCCL_VERSION', None):
       cuda_libraries.append('nccl')
 
-  paths = glob.glob('**/third_party/gpus/find_cuda_config.py', recursive=True)
-  if not paths:
+  find_cuda_script = os.path.join(pathlib.Path(__file__).parent.resolve(),
+       'third_party/gpus/find_cuda_config.py')
+  if not os.path.isfile(find_cuda_script):
     raise FileNotFoundError(
-        "Can't find 'find_cuda_config.py' script inside working directory")
+        f"Can't find 'find_cuda_config.py' script inside working directory, expected in {find_cuda_script}")
   proc = subprocess.Popen(
-      [environ_cp['PYTHON_BIN_PATH'], paths[0]] + cuda_libraries,
+      [environ_cp['PYTHON_BIN_PATH'], find_cuda_script] + cuda_libraries,
       stdout=subprocess.PIPE,
       env=maybe_encode_env(environ_cp))
 
