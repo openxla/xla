@@ -5,10 +5,7 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
-        "//xla:internal",
-        "@tf_runtime//:friends",
-    ],
+    default_visibility = ["//xla:internal"],
     licenses = ["notice"],
 )
 
