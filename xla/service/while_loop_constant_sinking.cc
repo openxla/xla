@@ -15,8 +15,13 @@ limitations under the License.
 
 #include "xla/service/while_loop_constant_sinking.h"
 
+#include <algorithm>
+#include <iterator>
+#include <vector>
+
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/service/while_util.h"
 #include "xla/util.h"
 
@@ -79,10 +84,19 @@ StatusOr<bool> WhileLoopConstantSinking::TrySinkingConstantsIntoWhileLoop(
   absl::flat_hash_map<int64_t, absl::InlinedVector<HloInstruction*, 1>>
       conditional_gte_index_to_insts =
           WhileUtil::GetGTEsMapForWhileConditional(*while_cond);
+  for (std::pair<const int64_t, absl::InlinedVector<xla::HloInstruction*, 1>>
+           conditional_gte : conditional_gte_index_to_insts) {
+    std::cout << "conditional_gte for index: ";
+    for (HloInstruction* instr : conditional_gte.second) {
+      std::cout << instr->ToString() << ", ";
+    }
+  }
   std::vector<HloInstruction*> invariant_body_gtes =
       WhileUtil::GetInvariantGTEsForWhileBody(*while_body);
 
   for (HloInstruction* invariant_body_gte : invariant_body_gtes) {
+    std::cout << "invariant_body_gte for while " << while_instr->name() << ": "
+              << invariant_body_gte->ToString() << std::endl;
     int64_t index = invariant_body_gte->tuple_index();
     const HloInstruction& invariant_value = *init_value.operand(index);
 
@@ -118,6 +132,8 @@ StatusOr<bool> WhileLoopConstantSinking::TrySinkingConstantsIntoWhileLoop(
             CloneHelper(&invariant_value, while_cond);
         TF_RETURN_IF_ERROR(
             invariant_cond_gte->ReplaceAllUsesWith(constant_instr));
+        std::cout << "found user second: " << invariant_value.name()
+                  << std::endl;
         changed = true;
       }
     }
@@ -134,7 +150,11 @@ StatusOr<bool> WhileLoopConstantSinking::Run(
 
   bool changed = false;
   std::vector<HloInstruction*> while_instrs;
-  for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
+  std::vector<HloComputation*> computations =
+      module->MakeNonfusionComputations(execution_threads);
+  // Make reverse order in order to visit outer loops first.
+  std::reverse(computations.begin(), computations.end());
+  for (auto* comp : computations) {
     // Right now we don't particularly care about optimizing while-of-while
     // patterns.  If/When we do, we'll want to visit the outer while (while_0)
     // before we visit the inner while (while_1):
@@ -161,6 +181,8 @@ StatusOr<bool> WhileLoopConstantSinking::Run(
   }
 
   for (HloInstruction* while_instr : while_instrs) {
+    VLOG(3) << "TrySinkingConstantsIntoWhileLoop(" << while_instr->name()
+            << ")";
     TF_ASSIGN_OR_RETURN(bool result,
                         TrySinkingConstantsIntoWhileLoop(while_instr));
     changed |= result;

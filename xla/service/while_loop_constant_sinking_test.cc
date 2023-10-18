@@ -65,6 +65,74 @@ ENTRY entry {
               op::Tuple(op::Add(_, op::Constant()), _));
 }
 
+// TODO write test for single while sinking but with the new feature in
+// while_util
+// TODO write a test for single while sinking with constant passed as gte
+
+TEST_F(WhileLoopConstantSinkingTest, SinkConstantNestedWhile) {
+  const char* const hlo_string = R"(
+HloModule ModuleWithNestedWhile
+
+body1 {
+  p_body = (f32[2],f32[2]) parameter(0)
+  loop_idx = f32[2] get-tuple-element((f32[2],f32[2]) p_body), index=0
+  p_body.1 = f32[2] get-tuple-element((f32[2],f32[2]) p_body), index=1
+
+  add.0 = f32[2] add(loop_idx, p_body.1)
+  ROOT root = (f32[2],f32[2]) tuple(add.0, p_body.1)
+}
+
+condition1 {
+  p_cond = (f32[2],f32[2]) parameter(0)
+  ROOT result = pred[] constant(true)
+}
+
+body2 {
+  p_body = (f32[2],f32[2],f32[2]) parameter(0)
+  inner_while_index = f32[2] get-tuple-element(p_body), index=0
+  gte_1 = f32[2] get-tuple-element(p_body), index=1
+  inner_while_init = (f32[2],f32[2]) tuple(inner_while_index, gte_1)
+  inner_while = (f32[2],f32[2]) while(inner_while_init), condition=condition1, body=body1
+  inner_while_output = f32[2] get-tuple-element(inner_while), index=0
+  ROOT out = (f32[2],f32[2],f32[2]) tuple(inner_while_index,gte_1,inner_while_output)
+}
+
+condition2 {
+  p_cond = (f32[2],f32[2],f32[2]) parameter(0)
+  ROOT result = pred[] constant(true)
+}
+
+ENTRY entry {
+  const_0 = f32[2] constant({1, 2})
+  const_1 = f32[2] constant({2, 1})
+  param = f32[2] parameter(0)
+  tuple1 = (f32[2],f32[2]) tuple(const_0,const_1)
+  gte_0 = f32[2] get-tuple-element(tuple1), index=0
+  gte_1 = f32[2] get-tuple-element(tuple1), index=1
+  while_init = (f32[2],f32[2],f32[2]) tuple(const_0, const_1, param)
+  ROOT outer_while = (f32[2],f32[2],f32[2]) while(while_init), condition=condition2, body=body2
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed,
+                          WhileLoopConstantSinking{}.Run(module.get()));
+
+  ASSERT_TRUE(changed);
+
+  auto* outer_body_instr =
+      module->GetComputationWithName("body2")->GetInstructionWithName(
+          "inner_while_init");
+
+  EXPECT_THAT(outer_body_instr, op::Tuple(op::Constant(), op::Constant()));
+
+  auto* inner_body = module->GetComputationWithName("body1");
+  EXPECT_THAT(inner_body->root_instruction(),
+              op::Tuple(op::Add(_, op::Constant()), _));
+}
+
 TEST_F(WhileLoopConstantSinkingTest, SinkBroadcastOfConstant) {
   const char* const hlo_string = R"(
 HloModule ModuleWithWhile

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/while_util.h"
 
+#include <algorithm>
 #include <memory>
 
 #include "absl/algorithm/container.h"
@@ -303,6 +304,7 @@ static Shape MakeLoopStateShapeWithLayout(
 /*static*/ std::vector<HloInstruction*> WhileUtil::GetInvariantGTEsForWhileBody(
     const HloComputation& while_body) {
   std::vector<HloInstruction*> result;
+  std::vector<int64_t> gte_indices;
   const HloInstruction::InstructionVector root_operands =
       while_body.root_instruction()->operands();
   for (int i = 0; i < root_operands.size(); i++) {
@@ -311,6 +313,20 @@ static Shape MakeLoopStateShapeWithLayout(
         instr->tuple_index() == i &&
         instr->operand(0) == while_body.parameter_instruction(0)) {
       result.push_back(instr);
+      gte_indices.push_back(i);
+    }
+  }
+  // It is possible that the invariant gte instructions found previously, are
+  // repeated inside the body with a different name. We find such repeated
+  // instructions.
+  for (HloInstruction* instr : while_body.instructions()) {
+    if (instr->opcode() == HloOpcode::kGetTupleElement &&
+        instr->operand(0) == while_body.parameter_instruction(0)) {
+      if (std::find(gte_indices.begin(), gte_indices.end(),
+                    instr->tuple_index()) != gte_indices.end() &&
+          std::find(result.begin(), result.end(), instr) == result.end()) {
+        result.push_back(instr);
+      }
     }
   }
   return result;

@@ -171,6 +171,105 @@ ENTRY main {
   EXPECT_EQ((*gte_list.begin())->name(), "gte.0");
 }
 
+TEST_F(WhileUtilTest, GetInvariantGTEsForWhileBodyDifferentName) {
+  const char* const hlo_string = R"(
+HloModule ModuleWithWhile
+
+body {
+  param.b = (s32[], s32[]) parameter(0)
+  gte.0 = s32[] get-tuple-element(param.b), index=0
+  gte.1 = s32[] get-tuple-element(param.b), index=1
+  add = s32[] add(gte.0, gte.1)
+  gte.2 = s32[] get-tuple-element(param.b), index=0
+  ROOT tuple = (s32[], s32[]) tuple(gte.0, add)
+}
+
+cond {
+  param.c = (s32[], s32[]) parameter(0)
+  ROOT constant = pred[] constant(true)
+}
+
+ENTRY main {
+  init = (s32[], s32[]) parameter(0)
+  ROOT while = (s32[], s32[]) while(init), condition=cond, body=body
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  HloComputation* while_body = module->GetComputationWithName("body");
+
+  ASSERT_NE(while_body, nullptr)
+      << "Expected exactly one while_body computation";
+
+  std::vector<HloInstruction*> gte_list =
+      WhileUtil::GetInvariantGTEsForWhileBody(*while_body);
+
+  ASSERT_EQ(gte_list.size(), 2);
+  EXPECT_EQ(gte_list[0]->name(), "gte.0");
+  EXPECT_EQ(gte_list[1]->name(), "gte.2");
+}
+
+TEST_F(WhileUtilTest, GetInvariantGTEsForWhileBodyNested) {
+  const char* const hlo_string = R"(
+HloModule ModuleWithNestedWhile
+
+body1 {
+  p_body = (f32[2],f32[2]) parameter(0)
+  p_body.0 = f32[2] get-tuple-element((f32[2],f32[2]) p_body), index=0
+  p_body.1 = f32[2] get-tuple-element((f32[2],f32[2]) p_body), index=1
+
+  add.0 = f32[2] add(p_body.0, p_body.1)
+  ROOT root = (f32[2],f32[2]) tuple(add.0, p_body.1)
+}
+
+condition1 {
+  p_cond = (f32[2],f32[2]) parameter(0)
+  ROOT result = pred[] constant(true)
+}
+
+body2 {
+  p_body = (f32[2],f32[2]) parameter(0)
+  gte_0 = f32[2] get-tuple-element(p_body), index=0
+  gte_1 = f32[2] get-tuple-element(p_body), index=1
+  while_init = (f32[2],f32[2]) tuple(gte_0, gte_1)
+  inner_while = (f32[2],f32[2]) while(while_init), condition=condition1, body=body1
+  second_elem = f32[2] get-tuple-element(inner_while), index=0
+  ROOT out = (f32[2],f32[2]) tuple(gte_0, second_elem)
+}
+
+condition2 {
+  p_cond = (f32[2],f32[2]) parameter(0)
+  ROOT result = pred[] constant(true)
+}
+
+ENTRY entry {
+  const_0 = f32[2] constant({1, 2})
+  const_1 = f32[2] constant({2, 1})
+  tuple1 = (f32[2],f32[2]) tuple(const_0,const_1)
+  gte_0 = f32[2] get-tuple-element(tuple1), index=0
+  gte_1 = f32[2] get-tuple-element(tuple1), index=1
+  while_init = (f32[2],f32[2]) tuple(gte_0, gte_1)
+  ROOT outer_while = (f32[2],f32[2]) while(while_init), condition=condition2, body=body2
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  HloComputation* while_body = module->GetComputationWithName("body2");
+
+  ASSERT_NE(while_body, nullptr)
+      << "Expected exactly one while_body computation";
+
+  std::vector<HloInstruction*> gte_list =
+      WhileUtil::GetInvariantGTEsForWhileBody(*while_body);
+  for (const auto& gte : gte_list) {
+    std::cout << "invariant gte: " << gte->ToString() << std::endl;
+  }
+}
+
 TEST_F(WhileUtilTest, AlwaysRemovePreviousWhileBody) {
   const char* const hlo_string = R"(
 HloModule WhileWithSideEffects
