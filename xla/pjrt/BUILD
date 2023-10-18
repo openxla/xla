@@ -485,7 +485,7 @@ xla_cc_test(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
-        "@tf_runtime//:async_value",
+        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -537,8 +537,8 @@ cc_library(
     visibility = [":friends"],
     deps = [
         "@com_google_absl//absl/functional:any_invocable",
-        "@tf_runtime//:hostcontext",
-        "@tf_runtime//:support",
+        "@tsl//tsl/concurrency:async_value",
+        "@tsl//tsl/concurrency:ref_count",
     ],
 )
 
@@ -555,7 +555,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tf_runtime//:hostcontext",
+        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -567,6 +567,7 @@ xla_cc_test(
     deps = [
         ":tracked_tfrt_cpu_device_buffer",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/platform:env",
     ],
 )
@@ -609,10 +610,8 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tf_runtime//:async_value",
-        "@tf_runtime//:hostcontext",
-        "@tf_runtime//:ref_count",
-        "@tf_runtime//:support",
+        "@tsl//tsl/concurrency:async_value",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:connected_traceme",
@@ -683,9 +682,8 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",  # TODO(zhangqiaorjc): Remove if use TFRT threadpool.
         "@llvm-project//mlir:IR",
-        "@tf_runtime//:async_value",
-        "@tf_runtime//:hostcontext",
-        "@tf_runtime//:support",
+        "@tsl//tsl/concurrency:async_value",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:env",
