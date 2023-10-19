@@ -68,12 +68,18 @@ int64_t FindMostFrequentGatherDim(
 // Combines the elements of to_combine into a single AllGather op. All entries
 // in to_combine must be AllGather ops with exactly one operand and the same
 // preferred all_gather_dimension.
-Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine,
+Status CombineAllGathers(HloModule* module,
+                         absl::Span<HloInstruction* const> to_combine,
+                         absl::Span<HloInstruction* const> to_combine_ends,
                          bool combine_by_dim) {
   if (to_combine.size() < 2) {
     return OkStatus();
   }
   VLOG(1) << "Combined " << to_combine.size() << " AllGather ops";
+
+  bool is_async = !to_combine_ends.empty();
+  // These two options are, for now, mutually exclusive.
+  TF_RET_CHECK(!is_async || !combine_by_dim);
 
   HloComputation& computation = *to_combine.back()->parent();
 
@@ -89,18 +95,25 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine,
   for (HloInstruction* hlo : to_combine) {
     VLOG(1) << "Set element: " << hlo->ToString();
 
-    TF_RET_CHECK(hlo->opcode() == HloOpcode::kAllGather);
+    TF_RET_CHECK(hlo->opcode() == (is_async ? HloOpcode::kAllGatherStart
+                                            : HloOpcode::kAllGather));
     const auto* ag = Cast<HloAllGatherInstruction>(hlo);
 
     TF_RET_CHECK(hlo->operand_count() == 1);
-    TF_RET_CHECK(hlo->shape().IsArray());
     TF_RET_CHECK(!combine_by_dim ||
                  ag->all_gather_dimension() == most_frequent_dim);
 
     HloInstruction* operand = hlo->operands().front();
     operands.push_back(operand);
     operand_permutations.emplace_back();
-    output_shapes.push_back(hlo->shape());
+    Shape shape = hlo->shape();
+    if (is_async) {
+      TF_RET_CHECK(hlo->shape().IsTuple());
+      TF_RET_CHECK(hlo->shape().tuple_shapes_size() == 2);
+      shape = hlo->shape().tuple_shapes(1);
+    }
+    TF_RET_CHECK(shape.IsArray());
+    output_shapes.push_back(shape);
 
     // Bitcast operand if needed.
     if (ag->all_gather_dimension() != most_frequent_dim) {
@@ -123,18 +136,42 @@ Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine,
 
   // Create combined all-gather op with a tuple result.
   HloInstruction* combined;
-  combined = computation.AddInstruction(HloInstruction::CreateAllGather(
-      ShapeUtil::MakeTupleShape(output_shapes), operands, most_frequent_dim,
-      to_combine.front()->replica_groups(),
-      /*constrain_layout=*/false, to_combine.front()->channel_id(),
-      Cast<HloAllGatherInstruction>(to_combine.front())
-          ->use_global_device_ids()));
+  auto create = [&](auto& f) {
+    Shape shape;
+    if (is_async) {
+      std::vector<Shape> operand_shapes;
+      for (HloInstruction* operand : operands) {
+        operand_shapes.push_back(operand->shape());
+      }
+      shape =
+          ShapeUtil::MakeTupleShape({ShapeUtil::MakeTupleShape(operand_shapes),
+                                     ShapeUtil::MakeTupleShape(output_shapes)});
+    } else {
+      shape = ShapeUtil::MakeTupleShape(output_shapes);
+    }
+    return computation.AddInstruction(
+        f(shape, operands, most_frequent_dim,
+          to_combine.front()->replica_groups(),
+          /*constrain_layout=*/false, to_combine.front()->channel_id(),
+          Cast<HloAllGatherInstruction>(to_combine.front())
+              ->use_global_device_ids()));
+  };
+  combined = is_async ? create(HloInstruction::CreateAllGatherStart)
+                      : create(HloInstruction::CreateAllGather);
 
   // We have to propagate the sharding manually because Domain instructions are
   // not guaranteed to preserve it for side effecting instructions.
   combined->set_sharding(
       hlo_sharding_util::CreateTupleSharding(combined->shape(), to_combine));
   VLOG(1) << "Replacing with : " << combined->ToString();
+
+  if (is_async) {
+    HloInstruction* combined_end = computation.AddInstruction(
+        HloInstruction::CreateUnary(combined->shape().tuple_shapes(1),
+                                    HloOpcode::kAllGatherDone, combined));
+    return CombineCollectives(&computation, combined, combined_end, to_combine,
+                              to_combine_ends, is_async);
+  }
 
   // Replace all the smaller all-gather ops with (bitcast) elements of the tuple
   // result.
@@ -163,8 +200,11 @@ using GroupKey = std::tuple<std::optional<int64_t>, int64_t, bool, bool,
 // different if not.
 std::optional<GroupKey> CombineKey(const HloInstruction* instruction,
                                    const HloDomainMap& domain_map,
-                                   bool combine_by_dim) {
-  if (instruction->opcode() != HloOpcode::kAllGather) {
+                                   bool combine_by_dim, bool is_async) {
+  HloOpcode opcode =
+      is_async ? HloOpcode::kAllGatherStart : HloOpcode::kAllGather;
+
+  if (instruction->opcode() != opcode) {
     return std::nullopt;
   }
 
@@ -188,25 +228,31 @@ std::optional<GroupKey> CombineKey(const HloInstruction* instruction,
 
 AllGatherCombiner::AllGatherCombiner(int64_t combine_threshold_in_bytes,
                                      int64_t combine_threshold_count,
-                                     bool combine_by_dim)
+                                     bool combine_by_dim, bool is_async,
+                                     std::string_view async_strategy,
+                                     int64_t near_op_threshold)
     : combine_threshold_in_bytes_(combine_threshold_in_bytes),
       combine_threshold_count_(combine_threshold_count),
-      combine_by_dim_(combine_by_dim) {}
+      combine_by_dim_(combine_by_dim),
+      is_async_(is_async),
+      async_strategy_(async_strategy == "near" ? kNear : kTrivial),
+      near_op_threshold_(near_op_threshold) {}
 
 StatusOr<bool> AllGatherCombiner::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  VLOG(1) << "Running AllGatherCombiner with threshold of "
+  VLOG(1) << "Running " << name() << " with threshold of "
           << combine_threshold_in_bytes_ << " bytes";
 
   if (combine_threshold_in_bytes_ <= 0 || combine_threshold_count_ <= 0) {
-    VLOG(1) << "Skip AllGatherCombiner because the threshold is zero";
+    VLOG(1) << "Skip " << name() << " because the threshold is zero";
     return false;
   }
 
   if (hlo_query::ContainsLayoutConstrainedCollective(*module,
                                                      HloOpcode::kAllGather)) {
-    VLOG(1) << "Skip AllGatherCombiner because the module contains "
+    VLOG(1) << "Skip " << name()
+            << " because the module contains "
                "all-gather with constrained layouts";
     return false;
   }
@@ -214,21 +260,43 @@ StatusOr<bool> AllGatherCombiner::Run(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
+    HloModule* module = computation->parent();
+    if (is_async_) {
+      TF_RET_CHECK(module->has_schedule());
+    }
     TF_ASSIGN_OR_RETURN(auto domain_map, HloDomainMap::Create(computation, ""));
 
     auto key_fn = [&](const HloInstruction* instruction) {
-      return CombineKey(instruction, *domain_map, combine_by_dim_);
+      return CombineKey(instruction, *domain_map, combine_by_dim_, is_async_);
     };
     auto combine_fn =
-        [&](absl::Span<HloInstruction* const> to_combine) -> Status {
-      return CombineAllGathers(to_combine, combine_by_dim_);
+        [&](HloModule* module, absl::Span<HloInstruction* const> to_combine,
+            absl::Span<HloInstruction* const> to_combine_ends) -> Status {
+      return CombineAllGathers(module, to_combine, to_combine_ends,
+                               combine_by_dim_);
+    };
+
+    auto size_fn =
+        [this](const HloInstruction* instruction) -> StatusOr<int64_t> {
+      if (!is_async_) {
+        return internal::SizeFromArrayShapedInstruction(instruction);
+      }
+      TF_RET_CHECK(instruction->opcode() == HloOpcode::kAllGatherStart);
+      // AllGatherStart has a tuple shape: (input_shape, output_shape). We are
+      // only interested in the output shape.
+      TF_RET_CHECK(instruction->shape().IsTuple());
+      TF_RET_CHECK(instruction->shape().tuple_shapes_size() == 2);
+      const Shape& output_shape = instruction->shape().tuple_shapes(1);
+      TF_RET_CHECK(output_shape.IsArray());
+      return ShapeUtil::ByteSizeOf(output_shape);
     };
 
     TF_ASSIGN_OR_RETURN(
         bool computation_changed,
-        CombineInstructionsByKey<GroupKey>(computation, key_fn, combine_fn,
-                                           combine_threshold_in_bytes_,
-                                           combine_threshold_count_));
+        CombineInstructionsByKey<GroupKey>(
+            computation, key_fn, combine_fn, combine_threshold_in_bytes_,
+            combine_threshold_count_, is_async_, async_strategy_,
+            near_op_threshold_, size_fn));
     changed |= computation_changed;
   }
 

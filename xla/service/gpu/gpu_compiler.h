@@ -99,8 +99,9 @@ class GpuCompiler : public LLVMCompiler {
   StatusOr<std::unique_ptr<AotCompilationResult>> Export(
       Executable* executable) const override;
 
-  Status RunPostSchedulingPipelines(HloModule* module,
-                                    int64_t scheduler_mem_limit) const;
+  Status RunPostSchedulingPipelines(
+      HloModule* module, int64_t scheduler_mem_limit,
+      const se::DeviceDescription* gpu_device_info = nullptr) const;
 
   std::string target_triple() const { return target_triple_; }
   std::string data_layout() const { return data_layout_; }

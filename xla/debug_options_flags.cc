@@ -127,6 +127,15 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_async_all_to_all(false);
   opts.set_xla_gpu_enable_async_reduce_scatter(false);
 
+  opts.set_xla_gpu_enable_prescheduling_combiners(true);
+  opts.set_xla_gpu_enable_postscheduling_combiners(false);
+
+  opts.set_xla_gpu_postscheduling_all_reduce_strategy("trivial");
+  opts.set_xla_gpu_postscheduling_all_gather_strategy("trivial");
+  opts.set_xla_gpu_postscheduling_reduce_scatter_strategy("trivial");
+
+  opts.set_xla_gpu_collective_combiner_near_op_threshold(5);
+
   opts.set_xla_gpu_enable_reassociation_for_converted_ar(true);
 
   opts.set_xla_cpu_enable_xprof_traceme(false);
@@ -893,6 +902,43 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_async_all_to_all),
       debug_options->xla_gpu_enable_async_all_to_all(),
       "Converts synchronous all-to-all ops into asynchronous."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_prescheduling_combiners",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_prescheduling_combiners),
+      debug_options->xla_gpu_enable_prescheduling_combiners(),
+      "Enables the running of collective combiners before scheduling."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_postscheduling_combiners",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_postscheduling_combiners),
+      debug_options->xla_gpu_enable_postscheduling_combiners(),
+      "Enables the running of collective combiners after scheduling."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_postscheduling_all_reduce_strategy",
+      string_setter_for(
+          &DebugOptions::set_xla_gpu_postscheduling_all_reduce_strategy),
+      debug_options->xla_gpu_postscheduling_all_reduce_strategy(),
+      "Sets the strategy for the post-scheduling all-reduce combiner."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_postscheduling_all_gather_strategy",
+      string_setter_for(
+          &DebugOptions::set_xla_gpu_postscheduling_all_gather_strategy),
+      debug_options->xla_gpu_postscheduling_all_gather_strategy(),
+      "Sets the strategy for the post-scheduling all-gather combiner."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_postscheduling_reduce_scatter_strategy",
+      string_setter_for(
+          &DebugOptions::set_xla_gpu_postscheduling_reduce_scatter_strategy),
+      debug_options->xla_gpu_postscheduling_reduce_scatter_strategy(),
+      "Sets the strategy for the post-scheduling reduce-scatter combiner."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_collective_combiner_near_op_threshold",
+      int64_setter_for(
+          &DebugOptions::set_xla_gpu_collective_combiner_near_op_threshold),
+      debug_options->xla_gpu_collective_combiner_near_op_threshold(),
+      "Sets the threshold (in number of ops) for the 'near' collective "
+      "combiner heuristic."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_all_reduce_combine_threshold_bytes",
       int64_setter_for(

@@ -44,7 +44,8 @@ int64_t AllReduceCount(const HloModule& module) {
       continue;
     }
     for (HloInstruction* hlo : computation->instructions()) {
-      if (hlo->opcode() == HloOpcode::kAllReduce) {
+      if (hlo->opcode() == HloOpcode::kAllReduce ||
+          hlo->opcode() == HloOpcode::kAllReduceStart) {
         ++count;
       }
     }
@@ -475,6 +476,348 @@ ENTRY %comp {
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       op::Tuple(op::GetTupleElement(crs1, 0), op::GetTupleElement(crs1, 1)));
+}
+
+using AsyncAllReduceCombinerTest = HloTestBase;
+
+TEST_F(AsyncAllReduceCombinerTest, Condition1) {
+  const char* const hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  constant = f64[] constant(42.3)
+  broadcast = f32[256] broadcast(constant)
+  constant.1 = f64[] constant(42.3)
+  broadcast.1 = f32[512] broadcast(constant.1)
+  all-reduce-start = f32[256] all-reduce-start(broadcast), to_apply=add
+  all-reduce-done = f32[256] all-reduce-done(all-reduce-start)
+  some-tuple = (f32[256]) tuple(all-reduce-done)
+  all-reduce-start.1 = f32[512] all-reduce-start(broadcast.1), to_apply=add
+  all-reduce-done.1 = f32[512] all-reduce-done(all-reduce-start.1)
+  ROOT tuple = (f32[256], f32[512]) tuple(all-reduce-done, all-reduce-done.1)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  VLOG(2) << "before: " << module->ToString();
+  AsyncAllReduceCombiner combine;
+  ASSERT_EQ(AllReduceCount(*module), 2);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  VLOG(1) << "after: " << module->ToString();
+
+  // Cannot change due to some-tuple depending on all-reduce-done (condition 1).
+  EXPECT_EQ(AllReduceCount(*module), 2);
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(AsyncAllReduceCombinerTest, Condition2) {
+  const char* const hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  constant = f64[] constant(42.3)
+  broadcast = f32[256] broadcast(constant)
+  all-reduce-start = f32[256] all-reduce-start(broadcast), to_apply=add
+  all-reduce-done = f32[256] all-reduce-done(all-reduce-start)
+  constant.1 = f64[] constant(42.3)
+  broadcast.1 = f32[512] broadcast(constant.1)
+  all-reduce-start.1 = f32[512] all-reduce-start(broadcast.1), to_apply=add
+  all-reduce-done.1 = f32[512] all-reduce-done(all-reduce-start.1)
+  ROOT tuple = (f32[256], f32[512]) tuple(all-reduce-done, all-reduce-done.1)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  VLOG(2) << "before: " << module->ToString();
+  AsyncAllReduceCombiner combine;
+  ASSERT_EQ(AllReduceCount(*module), 2);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  VLOG(1) << "after: " << module->ToString();
+
+  // Cannot change due to all-reduce-start.1's dependence on broadcast.1
+  // (condition 2).
+  EXPECT_EQ(AllReduceCount(*module), 2);
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(AsyncAllReduceCombinerTest, CanTriviallyReschedule) {
+  const char* const hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  constant = f64[] constant(42)
+  broadcast = f32[256] broadcast(constant)
+  broadcast.1 = f32[512] broadcast(constant)
+  broadcast.2 = f32[1024] broadcast(constant)
+  all-reduce-start = f32[256] all-reduce-start(broadcast), to_apply=add
+  all-reduce-done = f32[256] all-reduce-done(all-reduce-start)
+  constant.foo = f64[] constant(42)
+  all-reduce-start.1 = f32[512] all-reduce-start(broadcast.1), to_apply=add
+  all-reduce-done.1 = f32[512] all-reduce-done(all-reduce-start.1)
+  all-reduce-start.2 = f32[1024] all-reduce-start(broadcast.2), to_apply=add
+  all-reduce-done.2 = f32[1024] all-reduce-done(all-reduce-start.2)
+  ROOT tuple = (f32[256], f32[512], f32[1024]) tuple(all-reduce-done, all-reduce-done.1, all-reduce-done.2)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  VLOG(2) << "before: " << module->ToString();
+  AsyncAllReduceCombiner combine;
+  ASSERT_EQ(AllReduceCount(*module), 3);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  VLOG(1) << "after: " << module->ToString();
+
+  // constant.foo doesn't preclude combining.
+  EXPECT_EQ(AllReduceCount(*module), 1);
+  EXPECT_TRUE(changed);
+}
+
+TEST_F(AsyncAllReduceCombinerTest, CanPreserveNonConflictingDeps) {
+  const char* const hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  p0 = f64[] parameter(0)
+  constant = f64[] constant(42)
+  broadcast = f32[256] broadcast(constant)
+  broadcast.1 = f32[512] broadcast(constant)
+  broadcast.2 = f32[1024] broadcast(constant)
+  all-reduce-start = f32[256] all-reduce-start(broadcast), to_apply=add
+  foo = f64[] constant(42)
+  bar = add(p0, foo)
+  all-reduce-done = f32[256] all-reduce-done(all-reduce-start)
+  baz = f64[] constant(42)
+  all-reduce-start.1 = f32[512] all-reduce-start(broadcast.1), to_apply=add
+  qux = add(bar, p0)
+  quux = add(qux, p0)
+  all-reduce-done.1 = f32[512] all-reduce-done(all-reduce-start.1)
+  ROOT tuple = (f32[256], f32[512]) tuple(all-reduce-done, all-reduce-done.1)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  VLOG(2) << "before: " << module->ToString();
+  AsyncAllReduceCombiner combine;
+  ASSERT_EQ(AllReduceCount(*module), 2);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  VLOG(1) << "after: " << module->ToString();
+  ASSERT_TRUE(changed);
+
+  const char* const expected_hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  p0 = f64[] parameter(0)
+  constant = f64[] constant(42)
+  broadcast = f32[256] broadcast(constant)
+  broadcast.1 = f32[512] broadcast(constant)
+  broadcast.2 = f32[1024] broadcast(constant)
+  all-reduce-start.2 = (f32[256], f32[512]) all-reduce-start(broadcast, broadcast.1), to_apply=add
+  foo = f64[] constant(42)
+  bar = add(p0, foo)
+  baz = f64[] constant(42)
+  qux = add(bar, p0)
+  quux = add(qux, p0)
+  all-reduce-done.2 = (f32[256], f32[512]) all-reduce-done(all-reduce-start.2)
+  get-tuple-element = f32[256] get-tuple-element(all-reduce-done.2), index=0
+  get-tuple-element.1 = f32[512] get-tuple-element(all-reduce-done.2), index=1
+  ROOT tuple = (f32[256], f32[512]) tuple(get-tuple-element, get-tuple-element.1)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto expected_module,
+                          ParseAndReturnVerifiedModule(expected_hlo_string));
+  EXPECT_EQ(module->ToString(), expected_module->ToString());
+}
+
+TEST_F(AsyncAllReduceCombinerTest, CombineSeveralButNotAll) {
+  const char* const hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  p0 = f64[] parameter(0)
+  constant = f64[] constant(42)
+  broadcast = f32[256] broadcast(constant)
+  broadcast.1 = f32[512] broadcast(constant)
+  broadcast.2 = f32[1024] broadcast(constant)
+  all-reduce-start = f32[256] all-reduce-start(broadcast), to_apply=add
+  all-reduce-done = f32[256] all-reduce-done(all-reduce-start)
+  all-reduce-start.1 = f32[512] all-reduce-start(broadcast.1), to_apply=add
+  all-reduce-done.1 = f32[512] all-reduce-done(all-reduce-start.1)
+  some-tuple = (f32[512]) tuple(all-reduce-done.1)
+  all-reduce-start.2 = f32[1024] all-reduce-start(broadcast.2), to_apply=add
+  all-reduce-done.2 = f32[1024] all-reduce-done(all-reduce-start.2)
+  ROOT tuple = (f32[256], f32[512], f32[1024]) tuple(all-reduce-done, all-reduce-done.1, all-reduce-done.2)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  VLOG(2) << "before: " << module->ToString();
+  AsyncAllReduceCombiner combine;
+  ASSERT_EQ(AllReduceCount(*module), 3);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  VLOG(1) << "after: " << module->ToString();
+  ASSERT_TRUE(changed);
+
+  const char* const expected_hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  p0 = f64[] parameter(0)
+  constant = f64[] constant(42)
+  broadcast = f32[256] broadcast(constant)
+  broadcast.1 = f32[512] broadcast(constant)
+  broadcast.2 = f32[1024] broadcast(constant)
+  all-reduce-start.3 = (f32[256], f32[512]) all-reduce-start(broadcast, broadcast.1), to_apply=add
+  all-reduce-done.3 = (f32[256], f32[512]) all-reduce-done(all-reduce-start.3)
+  get-tuple-element = f32[256] get-tuple-element(all-reduce-done.3), index=0
+  get-tuple-element.1 = f32[512] get-tuple-element(all-reduce-done.3), index=1
+  some-tuple = (f32[512]) tuple(get-tuple-element.1)
+  all-reduce-start.2 = f32[1024] all-reduce-start(broadcast.2), to_apply=add
+  all-reduce-done.2 = f32[1024] all-reduce-done(all-reduce-start.2)
+  ROOT tuple = (f32[256], f32[512], f32[1024]) tuple(get-tuple-element, get-tuple-element.1, all-reduce-done.2)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto expected_module,
+                          ParseAndReturnVerifiedModule(expected_hlo_string));
+  EXPECT_EQ(module->ToString(), expected_module->ToString());
+}
+
+TEST_F(AsyncAllReduceCombinerTest, PreservesControlPredecessors) {
+  const char* const hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  p0 = f64[] parameter(0)
+  constant = f64[] constant(42)
+  broadcast = f32[256] broadcast(constant)
+  broadcast.1 = f32[512] broadcast(constant)
+  bar = add(p0, constant)
+  baz = add(p0, constant)
+  all-reduce-start = f32[256] all-reduce-start(broadcast), to_apply=add, control-predecessors={bar}
+  all-reduce-done = f32[256] all-reduce-done(all-reduce-start)
+  all-reduce-start.1 = f32[512] all-reduce-start(broadcast.1), to_apply=add
+  all-reduce-done.1 = f32[512] all-reduce-done(all-reduce-start.1), control-predecessors={baz}
+  ROOT tuple = (f32[256], f32[512]) tuple(all-reduce-done, all-reduce-done.1)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  VLOG(2) << "before: " << module->ToString();
+  AsyncAllReduceCombiner combine;
+  ASSERT_EQ(AllReduceCount(*module), 2);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  VLOG(1) << "after: " << module->ToString();
+  ASSERT_TRUE(changed);
+
+  const char* const expected_hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  p0 = f64[] parameter(0)
+  constant = f64[] constant(42)
+  broadcast = f32[256] broadcast(constant)
+  broadcast.1 = f32[512] broadcast(constant)
+  bar = add(p0, constant)
+  baz = add(p0, constant)
+  all-reduce-start.2 = (f32[256], f32[512]) all-reduce-start(broadcast, broadcast.1), to_apply=add, control-predecessors={bar}
+  all-reduce-done.2 = (f32[256], f32[512]) all-reduce-done(all-reduce-start.2)
+  get-tuple-element = f32[256] get-tuple-element(all-reduce-done.2), index=0
+  get-tuple-element.1 = f32[512] get-tuple-element(all-reduce-done.2), index=1, control-predecessors={baz}
+  ROOT tuple = (f32[256], f32[512]) tuple(get-tuple-element, get-tuple-element.1)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto expected_module,
+                          ParseAndReturnVerifiedModule(expected_hlo_string));
+  EXPECT_EQ(module->ToString(), expected_module->ToString());
+}
+
+TEST_F(AsyncAllReduceCombinerTest, NearOpThreshold) {
+  const char* const hlo_string = R"(
+HloModule module, is_scheduled=true
+
+%add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %comp {
+  constant = f64[] constant(42)
+  broadcast = f32[256] broadcast(constant)
+  broadcast.1 = f32[512] broadcast(constant)
+  broadcast.2 = f32[1024] broadcast(constant)
+  all-reduce-start = f32[256] all-reduce-start(broadcast), to_apply=add
+  all-reduce-done = f32[256] all-reduce-done(all-reduce-start)
+  constant.foo = f64[] constant(42)
+  all-reduce-start.1 = f32[512] all-reduce-start(broadcast.1), to_apply=add
+  all-reduce-done.1 = f32[512] all-reduce-done(all-reduce-start.1)
+  all-reduce-start.2 = f32[1024] all-reduce-start(broadcast.2), to_apply=add
+  all-reduce-done.2 = f32[1024] all-reduce-done(all-reduce-start.2)
+  ROOT tuple = (f32[256], f32[512], f32[1024]) tuple(all-reduce-done, all-reduce-done.1, all-reduce-done.2)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  VLOG(2) << "before: " << module->ToString();
+  AsyncAllReduceCombiner combine(/*strategy=*/"near", /*near_op_threshold=*/1);
+  ASSERT_EQ(AllReduceCount(*module), 3);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, combine.Run(module.get()));
+  VLOG(1) << "after: " << module->ToString();
+
+  // Threshold=1 precludes combining.
+  EXPECT_EQ(AllReduceCount(*module), 3);
+  EXPECT_FALSE(changed);
 }
 
 }  // namespace

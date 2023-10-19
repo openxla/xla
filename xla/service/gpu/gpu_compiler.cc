@@ -1014,20 +1014,22 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
 
   {
     HloPassPipeline pipeline("post-fusion optimization");
-    pipeline.AddPass<AllGatherCombiner>(
-        debug_options.xla_gpu_all_gather_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256,
-        debug_options.xla_gpu_enable_all_gather_combine_by_dim());
-    pipeline.AddPass<AllReduceCombiner>(
-        debug_options.xla_gpu_all_reduce_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256);
-    pipeline.AddPass<ReduceScatterCombiner>(
-        debug_options.xla_gpu_reduce_scatter_combine_threshold_bytes(),
-        /*combine_threshold_count=*/256,
-        debug_options.xla_gpu_enable_reduce_scatter_combine_by_dim());
+    if (debug_options.xla_gpu_enable_prescheduling_combiners()) {
+      pipeline.AddPass<AllGatherCombiner>(
+          debug_options.xla_gpu_all_gather_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256,
+          debug_options.xla_gpu_enable_all_gather_combine_by_dim());
+      pipeline.AddPass<AllReduceCombiner>(
+          debug_options.xla_gpu_all_reduce_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256);
+      pipeline.AddPass<ReduceScatterCombiner>(
+          debug_options.xla_gpu_reduce_scatter_combine_threshold_bytes(),
+          /*combine_threshold_count=*/256,
+          debug_options.xla_gpu_enable_reduce_scatter_combine_by_dim());
 
-    if (debug_options.xla_gpu_all_reduce_contiguous()) {
-      pipeline.AddPass<AllReduceContiguous>();
+      if (debug_options.xla_gpu_all_reduce_contiguous()) {
+        pipeline.AddPass<AllReduceContiguous>();
+      }
     }
 
     TF_RETURN_IF_ERROR(
@@ -1708,7 +1710,8 @@ GpuCompiler::CompileToBackendResult(
     TF_RETURN_IF_ERROR(pipeline.Run(module).status());
   }
 
-  TF_RETURN_IF_ERROR(RunPostSchedulingPipelines(module, scheduler_mem_limit));
+  TF_RETURN_IF_ERROR(RunPostSchedulingPipelines(module, scheduler_mem_limit,
+                                                &gpu_device_info));
 
   TF_ASSIGN_OR_RETURN(se::Platform * platform,
                       se::MultiPlatformManager::PlatformWithId(PlatformId()));
@@ -1988,9 +1991,29 @@ StatusOr<std::unique_ptr<AotCompilationResult>> GpuCompiler::Export(
 }
 
 Status GpuCompiler::RunPostSchedulingPipelines(
-    HloModule* module, int64_t scheduler_mem_limit) const {
+    HloModule* module, int64_t scheduler_mem_limit,
+    const se::DeviceDescription* gpu_device_info) const {
   TF_RETURN_IF_ERROR(
       RunPostSchedulingCopyInsertion(module, GetCanShareBuffer()));
+
+  const DebugOptions& debug_options = module->config().debug_options();
+  if (gpu_device_info &&
+      debug_options.xla_gpu_enable_postscheduling_combiners()) {
+    HloPassPipeline pipeline("post-scheduling-collectives-pipeline");
+    pipeline.AddPass<AsyncAllReduceCombiner>(
+        debug_options.xla_gpu_postscheduling_all_reduce_strategy(),
+        debug_options.xla_gpu_collective_combiner_near_op_threshold());
+    pipeline.AddPass<AsyncAllGatherCombiner>(
+        debug_options.xla_gpu_postscheduling_all_gather_strategy());
+    pipeline.AddPass<AsyncReduceScatterCombiner>(
+        debug_options.xla_gpu_postscheduling_reduce_scatter_strategy());
+
+    TF_RETURN_IF_ERROR(pipeline.Run(module).status());
+    // The combiner might have modified op dependencies; re-run the scheduler.
+    TF_RETURN_IF_ERROR(ScheduleGpuModule(
+        module, pointer_size_, scheduler_mem_limit, *gpu_device_info));
+  }
+
   {
     HloPassPipeline pipeline("post-scheduling-passes");
 

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 
 namespace xla {
 
@@ -26,17 +27,25 @@ std::optional<AllReduceKey> GetAllReduceKey(const HloInstruction* instruction,
                                             const HloDomainMap* domain_map,
                                             bool ignore_replica_groups) {
   if (instruction->opcode() != HloOpcode::kAllReduce &&
-      instruction->opcode() != HloOpcode::kReduceScatter) {
+      instruction->opcode() != HloOpcode::kAllReduceStart &&
+      instruction->opcode() != HloOpcode::kReduceScatter &&
+      (instruction->opcode() != HloOpcode::kAsyncStart ||
+       instruction->async_wrapped_opcode() != HloOpcode::kReduceScatter)) {
     return std::nullopt;
   }
 
-  if (instruction->to_apply()->instruction_count() != 3 ||
-      instruction->to_apply()->num_parameters() != 2) {
+  const HloInstruction* wrapped =
+      instruction->opcode() == HloOpcode::kAsyncStart
+          ? instruction->async_wrapped_instruction()
+          : instruction;
+
+  if (wrapped->to_apply()->instruction_count() != 3 ||
+      wrapped->to_apply()->num_parameters() != 2) {
     VLOG(1) << "Skipping due to non-trivial reduction function.";
     return std::nullopt;
   }
 
-  const auto* ar = Cast<HloAllReduceInstructionBase>(instruction);
+  const auto* ar = Cast<HloAllReduceInstructionBase>(wrapped);
 
   std::vector<std::vector<int64_t>> replica_groups;
   if (!ignore_replica_groups) {
@@ -52,7 +61,7 @@ std::optional<AllReduceKey> GetAllReduceKey(const HloInstruction* instruction,
   // Domain metadata id returned by `GetDomainMetadataId` is guaranteed to be >=
   // 0, so use -1 when we don't need to track domain metadata id.
   int64_t domain_metadata_id =
-      domain_map ? domain_map->GetDomainMetadataId(ar) : -1;
+      domain_map ? domain_map->GetDomainMetadataId(instruction) : -1;
   return AllReduceKey{
       to_apply_root->opcode(),     to_apply_root->shape().element_type(),
       domain_metadata_id,          ar->channel_id().has_value(),
