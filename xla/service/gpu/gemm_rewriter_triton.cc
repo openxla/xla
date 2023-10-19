@@ -1367,14 +1367,18 @@ StatusOr<FusionDecision> FuseDot(HloInstruction& dot,
   if (dot.GetModule()->config().debug_options().xla_gpu_triton_gemm_any()) {
     return FusionDecision{};
   }
-  for (const auto& iter : old_to_new_mapping) {
-    if (iter.second->opcode() == HloOpcode::kConvert ||
-        iter.second->opcode() == HloOpcode::kSlice ||
-        iter.second->opcode() == HloOpcode::kTranspose) {
-      return FusionDecision{};
-    }
+
+  const int64_t contracting_size = dot.operand(0)->shape().dimensions(
+      ContractingDimensionIndex(dot, /*operand_number=*/0));
+  // b*m*n*k
+  const int64_t complexity =
+      ShapeUtil::ElementsIn(dot.shape()) * contracting_size;
+  constexpr int64_t kComplexityLimit = 1'000'000;
+  if (complexity < kComplexityLimit) {
+    return "This is too small to use Triton.";
   }
-  return "No profitable operations to fuse.";
+
+  return FusionDecision{};
 }
 
 // Extracts into fused computations parts of HLO graph including dot()
