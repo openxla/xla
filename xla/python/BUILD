@@ -192,6 +192,7 @@ cc_library(
     deps = [
         "//xla:status",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 
