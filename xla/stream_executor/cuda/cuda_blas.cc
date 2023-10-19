@@ -175,6 +175,97 @@ class ScopedCublasMathMode {
   bool ok_;                // Whether the change was successful.
 };
 
+// CublasLogCollector allows to capture cuBLAS internal logs and helps to form
+// them into an error message. The hope is to provide the user with useful
+// information when an error occurs.
+//
+// The class is not intended to be instantiated explicitly. State (thread local)
+// is managed implicitly by the static methods.
+//
+// Use by calling the class methods in the following order:
+// 1. CublasLogCollector::Init(). Safe to call multiple times.
+// 2. CublasLogCollector::On() before a cuBLAS API call. This activates log
+//    collection and clears the accumulated logs from a previous use.
+// 3. CublasLogCollector::Off() after the cuBLAS API call. This stops log
+//    collection.
+// 4. CublasLogCollector::GetCublasErrorMessage(status) if the return code
+//    (status) of the cuBLAS API call does not indicate success. This function
+//    returns a string containing the accumulated cuBLAS logs together with some
+//    context on the nature of the error code.
+class CublasLogCollector {
+ public:
+  // Installs a cuBLAS logger callback, allowing us to accumulate internal
+  // cuBLAS logs.
+  static void Init() {
+    // This clobbers the callback if previously set elsewhere in XLA. To be
+    // safe, we fail if a callback is already installed. As of this writing,
+    // there are no other calls to cublasSetLoggerCallback in OSS XLA.
+    auto set_callback = []() {
+      {
+        cublasLogCallback current_callback;
+        cublasGetLoggerCallback(&current_callback);
+        CHECK(!current_callback) << "Refuse to clobber existing cuBLAS logger "
+                                 << "callback, part of global cuBLAS state. "
+                                 << "A revision in XLA is required to ensure "
+                                 << "interoperability between multiple setters "
+                                 << "of the cuBLAS log callback. See cuBLAS "
+                                 << "documentation for cublasGetLoggerCallback "
+                                 << "and cublasSetLoggerCallback.";
+      }
+      cublasSetLoggerCallback(CublasLogCollector::CublasCallback);
+    };
+    static std::once_flag once;
+    std::call_once(once, set_callback);
+  }
+
+  static void On() {
+    ResetState();
+    SetEnableLogging(true);
+  }
+  static void Off() { SetEnableLogging(false); }
+
+  static std::string GetCublasErrorMessage(cublasStatus_t status) {
+    if (status == CUBLAS_STATUS_SUCCESS) {
+      return "cuBLAS API call was successful.";
+    }
+    std::string logs = GetState().log_stream_.str();
+    std::stringstream error_message;
+    error_message << "cuBLAS API failed with status code " << (int)status
+                  << " (" << cublasGetStatusString(status) << "). "
+                  << "Internal logs captured:\n"
+                  << logs << "================= LOG END =================\n";
+    return error_message.str();
+  }
+
+ private:
+  // Potentially called multiple times within a single cuBLAS API call with
+  // internal log strings as input.
+  static void CublasCallback(const char *str) {
+    if (!str) return;
+    GetState().log_stream_ << '[' << GetState().counter_++ << "] " << str;
+  }
+
+  // Turns logging through the callback on/off, globally.
+  static void SetEnableLogging(bool active) {
+    cublasLoggerConfigure(/*logIsOn=*/active, /*logToStdOut=*/0,
+                          /*logToStdErr=*/0,
+                          /*logFileName=*/nullptr);
+  }
+
+  static CublasLogCollector &GetState() {
+    static thread_local CublasLogCollector collector{};
+    return collector;
+  }
+
+  static void ResetState() {
+    GetState().log_stream_.str("");
+    GetState().counter_ = 0;
+  }
+
+  unsigned counter_ = 0;
+  std::stringstream log_stream_;
+};
+
 static const char *const kCublasNotInitializedExplanation =
     "Failure to initialize cublas may be due to OOM (cublas needs some free "
     "memory when you initialize it, and your deep-learning framework may have "
@@ -201,7 +292,7 @@ bool CUDABlas::Init() {
     return false;
   }
 #endif  // CUDA_VERSION >= 11000
-
+  CublasLogCollector::Init();
   return true;
 }
 
@@ -394,11 +485,14 @@ tsl::Status CUDABlas::DoBlasInternalImpl(FuncT cublas_func, Stream *stream,
                                            : CUBLAS_POINTER_MODE_DEVICE)) {
     return tsl::errors::Internal("Failed setting error mode");
   }
-  cublasStatus_t ret = cublas_func(blas_, args...);
-  if (ret == CUBLAS_STATUS_SUCCESS) {
+  CublasLogCollector::On();
+  cublasStatus_t status = cublas_func(blas_, args...);
+  CublasLogCollector::Off();
+  if (status == CUBLAS_STATUS_SUCCESS) {
     return ::tsl::OkStatus();
   }
-  return tsl::errors::Internal(ToString(ret));
+  std::string error_message = CublasLogCollector::GetCublasErrorMessage(status);
+  return tsl::errors::Internal(error_message);
 }
 
 // cublas_func may be overloaded, so we need to figure out which one we really
