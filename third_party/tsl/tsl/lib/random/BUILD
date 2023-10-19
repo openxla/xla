@@ -8,15 +8,7 @@ load("//tsl/platform:rules_cc.bzl", "cc_library")
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
-        # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
-        "//tensorflow/core:__pkg__",
-        # tensorflow/core/platform/cloud depends on random.h
-        "//tensorflow/core/platform:__subpackages__",
-        # All of the following packages depend on random/simple_philox.h for tests
-        "//tsl/lib/core:__pkg__",
-        "//tensorflow/core/lib/gtl:__pkg__",
         "//tsl/lib/io:__pkg__",
-        "//tensorflow/core/lib/strings:__pkg__",
         # tensorflow/core/platform/random aliases this package
         "//tensorflow/core/lib/random:__pkg__",
     ],
@@ -69,7 +61,6 @@ cc_library(
     hdrs = ["philox_random.h"],
     compatible_with = get_compatible_with_portable(),
     visibility = [
-        "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/random:__pkg__",
         "//tensorflow/lite:__subpackages__",
     ],
@@ -125,10 +116,7 @@ filegroup(
         "random_distributions_utils.h",
         "simple_philox.h",
     ],
-    visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/random:__pkg__",
-    ],
+    visibility = ["//tensorflow/core/lib/random:__pkg__"],
 )
 
 filegroup(
@@ -138,10 +126,7 @@ filegroup(
         "random_distributions_utils.h",
         "weighted_picker.h",
     ],
-    visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/random:__pkg__",
-    ],
+    visibility = ["//tensorflow/core/lib/random:__pkg__"],
 )
 
 filegroup(
@@ -149,10 +134,7 @@ filegroup(
     srcs = [
         "philox_random_test_utils.h",
     ],
-    visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/random:__pkg__",
-    ],
+    visibility = ["//tensorflow/core/lib/random:__pkg__"],
 )
 
 filegroup(
@@ -167,10 +149,7 @@ filegroup(
         "simple_philox.h",
         "weighted_picker.h",
     ],
-    visibility = [
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/random:__pkg__",
-    ],
+    visibility = ["//tensorflow/core/lib/random:__pkg__"],
 )
 
 tsl_cc_test(
