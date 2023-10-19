@@ -1110,7 +1110,7 @@ build_cub_sort_kernels(
     deps = if_gpu_is_configured([
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@local_config_cuda//cuda:cuda_headers",  #cub
+        "//third_party/gpus/cub",
     ]),
 )
 
