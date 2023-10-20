@@ -213,6 +213,33 @@ struct FusedConvOp {
   }
 };
 
+// Implementation of the concept required by LazyOpRunner, for NormRunner.
+struct NormOp {
+  using Signature = NormSignature;
+
+  // Config is mainly used in RunnerFromAlgorithmDesc() to lazily create the
+  // runner. At this moment we only get existing runners and don't implement
+  // this feature.
+  struct Config {
+    double epsilon;
+    const TensorDescriptor& input_descriptor;
+    const TensorDescriptor& scale_descriptor;
+    const TensorDescriptor& bias_descriptor;
+    const TensorDescriptor& output_descriptor;
+    std::optional<dnn::TensorDescriptor> expectation_descriptor;
+    std::optional<dnn::TensorDescriptor> norm_factor_descriptor;
+  };
+
+  static tsl::StatusOr<std::unique_ptr<const OpRunner<Signature>>>
+  RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
+                          Stream* stream) {
+    return stream->NormRunnerFromDesc(
+        desc, config.epsilon, config.input_descriptor, config.scale_descriptor,
+        config.bias_descriptor, config.output_descriptor,
+        config.expectation_descriptor, config.norm_factor_descriptor);
+  }
+};
+
 // Implementation of the concept required by LazyOpRunner, for FusedMatmul.
 struct FusedMatmulOp {
   using Signature = FusedMatmulSignature;

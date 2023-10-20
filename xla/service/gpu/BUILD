@@ -272,6 +272,7 @@ cc_library(
         ":gpu_executable",
         ":gpu_fused_mha_runner",
         ":gpu_fusible",
+        ":gpu_norm_runner",
         ":hlo_fusion_analysis",
         ":hlo_to_ir_bindings",
         ":ir_emission_utils",
@@ -899,6 +900,7 @@ cc_library(
         "gpu_executable.cc",
         "infeed_thunk.cc",
         "kernel_thunk.cc",
+        "norm_thunk.cc",
         "memset_thunk.cc",
         "outfeed_thunk.cc",
         "replica_id_thunk.cc",
@@ -915,6 +917,7 @@ cc_library(
         "gpu_executable.h",
         "infeed_thunk.h",
         "kernel_thunk.h",
+        "norm_thunk.h",
         "memset_thunk.h",
         "outfeed_thunk.h",
         "replica_id_thunk.h",
@@ -934,6 +937,7 @@ cc_library(
         ":gpu_conv_runner",
         ":gpu_executable_run_options",
         ":gpu_fused_mha_runner",
+        ":gpu_norm_runner",
         ":io_feed_manager",
         ":ir_emission_utils",
         ":kernel_arguments",
@@ -1729,6 +1733,31 @@ cc_library(
         "//xla/stream_executor:lazy_op_runner",
         "@com_google_absl//absl/strings",
     ],
+)
+
+cc_library(
+    name = "gpu_norm_runner",
+    srcs = ["gpu_norm_runner.cc"],
+    hdrs = ["gpu_norm_runner.h"],
+    deps = [
+        ":backend_configs_cc",
+        ":cublas_cudnn",
+        ":stream_executor_util",
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla:types",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor",
+        "//xla/stream_executor:dnn",
+        "//xla/stream_executor:lazy_op_runner",
+        "@com_google_absl//absl/strings",
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ])
 )
 
 cc_library(
@@ -2868,6 +2897,7 @@ cc_library(
         ":cudnn_fused_conv_rewriter",
         ":cudnn_fused_mha_rewriter",
         ":cudnn_fused_mha_transpose_fusion",
+        ":cudnn_norm_rewriter",
         ":cudnn_pad_for_convolutions",
         ":cudnn_simplify_padding",
         ":cudnn_vectorize_convolutions",
@@ -3478,6 +3508,43 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "cudnn_norm_rewriter",
+    srcs = ["cudnn_norm_rewriter.cc"],
+    hdrs = ["cudnn_norm_rewriter.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    deps = [
+        ":backend_configs_cc",
+        ":cublas_cudnn",
+        "//xla:shape_util",
+        "//xla:window_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+        "//xla:status",
+] + if_cuda_is_configured([
+            "@local_config_cuda//cuda:cuda_headers",
+            "@local_config_cuda//cuda:cudnn_header",
+        ]),
+    )
+
+xla_cc_test(
+    name = "cudnn_norm_rewriter_test",
+    srcs = ["cudnn_norm_rewriter_test.cc"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    deps = [
+        ":cublas_cudnn",
+        ":cudnn_norm_rewriter",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/tests:filecheck",
+        "@com_google_googletest//:gtest_main",
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cudnn_header",
+    ]),
+)
+
+cc_library(
     name = "cudnn_fused_mha_rewriter",
     srcs = ["cudnn_fused_mha_rewriter.cc"],
     hdrs = ["cudnn_fused_mha_rewriter.h"],
@@ -3919,7 +3986,7 @@ test_suite(
         # TODO(anlunx): Re-enable when the FFI mechanism is avalable in Thunk-based runtime.
         # copybara:uncomment # "//third_party/py/jax/experimental/jax2tf/tests:primitives_test_gpu",
         # copybara:uncomment "//third_party/py/jax/tests:pmap_test_gpu",
-        # copybara:uncomment "//tensorflow/compiler/tests:fft_test_gpu",
+        # copybara:uncomment "//tests:fft_test_gpu",
         "//xla/python:xla_client_test_gpu",
         "//xla/service/gpu/tests:add_preds.hlo.test",
         "//xla/service/gpu/tests:concat.hlo.test",

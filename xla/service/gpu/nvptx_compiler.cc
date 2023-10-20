@@ -29,6 +29,11 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/util/env_var.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/call_inliner.h"
@@ -46,6 +51,7 @@ limitations under the License.
 #include "xla/service/gpu/cudnn_fused_conv_rewriter.h"
 #include "xla/service/gpu/cudnn_fused_mha_rewriter.h"
 #include "xla/service/gpu/cudnn_fused_mha_transpose_fusion.h"
+#include "xla/service/gpu/cudnn_norm_rewriter.h"
 #include "xla/service/gpu/cudnn_pad_for_convolutions.h"
 #include "xla/service/gpu/cudnn_simplify_padding.h"
 #include "xla/service/gpu/cudnn_vectorize_convolutions.h"
@@ -81,11 +87,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_internal.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/util/env_var.h"
 
 namespace xla {
 namespace gpu {
@@ -245,6 +246,9 @@ Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
     TF_RETURN_IF_ERROR(mha_fusion_pipeline.Run(hlo_module).status());
   }
+
+  // Rewrite normalization patterns into cuDNN Custom Calls.
+  pre_pipeline.AddPass<CudnnNormRewriter>(cuda_compute_capability);
 
   pre_pipeline.AddPass<DotDimensionMerger>();
 
