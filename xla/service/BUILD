@@ -1128,7 +1128,9 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     alwayslink = 1,
 )
 
@@ -4963,7 +4965,9 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
 )
 
 xla_cc_test(
