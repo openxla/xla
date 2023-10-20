@@ -4927,11 +4927,6 @@ bool MIOpenSupport::DeriveOutputBatchDescriptor(
   return true;
 }
 
-// A helper function to decide whether to use
-// NHWC in Convolution/Batchnorm. This mode can be faster in
-// in FP16 workloads on gfx908 and beyond. Requires ROCm 5.0+.
-// TODO(stevenireeves): Use autotune to choose between this mode and
-// NCHW when MIOpen has more optimized kernels. 
 bool UseNhwcLayoutForRocm() {
 #if TF_ROCM_VERSION >= 50100
   static bool is_enabled = [] {
