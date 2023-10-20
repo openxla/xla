@@ -258,8 +258,6 @@ StatusOr<std::string> PyHostSendAndRecvLoadedHostCallback::Serialize() const {
           py_host_callback_proto)) {
     return absl::InternalError("Could not serialize a Python host callback");
   }
-  xla_host_callback_proto.set_use_major_to_minor_data_layout_for_callbacks(
-      true);
   return xla_host_callback_proto.SerializeAsString();
 }
 

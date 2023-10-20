@@ -1237,8 +1237,7 @@ static xla::SendCallback CSendCallbackToCpp(
     const PJRT_SendCallbackInfo& c_callback) {
   return xla::SendCallback{
       c_callback.channel_id,
-      // Transfer metadata is unused because PJRT C API doesn't support
-      // use_major_to_minor_data_layout_for_callbacks = false
+      // Transfer metadata is unused.
       [user_arg = c_callback.user_arg, callback = c_callback.send_callback](
           const xla::PjRtTransferMetadata& unused_metadata,
           xla::PjRtChunk input, size_t total_size_in_bytes,
@@ -1283,8 +1282,7 @@ static xla::RecvCallback CRecvCallbackToCpp(
     const PJRT_RecvCallbackInfo& c_callback) {
   return xla::RecvCallback{
       c_callback.channel_id,
-      // Transfer metadata is unused because PJRT C API doesn't support
-      // use_major_to_minor_data_layout_for_callbacks = false
+      // Transfer metadata is unused.
       [user_arg = c_callback.user_arg, callback = c_callback.recv_callback](
           const xla::PjRtTransferMetadata& unused_metadata,
           std::unique_ptr<xla::CopyToDeviceStream> stream) {
@@ -1338,7 +1336,6 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
   options.untuple_result = true;
   options.context = nullptr;
   options.multi_slice_config = nullptr;
-  options.use_major_to_minor_data_layout_for_callbacks = true;
 
   std::vector<std::vector<xla::PjRtBuffer*>> cpp_argument_lists =
       Convert2DCBuffersToCppBuffers(args->argument_lists, args->num_devices,

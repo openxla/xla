@@ -34,7 +34,7 @@ limitations under the License.
 
 namespace xla {
 
-// A thread-safe queue for passing PjRtChunk objects for e.g. from Send ops to
+// A thread-safe queue for passing PjRtChunk objects e.g. from Send ops to
 // Recv ops.
 class ThreadSafePjRtChunkQueue {
  public:
@@ -95,20 +95,11 @@ struct HostCallback {
 // A helper class that maintains the send/recv states for a host callback.
 class HostCallbackContext {
  public:
-  HostCallbackContext(
-      HostCallback host_callback,
-      bool use_major_to_minor_data_layout_for_callbacks,
-      PjRtHostMemoryForDeviceManager* host_memory_for_device_manager)
+  explicit HostCallbackContext(HostCallback host_callback)
       : host_callback_(std::move(host_callback)),
-        use_major_to_minor_data_layout_for_callbacks_(
-            use_major_to_minor_data_layout_for_callbacks),
-        host_memory_for_device_manager_(host_memory_for_device_manager),
         args_(host_callback_.operands.size()),
         result_channels_(host_callback_.results.size()),
         ready_count_(args_.size()) {
-    if (!use_major_to_minor_data_layout_for_callbacks_) {
-      CHECK(host_memory_for_device_manager_);
-    }
     for (auto& channel : result_channels_) {
       channel = std::make_unique<ThreadSafePjRtChunkQueue>();
     }
@@ -124,8 +115,6 @@ class HostCallbackContext {
 
  private:
   HostCallback host_callback_;
-  bool use_major_to_minor_data_layout_for_callbacks_;
-  PjRtHostMemoryForDeviceManager* host_memory_for_device_manager_ = nullptr;
   std::vector<PjRtChunk> args_;
   std::vector<std::unique_ptr<ThreadSafePjRtChunkQueue>> result_channels_;
   std::atomic<int> ready_count_;
@@ -143,18 +132,10 @@ struct HostCallbackStates {
 
 // Creates the execution context for the `host_callback` for one
 // replica.
-//
-// `use_major_to_minor_data_layout_for_callbacks` should match the value set in
-// the corresponding ExecuteOptions; see the comment there for more
-// info. `host_memory_for_device_manager` may be nullptr if
-// `use_major_to_minor_data_layout_for_callbacks` is true.
 std::unique_ptr<HostCallbackContext>
 CreateHostCallbackStateAndAppendSendRecvCallbacks(
-    HostCallback host_callback,
-    PjRtHostMemoryForDeviceManager* host_memory_for_device_manager,
-    std::vector<SendCallback>& send_callbacks,
-    std::vector<RecvCallback>& recv_callbacks,
-    bool use_major_to_minor_data_layout_for_callbacks);
+    HostCallback host_callback, std::vector<SendCallback>& send_callbacks,
+    std::vector<RecvCallback>& recv_callbacks);
 
 }  // namespace xla
 

@@ -547,11 +547,8 @@ StatusOr<PjRtLoadedExecutable::ExecuteResult> PjRtLoadedExecutable::Execute(
 
       for (const auto& host_send_recv_callback : host_send_recv_callbacks_) {
         contexts.push_back(CreateHostCallbackStateAndAppendSendRecvCallbacks(
-            host_send_recv_callback->host_callback(),
-            /*host_memory_for_device_manager=*/nullptr, send_callbacks,
-            recv_callbacks,
-            /*use_major_to_minor_data_layout_for_callbacks=*/
-            options.use_major_to_minor_data_layout_for_callbacks));
+            host_send_recv_callback->host_callback(), send_callbacks,
+            recv_callbacks));
       }
     }
     opts.send_callbacks = host_callback_states->send_callbacks;

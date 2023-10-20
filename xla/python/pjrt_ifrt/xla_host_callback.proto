@@ -47,7 +47,5 @@ message XlaHostCallbackProto {
   // Serialized host callback.
   google.protobuf.Any serialized_callback = 3;
 
-  // See comment for PJRT
-  // ExecuteOptions::use_major_to_minor_data_layout_for_callbacks.
-  bool use_major_to_minor_data_layout_for_callbacks = 4;
+  reserved 4;
 }

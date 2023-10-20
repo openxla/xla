@@ -19,27 +19,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "xla/pjrt/pjrt_executable.h"
+
 namespace xla {
 
 Status HostCallbackContext::OnSend(int arg_num,
                                    const PjRtTransferMetadata& metadata,
                                    PjRtChunk data) {
-  if (!use_major_to_minor_data_layout_for_callbacks_) {
-    const auto& arg_info = host_callback_.operands.at(arg_num);
-    const auto& host_shape = arg_info.shape;
-    const auto& device_shape = metadata.device_shape;
-
-    size_t host_size = ShapeUtil::ByteSizeOf(host_shape);
-    DCHECK_GE(data.size(), host_size);
-
-    auto delinearized = PjRtChunk::AllocateDefault(host_size);
-    TF_CHECK_OK(host_memory_for_device_manager_->ToHostLayout(
-        data.data(), data.size(), device_shape, delinearized.data(),
-        delinearized.size(), host_shape));
-
-    data = std::move(delinearized);
-  }
-
   // This assignment to update `args_` will not race with the assignments in
   // future send ops for this `arg_num` because send callbacks are supposed to
   // be invoked sequentially.
@@ -98,15 +84,6 @@ void HostCallbackContext::Receive(int res_num,
   result_channel->Pop().OnReady(
       [this, res_num, metadata,
        stream = std::move(stream)](PjRtChunk chunk) mutable {
-        if (!use_major_to_minor_data_layout_for_callbacks_) {
-          const auto& host_shape = host_callback_.results.at(res_num).shape;
-          const auto& device_shape = metadata.device_shape;
-          auto statusor_linearized =
-              host_memory_for_device_manager_->ToDeviceLayout(
-                  chunk.data(), chunk.size(), host_shape, device_shape);
-          chunk = std::move(statusor_linearized.value());
-        }
-
         stream->AddChunk(std::move(chunk)).OnReady([](Status s) {
           TF_CHECK_OK(s);
         });
@@ -115,14 +92,10 @@ void HostCallbackContext::Receive(int res_num,
 
 std::unique_ptr<HostCallbackContext>
 CreateHostCallbackStateAndAppendSendRecvCallbacks(
-    HostCallback host_callback,
-    PjRtHostMemoryForDeviceManager* host_memory_for_device_manager,
-    std::vector<SendCallback>& send_callbacks,
-    std::vector<RecvCallback>& recv_callbacks,
-    bool use_major_to_minor_data_layout_for_callbacks) {
-  auto context = std::make_unique<HostCallbackContext>(
-      std::move(host_callback), use_major_to_minor_data_layout_for_callbacks,
-      host_memory_for_device_manager);
+    HostCallback host_callback, std::vector<SendCallback>& send_callbacks,
+    std::vector<RecvCallback>& recv_callbacks) {
+  auto context =
+      std::make_unique<HostCallbackContext>(std::move(host_callback));
 
   const auto& hb = context->host_callback();
   for (int arg_num = 0; arg_num < hb.operands.size(); ++arg_num) {

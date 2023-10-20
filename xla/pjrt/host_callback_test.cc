@@ -27,28 +27,6 @@ limitations under the License.
 namespace xla {
 namespace {
 
-class TestPjRtHostMemoryForDeviceManager
-    : public PjRtHostMemoryForDeviceManager {
- public:
-  ~TestPjRtHostMemoryForDeviceManager() override = default;
-
-  StatusOr<PjRtChunk> ToDeviceLayout(const void* src_data, size_t src_size,
-                                     const Shape& host_shape,
-                                     const Shape& device_shape) override {
-    auto chunk = PjRtChunk::AllocateDefault(src_size);
-    std::memcpy(chunk.data(), src_data, src_size);
-    return chunk;
-  }
-
-  Status ToHostLayout(const void* src_data, size_t src_size,
-                      const Shape& src_shape, void* dst_data, size_t dst_size,
-                      const Shape& dst_shape) override {
-    CHECK_EQ(src_size, dst_size);
-    std::memcpy(dst_data, src_data, src_size);
-    return OkStatus();
-  }
-};
-
 class TestStream : public CopyToDeviceStream {
  public:
   TestStream(int64_t total_bytes, int64_t granule_bytes, PjRtChunk& chunk,
@@ -87,12 +65,8 @@ TEST(HostCallbackTest, Basic) {
   auto& send_callbacks = states.send_callbacks.emplace_back();
   auto& recv_callbacks = states.recv_callbacks.emplace_back();
 
-  TestPjRtHostMemoryForDeviceManager test_host_memory_for_device_manager;
-
   auto context = CreateHostCallbackStateAndAppendSendRecvCallbacks(
-      std::move(host_callback), &test_host_memory_for_device_manager,
-      send_callbacks, recv_callbacks,
-      /*use_major_to_minor_data_layout_for_callbacks=*/false);
+      std::move(host_callback), send_callbacks, recv_callbacks);
 
   PjRtTransferMetadata metadata;
   metadata.device_shape = shape;
@@ -135,12 +109,8 @@ TEST(HostCallbackTest, NonBlockingRecv) {
   auto& send_callbacks = states.send_callbacks.emplace_back();
   auto& recv_callbacks = states.recv_callbacks.emplace_back();
 
-  TestPjRtHostMemoryForDeviceManager test_host_memory_for_device_manager;
-
   auto context = CreateHostCallbackStateAndAppendSendRecvCallbacks(
-      std::move(host_callback), &test_host_memory_for_device_manager,
-      send_callbacks, recv_callbacks,
-      /*use_major_to_minor_data_layout_for_callbacks=*/false);
+      std::move(host_callback), send_callbacks, recv_callbacks);
 
   PjRtTransferMetadata metadata;
   metadata.device_shape = shape;

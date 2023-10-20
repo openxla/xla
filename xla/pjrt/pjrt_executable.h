@@ -153,9 +153,7 @@ class ExecuteContext {
 };
 
 struct PjRtTransferMetadata {
-  // May be invalid if
-  // ExecuteOptions::use_major_to_minor_data_layout_for_callbacks is true for
-  // this execution.
+  // May be invalid if buffer layout is major_to_minor for this execution.
   Shape device_shape;
 };
 
@@ -230,15 +228,6 @@ struct ExecuteOptions {
   // These callbacks must outlive the execution.
   absl::Span<const std::vector<SendCallback>> send_callbacks;
   absl::Span<const std::vector<RecvCallback>> recv_callbacks;
-
-  // If true, send callbacks are passed PjRtChunks in major-to-minor layout, and
-  // recv functions should pass major-to-minor chunks to
-  // CopyToDeviceStream::AddChunk.
-  //
-  // If false, send callbacks are passed PjRtChunks in the on-device layout
-  // specified in the PjRtTransferMetadata, and recv functions should similarly
-  // pass device-layout chunks to CopyToDeviceStream::AddChunk.
-  bool use_major_to_minor_data_layout_for_callbacks = false;
 
   // The `execution_mode` decides whether the execution will be invoked in the
   // caller thread or launched to a separate thread. By default, the
