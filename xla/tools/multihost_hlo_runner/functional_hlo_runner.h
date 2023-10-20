@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/container/btree_map.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/pjrt/distributed/client.h"
@@ -372,7 +373,6 @@ class FunctionalHloRunner {
       const FunctionalHloRunner::PerDeviceLiteralVecType& output,
       absl::string_view dump_output_to, int task_id);
 
- private:
   // Calculates the requested number of replicas and partitions.
   //
   // The explicit num_replicas and num_partitions options override
@@ -380,16 +380,23 @@ class FunctionalHloRunner {
   //
   // Regarding the num_slices parameter, see the comment on
   // xla::MultiSliceConfig.
+  //
+  // This would ideally be private, but we need it for the implementation of
+  // MultihostHloRunner.
   static ReplicasAndPartitions GetReplicasAndPartitions(
       const std::optional<ExecutionOptions>& execution_options,
       int device_count, const std::optional<int>& num_replicas,
       const std::optional<int>& num_partitions, int num_slices = 1);
 
   // Creates an ExecutableBuildOptions using the specified ExecutionOptions.
+  //
+  // This would ideally be private, but we need it for the implementation of
+  // MultihostHloRunner.
   static ExecutableBuildOptions
   CreateExecutableBuildOptionsFromExecutionOptions(
       const ExecutionOptions& execution_options);
 
+ private:
   static absl::Span<PjRtDevice* const> GetLocalDevices(
       const PjRtClient& client);
 

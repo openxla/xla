@@ -65,6 +65,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:xla_proto_cc",
+        "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
