@@ -1,8 +1,8 @@
 # Description:
 #   XLA evaluator implementation.
 
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -96,12 +96,16 @@ xla_cc_test(
     srcs = ["hlo_evaluator_test.cc"],
     deps = [
         ":hlo_evaluator",
+        "//xla:array2d",
+        "//xla:array3d",
+        "//xla:array4d",
+        "//xla:comparison_util",
+        "//xla:debug_options_flags",
+        "//xla:error_spec",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla:permutation_util",
-        "//xla:reference_util",
         "//xla:shape_util",
-        "//xla:status",
-        "//xla:status_macros",
         "//xla:statusor",
         "//xla:test",
         "//xla:types",
@@ -109,14 +113,21 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "//xla/hlo/ir:hlo",
+        "//xla/service:dynamic_dimension_inference",
         "//xla/service:hlo_element_type_converter",
+        "//xla/service:hlo_module_config",
+        "//xla/service:shape_inference",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:status",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
     ],
