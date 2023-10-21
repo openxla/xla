@@ -728,6 +728,9 @@ bool AlgebraicSimplifierVisitor::ReplaceInstructionIfCompatible(
   if (!SameShape(old_instruction, new_instruction)) {
     return false;
   }
+  if (!old_instruction->parent()->IsSafelyRemovable(old_instruction)) {
+    return false;
+  }
   return ReplaceInstruction(old_instruction, new_instruction,
                             /*preserve_sharding=*/true)
       .value();

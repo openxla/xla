@@ -1143,6 +1143,9 @@ StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
         new_instruction->CopyAllControlDepsFrom(old_instruction));
     TF_RETURN_IF_ERROR(old_instruction->DropAllControlDeps());
   }
+  if (!IsSafelyRemovable(old_instruction)) {
+    return false;
+  }
   VLOG(10) << "transformed " << old_instruction->ToString() << " to "
            << new_instruction->ToString();
   // Try to add metadata for HLO instructions that are created to replace
