@@ -175,6 +175,7 @@ class FunctionalHloRunner {
     std::string xla_dump_to = "";
     XlaTextDumpMode xla_text_dump_mode = XlaTextDumpMode::kNotDumpAsText;
     XlaProtoDumpMode xla_proto_dump_mode = XlaProtoDumpMode::kNotDumpAsProto;
+    std::function<Status(CompilationEnvironments*)> add_comp_envs_fn;
   };
 
   // The options controlling the execution of the HLO module.

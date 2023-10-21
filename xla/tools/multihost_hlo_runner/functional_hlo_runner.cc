@@ -312,6 +312,10 @@ StatusOr<CompileOptions> FunctionalHloRunner::CreateCompileOptions(
 
   ExecutableBuildOptions& build_options =
       compile_options.executable_build_options;
+  if (raw_options.add_comp_envs_fn) {
+    TF_CHECK_OK(
+        raw_options.add_comp_envs_fn(build_options.mutable_comp_envs()));
+  }
   ReplicasAndPartitions replicas_and_partitions =
       FunctionalHloRunner::GetReplicasAndPartitions(
           raw_options.execution_options, client.device_count(),
