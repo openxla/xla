@@ -21,7 +21,7 @@
   * `CUDNN_INSTALL_PATH` (deprecated): The path to the cuDNN library. Default is
     `/usr/local/cuda`.
   * `TF_CUDA_COMPUTE_CAPABILITIES`: The CUDA compute capabilities. Default is
-    `3.5,5.2`.
+    `5.2`.
   * `PYTHON_BIN_PATH`: The python binary path
 """
 
@@ -325,7 +325,7 @@ def compute_capabilities(repository_ctx):
     capabilities = get_host_environ(
         repository_ctx,
         _TF_CUDA_COMPUTE_CAPABILITIES,
-        "compute_35,compute_52",
+        "compute_52",
     ).split(",")
 
     # Map old 'x.y' capabilities to 'compute_xy'.
