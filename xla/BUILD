@@ -1071,6 +1071,7 @@ cc_library(
             "@com_google_absl//absl/strings",
             "@com_google_absl//absl/strings:str_format",
             "@tsl//tsl/platform:logging",
+            "@tsl//tsl/platform:protobuf",
             "@tsl//tsl/util:command_line_flags",
         ],
 )
