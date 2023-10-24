@@ -288,8 +288,15 @@ std::unique_ptr<llvm::TargetMachine> NVPTXGetTargetMachine(
     const DebugOptions& debug_options) {
   // TODO(b/266678775): Make it always PTX 7.1 as soon as TF driver requirements
   // are updated.
-  const std::string ptx_ver =
-      debug_options.xla_gpu_enable_triton_gemm() ? "+ptx71" : "+ptx60";
+  std::string ptx_ver = "+ptx60";
+  if (debug_options.xla_gpu_enable_triton_gemm()) {
+#if CUDA_VERSION >= 12000
+    ptx_ver = "+ptx80";
+#else
+    ptx_ver = "+ptx71";
+#endif  // CUDA_VERSION >= 12000
+  }
+
   // Figure out the exact name of the processor as known to the NVPTX backend
   // from the gpu_architecture flag.
   return GetTargetMachine(target_triple, GetSmName(compute_capability),
