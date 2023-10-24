@@ -412,7 +412,9 @@ CompileOptions::LoadEnvOptionOverrides(
                               env_option_override.second.double_field())});
         break;
       case OptionOverrideProto::VALUE_NOT_SET:
-        return InternalError("OptionOverrideProto value not set.");
+        LOG(WARNING) << "OptionOverrideProto value type for "
+                     << env_option_override.first << " is not set.";
+        break;
     }
   }
   return result;
