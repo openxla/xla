@@ -83,6 +83,7 @@ Status RunFusedMHA(GpufMHAParams params, se::Stream *stream,
                                      params.config->activation,
                                      dropout_rate,
                                      seed,
+                                     false,
                                      false};
   TF_ASSIGN_OR_RETURN(auto *runner,
                       lazy_runner->GetOrCreateRunner(config, stream));
@@ -254,8 +255,10 @@ Status RunFusedMHABackward(GpufMHABackwardParams params, se::Stream *stream,
       params.config->mask,
       params.config->d_bias,
       std::nullopt,
+      std::nullopt,
       dropout_rate,
       seed,
+      false,
       false};
   TF_ASSIGN_OR_RETURN(auto *runner,
                       lazy_runner->GetOrCreateRunner(config, stream));
@@ -266,7 +269,7 @@ Status RunFusedMHABackward(GpufMHABackwardParams params, se::Stream *stream,
                    d_output_buffer, d_bmm1_lhs_buffer, d_bmm1_rhs_buffer,
                    d_bmm2_rhs_buffer, d_s_buffer, se::DeviceMemoryBase(),
                    se::DeviceMemoryBase(), mask_buffer, d_bias_buffer,
-                   se::DeviceMemoryBase());
+                   se::DeviceMemoryBase(), se::DeviceMemoryBase());
 }
 
 template <typename ElementType, typename BiasType, typename OutputType>
