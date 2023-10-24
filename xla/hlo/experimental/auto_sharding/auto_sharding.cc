@@ -2528,13 +2528,13 @@ AutoShardingSolverResult CallSolver(
     request.instruction_names.push_back(
         absl::StrCat(instruction_name, " (id: ", node_idx, ")"));
     std::vector<double> ci, di, mi, pi;
-    std::optional<HloSharding> default_strategy;
+    HloSharding default_strategy = HloSharding::Replicate();
     auto iter = sharding_propagation_solution.find(instruction_name);
     if (iter != sharding_propagation_solution.end()) {
       CHECK(iter->second->has_sharding()) << iter->second->ToString();
       default_strategy = iter->second->sharding();
       if (strategies->tuple_element_idx) {
-        const auto& tuple_elements = default_strategy->tuple_elements();
+        const auto& tuple_elements = default_strategy.tuple_elements();
         CHECK_LT(*strategies->tuple_element_idx, tuple_elements.size());
         default_strategy = tuple_elements.at(*strategies->tuple_element_idx);
       }
@@ -2546,7 +2546,7 @@ AutoShardingSolverResult CallSolver(
       di.push_back(strategy.communication_cost +
                    cost_graph.extra_node_costs_[node_idx][j]);
       mi.push_back(strategy.memory_cost);
-      pi.push_back(default_strategy && sharding == *default_strategy ? 0 : 1);
+      pi.push_back(sharding == default_strategy ? 0 : 1);
     }
     if (*std::min_element(pi.begin(), pi.end()) > 0) {
       LOG(WARNING) << "No default strategy for {node_idx " << node_idx
