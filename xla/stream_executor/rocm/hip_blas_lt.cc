@@ -21,8 +21,6 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 #include "xla/primitive_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/blas.h"
-#include "xla/stream_executor/rocm/hip_blas_utils.h"
 #include "xla/util.h"
 
 #if TF_HIPBLASLT
@@ -137,13 +135,13 @@ tsl::Status BlasLt::Init() {
                              ? m.num_cols
                              : m.num_rows;
   }
-
+  auto hipblas_data_type_ = AsHipblasDataType(type);
   hipblasLtMatrixLayout_t hip_layout;
   SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatrixLayoutCreate(
-      &hip_layout, AsHipblasDataType(type), m.num_rows, m.num_cols,
+      &hip_layout, hipblas_data_type_, m.num_rows, m.num_cols,
       *leading_dim_stride));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
-  BlasLt::MatrixLayout layout(hip_layout);
+  BlasLt::MatrixLayout layout(hip_layout, hipblas_data_type_);
   if (m.order != gpu::MatrixLayout::Order::kColumnMajor)
     return tsl::errors::Internal(
         "HipblasLT does not support row-major matrices");
@@ -167,14 +165,16 @@ tsl::Status BlasLt::Init() {
   VLOG(2) << "BlasLt::MatmulDesc::Create compute_type" << int(compute_type)
           << " scale_type " << int(scale_type) << " epilogue " << int(epilogue)
           << " pointer_mode " << int(pointer_mode);
+  auto hip_scale_type = AsHipblasDataType(scale_type);        
+  auto hip_compute_type = AsHipblasComputeType(compute_type);
   SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmulDescCreate(
-      &hip_desc, AsHipblasComputeType(compute_type),
-      AsHipblasDataType(scale_type)));
+      &hip_desc, hip_compute_type, hip_scale_type));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
-  BlasLt::MatmulDesc desc(hip_desc);
+  BlasLt::MatmulDesc desc(hip_desc, hip_compute_type, hip_scale_type);
   if (pointer_mode != PointerMode::kHost) {
     return tsl::errors::Internal("hipblaslt does not support device pointers");
   }
+
   TF_RETURN_IF_ERROR(SetAttr(hip_desc, HIPBLASLT_MATMUL_DESC_TRANSA,
                              AsHipblasOperation(trans_a)));
   TF_RETURN_IF_ERROR(SetAttr(hip_desc, HIPBLASLT_MATMUL_DESC_TRANSB,
