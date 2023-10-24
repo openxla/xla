@@ -218,6 +218,7 @@ HloInstructionSequence PostprocessorToScheduleSyncCollectives(
       // Place the start op just before the done op if its synchronous.
       HloInstruction* start = instr->mutable_operand(0);
       if (is_synchronous_op(start)) {
+        CHECK_EQ(start->control_successors().size(), 0);
         result.push_back(start);
       }
     }
