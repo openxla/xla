@@ -23,7 +23,7 @@ limitations under the License.
 
 #include "absl/strings/str_format.h"
 #include "Eigen/Core"  // from @eigen_archive
-#include "include/int4.h"  // from @ml_dtypes
+#include "ml_dtypes/include/int4.h"  // from @ml_dtypes
 
 namespace xla {
 

@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_PLATFORM_ML_DTYPES_H_
 #define TENSORFLOW_TSL_PLATFORM_ML_DTYPES_H_
 
-#include "include/float8.h"  // from @ml_dtypes
-#include "include/int4.h"  // from @ml_dtypes
+#include "ml_dtypes/include/float8.h"  // from @ml_dtypes
+#include "ml_dtypes/include/int4.h"  // from @ml_dtypes
 
 namespace tsl {
 using float8_e4m3fn = ml_dtypes::float8_e4m3fn;
