@@ -16,9 +16,11 @@ limitations under the License.
 #include "xla/service/copy_insertion.h"
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <optional>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -36,6 +38,7 @@ limitations under the License.
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_ordering.h"
+#include "xla/service/hlo_value.h"
 #include "xla/service/tuple_simplifier.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
@@ -359,10 +362,10 @@ Status AddCopiesForAliasedInputOutputs(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   HloComputation* entry = module->entry_computation();
-  if (!HloInstruction::IsThreadIncluded(entry->execution_thread(),
-                                        execution_threads)) {
-    return OkStatus();
-  }
+  // if (!HloInstruction::IsThreadIncluded(entry->execution_thread(),
+  //                                       execution_threads)) {
+  //   return OkStatus();
+  // }
   HloInstruction* root = entry->root_instruction();
 
   ShapeTree<bool> output_indices_to_copy(root->shape());
@@ -1191,6 +1194,16 @@ class CopyRemover {
               HloOrdering* ordering, bool check_live_range_ordering,
               const absl::flat_hash_set<absl::string_view>& execution_threads)
       : dataflow_(alias_analysis.dataflow_analysis()), ordering_(ordering) {
+    VLOG(0) << " module " << module.ToString() << "\n";
+    // Skip if execution thread is not included.
+    auto should_skip_value = [&execution_threads](const HloValue* value) {
+      // return value->defining_instruction()->parent() != nullptr &&
+      //        !HloInstruction::IsThreadIncluded(
+      //            value->defining_instruction()->parent()->execution_thread(),
+      //            execution_threads);
+      return false;
+    };
+
     // Construct a list for each HLO buffer in the alias analysis. Maintain a
     // map from HloValue to the respective list element representing that
     // value. The map is used to construct the copy info map below.
@@ -1204,14 +1217,6 @@ class CopyRemover {
         continue;
       }
       if (check_live_range_ordering) {
-        // Skip checking if execution thread is not included.
-        auto should_skip_value = [&execution_threads](const HloValue* value) {
-          return value->defining_instruction()->parent() != nullptr &&
-                 !HloInstruction::IsThreadIncluded(value->defining_instruction()
-                                                       ->parent()
-                                                       ->execution_thread(),
-                                                   execution_threads);
-        };
         // Verify values contained in the buffer are strictly ordered. This
         // should always be the case after adding copies to eliminate
         // interference. Specifically, the addition of the control flow edges
@@ -1240,18 +1245,31 @@ class CopyRemover {
         }
       }
 
+      // std::vector<const HloValue*> values = buffer.values();
       std::vector<const HloValue*> values = buffer.values();
-      absl::c_sort(values, [this](const HloValue* a, const HloValue* b) {
+      VLOG(0) << " values " << values.size() << "\n";
+      for (auto value : values) {
+        VLOG(0) << " value " << value->ToString() << "\n";
+      }
+      // absl::c_copy_if(buffer.values(), std::back_inserter(values),
+      //                 [&should_skip_value](const HloValue* value) {
+      //                   return !should_skip_value(value);
+      //                 });
+      //      if (!values.empty()) {
+        absl::c_sort(values, [this](const HloValue* a, const HloValue* b) {
         return ordering_->IsDefinedBefore(*a, *b);
-      });
+        //        });
 
-      // Create a list containing all of the values in the buffer.
-      AddValueList(values, &value_to_node);
+        // Create a list containing all of the values in the buffer.
+        AddValueList(values, &value_to_node);
+      }
     }
 
     // Create copy_map_ which contains the source and destination values
     // of all copies.
-    CreateCopyMap(module, value_to_node);
+    //    if (!value_to_node.empty()) {
+    CreateCopyMap(module, value_to_node, execution_threads);
+    //    }
 
     XLA_VLOG_LINES(3, ToString());
     TF_DCHECK_OK(Verify());
@@ -1299,7 +1317,8 @@ class CopyRemover {
   // respective ValueNode.
   void CreateCopyMap(
       const HloModule& module,
-      const absl::flat_hash_map<const HloValue*, ValueNode*>& value_to_node) {
+      const absl::flat_hash_map<const HloValue*, ValueNode*>& value_to_node,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) {
     for (HloComputation* computation : module.MakeNonfusionComputations()) {
       for (HloInstruction* instruction : computation->instructions()) {
         // Add copies with unambiguous source values to the map. Copies with
@@ -1308,10 +1327,18 @@ class CopyRemover {
           const HloValueSet& src_value_set =
               dataflow_.GetValueSet(instruction->operand(0));
           if (src_value_set.values().size() == 1) {
+            const HloValue* dest_value =
+                &dataflow_.GetUniqueValueAt(instruction);
+            const HloValue* src_value = &src_value_set.GetUniqueValue();
+            // if (value_to_node.contains(src_value) &&
+            //     value_to_node.contains(dest_value)) {
             CopyNodes& copy_node = copy_map_[instruction];
-            copy_node.dest =
-                value_to_node.at(&dataflow_.GetUniqueValueAt(instruction));
-            copy_node.src = value_to_node.at(&src_value_set.GetUniqueValue());
+            copy_node.dest = value_to_node.at(dest_value);
+            copy_node.src = value_to_node.at(src_value);
+            // } else {
+            //   VLOG(0) << " src value " << src_value->ToString()
+            //           << " dest value " << dest_value->ToString();
+            // }
           }
         }
       }
@@ -1871,8 +1898,7 @@ Status CopyInsertion::AddCopiesToResolveInterference(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer_));
-  for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+  for (HloComputation* computation : module->MakeNonfusionComputations()) {
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       if (instruction->opcode() == HloOpcode::kWhile) {
@@ -2009,7 +2035,7 @@ Status CopyInsertion::AddSpecialCaseCopies(
   }
 
   // Identify copies which must be added at root instructions
-  for (HloComputation* computation : module->computations(execution_threads)) {
+  for (HloComputation* computation : module->computations()) {
     const CallGraphNode& node = call_graph.GetNode(computation);
     if (node.context() == CallContext::kEmbedded) {
       continue;
@@ -2095,7 +2121,7 @@ static int64_t GetNumExistingCopies(
     const HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   int64_t num_existing_copies = 0;
-  for (HloComputation* computation : module->computations(execution_threads)) {
+  for (HloComputation* computation : module->computations()) {
     for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() == HloOpcode::kCopy) {
         ++num_existing_copies;
@@ -2145,8 +2171,7 @@ Status CopyInsertion::RemoveUnnecessaryCopies(
     changed = false;
     VLOG(2) << "Running fixpoint iteration " << num_iterations
             << " of copy elision";
-    for (HloComputation* computation :
-         module->computations(execution_threads)) {
+    for (HloComputation* computation : module->computations()) {
       VLOG(2) << "computation:" << computation->name() << "\n";
       for (HloInstruction* instruction : computation->instructions()) {
         VLOG(2) << instruction->ToString() << "\n";
@@ -2225,8 +2250,8 @@ StatusOr<bool> CopyInsertion::Run(
   // instructions introduced by tuple simplification.
   TupleSimplifier tuple_simplifier;
   HloDCE dce;
-  TF_RETURN_IF_ERROR(tuple_simplifier.Run(module, execution_threads).status());
-  TF_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
+  TF_RETURN_IF_ERROR(tuple_simplifier.Run(module).status());
+  TF_RETURN_IF_ERROR(dce.Run(module).status());
   DumpHloModuleDuringPassIfEnabled(
       name(), "after adding copies to resolve interference", *module);
 
@@ -2240,8 +2265,8 @@ StatusOr<bool> CopyInsertion::Run(
   DumpHloModuleDuringPassIfEnabled(name(), "after adding special-case copies",
                                    *module);
 
-  TF_RETURN_IF_ERROR(tuple_simplifier.Run(module, execution_threads).status());
-  TF_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
+  TF_RETURN_IF_ERROR(tuple_simplifier.Run(module).status());
+  TF_RETURN_IF_ERROR(dce.Run(module).status());
 
   VLOG(1) << "Num copies before copy-insertion: " << num_copies_before;
   VLOG(1) << "Num copies after copy-insertion: "
