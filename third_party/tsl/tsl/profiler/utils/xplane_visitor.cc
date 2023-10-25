@@ -52,6 +52,9 @@ std::string XStatVisitor::ToString() const {
       return "<opaque bytes>";
     case XStat::kRefValue:
       return plane_->GetStatMetadata(stat_->ref_value())->name();
+    case XStat::kCompressedStrValue:
+      return absl::StrCat("<opaque compressed string>",
+                          stat_->compressed_str_value());
     case XStat::VALUE_NOT_SET:
       return "";
   }
@@ -61,6 +64,8 @@ absl::string_view XStatVisitor::StrOrRefValue() const {
   switch (stat_->value_case()) {
     case XStat::kStrValue:
       return stat_->str_value();
+    case XStat::kCompressedStrValue:
+      return stat_->compressed_str_value();
     case XStat::kRefValue:
       return plane_->GetStatMetadata(stat_->ref_value())->name();
     case XStat::kInt64Value:

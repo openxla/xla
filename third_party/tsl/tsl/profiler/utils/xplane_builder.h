@@ -196,6 +196,9 @@ class XStatsBuilder {
       case XStat::kStrValue:
         dst_stat->set_str_value(src_stat.str_value());
         break;
+      case XStat::kCompressedStrValue:
+        dst_stat->set_compressed_str_value(src_stat.compressed_str_value());
+        break;
       case XStat::kRefValue: {
         const auto& stat_metadata_by_id = src_plane.stat_metadata();
         const auto it = stat_metadata_by_id.find(src_stat.ref_value());
@@ -436,6 +439,8 @@ absl::string_view XStatsBuilder<T>::StrOrRefValue(const XStat& stat) {
   switch (stat.value_case()) {
     case XStat::kStrValue:
       return stat.str_value();
+    case XStat::kCompressedStrValue:
+      return stat.compressed_str_value();
     case XStat::kRefValue: {
       auto* ref_stat = stats_metadata_owner_->GetStatMetadata(stat.ref_value());
       return ref_stat ? ref_stat->name() : absl::string_view();
