@@ -26,28 +26,35 @@ limitations under the License.
 #include "absl/random/random.h"
 #include "absl/strings/substitute.h"
 #include "Eigen/Core"  // from @eigen_archive
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "xla/service/gpu/runtime/gpu_kernel_helper.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/xla_data.pb.h"
+
+#define RUN_BENCHMARKS_ONLY 0
+
+#if !RUN_BENCHMARKS_ONLY
 #include "tsl/platform/test.h"
+#endif
 #include "tsl/platform/test_benchmark.h"
 
 namespace xla::gpu {
 namespace {
 
 using ::stream_executor::gpu::GpuStreamHandle;
+#if !RUN_BENCHMARKS_ONLY
 using ::testing::Combine;
 using ::testing::Values;
+#endif
 
 #define CUDA_CHECK(s)                                  \
   do {                                                 \
-    CHECK_EQ(s, cudaSuccess) << cudaGetErrorString(s); \
+    CHECK_EQ(s, gpuSuccess) << gpuGetErrorString(s); \
   } while (0)
 
 template <typename T>
 T* AllocateGpuBuffer(int num_elements) {
   void* buffer;
-  CUDA_CHECK(cudaMalloc(&buffer, num_elements * sizeof(T)));
+  CUDA_CHECK(gpuMalloc(&buffer, num_elements * sizeof(T)));
   return static_cast<T*>(buffer);
 }
 
@@ -59,8 +66,8 @@ std::vector<T> RandomFillRange(void* buffer, int num_elements, T start, T end) {
   for (int i = 0; i < num_elements; ++i) {
     local.push_back(absl::Uniform<T>(gen, start, end));
   }
-  CUDA_CHECK(cudaMemcpy(buffer, local.data(), num_elements * sizeof(T),
-                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(gpuMemcpy(buffer, local.data(), num_elements * sizeof(T),
+                        gpuMemcpyHostToDevice));
   return local;
 }
 
@@ -79,6 +86,7 @@ std::vector<T> RandomFillNegative(void* buffer, int num_elements) {
 PrimitiveType Get(float) { return PrimitiveType::F32; }
 PrimitiveType Get(Eigen::bfloat16) { return PrimitiveType::BF16; }
 
+#if !RUN_BENCHMARKS_ONLY
 // Params:
 //  - n_kb: number of elements in kilobytes.
 //  - k: number of elements to return.
@@ -99,24 +107,24 @@ TEST_P(TopkTest, TopKFloat) {
   auto* output_indices =
       static_cast<uint32_t*>(AllocateGpuBuffer<uint32_t>(k * batch_size));
   GpuStreamHandle stream;
-  CUDA_CHECK(cudaStreamCreate(&stream));
+  CUDA_CHECK(gpuStreamCreate(&stream));
   ASSERT_TRUE(RunTopk(stream, Get(T()), input_buffer, n, output_values,
                       output_indices, k, batch_size)
                   .ok());
   std::vector<T> got(k);
-  CUDA_CHECK(cudaStreamSynchronize(stream));
+  CUDA_CHECK(gpuStreamSynchronize(stream));
   for (int i = 0; i < batch_size; i++) {
-    CUDA_CHECK(cudaMemcpy(got.data(), &output_values[k * i], k * sizeof(T),
-                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(gpuMemcpy(got.data(), &output_values[k * i], k * sizeof(T),
+                          gpuMemcpyDeviceToHost));
     std::vector<T> slice(source.data() + n * i, source.data() + n * (i + 1));
     std::sort(slice.begin(), slice.end(), std::greater<T>());
     slice.resize(k);
     EXPECT_THAT(got, ::testing::ElementsAreArray(slice))
         << " k=" << k << ", batch_size=" << batch_size;
   }
-  CUDA_CHECK(cudaFree(input_buffer));
-  CUDA_CHECK(cudaFree(output_indices));
-  CUDA_CHECK(cudaFree(output_values));
+  CUDA_CHECK(gpuFree(input_buffer));
+  CUDA_CHECK(gpuFree(output_indices));
+  CUDA_CHECK(gpuFree(output_values));
 }
 
 TEST_P(TopkTest, TopKPackedNegative) {
@@ -129,24 +137,24 @@ TEST_P(TopkTest, TopKPackedNegative) {
   auto* output_indices =
       static_cast<uint32_t*>(AllocateGpuBuffer<uint32_t>(k * batch_size));
   GpuStreamHandle stream;
-  CUDA_CHECK(cudaStreamCreate(&stream));
+  CUDA_CHECK(gpuStreamCreate(&stream));
   ASSERT_TRUE(RunTopk(stream, Get(T()), input_buffer, n, output_values,
                       output_indices, k, batch_size)
                   .ok());
   std::vector<T> got(k);
-  CUDA_CHECK(cudaStreamSynchronize(stream));
+  CUDA_CHECK(gpuStreamSynchronize(stream));
   for (int i = 0; i < batch_size; i++) {
-    CUDA_CHECK(cudaMemcpy(got.data(), &output_values[k * i], k * sizeof(T),
-                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(gpuMemcpy(got.data(), &output_values[k * i], k * sizeof(T),
+                          gpuMemcpyDeviceToHost));
     std::vector<T> slice(source.data() + n * i, source.data() + n * (i + 1));
     std::sort(slice.begin(), slice.end(), std::greater<T>());
     slice.resize(k);
     EXPECT_THAT(got, ::testing::ElementsAreArray(slice))
         << " k=" << k << ", batch_size=" << batch_size;
   }
-  CUDA_CHECK(cudaFree(input_buffer));
-  CUDA_CHECK(cudaFree(output_indices));
-  CUDA_CHECK(cudaFree(output_values));
+  CUDA_CHECK(gpuFree(input_buffer));
+  CUDA_CHECK(gpuFree(output_indices));
+  CUDA_CHECK(gpuFree(output_values));
 }
 
 INSTANTIATE_TEST_SUITE_P(TopkTests, TopkTest,
@@ -162,6 +170,7 @@ INSTANTIATE_TEST_SUITE_P(TopkTests, TopkTest,
                                std::get<2>(info.param),
                                std::get<3>(info.param));
                          });
+#endif // !RUN_BENCHMARKS_ONLY
 
 template <size_t K>
 void BM_SmallTopk(benchmark::State& state) {
@@ -176,36 +185,40 @@ void BM_SmallTopk(benchmark::State& state) {
   void* output_values = AllocateGpuBuffer<T>(k);
   auto* output_indices = static_cast<uint32_t*>(AllocateGpuBuffer<uint32_t>(k));
   GpuStreamHandle stream;
-  CUDA_CHECK(cudaStreamCreate(&stream));
+  CUDA_CHECK(gpuStreamCreate(&stream));
   for (auto _ : state) {
-    cudaEvent_t start, stop;
-    CUDA_CHECK(cudaEventCreate(&start));
-    CUDA_CHECK(cudaEventCreate(&stop));
-    CUDA_CHECK(cudaEventRecord(start, stream));
+    gpuEvent_t start, stop;
+    CUDA_CHECK(gpuEventCreate(&start));
+    CUDA_CHECK(gpuEventCreate(&stop));
+    CUDA_CHECK(gpuEventRecord(start, stream));
     CHECK_OK(RunTopk(stream, Get(T()), input_buffer, n, output_values,
                      output_indices, k, batch_size));
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaEventRecord(stop, stream));
-    CUDA_CHECK(cudaEventSynchronize(stop));
+    CUDA_CHECK(gpuGetLastError());
+    CUDA_CHECK(gpuEventRecord(stop, stream));
+    CUDA_CHECK(gpuEventSynchronize(stop));
     float milliseconds = 0;
-    CUDA_CHECK(cudaEventElapsedTime(&milliseconds, start, stop));
+    CUDA_CHECK(gpuEventElapsedTime(&milliseconds, start, stop));
     state.SetIterationTime(static_cast<double>(milliseconds) / 1000);
-    CUDA_CHECK(cudaEventDestroy(start));
-    CUDA_CHECK(cudaEventDestroy(stop));
+    CUDA_CHECK(gpuEventDestroy(start));
+    CUDA_CHECK(gpuEventDestroy(stop));
   }
   size_t items_processed = batch_size * n * state.iterations();
   state.SetItemsProcessed(items_processed);
   state.SetBytesProcessed(items_processed * sizeof(T));
-  CUDA_CHECK(cudaFree(input_buffer));
-  CUDA_CHECK(cudaFree(output_values));
-  CUDA_CHECK(cudaFree(output_indices));
+  CUDA_CHECK(gpuFree(input_buffer));
+  CUDA_CHECK(gpuFree(output_values));
+  CUDA_CHECK(gpuFree(output_indices));
 }
 
 BENCHMARK(BM_SmallTopk<1>)->RangePair(1, 512, 16, 1024)->UseManualTime();
 BENCHMARK(BM_SmallTopk<2>)->RangePair(1, 512, 16, 1024)->UseManualTime();
 BENCHMARK(BM_SmallTopk<4>)->RangePair(1, 512, 16, 1024)->UseManualTime();
-BENCHMARK(BM_SmallTopk<8>)->RangePair(1, 512, 16, 1024)->UseManualTime();
-BENCHMARK(BM_SmallTopk<16>)->RangePair(1, 512, 16, 1024)->UseManualTime();
+BENCHMARK(BM_SmallTopk<8>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
+BENCHMARK(BM_SmallTopk<16>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
 
 }  // namespace
 }  // namespace xla::gpu
+
+#if RUN_BENCHMARKS_ONLY
+BENCHMARK_MAIN();
+#endif
