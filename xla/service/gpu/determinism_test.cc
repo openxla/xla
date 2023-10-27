@@ -59,6 +59,7 @@ class DeterminismTest : public GpuCodegenTest {
 
       TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                               ParseAndReturnVerifiedModule(hlo_string));
+      LOG(ERROR) << "module " << i << " " << module->ToString();
       if (i == 0) {
         fake_arguments = MakeFakeArguments(module.get()).value();
         for (Literal& literal : fake_arguments) {
