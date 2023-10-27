@@ -6656,7 +6656,7 @@ GetCudnnFlashAttentionOperationGraph(
   intermediate_ops.push_back(std::move(bmm2_op));
   ops.reserve(intermediate_ops.size());
   for (auto& intermediate_op : intermediate_ops) {
-    ops.push_back(&intermediate_op);
+    ops.emplace_back(&intermediate_op);
   }
 
   auto op_graph = cudnn_frontend::OperationGraphBuilder()
@@ -6670,9 +6670,7 @@ GetCudnnFlashAttentionOperationGraph(
           << "\nTensor_v: " << tensor_v.describe()
           << "\nTensor_o: " << tensor_o.describe()
           << "\nBMM1: " << bmm1_desc.describe()
-          << "\nBMM1_op: " << bmm1_op.describe()
           << "\nBMM2: " << bmm2_desc.describe()
-          << "\nBMM2_op: " << bmm2_op.describe()
           << "\nOpGraph: " << op_graph.describe();
   return std::make_unique<cudnn_frontend::OperationGraph>(std::move(op_graph));
 }
@@ -6956,6 +6954,7 @@ GetCudnnFlashAttentionBackwardOperationGraph(
 
   // Divide every stride by the last dim value.
   std::vector<int64_t> do_reduction_strides;
+  do_reduction_strides.reserve(do_strides.size());
   int64_t reduced_dim_len = do_dims.back();
   for (auto stride : do_strides) {
     do_reduction_strides.push_back(stride / reduced_dim_len);
@@ -7318,8 +7317,9 @@ GetCudnnFlashAttentionBackwardOperationGraph(
       CreateUnaryPwOp(tensor_d_Q_accum, tensor_dq, identity_desc));
   intermediate_ops.push_back(std::move(identity_op));
 
+  ops.reserve(intermediate_ops.size());
   for (auto& intermediate_op : intermediate_ops) {
-    ops.push_back(&intermediate_op);
+    ops.emplace_back(&intermediate_op);
   }
 
   auto op_graph = cudnn_frontend::OperationGraphBuilder()
@@ -7338,16 +7338,11 @@ GetCudnnFlashAttentionBackwardOperationGraph(
           << "\nTensor_dk: " << tensor_dk.describe()
           << "\nTensor_dv: " << tensor_dv.describe()
           << "\nBMM2_grad_gemm1: " << bmm2_grad_gemm1_desc.describe()
-          << "\nBMM2_grad_gemm1_op: " << bmm2_grad_gemm1_op.describe()
           << "\nBMM2_grad_gemm2: " << bmm2_grad_gemm2_desc.describe()
-          << "\nBMM2_grad_gemm2_op: " << bmm2_grad_gemm2_op.describe()
           << "\nBMM1_grad_gemm1: " << bmm1_grad_gemm1_desc.describe()
-          << "\nBMM1_grad_gemm1_op: " << bmm1_grad_gemm1_op.describe()
           << "\nBMM1_grad_gemm2: " << bmm1_grad_gemm2_desc.describe()
-          << "\nBMM1_grad_gemm2_op: " << bmm1_grad_gemm2_op.describe()
           << "\nOpGraph: " << op_graph.describe();
-  return std::unique_ptr<cudnn_frontend::OperationGraph>(
-      new cudnn_frontend::OperationGraph(std::move(op_graph)));
+  return std::make_unique<cudnn_frontend::OperationGraph>(std::move(op_graph));
 }
 
 #endif  // CUDNN_VERSION >= 8800 && TF_ENABLE_CUDNN_FRONTEND
