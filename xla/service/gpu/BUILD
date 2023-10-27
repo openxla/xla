@@ -2332,6 +2332,7 @@ cc_library(
     srcs = ["gpu_all_gather_optimizer.cc"],
     hdrs = ["gpu_all_gather_optimizer.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:collective_ops_utils",
