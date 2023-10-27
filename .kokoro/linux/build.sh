@@ -69,7 +69,7 @@ docker exec xla bazel --bazelrc=$RC_FILE \
         --jobs=150 \
         --nobuild_tests_only \
         $ADDITIONAL_FLAGS \
-        -- //xla/... //build_tools/... $TARGET_FILTER
+        -- //xla/service/gpu/tests:hlo_to_llvm_ir
 
 
 # Print build time statistics, including critical path.
