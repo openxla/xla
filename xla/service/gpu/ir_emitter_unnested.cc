@@ -338,10 +338,6 @@ std::unique_ptr<IrEmitterUnnested> IrEmitterUnnested::Create(
 
 StatusOr<BufferAllocation::Slice> IrEmitterUnnested::GetAllocationSlice(
     mlir::Value v) {
-  if (ir_emitter_context_->emit_ir_from_hlo()) {
-    return InternalError(
-        "Getting buffer allocation for MLIR when emitting from HLO");
-  }
   return xla::gpu::GetAllocationSlice(v, ir_emitter_context_->allocations(),
                                       nullptr);
 }
@@ -385,10 +381,14 @@ Status IrEmitterUnnested::EmitConstant(mlir::Operation* op) {
     TF_ASSIGN_OR_RETURN(
         element_bytes, GetElementTypeBytes(literal.getType().getElementType()));
   }
-  ir_emitter_context_->emit_constant(
-      num_elements, element_bytes, global.getSymName(),
-      global->getAttrOfType<mlir::IntegerAttr>("lmhlo.alloc").getInt(), content,
-      &b_);
+
+  int64_t arg_index =
+      global->getAttrOfType<mlir::IntegerAttr>("lmhlo.alloc").getInt();
+  int allocation_index = ir_emitter_context_->allocations()[arg_index]->index();
+
+  ir_emitter_context_->emit_constant(num_elements, element_bytes,
+                                     global.getSymName(), allocation_index,
+                                     content, &b_);
   return OkStatus();
 }
 
@@ -1040,32 +1040,6 @@ Status IrEmitterUnnested::EmitConvolutionReorderThunk(mlir::Operation* op) {
   return OkStatus();
 }
 
-Status IrEmitterUnnested::EmitCubDeviceRadixSort(mlir::Operation* op) {
-  auto radix_sort_op = mlir::cast<mlir::lmhlo_gpu::RadixSortOp>(op);
-  if (radix_sort_op.getInputs().size() != 1 &&
-      radix_sort_op.getInputs().size() != 2) {
-    return InternalError("Invalid number of operands for radix sort");
-  }
-
-  TF_ASSIGN_OR_RETURN(std::vector<BufferAllocation::Slice> operands,
-                      GetAllocationSlices(radix_sort_op.getInputs()));
-  TF_ASSIGN_OR_RETURN(std::vector<BufferAllocation::Slice> results,
-                      GetAllocationSlices(radix_sort_op.getOutput()));
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice scratch,
-                      GetAllocationSlice(radix_sort_op.getScratch()));
-
-  auto thunk = std::make_unique<CubSortThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(op),
-      GetShape(op->getOperand(0)).element_type(),
-      radix_sort_op.getInputs().size() == 2
-          ? std::optional(GetShape(op->getOperand(1)).element_type())
-          : std::nullopt,
-      operands, results, scratch, radix_sort_op.getDescending());
-
-  AddThunkToThunkSequence(std::move(thunk));
-  return OkStatus();
-}
-
 Status IrEmitterUnnested::EmitFusedMHAThunk(mlir::Operation* op) {
   using mlir::dyn_cast;
   using mlir::lmhlo_gpu::fusedMHAOp;
@@ -1352,6 +1326,33 @@ StatusOr<BufferAllocation::Slice> IrEmitterUnnested::GetAllocationSliceForHlo(
 }
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+Status IrEmitterUnnested::EmitCubDeviceRadixSort(mlir::Operation* op) {
+  auto radix_sort_op = mlir::cast<mlir::lmhlo_gpu::RadixSortOp>(op);
+  if (radix_sort_op.getInputs().size() != 1 &&
+      radix_sort_op.getInputs().size() != 2) {
+    return InternalError("Invalid number of operands for radix sort");
+  }
+
+  TF_ASSIGN_OR_RETURN(std::vector<BufferAllocation::Slice> operands,
+                      GetAllocationSlices(radix_sort_op.getInputs()));
+  TF_ASSIGN_OR_RETURN(std::vector<BufferAllocation::Slice> results,
+                      GetAllocationSlices(radix_sort_op.getOutput()));
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice scratch,
+                      GetAllocationSlice(radix_sort_op.getScratch()));
+
+  auto thunk = std::make_unique<CubSortThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(op),
+      GetShape(op->getOperand(0)).element_type(),
+      radix_sort_op.getInputs().size() == 2
+          ? std::optional(GetShape(op->getOperand(1)).element_type())
+          : std::nullopt,
+      operands, results, scratch, radix_sort_op.getDescending());
+
+  AddThunkToThunkSequence(std::move(thunk));
+  return OkStatus();
+}
+
 Status IrEmitterUnnested::EmitCholeskyThunk(mlir::Operation* op) {
   auto cholesky_op = mlir::cast<mlir::lmhlo_gpu::CholeskyOp>(op);
 
@@ -1759,7 +1760,7 @@ static Status ProcessFusionForConversion(mlir::Region* region,
 #if GOOGLE_CUDA
 Status IrEmitterUnnested::EmitTritonFusion(
     const HloFusionAnalysis& hlo_fusion_analysis, mlir::Operation* op,
-    const AutotuneResult::TritonGemmKey& config,
+    const TritonGemmConfig& config,
     const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
         hlo_for_lmhlo) {
   // Note: In this method we can't use `BuildKernelThunk` as usual,
@@ -1814,9 +1815,8 @@ Status IrEmitterUnnested::EmitTritonFusion(
           hlo_fusion_analysis.fusion_boundary(), config);
     } else {  // Must be a MatMul
       CHECK_EQ(fusion_kind, kTritonGemmFusionKind);
-      TF_ASSIGN_OR_RETURN(
-          auto analysis,
-          TritonFusionAnalysis::Execute(*hlo_computation, config.split_k()));
+      TF_ASSIGN_OR_RETURN(auto analysis, TritonFusionAnalysis::Execute(
+                                             *hlo_computation, config.split_k));
       TF_ASSIGN_OR_RETURN(
           triton_wrapper_result,
           TritonWrapper(analysis, impl_fn_name, hlo_computation,
@@ -1920,18 +1920,20 @@ Status IrEmitterUnnested::EmitFusion(
           triton_config.set_num_stages(1);
           triton_config.set_num_warps(2);
         }
-        return EmitTritonFusion(fusion_analysis, fusion_op,
-                                backend_config.triton_gemm_config(),
-                                hlo_for_lmhlo);
+        return EmitTritonFusion(
+            fusion_analysis, fusion_op,
+            TritonGemmConfig::FromProto(backend_config.triton_gemm_config()),
+            hlo_for_lmhlo);
       }
       if (backend_config.kind() == kTritonSoftmaxFusionKind) {
         auto& triton_config = *backend_config.mutable_triton_gemm_config();
         triton_config.set_num_stages(1);
         triton_config.set_num_warps(
             DeriveNumWarpsFromTritonSoftmaxComputation(fused_computation));
-        return EmitTritonFusion(fusion_analysis, fusion_op,
-                                backend_config.triton_gemm_config(),
-                                hlo_for_lmhlo);
+        return EmitTritonFusion(
+            fusion_analysis, fusion_op,
+            TritonGemmConfig::FromProto(backend_config.triton_gemm_config()),
+            hlo_for_lmhlo);
       }
 #endif
       LOG(FATAL) << "Unsupported fusion kind: " << backend_config.kind();
@@ -3096,9 +3098,6 @@ Status IrEmitterUnnested::EmitOp(
   if (mlir::isa<mlir::lmhlo_gpu::fusedMHABackwardOp>(op)) {
     return EmitFusedMHABackwardThunk(op);
   }
-  if (mlir::isa<mlir::lmhlo_gpu::RadixSortOp>(op)) {
-    return EmitCubDeviceRadixSort(op);
-  }
 #endif  // GOOGLE_CUDA
 
   if (mlir::isa<mlir::lmhlo_gpu::ConvForwardOp,
@@ -3111,6 +3110,9 @@ Status IrEmitterUnnested::EmitOp(
   }
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+  if (mlir::isa<mlir::lmhlo_gpu::RadixSortOp>(op)) {
+    return EmitCubDeviceRadixSort(op);
+  }
   if (mlir::isa<mlir::lmhlo_gpu::CholeskyOp>(op)) {
     if (ir_emitter_context_->emit_ir_from_hlo()) {
       return EmitCholeskyThunk(hlo_for_lmhlo.at(op));

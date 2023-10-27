@@ -163,6 +163,9 @@ xla::Status ActualStructSizeIsGreaterOrEqual(absl::string_view struct_name,
 absl::string_view GetPlatformVersion(PJRT_Client* client, const PJRT_Api* api);
 absl::string_view GetPlatformName(PJRT_Client* client, const PJRT_Api* api);
 
+xla::StatusOr<const PJRT_TopologyDescription*> GetTopologyDescription(
+    PJRT_Client* client, const PJRT_Api* api);
+
 // Releases `chunk`.
 PJRT_Chunk ConvertFromCppChunk(xla::PjRtChunk chunk);
 
@@ -175,6 +178,8 @@ PJRT_DeviceDescription* GetDeviceDescription(const PJRT_Api* api,
 
 absl::Span<PJRT_Memory*> GetAddressableMemories(const PJRT_Api* api,
                                                 PJRT_Device* device);
+
+int GetId(const PJRT_Api* api, PJRT_DeviceDescription* device_desc);
 
 using PJRT_KeyValueGetCFunc =
     std::function<PJRT_Error*(PJRT_KeyValueGetCallback_Args* args)>;
@@ -235,6 +240,11 @@ xla::StatusOr<xla::Shape> BuildXlaShapeFromC(PJRT_Buffer_Type element_type,
                                              const int64_t* dims,
                                              size_t num_dims,
                                              PJRT_Buffer_MemoryLayout* layout);
+
+absl::string_view PlatformName(const PJRT_Api* api,
+                               const PJRT_TopologyDescription* topo_desc);
+absl::Span<PJRT_DeviceDescription*> DeviceDescriptions(
+    const PJRT_Api* api, const PJRT_TopologyDescription* topo_desc);
 
 }  // namespace pjrt
 

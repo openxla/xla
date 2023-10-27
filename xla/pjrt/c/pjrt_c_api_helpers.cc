@@ -612,6 +612,16 @@ absl::string_view GetPlatformName(PJRT_Client* client, const PJRT_Api* api) {
   return platform_name;
 }
 
+xla::StatusOr<const PJRT_TopologyDescription*> GetTopologyDescription(
+    PJRT_Client* client, const PJRT_Api* api) {
+  PJRT_Client_TopologyDescription_Args args;
+  args.struct_size = PJRT_Client_TopologyDescription_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.client = client;
+  RETURN_STATUS_IF_PJRT_ERROR(api->PJRT_Client_TopologyDescription(&args), api);
+  return args.topology;
+}
+
 PJRT_Chunk ConvertFromCppChunk(xla::PjRtChunk chunk) {
   // `deleter_arg` holds a copy of the original xla::PjRtChunk
   // deleter. The original xla::PjRtChunk `input` releases its ownership
@@ -659,6 +669,13 @@ absl::Span<PJRT_Memory*> GetAddressableMemories(const PJRT_Api* api,
   args.device = device;
   pjrt::LogFatalIfPjrtError(api->PJRT_Device_AddressableMemories(&args), api);
   return absl::MakeSpan(args.memories, args.num_memories);
+}
+
+int GetId(const PJRT_Api* api, PJRT_DeviceDescription* device_desc) {
+  PJRT_DeviceDescription_Id_Args args = PJRT_DeviceDescription_Id_Args{
+      PJRT_DeviceDescription_Id_Args_STRUCT_SIZE, nullptr, device_desc};
+  pjrt::LogFatalIfPjrtError(api->PJRT_DeviceDescription_Id(&args), api);
+  return args.id;
 }
 
 static void PjRtValueDeleterCallback(char* value) { delete[] value; }
@@ -856,6 +873,28 @@ xla::StatusOr<xla::Shape> BuildXlaShapeFromC(PJRT_Buffer_Type element_type,
     *shape.mutable_layout() = cpp_layout;
   }
   return shape;
+}
+
+absl::string_view PlatformName(const PJRT_Api* api,
+                               const PJRT_TopologyDescription* topo_desc) {
+  PJRT_TopologyDescription_PlatformName_Args args;
+  args.struct_size = PJRT_TopologyDescription_PlatformName_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.topology = const_cast<PJRT_TopologyDescription*>(topo_desc);
+  LogFatalIfPjrtError(api->PJRT_TopologyDescription_PlatformName(&args), api);
+  return {args.platform_name, args.platform_name_size};
+}
+
+absl::Span<PJRT_DeviceDescription*> DeviceDescriptions(
+    const PJRT_Api* api, const PJRT_TopologyDescription* topo_desc) {
+  PJRT_TopologyDescription_GetDeviceDescriptions_Args args;
+  args.struct_size =
+      PJRT_TopologyDescription_GetDeviceDescriptions_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.topology = const_cast<PJRT_TopologyDescription*>(topo_desc);
+  LogFatalIfPjrtError(
+      api->PJRT_TopologyDescription_GetDeviceDescriptions(&args), api);
+  return {args.descriptions, args.num_descriptions};
 }
 
 }  // namespace pjrt

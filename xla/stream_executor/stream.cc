@@ -180,14 +180,6 @@ std::string ToVlogString(absl::Span<T> elements) {
   return ToVlogString(absl::Span<const T>(elements));
 }
 
-std::string ToVlogString(dnn::DepthToSpaceLayout depth_to_space_layout) {
-  switch (depth_to_space_layout) {
-    case dnn::DepthToSpaceLayout::DepthHeightWidth:
-      return "DepthToSpaceLayout::DepthHeightWidth";
-  }
-  return "unknown DepthToSpaceLayout";
-}
-
 std::string ToVlogString(dnn::DataType data_type) {
   switch (data_type) {
     case dnn::DataType::kFloat:
@@ -531,33 +523,6 @@ Stream &Stream::ThenConvolve(
   return *this;
 }
 
-Stream &Stream::ThenConvolveQuantized(
-    const dnn::BatchDescriptor &input_descriptor,
-    const DeviceMemory<float> &input_data,
-    const dnn::FilterDescriptor &filter_descriptor,
-    const DeviceMemory<int8_t> &filter_coefficients,
-    const DeviceMemory<float> &coefficient_scales,
-    const dnn::ConvolutionDescriptor &convolution_descriptor,
-    const dnn::BatchDescriptor &output_descriptor,
-    DeviceMemory<float> *output) {
-  VLOG_CALL(PARAM(input_descriptor), PARAM(input_data),
-            PARAM(filter_descriptor), PARAM(filter_coefficients),
-            PARAM(coefficient_scales), PARAM(convolution_descriptor),
-            PARAM(output_descriptor), PARAM(output));
-
-  if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
-    CheckError(dnn->DoConvolveQuantized(
-        this, input_descriptor, input_data, filter_descriptor,
-        filter_coefficients, coefficient_scales, convolution_descriptor,
-        output_descriptor, output));
-  } else {
-    SetError();
-    LOG(WARNING) << "attempting to perform DNN operation using StreamExecutor "
-                    "without DNN support";
-  }
-  return *this;
-}
-
 Stream &Stream::ThenSeparableConvolve(
     const dnn::BatchDescriptor &batch_descriptor,
     const DeviceMemory<float> &input_data,
@@ -741,25 +706,6 @@ Stream &Stream::ThenDepthConcatenate(
   if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
     CheckError(dnn->DoDepthConcatenate(this, input_dimensions, input_data,
                                        output_data));
-  } else {
-    SetErrorAndLogNoDnnSupport();
-  }
-  return *this;
-}
-
-Stream &Stream::ThenDepthToSpace(
-    const dnn::BatchDescriptor &input_dimensions,
-    const DeviceMemory<float> &input_data,
-    const dnn::DepthToSpaceLayout &depth_to_space_layout,
-    const int sqrt_depth_reduction, DeviceMemory<float> *output_data) {
-  VLOG_CALL(PARAM(input_dimensions), PARAM(input_data),
-            PARAM(depth_to_space_layout), PARAM(sqrt_depth_reduction),
-            PARAM(output_data));
-
-  if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
-    CheckError(dnn->DoDepthToSpace(this, input_dimensions, input_data,
-                                   depth_to_space_layout, sqrt_depth_reduction,
-                                   output_data));
   } else {
     SetErrorAndLogNoDnnSupport();
   }

@@ -141,14 +141,14 @@ class IrEmitterUnnested : public IrEmitter {
   Status EmitConvolutionReorderThunk(mlir::Operation* op);
   Status EmitTritonFusion(
       const HloFusionAnalysis& hlo_fusion_analysis, mlir::Operation* op,
-      const AutotuneResult::TritonGemmKey& config,
+      const TritonGemmConfig& config,
       const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
           hlo_for_lmhlo);
   Status EmitFusedMHAThunk(mlir::Operation* op);
   Status EmitFusedMHABackwardThunk(mlir::Operation* op);
-  Status EmitCubDeviceRadixSort(mlir::Operation* op);
 #endif  // GOOGLE_CUDA
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+  Status EmitCubDeviceRadixSort(mlir::Operation* op);
   Status EmitCholeskyThunk(mlir::Operation* op);
   Status EmitCholeskyThunk(const HloInstruction* instr);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM

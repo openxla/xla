@@ -243,11 +243,20 @@ bool IsCrossProgramPrefetchCandidate(const HloValue& value,
          });
 }
 
+struct CrossProgramPrefetchBufferSortValues {
+  int64_t latest_use = 0;
+  int64_t use_size = 0;
+};
+
 std::vector<MemorySpaceAssignment::BufferInterval>
 FindCrossProgramPrefetchCandidates(const HloAliasAnalysis& alias_analysis,
                                    const HloLiveRange& hlo_live_range,
                                    const Options& options) {
   std::vector<MemorySpaceAssignment::BufferInterval> candidates;
+  bool use_custom_compare = !options.default_cross_program_prefetch_heuristic ||
+                            !options.buffer_interval_compare;
+  absl::flat_hash_map<const HloValue*, CrossProgramPrefetchBufferSortValues>
+      buffer_sort_values;
   for (const HloBuffer& buffer : alias_analysis.buffers()) {
     CHECK_GE(buffer.values().size(), 1);
     const HloValue* value = buffer.values().at(0);
@@ -260,33 +269,40 @@ FindCrossProgramPrefetchCandidates(const HloAliasAnalysis& alias_analysis,
       interval.need_allocation = true;
       interval.colocations = {++buffer.values().begin(), buffer.values().end()};
       candidates.emplace_back(interval);
+
+      if (!use_custom_compare || buffer_sort_values.contains(value)) {
+        continue;
+      }
+      CrossProgramPrefetchBufferSortValues& sort_values =
+          buffer_sort_values[value];
+      absl::c_for_each(value->GetUses(), [&](const HloUse& use) {
+        auto it = hlo_live_range.instruction_schedule().find(use.instruction);
+        if (it == hlo_live_range.instruction_schedule().end()) {
+          return;
+        }
+        sort_values.latest_use = std::max(sort_values.latest_use, it->second);
+        sort_values.use_size +=
+            ShapeUtil::ElementsInRecursive(use.instruction->shape());
+      });
     }
   }
 
-  // The BufferIntervalCompare function used to sort buffers implements the
-  // greater-than operator so that the most beneficial buffers are allocated
-  // first. The size_compare function below hence uses the greater-than operator
-  // to pick the largest buffer.
-  auto size_compare = [](const auto& x, const auto& y) {
-    if (x.size == y.size) {
-      // When both buffers are of same size, we prefer the one that is used to
-      // produce larger tensors in its consumer instructions.
-      auto get_use_size =
-          [](const MemorySpaceAssignment::BufferInterval& bi) -> int64_t {
-        int64_t use_size = 0;
-        for (const auto& use : bi.buffer->GetUses()) {
-          use_size += ShapeUtil::ElementsInRecursive(use.instruction->shape());
-        }
-        return use_size;
+  auto custom_compare_tuple =
+      [&buffer_sort_values](
+          const MemorySpaceAssignment::BufferInterval& buffer_interval) {
+        const CrossProgramPrefetchBufferSortValues sort_values =
+            buffer_sort_values[buffer_interval.buffer];
+        return std::make_tuple(-buffer_interval.size, -sort_values.use_size,
+                               sort_values.latest_use,
+                               buffer_interval.buffer->id());
       };
-      return get_use_size(x) > get_use_size(y);
-    }
-    return x.size > y.size;
+  auto custom_compare = [&](const MemorySpaceAssignment::BufferInterval& x,
+                            const MemorySpaceAssignment::BufferInterval& y) {
+    return custom_compare_tuple(x) < custom_compare_tuple(y);
   };
-  auto& compare = options.default_cross_program_prefetch_heuristic &&
-                          options.buffer_interval_compare
-                      ? *options.buffer_interval_compare
-                      : size_compare;
+
+  auto& compare =
+      use_custom_compare ? custom_compare : *options.buffer_interval_compare;
 
   absl::c_sort(candidates, compare);
 
@@ -5704,16 +5720,15 @@ void AlternateMemoryBestFitHeap::ClearPendingChunks() {
 void AlternateMemoryBestFitHeap::AddToPendingChunks(
     const BufferInterval& buffer_interval, const Chunk& chunk_candidate) {
   VLOG(3) << "Committing chunk: " << buffer_interval.start << "-"
-          << buffer_interval.end << " : [" << chunk_candidate.offset << ", "
-          << chunk_candidate.size << "]";
+          << buffer_interval.end << " : " << chunk_candidate.ToString();
   pending_chunks_.emplace_back(buffer_interval, chunk_candidate);
   for (int i = buffer_interval.start; i <= buffer_interval.end; ++i) {
     peak_memory_usage_[i] += chunk_candidate.size;
     CHECK_LE(peak_memory_usage_[i], options_.max_size_in_bytes)
         << "Peak memory usage at " << i
         << " exceeds the max size of alternate memory. "
-        << buffer_interval.start << "-" << buffer_interval.end << " : ["
-        << chunk_candidate.offset << ", " << chunk_candidate.size << "]";
+        << buffer_interval.start << "-" << buffer_interval.end << " : "
+        << chunk_candidate.ToString();
   }
   CommitChunk(buffer_interval, chunk_candidate);
 }
@@ -6262,9 +6277,15 @@ AlternateMemoryBestFitHeap::Result AlternateMemoryBestFitHeap::Evict(
   CHECK_GT(request.allocation_value->allocation_sequence()->size(), 0);
   MemorySpaceAssignment::Allocation* prev_allocation =
       request.allocation_value->allocation_sequence()->back().get();
-  // TODO(b/306478911): prev_allocation can never be a prefetch, or we would be
-  // using an incorrect start time (we would need to wait until the copies
-  // finish)
+  // We do not ever expect an Evict() to be immediately proceeded by a prefetch.
+  // If that case ever occurs, the eviction_exclusive_start_time below will be
+  // calculated incorrectly, as it will need to come after the prefetch finishes
+  // coping data.
+  CHECK(!prev_allocation->is_copy_like_allocation())
+      << "Evict has been given copy-like previous allocation.\nEvict "
+         "candidate:\n"
+      << request.allocation_value->ToString() << "\nPrevious allocation:\n"
+      << prev_allocation->ToString();
 
   // The previous allocation's inclusive start time is the eviction's exclusive
   // start time to ensure that the value is created before we start copying
