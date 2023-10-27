@@ -442,11 +442,8 @@ StatusOr<bool> IsFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
   TF_RET_CHECK(seq_k.size() == 1);
   TF_RET_CHECK(hidden_dim.size() == 1);
   auto is_fixed_topology =
-      // is_causal_mask &&
       (custom_call_name == kCudnnfMHAScaleBiasSoftmaxDropoutCallTarget ||
-       custom_call_name == kCudnnfMHAScaleBiasSoftmaxCallTarget ||
-       custom_call_name == kCudnnfMHAScaleMaskSoftmaxDropoutCallTarget ||
-       custom_call_name == kCudnnfMHAScaleMaskSoftmaxCallTarget);
+       custom_call_name == kCudnnfMHAScaleBiasSoftmaxCallTarget);
 
   auto is_seqlen_supported =
       seq_q[0] == seq_k[0] && seq_q[0] > 512 && seq_q[0] % 64 == 0;
