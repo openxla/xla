@@ -4,6 +4,7 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl:tsl.bzl", "set_external_visibility")
 load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
@@ -102,5 +103,17 @@ cc_library(
     deps = [
         "//tsl/platform:logging",
         "//tsl/platform:types",
+        "@com_google_absl//absl/numeric:bits",
+    ],
+)
+
+tsl_cc_test(
+    name = "bits_test",
+    size = "small",
+    srcs = ["bits_test.cc"],
+    deps = [
+        ":bits",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
