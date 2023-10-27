@@ -88,7 +88,6 @@ limitations under the License.
 #include "xla/service/gpu/conditional_thunk.h"
 #include "xla/service/gpu/convolution_thunk.h"
 #include "xla/service/gpu/copy_thunk.h"
-#include "xla/service/gpu/fft_thunk.h"
 #include "xla/service/gpu/for_thunk.h"
 #include "xla/service/gpu/fused_mha_thunk.h"
 #include "xla/service/gpu/fusions/fusions.h"
@@ -116,6 +115,7 @@ limitations under the License.
 #include "xla/service/gpu/parallel_loop_emitter.h"
 #include "xla/service/gpu/replica_id_thunk.h"
 #include "xla/service/gpu/runtime3/custom_call_thunk.h"
+#include "xla/service/gpu/runtime3/fft_thunk.h"
 #include "xla/service/gpu/sequential_thunk.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/gpu/while_thunk.h"
@@ -147,7 +147,7 @@ limitations under the License.
 
 #if GOOGLE_CUDA || TF_HIPBLASLT
 #include "xla/service/gpu/cub_sort_thunk.h"
-#include "xla/service/gpu/cublas_lt_matmul_thunk.h"
+#include "xla/service/gpu/gpublas_lt_matmul_thunk.h"
 #include "xla/service/gpu/ir_emitter_triton.h"
 #endif  // GOOGLE_CUDA || TF_HIPBLASLT
 

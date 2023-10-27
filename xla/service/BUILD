@@ -501,6 +501,7 @@ cc_library(
     hdrs = ["collective_pipeliner.h"],
     deps = [
         ":constant_value",
+        ":hlo_dce",
         ":hlo_pass",
         ":value_range",
         "//xla:comparison_util",
@@ -1716,6 +1717,7 @@ cc_library(
         ":hlo_dataflow_analysis",
         ":hlo_ordering",
         ":hlo_proto_cc",
+        ":time_utils",
         ":tuple_points_to_analysis",
         "//xla:comparison_util",
         "//xla:status",
@@ -7182,4 +7184,11 @@ cc_library(
         "//xla:xla_proto_cc",
         "@tsl//tsl/platform:protobuf",
     ],
+)
+
+cc_library(
+    name = "time_utils",
+    srcs = ["time_utils.cc"],
+    hdrs = ["time_utils.h"],
+    deps = [],
 )

@@ -258,7 +258,6 @@ cc_library(
     ]),
     deps = [
         ":backend_configs_cc",
-        ":fft_thunk",
         ":gemm_thunk",
         ":gpu_asm_opts_util",
         ":gpu_constants",
@@ -301,6 +300,7 @@ cc_library(
         "//xla/service/gpu/fusions:thunk_util",
         "//xla/service/gpu/fusions:tiling_util",
         "//xla/service/gpu/runtime3:custom_call_thunk",
+        "//xla/service/gpu/runtime3:fft_thunk",
         "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
         "//xla/service/llvm_ir:fused_ir_emitter",
@@ -344,7 +344,7 @@ cc_library(
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ] + if_gpu_is_configured([
         ":cub_sort_thunk",
-        ":cublas_lt_matmul_thunk",
+        ":gpublas_lt_matmul_thunk",
         ":ir_emitter_triton",
         "//xla/service/gpu/runtime3:cholesky_thunk",
         "//xla/service/gpu/runtime3:triangular_solve_thunk",
@@ -909,7 +909,6 @@ cc_library(
         ":backend_configs_cc",
         ":buffer_allocations",
         ":cusolver_context",
-        ":fft_thunk",
         ":gemm_thunk",
         ":gpu_asm_opts_util",
         ":gpu_constants",
@@ -954,6 +953,7 @@ cc_library(
         "//xla/service/gpu/runtime:executable",
         "//xla/service/gpu/runtime:support",
         "//xla/service/gpu/runtime3:custom_call_thunk",
+        "//xla/service/gpu/runtime3:fft_thunk",
         "//xla/stream_executor",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_description",
@@ -1111,27 +1111,6 @@ build_cub_sort_kernels(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
     ] + xla_cub_deps()),
-)
-
-cc_library(
-    name = "fft_thunk",
-    srcs = ["fft_thunk.cc"],
-    hdrs = ["fft_thunk.h"],
-    deps = [
-        ":buffer_allocations",
-        ":thunk",
-        "//xla:types",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:buffer_assignment",
-        "//xla/stream_executor",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-    ],
 )
 
 cc_library(
@@ -1325,13 +1304,9 @@ cc_library(
 )
 
 cc_library(
-    name = "cublas_lt_matmul_thunk",
-    srcs = if_cuda_is_configured(["cublas_lt_matmul_thunk.cc"]) + if_rocm_is_configured([
-        "cublas_lt_matmul_thunk.cc",
-    ]),
-    hdrs = if_cuda_is_configured(["cublas_lt_matmul_thunk.h"]) + if_rocm_is_configured([
-        "cublas_lt_matmul_thunk.h",
-    ]),
+    name = "gpublas_lt_matmul_thunk",
+    srcs = if_gpu_is_configured(["gpublas_lt_matmul_thunk.cc"]),
+    hdrs = if_gpu_is_configured(["gpublas_lt_matmul_thunk.h"]),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
@@ -1344,11 +1319,6 @@ cc_library(
         "//xla/stream_executor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
-    ]) + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cublas_lt_header",
-        "//xla/stream_executor/cuda:cublas_plugin",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor/rocm:hipblas_lt_header",
     ]),
 )
 
@@ -2397,7 +2367,6 @@ cc_library(
         ":buffer_sharing",
         ":executable_proto_cc",
         ":gpu_constants",
-        ":gpu_convert_async_collectives_to_sync",
         ":gpu_executable",
         ":ir_emitter_context",
         ":ir_emitter_unnested",
@@ -2426,6 +2395,7 @@ cc_library(
         "//xla/translate/mhlo_to_hlo:location_exporter",
         "//xla/translate/mhlo_to_lhlo_with_xla",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:Support",
@@ -3298,9 +3268,12 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
+        ":hlo_fusion_analysis",
         ":ir_emission_utils",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_description_proto_cc",
         "@com_google_absl//absl/container:flat_hash_set",
     ],
 )
