@@ -9266,6 +9266,26 @@ TEST_F(AlgebraicSimplifierTest, SimplifyRedundantBitcastConvert) {
               GmockMatch(m::Concatenate(m::Parameter(0), m::Parameter(1))));
 }
 
+TEST_F(AlgebraicSimplifierTest,
+       DoNOtSimplifyRedundantBitcastConvertWithControlDep) {
+  const char* kModuleStr = R"(
+    HloModule m
+
+    ENTRY test {
+      p0 = s32[10] parameter(0)
+      p1 = s32[10] parameter(1)
+      p2 = s32[10] parameter(2)
+      p3 = s32[10] parameter(3)
+      add0 = s32[10] add(p2, p3)
+      b0 = s32[1, 10] bitcast(p0)
+      ROOT b1 = s32[1, 1, 10] bitcast(b0), control-predecessors={add0}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  // b1 has a control dep, we don't expect the graph to change.
+  ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
 TEST_F(AlgebraicSimplifierTest, SimplifyOptimizationBarrier) {
   const char* kModuleStr = R"(
     HloModule m
