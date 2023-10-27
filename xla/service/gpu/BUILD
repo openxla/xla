@@ -4325,6 +4325,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:lhlo",
         "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:errors",
