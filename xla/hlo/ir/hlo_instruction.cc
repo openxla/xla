@@ -3203,11 +3203,15 @@ bool HloInstruction::IsElementwiseImpl(
 }
 
 bool HloInstruction::IsCrossModuleAllReduce() const {
-  return opcode() == HloOpcode::kAllReduce && channel_id();
+  return (opcode() == HloOpcode::kAllReduce ||
+          opcode() == HloOpcode::kReduceScatter) &&
+         channel_id();
 }
 
 bool HloInstruction::IsCrossReplicaAllReduce() const {
-  return opcode() == HloOpcode::kAllReduce && !channel_id();
+  return (opcode() == HloOpcode::kAllReduce ||
+          opcode() == HloOpcode::kReduceScatter) &&
+         !channel_id();
 }
 
 void HloInstruction::PrintWithCanonicalNameMap(
