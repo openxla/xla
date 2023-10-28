@@ -467,6 +467,13 @@ std::optional<GatherScatterParallelDims> GetGatherScatterBatchParallelDims(
 // special handling like Outfeed and this function takes care of those.
 std::optional<HloSharding> GetOutputSharding(const HloInstruction* instruction);
 
+// Returns the un-tiled shape.
+Shape UnTileShape(const HloSharding& sharding, const Shape& shape);
+
+// Returns the un-tiled shape.
+// REQUIRES: !sharding.IsTuple()
+Shape UnTileLeafShape(const HloSharding& sharding, const Shape& shape);
+
 }  // namespace hlo_sharding_util
 }  // namespace xla
 
