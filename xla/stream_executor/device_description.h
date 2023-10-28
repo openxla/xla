@@ -80,6 +80,10 @@ struct CudaComputeCapability {
     return major >= CudaComputeCapabilities::HOPPER;
   }
 
+  bool Is(int other_major, int other_minor = 0) const {
+    return !(*this == CudaComputeCapability{other_major, other_minor});
+  }
+
   bool operator<(const CudaComputeCapability &other) const {
     return ToPair() < other.ToPair();
   }

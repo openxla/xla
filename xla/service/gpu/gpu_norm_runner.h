@@ -123,9 +123,8 @@ struct RunNormOptions {
   // Nullable output-parameter pointer for profiling results.
   se::dnn::ProfileResult* profile_result = nullptr;
 
-  // Use this runner cache (and its configured algorithm), instead of the one
-  // from the instruction.
-  NormRunner* runner_cache;
+  // Cannot be nullptr.
+  NormRunner* norm_runner;
 };
 
 Status RunGpuNorm(const GpuNormConfig& conv_config,

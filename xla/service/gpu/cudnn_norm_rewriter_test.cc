@@ -37,6 +37,12 @@ class CudnnNormRewriterTest : public GpuCodegenTest {
         .cuda_compute_capability();
   }
 
+  DebugOptions GetDebugOptionsForTest() override {
+    DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_enable_cudnn_layer_norm(true);
+    return debug_options;
+  }
+
  protected:
   void TestNorm(std::string hlo_text, std::string optimized_hlo) {
     EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
@@ -44,13 +50,16 @@ class CudnnNormRewriterTest : public GpuCodegenTest {
   }
 };
 
-TEST_F(CudnnNormRewriterTest, LayerNorm2N1) {
+// The following tests evaluate LayerNormXDY configurations, with X the rank of
+// the input and Y the dimensions that are normalized.
+TEST_F(CudnnNormRewriterTest, LayerNorm2D1) {
 #if (CUDA_VERSION < 12000 || CUDNN_VERSION < 8905)
   GTEST_SKIP() << "Layer norm kernels require CUDA 12 and cuDNN 8.9.5.";
 #endif
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Layer norm kernels require Ampere or newer architecture.";
+  if (!GetCudaComputeCapability().Is(se::CudaComputeCapability::AMPERE) &&
+      !GetCudaComputeCapability().Is(se::CudaComputeCapability::HOPPER)) {
+    GTEST_SKIP()
+        << "Layer norm kernels require Ampere or Hopper architectures.";
   }
   const char* hlo_text = R"(
     HloModule test
@@ -63,30 +72,30 @@ TEST_F(CudnnNormRewriterTest, LayerNorm2N1) {
 
     ENTRY test {
         input = f32[2,4] parameter(0)
-        multiply3 = f32[2,4] multiply(input, input)
+        input_square = f32[2,4] multiply(input, input)
         c0 = f32[] constant(0)
-        reduce1 = f32[2] reduce(multiply3, c0), dimensions={1}, to_apply=apply
-        c1 = f32[] constant(0.25)
-        c1_bcast = f32[2] broadcast(c1), dimensions={}
-        multiply9 = f32[2] multiply(reduce1, c1_bcast)
-        reduce = f32[2] reduce(input, c0),dimensions={1}, to_apply=apply
-        multiply8 = f32[2] multiply(reduce, c1_bcast)
-        multiply4 = f32[2] multiply(multiply8, multiply8)
-        subtract = f32[2] subtract(multiply9, multiply4)
-        c2 = f32[] constant(0.001)
-        c2_bcast = f32[2] broadcast(c2), dimensions={}
-        add3 = f32[2] add(subtract, c2_bcast)
-        rsqrt1 = f32[2] rsqrt(add3)
-        broadcast15 = f32[2,4] broadcast(rsqrt1), dimensions={0}
-        broadcast4 = f32[2,4] broadcast(multiply8), dimensions={0}
-        subtract1 = f32[2,4] subtract(input, broadcast4)
-        multiply6 = f32[2,4] multiply(broadcast15, subtract1)
+        input_square_sum = f32[2] reduce(input_square, c0), dimensions={1}, to_apply=apply
+        n_elems = f32[] constant(0.25)
+        n_elems_bcast = f32[2] broadcast(n_elems), dimensions={}
+        input_square_mean = f32[2] multiply(input_square_sum, n_elems_bcast)
+        input_sum = f32[2] reduce(input, c0),dimensions={1}, to_apply=apply
+        input_mean = f32[2] multiply(input_sum, n_elems_bcast)
+        input_mean_square = f32[2] multiply(input_mean, input_mean)
+        variance = f32[2] subtract(input_square_mean, input_mean_square)
+        epsilon = f32[] constant(0.001)
+        epsilon_bcast = f32[2] broadcast(epsilon), dimensions={}
+        variance_plus_epsilon = f32[2] add(variance, epsilon_bcast)
+        norm_factor = f32[2] rsqrt(variance_plus_epsilon)
+        norm_factor_bcast = f32[2,4] broadcast(norm_factor), dimensions={0}
+        input_mean_bcast = f32[2,4] broadcast(input_mean), dimensions={0}
+        input_center = f32[2,4] subtract(input, input_mean_bcast)
+        norm = f32[2,4] multiply(norm_factor_bcast, input_center)
         scale = f32[4] parameter(1)
-        broadcast17 = f32[2,4] broadcast(scale), dimensions={1}
-        multiply7 = f32[2,4] multiply(multiply6, broadcast17)
+        scale_bcast = f32[2,4] broadcast(scale), dimensions={1}
+        norm_scale = f32[2,4] multiply(norm, scale_bcast)
         bias = f32[4] parameter(2)
-        broadcast18 = f32[2,4] broadcast(bias), dimensions={1}
-        ROOT out = f32[2,4] add(multiply7, broadcast18)
+        bias_broadcast = f32[2,4] broadcast(bias), dimensions={1}
+        ROOT out = f32[2,4] add(norm_scale, bias_broadcast)
     })";
 
   const char* optimized_hlo = R"(
@@ -114,9 +123,10 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D3) {
 #if (CUDA_VERSION < 12000 || CUDNN_VERSION < 8905)
   GTEST_SKIP() << "Layer norm kernels require CUDA 12 and cuDNN 8.9.5.";
 #endif
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Layer norm kernels require Ampere or newer architecture.";
+  if (!GetCudaComputeCapability().Is(se::CudaComputeCapability::AMPERE) &&
+      !GetCudaComputeCapability().Is(se::CudaComputeCapability::HOPPER)) {
+    GTEST_SKIP()
+        << "Layer norm kernels require Ampere or Hopper architectures.";
   }
   const char* hlo_text = R"(
     HloModule test
@@ -129,30 +139,30 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D3) {
 
     ENTRY test {
         input = f32[2,4,6,8] parameter(0)
-        multiply3 = f32[2,4,6,8] multiply(input, input)
+        input_square = f32[2,4,6,8] multiply(input, input)
         c0 = f32[] constant(0)
-        reduce1 = f32[2,4,6] reduce(multiply3, c0), dimensions={3}, to_apply=apply
-        c1 = f32[] constant(0.125)
-        c1_bcast = f32[2,4,6] broadcast(c1), dimensions={}
-        multiply9 = f32[2,4,6] multiply(reduce1, c1_bcast)
-        reduce = f32[2,4,6] reduce(input,c0), dimensions={3}, to_apply=apply
-        multiply8 = f32[2,4,6] multiply(reduce, c1_bcast)
-        multiply4 = f32[2,4,6] multiply(multiply8, multiply8)
-        subtract = f32[2,4,6] subtract(multiply9, multiply4)
-        c2 = f32[] constant(0.001)
-        c2_bcast = f32[2,4,6] broadcast(c2), dimensions={}
-        add3 = f32[2,4,6] add(subtract, c2_bcast)
-        rsqrt1 = f32[2,4,6] rsqrt(add3)
-        broadcast15 = f32[2,4,6,8] broadcast(rsqrt1), dimensions={0,1,2}
-        broadcast4 = f32[2,4,6,8] broadcast(multiply8), dimensions={0,1,2}
-        subtract1 = f32[2,4,6,8] subtract(input, broadcast4)
-        multiply6 = f32[2,4,6,8] multiply(broadcast15, subtract1)
+        input_square_sum = f32[2,4,6] reduce(input_square, c0), dimensions={3}, to_apply=apply
+        n_elems = f32[] constant(0.125)
+        n_elems_bcast = f32[2,4,6] broadcast(n_elems), dimensions={}
+        input_square_mean = f32[2,4,6] multiply(input_square_sum, n_elems_bcast)
+        input_sum = f32[2,4,6] reduce(input, c0), dimensions={3}, to_apply=apply
+        input_mean = f32[2,4,6] multiply(input_sum, n_elems_bcast)
+        input_mean_square = f32[2,4,6] multiply(input_mean, input_mean)
+        variance = f32[2,4,6] subtract(input_square_mean, input_mean_square)
+        epsilon = f32[] constant(0.001)
+        epsilon_bcast = f32[2,4,6] broadcast(epsilon), dimensions={}
+        variance_plus_epsilon = f32[2,4,6] add(variance, epsilon_bcast)
+        norm_factor = f32[2,4,6] rsqrt(variance_plus_epsilon)
+        norm_factor_bcast = f32[2,4,6,8] broadcast(norm_factor), dimensions={0,1,2}
+        input_mean_bcast = f32[2,4,6,8] broadcast(input_mean), dimensions={0,1,2}
+        input_center = f32[2,4,6,8] subtract(input, input_mean_bcast)
+        norm = f32[2,4,6,8] multiply(norm_factor_bcast, input_center)
         scale = f32[8] parameter(1)
-        broadcast17 = f32[2,4,6,8] broadcast(scale), dimensions={3}
-        multiply7 = f32[2,4,6,8] multiply(multiply6, broadcast17)
+        scale_bcast = f32[2,4,6,8] broadcast(scale), dimensions={3}
+        norm_scale = f32[2,4,6,8] multiply(norm, scale_bcast)
         bias = f32[8] parameter(2)
-        broadcast18 = f32[2,4,6,8] broadcast(bias), dimensions={3}
-        ROOT out = f32[2,4,6,8] add(multiply7, broadcast18)
+        bias_bcast = f32[2,4,6,8] broadcast(bias), dimensions={3}
+        ROOT out = f32[2,4,6,8] add(norm_scale, bias_bcast)
     })";
 
   const char* optimized_hlo = R"(
@@ -180,9 +190,10 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D2) {
 #if (CUDA_VERSION < 12000 || CUDNN_VERSION < 8905)
   GTEST_SKIP() << "Layer norm kernels require CUDA 12 and cuDNN 8.9.5.";
 #endif
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Layer norm kernels require Ampere or newer architecture.";
+  if (!GetCudaComputeCapability().Is(se::CudaComputeCapability::AMPERE) &&
+      !GetCudaComputeCapability().Is(se::CudaComputeCapability::HOPPER)) {
+    GTEST_SKIP()
+        << "Layer norm kernels require Ampere or Hopper architectures.";
   }
   const char* hlo_text = R"(
     HloModule test
@@ -195,30 +206,30 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D2) {
 
     ENTRY test {
         input = f32[2,4,6,8] parameter(0)
-        multiply3 = f32[2,4,6,8] multiply(input, input)
+        input_square = f32[2,4,6,8] multiply(input, input)
         c0 = f32[] constant(0)
-        reduce1 = f32[2,4,8] reduce(multiply3, c0), dimensions={2}, to_apply=apply
-        c1 = f32[] constant(0.166667)
-        c1_bcast = f32[2,4,8] broadcast(c1), dimensions={}
-        multiply9 = f32[2,4,8] multiply(reduce1, c1_bcast)
-        reduce = f32[2,4,8] reduce(input,c0), dimensions={2}, to_apply=apply
-        multiply8 = f32[2,4,8] multiply(reduce, c1_bcast)
-        multiply4 = f32[2,4,8] multiply(multiply8, multiply8)
-        subtract = f32[2,4,8] subtract(multiply9, multiply4)
-        c2 = f32[] constant(0.001)
-        c2_bcast = f32[2,4,8] broadcast(c2), dimensions={}
-        add3 = f32[2,4,8] add(subtract, c2_bcast)
-        rsqrt1 = f32[2,4,8] rsqrt(add3)
-        broadcast15 = f32[2,4,6,8] broadcast(rsqrt1), dimensions={0,1,3}
-        broadcast4 = f32[2,4,6,8] broadcast(multiply8), dimensions={0,1,3}
-        subtract1 = f32[2,4,6,8] subtract(input, broadcast4)
-        multiply6 = f32[2,4,6,8] multiply(broadcast15, subtract1)
+        input_square_sum = f32[2,4,8] reduce(input_square, c0), dimensions={2}, to_apply=apply
+        n_elems = f32[] constant(0.166667)
+        n_elems_bcast = f32[2,4,8] broadcast(n_elems), dimensions={}
+        input_square_mean = f32[2,4,8] multiply(input_square_sum, n_elems_bcast)
+        reduce = f32[2,4,8] reduce(input, c0), dimensions={2}, to_apply=apply
+        input_mean = f32[2,4,8] multiply(reduce, n_elems_bcast)
+        input_mean_square = f32[2,4,8] multiply(input_mean, input_mean)
+        variance = f32[2,4,8] subtract(input_square_mean, input_mean_square)
+        epsilon = f32[] constant(0.001)
+        epsilon_bcast = f32[2,4,8] broadcast(epsilon), dimensions={}
+        variance_plus_epsilon = f32[2,4,8] add(variance, epsilon_bcast)
+        norm_factor = f32[2,4,8] rsqrt(variance_plus_epsilon)
+        norm_factor_bcast = f32[2,4,6,8] broadcast(norm_factor), dimensions={0,1,3}
+        input_mean_bcast = f32[2,4,6,8] broadcast(input_mean), dimensions={0,1,3}
+        input_center = f32[2,4,6,8] subtract(input, input_mean_bcast)
+        norm = f32[2,4,6,8] multiply(norm_factor_bcast, input_center)
         scale = f32[6] parameter(1)
-        broadcast17 = f32[2,4,6,8] broadcast(scale), dimensions={2}
-        multiply7 = f32[2,4,6,8] multiply(multiply6, broadcast17)
+        scale_bcast = f32[2,4,6,8] broadcast(scale), dimensions={2}
+        norm_scale = f32[2,4,6,8] multiply(norm, scale_bcast)
         bias = f32[6] parameter(2)
-        broadcast18 = f32[2,4,6,8] broadcast(bias), dimensions={2}
-        ROOT out = f32[2,4,6,8] add(multiply7, broadcast18)
+        bias_broadcast = f32[2,4,6,8] broadcast(bias), dimensions={2}
+        ROOT out = f32[2,4,6,8] add(norm_scale, bias_broadcast)
     })";
 
   const char* optimized_hlo = R"(
@@ -247,9 +258,10 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D12) {
 #if (CUDA_VERSION < 12000 || CUDNN_VERSION < 8905)
   GTEST_SKIP() << "Layer norm kernels require CUDA 12 and cuDNN 8.9.5.";
 #endif
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Layer norm kernels require Ampere or newer architecture.";
+  if (!GetCudaComputeCapability().Is(se::CudaComputeCapability::AMPERE) &&
+      !GetCudaComputeCapability().Is(se::CudaComputeCapability::HOPPER)) {
+    GTEST_SKIP()
+        << "Layer norm kernels require Ampere or Hopper architectures.";
   }
   const char* hlo_text = R"(
     HloModule test
@@ -264,28 +276,28 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D12) {
         input = f32[2,4,6,8] parameter(0)
         multiply3 = f32[2,4,6,8] multiply(input, input)
         c0 = f32[] constant(0)
-        reduce1 = f32[2,8] reduce(multiply3, c0), dimensions={1,2}, to_apply=apply
-        c1 = f32[] constant(0.041667)
-        c1_bcast = f32[2,8] broadcast(c1), dimensions={}
-        multiply9 = f32[2,8] multiply(reduce1, c1_bcast)
-        reduce = f32[2,8] reduce(input,c0), dimensions={1,2}, to_apply=apply
-        multiply8 = f32[2,8] multiply(reduce, c1_bcast)
-        multiply4 = f32[2,8] multiply(multiply8, multiply8)
-        subtract = f32[2,8] subtract(multiply9, multiply4)
-        c2 = f32[] constant(0.001)
-        c2_bcast = f32[2,8] broadcast(c2), dimensions={}
-        add3 = f32[2,8] add(subtract,c2_bcast)
-        rsqrt1 = f32[2,8] rsqrt(add3)
-        broadcast15 = f32[2,4,6,8] broadcast(rsqrt1), dimensions={0,3}
-        broadcast4 = f32[2,4,6,8] broadcast(multiply8), dimensions={0,3}
-        subtract1 = f32[2,4,6,8] subtract(input, broadcast4)
-        multiply6 = f32[2,4,6,8] multiply(broadcast15, subtract1)
+        input_square_sum = f32[2,8] reduce(multiply3, c0), dimensions={1,2}, to_apply=apply
+        n_elems = f32[] constant(0.041667)
+        n_elems_bcast = f32[2,8] broadcast(n_elems), dimensions={}
+        input_square_mean = f32[2,8] multiply(input_square_sum, n_elems_bcast)
+        reduce = f32[2,8] reduce(input, c0), dimensions={1,2}, to_apply=apply
+        input_mean = f32[2,8] multiply(reduce, n_elems_bcast)
+        input_mean_square = f32[2,8] multiply(input_mean, input_mean)
+        variance = f32[2,8] subtract(input_square_mean, input_mean_square)
+        epsilon = f32[] constant(0.001)
+        epsilon_bcast = f32[2,8] broadcast(epsilon), dimensions={}
+        variance_plus_epsilon = f32[2,8] add(variance, epsilon_bcast)
+        norm_factor = f32[2,8] rsqrt(variance_plus_epsilon)
+        norm_factor_bcast = f32[2,4,6,8] broadcast(norm_factor), dimensions={0,3}
+        input_mean_bcast = f32[2,4,6,8] broadcast(input_mean), dimensions={0,3}
+        input_center = f32[2,4,6,8] subtract(input, input_mean_bcast)
+        norm = f32[2,4,6,8] multiply(norm_factor_bcast, input_center)
         scale = f32[4,6] parameter(1)
-        broadcast17 = f32[2,4,6,8] broadcast(scale), dimensions={1,2}
-        multiply7 = f32[2,4,6,8] multiply(multiply6, broadcast17)
+        scale_bcast = f32[2,4,6,8] broadcast(scale), dimensions={1,2}
+        norm_scale = f32[2,4,6,8] multiply(norm, scale_bcast)
         bias = f32[4,6] parameter(2)
-        broadcast18 = f32[2,4,6,8] broadcast(bias), dimensions={1,2}
-        ROOT out = f32[2,4,6,8] add(multiply7, broadcast18)
+        bias_broadcast = f32[2,4,6,8] broadcast(bias), dimensions={1,2}
+        ROOT out = f32[2,4,6,8] add(norm_scale, bias_broadcast)
     })";
 
   const char* optimized_hlo = R"(
@@ -314,9 +326,10 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain2D1) {
 #if (CUDA_VERSION < 12000 || CUDNN_VERSION < 8905)
   GTEST_SKIP() << "Layer norm kernels require CUDA 12 and cuDNN 8.9.5.";
 #endif
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Layer norm kernels require Ampere or newer architecture.";
+  if (!GetCudaComputeCapability().Is(se::CudaComputeCapability::AMPERE) &&
+      !GetCudaComputeCapability().Is(se::CudaComputeCapability::HOPPER)) {
+    GTEST_SKIP()
+        << "Layer norm kernels require Ampere or Hopper architectures.";
   }
   const char* hlo_text = R"(
     HloModule test
@@ -331,30 +344,30 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain2D1) {
         input = f32[2,4] parameter(0)
         multiply3 = f32[2,4] multiply(input, input)
         c0 = f32[] constant(0)
-        reduce1 = f32[2] reduce(multiply3, c0), dimensions={1}, to_apply=apply
-        c1 = f32[] constant(0.25)
-        c1_bcast = f32[2] broadcast(c1), dimensions={}
-        multiply9 = f32[2] multiply(reduce1,c1_bcast)
-        reduce = f32[2] reduce(input,c0), dimensions={1}, to_apply=apply
-        multiply8 = f32[2] multiply(reduce,c1_bcast)
-        multiply4 = f32[2] multiply(multiply8,multiply8)
-        subtract = f32[2] subtract(multiply9,multiply4)
-        c2 = f32[] constant(0.001)
-        c2_bcast = f32[2] broadcast(c2), dimensions={}
-        add3 = f32[2] add(subtract,c2_bcast)
-        rsqrt1 = f32[2] rsqrt(add3)
-        broadcast15 = f32[2,4] broadcast(rsqrt1), dimensions={0}
-        broadcast4 = f32[2,4] broadcast(multiply8), dimensions={0}
-        subtract1 = f32[2,4] subtract(input,broadcast4)
-        multiply6 = f32[2,4] multiply(broadcast15,subtract1)
+        input_square_sum = f32[2] reduce(multiply3, c0), dimensions={1}, to_apply=apply
+        n_elems = f32[] constant(0.25)
+        n_elems_bcast = f32[2] broadcast(n_elems), dimensions={}
+        input_square_mean = f32[2] multiply(input_square_sum,n_elems_bcast)
+        reduce = f32[2] reduce(input, c0), dimensions={1}, to_apply=apply
+        input_mean = f32[2] multiply(reduce,n_elems_bcast)
+        input_mean_square = f32[2] multiply(input_mean,input_mean)
+        variance = f32[2] subtract(input_square_mean,input_mean_square)
+        epsilon = f32[] constant(0.001)
+        epsilon_bcast = f32[2] broadcast(epsilon), dimensions={}
+        variance_plus_epsilon = f32[2] add(variance, epsilon_bcast)
+        norm_factor = f32[2] rsqrt(variance_plus_epsilon)
+        norm_factor_bcast = f32[2,4] broadcast(norm_factor), dimensions={0}
+        input_mean_bcast = f32[2,4] broadcast(input_mean), dimensions={0}
+        input_center = f32[2,4] subtract(input,input_mean_bcast)
+        norm = f32[2,4] multiply(norm_factor_bcast,input_center)
         scale = f32[4] parameter(1)
-        broadcast17 = f32[2,4] broadcast(scale), dimensions={1}
-        multiply7 = f32[2,4] multiply(multiply6,broadcast17)
+        scale_bcast = f32[2,4] broadcast(scale), dimensions={1}
+        norm_scale = f32[2,4] multiply(norm,scale_bcast)
         bias = f32[4] parameter(2)
-        broadcast18 = f32[2,4] broadcast(bias), dimensions={1}
-        add = f32[2,4] add(multiply7,broadcast18)
-        divide = f32[2] divide(rsqrt1, add3)
-        ROOT out = (f32[2,4], f32[2], f32[2], f32[2]) tuple(add, multiply8, divide, rsqrt1)
+        bias_broadcast = f32[2,4] broadcast(bias), dimensions={1}
+        norm_scale_bias = f32[2,4] add(norm_scale, bias_broadcast)
+        norm_factor_cube = f32[2] divide(norm_factor, variance_plus_epsilon)
+        ROOT out = (f32[2,4], f32[2], f32[2], f32[2]) tuple(norm_scale_bias, input_mean, norm_factor, norm_factor_cube)
     })";
 
   const char* optimized_hlo = R"(
@@ -376,9 +389,9 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain2D1) {
 ; CHECK-NEXT:    [[GTE1:%[^ ]+]] = f32[2,1,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=1
 ; CHECK-NEXT:    [[GTE1_BITCAST:%[^ ]+]] = f32[2]{0} bitcast([[GTE1]])
 ; CHECK-NEXT:    [[GTE2:%[^ ]+]] = f32[2,1,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=2
-; CHECK-NEXT:    [[FUSION:%[^ ]+]] = f32[2]{0} fusion([[GTE2]]), kind=kLoop, calls=[[FUSED_COMPUTATION:%[^ ]+]]
 ; CHECK-NEXT:    [[GTE2_BITCAST:%[^ ]+]] = f32[2]{0} bitcast([[GTE2]])
-; CHECK-NEXT:  ROOT [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2]{0}, f32[2]{0}, f32[2]{0}) tuple([[GTE0_BITCAST]], [[GTE1_BITCAST]], [[FUSION]], [[GTE2_BITCAST]])
+; CHECK-NEXT:    [[FUSION:%[^ ]+]] = f32[2]{0} fusion([[GTE2]]), kind=kLoop, calls=[[FUSED_COMPUTATION:%[^ ]+]]
+; CHECK-NEXT:  ROOT [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2]{0}, f32[2]{0}, f32[2]{0}) tuple([[GTE0_BITCAST]], [[GTE1_BITCAST]], [[GTE2_BITCAST]], [[FUSION]])
   )";
 
   TestNorm(hlo_text, optimized_hlo);
@@ -388,9 +401,10 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain4D3) {
 #if (CUDA_VERSION < 12000 || CUDNN_VERSION < 8905)
   GTEST_SKIP() << "Layer norm kernels require CUDA 12 and cuDNN 8.9.5.";
 #endif
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Layer norm kernels require Ampere or newer architecture.";
+  if (!GetCudaComputeCapability().Is(se::CudaComputeCapability::AMPERE) &&
+      !GetCudaComputeCapability().Is(se::CudaComputeCapability::HOPPER)) {
+    GTEST_SKIP()
+        << "Layer norm kernels require Ampere or Hopper architectures.";
   }
   const char* hlo_text = R"(
     HloModule test
@@ -405,30 +419,30 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain4D3) {
         input = f32[2,4,6,8] parameter(0)
         multiply3 = f32[2,4,6,8] multiply(input, input)
         c0 = f32[] constant(0)
-        reduce1 = f32[2,4,6] reduce(multiply3, c0), dimensions={3}, to_apply=apply
-        c1 = f32[] constant(0.125)
-        c1_bcast = f32[2,4,6] broadcast(c1), dimensions={}
-        multiply9 = f32[2,4,6] multiply(reduce1,c1_bcast)
-        reduce = f32[2,4,6] reduce(input,c0), dimensions={3}, to_apply=apply
-        multiply8 = f32[2,4,6] multiply(reduce,c1_bcast)
-        multiply4 = f32[2,4,6] multiply(multiply8,multiply8)
-        subtract = f32[2,4,6] subtract(multiply9,multiply4)
-        c2 = f32[] constant(0.001)
-        c2_bcast = f32[2,4,6] broadcast(c2), dimensions={}
-        add3 = f32[2,4,6] add(subtract,c2_bcast)
-        rsqrt1 = f32[2,4,6] rsqrt(add3)
-        broadcast15 = f32[2,4,6,8] broadcast(rsqrt1), dimensions={0,1,2}
-        broadcast4 = f32[2,4,6,8] broadcast(multiply8), dimensions={0,1,2}
-        subtract1 = f32[2,4,6,8] subtract(input,broadcast4)
-        multiply6 = f32[2,4,6,8] multiply(broadcast15,subtract1)
+        input_square_sum = f32[2,4,6] reduce(multiply3, c0), dimensions={3}, to_apply=apply
+        n_elems = f32[] constant(0.125)
+        n_elems_bcast = f32[2,4,6] broadcast(n_elems), dimensions={}
+        input_square_mean = f32[2,4,6] multiply(input_square_sum, n_elems_bcast)
+        reduce = f32[2,4,6] reduce(input, c0), dimensions={3}, to_apply=apply
+        input_mean = f32[2,4,6] multiply(reduce, n_elems_bcast)
+        input_mean_square = f32[2,4,6] multiply(input_mean, input_mean)
+        variance = f32[2,4,6] subtract(input_square_mean, input_mean_square)
+        epsilon = f32[] constant(0.001)
+        epsilon_bcast = f32[2,4,6] broadcast(epsilon), dimensions={}
+        variance_plus_epsilon = f32[2,4,6] add(variance, epsilon_bcast)
+        norm_factor = f32[2,4,6] rsqrt(variance_plus_epsilon)
+        norm_factor_bcast = f32[2,4,6,8] broadcast(norm_factor), dimensions={0,1,2}
+        input_mean_bcast = f32[2,4,6,8] broadcast(input_mean), dimensions={0,1,2}
+        input_center = f32[2,4,6,8] subtract(input, input_mean_bcast)
+        norm = f32[2,4,6,8] multiply(norm_factor_bcast, input_center)
         scale = f32[8] parameter(1)
-        broadcast17 = f32[2,4,6,8] broadcast(scale), dimensions={3}
-        multiply7 = f32[2,4,6,8] multiply(multiply6,broadcast17)
+        scale_bcast = f32[2,4,6,8] broadcast(scale), dimensions={3}
+        norm_scale = f32[2,4,6,8] multiply(norm,scale_bcast)
         bias = f32[8] parameter(2)
-        broadcast18 = f32[2,4,6,8] broadcast(bias), dimensions={3}
-        add = f32[2,4,6,8] add(multiply7,broadcast18)
-        divide = f32[2,4,6] divide(rsqrt1, add3)
-        ROOT out = (f32[2,4,6,8], f32[2,4,6], f32[2,4,6], f32[2,4,6]) tuple(add, multiply8, divide, rsqrt1)
+        bias_broadcast = f32[2,4,6,8] broadcast(bias), dimensions={3}
+        norm_scale_bias = f32[2,4,6,8] add(norm_scale, bias_broadcast)
+        norm_factor_cube = f32[2,4,6] divide(norm_factor, variance_plus_epsilon)
+        ROOT out = (f32[2,4,6,8], f32[2,4,6], f32[2,4,6], f32[2,4,6]) tuple(norm_scale_bias, input_mean, norm_factor, norm_factor_cube)
     })";
 
   const char* optimized_hlo = R"(
@@ -450,9 +464,9 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain4D3) {
 ; CHECK-NEXT:    [[GTE1:%[^ ]+]] = f32[2,4,6,1]{3,2,1,0} get-tuple-element([[CC]]), index=1
 ; CHECK-NEXT:    [[GTE1_BITCAST:%[^ ]+]] = f32[2,4,6]{2,1,0} bitcast([[GTE1]])
 ; CHECK-NEXT:    [[GTE2:%[^ ]+]] = f32[2,4,6,1]{3,2,1,0} get-tuple-element([[CC]]), index=2
-; CHECK-NEXT:    [[FUSION:%[^ ]+]] = f32[2,4,6]{2,1,0} fusion([[GTE2]]), kind=kLoop, calls=[[FUSED_COMPUTATION:%[^ ]+]]
 ; CHECK-NEXT:    [[GTE2_BITCAST:%[^ ]+]] = f32[2,4,6]{2,1,0} bitcast([[GTE2]])
-; CHECK-NEXT:  ROOT [[OUT:%[^ ]+]] = (f32[2,4,6,8]{3,2,1,0}, f32[2,4,6]{2,1,0}, f32[2,4,6]{2,1,0}, f32[2,4,6]{2,1,0}) tuple([[GTE0_BITCAST]], [[GTE1_BITCAST]], [[FUSION]], [[GTE2_BITCAST]])
+; CHECK-NEXT:    [[FUSION:%[^ ]+]] = f32[2,4,6]{2,1,0} fusion([[GTE2]]), kind=kLoop, calls=[[FUSED_COMPUTATION:%[^ ]+]]
+; CHECK-NEXT:  ROOT [[OUT:%[^ ]+]] = (f32[2,4,6,8]{3,2,1,0}, f32[2,4,6]{2,1,0}, f32[2,4,6]{2,1,0}, f32[2,4,6]{2,1,0}) tuple([[GTE0_BITCAST]], [[GTE1_BITCAST]], [[GTE2_BITCAST]], [[FUSION]])
   )";
 
   TestNorm(hlo_text, optimized_hlo);
@@ -462,9 +476,10 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain4D12) {
 #if (CUDA_VERSION < 12000 || CUDNN_VERSION < 8905)
   GTEST_SKIP() << "Layer norm kernels require CUDA 12 and cuDNN 8.9.5.";
 #endif
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Layer norm kernels require Ampere or newer architecture.";
+  if (!GetCudaComputeCapability().Is(se::CudaComputeCapability::AMPERE) &&
+      !GetCudaComputeCapability().Is(se::CudaComputeCapability::HOPPER)) {
+    GTEST_SKIP()
+        << "Layer norm kernels require Ampere or Hopper architectures.";
   }
   const char* hlo_text = R"(
     HloModule test
@@ -479,30 +494,30 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain4D12) {
         input = f32[2,4,6,8] parameter(0)
         multiply3 = f32[2,4,6,8] multiply(input, input)
         c0 = f32[] constant(0)
-        reduce1 = f32[2,8] reduce(multiply3, c0), dimensions={1,2}, to_apply=apply
-        c1 = f32[] constant(0.041667)
-        c1_bcast = f32[2,8] broadcast(c1), dimensions={}
-        multiply9 = f32[2,8] multiply(reduce1, c1_bcast)
-        reduce = f32[2,8] reduce(input,c0), dimensions={1,2}, to_apply=apply
-        multiply8 = f32[2,8] multiply(reduce, c1_bcast)
-        multiply4 = f32[2,8] multiply(multiply8, multiply8)
-        subtract = f32[2,8] subtract(multiply9, multiply4)
-        c2 = f32[] constant(0.001)
-        c2_bcast = f32[2,8] broadcast(c2), dimensions={}
-        add3 = f32[2,8] add(subtract,c2_bcast)
-        rsqrt1 = f32[2,8] rsqrt(add3)
-        broadcast15 = f32[2,4,6,8] broadcast(rsqrt1), dimensions={0,3}
-        broadcast4 = f32[2,4,6,8] broadcast(multiply8), dimensions={0,3}
-        subtract1 = f32[2,4,6,8] subtract(input, broadcast4)
-        multiply6 = f32[2,4,6,8] multiply(broadcast15, subtract1)
+        input_square_sum = f32[2,8] reduce(multiply3, c0), dimensions={1,2}, to_apply=apply
+        n_elems = f32[] constant(0.041667)
+        n_elems_bcast = f32[2,8] broadcast(n_elems), dimensions={}
+        input_square_mean = f32[2,8] multiply(input_square_sum, n_elems_bcast)
+        reduce = f32[2,8] reduce(input, c0), dimensions={1,2}, to_apply=apply
+        input_mean = f32[2,8] multiply(reduce, n_elems_bcast)
+        input_mean_square = f32[2,8] multiply(input_mean, input_mean)
+        variance = f32[2,8] subtract(input_square_mean, input_mean_square)
+        epsilon = f32[] constant(0.001)
+        epsilon_bcast = f32[2,8] broadcast(epsilon), dimensions={}
+        variance_plus_epsilon = f32[2,8] add(variance, epsilon_bcast)
+        norm_factor = f32[2,8] rsqrt(variance_plus_epsilon)
+        norm_factor_bcast = f32[2,4,6,8] broadcast(norm_factor), dimensions={0,3}
+        input_mean_bcast = f32[2,4,6,8] broadcast(input_mean), dimensions={0,3}
+        input_center = f32[2,4,6,8] subtract(input, input_mean_bcast)
+        norm = f32[2,4,6,8] multiply(norm_factor_bcast, input_center)
         scale = f32[4,6] parameter(1)
-        broadcast17 = f32[2,4,6,8] broadcast(scale), dimensions={1,2}
-        multiply7 = f32[2,4,6,8] multiply(multiply6, broadcast17)
+        scale_bcast = f32[2,4,6,8] broadcast(scale), dimensions={1,2}
+        norm_scale = f32[2,4,6,8] multiply(norm, scale_bcast)
         bias = f32[4,6] parameter(2)
-        broadcast18 = f32[2,4,6,8] broadcast(bias), dimensions={1,2}
-        add = f32[2,4,6,8] add(multiply7, broadcast18)
-        divide = f32[2,8] divide(rsqrt1, add3)
-        ROOT out = (f32[2,4,6,8], f32[2,8], f32[2,8], f32[2,8]) tuple(add, multiply8, divide, rsqrt1)
+        bias_broadcast = f32[2,4,6,8] broadcast(bias), dimensions={1,2}
+        norm_scale_bias = f32[2,4,6,8] add(norm_scale, bias_broadcast)
+        norm_factor_cube = f32[2,8] divide(norm_factor, variance_plus_epsilon)
+        ROOT out = (f32[2,4,6,8], f32[2,8], f32[2,8], f32[2,8]) tuple(norm_scale_bias, input_mean, norm_factor, norm_factor_cube)
     })";
 
   const char* optimized_hlo = R"(
@@ -525,9 +540,9 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain4D12) {
 ; CHECK-NEXT:    [[GTE1:%[^ ]+]] = f32[2,8,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=1
 ; CHECK-NEXT:    [[GTE1_BITCAST:%[^ ]+]] = f32[2,8]{1,0} bitcast([[GTE1]])
 ; CHECK-NEXT:    [[GTE2:%[^ ]+]] = f32[2,8,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=2
-; CHECK-NEXT:    [[FUSION1:%[^ ]+]] = f32[2,8]{1,0} fusion([[GTE2]]), kind=kLoop, calls=[[FUSED_COMPUTATION1:%[^ ]+]]
 ; CHECK-NEXT:    [[GTE2_BITCAST:%[^ ]+]] = f32[2,8]{1,0} bitcast([[GTE2]])
-; CHECK-NEXT:  ROOT [[OUT:%[^ ]+]] = (f32[2,4,6,8]{3,2,1,0}, f32[2,8]{1,0}, f32[2,8]{1,0}, f32[2,8]{1,0}) tuple([[FUSION0]], [[GTE1_BITCAST]], [[FUSION1]], [[GTE2_BITCAST]])
+; CHECK-NEXT:    [[FUSION1:%[^ ]+]] = f32[2,8]{1,0} fusion([[GTE2]]), kind=kLoop, calls=[[FUSED_COMPUTATION1:%[^ ]+]]
+; CHECK-NEXT:  ROOT [[OUT:%[^ ]+]] = (f32[2,4,6,8]{3,2,1,0}, f32[2,8]{1,0}, f32[2,8]{1,0}, f32[2,8]{1,0}) tuple([[FUSION0]], [[GTE1_BITCAST]], [[GTE2_BITCAST]], [[FUSION1]])
   )";
 
   TestNorm(hlo_text, optimized_hlo);

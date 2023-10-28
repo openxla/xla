@@ -17,16 +17,10 @@ limitations under the License.
 
 #include <vector>
 
-#include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "xla/layout_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/dnn.h"
-#include "xla/util.h"
 
 namespace xla {
 namespace gpu {
@@ -41,12 +35,8 @@ Status RunGpuNorm(const gpu::GpuNormConfig& config,
                   const se::DeviceMemoryBase& scratch_memory,
                   se::Stream* stream, RunNormOptions options) {
   se::dnn::LazyOpRunner<se::dnn::NormOp>* lazy_runner =
-      options.runner_cache->AsNormRunner();
+      options.norm_runner->AsNormRunner();
   std::optional<se::dnn::LazyOpRunner<se::dnn::NormOp>> local_runner;
-  if (!lazy_runner) {
-    local_runner.emplace(config.algorithm);
-    lazy_runner = &local_runner.value();
-  }
 
   se::dnn::NormOp::Config ln_config{config.epsilon,
                                     config.input_descriptor,

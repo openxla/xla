@@ -217,9 +217,6 @@ struct FusedConvOp {
 struct NormOp {
   using Signature = NormSignature;
 
-  // Config is mainly used in RunnerFromAlgorithmDesc() to lazily create the
-  // runner. At this moment we only get existing runners and don't implement
-  // this feature.
   struct Config {
     double epsilon;
     const TensorDescriptor& input_descriptor;

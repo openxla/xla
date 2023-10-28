@@ -3986,7 +3986,7 @@ test_suite(
         # TODO(anlunx): Re-enable when the FFI mechanism is avalable in Thunk-based runtime.
         # copybara:uncomment # "//third_party/py/jax/experimental/jax2tf/tests:primitives_test_gpu",
         # copybara:uncomment "//third_party/py/jax/tests:pmap_test_gpu",
-        # copybara:uncomment "//tests:fft_test_gpu",
+        # copybara:uncomment "//tensorflow/compiler/tests:fft_test_gpu",
         "//xla/python:xla_client_test_gpu",
         "//xla/service/gpu/tests:add_preds.hlo.test",
         "//xla/service/gpu/tests:concat.hlo.test",

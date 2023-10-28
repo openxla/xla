@@ -655,7 +655,10 @@ message DebugOptions {
   // Enable radix sort using CUB.
   bool xla_gpu_enable_cub_radix_sort = 259;
 
-  // Next id: 261
+  // Rewrite layer norm patterns into cuDNN library calls.
+  bool xla_gpu_enable_cudnn_layer_norm = 261;
+
+  // Next id: 262
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

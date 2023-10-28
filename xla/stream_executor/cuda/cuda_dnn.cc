@@ -7352,10 +7352,10 @@ GetCudnnFlashAttentionBackwardOperationGraph(
 
 static tsl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
     cudnn_frontend::OperationGraph&& opGraph, const CudnnHandle& cudnn,
-    bool fallback_heuristics = false) {
+    bool include_fallback_heuristics = false) {
 #if (CUDNN_VERSION >= 8800)
   cudnn_frontend::EngineConfigList engine_configs;
-  if (!fallback_heuristics) {
+  if (!include_fallback_heuristics) {
     cudnn_frontend::get_heuristics_list<1>(
         {"heuristics_instant"}, opGraph, allowAllConfig, engine_configs, true);
   } else {
@@ -7380,6 +7380,10 @@ static tsl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
             .build();
     if (plan.get_status() == CUDNN_STATUS_SUCCESS) {
       return plan;
+    } else {
+      VLOG(4) << "Failed to build cuDNN execution plan for opGraph "
+              << opGraph.getTag()
+              << ". Status: " << CudnnStatusToString(plan.get_status());
     }
   }
 
@@ -8002,8 +8006,9 @@ class CudnnExecutionPlanRunner<void(Args...)>
                                           data_uids_.cend()};
     std::vector<void*> data_ptrs_vec;
 
-    // The operands of ForwardGraph convolutions are gathered dynamically. In
-    // this case, Args... is std::vector<DeviceMemoryBase>.
+    // The operands of ForwardGraph convolutions and norm Custom Calls are
+    // gathered dynamically. In these cases, Args... is
+    // std::vector<DeviceMemoryBase>.
     if constexpr (sizeof...(Args) == 1 &&
                   std::is_same_v<std::tuple_element_t<0, std::tuple<Args...>>,
                                  std::vector<DeviceMemoryBase>>) {
@@ -9055,8 +9060,6 @@ CudnnSupport::NormRunnerFromDesc(
             expectation_descriptor->dimensions(),
             expectation_descriptor->GetPhysicalStridesMajorToMinor(),
             next_uid(), expectation_descriptor->type(), 1, -1));
-  }
-  if (norm_factor_descriptor) {
     TF_ASSIGN_OR_RETURN(
         norm_factor_tensor,
         CreateCudnnTensor(
@@ -9109,9 +9112,10 @@ CudnnSupport::NormRunnerFromDesc(
                       .setOperationGraph(ops.size(), ops.data())
                       .build();
 
-  TF_ASSIGN_OR_RETURN(auto execution_plan,
-                      GetExecPlanFromHeuristics(std::move(op_graph), cudnn,
-                                                /*fallback_heuristics=*/true));
+  TF_ASSIGN_OR_RETURN(
+      auto execution_plan,
+      GetExecPlanFromHeuristics(std::move(op_graph), cudnn,
+                                /*include_fallback_heuristics=*/true));
   std::vector<ScalingParam> scalar_input_values = {
       ScalingParam(epsilon, dnn::DataType::kDouble)};
 
@@ -9120,8 +9124,8 @@ CudnnSupport::NormRunnerFromDesc(
       CudnnExecutionPlanRunner<dnn::NormSignature>::Create(
           parent_, cudnn_.get(), std::move(execution_plan), uids,
           /*need_side_input=*/false, /*has_activation_output=*/false,
-          scalar_uids, scalar_input_values, 0, 0,
-          /*is_flash_attention=*/false));
+          scalar_uids, scalar_input_values, /*dropout_rng_seed=*/0,
+          /*dropout_rng_offset=*/0, /*is_flash_attention=*/false));
   return {std::make_unique<CudnnExecutionPlanRunner<dnn::NormSignature>>(
       std::move(runner))};
 

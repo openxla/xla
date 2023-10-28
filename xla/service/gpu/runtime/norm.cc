@@ -183,7 +183,7 @@ static absl::Status NormImpl(const ServiceExecutableRunOptions* run_options,
   se::DeviceMemoryBase scratch_buffer = GetDeviceAddress(scratch.value());
 
   RunNormOptions opts;
-  opts.runner_cache = &current_runner.value()->runner;
+  opts.norm_runner = &current_runner.value()->runner;
 
   // Run the norm.
   return RunGpuNorm(current_runner.value()->config, input_buffer, scale_buffer,

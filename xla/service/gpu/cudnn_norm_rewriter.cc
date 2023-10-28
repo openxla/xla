@@ -35,7 +35,9 @@ namespace {
 
 namespace m = match;
 
-bool IsReduceAdd(const HloInstruction* instr) {
+// Returns whether the HLO Computation applied by instr calculates the sum of
+// the elements.
+bool AppliesAddReduce(const HloInstruction* instr) {
   HloComputation* reduce_comp = instr->to_apply();
   HloInstruction* reduce_comp_root = reduce_comp->root_instruction();
   return instr->operand_count() == 2 &&
@@ -47,12 +49,9 @@ bool IsReduceAdd(const HloInstruction* instr) {
          reduce_comp_root->operand(1)->opcode() == HloOpcode::kParameter;
 }
 
-bool CompatibleElementType(HloInstruction* instr) {
+bool CompatibleElementType(const HloInstruction* instr) {
   PrimitiveType element_type = instr->shape().element_type();
-  if (element_type == BF16 || element_type == F16 || element_type == F32) {
-    return true;
-  }
-  return false;
+  return element_type == BF16 || element_type == F16 || element_type == F32;
 }
 
 StatusOr<int64_t> CConstant(se::CudaComputeCapability cuda_compute_capability) {
@@ -66,21 +65,42 @@ StatusOr<int64_t> CConstant(se::CudaComputeCapability cuda_compute_capability) {
       "Norm kernels require Ampere or newer architecture.");
 }
 
+// Type conversion from and to any of BF16, F16 and F32.
+template <typename Pattern>
+auto Convert(Pattern pattern) {
+  auto supported_convert = [](const HloInstruction* instr) -> bool {
+    return CompatibleElementType(instr) &&
+           CompatibleElementType(instr->operand(0));
+  };
+  return m::Convert(pattern).WithPredicate(supported_convert);
+}
+
+// Reshape adding or removing degenerate dimensions.
+template <typename Pattern>
+auto Reshape(Pattern pattern) {
+  auto supported_reshape = [](const HloInstruction* instr) -> bool {
+    return ShapeUtil::Equal(
+        ShapeUtil::DropDegenerateDimensions(instr->shape()),
+        ShapeUtil::DropDegenerateDimensions(instr->operand(0)->shape()));
+  };
+  return m::Reshape(pattern).WithPredicate(supported_reshape);
+}
+
 // Matches pattern, convert(pattern), reshape(pattern),
 // convert(reshape(pattern)) and reshape(convert(pattern)).
 template <typename Pattern>
 auto OptionalConvertAndOrReshape(Pattern pattern) {
   auto shared_subpattern = m::SharedSubpattern(pattern);
   return m::AnyOf<HloInstruction>(
-      m::Convert(m::Reshape(shared_subpattern)),
-      m::Reshape(m::Convert(shared_subpattern)), m::Convert(shared_subpattern),
-      m::Reshape(shared_subpattern), shared_subpattern);
+      Convert(Reshape(shared_subpattern)), Reshape(Convert(shared_subpattern)),
+      Convert(shared_subpattern), Reshape(shared_subpattern),
+      shared_subpattern);
 }
 
 // Rsqrt with optional convert and/or reshape.
 template <typename Pattern>
-auto Rsqrt(Pattern pattern) {
-  return OptionalConvertAndOrReshape(m::Rsqrt(pattern));
+auto Rsqrt(HloInstruction** rsqrt, Pattern pattern) {
+  return OptionalConvertAndOrReshape(m::Rsqrt(rsqrt, pattern));
 }
 
 // AddAnyOrder with optional convert and/or reshape.
@@ -124,31 +144,33 @@ auto Square(Pattern pattern) {
       });
 }
 
-// Reduction-addition of pattern with optional convert and/or reshape and
+// Addition-reduction of pattern with optional convert and/or reshape and
 // constant 0 scalar.
 template <typename Pattern>
-auto ReduceAdd(Pattern pattern) {
+auto AddReduce(Pattern pattern) {
   return OptionalConvertAndOrReshape(
-      m::Reduce(pattern, m::ConstantScalar(0))
-          .WithPredicate(
-              [](const HloInstruction* instr) { return IsReduceAdd(instr); }));
+      m::Reduce(pattern, m::Op())
+          .WithPredicate([](const HloInstruction* instr) {
+            return AppliesAddReduce(instr);
+          }));
 }
 
-// Capturing reduction-addition of pattern with optional convert and/or reshape
+// Capturing addition-reduction of pattern with optional convert and/or reshape
 // and constant 0 scalar.
 template <typename Pattern>
-auto ReduceAdd(HloInstruction** reduction, Pattern pattern) {
+auto AddReduce(HloInstruction** reduction, Pattern pattern) {
   return OptionalConvertAndOrReshape(
-      m::Reduce(reduction, pattern, m::ConstantScalar(0))
-          .WithPredicate(
-              [](const HloInstruction* instr) { return IsReduceAdd(instr); }));
+      m::Reduce(reduction, pattern, m::Op())
+          .WithPredicate([](const HloInstruction* instr) {
+            return AppliesAddReduce(instr);
+          }));
 }
 
 // Expected value, or mean, with optional broadcast.
 template <typename Pattern>
 auto Expectation(Pattern pattern) {
   auto shared_subpattern =
-      MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()), ReduceAdd(pattern));
+      MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()), AddReduce(pattern));
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
@@ -157,7 +179,7 @@ auto Expectation(Pattern pattern) {
 template <typename Pattern>
 auto Expectation(HloInstruction** expectation, Pattern pattern) {
   auto shared_subpattern = MultiplyAnyOrder(
-      expectation, m::Broadcast(m::ConstantScalar()), ReduceAdd(pattern));
+      expectation, m::Broadcast(m::ConstantScalar()), AddReduce(pattern));
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
@@ -168,22 +190,24 @@ auto Expectation(HloInstruction** expectation, HloInstruction** reduction,
                  Pattern pattern) {
   auto shared_subpattern =
       MultiplyAnyOrder(expectation, m::Broadcast(m::ConstantScalar()),
-                       ReduceAdd(reduction, pattern));
+                       AddReduce(reduction, pattern));
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
 
-// Variance, expressed as E[(X - E[X])^2] or E[X^2] - E[X]^2 where E is the
-// expecation.
-auto Variance(HloInstruction** input0, HloInstruction** input1) {
+// Variance, expressed as E[(X - E[X])^2] or E[X^2] - E[X]^2, where E is the
+// expectation.
+auto Variance(HloInstruction** expectation, HloInstruction** input0,
+              HloInstruction** input1) {
   return m::AnyOf<HloInstruction>(
       Subtract(Expectation(Square(m::Op(input0))),
-               Square(Expectation(m::Op(input1)))),
-      Expectation(Square(Subtract(m::Op(input0), Expectation(m::Op(input1))))));
+               Square(Expectation(expectation, m::Op(input1)))),
+      Expectation(Square(
+          Subtract(m::Op(input0), Expectation(expectation, m::Op(input1))))));
 }
 
-// Variance, expressed as E[(X - E[X])^2] or E[X^2] - E[X]^2 where E is the
-// expecation.
+// Variance, expressed as E[(X - E[X])^2] or E[X^2] - E[X]^2, where E is the
+// expectation.
 auto Variance(HloInstruction** variance, HloInstruction** expectation,
               HloInstruction** input0, HloInstruction** input1) {
   return m::AnyOf<HloInstruction>(
@@ -195,21 +219,12 @@ auto Variance(HloInstruction** variance, HloInstruction** expectation,
 }
 
 // Reciprocal of the square root of variance + epsilon with optional broadcast.
-auto NormFactor(HloInstruction** input0, HloInstruction** input1,
-                HloInstruction** epsilon) {
-  auto shared_subpattern = Rsqrt(AddAnyOrder(
-      Variance(input0, input1), m::Broadcast(m::ConstantScalar(epsilon))));
-  return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
-                                  shared_subpattern);
-}
-
-// Reciprocal of the square root of variance + epsilon with optional broadcast.
-auto NormFactor(HloInstruction** input0, HloInstruction** input1,
-                HloInstruction** variance, HloInstruction** expectation,
-                HloInstruction** epsilon) {
-  auto shared_subpattern = m::SharedSubpattern(
-      Rsqrt(AddAnyOrder(Variance(variance, expectation, input0, input1),
-                        m::Broadcast(m::ConstantScalar(epsilon)))));
+auto NormFactor(HloInstruction** norm_factor, HloInstruction** input0,
+                HloInstruction** input1, HloInstruction** variance,
+                HloInstruction** expectation, HloInstruction** epsilon) {
+  auto shared_subpattern = m::SharedSubpattern(Rsqrt(
+      norm_factor, AddAnyOrder(Variance(variance, expectation, input0, input1),
+                               m::Broadcast(m::ConstantScalar(epsilon)))));
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
@@ -254,43 +269,49 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
     return MatchLayerNorm(instr);
   }
 
-  Status HandleDivide(HloInstruction* instr) override {
-    return MatchNormfactor(instr);
-  }
-
   // Matches and rewrites a layer norm pattern with scale multiplication and
-  // bias addition into a Custom Call to cuDNN. The pattern matching employs
-  // modularity to cover the scope of realizations.
+  // bias addition into a Custom Call to cuDNN.
   Status MatchLayerNorm(HloInstruction* instr) {
-    HloInstruction *input, *input0, *input1, *input2, *epsilon, *scale, *bias,
-        *expectation, *reduce;
+    HloInstruction *input, *input0, *input1, *input2, *scale, *bias, *epsilon,
+        *expectation, *expectation0, *reduce, *norm_factor, *variance;
     if (Match(instr,
               SubtractMultiplyAddAnyOrder(
                   m::Op(&input),
                   Expectation(&expectation, &reduce, m::Op(&input0)),
-                  NormFactor(&input1, &input2, &epsilon),
+                  NormFactor(&norm_factor, &input1, &input2, &variance,
+                             &expectation0, &epsilon),
+                  // NormFactor(&input1, &input2, &epsilon),
                   m::Broadcast(m::Op(&scale)), m::Broadcast(m::Op(&bias))))) {
 #if CUDNN_VERSION < 8905
-      // Layer Norm kernels are available with cuDNN 8.9.5 and above.
+      // Layer norm kernels are available with cuDNN 8.9.5 and above.
       VLOG(1) << "Layer norm Custom Calls require cuDNN 8.9.5.";
       return OkStatus();
 #endif  // CUDNN_VERSION < 8905
 
-      // Layer norm kernels require Ampere or newer architectures.
-      if (!cuda_compute_capability_.IsAtLeast(
-              se::CudaComputeCapability::AMPERE)) {
-        VLOG(1)
-            << "Layer norm Custom Calls require Ampere or newer architecture.";
+      if (!instr->GetModule()
+               ->config()
+               .debug_options()
+               .xla_gpu_enable_cudnn_layer_norm()) {
+        VLOG(1) << "Layer norm Custom Calls disabled.";
+        return OkStatus();
+      }
+
+      // Layer norm kernels require Ampere or Hopper architectures.
+      if (!cuda_compute_capability_.Is(se::CudaComputeCapability::AMPERE) &&
+          !cuda_compute_capability_.Is(se::CudaComputeCapability::HOPPER)) {
+        VLOG(1) << "Layer norm Custom Calls require Ampere or Hopper "
+                   "architectures.";
         return OkStatus();
       }
 
       // Verify the uniqueness of the inputs.
       auto is_input = [input](HloInstruction* inputx) -> bool {
         return inputx->unique_id() == input->unique_id() ||
-               inputx->operand_count() == 1 &&
+               inputx->opcode() == HloOpcode::kConvert &&
                    inputx->operand(0)->unique_id() == input->unique_id();
       };
-      if (!is_input(input0) || !is_input(input1) || !is_input(input2)) {
+      if (!is_input(input0) || !is_input(input1) || !is_input(input2) ||
+          expectation->unique_id() != expectation0->unique_id()) {
         VLOG(1) << "Layer norm operands not unique.";
         return OkStatus();
       }
@@ -300,12 +321,22 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         input = input->mutable_operand(0);
       }
 
+      // Verify the input and output layouts.
+      // TODO(philipphack): Consider supporting more general cases.
+      if (!LayoutUtil::IsMonotonicWithDim0Major(input->shape().layout()) ||
+          !LayoutUtil::IsMonotonicWithDim0Major(scale->shape().layout()) ||
+          !LayoutUtil::IsMonotonicWithDim0Major(bias->shape().layout()) ||
+          !LayoutUtil::IsMonotonicWithDim0Major(instr->shape().layout())) {
+        VLOG(1) << "Layer norm input and/or output layouts nor supported.";
+        return OkStatus();
+      }
+
       // Verify the element types. The types and shapes of the scale and bias
       // must match.
       if (!CompatibleElementType(input) || !CompatibleElementType(instr) ||
           !CompatibleElementType(scale) || !CompatibleElementType(bias) ||
           !ShapeUtil::Equal(scale->shape(), bias->shape())) {
-        VLOG(1) << "Layer norm input types not supported.";
+        VLOG(1) << "Layer norm input types or shapes not supported.";
         return OkStatus();
       }
 
@@ -323,6 +354,29 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
           VLOG(1) << "Layer norm input dimensions not supported.";
           return OkStatus();
         }
+      }
+
+      // Verify the scaling by the reciprocal of the number of elements during
+      // the calculation of the expectation. The absolute of the difference
+      // between the actual scaling factor and a reference value must not exceed
+      // a prescribed threshold.
+      bool bcast_operand =
+          expectation->operand(0)->opcode() != HloOpcode::kBroadcast;
+      float actual_rnumel = expectation->operand(bcast_operand)
+                                ->operand(0)
+                                ->literal()
+                                .GetAsDouble({})
+                                .value();
+      int64_t numel = 1;
+      for (auto dim : norm_dims) {
+        numel *= reduce->operand(0)->shape().dimensions()[dim];
+      }
+      float rnumel = 1. / float(numel);
+      float numerical_epsilon = 128 * std::numeric_limits<bfloat16>::epsilon();
+      if (abs(actual_rnumel - rnumel) >
+          (abs(actual_rnumel + rnumel) * numerical_epsilon)) {
+        VLOG(1) << "Expectation scaling factor outside tolerance.";
+        return OkStatus();
       }
 
       // If necessary, transpose the input so that the dimensions not being
@@ -351,14 +405,6 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       if (apply_transpose) {
         for (int k = 0; k < transpose_order.size(); ++k) {
           inverse_transpose_order[transpose_order[k]] = k;
-        }
-
-        std::vector<int64_t> transposed_dims;
-        for (int64_t non_norm_dim : non_norm_dims) {
-          transposed_dims.emplace_back(input->shape().dimensions(non_norm_dim));
-        }
-        for (int64_t norm_dim : norm_dims) {
-          transposed_dims.emplace_back(input->shape().dimensions(norm_dim));
         }
         TF_ASSIGN_OR_RETURN(transpose,
                             MakeTransposeHlo(input, transpose_order));
@@ -440,6 +486,16 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       }
 
       VLOG(1) << "Layer norm rewritten into Custom Call.";
+
+      // The layer norm training graph separately contains the norm factor
+      // divided by the sum of variance and epsilon.
+      for (HloInstruction* user : norm_factor->users()) {
+        if (user->opcode() == HloOpcode::kDivide &&
+            user->operand_index(norm_factor) == 0) {
+          TF_RETURN_IF_ERROR(MatchNormfactor(user, custom_call, variance,
+                                             expectation, epsilon));
+        }
+      }
     }
 
     return OkStatus();
@@ -449,45 +505,30 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
   // as the norm factor and its cube, (variance + epsilon)^-1/2 and (variance +
   // epsilon)^-3/2. When identified in the graph, these quantities are fused
   // into the layer norm Custom Call.
-  Status MatchNormfactor(HloInstruction* instr) {
-    HloInstruction *custom_call = nullptr, *input, *input0, *expectation,
-                   *variance, *vairance0, *epsilon, *epsilon0, *gte;
-    if (Match(
-            instr,
-            m::Divide(
-                NormFactor(&input, &input0, &variance, &expectation, &epsilon),
-                AddAnyOrder(m::Op(&vairance0),
-                            m::Broadcast(m::ConstantScalar(&epsilon0)))))) {
+  Status MatchNormfactor(HloInstruction* instr, HloInstruction* custom_call,
+                         HloInstruction* variance, HloInstruction* expectation,
+                         HloInstruction* epsilon) {
+    HloInstruction *variance0, *epsilon0, *gte, *norm_factor;
+    if (Match(instr,
+              m::Divide(m::Op(), AddAnyOrder(m::Op(&variance0),
+                                             m::Broadcast(m::ConstantScalar(
+                                                 &epsilon0)))))) {
       // Verify the uniqueness of the operands.
-      if (variance->unique_id() != vairance0->unique_id() ||
-          epsilon->unique_id() != epsilon0->unique_id() ||
-          input->unique_id() != input0->unique_id()) {
+      if (variance->unique_id() != variance0->unique_id() ||
+          epsilon->unique_id() != epsilon0->unique_id()) {
         VLOG(1) << "Layer norm operands not unique.";
         return OkStatus();
       }
+
+      // Verify the element types.
       if (!CompatibleElementType(instr) ||
           !CompatibleElementType(expectation)) {
         VLOG(1) << "Layer norm input types not compatible.";
         return OkStatus();
       }
 
-      // A layer norm Custom Call must be another user of input, possibly
-      // separated by a type conversion.
-      if (input->opcode() == HloOpcode::kConvert) {
-        input = input->mutable_operand(0);
-      }
-      for (HloInstruction* user : input->users()) {
-        if ((custom_call = FindLayerNormRecursive(user))) {
-          break;
-        }
-      }
-      if (!custom_call) {
-        VLOG(1) << "Unable to identify layer norm Custom Call.";
-        return OkStatus();
-      }
-
-      // The single user of the Custom Call must be a Get-Tuple-Element
-      // accessing the output.
+      // The single user of the Custom Call must be a get-tuple-element
+      // instruction accessing the output.
       if (custom_call->user_count() == 1 &&
           custom_call->users()[0]->opcode() == HloOpcode::kGetTupleElement &&
           custom_call->users()[0]->tuple_index() == 0) {
@@ -510,7 +551,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       Shape expectation_shape = make_compatible_shape(expectation->shape());
       Shape norm_factor_shape = make_compatible_shape(instr->shape());
 
-      // The augmented Custom Call additionally returns the expecation and the
+      // The augmented Custom Call additionally returns the expectation and the
       // norm factor.
       std::vector<Shape> tuple_shapes = custom_call->shape().tuple_shapes();
       tuple_shapes.insert(tuple_shapes.begin() + 1,
@@ -543,7 +584,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
           TF_ASSIGN_OR_RETURN(new_instr,
                               MakeReshapeHlo(old_instr->shape(), new_gte));
         }
-        if (tuple_index != 2) {
+        if (old_instr->opcode() != HloOpcode::kDivide) {
           // Replace the result of the layer norm or the expectation.
           TF_RETURN_IF_ERROR(ReplaceInstruction(old_instr, new_instr));
         } else {
@@ -574,24 +615,6 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
           << "Expectation and norm factor fused into layer norm Custom Call.";
     }
     return OkStatus();
-  }
-
-  // Recursively traverses the graph downward across reshapes and transposes,
-  // starting from instr, and returns a pointer to the layer norm Custom Call,
-  // if found. Returns nullptr otherwise.
-  HloInstruction* FindLayerNormRecursive(HloInstruction* instr) {
-    if (Match(instr, m::CustomCall({kCudnnNormCallTarget}))) {
-      return instr;
-    }
-    if (Match(instr, m::AnyOf<HloInstruction>(m::Reshape(), m::Transpose()))) {
-      for (HloInstruction* user : instr->users()) {
-        HloInstruction* custom_call = FindLayerNormRecursive(user);
-        if (custom_call) {
-          return custom_call;
-        }
-      }
-    }
-    return nullptr;
   }
 
  private:

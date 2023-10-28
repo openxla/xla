@@ -23,6 +23,7 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// Rewrites norm patterns into Custom Calls to the cuDNN library.
 class CudnnNormRewriter : public HloModulePass {
  public:
   explicit CudnnNormRewriter(

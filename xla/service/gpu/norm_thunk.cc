@@ -86,7 +86,7 @@ Status NormThunk::ExecuteOnStream(const ExecuteParams& params) {
       buffer_allocations.GetDeviceAddress(scratch_buffer_);
 
   RunNormOptions opts;
-  opts.runner_cache = &GetOrCreateRunner(params.stream);
+  opts.norm_runner = &GetOrCreateRunner(params.stream);
 
   TF_RETURN_IF_ERROR(RunGpuNorm(config_, input_se_buffer, scale_se_buffer,
                                 bias_se_buffer, output_se_buffer,
