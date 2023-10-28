@@ -1242,6 +1242,14 @@ class CopyRemover {
 
       std::vector<const HloValue*> values = buffer.values();
       absl::c_sort(values, [this](const HloValue* a, const HloValue* b) {
+        // IsDefinedBefore() is generally not strict weak ordering required by
+        // the sort algorithm, since a may not be comparable to b or c by
+        // IsDefinedBefore(), but b and c can be comparable. Such as in:
+        // if () { b = ...; c = b + 1; } else { a = ...; }
+        // So it fails the "incomparability being transitive" requirement by
+        // strict weak ordering. However we guarantee strict weak ordering here
+        // assuming copies have been inserted first for while loop, conditional,
+        // etc. for aliases.
         return ordering_->IsDefinedBefore(*a, *b);
       });
 
@@ -1833,7 +1841,7 @@ class CopyRemover {
 
 }  // namespace
 
-// We add copies for all non-phi indices of the true and false computation
+// We add copies for all phi indices of the true and false computation
 // roots, in order to resolve interference. We later rely on
 // RemoveUnnecessaryCopies to drop the unnecessary ones.
 Status CopyInsertion::AddCopiesForConditional(
@@ -1844,7 +1852,7 @@ Status CopyInsertion::AddCopiesForConditional(
   TF_RET_CHECK(conditional->opcode() == HloOpcode::kConditional);
   if (!IndicesToCopyForConditional(alias_analysis.dataflow_analysis(),
                                    conditional, &indices_to_copy)) {
-    VLOG(2) << "No copies necessary for kWhile instruction "
+    VLOG(2) << "No copies necessary for kContitional instruction "
             << conditional->name();
     return OkStatus();
   }
@@ -1871,8 +1879,11 @@ Status CopyInsertion::AddCopiesToResolveInterference(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer_));
-  for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+  // Need to ignore execution_threads here if main thread is not included since
+  // copies need to be added in all threads to make sure (aliased) buffer values
+  // have the right live ranges and defined-before hehavior. Later a sort is
+  // done and depends on that for strict weak ordering.
+  for (HloComputation* computation : module->MakeNonfusionComputations()) {
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       if (instruction->opcode() == HloOpcode::kWhile) {

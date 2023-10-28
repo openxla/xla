@@ -167,6 +167,7 @@ xla_cc_test(
     deps = if_gpu_is_configured([
         ":buffer_sharing",
         "//xla:test",
+        "//xla:test_helpers",
         "//xla/hlo/ir:hlo",
         "//xla/service:copy_insertion",
         "//xla/tests:hlo_test_base",

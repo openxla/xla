@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/service/copy_insertion.h"
 #include "xla/service/gpu/buffer_sharing.h"
 #include "xla/test.h"
+#include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
 
 namespace xla {
@@ -112,13 +113,13 @@ ENTRY main {
 
   CopyInsertion copy_insertion(FusionCanShareBufferHint,
                                /*use_region_based_live_range_analysis=*/0);
-  ASSERT_IS_OK(copy_insertion.Run(module.get(), {"foobar"}).status());
+  ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
   VLOG(2) << module->ToString();
-  // Copy insertion adds two copies inside the entry computation.
-  EXPECT_EQ(CountCopies(*module->entry_computation()), 2);
+  // Copy insertion adds three copies inside the entry computation.
+  EXPECT_EQ(CountCopies(*module->entry_computation()), 3);
   // We expect that for fusion.549, no further copy needs to be added to the
   // module.
-  EXPECT_EQ(CountCopies(*module), 2);
+  EXPECT_EQ(CountCopies(*module), 3);
 }
 
 using FusionCanShareBufferHintTest = HloTestBase;
@@ -678,9 +679,13 @@ ENTRY main {
 
   CopyInsertion copy_insertion(FusionCanShareBufferHint,
                                /*use_region_based_live_range_analysis=*/0);
-  ASSERT_IS_OK(copy_insertion.Run(module.get(), {"foobar"}).status());
+  ASSERT_IS_OK(copy_insertion.Run(module.get()).status());
   VLOG(2) << module->ToString();
-  EXPECT_EQ(CountCopies(*module), 0);
+  EXPECT_EQ(CountCopies(*module), 1);
+  // Copy insertion adds one copy inside the entry computation and no copy
+  // inside the loop body.
+  EXPECT_EQ(CountCopies(*module->entry_computation()), 1);
+  EXPECT_EQ(CountCopies(*module), 1);
 }
 
 }  // namespace
