@@ -28,6 +28,8 @@ package_group(
 gpu_kernel_library(
     name = "gpu_kernel_helper",
     hdrs = if_gpu_is_configured(["gpu_kernel_helper.h"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         "//xla/stream_executor/platform",
     ] + if_cuda_is_configured([
@@ -59,7 +61,7 @@ cuda_library(
     name = "sleep_kernel_cuda",
     srcs = if_gpu_is_configured(["sleep_kernel.cu.cc"]),
     hdrs = if_gpu_is_configured(["sleep_kernel.h"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]), 
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     compatible_with = [],
 )
 
