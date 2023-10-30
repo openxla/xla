@@ -536,9 +536,7 @@ PjRtFuture<Status> AbstractTfrtCpuBuffer::GetReadyFuture() {
 
   if (definition_event.IsAvailable()) {
     if (definition_event.IsError()) {
-      return PjRtFuture<Status>(
-          FailedPrecondition("Buffer Definition Event: %s",
-                             definition_event.GetError().message()));
+      return PjRtFuture<Status>(definition_event.GetError());
     }
     return PjRtFuture<Status>(OkStatus());
   } else {
@@ -548,9 +546,7 @@ PjRtFuture<Status> AbstractTfrtCpuBuffer::GetReadyFuture() {
     definition_event.AndThen(
         [definition_event = definition_event.AsPtr(), status_event]() {
           if (definition_event.IsError()) {
-            status_event.emplace(
-                FailedPrecondition("Buffer Definition Event: %s",
-                                   definition_event.GetError().message()));
+            status_event.emplace(definition_event.GetError());
           } else {
             status_event.emplace(OkStatus());
           }
