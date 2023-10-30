@@ -1117,9 +1117,8 @@ cc_library(
     name = "cub_sort_thunk",
     srcs = if_gpu_is_configured(["cub_sort_thunk.cc"]),
     hdrs = if_gpu_is_configured(["cub_sort_thunk.h"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = if_gpu_is_configured([
         ":buffer_allocations",
         ":thunk",
@@ -1139,14 +1138,14 @@ build_cub_sort_kernels(
     name = "cub_sort_kernel",
     srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
     hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     types = get_cub_sort_kernel_types(),
-    deps = if_cuda_is_configured([
+    deps = if_gpu_is_configured([
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-    ]) + if_cuda_is_configured([":gpu_prim_cuda"]) + if_rocm_is_configured([":gpu_prim_rocm"]),
+        "@com_google_absl//absl/strings"]) + 
+        if_cuda_is_configured([":gpu_prim_cuda"]) + 
+        if_rocm_is_configured([":gpu_prim_rocm"]),
 )
 
 cc_library(
