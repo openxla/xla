@@ -606,7 +606,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@local_config_cuda//cuda:cuda_headers",

@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cublas_v2.h"
@@ -165,7 +164,8 @@ struct GemmConfigSet {
 
 struct ExecutableCandidate {
   TritonGemmConfig config;
-  // Not nullptr.
+  // This may be nullptr inside CompileMany, but it should not return those
+  // candidates.
   std::unique_ptr<Executable> executable;
 };
 
@@ -394,7 +394,6 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
             const DebugOptions& debug_opts,
             const absl::flat_hash_map<const HloFusionInstruction*,
                                       GemmConfigSet>& gemm_config_sets) {
-  absl::Mutex executable_sets_mu;
   absl::flat_hash_map<const HloFusionInstruction*, ExecutableSet>
       executable_sets;
 
@@ -408,7 +407,21 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
   const int log_every_n = GetLogEveryN();
   int64_t config_count = 0;
   for (const auto& key_value : gemm_config_sets) {
+    const HloFusionInstruction* fusion = key_value.first;
     const GemmConfigSet& gemm_config_set = key_value.second;
+    // Pre-allocate ExecutableCandidates (in a deterministic order for each
+    // fusion) to allow the parallel threads to read and write them
+    // concurrently later in this function. We must not insert new elements into
+    // executable_sets or the candidate vectors during the parallel execution,
+    // because that could invalidate references to the values stored in them.
+    ExecutableSet executable_set;
+    executable_set.candidates.reserve(gemm_config_set.configs.size());
+    for (const TritonGemmConfig& config : gemm_config_set.configs) {
+      ExecutableCandidate candidate;
+      candidate.config = config;
+      executable_set.candidates.push_back(std::move(candidate));
+    }
+    executable_sets.insert({fusion, std::move(executable_set)});
     config_count += gemm_config_set.configs.size();
   }
   // The cuBLAS configs:
@@ -426,9 +439,10 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
     }
   };
 
-  // Returns true on success.
+  // The returned pointer can be nullptr on expected failures.
   auto compile = [&](const HloFusionInstruction* fusion,
-                     const TritonGemmConfig& conf) -> StatusOr<bool> {
+                     const TritonGemmConfig& conf)
+      -> StatusOr<std::unique_ptr<Executable>> {
     CHECK_LE(conf.block_m, kMaxTileSize);
     CHECK_LE(conf.block_n, kMaxTileSize);
     CHECK_LE(conf.block_k, kMaxTileSize);
@@ -436,107 +450,97 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
     // memory overhead (regarding the size of the executables).
     // We can also remove the force_disable_gpu_runtime argument at that
     // point.
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                        util.Compile([&](const DebugOptions& opts) {
-                          return TritonGemmAutotuneExtractor(
-                              conf, gpu_device_info, fusion, opts);
-                        }));
-
-    if (executable != nullptr) {
-      absl::MutexLock lock(&executable_sets_mu);
-      ExecutableSet& executable_set = executable_sets[fusion];
-      executable_set.candidates.push_back(
-          ExecutableCandidate{conf, std::move(executable)});
-      return true;
-    }
-
-    return false;
+    return util.Compile([&](const DebugOptions& opts) {
+      return TritonGemmAutotuneExtractor(conf, gpu_device_info, fusion, opts);
+    });
   };
 
-  // Returns true on success.
-  auto compile_reference_executable =
-      [&](const HloFusionInstruction* fusion) -> StatusOr<bool> {
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
-                        util.Compile([&](const DebugOptions& opts) {
-                          return CublasGemmAutotuneExtractor(config, fusion,
-                                                             opts);
-                        }));
-
-    if (executable != nullptr) {
-      absl::MutexLock lock(&executable_sets_mu);
-      ExecutableSet& executable_set = executable_sets[fusion];
-      TF_RET_CHECK(executable_set.reference == nullptr);
-      executable_set.reference = std::move(executable);
-      return true;
-    }
-
-    return false;
+  // The returned pointer can be nullptr on expected failures.
+  auto compile_reference_executable = [&](const HloFusionInstruction* fusion)
+      -> StatusOr<std::unique_ptr<Executable>> {
+    return util.Compile([&](const DebugOptions& opts) {
+      return CublasGemmAutotuneExtractor(config, fusion, opts);
+    });
   };
 
   // If the thread pool has only one thread, then it is actually slower to
   // offload the tasks there.
   if (thread_pool && thread_pool->NumThreads() > 1 &&
       debug_opts.xla_gpu_force_compilation_parallelism() != 1) {
-    if (gemm_config_sets.size() == 1) {
-      absl::string_view fusion_name = gemm_config_sets.begin()->first->name();
+    if (executable_sets.size() == 1) {
+      absl::string_view fusion_name = executable_sets.begin()->first->name();
       VLOG(1) << "Compiling " << config_count << " configs for " << fusion_name
               << " on " << thread_pool->NumThreads() << " threads.";
     } else {
       VLOG(1) << "Compiling " << config_count << " configs for "
-              << gemm_config_sets.size() << " fusions on "
+              << executable_sets.size() << " fusions on "
               << thread_pool->NumThreads() << " threads.";
     }
 
     tsl::BlockingCounter counter(config_count);
-    for (const auto& key_value : gemm_config_sets) {
+    for (auto& key_value : executable_sets) {
       const HloFusionInstruction* fusion = key_value.first;
-      const GemmConfigSet& gemm_config_set = key_value.second;
-
-      for (const TritonGemmConfig& conf : gemm_config_set.configs) {
-        thread_pool->Schedule([&, fusion] {
-          StatusOr<bool> has_executable = compile(fusion, conf);
-          TF_CHECK_OK(has_executable.status())
+      ExecutableSet& executable_set = key_value.second;
+      for (ExecutableCandidate& candidate : executable_set.candidates) {
+        thread_pool->Schedule([fusion, &candidate, &compile, &log, &counter] {
+          StatusOr<std::unique_ptr<Executable>> executable =
+              compile(fusion, candidate.config);
+          TF_CHECK_OK(executable.status())
               << "Failure occured when compiling fusion " << fusion->name()
-              << " with config '" << conf.ToString()
+              << " with config '" << candidate.config.ToString()
               << "'\nFused HLO computation:\n"
               << fusion->fused_instructions_computation()->ToString();
-          log(has_executable.value());
+          candidate.executable = std::move(executable.value());
+          log(candidate.executable != nullptr);
           counter.DecrementCount();
         });
       }
 
-      thread_pool->Schedule([&, fusion] {
-        StatusOr<bool> has_executable = compile_reference_executable(fusion);
-        TF_CHECK_OK(has_executable.status());
-        log(has_executable.value());
+      thread_pool->Schedule([fusion, &executable_set,
+                             &compile_reference_executable, &log, &counter] {
+        StatusOr<std::unique_ptr<Executable>> executable =
+            compile_reference_executable(fusion);
+        TF_CHECK_OK(executable.status());
+        executable_set.reference = std::move(executable.value());
+        log(executable_set.reference != nullptr);
         counter.DecrementCount();
       });
     }
     counter.Wait();
   } else {
-    if (gemm_config_sets.size() == 1) {
-      absl::string_view fusion_name = gemm_config_sets.begin()->first->name();
+    if (executable_sets.size() == 1) {
+      absl::string_view fusion_name = executable_sets.begin()->first->name();
       LOG(WARNING) << "Compiling " << config_count << " configs for "
                    << fusion_name << " on a single thread.";
 
     } else {
       LOG(WARNING) << "Compiling " << config_count << " configs for "
-                   << gemm_config_sets.size() << " fusions on a single thread.";
+                   << executable_sets.size() << " fusions on a single thread.";
     }
 
-    for (const auto& key_value : gemm_config_sets) {
+    for (auto& key_value : executable_sets) {
       const HloFusionInstruction* fusion = key_value.first;
-      const GemmConfigSet& gemm_config_set = key_value.second;
-
-      for (const TritonGemmConfig& gemm_config : gemm_config_set.configs) {
-        TF_ASSIGN_OR_RETURN(bool has_executable, compile(fusion, gemm_config));
-        log(has_executable);
+      ExecutableSet& executable_set = key_value.second;
+      for (ExecutableCandidate& candidate : executable_set.candidates) {
+        TF_ASSIGN_OR_RETURN(candidate.executable,
+                            compile(fusion, candidate.config));
+        log(candidate.executable != nullptr);
       }
 
-      TF_ASSIGN_OR_RETURN(bool has_executable,
+      TF_ASSIGN_OR_RETURN(executable_set.reference,
                           compile_reference_executable(fusion));
-      log(has_executable);
+      log(executable_set.reference != nullptr);
     }
+  }
+
+  for (auto& key_value : executable_sets) {
+    ExecutableSet& executable_set = key_value.second;
+    std::vector<ExecutableCandidate>& candidates = executable_set.candidates;
+    candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
+                                    [&](const ExecutableCandidate& candidate) {
+                                      return candidate.executable == nullptr;
+                                    }),
+                     candidates.end());
   }
 
   VLOG(1) << "Done compiling (successful: " << good_count.load() << ").";
