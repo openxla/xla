@@ -629,6 +629,7 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:redzone_allocator",
+        "@tsl//tsl/lib/core:bits",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
