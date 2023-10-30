@@ -8,7 +8,10 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = [
+        "//third_party/mlcompass/executors/controllers/benchmark_runners:__subpackages__",
+        "//xla:internal",
+    ],
     licenses = ["notice"],
 )
 
