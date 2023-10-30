@@ -139,7 +139,7 @@ void ToSortAndSlice(HloModule* module) {
 TEST_P(TopkTest, ProducesCorrectResult) {
   const auto [n_kb, k, batch_size, dtype] = GetParam();
   const size_t n = n_kb * 1024;
-  TF_ASSERT_OK_AND_ASSIGN(auto topk_module, TopkHlo(n, k, dtype));
+  TF_ASSERT_OK_AND_ASSIGN(auto topk_module, TopkHlo(n, k, batch_size, dtype));
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
                           gpu::TopkSpecializer().Run(topk_module.get()));
   ASSERT_TRUE(changed);

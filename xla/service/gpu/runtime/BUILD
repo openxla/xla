@@ -1,6 +1,7 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
+load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured", "rocm_library",
@@ -24,13 +25,9 @@ package_group(
     ],
 )
 
-cc_library(
+gpu_kernel_library(
     name = "gpu_kernel_helper",
     hdrs = if_gpu_is_configured(["gpu_kernel_helper.h"]),
-    # we use 'defines' in order to propagate GPU platform flags to dependent
-    # libraries
-    defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
-              if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         "//xla/stream_executor/platform",
     ] + if_cuda_is_configured([
@@ -44,7 +41,8 @@ cc_library(
     name = "cholesky",
     srcs = ["cholesky.cc"],
     hdrs = ["cholesky.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":support",
         "//xla:xla_proto_cc",
@@ -61,26 +59,24 @@ cuda_library(
     name = "sleep_kernel_cuda",
     srcs = if_gpu_is_configured(["sleep_kernel.cu.cc"]),
     hdrs = if_gpu_is_configured(["sleep_kernel.h"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]), 
     compatible_with = [],
-    deps = if_gpu_is_configured([
-        ":gpu_kernel_helper",
-    ]),
 )
 
 rocm_library(
     name = "sleep_kernel_rocm",
     srcs = if_gpu_is_configured(["sleep_kernel.cu.cc"]),
     hdrs = if_gpu_is_configured(["sleep_kernel.h"]),
+    local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     compatible_with = [],
-    deps = if_gpu_is_configured([
-        ":gpu_kernel_helper",
-    ]),
 )
 
 cc_library(
     name = "collectives",
     srcs = ["collectives.cc"],
     hdrs = ["collectives.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":support",
         "//xla/runtime:custom_call",
@@ -211,9 +207,8 @@ cc_library(
     name = "cub_sort",
     srcs = ["cub_sort.cc"],
     hdrs = ["cub_sort.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":support",
         "//xla/runtime:custom_call",
@@ -330,6 +325,8 @@ cc_library(
     srcs = if_gpu_is_configured(["topk_kernel.cc"]),
     hdrs = if_gpu_is_configured(["topk_kernel.h"]),
     compatible_with = [],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -357,6 +354,7 @@ cuda_library(
         ],
     ),
     hdrs = if_gpu_is_configured(["topk_kernel_common.h"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     compatible_with = [],
     deps = [
         ":gpu_kernel_helper",
@@ -374,6 +372,7 @@ rocm_library(
         ],
     ),
     hdrs = if_gpu_is_configured(["topk_kernel_common.h"]),
+    local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     compatible_with = [],
     deps = [
         ":gpu_kernel_helper",
@@ -385,6 +384,8 @@ xla_cc_test(
     name = "topk_kernel_test",
     srcs = if_gpu_is_configured(["topk_kernel_test.cc"]),
     tags = tf_gpu_tests_tags(),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":topk_kernel",
         ":gpu_kernel_helper",
@@ -404,6 +405,8 @@ xla_cc_test(
     name = "topk_test",
     srcs = if_gpu_is_configured(["topk_test.cc"]),
     tags = tf_gpu_tests_tags(),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":topk",
         "//xla:error_spec",
@@ -429,11 +432,10 @@ xla_cc_test(
 
 cc_library(
     name = "topk",
-    srcs = if_gpu_is_configured(
-        ["topk.cc",
-         "topk_no_cuda.cc"],
-    ),
+    srcs = if_gpu_is_configured(["topk.cc"]),
     hdrs = ["topk.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = if_gpu_is_configured([":topk_kernel"]) + [
         ":support",
         "//xla:executable_run_options",

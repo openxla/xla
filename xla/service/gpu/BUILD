@@ -7,8 +7,7 @@ load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("//xla:xla.bzl", "xla_cc_test", "xla_cub_deps", "xla_export_hlo_deps")
 load(
     "//xla/service/gpu:build_defs.bzl",
-    "build_cub_sort_kernels",
-    "get_cub_sort_kernel_types",
+    "build_cub_sort_kernels", "get_cub_sort_kernel_types",
 )
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -1137,9 +1136,8 @@ cc_library(
     name = "cub_sort_thunk",
     srcs = if_gpu_is_configured(["cub_sort_thunk.cc"]),
     hdrs = if_gpu_is_configured(["cub_sort_thunk.h"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = if_gpu_is_configured([
         ":buffer_allocations",
         ":thunk",
@@ -1159,9 +1157,8 @@ build_cub_sort_kernels(
     name = "cub_sort_kernel",
     srcs = if_gpu_is_configured(["cub_sort_kernel.cu.cc"]),
     hdrs = if_gpu_is_configured(["cub_sort_kernel.h"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     types = get_cub_sort_kernel_types(),
     deps = if_cuda_is_configured([
         ":gpu_prim_cuda",
