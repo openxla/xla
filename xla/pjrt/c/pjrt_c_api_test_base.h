@@ -15,12 +15,14 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "xla/client/xla_computation.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -35,11 +37,19 @@ namespace pjrt {
 class PjrtCApiTestBase : public ::testing::Test {
  public:
   explicit PjrtCApiTestBase(const PJRT_Api* api);
+
   ~PjrtCApiTestBase() override;
 
  protected:
   const PJRT_Api* api_;
+
   PJRT_Client* client_;
+
+  std::unique_ptr<PJRT_LoadedExecutable, ::pjrt::PJRT_LoadedExecutableDeleter>
+      executable_;
+
+  static constexpr std::string_view kExecutableName = "operation";
+
   void destroy_client(PJRT_Client* client);
 
   int GetDeviceId(PJRT_DeviceDescription* device_desc) const;
@@ -69,6 +79,15 @@ class PjrtCApiTestBase : public ::testing::Test {
 
   std::unique_ptr<PJRT_Error, ::pjrt::PJRT_ErrorDeleter> ToUniquePtr(
       PJRT_Error* error);
+
+  xla::XlaComputation CreateAddOneComputation();
+
+  std::unique_ptr<PJRT_LoadedExecutable, ::pjrt::PJRT_LoadedExecutableDeleter>
+  Create_Executable(const PJRT_Api* c_api, PJRT_Client* client,
+                    const xla::XlaComputation& computation);
+
+  std::unique_ptr<PJRT_Executable, ::pjrt::PJRT_ExecutableDeleter>
+  GetExecutable(PJRT_LoadedExecutable* loaded_executable, const PJRT_Api* api);
 
  private:
   PjrtCApiTestBase(const PjrtCApiTestBase&) = delete;
