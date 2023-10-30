@@ -46,14 +46,6 @@ namespace {
 
 // Estimated values in the absence of easy ways to query them.
 static constexpr absl::Duration kKernelLaunchOverhead = absl::Microseconds(5);
-static constexpr float kL2CacheSpeedup = 2.5;
-static constexpr float kL1CacheSpeedup = 8;
-// A very conservative estimate. L1 size varies because it can be dynamically
-// configured as shared memory; there is no easy way to query its actual size;
-// also we do not count what occupies cache, but rather claim that what is
-// much smaller than the cache size will likely stay in it.
-// For reference, it can be up to 256 kB per SM on RTX A6000.
-static constexpr float kL1CacheSizePerSM = 2 * 1024;
 
 // Returns whether a fusion uses the parameter at the given index elementwise
 // from its root.
@@ -65,84 +57,83 @@ bool FusionUsesParameterElementwiseFromRoot(
              fusion->fused_expression_root()) == 1.f;
 }
 
-int GetCoalescingWasteFactor(PrimitiveType element_type) {
+// Estimate read time of n_bytes_total bytes from global memory on a
+// given GPU. Account for L1 / L2 cache speedup if the input's nominal size
+// n_bytes_net is small.
+absl::Duration ReadTime(const se::DeviceDescription& gpu_device_info,
+                        int64_t num_blocks, int64_t net_size_bytes,
+                        int64_t total_size_bytes, PrimitiveType element_type,
+                        bool coalesced, bool first_read_from_dram) {
   int64_t element_size_bytes =
       element_type == PrimitiveType::TUPLE ||
               element_type == PrimitiveType::TOKEN
           ? 4 /* Dummy value. TODO(jreiffers): Model this case. */
           : ShapeUtil::ByteSizeOfPrimitiveType(element_type);
-  // Cache line is 128B that is split into 4 sectors of 32B. Default transaction
-  // size from DRAM -> L2 = 64 Bytes = 2 sectors, since V100, but it can be also
-  // configured.
-  // https://developer.download.nvidia.com/video/gputechconf/gtc/2020/presentations/s21819-optimizing-applications-for-nvidia-ampere-gpu-architecture.pdf
-  // (page 10).
-  constexpr int kDRAMToL2TransactionSizeBytes = 64;
-  // Assume we use one element from the cache line and waste the remaining
-  // bandwidth. For example, if we're reading f32s, we use 1/16nd of the cache
-  // line.
-  return kDRAMToL2TransactionSizeBytes / element_size_bytes;
-}
 
-// Estimate read time of n_bytes_total bytes from global memory on a
-// given GPU. Account for L1 / L2 cache speedup if the input's nominal size
-// n_bytes_net is small.
-absl::Duration ReadTime(const se::DeviceDescription& gpu_device_info,
-                        int64_t num_blocks, int64_t n_bytes_net,
-                        int64_t n_bytes_total, PrimitiveType element_type,
-                        bool coalesced, bool first_read_from_dram) {
-  int waste_factor = coalesced ? 1 : GetCoalescingWasteFactor(element_type);
+  // Returns the cache or bandwidth utilization for the given request size. That
+  // is, the size of the payload data relative to the request size.
+  auto get_utilization = [&](int64_t req_size_bytes) {
+    if (coalesced || element_size_bytes > req_size_bytes) return 1.0f;
+    return static_cast<float>(element_size_bytes) / req_size_bytes;
+  };
 
-  // Limit the bandwidth for low occupancy cases. Each SM can issue at most
-  // one 32B memory transaction per clock. H100 needs at least 56.8 active SMs
-  // (1830 MHz) to saturate the memory bandwidth (3.35 TB/s).
-  float per_block_bandwidth = gpu_device_info.clock_rate_ghz() * 1.0e9f * 32;
-  float max_bandwidth = num_blocks * per_block_bandwidth;
+  // Cache line is 128B, split into 4 sectors of 32B. By default, transactions
+  // are promoted to 2 sectors (since V100, but configurable through
+  // cudaLimitMaxL2FetchGranularity).
+  constexpr int kDramReqSizeBytes = 64;
+  // For uncoalesced accesses, assume we use one element from the request and
+  // waste the remaining bandwidth. For example, if we're reading f32s, we use
+  // 1/16nd of the cache line.
+  float dram_bandwidth =
+      gpu_device_info.memory_bandwidth() * get_utilization(kDramReqSizeBytes);
 
-  if (first_read_from_dram) {
-    // The first read of the input buffer always happens from DRAM. If reads are
-    // no coaleced, bandwidth is reduced by the waste factor.
-    float dram_bandwidth = gpu_device_info.memory_bandwidth() / waste_factor;
+  float cache_bandwidth = [&] {
+    // A very conservative estimate. L1 size varies because it can be
+    // dynamically configured as shared memory; there is no easy way to
+    // query its actual size; also we do not count what occupies cache, but
+    // rather claim that what is much smaller than the cache size will
+    // likely stay in it. For reference, it can be up to 256 kB per SM on
+    // RTX A6000.
+    static constexpr float kL1CacheSizePerCore = 2 * 1024;
 
-    // Two things can happed on re-reading the buffer:
-    //   - If the buffer fits into cache, the L1/L2 cache speedup is applied.
-    //   - If the buffer doesn't fit, it will be read from DRAM and the same
-    //     coalessing waste factor is applied.
-    float rest_bandwidth = gpu_device_info.memory_bandwidth();
-    if (n_bytes_net < gpu_device_info.l2_cache_size()) {
-      rest_bandwidth *= kL2CacheSpeedup;
-      if (n_bytes_net < kL1CacheSizePerSM * gpu_device_info.core_count()) {
-        rest_bandwidth *= kL1CacheSpeedup;
-      }
-    } else {
-      rest_bandwidth /= waste_factor;
+    constexpr int kCacheLineSizeBytes = 128;
+    float cache_utilization = get_utilization(kCacheLineSizeBytes);
+
+    int64_t num_cores =
+        std::min<int64_t>(gpu_device_info.core_count(), num_blocks);
+    float clock_rate_hz = gpu_device_info.clock_rate_ghz() * 1.0e9f;
+
+    // Use total_size_bytes to compare against L1 cache size because if data
+    // is read multiple times (i.e. total_size_bytes > net_size_bytes), it is
+    // likely to be happening from different SMs.
+    if (total_size_bytes < kL1CacheSizePerCore * num_cores * cache_utilization)
+      // L1 serves 128B per clock, across 32 banks. Number of banks for
+      // uncoalesced reads can be anything from 32 to 1. We would need to know
+      // the stride to model this correctly. For now, assume a single bank.
+      return num_cores * clock_rate_hz * 128 * get_utilization(128);
+
+    if (net_size_bytes < gpu_device_info.l2_cache_size() * cache_utilization) {
+      // Each SM can issue at most one 32B memory transaction per clock. H100
+      // needs at least 56.8 active SMs (at 1830 MHz) to saturate the memory
+      // bandwidth (3.35 TB/s). This assumes that there are enough L2 partitions
+      // to serve the requests at full speed.
+      float l2_bandwidth = num_cores * clock_rate_hz * 32;
+      // Only the priority-based fusion code path models L2 utilization.
+      if (first_read_from_dram) return l2_bandwidth * get_utilization(32);
+      return l2_bandwidth;
     }
 
-    dram_bandwidth = std::min(dram_bandwidth, max_bandwidth);
-    rest_bandwidth = std::min(rest_bandwidth, max_bandwidth);
+    return dram_bandwidth;
+  }();
 
-    // n_bytes_net > n_bytes_total can happend when we compute read time of
-    // shared operand. This is a flaw in the interface that should be fixed.
-    int64_t n_bytes_read_dram = std::min(n_bytes_net, n_bytes_total);
+  // n_bytes_net > n_bytes_total can happen when we compute read time of shared
+  // operand. This is a flaw in the interface that should be fixed.
+  int64_t dram_read_size_bytes =
+      first_read_from_dram ? std::min(net_size_bytes, total_size_bytes) : 0;
+  int64_t cache_read_size_bytes = total_size_bytes - dram_read_size_bytes;
 
-    // Number of bytes that we be re-read, potentially from cache.
-    int64_t n_bytes_read_cache = n_bytes_total - n_bytes_read_dram;
-
-    return absl::Seconds(n_bytes_read_dram / dram_bandwidth) +
-           absl::Seconds(n_bytes_read_cache / rest_bandwidth);
-  } else {
-    float bandwidth = gpu_device_info.memory_bandwidth();
-    if (n_bytes_net < gpu_device_info.l2_cache_size()) {
-      bandwidth *= kL2CacheSpeedup;
-      if (n_bytes_net < kL1CacheSizePerSM * gpu_device_info.core_count()) {
-        bandwidth *= kL1CacheSpeedup;
-      }
-    } else if (!coalesced) {
-      bandwidth /= waste_factor;
-    }
-
-    bandwidth = std::min(bandwidth, max_bandwidth);
-    return absl::Seconds(n_bytes_total / bandwidth);
-  }
+  return absl::Seconds(dram_read_size_bytes / dram_bandwidth) +
+         absl::Seconds(cache_read_size_bytes / cache_bandwidth);
 }
 
 int64_t GetNcclMaxNumChannels(
@@ -364,17 +355,29 @@ GpuPerformanceModel::EstimateRunTimeForInstruction(
       }
     }
 
-    // TODO(jreiffers): We should be checking each operand here.
-    bool coalesced = (fusion_analysis &&
-                      fusion_analysis->GetEmitterFusionKind() ==
-                          HloFusionAnalysis::EmitterFusionKind::kTranspose) ||
-                     (!producer_transposes && !consumer_transposes);
-    // Fusing two row reductions breaks coalescing.
-    coalesced &= ((fusion_analysis &&
-                   fusion_analysis->GetEmitterFusionKind() !=
-                       HloFusionAnalysis::EmitterFusionKind::kReduction) ||
-                  !fused_consumer || !IsInputFusibleReduction(*producer) ||
-                  !IsInputFusibleReduction(*fused_consumer));
+    bool coalesced = [&] {
+      auto analyzed_kind_or_reduction =
+          fusion_analysis ? fusion_analysis->GetEmitterFusionKind()
+                          : HloFusionAnalysis::EmitterFusionKind::kReduction;
+      // TODO(jreiffers): We should be checking each operand here.
+      if (analyzed_kind_or_reduction !=
+              HloFusionAnalysis::EmitterFusionKind::kTranspose &&
+          (producer_transposes || consumer_transposes))
+        return false;
+      // Fusing two row reductions breaks coalescing.
+      if (analyzed_kind_or_reduction ==
+              HloFusionAnalysis::EmitterFusionKind::kReduction &&
+          IsInputFusibleReduction(*producer) && fused_consumer &&
+          IsInputFusibleReduction(*fused_consumer))
+        return false;
+      // Fusing a reduction into a transpose breaks coalescing.
+      if (analyzed_kind_or_reduction ==
+              HloFusionAnalysis::EmitterFusionKind::kTranspose &&
+          IsInputFusibleReduction(*producer))
+        return false;
+      return true;
+    }();
+
     const auto& operand_shape = producer->operand(i)->shape();
 
     CHECK_LE(common_utilization, producer_output_utilization);

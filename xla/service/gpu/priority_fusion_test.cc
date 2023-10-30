@@ -51,7 +51,8 @@ class PriorityFusionTest : public HloTestBase {
   std::vector<HloFusionAnalysis::EmitterFusionKind> RunAndGetFusionKinds(
       absl::string_view hlo) {
     auto module = ParseAndReturnVerifiedModule(hlo).value();
-    EXPECT_TRUE(priority_fusion_.Run(module.get()).value());
+    EXPECT_THAT(priority_fusion_.Run(module.get()),
+                ::testing::status::IsOkAndHolds(true));
     TF_CHECK_OK(module->RemoveUnusedComputations());
     std::vector<HloFusionAnalysis::EmitterFusionKind> kinds;
     for (auto computation : module->computations()) {
@@ -239,8 +240,8 @@ TEST_F(PriorityFusionTest, ReductionEpilogueFusionRegressionTest) {
 
   EXPECT_THAT(
       RunAndGetFusionKinds(kHlo),
-      ::testing::ElementsAre(HloFusionAnalysis::EmitterFusionKind::kLoop,
-                             HloFusionAnalysis::EmitterFusionKind::kReduction));
+      ::testing::ElementsAre(HloFusionAnalysis::EmitterFusionKind::kReduction,
+                             HloFusionAnalysis::EmitterFusionKind::kLoop));
 
   RunAndFilecheckHloRewrite(kHlo, std::move(priority_fusion_), R"(
 CHECK: ENTRY
@@ -248,78 +249,113 @@ CHECK: ROOT {{.*}} fusion(
   )");
 }
 
-TEST_F(PriorityFusionTest, DoNotFuseTransposeIntoReduce) {
+TEST_F(PriorityFusionTest, DoNotFuseReduceIntoTransposeSimple) {
   absl::string_view kHlo = R"(
-    HloModule test_module
+    HloModule jit_apply_fn, is_scheduled=true,
+    entry_computation_layout={(f32[256,50]{1,0})->f32[50,256]{1,0}}
 
-    add {
-      Arg_1.1046 = f32[] parameter(1)
-      Arg_0.1045 = f32[] parameter(0)
-      ROOT add.3303 = f32[] add(Arg_0.1045, Arg_1.1046)
+    region_sum {
+      param0 = f32[] parameter(0)
+      param1 = f32[] parameter(1)
+      ROOT add = f32[] add(param0, param1)
+    }
+
+    reduce {
+      param0 = f32[256,50]{1,0} parameter(0)
+      zero = f32[] constant(0)
+      ROOT reduce = f32[256]{0} reduce(param0, zero), dimensions={1},
+    to_apply=region_sum
+    }
+
+    fused_transpose {
+      param0 = f32[256,50]{1,0} parameter(0)
+      transpose = f32[50,256]{1,0} transpose(param0), dimensions={1,0}
+      param1 = f32[256]{0} parameter(1)
+      broadcast = f32[50,256]{1,0} broadcast(param1), dimensions={1}
+      ROOT add = f32[50,256]{1,0} add(transpose, broadcast)
     }
 
     ENTRY main {
-      param_0.17323 = pred[2048,2048]{1,0} parameter(0)
-      broadcast.22829 = pred[1,12,2048,2048]{3,2,1,0} broadcast(param_0.17323), dimensions={2,3}
-      param_1.19761 = bf16[2048,24576]{1,0} parameter(1)
-      convert.29880.clone.1 = f32[2048,24576]{1,0} convert(param_1.19761)
-      constant_10033_clone_1 = bf16[] constant(0.02002)
-      convert.30056.clone.1 = f32[] convert(constant_10033_clone_1)
-      broadcast.18898.clone.1 = f32[2048,24576]{1,0} broadcast(convert.30056.clone.1), dimensions={}
-      multiply.13451.clone.1 = f32[2048,24576]{1,0} multiply(convert.29880.clone.1, broadcast.18898.clone.1)
-      tanh.798.clone.1 = f32[2048,24576]{1,0} tanh(multiply.13451.clone.1)
-      constant_10244_clone_1 = bf16[] constant(50)
-      convert.30039.clone.1 = f32[] convert(constant_10244_clone_1)
-      broadcast.18310.clone.1 = f32[2048,24576]{1,0} broadcast(convert.30039.clone.1), dimensions={}
-      multiply.12550.clone.1 = f32[2048,24576]{1,0} multiply(tanh.798.clone.1, broadcast.18310.clone.1)
-      convert.29370.clone.1 = bf16[2048,24576]{1,0} convert(multiply.12550.clone.1)
-      bitcast.22330 = bf16[1,2048,2048,12]{3,2,1,0} bitcast(convert.29370.clone.1)
-      transpose.6582 = bf16[1,12,2048,2048]{3,2,1,0} transpose(bitcast.22330), dimensions={0,3,2,1}
-      convert.33705 = f32[1,12,2048,2048]{3,2,1,0} convert(transpose.6582)
-      constant_10212 = f32[] constant(-2.38197633e+38)
-      broadcast.22828 = f32[1,12,2048,2048]{3,2,1,0} broadcast(constant_10212), dimensions={}
-      select.589 = f32[1,12,2048,2048]{3,2,1,0} select(broadcast.22829, convert.33705, broadcast.22828)
-      bitcast.22075 = f32[12,2048,2048]{2,1,0} bitcast(select.589)
-      constant_10192 = f32[] constant(-inf)
-      reduce.1614 = f32[12,2048]{1,0} reduce(bitcast.22075, constant_10192), dimensions={2}, to_apply=add
-
-      predarg = pred[1,1,2048,2048]{3,2,1,0} parameter(2)
-      bitcast.11069 = pred[2048,2048]{1,0} bitcast(predarg)
-
-      broadcast.22825 = pred[1,12,2048,2048]{3,2,1,0} broadcast(bitcast.11069), dimensions={2,3}
-      bitcast.22331 = bf16[1,2048,2048,12]{3,2,1,0} bitcast(convert.29370.clone.1)
-      transpose.6580 = bf16[1,12,2048,2048]{3,2,1,0} transpose(bitcast.22331), dimensions={0,3,2,1}
-      convert.33703 = f32[1,12,2048,2048]{3,2,1,0} convert(transpose.6580)
-      constant_10213 = f32[] constant(-2.38197633e+38)
-      broadcast.22824 = f32[1,12,2048,2048]{3,2,1,0} broadcast(constant_10213), dimensions={}
-      select.587 = f32[1,12,2048,2048]{3,2,1,0} select(broadcast.22825, convert.33703, broadcast.22824)
-      broadcast.22819 = f32[1,12,2048,2048]{3,2,1,0} broadcast(reduce.1614), dimensions={1,2}
-      subtract.1129 = f32[1,12,2048,2048]{3,2,1,0} subtract(select.587, broadcast.22819)
-      exponential.418 = f32[1,12,2048,2048]{3,2,1,0} exponential(subtract.1129)
-      bitcast.22074 = f32[12,2048,2048]{2,1,0} bitcast(exponential.418)
-      constant_10490 = f32[] constant(0)
-      reduce.1613 = f32[12,2048]{1,0} reduce(bitcast.22074, constant_10490), dimensions={2}, to_apply=add
-
-      constant_468 = f32[] constant(-2.38197633e+38)
-      broadcast.22833 = pred[1,12,2048,2048]{3,2,1,0} broadcast(bitcast.11069), dimensions={2,3}
-      bitcast.22332 = bf16[1,2048,2048,12]{3,2,1,0} bitcast(convert.29370.clone.1)
-      transpose.6584 = bf16[1,12,2048,2048]{3,2,1,0} transpose(bitcast.22332), dimensions={0,3,2,1}
-      convert.33707 = f32[1,12,2048,2048]{3,2,1,0} convert(transpose.6584)
-      broadcast.22832 = f32[1,12,2048,2048]{3,2,1,0} broadcast(constant_468), dimensions={}
-      select.591 = f32[1,12,2048,2048]{3,2,1,0} select(broadcast.22833, convert.33707, broadcast.22832)
-      broadcast.22821 = f32[1,12,2048,2048]{3,2,1,0} broadcast(reduce.1614), dimensions={1,2}
-      subtract.1131 = f32[1,12,2048,2048]{3,2,1,0} subtract(select.591, broadcast.22821)
-      exponential.420 = f32[1,12,2048,2048]{3,2,1,0} exponential(subtract.1131)
-      broadcast.18351 = f32[1,12,2048,2048]{3,2,1,0} broadcast(reduce.1613), dimensions={1,2}
-      divide.340 = f32[1,12,2048,2048]{3,2,1,0} divide(exponential.420, broadcast.18351)
-      ROOT convert.29418 = bf16[1,12,2048,2048]{3,2,1,0} convert(divide.340)
+      param0 = f32[256,50]{1,0} parameter(0), sharding={replicated}
+      reduce = f32[256]{0} fusion(param0), kind=kInput, calls=reduce
+      ROOT fusion = f32[50,256]{1,0} fusion(param0, reduce), kind=kInput,
+    calls=fused_transpose
     })";
 
-  using Kind = HloFusionAnalysis::EmitterFusionKind;
-  EXPECT_THAT(RunAndGetFusionKinds(kHlo),
-              ::testing::UnorderedElementsAre(
-                  Kind::kReduction, Kind::kReduction, Kind::kTranspose,
-                  Kind::kTranspose, Kind::kTranspose));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_THAT(priority_fusion_.Run(module.get()),
+              ::testing::status::IsOkAndHolds(false));
+}
+
+TEST_F(PriorityFusionTest, DoNotFuseReduceIntoTransposeResnet200) {
+  absl::string_view kHlo = R"(
+    HloModule jit_apply_fn, is_scheduled=true, entry_computation_layout={
+      (f16[256,1,50,1]{3,2,1,0}, f16[256]{0}, f16[1,1,1,256]{3,2,1,0})->f16[1,1,50,256]{3,2,1,0}
+    }
+
+    region_sum {
+      Arg_1.657 = f32[] parameter(1)
+      Arg_0.656 = f32[] parameter(0)
+      ROOT add.205 = f32[] add(Arg_0.656, Arg_1.657)
+    }
+
+    %fused_transpose (param_0.10044: f16[256,1,50,1], param_1.11032: f16[256], param_2.4666: f16[1,1,1,256], param_3.3799: f16[1,1,1,256], param_4.2502: f16[256]) -> f16[1,1,50,256] {
+      %param_0.10044 = f16[256,1,50,1]{3,2,1,0} parameter(0)
+      %transpose.410 = f16[1,1,50,256]{3,2,1,0} transpose(f16[256,1,50,1]{3,2,1,0} %param_0.10044), dimensions={3,1,2,0}
+      %param_1.11032 = f16[256]{0} parameter(1)
+      %constant.2525 = f16[] constant(0.020004)
+      %broadcast.5429 = f16[256]{0} broadcast(f16[] %constant.2525), dimensions={}
+      %multiply.6117 = f16[256]{0} multiply(f16[256]{0} %param_1.11032, f16[256]{0} %broadcast.5429)
+      %broadcast.2476 = f16[1,1,50,256]{3,2,1,0} broadcast(f16[256]{0} %multiply.6117), dimensions={3}
+      %subtract.827 = f16[1,1,50,256]{3,2,1,0} subtract(f16[1,1,50,256]{3,2,1,0} %transpose.410, f16[1,1,50,256]{3,2,1,0} %broadcast.2476)
+      %param_3.3799 = f16[1,1,1,256]{3,2,1,0} parameter(3)
+      %param_4.2502 = f16[256]{0} parameter(4)
+      %constant.4175 = f16[] constant(0.020004)
+      %broadcast.6031 = f16[256]{0} broadcast(f16[] %constant.4175), dimensions={}
+      %multiply.6798 = f16[256]{0} multiply(f16[256]{0} %param_4.2502, f16[256]{0} %broadcast.6031)
+      %broadcast.6030 = f16[256]{0} broadcast(f16[] %constant.4175), dimensions={}
+      %multiply.6797 = f16[256]{0} multiply(f16[256]{0} %param_1.11032, f16[256]{0} %broadcast.6030)
+      %multiply.6796 = f16[256]{0} multiply(f16[256]{0} %multiply.6797, f16[256]{0} %multiply.6797)
+      %subtract.2011 = f16[256]{0} subtract(f16[256]{0} %multiply.6798, f16[256]{0} %multiply.6796)
+      %constant.4174 = f16[] constant(1.0014e-05)
+      %broadcast.6029 = f16[256]{0} broadcast(f16[] %constant.4174), dimensions={}
+      %add.2304 = f16[256]{0} add(f16[256]{0} %subtract.2011, f16[256]{0} %broadcast.6029)
+      %rsqrt.1349 = f16[256]{0} rsqrt(f16[256]{0} %add.2304)
+      %bitcast.3364 = f16[1,1,1,256]{3,2,1,0} bitcast(f16[256]{0} %rsqrt.1349)
+      %multiply.6795 = f16[1,1,1,256]{3,2,1,0} multiply(f16[1,1,1,256]{3,2,1,0} %param_3.3799, f16[1,1,1,256]{3,2,1,0} %bitcast.3364)
+      %bitcast.3363 = f16[256]{0} bitcast(f16[1,1,1,256]{3,2,1,0} %multiply.6795)
+      %broadcast.2475 = f16[1,1,50,256]{3,2,1,0} broadcast(f16[256]{0} %bitcast.3363), dimensions={3}
+      %multiply.3108 = f16[1,1,50,256]{3,2,1,0} multiply(f16[1,1,50,256]{3,2,1,0} %subtract.827, f16[1,1,50,256]{3,2,1,0} %broadcast.2475)
+      %param_2.4666 = f16[1,1,1,256]{3,2,1,0} parameter(2)
+      %bitcast.3042 = f16[256]{0} bitcast(f16[1,1,1,256]{3,2,1,0} %param_2.4666)
+      %broadcast.2474 = f16[1,1,50,256]{3,2,1,0} broadcast(f16[256]{0} %bitcast.3042), dimensions={3}
+      %add.1064 = f16[1,1,50,256]{3,2,1,0} add(f16[1,1,50,256]{3,2,1,0} %multiply.3108, f16[1,1,50,256]{3,2,1,0} %broadcast.2474)
+      %constant.3263 = f16[] constant(0)
+      %broadcast.141 = f16[1,1,50,256]{3,2,1,0} broadcast(f16[] %constant.3263), dimensions={}
+      ROOT %maximum.67 = f16[1,1,50,256]{3,2,1,0} maximum(f16[1,1,50,256]{3,2,1,0} %add.1064, f16[1,1,50,256]{3,2,1,0} %broadcast.141)
+    }
+
+    %fused_reduce (param_0.9689: f16[256,1,50,1]) -> f16[256] {
+      %param_0.9689 = f16[256,1,50,1]{3,2,1,0} parameter(0)
+      %multiply.3994 = f16[256,1,50,1]{3,2,1,0} multiply(f16[256,1,50,1]{3,2,1,0} %param_0.9689, f16[256,1,50,1]{3,2,1,0} %param_0.9689)
+      %convert.3057 = f32[256,1,50,1]{3,2,1,0} convert(f16[256,1,50,1]{3,2,1,0} %multiply.3994)
+      %bitcast.1598 = f32[256,50]{1,0} bitcast(f32[256,1,50,1]{3,2,1,0} %convert.3057)
+      %constant.3669 = f32[] constant(0)
+      %reduce.593 = f32[256]{0} reduce(f32[256,50]{1,0} %bitcast.1598, f32[] %constant.3669), dimensions={1}, to_apply=region_sum
+      ROOT %convert.3055 = f16[256]{0} convert(f32[256]{0} %reduce.593)
+    }
+
+    ENTRY main {
+      parameter0 = f16[256,1,50,1]{3,2,1,0} parameter(0), sharding={replicated}
+      parameter1 = f16[256]{0} parameter(1), sharding={replicated}
+      parameter2 = f16[1,1,1,256]{3,2,1,0} parameter(2), sharding={replicated}
+      fused_reduce = f16[256]{0} fusion(parameter0), kind=kInput, calls=fused_reduce
+      ROOT fused_transpose = f16[1,1,50,256]{3,2,1,0} fusion(parameter0, parameter1, parameter2, parameter2, fused_reduce), kind=kInput, calls=fused_transpose
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_THAT(priority_fusion_.Run(module.get()),
+              ::testing::status::IsOkAndHolds(false));
 }
 
 TEST_F(PriorityFusionTest, DoNotFuseReduceIntoReduce) {
