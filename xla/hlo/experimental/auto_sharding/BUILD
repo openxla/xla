@@ -186,7 +186,7 @@ cc_library(
     srcs = ["cluster_environment.cc"],
     hdrs = ["cluster_environment.h"],
     deps = [
-        ":auto_sharding_solver_option",
+        ":auto_sharding_option",
         ":auto_sharding_strategy",
         ":auto_sharding_util",
         ":profiling_result",
