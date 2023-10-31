@@ -27,20 +27,27 @@ namespace gpu {
 namespace {
 
 bool DimensionRequiresPadding(const int64_t size, const PrimitiveType data_type,
-                              const se::CudaComputeCapability cc) {
-  for (const CublasPaddingRequirement& requirement :
-       CublasPaddingRequirements) {
-    if (cc.IsAtLeast(requirement.min_compute_capability) &&
-        data_type == requirement.data_type &&
-        size % requirement.multiple_of != 0) {
-      return true;
+                              const se::GpuComputeCapability cc) {
+
+  if (auto pcc = std::get_if<se::CudaComputeCapability>(&cc); pcc) {                                
+    for (const auto& req : CublasPaddingRequirements) {
+      if (pcc->IsAtLeast(req.min_compute_capability) &&
+          data_type == req.data_type && size % req.multiple_of != 0) {
+        return true;
+      }
     }
+  } else if (auto pcc = std::get_if<se::RocmComputeCapability>(&cc); pcc) {         
+    for (const auto& req : HipblasPaddingRequirements) {
+      if (data_type == req.data_type && size % req.multiple_of != 0) {
+        return true;
+      }
+    } // for
   }
   return false;
 }
 
 bool ShapeRequiresPadding(const Shape& shape,
-                          const se::CudaComputeCapability cc) {
+                          const se::GpuComputeCapability cc) {
   // Since dots are canonicalized before padding only the last two dimensions
   // of each operand represent non-batch dimensions and may need padding.
   return DimensionRequiresPadding(shape.dimensions(shape.rank() - 1),
@@ -52,7 +59,7 @@ bool ShapeRequiresPadding(const Shape& shape,
 }  // namespace
 
 bool CublasRequiresPadding(const HloDotInstruction& dot,
-                           const se::CudaComputeCapability cc) {
+                           const se::GpuComputeCapability cc) {
   return ShapeRequiresPadding(dot.operand(0)->shape(), cc) ||
          ShapeRequiresPadding(dot.operand(1)->shape(), cc);
 }

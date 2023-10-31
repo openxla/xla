@@ -26,11 +26,9 @@ namespace {
 
 class GemmBroadcastFoldingRewriteTest : public GpuCodegenTest {
  protected:
-  se::CudaComputeCapability GetCudaComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .cuda_compute_capability();
+  const auto& GpuComputeComp() {
+    return backend().default_stream_executor()
+        ->GetDeviceDescription().gpu_compute_capability();
   }
 
   DebugOptions GetDebugOptionsForTest() override {
@@ -137,7 +135,7 @@ ENTRY AddDotsFunc {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   // Use GemmRewriter to generate cublasGemm call.
-  GemmRewriter gemm_rewriter(GetCudaComputeCapability());
+  GemmRewriter gemm_rewriter(GpuComputeComp());
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
                           this->RunHloPass(&gemm_rewriter, module.get()));
   EXPECT_TRUE(changed);
@@ -163,7 +161,7 @@ ENTRY AddDotsFunc {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   // Use GemmRewriter to generate cublasGemm call.
-  GemmRewriter gemm_rewriter(GetCudaComputeCapability());
+  GemmRewriter gemm_rewriter(GpuComputeComp());
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
                           this->RunHloPass(&gemm_rewriter, module.get()));
   EXPECT_TRUE(changed);
@@ -187,7 +185,7 @@ ENTRY %LHSBatchDimNonZero (Arg_1: f32[4,3], Arg_2: f32[4,7,3]) -> f32[4,7,7] {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
   // Use GemmRewriter to generate cublasGemm call.
-  GemmRewriter gemm_rewriter(GetCudaComputeCapability());
+  GemmRewriter gemm_rewriter(GpuComputeComp());
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
                           this->RunHloPass(&gemm_rewriter, module.get()));
   EXPECT_TRUE(changed);
@@ -210,7 +208,7 @@ ENTRY %RHSBatchDimNonZero (Arg_1: f32[4,3], Arg_2: f32[4,7,3]) -> f32[4,7,7] {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter gemm_rewriter(GetCudaComputeCapability());
+  GemmRewriter gemm_rewriter(GpuComputeComp());
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
                           this->RunHloPass(&gemm_rewriter, module.get()));
   EXPECT_TRUE(changed);

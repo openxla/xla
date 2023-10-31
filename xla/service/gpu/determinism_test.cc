@@ -90,15 +90,13 @@ ENTRY e {
 })";
 
 #if TENSORFLOW_USE_ROCM
-  auto rocm = backend()
-                  .default_stream_executor()
-                  ->GetDeviceDescription()
-                  .rocm_compute_capability();
-  if (!rocm.has_hipblaslt()) {
+  auto rocm =  backend().default_stream_executor()->GetDeviceDescription().
+              rocm_compute_capability();
+  if(!rocm.has_hipblaslt()) {
     GTEST_SKIP() << "No hipblas-lt support on this architecture!";
   }
-#endif  // TENSORFLOW_USE_ROCM
-
+#endif // TENSORFLOW_USE_ROCM
+    
   debug_options_.set_xla_gpu_triton_fusion_level(0);
   MatchOptimizedHlo(kHloText, R"(; CHECK: custom_call_target="__cublas$gemm")");
   AssertDeterminism(kHloText);
@@ -110,11 +108,9 @@ ENTRY e {
 }
 
 TEST_F(DeterminismTest, TritonDot) {
-#if GOOGLE_CUDA
-  auto comp = backend()
-                  .default_stream_executor()
-                  ->GetDeviceDescription()
-                  .cuda_compute_capability();
+#if GOOGLE_CUDA  
+  auto comp = backend().default_stream_executor()->GetDeviceDescription().
+                              cuda_compute_capability();
   if (!comp.IsAtLeast(se::CudaComputeCapability::VOLTA)) {
     GTEST_SKIP() << "Triton not used on pre-Volta GPUs";
   }

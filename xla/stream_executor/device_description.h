@@ -194,7 +194,9 @@ class RocmComputeCapability {
     return gfx_version() != "gfx900" && gfx_version() != "gfx906";
   }
 
-  bool has_hipblaslt() const { return gfx9_mi200_or_later(); }
+  bool has_hipblaslt() const {
+    return gfx9_mi200_or_later();
+  }
 
   RocmComputeCapabilityProto ToProto() const {
     RocmComputeCapabilityProto proto;
