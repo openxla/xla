@@ -63,6 +63,9 @@ cuda_library(
     hdrs = if_gpu_is_configured(["sleep_kernel.h"]),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     compatible_with = [],
+    deps = if_gpu_is_configured([
+        ":gpu_kernel_helper",
+    ]),
 )
 
 rocm_library(
@@ -71,6 +74,9 @@ rocm_library(
     hdrs = if_gpu_is_configured(["sleep_kernel.h"]),
     local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     compatible_with = [],
+    deps = if_gpu_is_configured([
+        ":gpu_kernel_helper",
+    ]),
 )
 
 cc_library(

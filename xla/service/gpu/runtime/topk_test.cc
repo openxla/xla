@@ -64,8 +64,8 @@ using ParameterizedInterface =
 class TopkTest : public HloTestBase, public ParameterizedInterface {
  public:
   TopkTest()
-      : HloTestBase(*PlatformUtil::GetPlatform("CUDA"),
-                    *PlatformUtil::GetPlatform("CUDA"), true, true, {}) {}
+      : HloTestBase(*PlatformUtil::GetPlatform("gpu"),
+                    *PlatformUtil::GetPlatform("gpu"), true, true, {}) {}
 
  protected:
   StatusOr<std::unique_ptr<HloModule>> TopkHlo(int n, int k, int batch_size, 
