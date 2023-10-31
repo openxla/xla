@@ -29,7 +29,8 @@ cc_library(
     deps = [
         ":constants",
         "//xla:shape_util",
-        "//xla:statusor",
+        "//xla:status_macros",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
@@ -242,7 +243,6 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -418,9 +418,6 @@ cc_library(
     deps = [
         ":arithmetic",
         ":constants",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla/client:xla_builder",

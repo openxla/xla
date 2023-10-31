@@ -14,12 +14,9 @@ limitations under the License.
 ==============================================================================*/
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
-#include "xla/shape.h"
-#include "xla/shape_util.h"
+#include "xla/service/hlo_module_config.h"
 
 namespace xla {
 namespace gpu {
@@ -41,8 +38,8 @@ TEST_F(GpuDynamicShapeTest, DynamicShapeR2) {
   CompileAndVerifyIr(std::move(hlo_module),
                      R"(
 ; CHECK-LABEL: is_thread_0-true
-; CHECK-LABEL: x_padded.in_dyn_bounds-true
-; CHECK-LABEL: x_padded.in_bounds-true
+; CHECK-LABEL: custom_call.in_dyn_bounds-true
+; CHECK-LABEL: custom_call.in_bounds-true
 ; CHECK: %[[dyn_dim_size:.*]] = load i32, ptr
 ; CHECK: %[[dyn_element_total:.*]] = mul i32 1, %[[dyn_dim_size:.*]]
 ; CHECK: %[[linear_index:.*]] = add nuw nsw i32
