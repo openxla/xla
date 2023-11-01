@@ -432,6 +432,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -465,6 +466,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:statusor",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -502,6 +504,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
+    alwayslink = True,
 )
 
 cc_library(
@@ -608,6 +611,7 @@ cc_library(
         "@tsl//tsl/protobuf:dnn_proto_cc",
         "@tsl//tsl/util:env_var",
     ],
+    alwayslink = True,
 )
 
 # We have a separate `stream_executor_impl` target because in open source we are building multiple
