@@ -85,6 +85,7 @@ cc_library(
     name = "loop",
     srcs = ["loop.cc"],
     hdrs = ["loop.h"],
+    visibility = ["//xla/service/gpu:__subpackages__"],
     deps = [
         ":fusion_emitter",
         "//xla/hlo/ir:hlo",
@@ -183,6 +184,7 @@ cc_library(
     name = "transpose",
     srcs = ["transpose.cc"],
     hdrs = ["transpose.h"],
+    visibility = ["//xla/service/gpu:__subpackages__"],
     deps = [
         ":fusion_emitter",
         ":tiling_util",
@@ -206,6 +208,7 @@ cc_library(
     name = "input_slices",
     srcs = ["input_slices.cc"],
     hdrs = ["input_slices.h"],
+    visibility = ["//xla/service/gpu:__subpackages__"],
     deps = [
         ":fusion_emitter",
         "//xla/hlo/ir:hlo",
