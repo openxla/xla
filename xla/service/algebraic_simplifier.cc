@@ -725,6 +725,16 @@ void AlgebraicSimplifierVisitor::ReplaceWithBitcast(HloInstruction* instruction,
 // 2. the replacement will not cause loss of sharding
 bool AlgebraicSimplifierVisitor::ReplaceInstructionIfCompatible(
     HloInstruction* old_instruction, HloInstruction* new_instruction) {
+  // It's tricky for the simplifier to determine whether
+  // it should remove the op when control deps are present. I.e.
+  // control deps might be added to preserve a certain order.
+  // It's better to not process in that case.
+  if (old_instruction->control_predecessors().size() > 0) {
+    VLOG(3) << old_instruction->ToString()
+            << " has control predecessors, skipping.";
+    return false;
+  }
+
   if (!SameShape(old_instruction, new_instruction)) {
     return false;
   }

@@ -2820,6 +2820,29 @@ TEST_F(AlgebraicSimplifierTest, RemoveUnaryConcatenate) {
   EXPECT_THAT(computation->root_instruction(), param0);
 }
 
+// Test that unary concatenates are removed.
+TEST_F(AlgebraicSimplifierTest, DoNotRemoveUnaryConcatenateWithCtrlDep) {
+  auto m = CreateNewVerifiedModule();
+  Shape r1f32 = ShapeUtil::MakeShape(F32, {100});
+  HloComputation::Builder builder(TestName());
+  HloInstruction* param0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, r1f32, "param0"));
+  HloInstruction* param1 = builder.AddInstruction(
+      HloInstruction::CreateParameter(1, r1f32, "param1"));
+
+  HloInstruction* concat = builder.AddInstruction(
+      HloInstruction::CreateConcatenate(param0->shape(), {param0}, 0));
+  TF_ASSERT_OK(param1->AddControlDependencyTo(concat));
+  auto computation = m->AddEntryComputationWithLayouts(builder.Build());
+
+  EXPECT_THAT(computation->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(0))));
+  LOG(ERROR) << "module: " << m->ToString();
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
+}
+
 TEST_F(AlgebraicSimplifierTest, SliceReverse) {
   const char* const hlo_string = R"(
 HloModule module
@@ -9267,7 +9290,7 @@ TEST_F(AlgebraicSimplifierTest, SimplifyRedundantBitcastConvert) {
 }
 
 TEST_F(AlgebraicSimplifierTest,
-       DoNOtSimplifyRedundantBitcastConvertWithControlDep) {
+       DoNotSimplifyRedundantBitcastConvertWithControlDep) {
   const char* kModuleStr = R"(
     HloModule m
 
