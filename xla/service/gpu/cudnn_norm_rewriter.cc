@@ -38,9 +38,10 @@ namespace m = match;
 // Returns an architecture-specific constant for the calculation of an upper
 // bound for the size of the scratch space for layer norm kernels.
 StatusOr<int64_t> CConstant(se::CudaComputeCapability cuda_compute_capability) {
-  if (cuda_compute_capability.Is(se::CudaComputeCapability::AMPERE)) {
+  if (cuda_compute_capability.major == se::CudaComputeCapability::AMPERE) {
     return 32 * 128;
-  } else if (cuda_compute_capability.Is(se::CudaComputeCapability::HOPPER)) {
+  } else if (cuda_compute_capability.major ==
+             se::CudaComputeCapability::HOPPER) {
     return 32 * 144;
   }
   return xla::InternalError(
@@ -253,8 +254,9 @@ auto Expectation(HloInstruction** expectation, HloInstruction** reduce,
                                   shared_subpattern);
 }
 
-// Variance, expressed as expectation(X^2) - expectation(X)^2 or expectation((X
-// - expectation(X))^2).
+// Variance, expressed as expectation(X^2) - expectation(X)^2 or
+// expectation((X - expectation(X))^2). The simultaneous capture of input0 and
+// input1 allows the caller to verify that they are identical.
 auto Variance(HloInstruction** expectation, HloInstruction** input0,
               HloInstruction** input1) {
   return m::AnyOf<HloInstruction>(
@@ -264,8 +266,9 @@ auto Variance(HloInstruction** expectation, HloInstruction** input0,
           Subtract(m::Op(input0), Expectation(expectation, m::Op(input1))))));
 }
 
-// Variance, expressed as expectation(X^2) - expectation(X)^2 or expectation((X
-// - expectation(X))^2).
+// Variance, expressed as expectation(X^2) - expectation(X)^2 or
+// expectation((X - expectation(X))^2). The simultaneous capture of input0 and
+// input1 allows the caller to verify that they are identical.
 auto Variance(HloInstruction** variance, HloInstruction** expectation,
               HloInstruction** input0, HloInstruction** input1) {
   return m::AnyOf<HloInstruction>(
@@ -277,6 +280,8 @@ auto Variance(HloInstruction** variance, HloInstruction** expectation,
 }
 
 // Reciprocal of the square root of variance + epsilon with optional broadcast.
+// The simultaneous capture of input0 and input1 allows the caller to verify
+// that they are identical.
 auto NormFactor(HloInstruction** norm_factor, HloInstruction** input0,
                 HloInstruction** input1, HloInstruction** variance,
                 HloInstruction** expectation, HloInstruction** epsilon) {
@@ -356,8 +361,10 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       }
 
       // Layer norm kernels require Ampere or Hopper architectures.
-      if (!cuda_compute_capability_.Is(se::CudaComputeCapability::AMPERE) &&
-          !cuda_compute_capability_.Is(se::CudaComputeCapability::HOPPER)) {
+      if (!cuda_compute_capability_.major ==
+              se::CudaComputeCapability::AMPERE &&
+          !cuda_compute_capability_.major ==
+              se::CudaComputeCapability::HOPPER) {
         VLOG(1) << "Layer norm Custom Calls require Ampere or Hopper "
                    "architectures.";
         return OkStatus();

@@ -7372,22 +7372,26 @@ static tsl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
         "No engine configurations found for this opGraph and heuristics.");
   }
 
+  cudnnStatus_t status;
   for (auto engine_config : engine_configs) {
     cudnn_frontend::ExecutionPlan plan =
         cudnn_frontend::ExecutionPlanBuilder()
             .setHandle(cudnn.handle())
             .setEngineConfig(engine_config, opGraph.getTag())
             .build();
-    if (plan.get_status() == CUDNN_STATUS_SUCCESS) {
+    status = plan.get_status();
+    if (status == CUDNN_STATUS_SUCCESS) {
       return plan;
     } else {
       VLOG(4) << "Failed to build cuDNN execution plan for opGraph "
               << opGraph.getTag()
-              << ". Status: " << CudnnStatusToString(plan.get_status());
+              << ". Status: " << CudnnStatusToString(status);
     }
   }
 
-  return tsl::errors::Internal("Failed to generate cuDNN execution plan.");
+  LOG(FATAL) << "Failed to generate cuDNN execution plan for opGraph "
+             << opGraph.getTag()
+             << ". Status of final plan: " << CudnnStatusToString(status);
 #else
   return absl::UnimplementedError("Supported only for cuDNN >= 8.8.0");
 #endif

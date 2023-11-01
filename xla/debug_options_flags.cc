@@ -984,6 +984,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_fused_attention_use_cudnn_rng),
       debug_options->xla_gpu_fused_attention_use_cudnn_rng(),
       "Use cudnn random number generator for fused attention kernel."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_cudnn_layer_norm",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_cudnn_layer_norm),
+      debug_options->xla_gpu_enable_cudnn_layer_norm(),
+      "Rewrite layer norm patterns into cuDNN library call."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_enable_cublaslt",
                 bool_setter_for(&DebugOptions::set_xla_gpu_enable_cublaslt),
@@ -1402,11 +1407,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_cub_radix_sort),
       debug_options->xla_gpu_enable_cub_radix_sort(),
       "Enable radix sort using CUB for simple shapes"));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_cudnn_layer_norm",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_cudnn_layer_norm),
-      debug_options->xla_gpu_enable_cudnn_layer_norm(),
-      "Rewrite layer norm patterns into cuDNN library call."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
