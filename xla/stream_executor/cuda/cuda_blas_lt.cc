@@ -318,9 +318,9 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg,
                                           cfg.compute_precision));
   }
 
-  // For FP8 matmuls, there are two options available: fast
-  // accumulation(PrecisionConfig.Precision.DEFAULT) and
-  //  higher precision accumulation (PrecisionConfig.Precision.HIGHEST).
+  // FP8 matmuls have a fast accumulation mode that is less precise than the
+  // default accumulation mode. Use the fast accumulation mode if the compute
+  // precision is DEFAULT.
   bool enable_fast_accum = (xla::primitive_util::IsF8Type(lhs_layout.dtype) ||
                             xla::primitive_util::IsF8Type(rhs_layout.dtype)) &&
                            cfg.compute_precision == 0;
