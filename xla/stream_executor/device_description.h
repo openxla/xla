@@ -81,7 +81,7 @@ struct CudaComputeCapability {
   }
 
   bool Is(int other_major, int other_minor = 0) const {
-    return !(*this == CudaComputeCapability{other_major, other_minor});
+    return *this == CudaComputeCapability{other_major, other_minor};
   }
 
   bool operator<(const CudaComputeCapability &other) const {

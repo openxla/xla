@@ -23,7 +23,8 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Rewrites norm patterns into Custom Calls to the cuDNN library.
+// Rewrites norm patterns into Custom Calls to the cuDNN library. Currently, the
+// forward pass of layer norm patterns is implemented.
 class CudnnNormRewriter : public HloModulePass {
  public:
   explicit CudnnNormRewriter(

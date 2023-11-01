@@ -35,9 +35,31 @@ namespace {
 
 namespace m = match;
 
+// Returns an architecture-specific constant for the calculation of an upper
+// bound for the size of the scratch space for layer norm kernels.
+StatusOr<int64_t> CConstant(se::CudaComputeCapability cuda_compute_capability) {
+  if (cuda_compute_capability.Is(se::CudaComputeCapability::AMPERE)) {
+    return 32 * 128;
+  } else if (cuda_compute_capability.Is(se::CudaComputeCapability::HOPPER)) {
+    return 32 * 144;
+  }
+  return xla::InternalError(
+      "Norm kernels require Ampere or Hopper architecture.");
+}
+
+// Returns whether the element type of instr is compatible with layer norm
+// kernels.
+bool CompatibleElementType(const HloInstruction* instr) {
+  PrimitiveType element_type = instr->shape().element_type();
+  return element_type == BF16 || element_type == F16 || element_type == F32;
+}
+
 // Returns whether the HLO Computation applied by instr calculates the sum of
 // the elements.
 bool AppliesAddReduce(const HloInstruction* instr) {
+  if (instr->opcode() != HloOpcode::kReduce) {
+    return false;
+  }
   HloComputation* reduce_comp = instr->to_apply();
   HloInstruction* reduce_comp_root = reduce_comp->root_instruction();
   return instr->operand_count() == 2 &&
@@ -49,25 +71,49 @@ bool AppliesAddReduce(const HloInstruction* instr) {
          reduce_comp_root->operand(1)->opcode() == HloOpcode::kParameter;
 }
 
-bool CompatibleElementType(const HloInstruction* instr) {
-  PrimitiveType element_type = instr->shape().element_type();
-  return element_type == BF16 || element_type == F16 || element_type == F32;
-}
+// Returns whether instr multiplies the result of a reduction by one over the
+// number of reduced elements.
+bool CalculatesExpectation(const HloInstruction* instr) {
+  auto skip_convert_and_reshape =
+      [](const HloInstruction* instr) -> const HloInstruction* {
+    while (instr->opcode() == HloOpcode::kConvert ||
+           instr->opcode() == HloOpcode::kReshape) {
+      instr = instr->operand(0);
+    }
+    return instr;
+  };
 
-StatusOr<int64_t> CConstant(se::CudaComputeCapability cuda_compute_capability) {
-  if (cuda_compute_capability.major == se::CudaComputeCapability::AMPERE) {
-    return 32 * 128;
-  } else if (cuda_compute_capability.major ==
-             se::CudaComputeCapability::HOPPER) {
-    return 32 * 144;
+  instr = skip_convert_and_reshape(instr);
+  if (instr->opcode() != HloOpcode::kMultiply) {
+    return false;
   }
-  return xla::InternalError(
-      "Norm kernels require Ampere or newer architecture.");
+  bool bcast_operand = instr->operand(0)->opcode() != HloOpcode::kBroadcast;
+  const HloInstruction *broadcast = instr->operand(bcast_operand),
+                       *reduce = instr->operand(!bcast_operand);
+  reduce = skip_convert_and_reshape(reduce);
+  if (reduce->opcode() != HloOpcode::kReduce ||
+      broadcast->opcode() != HloOpcode::kBroadcast ||
+      broadcast->operand(0)->opcode() != HloOpcode::kConstant) {
+    return false;
+  }
+
+  float actual_r_nelems =
+      broadcast->operand(0)->literal().GetAsDouble({}).value();
+  int64_t nelems = 1;
+  for (int64_t norm_dim : reduce->dimensions()) {
+    nelems *= reduce->operand(0)->shape().dimensions()[norm_dim];
+  }
+  // The absolute of the difference between the actual scaling factor and the
+  // reference value must not exceed a prescribed threshold.
+  float r_nelems = 1. / float(nelems);
+  float numerical_epsilon = std::numeric_limits<bfloat16>::epsilon();
+  return abs(actual_r_nelems - r_nelems) <
+         ((actual_r_nelems + r_nelems) * numerical_epsilon);
 }
 
-// Type conversion from and to any of BF16, F16 and F32.
+// Type conversion from and to any of BF16, FP16 and FP32.
 template <typename Pattern>
-auto Convert(Pattern pattern) {
+auto SupportedConvert(Pattern pattern) {
   auto supported_convert = [](const HloInstruction* instr) -> bool {
     return CompatibleElementType(instr) &&
            CompatibleElementType(instr->operand(0));
@@ -77,7 +123,7 @@ auto Convert(Pattern pattern) {
 
 // Reshape adding or removing degenerate dimensions.
 template <typename Pattern>
-auto Reshape(Pattern pattern) {
+auto SupportedReshape(Pattern pattern) {
   auto supported_reshape = [](const HloInstruction* instr) -> bool {
     return ShapeUtil::Equal(
         ShapeUtil::DropDegenerateDimensions(instr->shape()),
@@ -86,14 +132,16 @@ auto Reshape(Pattern pattern) {
   return m::Reshape(pattern).WithPredicate(supported_reshape);
 }
 
-// Matches pattern, convert(pattern), reshape(pattern),
-// convert(reshape(pattern)) and reshape(convert(pattern)).
+// Matches pattern, SupportedConvert(pattern), SupportedReshape(pattern),
+// SupportedConvert(SupportedReshape(pattern)) and
+// SupportedReshape(SupportedConvert(pattern)).
 template <typename Pattern>
 auto OptionalConvertAndOrReshape(Pattern pattern) {
   auto shared_subpattern = m::SharedSubpattern(pattern);
   return m::AnyOf<HloInstruction>(
-      Convert(Reshape(shared_subpattern)), Reshape(Convert(shared_subpattern)),
-      Convert(shared_subpattern), Reshape(shared_subpattern),
+      SupportedConvert(SupportedReshape(shared_subpattern)),
+      SupportedReshape(SupportedConvert(shared_subpattern)),
+      SupportedConvert(shared_subpattern), SupportedReshape(shared_subpattern),
       shared_subpattern);
 }
 
@@ -170,7 +218,10 @@ auto AddReduce(HloInstruction** reduction, Pattern pattern) {
 template <typename Pattern>
 auto Expectation(Pattern pattern) {
   auto shared_subpattern =
-      MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()), AddReduce(pattern));
+      MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()), AddReduce(pattern))
+          .WithPredicate([](const HloInstruction* instr) {
+            return CalculatesExpectation(instr);
+          });
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
@@ -178,25 +229,32 @@ auto Expectation(Pattern pattern) {
 // Expected value, or mean, with optional broadcast.
 template <typename Pattern>
 auto Expectation(HloInstruction** expectation, Pattern pattern) {
-  auto shared_subpattern = MultiplyAnyOrder(
-      expectation, m::Broadcast(m::ConstantScalar()), AddReduce(pattern));
+  auto shared_subpattern =
+      MultiplyAnyOrder(expectation, m::Broadcast(m::ConstantScalar()),
+                       AddReduce(pattern))
+          .WithPredicate([](const HloInstruction* instr) {
+            return CalculatesExpectation(instr);
+          });
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
 
 // Expected value, or mean, with optional broadcast.
 template <typename Pattern>
-auto Expectation(HloInstruction** expectation, HloInstruction** reduction,
+auto Expectation(HloInstruction** expectation, HloInstruction** reduce,
                  Pattern pattern) {
   auto shared_subpattern =
       MultiplyAnyOrder(expectation, m::Broadcast(m::ConstantScalar()),
-                       AddReduce(reduction, pattern));
+                       AddReduce(reduce, pattern))
+          .WithPredicate([](const HloInstruction* instr) {
+            return CalculatesExpectation(instr);
+          });
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
 
-// Variance, expressed as E[(X - E[X])^2] or E[X^2] - E[X]^2, where E is the
-// expectation.
+// Variance, expressed as expectation(X^2) - expectation(X)^2 or expectation((X
+// - expectation(X))^2).
 auto Variance(HloInstruction** expectation, HloInstruction** input0,
               HloInstruction** input1) {
   return m::AnyOf<HloInstruction>(
@@ -206,8 +264,8 @@ auto Variance(HloInstruction** expectation, HloInstruction** input0,
           Subtract(m::Op(input0), Expectation(expectation, m::Op(input1))))));
 }
 
-// Variance, expressed as E[(X - E[X])^2] or E[X^2] - E[X]^2, where E is the
-// expectation.
+// Variance, expressed as expectation(X^2) - expectation(X)^2 or expectation((X
+// - expectation(X))^2).
 auto Variance(HloInstruction** variance, HloInstruction** expectation,
               HloInstruction** input0, HloInstruction** input1) {
   return m::AnyOf<HloInstruction>(
@@ -241,9 +299,9 @@ auto MultiplyMultiplyAnyOrder(P0 p0, P1 p1, P2 p2) {
 // Any order of p0 - p1 + p2.
 template <typename P0, typename P1, typename P2>
 auto SubtractAddAnyOrder(P0 p0, P1 p1, P2 p2) {
-  return m::AnyOf<HloInstruction>(m::AddAnyOrder(m::Subtract(p0, p1), p2),
-                                  m::AddAnyOrder(m::Subtract(p2, p1), p0),
-                                  m::Subtract(m::AddAnyOrder(p0, p2), p1));
+  return m::AnyOf<HloInstruction>(AddAnyOrder(Subtract(p0, p1), p2),
+                                  AddAnyOrder(Subtract(p2, p1), p0),
+                                  Subtract(AddAnyOrder(p0, p2), p1));
 }
 
 // Any order of (p0 - p1) * p2 * p3 + p4.
@@ -252,7 +310,7 @@ auto SubtractMultiplyAddAnyOrder(P0 p0, P1 p1, P2 p2, P3 p3, P4 p4) {
   return m::AnyOf<HloInstruction>(
       SubtractAddAnyOrder(MultiplyMultiplyAnyOrder(p0, p2, p3),
                           MultiplyMultiplyAnyOrder(p1, p2, p3), p4),
-      m::AddAnyOrder(MultiplyMultiplyAnyOrder(Subtract(p0, p1), p2, p3), p4));
+      AddAnyOrder(MultiplyMultiplyAnyOrder(Subtract(p0, p1), p2, p3), p4));
 }
 
 class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
@@ -269,19 +327,20 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
     return MatchLayerNorm(instr);
   }
 
-  // Matches and rewrites a layer norm pattern with scale multiplication and
-  // bias addition into a Custom Call to cuDNN.
+  // Matches and rewrites layer norm patterns,
+  // (X - expectation(X))/(variance(X) + epsilon)^1/2 * scale + bias,
+  // into Custom Calls to cuDNN.
   Status MatchLayerNorm(HloInstruction* instr) {
     HloInstruction *input, *input0, *input1, *input2, *scale, *bias, *epsilon,
-        *expectation, *expectation0, *reduce, *norm_factor, *variance;
-    if (Match(instr,
-              SubtractMultiplyAddAnyOrder(
-                  m::Op(&input),
-                  Expectation(&expectation, &reduce, m::Op(&input0)),
-                  NormFactor(&norm_factor, &input1, &input2, &variance,
-                             &expectation0, &epsilon),
-                  // NormFactor(&input1, &input2, &epsilon),
-                  m::Broadcast(m::Op(&scale)), m::Broadcast(m::Op(&bias))))) {
+        *expectation, *expectation0, *reduce, *norm_factor, *variance,
+        *broadcast_scale, *broadcast_bias;
+    if (Match(instr, SubtractMultiplyAddAnyOrder(
+                         m::Op(&input),
+                         Expectation(&expectation, &reduce, m::Op(&input0)),
+                         NormFactor(&norm_factor, &input1, &input2, &variance,
+                                    &expectation0, &epsilon),
+                         m::Broadcast(&broadcast_scale, m::Op(&scale)),
+                         m::Broadcast(&broadcast_bias, m::Op(&bias))))) {
 #if CUDNN_VERSION < 8905
       // Layer norm kernels are available with cuDNN 8.9.5 and above.
       VLOG(1) << "Layer norm Custom Calls require cuDNN 8.9.5.";
@@ -356,36 +415,25 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         }
       }
 
-      // Verify the scaling by the reciprocal of the number of elements during
-      // the calculation of the expectation. The absolute of the difference
-      // between the actual scaling factor and a reference value must not exceed
-      // a prescribed threshold.
-      bool bcast_operand =
-          expectation->operand(0)->opcode() != HloOpcode::kBroadcast;
-      float actual_rnumel = expectation->operand(bcast_operand)
-                                ->operand(0)
-                                ->literal()
-                                .GetAsDouble({})
-                                .value();
-      int64_t numel = 1;
-      for (auto dim : norm_dims) {
-        numel *= reduce->operand(0)->shape().dimensions()[dim];
-      }
-      float rnumel = 1. / float(numel);
-      float numerical_epsilon = 128 * std::numeric_limits<bfloat16>::epsilon();
-      if (abs(actual_rnumel - rnumel) >
-          (abs(actual_rnumel + rnumel) * numerical_epsilon)) {
-        VLOG(1) << "Expectation scaling factor outside tolerance.";
+      // Verify the broadcasts of scale and bias.
+      if (!ShapeUtil::EqualIgnoringElementType(reduce->operand(0)->shape(),
+                                               broadcast_scale->shape()) ||
+          !ShapeUtil::EqualIgnoringElementType(reduce->operand(0)->shape(),
+                                               broadcast_bias->shape()) ||
+          reduce->dimensions() != broadcast_scale->dimensions() ||
+          reduce->dimensions() != broadcast_bias->dimensions()) {
+        VLOG(1) << "Layer norm operand broadcast not supported.";
         return OkStatus();
       }
 
       // If necessary, transpose the input so that the dimensions not being
       // normalized are the leading dimensions.
       std::vector<int64_t> non_norm_dims;
-      for (int64_t dim = 0; dim < input->shape().rank(); ++dim) {
-        if (std::find(norm_dims.begin(), norm_dims.end(), dim) ==
+      for (int64_t input_dim = 0; input_dim < input->shape().rank();
+           ++input_dim) {
+        if (std::find(norm_dims.begin(), norm_dims.end(), input_dim) ==
             norm_dims.end()) {
-          non_norm_dims.emplace_back(dim);
+          non_norm_dims.emplace_back(input_dim);
         }
       }
       std::vector<int64_t> transpose_order = non_norm_dims;
@@ -492,7 +540,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       for (HloInstruction* user : norm_factor->users()) {
         if (user->opcode() == HloOpcode::kDivide &&
             user->operand_index(norm_factor) == 0) {
-          TF_RETURN_IF_ERROR(MatchNormfactor(user, custom_call, variance,
+          TF_RETURN_IF_ERROR(MatchNormFactor(user, custom_call, variance,
                                              expectation, epsilon));
         }
       }
@@ -505,10 +553,10 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
   // as the norm factor and its cube, (variance + epsilon)^-1/2 and (variance +
   // epsilon)^-3/2. When identified in the graph, these quantities are fused
   // into the layer norm Custom Call.
-  Status MatchNormfactor(HloInstruction* instr, HloInstruction* custom_call,
+  Status MatchNormFactor(HloInstruction* instr, HloInstruction* custom_call,
                          HloInstruction* variance, HloInstruction* expectation,
                          HloInstruction* epsilon) {
-    HloInstruction *variance0, *epsilon0, *gte, *norm_factor;
+    HloInstruction *variance0, *epsilon0, *gte = custom_call->users()[0];
     if (Match(instr,
               m::Divide(m::Op(), AddAnyOrder(m::Op(&variance0),
                                              m::Broadcast(m::ConstantScalar(
@@ -527,25 +575,12 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         return OkStatus();
       }
 
-      // The single user of the Custom Call must be a get-tuple-element
-      // instruction accessing the output.
-      if (custom_call->user_count() == 1 &&
-          custom_call->users()[0]->opcode() == HloOpcode::kGetTupleElement &&
-          custom_call->users()[0]->tuple_index() == 0) {
-        gte = custom_call->users()[0];
-      } else {
-        VLOG(1) << "Incompatible users of layer norm Custom Call.";
-        return OkStatus();
-      }
-
+      // The shape of the expectation and norm factor return values of the
+      // Custom Call is [nelems, 1, 1, 1], where nelems is the
+      // number of elements in the expectation and norm factor shapes.
       auto make_compatible_shape = [](Shape shape) -> Shape {
-        // Eliminate any leading degenerate dimensions.
-        Shape compatible_shape = ShapeUtil::DropDegenerateDimensions(shape);
-        // cuDNN requires tensors to have at least four dimensions.
-        while (compatible_shape.rank() < 4) {
-          ShapeUtil::AppendMinorDimension(1, &compatible_shape);
-        }
-        return compatible_shape;
+        return ShapeUtil::MakeShape(shape.element_type(),
+                                    {ShapeUtil::ElementsIn(shape), 1, 1, 1});
       };
 
       Shape expectation_shape = make_compatible_shape(expectation->shape());
