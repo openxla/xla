@@ -77,11 +77,15 @@ class CollectivePipeliner : public HloModulePass {
     HloPredicate should_process;
     // Filter acceptable formatting ops for for forward piplining to discard
     // cases that pipeline formatting operations that we don't want to support.
-    HloPredicate acceptable_formatting;
+    HloPredicate acceptable_formatting = [](const HloInstruction*) {
+      return true;
+    };
     // If the pipelined op has same input/output size the we reuse  the same
     // buffer we are storing the value in in the output loop for forward
     // pipelining. This function allows to not do it for certain ops.
-    HloPredicate reuse_pipelined_op_buffer;
+    HloPredicate reuse_pipelined_op_buffer = [](const HloInstruction*) {
+      return false;
+    };
   };
   static const char* const kInsertedByPreviousStep;
   static const char* const kSunkByPreviousStep;
