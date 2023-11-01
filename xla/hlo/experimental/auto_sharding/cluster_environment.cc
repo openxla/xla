@@ -17,8 +17,14 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <numeric>
 #include <optional>
+#include <ostream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -30,8 +36,8 @@ namespace xla {
 namespace spmd {
 
 double ClusterEnvironment::AllGatherCost(double num_bytes, int mesh_dim) const {
-  if (auto_sharding_option_.force_override_all_gather_cost) {
-    return auto_sharding_option_.all_gather_cost;
+  if (solver_option_.override_all_gather_cost) {
+    return solver_option_.all_gather_cost;
   }
 
   if (prof_result_.Enabled()) {
@@ -39,7 +45,7 @@ double ClusterEnvironment::AllGatherCost(double num_bytes, int mesh_dim) const {
                                               num_bytes / 4, "float32");
   }
 
-  if (auto_sharding_option_.force_batch_dim_to_mesh_dim == mesh_dim) {
+  if (solver_option_.force_batch_dim_to_mesh_dim == mesh_dim) {
     // if data-parallel is forced on this dim, we only allow all-reduce
     // in this dimension.
     return kInfinityCost;
@@ -55,8 +61,8 @@ double ClusterEnvironment::AllGatherCost(double num_bytes, int mesh_dim) const {
 // TODO(zhuohan): distinguish dtype and reduce_op.
 double ClusterEnvironment::AllReduceCost(double num_bytes, int32_t mesh_dim,
                                          int32_t mesh_dim_another) const {
-  if (auto_sharding_option_.force_override_all_reduce_cost) {
-    return auto_sharding_option_.all_reduce_cost;
+  if (solver_option_.override_all_reduce_cost) {
+    return solver_option_.all_reduce_cost;
   }
 
   if (prof_result_.Enabled()) {
@@ -83,8 +89,8 @@ double ClusterEnvironment::AllReduceCost(double num_bytes, int32_t mesh_dim,
 
 double ClusterEnvironment::ReduceScatterCost(double num_bytes,
                                              int mesh_dim) const {
-  if (auto_sharding_option_.force_override_reduce_scatter_cost) {
-    return auto_sharding_option_.reduce_scatter_cost;
+  if (solver_option_.override_reduce_scatter_cost) {
+    return solver_option_.reduce_scatter_cost;
   }
 
   if (prof_result_.Enabled()) {
@@ -100,8 +106,8 @@ double ClusterEnvironment::ReduceScatterCost(double num_bytes,
 }
 
 double ClusterEnvironment::AllToAllCost(double num_bytes, int mesh_dim) const {
-  if (auto_sharding_option_.force_override_all_to_all_cost) {
-    return auto_sharding_option_.all_to_all_cost;
+  if (solver_option_.override_all_to_all_cost) {
+    return solver_option_.all_to_all_cost;
   }
 
   if (prof_result_.Enabled()) {
@@ -109,7 +115,7 @@ double ClusterEnvironment::AllToAllCost(double num_bytes, int mesh_dim) const {
                                              num_bytes / 4, "float32");
   }
 
-  if (auto_sharding_option_.force_batch_dim_to_mesh_dim == mesh_dim) {
+  if (solver_option_.force_batch_dim_to_mesh_dim == mesh_dim) {
     // if data-parallel is forced on this dim, we only allow all-reduce
     // in this dimension.
     return kInfinityCost;
@@ -122,7 +128,7 @@ double ClusterEnvironment::AllToAllCost(double num_bytes, int mesh_dim) const {
 
 double ClusterEnvironment::DotCost(const Shape& lhs_shape,
                                    const Shape& rhs_shape) const {
-  if (!auto_sharding_option_.allow_recompute_heavy_op) {
+  if (!solver_option_.allow_recompute_heavy_op) {
     return kInfinityCost;
   }
 

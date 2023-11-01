@@ -19,11 +19,15 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <memory>
+#include <optional>
+#include <ostream>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "xla/hlo/experimental/auto_sharding/auto_sharding_option.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_solver_option.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_util.h"
 #include "xla/hlo/experimental/auto_sharding/profiling_result.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -43,7 +47,7 @@ class ClusterEnvironment {
                      absl::Span<const double> mesh_alpha,
                      absl::Span<const double> mesh_beta,
                      const ProfilingResult& prof_result,
-                     const AutoShardingOption& auto_sharding_option)
+                     const AutoShardingSolverOption& solver_option)
       : original_device_mesh_(original_device_mesh),
         device_mesh_(device_mesh),
         mesh_alpha_(mesh_alpha.begin(), mesh_alpha.end()),
@@ -51,7 +55,7 @@ class ClusterEnvironment {
         prof_result_(prof_result),
         total_devices_(device_mesh.num_elements()),
         device_mesh_1d_(original_device_mesh),
-        auto_sharding_option_(auto_sharding_option) {
+        solver_option_(solver_option) {
     // Build replica group for each dimension.
     non_zero_mesh_dims_ =
         VectorGreaterThanOneElementIndices(device_mesh.dimensions());
@@ -170,8 +174,8 @@ class ClusterEnvironment {
   // Used for mixed mesh shape strategies.
   Array<int64_t> device_mesh_1d_;
 
-  // The option may override the cost of communication primitives
-  const AutoShardingOption& auto_sharding_option_;
+  // The solver option may override the cost of communication primitives
+  const AutoShardingSolverOption& solver_option_;
 
   // Cached replica groups. Shape: [mesh_dim, group_id, ids in this group].
   std::vector<std::vector<std::vector<int64_t>>> cached_replica_groups_;
