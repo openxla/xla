@@ -4,6 +4,7 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
+        "//third_party/golang/github_com/gomlx/gomlx:__subpackages__",
         "//xla:internal",
     ],
     licenses = ["notice"],
