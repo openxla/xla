@@ -62,7 +62,7 @@ std::string TensorFlowSrcRoot() {
 std::string XlaSrcRoot() {
   std::string workspace = GetEnvVarOrDie("TEST_WORKSPACE");
   std::string srcdir = GetEnvVarOrDie("TEST_SRCDIR");
-  const char* xla_path = "xla";
+  const char* xla_path = "tensorflow/compiler/xla";
 
   return kIsOpenSource
              ? io::JoinPath(srcdir, workspace, xla_path)
