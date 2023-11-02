@@ -4499,3 +4499,12 @@ xla_cc_test(
         "@tsl//tsl/platform:statusor",
     ],
 )
+
+cc_library(
+    name = "gpu_symbol_repository",
+    hdrs = ["gpu_symbol_repository.h"],
+    deps = [
+        "//xla:xla_proto_cc",
+        "//xla/service:symbol_repository",
+    ],
+)
