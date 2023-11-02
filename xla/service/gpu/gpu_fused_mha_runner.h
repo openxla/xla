@@ -391,24 +391,25 @@ Status RunGpuFMHA(const GpufMHAConfig& fmha_config,
                   std::optional<se::DeviceMemoryBase> activation_buffer,
                   se::Stream* stream, RunFusedMHAOptions = {});
 
-Status RunGpuFMHABackward(
-    const GpufMHABackwardConfig& fmha_config,
-    se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer,
-    se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer,
-    se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer,
-    se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
-    se::DeviceMemoryBase d_output_buffer, se::DeviceMemoryBase scratch_buffer,
-    se::DeviceMemoryBase d_bmm1_lhs_buffer,
-    se::DeviceMemoryBase d_bmm1_rhs_buffer,
-    se::DeviceMemoryBase d_bmm2_rhs_buffer,
-    std::optional<se::DeviceMemoryBase> d_s_buffer,
-    std::optional<se::DeviceMemoryBase> softmax_sum_buffer,
-    std::optional<se::DeviceMemoryBase> d_Q_accum_buffer,
-    std::optional<se::DeviceMemoryBase> mask_buffer,
-    std::optional<se::DeviceMemoryBase> d_bias_buffer,
-    std::optional<se::DeviceMemoryBase> fwd_output_buffer,
-    std::optional<se::DeviceMemoryBase> bias_buffer, se::Stream* stream,
-    RunFusedMHABackwardOptions = {});
+Status RunGpuFMHABackward(const GpufMHABackwardConfig& fmha_config,
+                          se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer,
+                          se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer,
+                          se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer,
+                          se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
+                          se::DeviceMemoryBase d_output_buffer,
+                          se::DeviceMemoryBase scratch_buffer,
+                          se::DeviceMemoryBase d_bmm1_lhs_buffer,
+                          se::DeviceMemoryBase d_bmm1_rhs_buffer,
+                          se::DeviceMemoryBase d_bmm2_rhs_buffer,
+                          std::optional<se::DeviceMemoryBase> d_s_buffer,
+                          std::optional<se::DeviceMemoryBase> softmax_sum_buffer,
+                          std::optional<se::DeviceMemoryBase> d_Q_accum_buffer,
+                          std::optional<se::DeviceMemoryBase> mask_buffer,
+                          std::optional<se::DeviceMemoryBase> d_bias_buffer,
+                          std::optional<se::DeviceMemoryBase> fwd_output_buffer,
+                          std::optional<se::DeviceMemoryBase> bias_buffer,
+                          se::Stream* stream,
+                          RunFusedMHABackwardOptions = {});
 
 std::string ToString(const GpufMHAConfig& config);
 

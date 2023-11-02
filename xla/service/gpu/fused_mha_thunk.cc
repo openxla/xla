@@ -61,6 +61,15 @@ FusedMultiHeadedAttentionRunner& FusedMHAThunk::GetOrCreateRunner(
   return *it->second;
 }
 
+std::optional<se::DeviceMemoryBase> AssignBufferIfNotNull(
+    const BufferAllocations& buffer_allocations,
+    BufferAllocation::Slice& slice) {
+  return slice.allocation() != nullptr
+             ? std::optional<se::DeviceMemoryBase>{
+                buffer_allocations.GetDeviceAddress(slice)}
+             : std::nullopt;
+}
+
 Status FusedMHAThunk::ExecuteOnStream(const ExecuteParams& params) {
   const auto& buffer_allocations = *params.buffer_allocations;
   se::DeviceMemoryBase lhs_bmm1_buffer =
@@ -74,19 +83,12 @@ Status FusedMHAThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::DeviceMemoryBase scratch_buffer =
       buffer_allocations.GetDeviceAddress(scratch_buffer_);
 
-  std::optional<se::DeviceMemoryBase> mask_buffer;
-  if (mask_buffer_.allocation() != nullptr) {
-    mask_buffer = buffer_allocations.GetDeviceAddress(mask_buffer_);
-  }
-  std::optional<se::DeviceMemoryBase> bias_buffer;
-  if (bias_buffer_.allocation() != nullptr) {
-    bias_buffer = buffer_allocations.GetDeviceAddress(bias_buffer_);
-  }
-
-  std::optional<se::DeviceMemoryBase> activation_buffer;
-  if (activation_buffer_.allocation() != nullptr) {
-    activation_buffer = buffer_allocations.GetDeviceAddress(activation_buffer_);
-  }
+  std::optional<se::DeviceMemoryBase> mask_buffer =
+      AssignBufferIfNotNull(buffer_allocations, mask_buffer_);
+  std::optional<se::DeviceMemoryBase> bias_buffer =
+      AssignBufferIfNotNull(buffer_allocations, bias_buffer_);
+  std::optional<se::DeviceMemoryBase> activation_buffer =
+      AssignBufferIfNotNull(buffer_allocations, activation_buffer_);
 
   RunFusedMHAOptions opts;
   opts.runner_cache = &GetOrCreateRunner(params.stream);
@@ -175,41 +177,21 @@ Status FusedMHABackwardThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::DeviceMemoryBase d_bmm2_rhs_buffer =
       buffer_allocations.GetDeviceAddress(d_bmm2_rhs_buffer_);
 
-  se::DeviceMemoryBase d_s_buffer;
-  if (d_s_buffer_.allocation() != nullptr) {
-    d_s_buffer = buffer_allocations.GetDeviceAddress(d_s_buffer_);
-  }
+  std::optional<se::DeviceMemoryBase> d_s_buffer =
+      AssignBufferIfNotNull(buffer_allocations, d_s_buffer_);
+  std::optional<se::DeviceMemoryBase> softmax_sum_buffer =
+      AssignBufferIfNotNull(buffer_allocations, softmax_sum_buffer_);
+  std::optional<se::DeviceMemoryBase> d_Q_accum_buffer =
+      AssignBufferIfNotNull(buffer_allocations, d_Q_accum_buffer_);
+  std::optional<se::DeviceMemoryBase> mask_buffer =
+      AssignBufferIfNotNull(buffer_allocations, mask_buffer_);
+  std::optional<se::DeviceMemoryBase> d_bias_buffer =
+      AssignBufferIfNotNull(buffer_allocations, d_bias_buffer_);
+  std::optional<se::DeviceMemoryBase> fwd_output_buffer =
+      AssignBufferIfNotNull(buffer_allocations, fwd_output_buffer_);
+  std::optional<se::DeviceMemoryBase> bias_buffer =
+      AssignBufferIfNotNull(buffer_allocations, bias_buffer_);
 
-  se::DeviceMemoryBase softmax_sum_buffer;
-  if (softmax_sum_buffer_.allocation() != nullptr) {
-    softmax_sum_buffer =
-        buffer_allocations.GetDeviceAddress(softmax_sum_buffer_);
-  }
-
-  se::DeviceMemoryBase d_Q_accum_buffer;
-  if (d_Q_accum_buffer_.allocation() != nullptr) {
-    d_Q_accum_buffer = buffer_allocations.GetDeviceAddress(d_Q_accum_buffer_);
-  }
-
-  std::optional<se::DeviceMemoryBase> mask_buffer;
-  if (mask_buffer_.allocation() != nullptr) {
-    mask_buffer = buffer_allocations.GetDeviceAddress(mask_buffer_);
-  }
-
-  std::optional<se::DeviceMemoryBase> d_bias_buffer;
-  if (d_bias_buffer_.allocation() != nullptr) {
-    d_bias_buffer = buffer_allocations.GetDeviceAddress(d_bias_buffer_);
-  }
-
-  se::DeviceMemoryBase fwd_output_buffer;
-  if (fwd_output_buffer_.allocation() != nullptr) {
-    fwd_output_buffer = buffer_allocations.GetDeviceAddress(fwd_output_buffer_);
-  }
-
-  se::DeviceMemoryBase bias_buffer;
-  if (bias_buffer_.allocation() != nullptr) {
-    bias_buffer = buffer_allocations.GetDeviceAddress(bias_buffer_);
-  }
   RunFusedMHABackwardOptions opts;
 
   opts.runner_cache = &GetOrCreateRunner(params.stream);
