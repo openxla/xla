@@ -419,7 +419,6 @@ cc_library(
     name = "command_buffer",
     srcs = ["command_buffer.cc"],
     hdrs = ["command_buffer.h"],
-    visibility = ["//visibility:private"],
     deps = [
         ":stream_executor_headers",
         ":stream_executor_internal",
