@@ -1,6 +1,7 @@
 # Description:
 #   CUDA-platform specific StreamExecutor support code.
 
+load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla:xla.bzl",
@@ -56,6 +57,7 @@ cc_library(
         [
             ":cuda_activation",
             ":cuda_driver",
+            ":cuda_runtime",
             ":cuda_executor",
             ":cuda_platform_id",
             "@com_google_absl//absl/base",
@@ -139,6 +141,21 @@ cc_library(
         "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+    ]),
+)
+
+cc_library(
+    name = "cuda_runtime",
+    srcs = if_cuda_is_configured(["cuda_runtime.cc"]),
+    deps = [
+        "//xla/stream_executor/gpu:gpu_runtime_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:statusor",
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
     ]),
 )
 
@@ -400,15 +417,17 @@ cc_library(
     ]),
 )
 
-cc_library(
+cuda_library(
     name = "cuda_test_kernels",
     testonly = 1,
-    hdrs = ["cuda_test_kernels.h"],
+    srcs = if_cuda_is_configured(["cuda_test_kernels.cu.cc"]),
+    hdrs = if_cuda_is_configured(["cuda_test_kernels.h"]),
+    deps = ["@local_config_cuda//cuda:cuda_headers"],
 )
 
 xla_test(
     name = "cuda_kernel_test",
-    srcs = ["cuda_kernel_test.cc"],
+    srcs = if_cuda_is_configured(["cuda_kernel_test.cc"]),
     backends = ["gpu"],
     deps = [
         ":cuda_platform",
@@ -424,15 +443,17 @@ xla_test(
 
 xla_test(
     name = "cuda_command_buffer_test",
-    srcs = ["cuda_command_buffer_test.cc"],
+    srcs = if_cuda_is_configured(["cuda_command_buffer_test.cc"]),
     backends = ["gpu"],
     deps = [
         ":cuda_platform",
+        ":cuda_runtime",
         ":cuda_test_kernels",
         "//xla/stream_executor",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
         "@com_google_absl//absl/log:check",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
@@ -505,6 +526,7 @@ cc_library(
         ":cuda_event",
         ":cuda_kernel",
         ":cuda_platform_id",
+        ":cuda_runtime",
         ":cuda_stream",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
@@ -517,6 +539,7 @@ cc_library(
         "//xla/stream_executor/gpu:asm_compiler",
         "//xla/stream_executor/gpu:gpu_command_buffer",
         "//xla/stream_executor/gpu:gpu_driver_header",
+        "//xla/stream_executor/gpu:gpu_runtime_header",
         "//xla/stream_executor/gpu:gpu_event_header",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/gpu:gpu_kernel_header",

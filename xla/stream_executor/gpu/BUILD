@@ -95,6 +95,18 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_runtime_header",
+    hdrs = if_gpu_is_configured(["gpu_runtime.h"]),
+    visibility = set_external_visibility([
+        "//xla/stream_executor:__subpackages__",
+    ]),
+    deps = [
+        ":gpu_types_header",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "gpu_command_buffer",
     srcs = if_gpu_is_configured(["gpu_command_buffer.cc"]),
     hdrs = if_gpu_is_configured(["gpu_command_buffer.h"]),
