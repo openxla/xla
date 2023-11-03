@@ -2214,9 +2214,9 @@ StatusOr<bool> CopyInsertion::Run(
         "Call graph must be flattened before copy insertion.");
   }
 
-  int64_t num_copies_before = GetNumExistingCopies(module, execution_threads);
+  int64_t num_copies_before = GetNumExistingCopies(module, {});
 
-  TF_RETURN_IF_ERROR(AddCopiesToResolveInterference(module, execution_threads));
+  TF_RETURN_IF_ERROR(AddCopiesToResolveInterference(module, {}));
 
   // Simplify the tuple structures introduced by the deep copies. This should be
   // done before removing copies (RemoveUnnecessaryCopies) because tuple
@@ -2225,27 +2225,26 @@ StatusOr<bool> CopyInsertion::Run(
   // instructions introduced by tuple simplification.
   TupleSimplifier tuple_simplifier;
   HloDCE dce;
-  TF_RETURN_IF_ERROR(tuple_simplifier.Run(module, execution_threads).status());
-  TF_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
+  TF_RETURN_IF_ERROR(tuple_simplifier.Run(module, {}).status());
+  TF_RETURN_IF_ERROR(dce.Run(module, {}).status());
   DumpHloModuleDuringPassIfEnabled(
       name(), "after adding copies to resolve interference", *module);
 
   TF_RETURN_IF_ERROR(RemoveUnnecessaryCopies(module,
                                              /*check_live_range_ordering=*/true,
-                                             execution_threads));
+                                             {}));
   DumpHloModuleDuringPassIfEnabled(name(), "after removing unnecessary copies",
                                    *module);
-  TF_RETURN_IF_ERROR(
-      AddSpecialCaseCopies(*call_graph, execution_threads, module));
+  TF_RETURN_IF_ERROR(AddSpecialCaseCopies(*call_graph, {}, module));
   DumpHloModuleDuringPassIfEnabled(name(), "after adding special-case copies",
                                    *module);
 
-  TF_RETURN_IF_ERROR(tuple_simplifier.Run(module, execution_threads).status());
-  TF_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
+  TF_RETURN_IF_ERROR(tuple_simplifier.Run(module, {}).status());
+  TF_RETURN_IF_ERROR(dce.Run(module, {}).status());
 
   VLOG(1) << "Num copies before copy-insertion: " << num_copies_before;
   VLOG(1) << "Num copies after copy-insertion: "
-          << GetNumExistingCopies(module, execution_threads);
+          << GetNumExistingCopies(module, {});
 
   return true;
 }
