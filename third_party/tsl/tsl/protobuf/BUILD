@@ -46,6 +46,7 @@ tf_proto_library(
     srcs = ["status.proto"],
     make_default_target_header_only = True,
     protodeps = [":error_codes_proto_impl"],
+    visibility = ["//visibility:public"],
 )
 
 tf_proto_library(
