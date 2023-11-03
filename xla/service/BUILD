@@ -6991,6 +6991,7 @@ xla_cc_binary(
     deps = [
         ":compiler",
         ":executable",
+        ":export_hlo",
         ":hlo_module_config",
         ":symbol_repository",
         "//xla:autotune_results_proto_cc",
