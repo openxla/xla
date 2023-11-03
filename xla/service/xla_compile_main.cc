@@ -21,8 +21,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
@@ -42,6 +45,7 @@ limitations under the License.
 #include "xla/service/export_hlo.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/symbol_repository.h"
+#include "xla/service/xla_compile_result.pb.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor_pimpl.h"
@@ -52,7 +56,10 @@ limitations under the License.
 #include "tsl/platform/init_main.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"
+#include "tsl/platform/status_to_from_proto.h"
+#include "tsl/platform/types.h"
 #include "tsl/util/command_line_flags.h"
+#include "tsl/util/proto/proto_utils.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/service/gpu/autotuner_util.h"
@@ -204,7 +211,7 @@ Status XlaCompileMain(
     const std::string& platform, const std::string& gpu_target_config_path,
     const std::string& autotune_results_path, const std::string& symbol_repo,
     const std::string& symbol_id, const bool use_attached_device,
-    const bool wait_for_uploads) {
+    const bool wait_for_uploads, const std::string& result_output_file) {
   std::unique_ptr<HloModule> hlo_module;
   std::unique_ptr<Compiler::TargetConfig> target_config;
   if (!symbol_id.empty()) {
@@ -227,10 +234,39 @@ Status XlaCompileMain(
     TF_ASSIGN_OR_RETURN(hlo_module, LoadModule(module_path));
   }
 
+  const absl::Time start = absl::Now();
+  absl::Time end;
+  CompilationResult compilation_result;
+  absl::Cleanup cleanup([&result_output_file, &compilation_result, &start,
+                         &end] {
+    if (result_output_file.empty()) {
+      return;
+    }
+
+    if (end == absl::Time()) {
+      end = absl::Now();
+    }
+
+    const absl::Duration duration = end - start;
+
+    *compilation_result.mutable_perf_stats()->mutable_compilation_duration() =
+        tsl::proto_utils::ToDurationProto(duration);
+    *compilation_result.mutable_perf_stats()->mutable_total_duration() =
+        tsl::proto_utils::ToDurationProto(duration);
+
+    TF_CHECK_OK(tsl::WriteBinaryProto(tsl::Env::Default(), result_output_file,
+                                      compilation_result));
+  });
   // Run AOT compilation.
   std::string result;
   if (platform == "cpu") {
-    TF_ASSIGN_OR_RETURN(result, AotCompileCpuExecutable(std::move(hlo_module)));
+    auto compile_result = AotCompileCpuExecutable(std::move(hlo_module));
+    if (!compile_result.ok()) {
+      *compilation_result.mutable_status() =
+          tsl::StatusToProto(compile_result.status());
+      return compile_result.status();
+    }
+    result = *compile_result;
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   } else if (platform == "gpu") {
     if (!gpu_target_config_path.empty()) {
@@ -258,8 +294,13 @@ Status XlaCompileMain(
     std::optional<Compiler::TargetConfig> cfg =
         (use_attached_device) ? std::nullopt
                               : std::make_optional(*std::move(target_config));
-    TF_ASSIGN_OR_RETURN(result,
-                        CompileGpuExecutable(std::move(hlo_module), cfg));
+    auto compile_result = CompileGpuExecutable(std::move(hlo_module), cfg);
+    if (!compile_result.ok()) {
+      *compilation_result.mutable_status() =
+          tsl ::StatusToProto(compile_result.status());
+      return compile_result.status();
+    }
+    result = *compile_result;
 #endif
   } else {
     return Unimplemented("platform %s not supported", platform);
@@ -289,6 +330,7 @@ int main(int argc, char* argv[]) {
   std::string symbol_id;
   bool use_attached_device = false;
   bool wait_for_uploads = false;
+  std::string result_output_file;
   std::vector<tsl::Flag> flag_list = {
       tsl::Flag("module_file", &module_path,
                 "The path to the HLO, MHLO or StableHLO file"),
@@ -316,6 +358,8 @@ int main(int argc, char* argv[]) {
       tsl::Flag("wait_for_uploads", &wait_for_uploads,
                 "Whether to wait for uploads to a symbol repository to "
                 "complete. See export_hlo.h for more on uploads."),
+      tsl::Flag("result_output_file", &result_output_file,
+                "File to write a serialized xla.CompilationResult proto to."),
   };
 
   tsl::string usage = xla::xla_compile::kUsageHeader;
@@ -333,7 +377,7 @@ int main(int argc, char* argv[]) {
   xla::Status result = xla::xla_compile::XlaCompileMain(
       module_path, output_path, platform, gpu_target_config_path,
       autotune_results_path, symbol_repository, symbol_id, use_attached_device,
-      wait_for_uploads);
+      wait_for_uploads, result_output_file);
   if (!result.ok()) {
     LOG(ERROR) << "Compilation failed: " << result;
     return 1;
