@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-
 load("//xla:pytype.default.bzl", "pytype_strict_library")
 # Placeholder: load py_test
 
