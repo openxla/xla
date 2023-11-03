@@ -2,7 +2,7 @@
 """
 
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda_is_configured", "cuda_library")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")  
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")  # copybara:comment
 
 def get_cub_sort_kernel_types(name = ""):
     """ List of supported types for CUB sort kernels.
