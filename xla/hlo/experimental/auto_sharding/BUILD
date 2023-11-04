@@ -30,7 +30,6 @@ cc_library(
         ":auto_sharding_cost_graph",
         ":auto_sharding_option",
         ":auto_sharding_solver",
-        ":auto_sharding_solver_option",
         ":auto_sharding_strategy",
         ":auto_sharding_util",
         ":auto_sharding_wrapper",
@@ -199,11 +198,6 @@ cc_library(
     name = "profiling_result",
     hdrs = ["profiling_result.h"],
     deps = [":auto_sharding_strategy"],
-)
-
-cc_library(
-    name = "auto_sharding_solver_option",
-    hdrs = ["auto_sharding_solver_option.h"],
 )
 
 cc_library(
