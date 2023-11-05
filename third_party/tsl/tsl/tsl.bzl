@@ -554,7 +554,7 @@ def tsl_pybind_extension_opensource(
         module_name = None,  # @unused
         hdrs = [],
         dynamic_deps = [],
-        static_deps = [],
+        static_deps = None,
         deps = [],
         additional_exported_symbols = [],
         compatible_with = None,
@@ -643,7 +643,6 @@ def tsl_pybind_extension_opensource(
             name = so_file,
             roots = [cc_library_name],
             dynamic_deps = dynamic_deps,
-            static_deps = static_deps,
             additional_linker_inputs = [exported_symbols_file, version_script_file],
             compatible_with = compatible_with,
             deprecation = deprecation,
