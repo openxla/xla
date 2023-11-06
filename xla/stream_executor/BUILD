@@ -419,6 +419,7 @@ cc_library(
     name = "command_buffer",
     srcs = ["command_buffer.cc"],
     hdrs = ["command_buffer.h"],
+    visibility = [":internal"],
     deps = [
         ":stream_executor_headers",
         ":stream_executor_internal",
@@ -484,7 +485,7 @@ cc_library(
     name = "kernel",
     srcs = ["kernel.cc"],
     hdrs = ["kernel.h"],
-    visibility = ["//visibility:private"],
+    visibility = [":internal"],
     deps = [
         ":device_memory",
         ":platform",
