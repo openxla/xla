@@ -646,6 +646,13 @@ GpuDriver::GraphNodeGetType(hipGraphNode_t node) {
   return ::tsl::OkStatus();
 }
 
+/* static */ tsl::Status GpuDriver::DeviceGraphMemTrim(GpuDeviceHandle device) {
+  VLOG(2) << "Trim ROCM device graph memory " << device;
+  RETURN_IF_ROCM_ERROR(hipDeviceGraphMemTrim(device),
+                           "Failed to trim device graph memory");
+  return tsl::OkStatus();
+}
+
 /* static */ tsl::StatusOr<bool> GpuDriver::StreamIsCapturing(
     GpuStreamHandle stream) {
   VLOG(2) << "Checking if stream " << stream << " is capturing";
