@@ -12,7 +12,7 @@ def _container_image_uri(container_name):
     container = containers[container_name]
     return "docker://%s/%s@%s" % (container["registry"], container["repository"], container["digest"])
 
-def _tensorflow_rbe_config(name, compiler, python_versions, os, rocm_version = None, cuda_version = None, cudnn_version = None, tensorrt_version = None, tensorrt_install_path = None, cudnn_install_path = None, compiler_prefix = None, sysroot = None, python_install_path = "/usr"):
+def _tensorflow_rbe_config(name, compiler, python_versions, os, rocm_version = None, cuda_version = None, cudnn_version = None, tensorrt_version = None, tensorrt_install_path = None, cudnn_install_path = None, compiler_prefix = None, sysroot = None, python_install_path = "/usr", use_nvcc_for_cuda = False):
     if cuda_version != None and rocm_version != None:
         fail("Specifying both cuda_version and rocm_version is not supported.")
 
@@ -36,7 +36,7 @@ def _tensorflow_rbe_config(name, compiler, python_versions, os, rocm_version = N
         # so we do not fetch local_config_cc.
         env.update({
             "TF_NEED_CUDA": "1",
-            "TF_CUDA_CLANG": "1" if compiler.endswith("clang") else "0",
+            "TF_CUDA_CLANG": "1" if (compiler.endswith("clang") and not use_nvcc_for_cuda) else "0",
             "TF_CUDA_COMPUTE_CAPABILITIES": "3.5,6.0",
             "TF_ENABLE_XLA": "1",
             "TF_CUDNN_VERSION": cudnn_version,
@@ -45,9 +45,9 @@ def _tensorflow_rbe_config(name, compiler, python_versions, os, rocm_version = N
             "TF_NEED_TENSORRT": "1",
             "TF_TENSORRT_VERSION": tensorrt_version if tensorrt_version != None else "",
             "TENSORRT_INSTALL_PATH": tensorrt_install_path if tensorrt_install_path != None else "/usr/lib/x86_64-linux-gnu",
-            "GCC_HOST_COMPILER_PATH": compiler if not compiler.endswith("clang") else "",
+            "GCC_HOST_COMPILER_PATH": compiler if (not compiler.endswith("clang") or use_nvcc_for_cuda) else "",
             "GCC_HOST_COMPILER_PREFIX": compiler_prefix if compiler_prefix != None else "/usr/bin",
-            "CLANG_CUDA_COMPILER_PATH": compiler if compiler.endswith("clang") else "",
+            "CLANG_CUDA_COMPILER_PATH": compiler if (compiler.endswith("clang") and not use_nvcc_for_cuda) else "",
             "TF_SYSROOT": sysroot if sysroot else "",
         })
 

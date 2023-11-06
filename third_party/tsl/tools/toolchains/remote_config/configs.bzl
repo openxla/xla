@@ -187,6 +187,7 @@ def initialize_rbe_configs():
         python_versions = ["3.9", "3.10", "3.11", "3.12"],
         sysroot = "/dt9",
         python_install_path = "/usr/local",
+        use_nvcc_for_cuda = True,
     )
 
     tensorflow_rbe_config(
