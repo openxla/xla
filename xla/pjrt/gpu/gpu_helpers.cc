@@ -72,7 +72,8 @@ void EnablePeerAccess(absl::Span<se::StreamExecutor* const> executors) {
 
 // Builds a BFCAllocator for all local GPUs.
 StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
-    se::StreamExecutor* executor, double memory_fraction, bool preallocate) {
+    se::StreamExecutor* executor, double memory_fraction, bool preallocate,
+    bool garbage_collection) {
   bool enable_unified_memory;
   Status status = tsl::ReadBoolFromEnvVar("TF_FORCE_UNIFIED_MEMORY", false,
                                           &enable_unified_memory);
@@ -111,6 +112,7 @@ StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
 
   tsl::BFCAllocator::Options opts;
   opts.allow_growth = !preallocate;
+  opts.garbage_collection = garbage_collection;
   return std::make_unique<tsl::BFCAllocator>(
       std::move(sub_allocator), allocator_memory,
       absl::StrCat("GPU_", device_ordinal, "_bfc"), opts);

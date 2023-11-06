@@ -2019,7 +2019,7 @@ StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::CreateAssignment(
       buffers_to_assign_sequentially.size() == global_computations.size();
   VLOG(2) << "Running whole module heap simulation: "
           << run_whole_module_heap_simulation;
-  const int32_t multiheap_size_constraint_per_heap =
+  const int64_t multiheap_size_constraint_per_heap =
       module->config().debug_options().xla_multiheap_size_constraint_per_heap();
   VLOG(2) << "Multiheap per heap size limit: "
           << multiheap_size_constraint_per_heap;

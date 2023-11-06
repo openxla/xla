@@ -530,7 +530,7 @@ class BufferAssignment {
         color_alignment_(std::move(color_alignment)),
         alias_analysis_(std::move(alias_analysis)),
         hlo_live_range_(std::move(hlo_live_range)) {
-    int32_t raw_value = module->config()
+    int64_t raw_value = module->config()
                             .debug_options()
                             .xla_multiheap_size_constraint_per_heap();
     // -1 means no constraint.

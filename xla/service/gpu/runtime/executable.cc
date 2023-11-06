@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/stream_synchronization.h"
 #include "xla/service/gpu/runtime/support.h"
 #include "xla/service/gpu/runtime/topk.h"
+#include "xla/service/gpu/runtime/resize_bicubic.h"
 #include "xla/service/gpu/runtime/tracing.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/service_executable_run_options.h"
@@ -87,6 +88,7 @@ void RegisterXlaGpuRuntimeCustomCalls(DirectCustomCallRegistry& registry) {
   RegisterMemsetCustomCalls(registry);
   RegisterSendRecvCustomCalls(registry);
   RegisterTopkCustomCall(registry);
+  RegisterResizeBicubicCustomCall(registry);
 
 #if GOOGLE_CUDA || TF_HIPBLASLT
   RegisterMatmulCustomCalls(registry);

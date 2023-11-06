@@ -257,6 +257,7 @@ cc_library(
         ":stream_synchronization",
         ":support",
         ":topk",
+        ":resize_bicubic",
         ":tracing",
         "//xla:statusor",
         "//xla:xla_proto_cc",
@@ -413,6 +414,85 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "resize_bicubic_kernel",
+    srcs = if_cuda_is_configured(
+        [
+            "resize_bicubic_kernel.cc",
+        ],
+    ),
+    hdrs = if_cuda_is_configured(["resize_bicubic_kernel.h"]),
+    compatible_with = [],
+    deps = [
+        ":resize_bicubic_kernel_cuda",
+        # "//xla:shape_util",
+        "//xla:xla_proto_cc",
+        "//xla:xla_data_proto_cc",
+        "//xla/runtime:memref_view",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_headers",  # build_cleaner: keep
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "@com_google_absl//absl/numeric:bits",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cuda_library(
+    name = "resize_bicubic_kernel_cuda",
+    srcs = if_cuda_is_configured(
+        [
+            "resize_bicubic_kernel.cu.cc",
+        ],
+    ),
+    hdrs = if_cuda_is_configured(["resize_bicubic_kernel_common.h"]),
+    compatible_with = [],
+    deps = [
+        "@eigen_archive//:eigen3",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+
+cc_library(
+    name = "resize_bicubic",
+    srcs = if_cuda_is_configured(
+        ["resize_bicubic.cc"],
+    ),
+    hdrs = ["resize_bicubic.h"],
+    deps = if_cuda_is_configured([":resize_bicubic_kernel"]) + [
+        ":support",
+        "//xla:executable_run_options",
+        # "//xla:shape_util",
+        "//xla:status",
+        "//xla:statusor",
+        # "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        # "//xla/mlir/runtime/transforms:custom_call_encoding",
+        "//xla/runtime:custom_call",
+        "//xla/runtime:custom_call_registry",
+        "//xla/runtime:executable",
+        "//xla/runtime:state",
+        # "//xla/runtime/ffi:ffi_api",
+        # "//xla/runtime/ffi:ffi_c_api_hdrs",
+        "//xla/service:executable",
+        "//xla/service:hlo_pass",
+        "//xla/service:tuple_util",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:statusor",
     ],
 )

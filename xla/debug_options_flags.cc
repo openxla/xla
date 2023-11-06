@@ -794,7 +794,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "this flag to false."));
   flag_list->push_back(tsl::Flag(
       "xla_multiheap_size_constraint_per_heap",
-      int32_setter_for(
+      int64_setter_for(
           &DebugOptions::set_xla_multiheap_size_constraint_per_heap),
       debug_options->xla_multiheap_size_constraint_per_heap(),
       "Generates multiple heaps (i.e., temp buffers) with a size "

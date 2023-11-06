@@ -348,7 +348,7 @@ message DebugOptions {
 
   // Per-heap size constraint. New heaps will be created if per-heap max size is
   // reached.
-  int32 xla_multiheap_size_constraint_per_heap = 142;
+  int64 xla_multiheap_size_constraint_per_heap = 142;
 
   reserved 143;  // Was xla_detailed_logging_and_dumping
 

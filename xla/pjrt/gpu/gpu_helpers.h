@@ -57,6 +57,9 @@ struct GpuAllocatorConfig {
   // fragmentation, allowing more of the total memory to be used. If false, the
   // allocator will allocate more memory as allocations are requested.
   bool preallocate = true;
+
+  // activate garbage collection or not
+  bool garbage_collection = false;
 };
 
 std::unique_ptr<tsl::BFCAllocator> GetGpuHostAllocator(
@@ -64,7 +67,8 @@ std::unique_ptr<tsl::BFCAllocator> GetGpuHostAllocator(
 
 // Builds a BFCAllocator for all local GPUs.
 StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
-    se::StreamExecutor* executor, double memory_fraction, bool preallocate);
+    se::StreamExecutor* executor, double memory_fraction, bool preallocate,
+    bool garbage_collection);
 
 }  // namespace xla
 
