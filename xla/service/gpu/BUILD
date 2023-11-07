@@ -3387,15 +3387,13 @@ xla_cc_test(
     ],
 )
 
-cuda_library(
+cc_library(
     name = "buffer_comparator",
-    srcs = if_cuda_is_configured([
-        "buffer_comparator.cc",
-        "buffer_comparator.cu.cc",
-    ]),
+    srcs = if_cuda_is_configured(["buffer_comparator.cc"]),
     hdrs = if_cuda_is_configured(["buffer_comparator.h"]),
     deps = if_cuda_is_configured([
         ":launch_dimensions",
+        ":buffer_comparator_kernel",
         ":gpu_asm_opts_util",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
@@ -3409,6 +3407,12 @@ cuda_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:errors",
     ]),
+)
+
+cuda_library(
+    name = "buffer_comparator_kernel",
+    srcs = if_cuda_is_configured(["buffer_comparator.cu.cc"]),
+    deps = ["@local_config_cuda//cuda:cuda_headers"],
 )
 
 xla_cc_test(
