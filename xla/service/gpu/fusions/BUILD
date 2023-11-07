@@ -143,6 +143,7 @@ cc_library(
     name = "reduction",
     srcs = ["reduction.cc"],
     hdrs = ["reduction.h"],
+    visibility = ["//xla/service/gpu:__subpackages__"],
     deps = [
         ":fusion_emitter",
         ":thunk_util",
@@ -161,6 +162,7 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter",
         "//xla/service/gpu:ir_emitter_context",
+        "//xla/service/gpu:kernel_arguments",
         "//xla/service/gpu:kernel_reuse_cache",
         "//xla/service/gpu:parallel_loop_emitter",
         "//xla/service/gpu:reduction_utils",
