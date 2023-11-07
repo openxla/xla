@@ -856,7 +856,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_force_compilation_parallelism),
       debug_options->xla_gpu_force_compilation_parallelism(),
       "Overrides normal multi-threaded compilation setting to use this many "
-      "threads. Setting to 0 (the default value) means no enforcement."));
+      "threads. Setting to 0 (the default value) means no enforcement. This "
+      "doesn't affect autotuning."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_force_autotuning_parallelism",
+      int32_setter_for(&DebugOptions::set_xla_gpu_force_autotuning_parallelism),
+      debug_options->xla_gpu_force_autotuning_parallelism(),
+      "Overrides normal multi-threaded compilation setting to use this many "
+      "threads in autotuning. Setting to 0 (the default value) means no "
+      "enforcement."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_deterministic_ops",
                 bool_setter_for(&DebugOptions::set_xla_gpu_deterministic_ops),

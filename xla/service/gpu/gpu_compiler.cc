@@ -313,6 +313,24 @@ class GpuAotCompilationResult : public AotCompilationResult {
   XlaRuntimeGpuExecutableProto xla_runtime_gpu_executable_;
 };
 
+// Depending on `num_threads` either return an existing thread pool, or none, or
+// create a new one.
+tsl::thread::ThreadPool* GetThreadPool(
+    tsl::thread::ThreadPool* existing_thread_pool,
+    std::optional<tsl::thread::ThreadPool>& overriding_thread_pool,
+    absl::string_view overriding_thread_pool_name, int num_threads) {
+  if (num_threads == 0) {
+    return existing_thread_pool;
+  }
+  if (num_threads == 1) {
+    return nullptr;
+  }
+  overriding_thread_pool.emplace(tsl::Env::Default(),
+                                 std::string(overriding_thread_pool_name),
+                                 num_threads);
+  return &*overriding_thread_pool;
+}
+
 }  // end anonymous namespace
 
 StatusOr<std::unique_ptr<Executable>> GpuAotCompilationResult::LoadExecutable(
@@ -385,22 +403,16 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
                                       const TargetConfig& gpu_target_config) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
 
-  // By default use an externally provided thread pool.
-  tsl::thread::ThreadPool* thread_pool = options.thread_pool;
   std::optional<tsl::thread::ThreadPool> overriding_thread_pool;
-  int num_threads = hlo_module->config()
-                        .debug_options()
-                        .xla_gpu_force_compilation_parallelism();
-  // If an external thread pool is provided or single-threaded operation is
-  // requested do not create a thread pool.
-  if (thread_pool == nullptr && num_threads != 1) {
-    // Zero means "default", treat it as "max parallelism" here.
-    if (num_threads == 0) {
-      num_threads = tsl::port::MaxParallelism();
-    }
-    overriding_thread_pool.emplace(tsl::Env::Default(), "", num_threads);
-    thread_pool = &*overriding_thread_pool;
+  int num_threads = debug_options.xla_gpu_force_autotuning_parallelism();
+  // If an external thread pool is not provided, use maximum parallelism by
+  // default.
+  if (options.thread_pool == nullptr && num_threads == 0) {
+    num_threads = tsl::port::MaxParallelism();
   }
+  tsl::thread::ThreadPool* thread_pool =
+      GetThreadPool(options.thread_pool, overriding_thread_pool,
+                    "xla_gpu_autotuning", num_threads);
 
   AlgebraicSimplifierOptions layout_insensitive_algsimp_opts({},
                                                              ConvIsLowerable);
@@ -1440,24 +1452,10 @@ GpuCompiler::CompileToTargetBinary(const HloModuleConfig& module_config,
                                  /*shard_number=*/std::nullopt);
   }
 
-  tsl::thread::ThreadPool* thread_pool;
   std::optional<tsl::thread::ThreadPool> overriding_thread_pool;
-  switch (
-      module_config.debug_options().xla_gpu_force_compilation_parallelism()) {
-    case 0:
-      thread_pool = options.thread_pool;
-      break;
-    case 1:
-      thread_pool = nullptr;
-      break;
-    default:
-      overriding_thread_pool.emplace(
-          tsl::Env::Default(), "",
-          module_config.debug_options()
-              .xla_gpu_force_compilation_parallelism());
-      thread_pool = &*overriding_thread_pool;
-      break;
-  }
+  tsl::thread::ThreadPool* thread_pool = GetThreadPool(
+      options.thread_pool, overriding_thread_pool, "xla_gpu_compilation",
+      module_config.debug_options().xla_gpu_force_compilation_parallelism());
 
   if (!thread_pool) {
     return compile_single_module(llvm_module.get(), /*relocatable=*/false,

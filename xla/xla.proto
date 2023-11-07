@@ -360,8 +360,14 @@ message DebugOptions {
   bool xla_enable_dumping = 253;
 
   // Overrides normal multi-threaded compilation setting to use this many
-  // threads. Setting to 0 (the default value) means no enforcement.
+  // threads. Setting to 0 (the default value) means no enforcement. This
+  // doesn't affect autotuning.
   int32 xla_gpu_force_compilation_parallelism = 147;
+
+  // Overrides normal multi-threaded compilation setting to use this many
+  // threads in autotuning. Setting to 0 (the default value) means no
+  // enforcement.
+  int32 xla_gpu_force_autotuning_parallelism = 263;
 
   // Guarantees run-to-run determinism. At present, the HLO ops Scatter and
   // SelectAndScatter do not have deterministic XLA:GPU implementations.
@@ -663,7 +669,7 @@ message DebugOptions {
   // Enable radix sort using CUB.
   bool xla_gpu_enable_cub_radix_sort = 259;
 
-  // Next id: 263
+  // Next id: 264
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
