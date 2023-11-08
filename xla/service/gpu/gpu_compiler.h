@@ -82,12 +82,6 @@ class GpuCompiler : public LLVMCompiler {
   CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
                      AotCompilationOptions const& options) override;
 
-  StatusOr<std::pair<std::string, std::vector<uint8_t>>> CompileToTargetBinary(
-      const HloModuleConfig& module_config,
-      std::unique_ptr<llvm::Module> llvm_module,
-      se::GpuComputeCapability gpu_version, se::StreamExecutor* stream_exec,
-      const CompileOptions& options, const HloModule* debug_module);
-
   se::Platform::Id PlatformId() const override { return platform_id_; }
 
   HloCostAnalysis::ShapeSizeFunction ShapeSizeBytesFunction() const override;
@@ -108,6 +102,11 @@ class GpuCompiler : public LLVMCompiler {
                                     int64_t scheduler_mem_limit) const;
 
  protected:
+  struct BackendCompileResult {
+    std::string asm_text;
+    std::vector<uint8_t> binary;
+  };
+
   // During compilation with device, stream_exec != null and autotune_results
   // == null. During deviceless AOT compilation, stream_exec == null and
   // autotune_results != null.
@@ -149,6 +148,17 @@ class GpuCompiler : public LLVMCompiler {
   }
 
  private:
+  StatusOr<BackendCompileResult> CompileToTargetBinary(
+      const HloModuleConfig& module_config, llvm::Module* llvm_module,
+      se::GpuComputeCapability gpu_version, se::StreamExecutor* stream_exec,
+      const CompileOptions& options, const HloModule* debug_module);
+
+  StatusOr<BackendCompileResult> CompileSingleModule(
+      const HloModuleConfig& module_config,
+      se::GpuComputeCapability gpu_version, const HloModule* debug_module,
+      llvm::Module* llvm_module, bool relocatable,
+      const CompileOptions& options, std::optional<int> shard_number);
+
   Status LoadAutotuneResultsFromFile(const DebugOptions& debug_options);
   Status SerializeAutotuneResultsToFile(const DebugOptions& debug_options);
 
@@ -171,12 +181,10 @@ class GpuCompiler : public LLVMCompiler {
 
   // TODO(timshen): Replace `debug_module` with some portable debug information
   // that accommodates both HLO and MLIR.
-  virtual StatusOr<std::pair<std::string, std::vector<uint8_t>>>
-  CompileTargetBinary(const HloModuleConfig& module_config,
-                      llvm::Module* llvm_module,
-                      se::GpuComputeCapability gpu_version, bool relocatable,
-                      const HloModule* debug_module,
-                      const CompileOptions& options) = 0;
+  virtual StatusOr<BackendCompileResult> CompileTargetBinary(
+      const HloModuleConfig& module_config, llvm::Module* llvm_module,
+      se::GpuComputeCapability gpu_version, bool relocatable,
+      const HloModule* debug_module, const CompileOptions& options) = 0;
 
   Status PrepareHloModuleForIrEmitting(HloModule* hlo_module);
 
