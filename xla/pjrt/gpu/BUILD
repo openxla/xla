@@ -296,7 +296,6 @@ xla_cc_test(
     deps = [
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler",
-        "//third_party/protobuf",
         "//xla:literal",
         "//xla:literal_util",
         "//xla/client:xla_computation",
@@ -320,6 +319,7 @@ xla_cc_test(
         "@llvm-project//mlir:Parser",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
