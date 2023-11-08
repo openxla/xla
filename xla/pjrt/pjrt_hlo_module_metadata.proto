@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package xla;
+
+import "xla/service/hlo.proto";
+import "xla/xla_data.proto";
+
+message ShardedProgramShapeProto {
+  repeated ShapeProto argument_shapes = 1;
+  ShapeProto result_shape = 2;
+}
+
+message PjrtHloModuleMetadataProto {
+  string name = 1;
+  int64 entry_computation_id = 2;
+  HloInputOutputAliasProto input_output_alias_config = 3;
+  ProgramShapeProto host_program_shape = 4;
+  ShardedProgramShapeProto sharded_program_shape = 5;
+  int32 launch_id = 6;
+  int64 replica_count = 7;
+  int64 num_partitions = 8;
+  int64 num_parameters = 9;
+  ShapeProto hlo_first_parameter_instruction_shape = 10;
+  ShapeProto hlo_first_root_instruction_shape = 11;
+}

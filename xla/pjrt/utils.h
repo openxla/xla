@@ -26,7 +26,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/xla_computation.h"
-#include "xla/hlo/ir/hlo_module.h"
+#include "xla/pjrt/pjrt_hlo_module_metadata.h"
+#include "xla/pjrt/pjrt_hlo_module_metadata.pb.h"
 #include "xla/service/computation_placer.h"
 #include "xla/shape.h"
 #include "xla/status.h"
@@ -54,12 +55,26 @@ Status DetermineArgumentLayoutsFromCompileOptions(
     ExecutableBuildOptions* build_options,
     std::vector<const Shape*>* argument_layout_pointers);
 
+// Returns pointers to the argument layouts given a PjrtHloModuleMetadataProto
+// and ExecutableBuildOptions.
+Status DetermineArgumentLayoutsFromCompileOptions(
+    const PjrtHloModuleMetadataProto& metadata,
+    std::function<StatusOr<Shape>(Shape)>
+        choose_compact_layout_for_shape_function,
+    std::optional<std::vector<Shape>>& argument_layouts,
+    ExecutableBuildOptions* build_options,
+    std::vector<const Shape*>* argument_layout_pointers);
+
 // Executables can donate buffers so that buffers can be aliased from inputs
 // to outputs. This function returns a sorted vector of parameters that must be
 // donated when executable is run. tuple_inputs reflects the option that
 // executable was compiled with.
 StatusOr<std::vector<int>> ComputeParametersThatMustBeDonated(
-    const HloModule& hlo_module, bool tuple_inputs);
+    const HloModule& module, bool tuple_inputs);
+
+// Same functionality as above but takes hlo module metadata as input.
+StatusOr<std::vector<int>> ComputeParametersThatMustBeDonated(
+    const PjrtHloModuleMetadata& hlo_module_metadata, bool tuple_inputs);
 
 // Return max parallelism level.
 int DefaultThreadPoolSize();

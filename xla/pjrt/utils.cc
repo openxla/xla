@@ -33,9 +33,9 @@ limitations under the License.
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
-#include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/layout_util.h"
+#include "xla/pjrt/pjrt_hlo_module_metadata.h"
+#include "xla/pjrt/pjrt_hlo_module_metadata.pb.h"
 #include "xla/primitive_util.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
@@ -54,76 +54,160 @@ limitations under the License.
 namespace xla {
 
 namespace {
-StatusOr<Shape> GetShardedShape(const Shape& shape,
-                                const OpSharding& sharding) {
-  TF_ASSIGN_OR_RETURN(HloSharding hlo_sharding,
-                      HloSharding::FromProto(sharding));
-  if (shape.IsTuple()) {
-    Shape sharded_shape = shape;
-    ShapeUtil::ForEachMutableSubshape(
-        &sharded_shape, [&](Shape* subshape, const ShapeIndex& index) {
-          if (!subshape->IsTuple()) {
-            HloSharding subsharding = hlo_sharding.GetSubSharding(shape, index);
-            *subshape = subsharding.TileShape(*subshape);
-          }
-        });
-    return sharded_shape;
-  } else {
-    return hlo_sharding.TileShape(shape);
-  }
-}
-
-StatusOr<Shape> GetShardedShape(const HloInstructionProto& instr) {
-  const Shape unsharded_shape(instr.shape());
-  Shape sharded_shape;
-  if (instr.has_sharding()) {
-    TF_ASSIGN_OR_RETURN(sharded_shape,
-                        GetShardedShape(unsharded_shape, instr.sharding()));
-  } else {
-    sharded_shape = unsharded_shape;
-  }
-  LayoutUtil::ClearLayout(&sharded_shape);
-  return sharded_shape;
-}
-
-// Returns sharded (argument shapes, result shape) without layouts.
 StatusOr<std::pair<std::vector<Shape>, Shape>> GetShardedProgramShapes(
     const XlaComputation& computation, const ProgramShape& program_shape) {
-  std::vector<Shape> arg_shapes;
-  arg_shapes.resize(program_shape.parameters_size());
-  Shape result_shape;
-  for (const HloComputationProto& comp : computation.proto().computations()) {
-    if (comp.id() != computation.proto().entry_computation_id()) {
-      continue;
-    }
-    for (const HloInstructionProto& instr : comp.instructions()) {
-      if (instr.opcode() == HloOpcodeString(HloOpcode::kParameter)) {
-        if (instr.parameter_number() >= program_shape.parameters_size()) {
-          return InvalidArgument(
-              "Got invalid parameter number %d, expected %d parameters",
-              instr.parameter_number(), program_shape.parameters_size());
-        }
-        TF_ASSIGN_OR_RETURN(arg_shapes[instr.parameter_number()],
-                            GetShardedShape(instr));
-      }
-      if (instr.id() == comp.root_id()) {
-        if (result_shape.element_type() != PRIMITIVE_TYPE_INVALID) {
-          return InvalidArgument("Found multiple root instructions");
-        }
-        TF_ASSIGN_OR_RETURN(result_shape, GetShardedShape(instr));
-      }
-    }
-  }
-  for (int i = 0; i < arg_shapes.size(); ++i) {
-    if (arg_shapes[i].element_type() == PRIMITIVE_TYPE_INVALID) {
-      return InvalidArgument("Couldn't find parameter %d", i);
-    }
-  }
-  if (result_shape.element_type() == PRIMITIVE_TYPE_INVALID) {
-    return InvalidArgument("Couldn't find root instruction");
-  }
-  return std::make_pair(arg_shapes, result_shape);
+  return GetShardedProgramShapesHelper(
+      computation.proto().computations(),
+      computation.proto().entry_computation_id(), program_shape);
 }
+
+std::pair<std::vector<Shape>, Shape> CreateShardedProgramShape(
+    const PjrtHloModuleMetadataProto& metadata) {
+  std::vector<Shape> argument_shapes;
+  for (const ShapeProto& shape :
+       metadata.sharded_program_shape().argument_shapes()) {
+    argument_shapes.push_back(Shape(shape));
+  }
+  return std::make_pair(argument_shapes,
+                        Shape(metadata.sharded_program_shape().result_shape()));
+}
+
+Status PrepareArgumentLayout(
+    ProgramShape program_shape,
+    std::optional<std::vector<Shape>>& argument_layouts) {
+  if (!argument_layouts) {
+    argument_layouts.emplace(program_shape.parameters());
+    for (Shape& shape : *argument_layouts) {
+      LayoutUtil::ClearLayout(&shape);
+    }
+  } else if (argument_layouts->size() != program_shape.parameters_size()) {
+    return InvalidArgument(
+        "CompileOptions specify %d argument layouts, but computation has %d "
+        "arguments",
+        argument_layouts->size(), program_shape.parameters_size());
+  }
+  return OkStatus();
+}
+
+Status DetermineArgumentLayoutsFromCompileOptions(
+    ProgramShape program_shape,
+    StatusOr<std::pair<std::vector<Shape>, Shape>> sharded_program_shapes,
+    std::function<StatusOr<Shape>(Shape)>
+        choose_compact_layout_for_shape_function,
+    std::optional<std::vector<Shape>>& argument_layouts,
+    ExecutableBuildOptions* build_options,
+    std::vector<const Shape*>* argument_layout_pointers) {
+  argument_layout_pointers->reserve(argument_layouts->size());
+
+  // Assign a default layout based on `sharded_shape` to any array subshapes in
+  // `dst_shape` that are missing layouts.
+  auto assign_layouts = [&choose_compact_layout_for_shape_function](
+                            const Shape& sharded_shape, Shape* dst_shape) {
+    return ShapeUtil::ForEachMutableSubshapeWithStatus(
+        dst_shape, [&](Shape* subshape, const ShapeIndex& idx) {
+          if (subshape->IsArray() && !subshape->has_layout()) {
+            CHECK(ShapeUtil::IndexIsValid(sharded_shape, idx));
+            const Shape& sharded_subshape =
+                ShapeUtil::GetSubshape(sharded_shape, idx);
+            LayoutUtil::SetToDefaultLayout(subshape);
+            TF_ASSIGN_OR_RETURN(
+                Shape layout,
+                choose_compact_layout_for_shape_function(sharded_subshape));
+            *subshape->mutable_layout() = layout.layout();
+          }
+          return OkStatus();
+        });
+  };
+  TF_ASSIGN_OR_RETURN(auto sharded_shapes, sharded_program_shapes);
+
+  CHECK_EQ(sharded_shapes.first.size(), argument_layouts->size());
+  for (int i = 0; i < argument_layouts->size(); ++i) {
+    Shape* layout = &(*argument_layouts)[i];
+    argument_layout_pointers->push_back(layout);
+    TF_RETURN_IF_ERROR(assign_layouts(sharded_shapes.first[i], layout));
+  }
+
+  Shape result_layout;
+  if (build_options->result_layout()) {
+    result_layout = *build_options->result_layout();
+  } else {
+    result_layout = program_shape.result();
+    LayoutUtil::ClearLayout(&result_layout);
+  }
+  TF_RETURN_IF_ERROR(assign_layouts(sharded_shapes.second, &result_layout));
+  build_options->set_result_layout(result_layout);
+  return OkStatus();
+}
+int DetermineNumberOfParameters(
+    const PjrtHloModuleMetadata& hlo_module_metadata, bool tuple_inputs) {
+  if (tuple_inputs) {
+    CHECK_EQ(hlo_module_metadata.num_parameters(), 1);
+    const Shape& input_tuple_shape =
+        hlo_module_metadata.hlo_first_parameter_instruction_shape();
+    CHECK(input_tuple_shape.IsTuple());
+    return input_tuple_shape.tuple_shapes_size();
+  } else {
+    return hlo_module_metadata.num_parameters();
+  }
+}
+
+int DetermineNumberOfParameters(HloComputation* computation,
+                                bool tuple_inputs) {
+  if (tuple_inputs) {
+    CHECK_EQ(computation->num_parameters(), 1);
+    const Shape& input_tuple_shape =
+        computation->parameter_instruction(0)->shape();
+    CHECK(input_tuple_shape.IsTuple());
+    return input_tuple_shape.tuple_shapes_size();
+  } else {
+    return computation->num_parameters();
+  }
+}
+
+StatusOr<std::vector<int>> ComputeParametersThatMustBeDonated(
+    int num_parameters, int determined_number_of_parameters,
+    const HloInputOutputAliasConfig& config, bool tuple_inputs) {
+  // If any buffer in a parameter is aliased we will donate the entire input
+  // parameter.
+  std::vector<int> parameters_to_donate;
+  parameters_to_donate.reserve(num_parameters);
+  TF_RETURN_IF_ERROR(config.ForEachAliasWithStatus(
+      [&](const ShapeIndex& output_index,
+          const HloInputOutputAliasConfig::Alias& alias) {
+        if (tuple_inputs) {
+          if (alias.parameter_number != 0) {
+            return InvalidArgument(
+                "Unexpected parameter number %d in alias config with tupled "
+                "inputs",
+                alias.parameter_number);
+          }
+          const ShapeIndex& index = alias.parameter_index;
+          if (!index.empty()) {
+            int this_parameter = index.data()[0];
+            if (this_parameter >= determined_number_of_parameters) {
+              return InvalidArgument(
+                  "Unexpected parameter index %s in alias config with tupled "
+                  "inputs and %d parameters",
+                  index.ToString(), determined_number_of_parameters);
+            }
+            parameters_to_donate.push_back(this_parameter);
+          }
+        } else {
+          int this_parameter = alias.parameter_number;
+          if (this_parameter >= determined_number_of_parameters) {
+            return InvalidArgument(
+                "Unexpected parameter number %d in alias config without tupled "
+                "inputs and %d parameters",
+                this_parameter, determined_number_of_parameters);
+          }
+          parameters_to_donate.push_back(this_parameter);
+        }
+        return OkStatus();
+      }));
+  absl::c_sort(parameters_to_donate);
+  return parameters_to_donate;
+}
+
 }  // namespace
 
 Status ParseDeviceAssignmentCompileOptions(
@@ -176,114 +260,47 @@ Status DetermineArgumentLayoutsFromCompileOptions(
     std::vector<const Shape*>* argument_layout_pointers) {
   TF_ASSIGN_OR_RETURN(ProgramShape program_shape,
                       computation.GetProgramShape());
-  if (!argument_layouts) {
-    argument_layouts.emplace(program_shape.parameters());
-    for (Shape& shape : *argument_layouts) {
-      LayoutUtil::ClearLayout(&shape);
-    }
-  } else if (argument_layouts->size() != program_shape.parameters_size()) {
-    return InvalidArgument(
-        "CompileOptions specify %d argument layouts, but computation has %d "
-        "arguments",
-        argument_layouts->size(), program_shape.parameters_size());
-  }
-  argument_layout_pointers->reserve(argument_layouts->size());
+  TF_RETURN_IF_ERROR(PrepareArgumentLayout(program_shape, argument_layouts));
+  return DetermineArgumentLayoutsFromCompileOptions(
+      program_shape, GetShardedProgramShapes(computation, program_shape),
+      choose_compact_layout_for_shape_function, argument_layouts, build_options,
+      argument_layout_pointers);
+}
 
-  // Assign a default layout based on `sharded_shape` to any array subshapes in
-  // `dst_shape` that are missing layouts.
-  auto assign_layouts = [&choose_compact_layout_for_shape_function](
-                            const Shape& sharded_shape, Shape* dst_shape) {
-    return ShapeUtil::ForEachMutableSubshapeWithStatus(
-        dst_shape, [&](Shape* subshape, const ShapeIndex& idx) {
-          if (subshape->IsArray() && !subshape->has_layout()) {
-            CHECK(ShapeUtil::IndexIsValid(sharded_shape, idx));
-            const Shape& sharded_subshape =
-                ShapeUtil::GetSubshape(sharded_shape, idx);
-            LayoutUtil::SetToDefaultLayout(subshape);
-            TF_ASSIGN_OR_RETURN(
-                Shape layout,
-                choose_compact_layout_for_shape_function(sharded_subshape));
-            *subshape->mutable_layout() = layout.layout();
-          }
-          return OkStatus();
-        });
-  };
-  TF_ASSIGN_OR_RETURN(auto sharded_shapes,
-                      GetShardedProgramShapes(computation, program_shape));
+Status DetermineArgumentLayoutsFromCompileOptions(
+    const PjrtHloModuleMetadataProto& metadata,
+    std::function<StatusOr<Shape>(Shape)>
+        choose_compact_layout_for_shape_function,
+    std::optional<std::vector<Shape>>& argument_layouts,
+    ExecutableBuildOptions* build_options,
+    std::vector<const Shape*>* argument_layout_pointers) {
+  TF_RET_CHECK(metadata.has_host_program_shape());
+  const ProgramShape& program_shape =
+      ProgramShape(metadata.host_program_shape());
+  TF_RETURN_IF_ERROR(PrepareArgumentLayout(program_shape, argument_layouts));
+  return DetermineArgumentLayoutsFromCompileOptions(
+      program_shape, CreateShardedProgramShape(metadata),
+      choose_compact_layout_for_shape_function, argument_layouts, build_options,
+      argument_layout_pointers);
+}
 
-  CHECK_EQ(sharded_shapes.first.size(), argument_layouts->size());
-  for (int i = 0; i < argument_layouts->size(); ++i) {
-    Shape* layout = &(*argument_layouts)[i];
-    argument_layout_pointers->push_back(layout);
-    TF_RETURN_IF_ERROR(assign_layouts(sharded_shapes.first[i], layout));
-  }
-
-  Shape result_layout;
-  if (build_options->result_layout()) {
-    result_layout = *build_options->result_layout();
-  } else {
-    result_layout = program_shape.result();
-    LayoutUtil::ClearLayout(&result_layout);
-  }
-  TF_RETURN_IF_ERROR(assign_layouts(sharded_shapes.second, &result_layout));
-  build_options->set_result_layout(result_layout);
-  return OkStatus();
+StatusOr<std::vector<int>> ComputeParametersThatMustBeDonated(
+    const PjrtHloModuleMetadata& hlo_module_metadata, bool tuple_inputs) {
+  int determined_number_of_parameters =
+      DetermineNumberOfParameters(hlo_module_metadata, tuple_inputs);
+  return ComputeParametersThatMustBeDonated(
+      hlo_module_metadata.num_parameters(), determined_number_of_parameters,
+      hlo_module_metadata.hlo_input_output_alias_config(), tuple_inputs);
 }
 
 StatusOr<std::vector<int>> ComputeParametersThatMustBeDonated(
     const HloModule& module, bool tuple_inputs) {
   HloComputation* computation = module.entry_computation();
-  int number_of_parameters = [&]() -> int {
-    if (tuple_inputs) {
-      CHECK_EQ(computation->num_parameters(), 1);
-      const Shape& input_tuple_shape =
-          computation->parameter_instruction(0)->shape();
-      CHECK(input_tuple_shape.IsTuple());
-      return input_tuple_shape.tuple_shapes_size();
-    } else {
-      return computation->num_parameters();
-    }
-  }();
-  // If any buffer in a parameter is aliased we will donate the entire input
-  // parameter.
-  std::vector<int> parameters_to_donate;
-  parameters_to_donate.reserve(computation->num_parameters());
-  const HloInputOutputAliasConfig& config = module.input_output_alias_config();
-  TF_RETURN_IF_ERROR(config.ForEachAliasWithStatus(
-      [&](const ShapeIndex& output_index,
-          const HloInputOutputAliasConfig::Alias& alias) {
-        if (tuple_inputs) {
-          if (alias.parameter_number != 0) {
-            return InvalidArgument(
-                "Unexpected parameter number %d in alias config with tupled "
-                "inputs",
-                alias.parameter_number);
-          }
-          const ShapeIndex& index = alias.parameter_index;
-          if (!index.empty()) {
-            int this_parameter = index.data()[0];
-            if (this_parameter >= number_of_parameters) {
-              return InvalidArgument(
-                  "Unexpected parameter index %s in alias config with tupled "
-                  "inputs and %d parameters",
-                  index.ToString(), number_of_parameters);
-            }
-            parameters_to_donate.push_back(this_parameter);
-          }
-        } else {
-          int this_parameter = alias.parameter_number;
-          if (this_parameter >= number_of_parameters) {
-            return InvalidArgument(
-                "Unexpected parameter number %d in alias config without tupled "
-                "inputs and %d parameters",
-                this_parameter, number_of_parameters);
-          }
-          parameters_to_donate.push_back(this_parameter);
-        }
-        return OkStatus();
-      }));
-  absl::c_sort(parameters_to_donate);
-  return parameters_to_donate;
+  int determined_number_of_parameters =
+      DetermineNumberOfParameters(computation, tuple_inputs);
+  return ComputeParametersThatMustBeDonated(
+      computation->num_parameters(), determined_number_of_parameters,
+      module.input_output_alias_config(), tuple_inputs);
 }
 
 int DefaultThreadPoolSize() {
