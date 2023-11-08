@@ -1628,12 +1628,12 @@ StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   TF_ASSIGN_OR_RETURN(se::Platform * platform,
                       se::MultiPlatformManager::PlatformWithId(PlatformId()));
 
-  CompileModuleResults compile_module_results;
-
-  TF_RETURN_IF_ERROR(CompileModuleToLlvmIrImpl(
-      module.get(), &llvm_context, target_triple_, data_layout_,
-      platform->Name(), platform->id(), gpu_device_info, GetCanShareBuffer(),
-      BufferSizeBytesFunction(), &compile_module_results));
+  TF_ASSIGN_OR_RETURN(
+      CompileModuleResults compile_module_results,
+      CompileModuleToLlvmIr(module.get(), &llvm_context, target_triple_,
+                            data_layout_, platform->Name(), platform->id(),
+                            gpu_device_info, GetCanShareBuffer(),
+                            BufferSizeBytesFunction()));
 
   if (user_pre_optimization_hook_) {
     user_pre_optimization_hook_(*compile_module_results.llvm_module);
@@ -1773,24 +1773,17 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
     TF_RETURN_IF_ERROR(
         RunPostSchedulingPipelines(module.get(), scheduler_mem_limit));
 
-    // Compile the module
-    CompileModuleResults compile_module_results;
+    TF_ASSIGN_OR_RETURN(se::Platform * platform,
+                        se::MultiPlatformManager::PlatformWithId(PlatformId()));
 
-    if (target_config.has_value()) {
-      TF_RETURN_IF_ERROR(CompileModuleToLlvmIrImpl(
-          module.get(), &llvm_context, target_triple_, data_layout_,
-          target_config->platform_name, options.PlatformId(),
-          target_config->device_description, GetCanShareBuffer(),
-          BufferSizeBytesFunction(), &compile_module_results));
-    } else {
-      CHECK(options.executor() != nullptr);
-      auto stream_exec = options.executor();
-      TF_RETURN_IF_ERROR(CompileModuleToLlvmIrImpl(
-          module.get(), &llvm_context, target_triple_, data_layout_,
-          stream_exec->platform()->Name(), options.PlatformId(),
-          stream_exec->GetDeviceDescription(), GetCanShareBuffer(),
-          BufferSizeBytesFunction(), &compile_module_results));
-    }
+    // Compile the module
+    TF_ASSIGN_OR_RETURN(
+        CompileModuleResults compile_module_results,
+        CompileModuleToLlvmIr(module.get(), &llvm_context, target_triple_,
+                              data_layout_, platform->Name(), platform->id(),
+                              gpu_device_info, GetCanShareBuffer(),
+                              BufferSizeBytesFunction()));
+
     if (user_pre_optimization_hook_) {
       user_pre_optimization_hook_(*compile_module_results.llvm_module);
     }
