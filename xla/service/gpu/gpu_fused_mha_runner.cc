@@ -201,24 +201,21 @@ void AssignSeed(GpufMHAConfig &config,
 }
 
 template <typename ElementType, typename OutputType>
-Status RunFusedMHABackward(GpufMHABackwardParams params, se::Stream *stream,
-                           RunFusedMHABackwardOptions options,
-                           DeviceMemory<ElementType> bmm1_grad_gemm1_rhs_buffer,
-                           DeviceMemory<ElementType> bmm1_grad_gemm2_rhs_buffer,
-                           DeviceMemory<ElementType> bmm2_grad_gemm1_lhs_buffer,
-                           DeviceMemory<ElementType> bmm2_grad_gemm2_rhs_buffer,
-                           DeviceMemory<ElementType> d_output_buffer,
-                           DeviceMemory<OutputType> d_bmm1_lhs_buffer,
-                           DeviceMemory<OutputType> d_bmm1_rhs_buffer,
-                           DeviceMemory<OutputType> d_bmm2_rhs_buffer,
-                           DeviceMemoryBase d_s_buffer,
-                           DeviceMemoryBase softmax_buffer,
-                           DeviceMemoryBase d_Q_accum_buffer,
-                           DeviceMemoryBase mask_buffer,
-                           DeviceMemoryBase d_bias_buffer,
-                           DeviceMemoryBase fwd_output_buffer,
-                           DeviceMemoryBase bias_buffer,
-                           DeviceMemoryBase scratch_memory) {
+Status RunFusedMHABackward(
+    GpufMHABackwardParams params, se::Stream *stream,
+    RunFusedMHABackwardOptions options,
+    DeviceMemory<ElementType> bmm1_grad_gemm1_rhs_buffer,
+    DeviceMemory<ElementType> bmm1_grad_gemm2_rhs_buffer,
+    DeviceMemory<ElementType> bmm2_grad_gemm1_lhs_buffer,
+    DeviceMemory<ElementType> bmm2_grad_gemm2_rhs_buffer,
+    DeviceMemory<ElementType> d_output_buffer,
+    DeviceMemory<OutputType> d_bmm1_lhs_buffer,
+    DeviceMemory<OutputType> d_bmm1_rhs_buffer,
+    DeviceMemory<OutputType> d_bmm2_rhs_buffer, DeviceMemoryBase d_s_buffer,
+    DeviceMemoryBase softmax_buffer, DeviceMemoryBase d_Q_accum_buffer,
+    DeviceMemoryBase mask_buffer, DeviceMemoryBase d_bias_buffer,
+    DeviceMemoryBase fwd_output_buffer, DeviceMemoryBase bias_buffer,
+    DeviceMemoryBase scratch_memory) {
   se::dnn::LazyOpRunner<se::dnn::FusedMHABackwardOp> *lazy_runner =
       options.runner_cache->AsFusedMHABackwardRunner();
   std::optional<se::dnn::LazyOpRunner<se::dnn::FusedMHABackwardOp>>
@@ -706,25 +703,24 @@ Status RunGpuFMHA(const GpufMHAConfig &fmha_config,
   return OkStatus();
 }
 
-Status RunGpuFMHABackward(const GpufMHABackwardConfig &fmha_config,
-                          se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer,
-                          se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer,
-                          se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer,
-                          se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
-                          se::DeviceMemoryBase d_output_buffer,
-                          se::DeviceMemoryBase scratch_buffer,
-                          se::DeviceMemoryBase d_bmm1_lhs_buffer,
-                          se::DeviceMemoryBase d_bmm1_rhs_buffer,
-                          se::DeviceMemoryBase d_bmm2_rhs_buffer,
-                          std::optional<se::DeviceMemoryBase> d_s_buffer,
-                          std::optional<se::DeviceMemoryBase> softmax_sum_buffer,
-                          std::optional<se::DeviceMemoryBase> d_Q_accum_buffer,
-                          std::optional<se::DeviceMemoryBase> mask_buffer,
-                          std::optional<se::DeviceMemoryBase> d_bias_buffer,
-                          std::optional<se::DeviceMemoryBase> fwd_output_buffer,
-                          std::optional<se::DeviceMemoryBase> bias_buffer,
-                          se::Stream *stream,
-                          RunFusedMHABackwardOptions options) {
+Status RunGpuFMHABackward(
+    const GpufMHABackwardConfig &fmha_config,
+    se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer,
+    se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer,
+    se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer,
+    se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
+    se::DeviceMemoryBase d_output_buffer, se::DeviceMemoryBase scratch_buffer,
+    se::DeviceMemoryBase d_bmm1_lhs_buffer,
+    se::DeviceMemoryBase d_bmm1_rhs_buffer,
+    se::DeviceMemoryBase d_bmm2_rhs_buffer,
+    std::optional<se::DeviceMemoryBase> d_s_buffer,
+    std::optional<se::DeviceMemoryBase> softmax_sum_buffer,
+    std::optional<se::DeviceMemoryBase> d_Q_accum_buffer,
+    std::optional<se::DeviceMemoryBase> mask_buffer,
+    std::optional<se::DeviceMemoryBase> d_bias_buffer,
+    std::optional<se::DeviceMemoryBase> fwd_output_buffer,
+    std::optional<se::DeviceMemoryBase> bias_buffer, se::Stream *stream,
+    RunFusedMHABackwardOptions options) {
   TF_ASSIGN_OR_RETURN(
       GpufMHABackwardParams params,
       GpufMHABackwardParams::For(

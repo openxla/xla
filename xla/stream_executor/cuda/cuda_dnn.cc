@@ -7367,8 +7367,8 @@ static tsl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "Heuristic has " << engine_configs.size() << " configurations ";
   }
-  if (engine_configs.size() == 0) {
-    return tsl::errors::Internal(
+  if (engine_configs.empty()) {
+    return absl::InternalError(
         "No engine configurations found for this opGraph and heuristics.");
   }
 
@@ -7393,7 +7393,7 @@ static tsl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
              << opGraph.getTag()
              << ". Status of final plan: " << CudnnStatusToString(status);
 #else
-  return tsl::errors::Unimplemented("Supported only for cuDNN >= 8.8.0");
+  return absl::UnimplementedError("Supported only for cuDNN >= 8.8.0");
 #endif
 }
 
@@ -8068,7 +8068,7 @@ class CudnnExecutionPlanRunner<void(Args...)>
         data_ptrs_vec.push_back((void*)(&initial_offset_));
       }
 #else
-      return tsl::errors::Unimplemented(
+      return absl::UnimplementedError(
           "Cudnn dropout offset and seed are only supported with Cudnn >= "
           "8.8.");
 #endif  // CUDNN_VERSION >= 8800 && TF_ENABLE_CUDNN_FRONTEND
