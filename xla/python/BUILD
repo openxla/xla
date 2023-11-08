@@ -842,7 +842,7 @@ cc_library(
         "@llvm-project//mlir:Transforms",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
-        "@stablehlo//:stablehlo_passes",
+        "@stablehlo//stablehlo/experimental:experimental_stablehlo_passes",
         "@tsl//tsl/platform:errors",
     ],
 )
