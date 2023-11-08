@@ -400,6 +400,7 @@ tsl::Status BlasLt::MatmulPlan::DoMatmul(
     workspace = gpu::GpuMemoryMutable(&alloc);
   }
 
+  auto palgo = std::any_cast<cublasLtMatmulAlgo_t>(&algorithm.opaque_algo);
   {
     absl::MutexLock lock(&blas_lt_ref_.mu_);
     TF_RET_CHECK(blas_lt_ref_.blas_lt_ != nullptr);
@@ -475,8 +476,7 @@ tsl::Status BlasLt::MatmulPlan::DoMatmul(
 
     gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
 
-    if (auto palgo =
-            std::any_cast<cublasLtMatmulAlgo_t>(&algorithm.opaque_algo)) {
+    if (palgo != nullptr) {
       SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmul(
           blas_lt_ref_.blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
           a_desc_.get(), b.opaque(), b_desc_.get(), beta, c.opaque(),
@@ -489,6 +489,8 @@ tsl::Status BlasLt::MatmulPlan::DoMatmul(
 
   if (profile_result != nullptr) {
     TF_ASSIGN_OR_RETURN(absl::Duration elapsed, timer->GetElapsedDuration());
+    // set algorithm ID to be unique (otherwise it gets kDefaultAlgorithm ID)
+    profile_result->set_algorithm(reinterpret_cast<blas::AlgorithmType>(palgo));
     profile_result->set_is_valid(true);
     profile_result->set_elapsed_time_in_ms(absl::ToDoubleMilliseconds(elapsed));
   }
