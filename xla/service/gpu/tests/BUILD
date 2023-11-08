@@ -124,6 +124,23 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "gpu_replica_reduce_splitter_test",
+    srcs = ["gpu_replica_reduce_splitter_test.cc"],
+    deps = [
+        "//xla:statusor",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
+        "//xla/service/gpu:gpu_replica_reduce_splitter",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_cc_test(
     name = "gpu_spmd_e2e_compile_test",
     size = "small",
     srcs = ["gpu_spmd_e2e_compile_test.cc"],

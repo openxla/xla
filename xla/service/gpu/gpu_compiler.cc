@@ -133,6 +133,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_layout_assignment.h"
 #include "xla/service/gpu/gpu_reduce_scatter_creator.h"
+#include "xla/service/gpu/gpu_replica_reduce_splitter.h"
 #include "xla/service/gpu/gpu_sanitize_constant_names.h"
 #include "xla/service/gpu/gpu_scatter_expander.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
@@ -699,6 +700,8 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
   // otherwise as well so that all collectives can get these optimizations.
   {
     HloPassPipeline collectives_pipeline("collective-optimizations");
+    VLOG(2) << "Adding ReplicaReduceSplitter pass.\n";
+    collectives_pipeline.AddPass<ReplicaReduceSplitter>()    
     collectives_pipeline.AddPass<AllReduceFolder>();
     collectives_pipeline.AddPass<ReduceScatterCreator>();
     collectives_pipeline.AddPass<AllGatherOptimizer>();

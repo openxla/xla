@@ -2481,6 +2481,23 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_replica_reduce_splitter",
+    srcs = ["gpu_replica_reduce_splitter.cc"],
+    hdrs = ["gpu_replica_reduce_splitter.h"],
+    deps = [
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:collective_ops_utils",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
     name = "gpu_float_support",
     srcs = ["gpu_float_support.cc"],
     hdrs = ["gpu_float_support.h"],
@@ -2660,6 +2677,7 @@ cc_library(
         ":gemm_rewriter_triton",
         ":gemm_rewriter",
         ":gpu_all_gather_optimizer",
+        ":gpu_replica_reduce_splitter",
         ":gpu_async_collective_annotator",
         ":gpu_constants",
         ":gpu_conv_rewriter",
