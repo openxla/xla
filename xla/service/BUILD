@@ -6478,7 +6478,7 @@ cc_library(
         "//xla/client/lib:comparators",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
     ],
 )
