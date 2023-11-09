@@ -43,7 +43,9 @@ class SimplePhilox {
   }
 
   // Uniform float in [0, 1)
-  PHILOX_DEVICE_INLINE float RandFloat() { return Uint32ToFloat(single_()); }
+  PHILOX_DEVICE_INLINE float RandFloat() {
+    return UintToFloat<float>(single_());
+  }
 
   // Uniform double in [0, 1)
   PHILOX_DEVICE_INLINE double RandDouble() {

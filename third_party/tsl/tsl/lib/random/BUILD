@@ -1,8 +1,8 @@
+load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
-load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -36,6 +36,7 @@ cc_library(
         ":exact_uniform_int",
         ":philox_random",
         ":random_distributions_utils",
+        "//tsl/lib/math:math_util",
         "//tsl/platform:logging",
         "//tsl/platform:macros",
         "//tsl/platform:types",
@@ -53,7 +54,10 @@ cc_library(
         "//tensorflow/core/lib/random:__pkg__",
         "//tensorflow/lite:__subpackages__",
     ],
-    deps = [":philox_random"],
+    deps = [
+        ":philox_random",
+        "@eigen_archive//:eigen3",
+    ],
 )
 
 cc_library(

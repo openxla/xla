@@ -19,7 +19,10 @@ limitations under the License.
 #include <string.h>
 
 #include <cstdint>
+#include <limits>
+#include <utility>
 
+#include "Eigen/Core"  // from @eigen_archive
 #include "tsl/lib/random/philox_random.h"
 
 #ifndef M_PI
@@ -29,66 +32,70 @@ limitations under the License.
 namespace tsl {
 namespace random {
 
-// Helper function to convert an 32-bit integer to a float between [0..1).
-PHILOX_DEVICE_INLINE float Uint32ToFloat(uint32_t x) {
+// Helper function to convert an unsigned integer to a float between [0..1).
+template <typename FloatOut, typename UintIn>
+PHILOX_DEVICE_INLINE FloatOut UintToFloat(UintIn x) {
+  static_assert(std::numeric_limits<UintIn>::is_specialized);
+  static_assert(std::numeric_limits<UintIn>::is_integer);
+  static_assert(!std::numeric_limits<UintIn>::is_signed);
+  static_assert(std::numeric_limits<FloatOut>::is_specialized);
+  static_assert(!std::numeric_limits<FloatOut>::is_integer);
+  static_assert(sizeof(UintIn) >= sizeof(FloatOut));
+  constexpr int kBias = (1 - std::numeric_limits<FloatOut>::min_exponent) + 1;
+  constexpr int kTrailingSignificandFieldWidth =
+      std::numeric_limits<FloatOut>::digits - 1;
   // IEEE754 floats are formatted as follows (MSB first):
-  //    sign(1) exponent(8) mantissa(23)
+  //    sign exponent mantissa
   // Conceptually construct the following:
   //    sign == 0
-  //    exponent == 127  -- an excess 127 representation of a zero exponent
-  //    mantissa == 23 random bits
-  const uint32_t man = x & 0x7fffffu;  // 23 bit mantissa
-  const uint32_t exp = static_cast<uint32_t>(127);
-  const uint32_t val = (exp << 23) | man;
+  //    exponent == an excess representation of a zero exponent
+  //    mantissa == random bits
+  const UintIn man = x & ((UintIn(1) << kTrailingSignificandFieldWidth) - 1);
+  const UintIn exp = static_cast<UintIn>(kBias);
+  const UintIn val = (exp << kTrailingSignificandFieldWidth) | man;
 
-  // Assumes that endian-ness is same for float and uint32_t.
-  float result;
-  memcpy(&result, &val, sizeof(val));
-  return result - 1.0f;
+  // Assumes that endian-ness is same for float and UintIn.
+  FloatOut result = Eigen::numext::bit_cast<FloatOut>(
+      static_cast<typename Eigen::numext::get_integer_by_size<sizeof(
+          FloatOut)>::unsigned_type>(val));
+  return result - static_cast<FloatOut>(1.0);
 }
 
 // Helper function to convert two 32-bit integers to a double between [0..1).
 PHILOX_DEVICE_INLINE double Uint64ToDouble(uint32_t x0, uint32_t x1) {
-  // IEEE754 doubles are formatted as follows (MSB first):
-  //    sign(1) exponent(11) mantissa(52)
-  // Conceptually construct the following:
-  //    sign == 0
-  //    exponent == 1023  -- an excess 1023 representation of a zero exponent
-  //    mantissa == 52 random bits
-  const uint32_t mhi = x0 & 0xfffffu;  // upper 20 bits of mantissa
-  const uint32_t mlo = x1;             // lower 32 bits of mantissa
-  const uint64_t man = (static_cast<uint64_t>(mhi) << 32) | mlo;  // mantissa
-  const uint64_t exp = static_cast<uint64_t>(1023);
-  const uint64_t val = (exp << 52) | man;
-  // Assumes that endian-ness is same for double and uint64_t.
-  double result;
-  memcpy(&result, &val, sizeof(val));
-  return result - 1.0;
+  return UintToFloat<double>((static_cast<uint64_t>(x0) << 32) | x1);
 }
 
-// Helper function to convert two 32-bit uniform integers to two floats
+// Helper function to convert two uniform integers to two floats
 // under the unit normal distribution.
-PHILOX_DEVICE_INLINE
-void BoxMullerFloat(uint32_t x0, uint32_t x1, float* f0, float* f1) {
+template <typename FloatOut, typename UintIn>
+PHILOX_DEVICE_INLINE std::pair<FloatOut, FloatOut> BoxMullerFloat(UintIn x0,
+                                                                  UintIn x1) {
   // This function implements the Box-Muller transform:
   // http://en.wikipedia.org/wiki/Box%E2%80%93Muller_transform#Basic_form
   // Do not send a really small number to log().
   // We cannot mark "epsilon" as "static const" because NVCC would complain
-  const float epsilon = 1.0e-7f;
-  float u1 = Uint32ToFloat(x0);
+  const FloatOut epsilon = 1.0e-7;
+  FloatOut u1 = UintToFloat<FloatOut>(x0);
   if (u1 < epsilon) {
     u1 = epsilon;
   }
-  const float v1 = 2.0f * M_PI * Uint32ToFloat(x1);
-  const float u2 = sqrt(-2.0f * log(u1));
+  const FloatOut v1 = 2.0 * M_PI * UintToFloat<FloatOut>(x1);
+  const FloatOut u2 = sqrt(-2.0 * log(u1));
+  FloatOut f0, f1;
 #if !defined(__linux__)
-  *f0 = sin(v1);
-  *f1 = cos(v1);
+  f0 = Eigen::numext::sin(v1);
+  f1 = Eigen::numext::cos(v1);
 #else
-  sincosf(v1, f0, f1);
+  if constexpr (std::is_same_v<FloatOut, double>) {
+    sincos(v1, &f0, &f1);
+  } else {
+    sincosf(v1, &f0, &f1);
+  }
 #endif
-  *f0 *= u2;
-  *f1 *= u2;
+  f0 *= u2;
+  f1 *= u2;
+  return std::make_pair(f0, f1);
 }
 
 }  // namespace random
