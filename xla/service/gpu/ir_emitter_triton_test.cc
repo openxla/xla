@@ -1532,9 +1532,46 @@ ENTRY e {
     lhs_batch_dims={2}, lhs_contracting_dims={1},
     rhs_batch_dims={2}, rhs_contracting_dims={1}
 })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> verified_module,
+                          ParseAndReturnVerifiedModule(kHloText));
+  DebugOptions debug_options = verified_module->config().debug_options();
 
+  /*   The fmha pipeline introduces a layout normalization prior to the triton
+    gemm rewriter which leads to the TritonGemmRewriter encounter the following
+    HLO:
+
+    HloModule module_e, entry_computation_layout={(f16[3,3,256]{2,1,0},
+    f16[3,3,256]{2,1,0})->f16[128,3,3]{2,1,0}} 
+    ENTRY %e (p0: f16[3,3,256], p1:
+    f16[3,3,256]) -> f16[128,3,3] { 
+    %p0 = f16[3,3,256]{2,1,0} parameter(0)
+    %transpose.2 = f16[256,3,3]{2,1,0} transpose(f16[3,3,256]{2,1,0} %p0),
+    dimensions={2,0,1} 
+    %slice = f16[128,3,3]{2,1,0} slice(f16[256,3,3]{2,1,0}
+    %transpose.2), slice={[123:251], [0:3], [0:3]} 
+    %p1 = f16[3,3,256]{2,1,0}
+    parameter(1) %transpose.4 = f16[256,3,3]{2,1,0}
+    transpose(f16[3,3,256]{2,1,0} %p1), dimensions={2,1,0} 
+    %slice.1 = f16[128,3,3]{2,1,0} slice(f16[256,3,3]{2,1,0} %transpose.4),
+    slice={[30:158], [0:3], [0:3]} 
+    ROOT %dot = f16[128,3,3]{2,1,0}
+    dot(f16[128,3,3]{2,1,0} %slice, f16[128,3,3]{2,1,0} %slice.1),
+    lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0},
+    rhs_contracting_dims={1}
+    }
+
+    In this optimized HLO, the dot consumes the slice (transposed args) rather
+    than transpose (with sliced args). Slice inputs to the dot are not fused in
+    the 2nd case because it's not obviously profitable to do so
+    - slicing is generally better to have at outputs of fusions rather than
+    inputs to have less memory traffic.
+    Hence, we turn off the fmha pipeline to correctly test this triton gemm
+    fusion pattern. Note that the optimized HLO, both with and without the fmha
+    pipeline, are functionally correct.  */
+  debug_options.set_xla_gpu_enable_cudnn_fmha(false);
+  verified_module->mutable_config().set_debug_options(debug_options);
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(kHloText));
+                          GetOptimizedModule(std::move(verified_module)));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Fusion(m::Parameter(), m::Parameter())
