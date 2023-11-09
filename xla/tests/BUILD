@@ -14,7 +14,15 @@ load(
     "tf_cuda_tests_tags",
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-
+load(
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_hipblaslt",
+    "if_rocm_is_configured",
+)
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [":friends"],
@@ -2340,6 +2348,8 @@ xla_cc_test(
     name = "llvm_compiler_test",
     srcs = if_gpu_is_configured(["llvm_compiler_test.cc"]),
     tags = tf_cuda_tests_tags(),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM"]),
     deps = if_gpu_is_configured([
         ":verified_hlo_module",
         "//xla:literal_util",
@@ -2352,10 +2362,13 @@ xla_cc_test(
         "//xla/service:platform_util",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/gpu:gpu_compiler",
-        "//xla/stream_executor",
-        "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/stream_executor",        
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test_main",
+        ]) + if_cuda_is_configured([
+            "//xla/stream_executor/cuda:cuda_platform_id",
+        ]) + if_rocm_is_configured([
+            "//xla/stream_executor/rocm:rocm_platform_id",        
     ]),
 )
 
