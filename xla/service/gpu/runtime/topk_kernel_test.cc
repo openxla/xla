@@ -30,21 +30,15 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/xla_data.pb.h"
 
-#define RUN_BENCHMARKS_ONLY 0
-
-#if !RUN_BENCHMARKS_ONLY
 #include "tsl/platform/test.h"
-#endif
 #include "tsl/platform/test_benchmark.h"
 
 namespace xla::gpu {
 namespace {
 
 using ::stream_executor::gpu::GpuStreamHandle;
-#if !RUN_BENCHMARKS_ONLY
 using ::testing::Combine;
 using ::testing::Values;
-#endif
 
 #define CUDA_CHECK(s)                                  \
   do {                                                 \
@@ -86,7 +80,6 @@ std::vector<T> RandomFillNegative(void* buffer, int num_elements) {
 PrimitiveType Get(float) { return PrimitiveType::F32; }
 PrimitiveType Get(Eigen::bfloat16) { return PrimitiveType::BF16; }
 
-#if !RUN_BENCHMARKS_ONLY
 // Params:
 //  - n_kb: number of elements in kilobytes.
 //  - k: number of elements to return.
@@ -170,7 +163,6 @@ INSTANTIATE_TEST_SUITE_P(TopkTests, TopkTest,
                                std::get<2>(info.param),
                                std::get<3>(info.param));
                          });
-#endif // !RUN_BENCHMARKS_ONLY
 
 template <size_t K>
 void BM_SmallTopk(benchmark::State& state) {
@@ -218,7 +210,3 @@ BENCHMARK(BM_SmallTopk<16>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
 
 }  // namespace
 }  // namespace xla::gpu
-
-#if RUN_BENCHMARKS_ONLY
-BENCHMARK_MAIN();
-#endif
