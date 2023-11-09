@@ -29,6 +29,21 @@ limitations under the License.
 
 namespace xla::gpu {
 
+// Default implementation for KV holder. Useful for testing while adding support
+// for a new type, but generally bitpacking those values is more efficient. See
+// implementations below.
+template <typename T, typename V>
+struct Descending {
+  struct KVT {
+    T key;
+    V idx;
+  };
+
+  __device__ FORCEINLINE static bool cmp(const KVT& lhs, const KVT& rhs) {
+    return lhs.key == rhs.key ? lhs.idx < rhs.idx : lhs.key > rhs.key;
+  }
+};
+
 // TopK implements a faster TopK for K < 16.
 //
 // To compute the final largest K elements, we shard the data threads and each
@@ -99,23 +114,20 @@ namespace xla::gpu {
 //    efficiently, so it was let out of v1.
 //
 
-template <size_t K, typename KT>
+template <size_t K, typename KT, typename VT,
+    template <class, class> class Traits = Descending>
 struct TopK {
   
-  struct KVT {
-    KT key;
-    uint32_t idx;
-    __device__ FORCEINLINE bool operator >(const KVT& rhs) {
-      return key == rhs.key ? idx < rhs.idx : key > rhs.key;
-    }
-  };
+  using Trait = Traits<KT, VT>;
+  using KVT = typename Trait::KVT;  
 
   __device__ TopK(void* buffer, int num_outputs)
       : buffer_(reinterpret_cast<KVT*>(buffer)), num_outputs_(num_outputs) {}
  
-__device__ FORCEINLINE uint32_t Idx(uint32_t i) {
-  return blockDim.x * i + threadIdx.x;
-}
+  __device__ FORCEINLINE uint32_t Idx(uint32_t i) {
+    return blockDim.x * i + threadIdx.x;
+  }
+
   // Compute a per-warp topk of a slice of data.
   __device__ void PerWarpTopK(KT* key, int n) {
 
@@ -123,7 +135,7 @@ __device__ FORCEINLINE uint32_t Idx(uint32_t i) {
     // TODO(doak): Use bitonic sort.
 #pragma unroll    
     for (int i = 0; i < K; i++) {
-        tmp[i] = {key[Idx(i)], Idx(i)};
+        tmp[i] = {key[Idx(i)], VT(Idx(i))};
     }
 #pragma unroll    
     for (int i = 0; i < K; i++) {
@@ -131,15 +143,15 @@ __device__ FORCEINLINE uint32_t Idx(uint32_t i) {
       for (int j = i + 1; j < K; j++) {
         KVT ti = tmp[i];
         KVT tj = tmp[j];
-        bool cmp = ti > tj;
-        tmp[i] = cmp ? ti : tj;
-        tmp[j] = cmp ? tj : ti;
+        bool res = Trait::cmp(ti, tj);
+        tmp[i] = res ? ti : tj;
+        tmp[j] = res ? tj : ti;
       }
     }
     constexpr uint32_t WarpSize = WAVEFRONT_SIZE;
 
     for (int idx = K; idx < n; idx++) {
-      KVT kv{key[Idx(idx)], Idx(idx)};
+      KVT kv{key[Idx(idx)], VT(Idx(idx))};
       Push(tmp, kv);
     }
     Reduce(tmp, WarpSize);
@@ -195,13 +207,13 @@ __device__ FORCEINLINE uint32_t Idx(uint32_t i) {
   // order of `tmp`.
   static __device__ FORCEINLINE bool Push(KVT tmp[K], const KVT& kv) 
   {
-    if (tmp[K - 1] > kv) return false;
+    if (Trait::cmp(tmp[K - 1], kv)) return false;
     tmp[K - 1] = kv; // (K-1)th is the smallest element out of K
 #pragma unroll
     for (int i = (int)K - 2; i >= 0; --i) {
-      if (tmp[i] > kv) break;
+      if (Trait::cmp(tmp[i], kv)) break;
       // Swap
-      KVT t = tmp[i];
+      auto t = tmp[i];
       tmp[i] = tmp[i + 1];
       tmp[i + 1] = t;
     }
@@ -217,11 +229,11 @@ __device__ FORCEINLINE uint32_t Idx(uint32_t i) {
 // instantiations of Run() from the multiple monomorphizations of Run().
 extern __device__ __shared__ int shmem[];
 
-template <size_t K, typename KT>
+template <size_t K, typename KT, typename VT>
 __launch_bounds__(kTopKMaxThreadsPerBlock, 1) __global__
     void Run(KT* data, int n, KT* result, uint32_t* result_idxs, int k) 
 {
-  TopK<K, KT> obj(shmem, k);
+  TopK<K, KT, VT> obj(shmem, k);
   
   const uint32_t bidx = blockIdx.x; 
   auto in = data + n * bidx;
@@ -240,10 +252,9 @@ template <typename T, size_t K>
 void* GetTopKKernelForK(int n) {
   // TODO(doak): Switch to uint32_t if we don't have an efficient
   // implemementation for uint16_t.
-  // pemeliya: gpu registers are 32-bits hence there is no performance
-  // advantage of using uint16_t datatype for indices 
-  // (unless we store data in a shared memory)
-  return reinterpret_cast<void*>(&Run<K, T>);
+  return n < std::numeric_limits<uint16_t>::max()
+             ? reinterpret_cast<void*>(&Run<K, T, uint16_t>)
+             : reinterpret_cast<void*>(&Run<K, T, uint32_t>);
 }
 
 }  // namespace xla::gpu
