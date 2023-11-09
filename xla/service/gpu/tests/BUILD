@@ -880,6 +880,7 @@ xla_test(
         ":gpu_codegen_test",
         "//xla:error_spec",
         "//xla/tests:hlo_test_base",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:tensor_float_32_utils",
         "@tsl//tsl/platform:test_main",
     ],
