@@ -374,6 +374,7 @@ cc_library(
         "//xla/pjrt:lru_cache",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt:pjrt_stream_executor_client",
@@ -1122,6 +1123,7 @@ cc_library(
         ":xla_compiler",
         # placeholder for index annotation deps
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:initialize",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -1138,6 +1140,7 @@ cc_library(
         "//xla/pjrt:pjrt_api",
         "//xla/pjrt:pjrt_c_api_client",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:tfrt_cpu_pjrt_client",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
