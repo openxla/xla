@@ -4744,6 +4744,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
