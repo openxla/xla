@@ -865,6 +865,7 @@ xla_cc_test(
         "//xla/client:xla_builder",
         "//xla/pjrt/c:pjrt_c_api_cpu_internal",
         "//xla/tests:literal_test_util",
+        "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
