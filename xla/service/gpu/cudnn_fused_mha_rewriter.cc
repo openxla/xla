@@ -1086,8 +1086,9 @@ StatusOr<HloInstruction*> CanonicalizeBatchedGemmForcuDNNFMHA(
 }
 
 StatusOr<HloInstruction*> ChangeCheckedDimToFastest(
-    HloComputation* comp, HloInstruction* bmm, bool is_lhs,
+    HloComputation* comp, HloInstruction** bmm_ptr, bool is_lhs,
     bool should_contracting_be_fastest) {
+  HloInstruction* bmm = *bmm_ptr;
   const DotDimensionNumbers& dot_dims_bmm = bmm->dot_dimension_numbers();
   DotDimensionNumbers new_dot_dims_bmm = dot_dims_bmm;
   int64_t bmm_operand = is_lhs ? 0 : 1;
@@ -1138,8 +1139,13 @@ StatusOr<HloInstruction*> ChangeCheckedDimToFastest(
                 rhs_minor_to_major_bmm),
             operand_bmm, perm),
         &operand_bmm->metadata());
-    *((DynCast<HloDotInstruction>(bmm))->mutable_dot_dimension_numbers()) =
-        new_dot_dims_bmm;
+    TF_RETURN_IF_ERROR(comp->ReplaceWithNewInstruction(
+        *bmm_ptr,
+        HloInstruction::CreateDot(
+            bmm->shape(), is_lhs ? operand_bmm : bmm->mutable_operand(0),
+            is_lhs ? bmm->mutable_operand(1) : operand_bmm, new_dot_dims_bmm,
+            bmm->precision_config())));
+    *bmm_ptr = operand_bmm->users()[0];
   }
   return operand_bmm;
 }
@@ -1155,14 +1161,14 @@ StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
   HloInstruction* rhs_bmm1;
   HloInstruction* rhs_bmm2;
   TF_ASSIGN_OR_RETURN(rhs_bmm1, ChangeCheckedDimToFastest(
-                                    comp, bmm_1, false /*is_lhs*/,
+                                    comp, &bmm_1, false /*is_lhs*/,
                                     true /*should_contracting_be_fastest*/));
   TF_ASSIGN_OR_RETURN(lhs_bmm1, ChangeCheckedDimToFastest(
-                                    comp, bmm_1, true /*is_lhs*/,
+                                    comp, &bmm_1, true /*is_lhs*/,
                                     true /*should_contracting_be_fastest*/));
 
   TF_ASSIGN_OR_RETURN(rhs_bmm2, ChangeCheckedDimToFastest(
-                                    comp, bmm_2, false /*is_lhs*/,
+                                    comp, &bmm_2, false /*is_lhs*/,
                                     false /*should_contracting_be_fastest*/));
 
   if (rhs_bmm2 != bmm_2->mutable_operand(1)) {
@@ -1341,22 +1347,22 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // Q tensor
   TF_ASSIGN_OR_RETURN(
       rhs_bmm1_grad_gemm1,
-      ChangeCheckedDimToFastest(comp, bmm_1_grad_1, false /*is_lhs*/,
+      ChangeCheckedDimToFastest(comp, &bmm_1_grad_1, false /*is_lhs*/,
                                 false /*should_contracting_be_fastest*/));
   // K tensor
   TF_ASSIGN_OR_RETURN(
       lhs_bmm1_grad_gemm2,
-      ChangeCheckedDimToFastest(comp, bmm_1_grad_2, false /*is_lhs*/,
+      ChangeCheckedDimToFastest(comp, &bmm_1_grad_2, false /*is_lhs*/,
                                 false /*should_contracting_be_fastest*/));
   // Forward activation
   TF_ASSIGN_OR_RETURN(
       lhs_bmm2_grad_gemm1,
-      ChangeCheckedDimToFastest(comp, bmm_2_grad_1, true /*is_lhs*/,
+      ChangeCheckedDimToFastest(comp, &bmm_2_grad_1, true /*is_lhs*/,
                                 false /*should_contracting_be_fastest*/));
   // V tensor
   TF_ASSIGN_OR_RETURN(
       rhs_bmm2_grad_gemm2,
-      ChangeCheckedDimToFastest(comp, bmm_2_grad_2, false /*is_lhs*/,
+      ChangeCheckedDimToFastest(comp, &bmm_2_grad_2, false /*is_lhs*/,
                                 true /*should_contracting_be_fastest*/));
   // d output
   // Since d_o is the input of 2 bmms, we set the dim number using the
@@ -1364,7 +1370,7 @@ StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // -> the contracting dimension of the lhs of bmm_2_grad_2 needs to be the
   // fastest moving dimension.
   TF_ASSIGN_OR_RETURN(d_output_grad, ChangeCheckedDimToFastest(
-                                         comp, bmm_2_grad_2, true /*is_lhs*/,
+                                         comp, &bmm_2_grad_2, true /*is_lhs*/,
                                          true /*check_contracting_dim*/));
   // Operand order {Q, K, V, Fwd act, d_o, mask*}
   std::vector<HloInstruction*> operands = {
