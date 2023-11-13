@@ -2592,6 +2592,38 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "custom_fusion_rewriter",
+    srcs = ["custom_fusion_rewriter.cc"],
+    hdrs = ["custom_fusion_rewriter.h"],
+    deps = [
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "//xla/service/gpu/kernels:custom_fusion_pattern",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "custom_fusion_rewriter_test",
+    srcs = ["custom_fusion_rewriter_test.cc"],
+    deps = [
+        ":custom_fusion_rewriter",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu/kernels:custom_fusion_pattern",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
     name = "fusion_pipeline",
     srcs = ["fusion_pipeline.cc"],
     hdrs = ["fusion_pipeline.h"],
