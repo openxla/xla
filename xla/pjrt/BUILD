@@ -295,6 +295,7 @@ cc_library(
         ":pjrt_device_description",
         ":pjrt_executable",
         "//xla/client:xla_computation",
+        "//xla/service:hlo_parser",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -337,6 +338,7 @@ cc_library(
     hdrs = ["utils.h"],
     visibility = ["//xla:friends"],
     deps = [
+        ":layout_mode",
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
@@ -352,10 +354,26 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "layout_mode",
+    srcs = ["layout_mode.cc"],
+    hdrs = ["layout_mode.h"],
+    visibility = ["//xla:friends"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla/service:hlo_parser",
+        "@com_google_absl//absl/strings",
     ],
 )
 
