@@ -13,10 +13,7 @@ package(
 tf_proto_library(
     name = "protocol_proto",
     srcs = ["protocol.proto"],
-    has_services = 1,
     cc_api_version = 2,
-    create_grpc_library = True,
-    use_grpc_namespace = True,
 )
 
 cc_library(
@@ -24,7 +21,6 @@ cc_library(
     srcs = ["service.cc"],
     hdrs = ["service.h"],
     deps = [
-        ":protocol_cc_grpc_proto",
         ":topology_util",
         ":util",
         "//xla:status",
@@ -75,7 +71,6 @@ cc_library(
         "client.h",
     ],
     deps = [
-        ":protocol_cc_grpc_proto",
         ":util",
         "//xla:statusor",
         "//xla:types",
@@ -147,6 +142,7 @@ xla_cc_test(
         ":distributed",
         ":protocol_proto_cc",
         ":service",
+        ":topology_util",
         "//xla:protobuf_util",
         "//xla:status_macros",
         "@com_google_absl//absl/strings",
