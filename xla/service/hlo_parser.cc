@@ -5769,7 +5769,7 @@ bool HloParserImpl::ParseShape(Shape* result) {
     result->add_dimensions(dimension_sizes[i]);
     result->set_dynamic_dimension(i, dynamic_dimensions[i]);
   }
-  LayoutUtil::SetToDefaultLayout(result);
+  result->clear_layout();
   // We need to lookahead to see if a following open brace is the start of a
   // layout. The specific problematic case is:
   //
