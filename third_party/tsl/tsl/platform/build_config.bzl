@@ -2,8 +2,12 @@
 
 load(
     "//tsl/platform/default:build_config.bzl",
+    _if_llvm_aarch32_available = "if_llvm_aarch32_available",
     _if_llvm_aarch64_available = "if_llvm_aarch64_available",
+    _if_llvm_arm_available = "if_llvm_arm_available",
+    _if_llvm_powerpc_available = "if_llvm_powerpc_available",
     _if_llvm_system_z_available = "if_llvm_system_z_available",
+    _if_llvm_x86_available = "if_llvm_x86_available",
     _pyx_library = "pyx_library",
     _tf_additional_all_protos = "tf_additional_all_protos",
     _tf_additional_core_deps = "tf_additional_core_deps",
@@ -42,8 +46,12 @@ load(
     _tsl_protobuf_deps = "tsl_protobuf_deps",
 )
 
+if_llvm_aarch32_available = _if_llvm_aarch32_available
 if_llvm_aarch64_available = _if_llvm_aarch64_available
+if_llvm_arm_available = _if_llvm_arm_available
+if_llvm_powerpc_available = _if_llvm_powerpc_available
 if_llvm_system_z_available = _if_llvm_system_z_available
+if_llvm_x86_available = _if_llvm_x86_available
 pyx_library = _pyx_library
 tf_additional_all_protos = _tf_additional_all_protos
 tf_additional_core_deps = _tf_additional_core_deps
