@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 licenses(["notice"])
 
@@ -20,29 +20,10 @@ tf_proto_library(
 )
 
 cc_library(
-    name = "protocol",
-    hdrs = ["protocol.h"],
-)
-
-cc_library(
-    name = "key_value_store",
-    srcs = ["key_value_store.cc"],
-    hdrs = ["key_value_store.h"],
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/time",
-    ] + tsl_grpc_cc_dependencies(),
-)
-
-cc_library(
     name = "service",
     srcs = ["service.cc"],
     hdrs = ["service.h"],
     deps = [
-        ":key_value_store",
-        ":protocol",
         ":protocol_cc_grpc_proto",
         ":topology_util",
         ":util",
@@ -87,7 +68,6 @@ cc_library(
         "client.h",
     ],
     deps = [
-        ":protocol",
         ":protocol_cc_grpc_proto",
         ":util",
         "//xla:statusor",
