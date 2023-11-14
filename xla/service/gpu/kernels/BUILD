@@ -1,6 +1,8 @@
-load("//xla/tests:build_defs.bzl", "xla_test")
-load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
-load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
+# copybara:uncomment_begin(google-only-loads)
+# load("//xla/tests:build_defs.bzl", "xla_test")
+# load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+# load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
+# copybara:uncomment_end(google-only-loads)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
