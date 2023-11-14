@@ -1154,6 +1154,9 @@ StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
   HloInstruction* lhs_bmm1;
   HloInstruction* rhs_bmm1;
   HloInstruction* rhs_bmm2;
+  DotDimensionNumbers orig_bmm1_dot_dim = bmm_1->dot_dimension_numbers();
+  DotDimensionNumbers orig_bmm2_dot_dim = bmm_2->dot_dimension_numbers();
+
   TF_ASSIGN_OR_RETURN(rhs_bmm1, ChangeCheckedDimToFastest(
                                     comp, bmm_1, false /*is_lhs*/,
                                     true /*should_contracting_be_fastest*/));
@@ -1176,6 +1179,9 @@ StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
       bmm_2->dot_dimension_numbers();
 
   TF_RET_CHECK((dropout_rate >= 0.0 && dropout_rate <= 1.0));
+  // Restore original DotDimensionNumbers.
+  *((DynCast<HloDotInstruction>(bmm_1))->mutable_dot_dimension_numbers()) = orig_bmm1_dot_dim;
+  *((DynCast<HloDotInstruction>(bmm_2))->mutable_dot_dimension_numbers()) = orig_bmm2_dot_dim;
 
   // If scale node is assigned, extract value from it.
   if (scale != nullptr) {
