@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -35,6 +37,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace pjrt {
 namespace {
@@ -60,9 +63,13 @@ PJRT_Client* CreateClient(const PJRT_Api* api) {
 PjrtCApiTestBase::PjrtCApiTestBase(const PJRT_Api* api) {
   api_ = api;
   client_ = CreateClient(api_);
+  executable_ = Create_Executable(api_, client_, CreateAddOneComputation());
 }
 
-PjrtCApiTestBase::~PjrtCApiTestBase() { destroy_client(client_); }
+PjrtCApiTestBase::~PjrtCApiTestBase() {
+  executable_.reset();
+  destroy_client(client_);
+}
 
 void PjrtCApiTestBase::destroy_client(PJRT_Client* client) {
   PJRT_Client_Destroy_Args destroy_args;
@@ -210,6 +217,71 @@ std::unique_ptr<PJRT_Error, ::pjrt::PJRT_ErrorDeleter>
 PjrtCApiTestBase::ToUniquePtr(PJRT_Error* error) {
   return std::unique_ptr<PJRT_Error, ::pjrt::PJRT_ErrorDeleter>{
       error, ::pjrt::MakeErrorDeleter(api_)};
+}
+
+xla::XlaComputation PjrtCApiTestBase::CreateAddOneComputation() {
+  xla::XlaBuilder builder(std::string{kExecutableName});
+  xla::Shape s = xla::ShapeUtil::MakeShape(xla::F32, {});
+  auto inp = Parameter(&builder, 0, s, "input");
+  auto one = xla::ConstantR0<float>(&builder, 1.0f);
+  auto incremented = Add(inp, one);
+  return builder.Build(incremented).value();
+}
+
+std::unique_ptr<PJRT_LoadedExecutable, ::pjrt::PJRT_LoadedExecutableDeleter>
+PjrtCApiTestBase::Create_Executable(const PJRT_Api* c_api, PJRT_Client* client,
+                                    const xla::XlaComputation& computation) {
+  LOG(INFO) << "ABOUT TO CREATE EXE";
+  std::string module_str = computation.proto().SerializeAsString();
+  LOG(INFO) << "Module str: " << module_str;
+  std::string format(::pjrt::kHloFormat);
+  PJRT_Program program;
+  program.struct_size = PJRT_Program_STRUCT_SIZE;
+  program.priv = nullptr;
+  program.code = module_str.data();
+  program.code_size = module_str.size();
+  program.format = format.data();
+  program.format_size = format.size();
+
+  xla::CompileOptions compile_options;
+  compile_options.executable_build_options.set_num_replicas(1);
+  absl::StatusOr<xla::CompileOptionsProto> compile_options_proto =
+      compile_options.ToProto();
+  TF_CHECK_OK(compile_options_proto.status());
+
+  PJRT_Client_Compile_Args compile_args;
+  compile_args.struct_size = sizeof(PJRT_Client_Compile_Args);
+  compile_args.priv = nullptr;
+  compile_args.program = std::move(&program);
+  compile_args.client = client;
+  compile_args.compile_options =
+      compile_options_proto->SerializeAsString().c_str();
+  compile_args.compile_options_size = compile_options_proto->ByteSizeLong();
+  compile_args.executable = nullptr;
+  LOG(INFO) << "COMPILE OPTIONS PROTO: " << compile_args.compile_options;
+
+  PJRT_Error* client_compile_error = c_api->PJRT_Client_Compile(&compile_args);
+  CHECK_EQ(client_compile_error, nullptr);
+  LOG(INFO) << "COMPILED";
+
+  std::unique_ptr<PJRT_LoadedExecutable, ::pjrt::PJRT_LoadedExecutableDeleter>
+      unique_executable(compile_args.executable,
+                        ::pjrt::MakeLoadedExecutableDeleter(c_api));
+  LOG(INFO) << "CREATED EXE";
+  return unique_executable;
+}
+
+std::unique_ptr<PJRT_Executable, ::pjrt::PJRT_ExecutableDeleter>
+PjrtCApiTestBase::GetExecutable(PJRT_LoadedExecutable* loaded_executable,
+                                const PJRT_Api* api) {
+  PJRT_LoadedExecutable_GetExecutable_Args args;
+  args.struct_size = PJRT_LoadedExecutable_GetExecutable_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.loaded_executable = loaded_executable;
+  args.executable = nullptr;
+  ::pjrt::LogFatalIfPjrtError(api->PJRT_LoadedExecutable_GetExecutable(&args),
+                              api);
+  return {args.executable, ::pjrt::MakeExecutableDeleter(api)};
 }
 
 }  // namespace pjrt

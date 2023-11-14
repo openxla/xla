@@ -16,17 +16,18 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_test.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <numeric>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -34,8 +35,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "third_party/protobuf/util/message_differencer.h"
 #include "xla/client/executable_build_options.h"
-#include "xla/hlo/ir/hlo_module.h"
+#include "xla/client/xla_builder.h"
+#include "xla/client/xla_computation.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -43,6 +46,8 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_test_base.h"
 #include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
@@ -52,6 +57,7 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
 
 namespace pjrt {
@@ -133,7 +139,150 @@ namespace {
 class PjrtCApiTest : public PjrtCApiTestBase {
  protected:
   PjrtCApiTest() : PjrtCApiTestBase(GetCApi()) {}
+
+  ~PjrtCApiTest() override = default;
+
   std::string platform_name_ = GetPlatformName();
+
+  int GetDeviceId(PJRT_DeviceDescription* device_desc) const {
+    PJRT_DeviceDescription_Id_Args args = PJRT_DeviceDescription_Id_Args{
+        .struct_size = PJRT_DeviceDescription_Id_Args_STRUCT_SIZE,
+        .priv = nullptr,
+        .device_description = device_desc,
+        .id = -1,
+    };
+    PJRT_Error* error = api_->PJRT_DeviceDescription_Id(&args);
+    CHECK_EQ(error, nullptr);
+    return args.id;
+  }
+
+  int GetDeviceId(PJRT_Device* device) const {
+    return GetDeviceId(::pjrt::GetDeviceDescription(api_, device));
+  }
+
+  bool IsValidDeviceId(PJRT_Device* device) const {
+    return GetDeviceId(device) >= 0;
+  }
+
+  int GetLocalHardwareId(PJRT_Device* device) const {
+    PJRT_Device_LocalHardwareId_Args args = PJRT_Device_LocalHardwareId_Args{
+        .struct_size = PJRT_Device_LocalHardwareId_Args_STRUCT_SIZE,
+        .priv = nullptr,
+        .device = device,
+        .local_hardware_id = -1,
+    };
+    PJRT_Error* error = api_->PJRT_Device_LocalHardwareId(&args);
+    CHECK_EQ(error, nullptr);
+    return args.local_hardware_id;
+  }
+
+  absl::Span<PJRT_Device* const> GetClientDevices() const {
+    PJRT_Client_Devices_Args dev_args;
+    dev_args.struct_size = PJRT_Client_Devices_Args_STRUCT_SIZE;
+    dev_args.priv = nullptr;
+    dev_args.client = client_;
+    PJRT_Error* error = api_->PJRT_Client_Devices(&dev_args);
+    CHECK(error == nullptr);
+    return absl::MakeSpan(dev_args.devices, dev_args.num_devices);
+  }
+
+  int GetNumDevices() const { return GetClientDevices().size(); }
+
+  std::string BuildSingleDeviceCompileOptionStr() {
+    xla::ExecutableBuildOptions build_options;
+    build_options.set_device_ordinal(0);
+    xla::DeviceAssignment device_assignment(1, 1);
+    device_assignment(0, 0) = 0;
+    build_options.set_device_assignment(device_assignment);
+    xla::CompileOptions options;
+    options.executable_build_options = build_options;
+    absl::StatusOr<xla::CompileOptionsProto> options_proto = options.ToProto();
+    TF_CHECK_OK(options_proto.status());
+    return options_proto->SerializeAsString();
+  }
+
+  // Returns a scalar result of execution.
+  // supply as e.g. `src_buffer = args.output_lists[0][0];`
+  // after calling `api_->PJRT_LoadedExecutable_Execute(&args);`
+  absl::StatusOr<float> GetProgramResult(PJRT_Buffer* src_buffer) {
+    CHECK(src_buffer != nullptr);
+    PJRT_Buffer_ToHostBuffer_Args args{
+        .struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE,
+        .priv = nullptr,
+        .src = src_buffer,
+        .host_layout = nullptr,
+        .dst = nullptr,
+        .dst_size = 0,
+        .event = nullptr,
+    };
+    PJRT_Error* error = api_->PJRT_Buffer_ToHostBuffer(&args);
+    if (error != nullptr) {
+      return ::pjrt::PjrtErrorToStatus(error, api_);
+    }
+    CHECK_EQ(args.dst_size, sizeof(float));
+
+    CHECK_EQ(::pjrt::GetDimensions(api_, src_buffer).size(), 0);
+    CHECK_EQ(::pjrt::GetElementType(api_, src_buffer), PJRT_Buffer_Type_F32);
+
+    float value;
+    args.dst = &value;
+    error = api_->PJRT_Buffer_ToHostBuffer(&args);
+    if (error != nullptr) {
+      return ::pjrt::PjrtErrorToStatus(error, api_);
+    }
+
+    xla::PjRtFuture<absl::Status> transfer_to_host =
+        ::pjrt::ConvertCEventToCppFuture(args.event, api_);
+    TF_RETURN_IF_ERROR(transfer_to_host.Await());
+    return value;
+  }
+
+  // Runs the default executable created in PjrtCApiTpuExecutableTest:SetUp and
+  // returns its output
+  absl::StatusOr<float> RunScalarExecutableAndGetResult(
+      PJRT_LoadedExecutable* executable) {
+    PJRT_LoadedExecutable_Execute_Args args;
+    args.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
+    args.priv = nullptr;
+    args.executable = executable;
+    PJRT_ExecuteOptions c_options;
+    c_options.num_send_ops = 0;
+    c_options.num_recv_ops = 0;
+    args.options = &c_options;
+    args.options->struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
+    args.options->launch_id = 0;
+    args.num_devices = 1;
+    args.num_args = 1;
+    auto buffer = create_buffer().first;
+    std::vector<PJRT_Buffer*> argument_list = {buffer.get()};
+    std::vector<PJRT_Buffer**> argument_lists{argument_list.data()};
+    args.argument_lists = argument_lists.data();
+    args.device_complete_events = nullptr;
+    args.execute_device = nullptr;
+
+    // Allocates memory for output.
+    int num_outputs_per_device = 1;
+    std::vector<PJRT_Buffer*> output_list(num_outputs_per_device);
+    std::vector<PJRT_Buffer**> output_lists{output_list.data()};
+    args.output_lists = output_lists.data();
+
+    PJRT_Error* error = api_->PJRT_LoadedExecutable_Execute(&args);
+    if (error != nullptr) {
+      return ::pjrt::PjrtErrorToStatus(error, api_);
+    }
+
+    PJRT_Buffer* result_buffer = args.output_lists[0][0];
+    TF_ASSIGN_OR_RETURN(float result, GetProgramResult(result_buffer));
+
+    // Clean up.
+    auto buffer_deleter = ::pjrt::MakeBufferDeleter(api_);
+    for (int i = 0; i < args.num_devices; ++i) {
+      for (int j = 0; j < num_outputs_per_device; ++j) {
+        buffer_deleter(args.output_lists[i][j]);
+      }
+    }
+    return result;
+  }
 };
 
 // -------------------------------- API Version --------------------------------
@@ -311,8 +460,6 @@ TEST_F(PjrtCApiTest, LookupDeviceOutOfRangeId) {
   absl::Status status = ::pjrt::PjrtErrorToStatus(error.get(), api_);
   ASSERT_EQ(status, expected);
 }
-
-static constexpr std::string_view kExecutableName = "operation";
 
 void destroy_executable(PJRT_LoadedExecutable* executable,
                         const PJRT_Api* api) {
@@ -532,6 +679,401 @@ TEST_F(PjrtCApiTest, DeviceLocalHardwareId) {
   PJRT_Error* error = api_->PJRT_Device_LocalHardwareId(&args);
   ASSERT_EQ(error, nullptr);
   CHECK_EQ(args.local_hardware_id, 0);
+}
+
+// ------------------------------- Executables ---------------------------------
+
+std::string GetSerializedProgramFromCAPI(PJRT_Executable* executable,
+                                         const PJRT_Api* c_api) {
+  PJRT_Executable_OptimizedProgram_Args args;
+  args.struct_size = PJRT_Executable_OptimizedProgram_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.executable = executable;
+  auto program = std::make_unique<PJRT_Program>();
+  program->struct_size = PJRT_Program_STRUCT_SIZE;
+  program->priv = nullptr;
+  program->code = nullptr;
+  absl::string_view program_format = "hlo_with_config";
+  program->format = program_format.data();
+  program->format_size = program_format.length();
+  args.program = program.get();
+
+  // The first call to `PJRT_Executable_OptimizedProgram` populates
+  // `program->code_size`, telling us how large a string to allocate
+  // RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Executable_OptimizedProgram(&args),
+  //                             c_api);
+  PJRT_Error* error = c_api->PJRT_Executable_OptimizedProgram(&args);
+  EXPECT_EQ(error, nullptr);
+  constexpr size_t TWO_GIBIBYTES = 2ull * 1024 * 1024 * 1024;
+  const size_t code_size = args.program->code_size;
+  CHECK(code_size < TWO_GIBIBYTES);
+  std::string code(args.program->code_size, 'a');
+  program->code = code.data();
+
+  // The second call to `PJRT_Executable_OptimizedProgram` assigns the
+  // serialized program to `program->code` (and thus `code`).
+  error = c_api->PJRT_Executable_OptimizedProgram(&args);
+  EXPECT_EQ(error, nullptr);
+
+  return code;
+}
+
+int64_t GetSizeOfGeneratedCodeInBytes(PJRT_Executable* executable,
+                                      const PJRT_Api* c_api) {
+  PJRT_Executable_SizeOfGeneratedCodeInBytes_Args args;
+  args.struct_size =
+      PJRT_Executable_SizeOfGeneratedCodeInBytes_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.executable = executable;
+  PJRT_Error* error = c_api->PJRT_Executable_SizeOfGeneratedCodeInBytes(&args);
+  CHECK_EQ(error, nullptr);
+  return args.size_in_bytes;
+}
+
+PJRT_Executable_GetCostAnalysis_Args GetCostAnalysisFromCApi(
+    PJRT_Executable* executable, const PJRT_Api* c_api) {
+  PJRT_Executable_GetCostAnalysis_Args args;
+  args.struct_size = PJRT_Executable_GetCostAnalysis_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.executable = executable;
+  args.num_properties = 0, args.properties = nullptr;
+  PJRT_Error* error = c_api->PJRT_Executable_GetCostAnalysis(&args);
+  CHECK_EQ(error, nullptr);
+  return args;
+}
+
+class PjrtCApiExecutableTest : public PjrtCApiTest {
+ protected:
+  PjrtCApiExecutableTest() = default;
+
+  ~PjrtCApiExecutableTest() override = default;
+
+  absl::flat_hash_map<std::string, xla::PjRtValueType>
+  CreateMapFromGetCostAnalysisOutput(
+      const PJRT_Executable_GetCostAnalysis_Args& args) {
+    absl::flat_hash_map<std::string, xla::PjRtValueType> output_map;
+    return ::pjrt::ConvertFromPjRtNamedValueList(args.properties,
+                                                 args.num_properties);
+  }
+};
+
+TEST_F(PjrtCApiExecutableTest, ExecutableName) {
+  PJRT_Executable_Name_Args args;
+  args.struct_size = PJRT_Executable_Name_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  auto executable = GetExecutable(executable_.get(), api_);
+  args.executable = executable.get();
+  PJRT_Error* error = api_->PJRT_Executable_Name(&args);
+  ASSERT_EQ(error, nullptr);
+  absl::string_view executable_name(args.executable_name,
+                                    args.executable_name_size);
+
+  using ::testing::StartsWith;
+  ASSERT_THAT(executable_name, StartsWith(kExecutableName));
+}
+
+TEST_F(PjrtCApiExecutableTest, ExecutableNumReplicas) {
+  PJRT_Executable_NumReplicas_Args args;
+  args.struct_size = PJRT_Executable_NumReplicas_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  auto executable = GetExecutable(executable_.get(), api_);
+  args.executable = executable.get();
+  PJRT_Error* error = api_->PJRT_Executable_NumReplicas(&args);
+
+  ASSERT_EQ(error, nullptr);
+  ASSERT_EQ(args.num_replicas, 1);
+}
+
+TEST_F(PjrtCApiExecutableTest, AddressableDevices) {
+  PJRT_LoadedExecutable_AddressableDevices_Args args;
+  args.struct_size = PJRT_LoadedExecutable_AddressableDevices_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.executable = executable_.get();
+  PJRT_Error* error = api_->PJRT_LoadedExecutable_AddressableDevices(&args);
+  EXPECT_EQ(error, nullptr);
+  absl::Span<PJRT_Device* const> addressable_devices =
+      absl::MakeSpan(args.addressable_devices, args.num_addressable_devices);
+
+  ASSERT_FALSE(addressable_devices.empty());
+  for (auto& device : addressable_devices) {
+    ASSERT_TRUE(this->IsValidDeviceId(device));
+  }
+
+  absl::Span<PJRT_Device* const> client_devices = GetClientAddressableDevices();
+  for (auto& addressable_device : addressable_devices) {
+    ASSERT_THAT(client_devices, testing::Contains(addressable_device));
+  }
+}
+
+TEST_F(PjrtCApiExecutableTest, OptimizedProgram) {
+  PJRT_Executable_OptimizedProgram_Args args;
+  args.struct_size = PJRT_Executable_OptimizedProgram_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  auto executable = GetExecutable(executable_.get(), api_);
+  args.executable = executable.get();
+  auto program = std::make_unique<PJRT_Program>();
+  program->struct_size = PJRT_Program_STRUCT_SIZE;
+  program->priv = nullptr;
+  program->code = nullptr;
+  absl::string_view program_format = "hlo_with_config";
+  program->format = program_format.data();
+  program->format_size = program_format.length();
+  args.program = program.get();
+
+  // The first call to `PJRT_Executable_OptimizedProgram` populates
+  // `program->code_size`, telling us how large a string to allocate
+  auto error = ToUniquePtr(api_->PJRT_Executable_OptimizedProgram(&args));
+  EXPECT_EQ(error, nullptr);
+  constexpr size_t TWO_GIBIBYTES = 2ull * 1024 * 1024 * 1024;
+  ASSERT_LT(program->code_size, TWO_GIBIBYTES);
+  std::string code(args.program->code_size, 'a');
+  program->code = code.data();
+
+  // The second call to `PJRT_Executable_OptimizedProgram` assigns the
+  // serialized program to `program->code` (and thus `code`).
+  error = ToUniquePtr(api_->PJRT_Executable_OptimizedProgram(&args));
+  EXPECT_EQ(error, nullptr) << ::pjrt::GetPjrtErrorMessage(error.get(), api_);
+
+  xla::HloModuleProtoWithConfig expected_proto;
+  ASSERT_TRUE(expected_proto.ParseFromString(code));
+
+  // Get the serialized program from the C API.
+  std::string serialized_program =
+      GetSerializedProgramFromCAPI(executable.get(), api_);
+
+  // Create a new xla::HloModuleProtoWithConfig from the serialized program.
+  xla::HloModuleProtoWithConfig deserialized_proto;
+  ASSERT_TRUE(deserialized_proto.ParseFromString(serialized_program));
+
+  // Make sure the protos are equivalent.
+  google::protobuf::util::MessageDifferencer diff;
+  diff.set_message_field_comparison(
+      google::protobuf::util::MessageDifferencer::EQUIVALENT);
+  EXPECT_TRUE(diff.Equals(expected_proto, deserialized_proto));
+}
+
+TEST_F(PjrtCApiExecutableTest, ExecuteInputArgumentSizeExceedNumDevice) {
+  PJRT_LoadedExecutable_Execute_Args args;
+  args.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.executable = executable_.get();
+  std::unique_ptr<PJRT_ExecuteOptions> c_options(new PJRT_ExecuteOptions);
+  c_options->num_send_ops = 0;
+  c_options->num_recv_ops = 0;
+  c_options->non_donatable_input_indices = nullptr;
+  c_options->num_non_donatable_input_indices = 0;
+  args.options = c_options.get();
+  args.options->struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
+  args.options->launch_id = 0;
+  // The number of addressable devices of executable_ is 1.
+  args.num_devices = 2;
+  args.num_args = 1;
+  args.output_lists = nullptr;
+  args.device_complete_events = nullptr;
+  auto buffer_and_event_1 = create_buffer();
+  auto buffer_and_event_2 = create_buffer();
+  std::vector<PJRT_Buffer*> argument_list_1{buffer_and_event_1.first.get()};
+  std::vector<PJRT_Buffer*> argument_list_2{buffer_and_event_2.first.get()};
+  std::vector<PJRT_Buffer**> argument_lists{argument_list_1.data(),
+                                            argument_list_2.data()};
+  args.argument_lists = argument_lists.data();
+  args.execute_device = nullptr;
+
+  PJRT_Error* error = api_->PJRT_LoadedExecutable_Execute(&args);
+
+  absl::Status status = ::pjrt::PjrtErrorToStatus(error, api_);
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(status.message(),
+            "Attempted to execute with 2 argument lists when local device "
+            "count is 1 (total replica count: 1, partition count: 1)");
+
+  // Clean up.
+  EXPECT_OK(buffer_and_event_1.second.Await());
+  EXPECT_OK(buffer_and_event_2.second.Await());
+  ::pjrt::MakeErrorDeleter(api_)(error);
+}
+
+TEST_F(PjrtCApiExecutableTest, ExecutableNumPartitions) {
+  PJRT_Executable_NumPartitions_Args args;
+  args.struct_size = PJRT_Executable_NumPartitions_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  auto executable = GetExecutable(executable_.get(), api_);
+  args.executable = executable.get();
+  PJRT_Error* error = api_->PJRT_Executable_NumPartitions(&args);
+
+  ASSERT_EQ(error, nullptr);
+  ASSERT_EQ(args.num_partitions, 1);
+}
+
+TEST_F(PjrtCApiExecutableTest, NumOutputsSingle) {
+  PJRT_Executable_NumOutputs_Args args;
+  args.struct_size = PJRT_Executable_NumOutputs_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  auto executable = GetExecutable(executable_.get(), api_);
+  args.executable = executable.get();
+  PJRT_Error* error = api_->PJRT_Executable_NumOutputs(&args);
+  ASSERT_EQ(error, nullptr);
+  EXPECT_EQ(args.num_outputs, 1);
+}
+
+TEST_F(PjrtCApiExecutableTest, NumOutputsTuple) {
+  xla::XlaBuilder builder(std::string{kExecutableName});
+  xla::Shape s = xla::ShapeUtil::MakeShape(xla::F32, {});
+  auto inp = Parameter(&builder, 0, s, "input");
+  auto one = xla::ConstantR0<float>(&builder, 1.0f);
+  auto incremented = Add(inp, one);
+  std::vector v = {incremented, inp};
+  auto tuple = Tuple(&builder, v);
+  auto computation = builder.Build(tuple).value();
+  auto pjrt_executable = Create_Executable(api_, client_, computation);
+  PJRT_Executable_NumOutputs_Args args;
+  args.struct_size = PJRT_Executable_NumOutputs_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  auto base_executable = GetExecutable(pjrt_executable.get(), api_);
+  args.executable = base_executable.get();
+  PJRT_Error* error = api_->PJRT_Executable_NumOutputs(&args);
+  ASSERT_EQ(error, nullptr);
+  EXPECT_EQ(args.num_outputs, 2);
+}
+
+TEST_F(PjrtCApiExecutableTest, SizeOfGeneratedCodeInBytes) {
+  // Call the function directly to get a reference size, check that it's not
+  // zero.
+  int64_t direct_call_size = GetSizeOfGeneratedCodeInBytes(
+      GetExecutable(executable_.get(), api_).get(), api_);
+  ASSERT_NE(direct_call_size, 0);
+
+  // Call the function through PJRT C API interface, check that it's not zero.
+  auto executable = GetExecutable(executable_.get(), api_);
+  PJRT_Executable_SizeOfGeneratedCodeInBytes_Args args;
+  args.struct_size =
+      PJRT_Executable_SizeOfGeneratedCodeInBytes_Args_STRUCT_SIZE;
+  args.priv = nullptr;
+  args.executable = executable.get();
+  PJRT_Error* error = api_->PJRT_Executable_SizeOfGeneratedCodeInBytes(&args);
+  ::pjrt::LogFatalIfPjrtError(error, api_);
+  ASSERT_EQ(error, nullptr);
+  ASSERT_NE(args.size_in_bytes, 0);
+
+  // Confirm that size in bytes returned from both calls are the same.
+  ASSERT_EQ(direct_call_size, args.size_in_bytes);
+}
+
+TEST_F(PjrtCApiExecutableTest, GetCostAnalysis) {
+  // Call GetCostAnalysis directly
+  auto program_cost_properties =
+      CreateMapFromGetCostAnalysisOutput(GetCostAnalysisFromCApi(
+          GetExecutable(executable_.get(), api_).get(), api_));
+  ASSERT_GT(program_cost_properties.size(), 0);
+
+  // Call PJRT C API
+  auto executable = GetExecutable(executable_.get(), api_);
+  PJRT_Executable_GetCostAnalysis_Args args{
+      .struct_size = PJRT_Executable_GetCostAnalysis_Args_STRUCT_SIZE,
+      .priv = nullptr,
+      .executable = executable.get(),
+      .num_properties = 0,
+      .properties = nullptr};
+  PJRT_Error* error = api_->PJRT_Executable_GetCostAnalysis(&args);
+  ::pjrt::LogFatalIfPjrtError(error, api_);
+  ASSERT_EQ(error, nullptr);
+  ASSERT_GT(args.num_properties, 0);
+
+  // Verify results from program_cost_properties and C API are the same
+  auto output_map = CreateMapFromGetCostAnalysisOutput(args);
+  ASSERT_EQ(program_cost_properties, output_map);
+
+  // Call PJRT C API again (which returns cached value)
+  // to confirm results are the same
+  PJRT_Executable_GetCostAnalysis_Args second_call_args{
+      .struct_size = PJRT_Executable_GetCostAnalysis_Args_STRUCT_SIZE,
+      .priv = nullptr,
+      .executable = executable.get(),
+      .num_properties = 0,
+      .properties = nullptr};
+  error = api_->PJRT_Executable_GetCostAnalysis(&second_call_args);
+  ::pjrt::LogFatalIfPjrtError(error, api_);
+  ASSERT_EQ(error, nullptr);
+  ASSERT_GT(args.num_properties, 0);
+
+  auto second_call_output_map = CreateMapFromGetCostAnalysisOutput(args);
+  ASSERT_EQ(program_cost_properties, second_call_output_map);
+}
+
+TEST_F(PjrtCApiExecutableTest, GetOutputElementTypes) {
+  // Call PJRT C API
+  auto executable = GetExecutable(executable_.get(), api_);
+  PJRT_Executable_OutputElementTypes_Args args{
+      .struct_size = PJRT_Executable_OutputElementTypes_Args_STRUCT_SIZE,
+      .priv = nullptr,
+      .executable = executable.get()};
+  PJRT_Error* error = api_->PJRT_Executable_OutputElementTypes(&args);
+  ::pjrt::LogFatalIfPjrtError(error, api_);
+  ASSERT_EQ(error, nullptr);
+  EXPECT_EQ(args.num_output_types, 1);
+
+  // We expect PJRT_Buffer_Type_F32 because `executable_` uses an xla::F32 Shape
+  // upon creation.
+  auto expected_output_type = PJRT_Buffer_Type::PJRT_Buffer_Type_F32;
+
+  // Verify we got the expected result.
+  EXPECT_EQ(expected_output_type, args.output_types[0]);
+
+  // Call PJRT C API again (which returns cached value) to confirm results are
+  // the same.
+  PJRT_Executable_OutputElementTypes_Args second_call_args{
+      .struct_size = PJRT_Executable_OutputElementTypes_Args_STRUCT_SIZE,
+      .priv = nullptr,
+      .executable = executable.get()};
+  error = api_->PJRT_Executable_OutputElementTypes(&second_call_args);
+  ::pjrt::LogFatalIfPjrtError(error, api_);
+  ASSERT_EQ(error, nullptr);
+  EXPECT_EQ(second_call_args.num_output_types, 1);
+
+  // Verify we got the expected result.
+  EXPECT_EQ(expected_output_type, second_call_args.output_types[0]);
+}
+
+TEST_F(PjrtCApiExecutableTest, GetOutputDimensions) {
+  xla::XlaBuilder builder(std::string{kExecutableName});
+  xla::Shape s = xla::ShapeUtil::MakeShape(xla::F32, {2});
+  auto inp = Parameter(&builder, 0, s, "input");
+  auto one = xla::ConstantR1<float>(&builder, {1.0f, 1.0f});
+  auto incremented = Add(inp, one);
+  std::vector v = {incremented, inp};
+  auto tuple = Tuple(&builder, v);
+  auto computation = builder.Build(tuple).value();
+  auto pjrt_executable = Create_Executable(api_, client_, computation);
+
+  // Call PJRT C API
+  auto executable = GetExecutable(pjrt_executable.get(), api_);
+  PJRT_Executable_OutputDimensions_Args args{
+      .struct_size = PJRT_Executable_OutputDimensions_Args_STRUCT_SIZE,
+      .priv = nullptr,
+      .executable = executable.get()};
+  PJRT_Error* error = api_->PJRT_Executable_OutputDimensions(&args);
+  ::pjrt::LogFatalIfPjrtError(error, api_);
+  ASSERT_EQ(error, nullptr);
+  EXPECT_EQ(args.num_outputs, 2);
+  EXPECT_EQ(args.dim_sizes[0], 1);
+  EXPECT_EQ(args.dim_sizes[1], 1);
+  EXPECT_EQ(args.dims[0], 2);
+  EXPECT_EQ(args.dims[1], 2);
+
+  // Call PJRT C API again (which returns cached value) to confirm results are
+  // the same.
+  PJRT_Executable_OutputDimensions_Args second_call_args{
+      .struct_size = PJRT_Executable_OutputDimensions_Args_STRUCT_SIZE,
+      .priv = nullptr,
+      .executable = executable.get()};
+  error = api_->PJRT_Executable_OutputDimensions(&second_call_args);
+  ::pjrt::LogFatalIfPjrtError(error, api_);
+  ASSERT_EQ(error, nullptr);
+  EXPECT_EQ(second_call_args.num_outputs, 2);
+  EXPECT_EQ(second_call_args.dim_sizes[0], 1);
+  EXPECT_EQ(second_call_args.dim_sizes[1], 1);
+  EXPECT_EQ(second_call_args.dims[0], 2);
+  EXPECT_EQ(second_call_args.dims[1], 2);
 }
 
 // ---------------------------------- Buffers ----------------------------------
