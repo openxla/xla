@@ -129,6 +129,7 @@ cc_library(
     deps = [
         ":auto_sharding_strategy",
         ":matrix",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
     ],
 )
