@@ -52,6 +52,7 @@ cc_library(
     deps = [
         "//xla:statusor",
         "//xla/stream_executor",
+        "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
