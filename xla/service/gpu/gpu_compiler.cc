@@ -700,8 +700,9 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
   // otherwise as well so that all collectives can get these optimizations.
   {
     HloPassPipeline collectives_pipeline("collective-optimizations");
-    VLOG(2) << "Adding ReplicaReduceSplitter pass.\n";
-    collectives_pipeline.AddPass<ReplicaReduceSplitter>()    
+    if (hlo_module->config().use_spmd_partitioning() && num_partitions > 1) {
+      collectives_pipeline.AddPass<ReplicaReduceSplitter>();
+    }
     collectives_pipeline.AddPass<AllReduceFolder>();
     collectives_pipeline.AddPass<ReduceScatterCreator>();
     collectives_pipeline.AddPass<AllGatherOptimizer>();

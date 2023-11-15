@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
@@ -36,135 +37,174 @@ namespace gpu {
 
 namespace m = match;
 
-template <typename Pattern>
-auto OptionalCopy(HloInstruction **optional_copy, Pattern pattern) {
-  return m::AnyOf<HloInstruction>(m::Copy(optional_copy, pattern),
-                                  std::move(pattern));
-}
-
-StatusOr<bool> ReplicaReduceSplitter::Run(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  bool changed = false;
-  const HloModuleConfig &config = module->config();
-  if (!config.use_spmd_partitioning()) {
-    VLOG(2) << "Unsupported module";
+// Returns whether the HLO Computation applied by `op` calculates the largest
+// element.
+bool IsMaxReduce(HloInstruction *op) {
+  if (op->opcode() != HloOpcode::kReduce) {
     return false;
   }
-  HloInstruction *pid = nullptr;
-  for (HloComputation *computation :
-       module->MakeNonfusionComputations(execution_threads)) {
-    for (HloInstruction *instr : computation->MakeInstructionPostOrder()) {
-      if (instr->opcode() == HloOpcode::kPartitionId) {
-        VLOG(2) << "Found partition-id\n";
-        pid = instr;
-        VLOG(2) << instr->GetModule()->config().num_partitions() << "\n";
-        VLOG(2) << instr->GetModule()->config().replica_count() << "\n";
-        break;
+  HloComputation *reduce_comp = op->to_apply();
+  HloInstruction *reduce_comp_root = reduce_comp->root_instruction();
+  return ShapeUtil::IsScalar(op->shape()) &&
+         ShapeUtil::IsScalar(op->operand(1)->shape()) &&
+         op->operand(1)->IsConstant() &&
+         op->operand(1)->literal().GetAsDouble({}) <= 0. &&
+         reduce_comp_root->opcode() == HloOpcode::kMaximum &&
+         reduce_comp_root->operand(0)->opcode() == HloOpcode::kParameter &&
+         reduce_comp_root->operand(1)->opcode() == HloOpcode::kParameter;
+}
+
+// Recursively find partition-id node.
+HloInstruction *FindPartitionIdRecursive(
+    HloInstruction *instr, absl::flat_hash_set<int> &visited_instrs) {
+  // Avoid visiting the same instruction more than once.
+  if (!visited_instrs.emplace(instr->unique_id()).second) {
+    return nullptr;
+  }
+  if (instr->opcode() == HloOpcode::kPartitionId) {
+    return instr;
+  }
+  if (instr->operand_count() == 1 || instr->opcode() == HloOpcode::kClamp) {
+    int operand_idx = 0;
+    if (instr->opcode() == HloOpcode::kClamp) {
+      operand_idx = 1;
+    }
+    return FindPartitionIdRecursive(instr->mutable_operand(operand_idx),
+                                    visited_instrs);
+  } else if (instr->opcode() == HloOpcode::kMultiply ||
+             instr->opcode() == HloOpcode::kDynamicSlice) {
+    for (int k = 0; k < 2; ++k) {
+      int tmp_k = instr->opcode() == HloOpcode::kDynamicSlice ? k + 1 : k;
+      auto binary_subgraph = FindPartitionIdRecursive(
+          instr->mutable_operand(tmp_k), visited_instrs);
+      if (binary_subgraph) {
+        return binary_subgraph;
       }
     }
   }
-  if (!pid) {
-    VLOG(2) << "No partition-id found!";
-    return false;
-  }
+  return nullptr;
+}
+
+StatusOr<bool> ReplicaReduceSplitter::Run(
+    HloModule *module,
+    const absl::flat_hash_set<absl::string_view> &execution_threads) {
+  bool changed = false;
+  const HloModuleConfig &config = module->config();
+
   int64_t next_channel_id = hlo_query::NextChannelId(*module);
+  auto is_replicated_parameter = [](const HloInstruction *instr) -> bool {
+    return instr->operand_count() == 0 && instr->sharding().IsReplicated();
+  };
   for (HloComputation *computation :
        module->MakeNonfusionComputations(execution_threads)) {
+    HloInstruction *sharded_param = nullptr;
+    HloInstruction *partition_id = nullptr;
     for (HloInstruction *instr : computation->MakeInstructionPostOrder()) {
-      if (instr->opcode() == HloOpcode::kReduce) {
-        // VLOG(2) << "instr:" << instr->ToString() << "\n";
-        HloInstruction *absop = nullptr;
-        HloInstruction *shard_operand = nullptr;
-        HloInstruction *optcpy = nullptr;
-        HloInstruction *operand = instr->mutable_operand(0);
-        if (Match(
-                operand,
-                m::Abs(&absop, OptionalCopy(&optcpy, m::Op(&shard_operand))))) {
-          if (optcpy) VLOG(2) << "optcpy " << optcpy->ToString() << "\n";
-          VLOG(2) << "instr:" << instr->ToString() << "\n";
-          VLOG(2) << "shard_operand:" << shard_operand->ToString() << "\n";
-          // return true;
-          if (shard_operand->opcode() != HloOpcode::kDynamicSlice &&
-              shard_operand->sharding().IsReplicated()) {
-            VLOG(2) << "Found replicated operand\n";
-            int num_partitions = instr->GetModule()->config().num_partitions();
-            // HloInstruction *zero = instr->AddInstruction(
-            //     HloInstruction::CreateConstant(LiteralUtil::Zero(S32)));
-            const Shape target = shard_operand->shape();
-            size_t num_col = target.dimensions(1);
-            size_t num_row = target.dimensions(0);
-            VLOG(2) << "tensor shape: " << num_row << " x " << num_col
-                    << std::endl;
-            Shape ds_shape =
-                ShapeUtil::MakeShape(pid->shape().element_type(), {1});
-            std::vector<int> all_dev(num_partitions);
-            std::iota(std::begin(all_dev), std::end(all_dev), 0);
-            Array<uint32_t> gmap({num_partitions});
-            gmap.FillIota(0);
+      if (IsMaxReduce(instr) &&
+          Match(instr->mutable_operand(0),
+                m::Abs(m::Op(&sharded_param)
+                           .WithPredicate(is_replicated_parameter)))) {
+        int dynamic_slice_id = -1;
+        for (int i = 0; i < sharded_param->users().size(); ++i) {
+          if (sharded_param->users()[i]->opcode() == HloOpcode::kDynamicSlice) {
+            dynamic_slice_id = i;
+            break;
+          }
+        }
+        if (dynamic_slice_id == -1) {
+          VLOG(2) << "Replicated parameter has not been sliced so "
+                     "ReplicaReduceSplitter pass not applied.";
+          return false;
+        }
 
-            auto dsop0 =
-                computation->AddInstruction(HloInstruction::CreateConstant(
-                    LiteralUtil::CreateFromArray(gmap)));
+        auto dynamic_slice_op = sharded_param->users()[dynamic_slice_id];
+        absl::flat_hash_set<int> visited_instrs;
+        partition_id =
+            FindPartitionIdRecursive(dynamic_slice_op, visited_instrs);
+        int num_partitions = instr->GetModule()->config().num_partitions();
+        const Shape param_shape = sharded_param->shape();
 
-            HloInstruction *DS0 =
-                instr->AddInstruction(HloInstruction::CreateDynamicSlice(
-                    ds_shape, dsop0, {pid}, {1}));
-            HloInstruction *CV0 =
-                instr->AddInstruction(HloInstruction::CreateConvert(
-                    ShapeUtil::MakeShape(S32, {1}), DS0));
+        // Ensure that slicing is performed on the most major dimension
+        int most_major_dim =
+            param_shape.layout().minor_to_major(param_shape.rank() - 1);
+        size_t num_row = param_shape.dimensions(most_major_dim);
 
-            // dynamic-slice.19
-            Array<int32_t> gmap2({num_partitions});
-            int32_t start_ind = 0;
-            auto loc_row = static_cast<int32_t>(num_row / num_partitions);
-            std::generate(gmap2.begin() + 1, gmap2.end(),
-                          [&] { return start_ind += loc_row; });
-            auto dsop1 = instr->AddInstruction(HloInstruction::CreateConstant(
-                LiteralUtil::CreateFromArray(gmap2)));
-            HloInstruction *DS1 =
-                instr->AddInstruction(HloInstruction::CreateDynamicSlice(
-                    ShapeUtil::MakeShape(dsop1->shape().element_type(), {1}),
-                    dsop1, {CV0}, {1}));
-            // reshape.147
-            HloInstruction *RS1 =
-                instr->AddInstruction(HloInstruction::CreateReshape(
-                    ShapeUtil::MakeShape(DS1->shape().element_type(), {}),
-                    DS1));
-            // dynamic-slice.20 new
-            auto start_col =
-                instr->AddInstruction(HloInstruction::CreateConstant(
-                    LiteralUtil::CreateR0<int32_t>(0)));
-            HloInstruction *possible = optcpy ? optcpy : shard_operand;
-            HloInstruction *DS2 =
-                instr->AddInstruction(HloInstruction::CreateDynamicSlice(
-                    ShapeUtil::MakeShape(possible->shape().element_type(),
-                                         {loc_row, num_col}),
-                    possible, {RS1, start_col}, {loc_row, num_col}));
-            HloInstruction *newabs =
-                instr->AddInstruction(HloInstruction::CreateUnary(
-                    DS2->shape(), HloOpcode::kAbs, DS2));
-            HloInstruction *newreduce =
-                instr->AddInstruction(HloInstruction::CreateReduce(
-                    instr->shape(), newabs, instr->mutable_operand(1),
-                    instr->dimensions(), instr->to_apply()));
+        Shape dynamic_slice_shape =
+            ShapeUtil::MakeShape(partition_id->shape().element_type(), {1});
 
-            // AllReduce
-            std::vector<ReplicaGroup> groups(1);
-            for (int64_t i = 0; i < num_partitions; ++i) {
-              groups[0].add_replica_ids(i);
-            }
+        Array<uint32_t> gmap_0({num_partitions});
+        gmap_0.FillIota(0);
 
-            std::optional<int64_t> channel_id = next_channel_id;
-            auto newallreduce = HloInstruction::CreateAllReduce(
-                instr->shape(), {newreduce}, instr->to_apply(), groups, false,
-                channel_id, true);
-            TF_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
-                instr, std::move(newallreduce)));
-            // return true;
-            changed = true;
-          }  // if
-        }    // match
+        HloInstruction *constant_0 =
+            instr->AddInstruction(HloInstruction::CreateConstant(
+                LiteralUtil::CreateFromArray(gmap_0)));
+
+        HloInstruction *dynamic_slice_0 =
+            instr->AddInstruction(HloInstruction::CreateDynamicSlice(
+                dynamic_slice_shape, constant_0, {partition_id}, {1}));
+        HloInstruction *convert_0 =
+            instr->AddInstruction(HloInstruction::CreateConvert(
+                ShapeUtil::MakeShape(S32, {1}), dynamic_slice_0));
+
+        Array<int32_t> gmap_1({num_partitions});
+        int32_t start_ind = 0;
+        auto loc_row = static_cast<int32_t>(num_row / num_partitions);
+        std::generate(gmap_1.begin() + 1, gmap_1.end(),
+                      [&] { return start_ind += loc_row; });
+        auto constant_1 = instr->AddInstruction(HloInstruction::CreateConstant(
+            LiteralUtil::CreateFromArray(gmap_1)));
+        HloInstruction *dynamic_slice_1 =
+            instr->AddInstruction(HloInstruction::CreateDynamicSlice(
+                ShapeUtil::MakeShape(constant_1->shape().element_type(), {1}),
+                constant_1, {convert_0}, {1}));
+
+        HloInstruction *reshape_0 =
+            instr->AddInstruction(HloInstruction::CreateReshape(
+                ShapeUtil::MakeShape(dynamic_slice_1->shape().element_type(),
+                                     {}),
+                dynamic_slice_1));
+
+        HloInstruction *start_from_zero = instr->AddInstruction(
+            HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(0)));
+        auto sliced_shape = sharded_param->shape();
+        sliced_shape.set_dimensions(most_major_dim, loc_row);
+        int param_rank = sharded_param->shape().rank();
+        std::vector<int64_t> sliced_dims(param_rank);
+
+        std::vector<HloInstruction *> start_index(param_rank);
+        for (size_t i = 0; i < param_rank; ++i) {
+          start_index[i] = (i == most_major_dim) ? reshape_0 : start_from_zero;
+          sliced_dims[i] = sliced_shape.dimensions(i);
+        }
+
+        HloInstruction *dynamic_shape_2 =
+            instr->AddInstruction(HloInstruction::CreateDynamicSlice(
+                ShapeUtil::MakeShapeWithDenseLayout(
+                    sharded_param->shape().element_type(),
+                    sliced_shape.dimensions(),
+                    sharded_param->shape().layout().minor_to_major()),
+                sharded_param, absl::MakeSpan(start_index),
+                absl::MakeSpan(sliced_dims)));
+        HloInstruction *new_abs =
+            instr->AddInstruction(HloInstruction::CreateUnary(
+                dynamic_shape_2->shape(), HloOpcode::kAbs, dynamic_shape_2));
+        HloInstruction *new_reduce =
+            instr->AddInstruction(HloInstruction::CreateReduce(
+                instr->shape(), new_abs, instr->mutable_operand(1),
+                instr->dimensions(), instr->to_apply()));
+
+        std::vector<ReplicaGroup> groups(1);
+        for (int64_t i = 0; i < num_partitions; ++i) {
+          groups[0].add_replica_ids(i);
+        }
+
+        std::optional<int64_t> channel_id = next_channel_id;
+        auto newallreduce = HloInstruction::CreateAllReduce(
+            instr->shape(), {new_reduce}, instr->to_apply(), groups, false,
+            channel_id, true);
+        TF_RETURN_IF_ERROR(computation->ReplaceWithNewInstruction(
+            instr, std::move(newallreduce)));
+        changed = true;
       }
     }
   }

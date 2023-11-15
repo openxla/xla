@@ -21,6 +21,8 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// Transforms reduce(abs(a)) to all-reduce(reduce(abs(dynamic_slice(a)))) where
+// a is a replicated parameter and has been dynamic_sliced in another path.
 
 class ReplicaReduceSplitter : public HloModulePass {
  public:
