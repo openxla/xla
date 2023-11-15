@@ -2028,7 +2028,10 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
     ],
@@ -2646,6 +2649,7 @@ cc_library(
         "//xla/service:layout_assignment",
         "//xla/service/gpu/model:gpu_hlo_cost_analysis",
         "//xla/stream_executor:device_description",
+        "@tsl//tsl/platform:env",
     ],
 )
 
