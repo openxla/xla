@@ -955,6 +955,52 @@ ENTRY e {
   EXPECT_FALSE(GemmRewriterTriton(cc).Run(module.get()).value());
 }
 
+TEST_F(GemmRewriterTritonTest, F32WithDefaultPrecisionIsSupported) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+  a = f32[2,2] parameter(0)
+  b = f32[2,2] parameter(1)
+  negate_b = f32[2,2] negate(b) // Make it a non-pure matmul
+  ROOT r = f32[2,2] dot(a, negate_b),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    operand_precision={default, default}
+})"));
+  const se::CudaComputeCapability cc{se::CudaComputeCapability::AMPERE, 0};
+  EXPECT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+}
+
+TEST_F(GemmRewriterTritonTest, F32WithHighestPrecisionIsSupported) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+  a = f32[2,2] parameter(0)
+  b = f32[2,2] parameter(1)
+  negate_b = f32[2,2] negate(b) // Make it a non-pure matmul
+  ROOT r = f32[2,2] dot(a, negate_b),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    operand_precision={highest, highest}
+})"));
+  const se::CudaComputeCapability cc{se::CudaComputeCapability::AMPERE, 0};
+  EXPECT_TRUE(GemmRewriterTriton(cc).Run(module.get()).value());
+}
+
+// A lot of other precision-type combinations are also not supported.
+TEST_F(GemmRewriterTritonTest, F16WithHighestPrecisionIsNotSupported) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+  a = f16[2,2] parameter(0)
+  b = f16[2,2] parameter(1)
+  negate_b = f16[2,2] negate(b) // Make it a non-pure matmul
+  ROOT r = f16[2,2] dot(a, negate_b),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    operand_precision={highest, highest}
+})"));
+  const se::CudaComputeCapability cc{se::CudaComputeCapability::AMPERE, 0};
+  EXPECT_FALSE(GemmRewriterTriton(cc).Run(module.get()).value());
+}
+
 class GemmRewriterTritonLevel2Test : public GemmRewriterTritonTest {
  public:
   DebugOptions GetDebugOptionsForTest() override {

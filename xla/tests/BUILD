@@ -2762,8 +2762,11 @@ xla_test(
 xla_test(
     name = "triangular_solve_test",
     srcs = ["triangular_solve_test.cc"],
+    backend_tags = {
+        "gpu": ["cpu:4"],
+    },
     real_hardware_only = True,
-    shard_count = 3,
+    shard_count = 10,
     tags = [
         "enable_for_xla_interpreter",
         "optonly",

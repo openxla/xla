@@ -1527,6 +1527,45 @@ Status FusionContext::PropagateDimensionOrdersToParameters(
   return OkStatus();
 }
 
+PrecisionConfig::Precision GetEffectiveOperandPrecision(
+    const HloInstruction& dot, int operand_index) {
+  // TODO(tdanyluk): Remove this when we remove
+  // tensor_float_32_execution_enabled() checks from XLA.
+  if (dot.operand(operand_index)->shape().element_type() == F32 &&
+      !tsl::tensor_float_32_execution_enabled()) {
+    return PrecisionConfig::HIGHEST;
+  }
+
+  return dot.precision_config().operand_precision(operand_index);
+}
+
+FusionDecision CanTritonHandleGemmPrecision(const HloInstruction& dot) {
+  CHECK_EQ(dot.opcode(), HloOpcode::kDot);
+  CHECK_EQ(dot.operands().size(), 2);
+
+  const std::array<PrimitiveType, 2> operand_types = {
+      dot.operand(0)->shape().element_type(),
+      dot.operand(1)->shape().element_type()};
+
+  const std::array<PrecisionConfig::Precision, 2> effective_operand_precisions =
+      {GetEffectiveOperandPrecision(dot, 0),
+       GetEffectiveOperandPrecision(dot, 1)};
+
+  if (absl::c_all_of(effective_operand_precisions,
+                     [](int x) { return x == PrecisionConfig::DEFAULT; })) {
+    return FusionDecision{};
+  }
+
+  if (absl::c_all_of(effective_operand_precisions,
+                     [](int x) { return x == PrecisionConfig::HIGHEST; }) &&
+      absl::c_all_of(operand_types,
+                     [](PrimitiveType x) { return x == PrimitiveType::F32; })) {
+    return FusionDecision{};
+  }
+
+  return "Unsupported precision";
+}
+
 }  // anonymous namespace
 
 // Data types that are supported by the Triton emitters.
@@ -1692,11 +1731,13 @@ const DimIterationSpec* TritonFusionAnalysis::IterSpec(
 
 FusionDecision CanTritonHandleGEMM(const HloInstruction& dot,
                                    const se::GpuComputeCapability gpu_version) {
-  if (dot.opcode() != HloOpcode::kDot ||
-      !tsl::tensor_float_32_execution_enabled() ||
-      absl::c_any_of(dot.precision_config().operand_precision(),
-                     [](int x) { return x != PrecisionConfig::DEFAULT; })) {
-    return "Non-default precision.";
+  if (dot.opcode() != HloOpcode::kDot) {
+    return "Not a dot instruction.";
+  }
+
+  if (FusionDecision decision = CanTritonHandleGemmPrecision(dot);
+      !decision.CanFuse()) {
+    return decision;
   }
 
   auto supported_output_type = [&](const PrimitiveType t) {
