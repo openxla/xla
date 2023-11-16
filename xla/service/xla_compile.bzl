@@ -106,6 +106,7 @@ def xla_aot_compile_gpu_runtime_autotuning(
         # copybara:comment_begin(oss-only)
         target_compatible_with = select({
             "@local_config_cuda//:is_cuda_enabled": [],
+            "@local_config_rocm//:_enable_rocm": [],
             "//conditions:default": ["@platforms//:incompatible"],
         }),
         # copybara:comment_end

@@ -3071,7 +3071,7 @@ xla_cc_test(
 
 xla_cc_test(
     name = "gpu_aot_compilation_test",
-    srcs = if_cuda_is_configured([
+    srcs = if_gpu_is_configured([
         "gpu_aot_compilation_test.cc",
     ]),
     env = {
@@ -3080,15 +3080,18 @@ xla_cc_test(
     tags = [
         "gpu",
         "no_oss",
-        "no_rocm",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
         "requires-gpu-nvidia",
     ],
     deps = if_cuda_is_configured([
         ":nvptx_compiler_impl",
+    ]) + if_rocm_is_configured([
+        ":amdgpu_compiler_impl",
+    ]) + [
+        "//xla/service/gpu:gpu_transfer_manager",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
-    ]),
+    ],
 )
 
 cc_library(
