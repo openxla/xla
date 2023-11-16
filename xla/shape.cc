@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -31,6 +32,123 @@ limitations under the License.
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
+
+// QuantizationAttribute
+QuantizationAttribute::QuantizationAttribute() = default;
+QuantizationAttribute::QuantizationAttribute(const QuantizationAttribute&) =
+    default;
+QuantizationAttribute::QuantizationAttribute(QuantizationAttribute&&) = default;
+QuantizationAttribute& QuantizationAttribute::operator=(
+    const QuantizationAttribute&) = default;
+QuantizationAttribute::~QuantizationAttribute() = default;
+
+/* static */ QuantizationAttribute QuantizationAttribute::CreateFromProto(
+    const QuantizationAttributeProto& proto) {
+  QuantizationAttribute quantization_attribute;
+  quantization_attribute.set_expressed_type(proto.expressed_type());
+  for (const double scale : proto.scales()) {
+    quantization_attribute.add_scale(scale);
+  }
+  for (const int64_t zero_point : proto.zero_points()) {
+    quantization_attribute.add_zero_point(zero_point);
+  }
+  if (proto.has_storage_type_min()) {
+    quantization_attribute.set_storage_type_min(proto.storage_type_min());
+  }
+  if (proto.has_storage_type_max()) {
+    quantization_attribute.set_storage_type_max(proto.storage_type_max());
+  }
+  if (proto.has_quantization_dimension()) {
+    quantization_attribute.set_quantization_dimension(
+        proto.quantization_dimension());
+  }
+
+  return quantization_attribute;
+}
+
+QuantizationAttributeProto QuantizationAttribute::ToProto() const {
+  QuantizationAttributeProto proto;
+  proto.set_expressed_type(expressed_type_);
+  for (const double scale : scales_) {
+    proto.add_scales(scale);
+  }
+  for (const int64_t zero_point : zero_points_) {
+    proto.add_zero_points(zero_point);
+  }
+  if (storage_type_min_.has_value()) {
+    proto.set_storage_type_min(*storage_type_min_);
+  }
+  if (storage_type_max_.has_value()) {
+    proto.set_storage_type_max(*storage_type_max_);
+  }
+  if (quantization_dimension_.has_value()) {
+    proto.set_quantization_dimension(*quantization_dimension_);
+  }
+
+  return proto;
+}
+
+void QuantizationAttribute::Print(Printer* printer) const {
+  if (has_storage_type_min() && has_storage_type_max()) {
+    printer->Append("<");
+    printer->Append(storage_type_min());
+    printer->Append(":");
+    printer->Append(storage_type_max());
+    printer->Append(">");
+  }
+  printer->Append(":");
+  printer->Append(primitive_util::LowercasePrimitiveTypeName(expressed_type()));
+  if (is_per_axis_quantized()) {
+    printer->Append(":");
+    printer->Append(quantization_dimension());
+  }
+  printer->Append(",");
+  if (is_per_axis_quantized()) {
+    printer->Append("{");
+  }
+
+  auto print_scale_zero_point = [&](int i) {
+    printer->Append(scales()[i]);
+    printer->Append(":");
+    printer->Append(zero_points()[i]);
+  };
+  print_scale_zero_point(0);
+  for (int i = 1, n = scale_size(); i < n; ++i) {
+    printer->Append(",");
+    print_scale_zero_point(i);
+  }
+
+  if (is_per_axis_quantized()) {
+    printer->Append("}");
+  }
+}
+
+std::string QuantizationAttribute::ToString() const {
+  StringPrinter printer;
+  Print(&printer);
+  return std::move(printer).ToString();
+}
+
+bool QuantizationAttribute::Equal::operator()(
+    const QuantizationAttribute& lhs, const QuantizationAttribute& rhs) {
+  if (lhs.expressed_type() != rhs.expressed_type() ||
+      lhs.scales() != rhs.scales() || lhs.zero_points() != rhs.zero_points() ||
+      lhs.has_quantization_dimension() != rhs.has_quantization_dimension() ||
+      lhs.has_storage_type_min() != rhs.has_storage_type_min() ||
+      lhs.has_storage_type_max() != rhs.has_storage_type_max())
+    return false;
+
+  if (lhs.has_storage_type_min() &&
+      lhs.storage_type_min() != rhs.storage_type_min())
+    return false;
+  if (lhs.has_storage_type_max() &&
+      lhs.storage_type_max() != rhs.storage_type_max())
+    return false;
+  if (lhs.has_quantization_dimension() &&
+      lhs.quantization_dimension() != rhs.quantization_dimension())
+    return false;
+  return true;
+}
 
 // Defined in .cc file to avoid inlining these large routines
 Shape::Shape() = default;
@@ -77,6 +195,10 @@ Shape::Shape(const ShapeProto& shape_proto) {
       *mutable_layout() = Layout::CreateFromProto(shape_proto.layout());
     }
   }
+  if (shape_proto.has_quantization_attribute()) {
+    *mutable_quantization_attribute() = QuantizationAttribute::CreateFromProto(
+        shape_proto.quantization_attribute());
+  }
 }
 
 ShapeProto Shape::ToProto() const {
@@ -96,6 +218,11 @@ ShapeProto Shape::ToProto() const {
   if (has_layout()) {
     *proto.mutable_layout() = layout().ToProto();
   }
+  if (has_quantization_attribute()) {
+    *proto.mutable_quantization_attribute() =
+        quantization_attribute().ToProto();
+  }
+
   return proto;
 }
 
@@ -145,6 +272,14 @@ bool Shape::is_unbounded_dynamic() const {
   }
   return absl::c_any_of(dimensions_,
                         [](int64_t dim) { return dim == kUnboundedSize; });
+}
+
+bool Shape::is_quantized() const {
+  return IsTuple() ? absl::c_any_of(tuple_shapes_,
+                                    [](const Shape& subshape) {
+                                      return subshape.is_quantized();
+                                    })
+                   : has_quantization_attribute();
 }
 
 void Shape::DeleteDimension(int64_t dim_to_delete) {
@@ -225,6 +360,23 @@ bool Shape::Equal::operator()(const Shape& lhs, const Shape& rhs) {
           VLOG(3) << "CompareShapes: lhs layout != rhs layout";
           return false;
         }
+      }
+    }
+  }
+
+  if (!ignore_quantization_attribute_) {
+    if (lhs.has_quantization_attribute() || rhs.has_quantization_attribute()) {
+      if (!lhs.has_quantization_attribute() ||
+          !rhs.has_quantization_attribute()) {
+        VLOG(3)
+            << "CompareShapes: both shapes do not have quantization attributes";
+        return false;
+      }
+      QuantizationAttribute::Equal equal;
+      if (!equal(lhs.quantization_attribute(), rhs.quantization_attribute())) {
+        VLOG(3) << "CompareShapes: lhs quantization attribute != rhs "
+                   "quantization attribute";
+        return false;
       }
     }
   }

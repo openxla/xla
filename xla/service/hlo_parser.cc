@@ -525,6 +525,10 @@ class HloParserImpl : public HloParser {
                            std::vector<bool>* dynamic_dimensions);
   bool ParseShape(Shape* result);
   bool ParseLayout(Layout* layout);
+  bool ParseQuantizationAttribute(QuantizationAttribute* quantization_attribute,
+                                  PrimitiveType primitive_type);
+  bool ParseNameAsPrimitiveType(PrimitiveType* primtive_type);
+
   bool ParseLayoutIntAttribute(int64_t* attr_value,
                                absl::string_view attr_description);
   bool ParseDimLevelTypes(
@@ -5660,6 +5664,153 @@ bool HloParserImpl::ParseLayoutIntAttribute(
   return true;
 }
 
+// In the context of parsing quantized element-type, we can encouter cases like
+// (A) 'qint<storage_type<storage_type_min:storage_type_max>:expressed_type...'
+//  or (B) 'qint<storage_type:expressed_type...' (storage_type_min/storage_max
+//  being
+// optional can be omitted). Hence it is possible to parse the storage_type
+// either as a 'TokKind::kPrimitiveType' (for A) or as 'TokKind::kName' (for B).
+// In case of (B), even though the token is parsed as 'TokKind::kName', it
+// should actually represent a 'TokKind::kPrimitiveType'. The following routine
+// is applied in the context of parsing quantized element-type and parses the
+// current token as primitive_type while addressing both cases (A) and (B).
+bool HloParserImpl::ParseNameAsPrimitiveType(PrimitiveType* primtive_type) {
+  if (lexer_.GetKind() == TokKind::kPrimitiveType) {
+    if (!ParsePrimitiveType(primtive_type)) {
+      return false;
+    }
+  } else if (lexer_.GetKind() == TokKind::kName) {
+    auto status = primitive_util::StringToPrimitiveType(lexer_.GetStrVal());
+    if (!status.ok()) return false;
+    *primtive_type = status.value();
+    lexer_.Lex();
+  }
+
+  return true;
+}
+
+// quantization_attribute
+//   ::= ['<' storage_type_min ':' storage_type_max '>']
+//        ':' expressed_type [':' quantization_dimension]
+//        ',' quantization_parameters
+// storage_type_min ::= int64
+// storage_type_max ::= int64
+// expressed_type ::= PrimitiveType
+// quantization_dimension ::= int32
+// quantization_parameters ::= quantization_parameter
+//                   | '{' QuantizationParameter {',' QuantizationParameter} '}'
+// quantization_parameter ::= scale ':' zero_point
+// scale ::= double
+// zero_point ::= int64
+bool HloParserImpl::ParseQuantizationAttribute(
+    QuantizationAttribute* quantization_attribute,
+    PrimitiveType primitive_type) {
+  int64_t storage_type_min =
+      primitive_util::GetDefaultMinimumForInteger(primitive_type);
+  int64_t storage_type_max =
+      primitive_util::GetDefaultMaximumForInteger(primitive_type);
+  if (EatIfPresent(TokKind::kLt)) {
+    // parse the storage_type_min and storage_type_max
+    if (!ParseInt64(&storage_type_min) ||
+        !ParseToken(TokKind::kColon,
+                    StrCat("expects storage type min to be followed by ",
+                           TokKindToString(TokKind::kColon))) ||
+        !ParseInt64(&storage_type_max) ||
+        !ParseToken(TokKind::kGt,
+                    StrCat("expects storage type max to be followed by ",
+                           TokKindToString(TokKind::kGt)))) {
+      return false;
+    }
+  }
+  quantization_attribute->set_storage_type_min(storage_type_min);
+  quantization_attribute->set_storage_type_max(storage_type_max);
+
+  // For the quantized shape without storage_type_min/storage_type_max,
+  // `qint<s8:f32...`, the storage_type is parsed as TokKind::kName where the
+  // ':' was already eaten up by the lexer, in which case, we have to start
+  // parsing with expressed_type. However, for the case when
+  // storage_type_min/storage_type_max are present,
+  // `qint<s8<-128,127>:f32...`, the ':' needs to be parsed explicitly.
+  PrimitiveType expressed_type = PRIMITIVE_TYPE_INVALID;
+  if (lexer_.GetKind() == TokKind::kColon) {
+    if (!ParseToken(TokKind::kColon,
+                    StrCat("expects expressed type to start with ",
+                           TokKindToString(TokKind::kColon)))) {
+      return false;
+    }
+  }
+  if (!ParseNameAsPrimitiveType(&expressed_type)) {
+    return false;
+  }
+  quantization_attribute->set_expressed_type(expressed_type);
+
+  bool isPerAxis = false;
+  if (lexer_.GetKind() == TokKind::kInt) {
+    // parse quantization dimension
+    int64_t quantization_dimension;
+    if (!ParseInt64(&quantization_dimension)) {
+      return false;
+    }
+    quantization_attribute->set_quantization_dimension(quantization_dimension);
+    isPerAxis = true;
+  }
+
+  if (!ParseToken(
+          TokKind::kComma,
+          StrCat("expects the scales and zero_points to be preceded with ",
+                 TokKindToString(TokKind::kComma)))) {
+    return false;
+  }
+
+  // Parsing quantization parameters (scales and zero_points).
+  // For per-axis, ranges are in a {} delimited list.
+  if (isPerAxis) {
+    if (!ParseToken(TokKind::kLbrace,
+                    StrCat("expects the scales and zero_points to start with ",
+                           TokKindToString(TokKind::kLbrace)))) {
+      return false;
+    }
+  }
+
+  std::vector<double> scales;
+  std::vector<int64_t> zero_points;
+  auto parse_scale_zero_point = [&](double& scale,
+                                    int64_t& zero_point) -> bool {
+    // scale[:zero_point]?
+    // scale.
+    if (!ParseDouble(&scale)) return false;
+
+    // zero point.
+    zero_point = 0;
+    if (!EatIfPresent(TokKind::kColon)) {
+      // Default zero point.
+      return true;
+    }
+
+    return ParseInt64(&zero_point);
+  };
+
+  do {
+    scales.resize(scales.size() + 1);
+    zero_points.resize(zero_points.size() + 1);
+    if (!parse_scale_zero_point(scales.back(), zero_points.back())) {
+      return false;
+    }
+  } while (isPerAxis && EatIfPresent(TokKind::kComma));
+
+  if (isPerAxis) {
+    if (!ParseToken(TokKind::kRbrace,
+                    StrCat("expects the scales and zero_points to end with ",
+                           TokKindToString(TokKind::kRbrace)))) {
+      return false;
+    }
+  }
+  quantization_attribute->set_scales(scales);
+  quantization_attribute->set_zero_points(zero_points);
+
+  return true;
+}
+
 // layout
 //   ::= '{' int64_list
 //       (':' dim_level_types
@@ -5814,8 +5965,29 @@ bool HloParserImpl::ParseShape(Shape* result) {
   }
 
   PrimitiveType primitive_type;
-  if (!ParsePrimitiveType(&primitive_type)) {
-    return false;
+  if (EatIfPresent(TokKind::kw_qint)) {  // quantized shape
+    QuantizationAttribute quantization_attribute;
+    if (!ParseToken(TokKind::kLt,
+                    "expects '<' to begin the quantization shape.")) {
+      return false;
+    }
+
+    if (!ParseNameAsPrimitiveType(&primitive_type)) {
+      return false;
+    }
+
+    if (!ParseQuantizationAttribute(&quantization_attribute, primitive_type)) {
+      return false;
+    }
+    if (!ParseToken(TokKind::kGt,
+                    "expects '>' to end the quantization shape.")) {
+      return false;
+    }
+    *result->mutable_quantization_attribute() = quantization_attribute;
+  } else {
+    if (!ParsePrimitiveType(&primitive_type)) {
+      return false;
+    }
   }
 
   // Each element contains a dimension size and a bool indicating whether this
@@ -5880,9 +6052,10 @@ bool HloParserImpl::ParseShape(Shape* result) {
 
 bool HloParserImpl::CanBeShape() {
   // A non-tuple shape starts with a kPrimitiveType token; a tuple shape starts
-  // with '('.
+  // with '('; a quantized shape starts with 'qint'.
   return lexer_.GetKind() == TokKind::kPrimitiveType ||
-         lexer_.GetKind() == TokKind::kLparen;
+         lexer_.GetKind() == TokKind::kLparen ||
+         lexer_.GetKind() == TokKind::kw_qint;
 }
 
 bool HloParserImpl::ParseName(std::string* result) {

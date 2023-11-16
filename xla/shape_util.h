@@ -382,39 +382,56 @@ class ShapeUtil {
   }
 
   // Constructs a new shape with the given element type and sequence of
-  // dimensions.
+  // dimensions. Optionally accepts quantization related attributes to create a
+  // quantized shape.
   static Shape MakeShape(PrimitiveType element_type,
-                         absl::Span<const int64_t> dimensions);
+                         absl::Span<const int64_t> dimensions,
+                         std::optional<QuantizationAttribute>
+                             quantization_attribute = std::nullopt);
 
-  // Make a scalar shape with given primitive type.
-  static Shape MakeScalarShape(PrimitiveType element_type);
+  // Make a scalar shape with given primitive type. Optionally accepts
+  // quantization related attributes to create a quantized shape.
+  static Shape MakeScalarShape(PrimitiveType element_type,
+                               std::optional<QuantizationAttribute>
+                                   quantization_attribute = std::nullopt);
 
   // Constructs a new shape with the given element type and sequence of
   // potentially dynamic dimensions. The argument 'dynamic_dimensions' indicates
   // with a true value that the respective dimension is dynamic. If the
   // dimension is dynamic then the respective value in 'dimension' is an upper
   // bound on the dimension size. 'dimensions' and 'dynamic_dimensions' must be
-  // the same size.
+  // the same size. Optionally accepts quantization related attributes to create
+  // a quantized shape.
   static Shape MakeShape(PrimitiveType element_type,
                          absl::Span<const int64_t> dimensions,
-                         const std::vector<bool>& dynamic_dimensions);
+                         const std::vector<bool>& dynamic_dimensions,
+                         std::optional<QuantizationAttribute>
+                             quantization_attribute = std::nullopt);
 
   // Constructs a new shape with the given element type and sequence of
   // dimensions. Method checks if the element type is valid, the shape's
   // size fits in std::numeric_limits<int64_t>::max(), and dynamic size is not
-  // marked static.
-  static StatusOr<Shape> MakeValidatedShape(
-      PrimitiveType element_type, absl::Span<const int64_t> dimensions);
+  // marked static. Optionally accepts quantization related attributes to create
+  // a quantized shape.
   static StatusOr<Shape> MakeValidatedShape(
       PrimitiveType element_type, absl::Span<const int64_t> dimensions,
-      const std::vector<bool>& dynamic_dimensions);
+      std::optional<QuantizationAttribute> quantization_attribute =
+          std::nullopt);
+  static StatusOr<Shape> MakeValidatedShape(
+      PrimitiveType element_type, absl::Span<const int64_t> dimensions,
+      const std::vector<bool>& dynamic_dimensions,
+      std::optional<QuantizationAttribute> quantization_attribute =
+          std::nullopt);
 
   // Creates a Shape with element type corresponding to T and the given
-  // dimensions
+  // dimensions. Optionally accepts quantization related attributes to create a
+  // quantized shape.
   template <typename T>
-  static Shape MakeShapeWithType(absl::Span<const int64_t> dimensions) {
+  static Shape MakeShapeWithType(absl::Span<const int64_t> dimensions,
+                                 std::optional<QuantizationAttribute>
+                                     quantization_attribute = std::nullopt) {
     return ShapeUtil::MakeShape(primitive_util::NativeToPrimitiveType<T>(),
-                                dimensions);
+                                dimensions, quantization_attribute);
   }
 
   // Constructs a new dense array shape with the given minor_to_major order in
@@ -465,6 +482,10 @@ class ShapeUtil {
                               absl::Span<const int64_t> dimensions,
                               Shape* shape);
 
+  // Populate an already created shape with quantization related attributes.
+  static Status PopulateShapeWithQuantizationAttribute(
+      const QuantizationAttribute& quantization_attribute, Shape* shape);
+
   // Validates that the provided shape satisfies invariants.
   static Status ValidateShape(const Shape& shape);
 
@@ -474,6 +495,11 @@ class ShapeUtil {
   // Layout is optional for client-provided shapes, so that the compiler may
   // determine and assign an optimized layout.
   static Status ValidateShapeWithOptionalLayout(const Shape& shape);
+
+  // Validates that the provided shape satisfies invariants related to
+  // quantization.
+  static Status ValidateQuantizationAttribute(
+      const QuantizationAttribute& quantization_attribute, const Shape& shape);
 
   // Returns whether the element type of the shape is integral (signed or
   // unsigned). Note that predicates are not considered integral here, since
@@ -1004,7 +1030,9 @@ class ShapeUtil {
   // Fills *shape ignoring dynamic dimensions. Returns true on success.
   // REQUIRES: *shape is empty.
   static bool FillNewShape(PrimitiveType element_type,
-                           absl::Span<const int64_t> dimensions, Shape* shape);
+                           absl::Span<const int64_t> dimensions, Shape* shape,
+                           std::optional<QuantizationAttribute>
+                               quantization_attribute = std::nullopt);
 
   // Validates the shape size is sane. This makes sure it's safe to do
   // calculations in int64_t without overflowing.

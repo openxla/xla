@@ -34,6 +34,140 @@ limitations under the License.
 
 namespace xla {
 
+// A quantization attribute describes various properties of a quantized shape
+// other than the internal type used for storage, which is expressed using
+// Shape::element_type. The properties include the following:
+//
+// expressed type_: The type that the quantized shape approximates.
+// scales_ and zero points_: The quantization parameters of a quantized shape.
+// storage_min_ and storage_max_: The minimum and maximum value the internal
+//                                storage type can take.
+// quantization_dimension_: The axis along which the scales and zero_points may
+//                          vary. This is relevant for per-axis quantized shape.
+//
+// zero_points_, storage_min_ and storage_max_ can be omitted in the quantized
+// shape specification.
+class QuantizationAttribute {
+ public:
+  QuantizationAttribute();
+  QuantizationAttribute(
+      PrimitiveType expressed_type, std::vector<double> scales,
+      std::vector<int64_t> zero_points = {},
+      std::optional<int64_t> storage_type_min = std::nullopt,
+      std::optional<int64_t> storage_type_max = std::nullopt,
+      std::optional<int32_t> quantization_dimension = std::nullopt)
+      : expressed_type_(expressed_type),
+        scales_(std::move(scales)),
+        zero_points_(zero_points),
+        storage_type_min_(storage_type_min),
+        storage_type_max_(storage_type_max),
+        quantization_dimension_(quantization_dimension) {
+    if (zero_points_.empty()) {
+      zero_points_.resize(scales_.size(), 0);
+    }
+  }
+  QuantizationAttribute(const QuantizationAttribute& other);
+  QuantizationAttribute(QuantizationAttribute&& other);
+  QuantizationAttribute& operator=(const QuantizationAttribute&);
+  ~QuantizationAttribute();
+
+  // Construct QuantizedAttribute from a QuantizedAttributesProto.
+  static QuantizationAttribute CreateFromProto(
+      const QuantizationAttributeProto& proto);
+
+  // Returns a QuantizedAttributesProto representation of the
+  // QuantizedAttribute.
+  QuantizationAttributeProto ToProto() const;
+
+  // Prints a human-readable string that represents this QuantizedAttribute.
+  void Print(Printer* printer) const;
+
+  // Returns a human-readable string that represents this QuantizedAttribute.
+  std::string ToString() const;
+
+  // Equal is a configurable functor to check the equality of two quantization
+  // attribute.
+  class Equal {
+   public:
+    Equal() = default;
+
+    bool operator()(const QuantizationAttribute& lhs,
+                    const QuantizationAttribute& rhs);
+  };
+
+  // Methods to access various components of QuantizationAttribute.
+  PrimitiveType expressed_type() const { return expressed_type_; }
+  void set_expressed_type(PrimitiveType value) { expressed_type_ = value; }
+
+  const std::vector<double>& scales() const { return scales_; }
+  int64_t scale_size() const { return scales_.size(); }
+  void set_scales(const std::vector<double>& scales) { scales_ = scales; }
+  void add_scale(double scale) { scales_.push_back(scale); }
+
+  // bool has_zero_points() const { return !zero_points_.empty(); }
+  const std::vector<int64_t>& zero_points() const { return zero_points_; }
+  void set_zero_points(const std::vector<int64_t>& zero_points) {
+    zero_points_ = zero_points;
+  }
+  void add_zero_point(int64_t zero_point) {
+    zero_points_.push_back(zero_point);
+  }
+
+  bool has_storage_type_min() const {
+    return storage_type_min_ != std::nullopt;
+  }
+  int64_t storage_type_min() const {
+    CHECK(has_storage_type_min());
+    return *storage_type_min_;
+  }
+  void set_storage_type_min(int64_t storage_type_min) {
+    storage_type_min_ = storage_type_min;
+  }
+
+  bool has_storage_type_max() const {
+    return storage_type_max_ != std::nullopt;
+  }
+  int64_t storage_type_max() const {
+    CHECK(has_storage_type_max());
+    return *storage_type_max_;
+  }
+  void set_storage_type_max(int64_t storage_type_max) {
+    storage_type_max_ = storage_type_max;
+  }
+
+  bool has_quantization_dimension() const {
+    return quantization_dimension_ != std::nullopt;
+  }
+  int32_t quantization_dimension() const {
+    CHECK(has_quantization_dimension());
+    return *quantization_dimension_;
+  }
+  void set_quantization_dimension(int32_t value) {
+    quantization_dimension_ = value;
+  }
+
+  bool is_per_axis_quantized() const { return has_quantization_dimension(); }
+  bool is_per_tensor_quantized() const { return !has_quantization_dimension(); }
+
+ private:
+  // Floating point type that the quantized shape approximates.
+  PrimitiveType expressed_type_ = PRIMITIVE_TYPE_INVALID;
+
+  // The qunatization parameters for the quantized shape.
+  std::vector<double> scales_;
+  std::vector<int64_t> zero_points_;
+
+  // The minimum value the internal storage type, Shape::element_type, can take.
+  std::optional<int64_t> storage_type_min_;
+
+  // The maximum value the internal storage type, Shape::element_type, can take.
+  std::optional<int64_t> storage_type_max_;
+
+  // The axis along which the scales and zero_points of the quantized shape can
+  // vary.
+  std::optional<int32_t> quantization_dimension_;
+};
+
 // A shape describes the number of dimensions in a array, the bounds of each
 // dimension, and the primitive component type. For tuples, shape describes the
 // structure (number of elements and nesting).
@@ -80,6 +214,7 @@ class Shape {
   bool IsTuple() const { return element_type() == TUPLE; }
   bool IsToken() const { return element_type() == TOKEN; }
   bool IsOpaque() const { return element_type() == OPAQUE_TYPE; }
+  // bool IsQuantized() const { return has_quantization_attribute(); }
 
   // Returns whether all elements in the shape are integer.
   // A nested tuple of integers is considered as integer.
@@ -204,6 +339,28 @@ class Shape {
   }
   void clear_layout() { layout_ = std::nullopt; }
 
+  // Returns true if the shape containing quantization attribute .
+  // Tuple shapes are traversed recursively.
+  bool is_quantized() const;
+
+  // Methods for accessing the quantization attribute.
+  bool has_quantization_attribute() const {
+    return quantization_attribute_ != std::nullopt;
+  }
+  const QuantizationAttribute& quantization_attribute() const {
+    CHECK(has_quantization_attribute()) << ShortDebugString();
+    return *quantization_attribute_;
+  }
+  QuantizationAttribute* mutable_quantization_attribute() {
+    if (quantization_attribute_ == std::nullopt) {
+      quantization_attribute_.emplace();
+    }
+    return &(*quantization_attribute_);
+  }
+  void clear_quantization_attribute() {
+    quantization_attribute_ = std::nullopt;
+  }
+
   // Recursively clear all dynamic dimension of a shape, including bounded and
   // unbounded dynamic dimensions.
   void clear_dynamic_dimensions() {
@@ -292,6 +449,10 @@ class Shape {
       ignore_dimensions_ = true;
       return *this;
     }
+    Equal& IgnoreQuantizationAttribute() {
+      ignore_quantization_attribute_ = true;
+      return *this;
+    }
 
    private:
     bool ignore_layout_ = false;
@@ -302,6 +463,7 @@ class Shape {
     bool ignore_fp_precision_ = false;
     bool ignore_dynamic_dimension_ = false;
     bool ignore_dimensions_ = false;
+    bool ignore_quantization_attribute_ = false;
   };
 
   // Test that all fields of the shape are the same, equivalent to Equal().
@@ -347,6 +509,8 @@ class Shape {
 
   // The layout of the shape. Only relevant for arrays.
   std::optional<Layout> layout_;
+
+  std::optional<QuantizationAttribute> quantization_attribute_;
 };
 
 // Shape of the parameters and output of an XLA computation. This is analogous

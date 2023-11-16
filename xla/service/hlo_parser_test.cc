@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/hlo_parser.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -4059,6 +4060,90 @@ TEST_F(HloParserTest, ParseShapeStringUnbounded) {
   ASSERT_TRUE(ShapeUtil::Equal(expected, actual))
       << "expected: " << ShapeUtil::HumanString(expected)
       << "actual:   " << ShapeUtil::HumanString(actual);
+}
+
+TEST_F(HloParserTest, ParseShapeStringQuantized) {
+  // Test per-axis quantized type
+  std::string shape_string_1 = "qint<s8<-128:127>:f32:0,{1.0:2, 2.0:0}>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_1, ParseShape(shape_string_1));
+  Shape expected_1 = ShapeUtil::MakeShape(
+      S8, {2}, QuantizationAttribute({F32, {1.0, 2.0}, {2, 0}, -128, 127, 0}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_1, actual_1))
+      << "expected: " << ShapeUtil::HumanString(expected_1)
+      << "actual:   " << ShapeUtil::HumanString(actual_1);
+
+  // Test per-tensor quantized type
+  std::string shape_string_2 = "qint<s8<-128:127>:f32,1.0:0>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_2, ParseShape(shape_string_2));
+  Shape expected_2 = ShapeUtil::MakeShape(
+      S8, {2},
+      QuantizationAttribute({F32, {1.0}, {0}, std::nullopt, std::nullopt}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_2, actual_2))
+      << "expected: " << ShapeUtil::HumanString(expected_2)
+      << "actual:   " << ShapeUtil::HumanString(actual_2);
+
+  // Test optional storage tpe min/max
+  std::string shape_string_3_1 = "qint<s8:f32:0,{1.0:2, 2.0}>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_3_1, ParseShape(shape_string_3_1));
+  Shape expected_3_1 = ShapeUtil::MakeShape(
+      S8, {2}, QuantizationAttribute({F32, {1.0, 2.0}, {2, 0}, -128, 127, 0}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_3_1, actual_3_1))
+      << "expected: " << ShapeUtil::HumanString(expected_3_1)
+      << "actual:   " << ShapeUtil::HumanString(actual_3_1);
+
+  std::string shape_string_3_2 = "qint<s8<-128:127>:f32:0,{1.0:2, 2.0}>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_3_2, ParseShape(shape_string_3_2));
+  Shape expected_3_2 = ShapeUtil::MakeShape(
+      S8, {2},
+      QuantizationAttribute(
+          {F32, {1.0, 2.0}, {2, 0}, std::nullopt, std::nullopt, 0}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_3_2, actual_3_2))
+      << "expected: " << ShapeUtil::HumanString(expected_3_2)
+      << "actual:   " << ShapeUtil::HumanString(actual_3_2);
+
+  std::string shape_string_3_3 = "qint<s8:f32:0,{1.0:2, 2.0}>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_3_3, ParseShape(shape_string_3_3));
+  Shape expected_3_3 = ShapeUtil::MakeShape(
+      S8, {2},
+      QuantizationAttribute(
+          {F32, {1.0, 2.0}, {2, 0}, std::nullopt, std::nullopt, 0}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_3_3, actual_3_3))
+      << "expected: " << ShapeUtil::HumanString(expected_3_3)
+      << "actual:   " << ShapeUtil::HumanString(actual_3_3);
+
+  std::string shape_string_3_4 = "qint<s8<-128:126>:f32:0,{1.0:2, 2.0}>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_3_4, ParseShape(shape_string_3_4));
+  Shape expected_3_4 = ShapeUtil::MakeShape(
+      S8, {2},
+      QuantizationAttribute({F32, {1.0, 2.0}, {2, 0}, std::nullopt, 126, 0}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_3_4, actual_3_4))
+      << "expected: " << ShapeUtil::HumanString(expected_3_4)
+      << "actual:   " << ShapeUtil::HumanString(actual_3_4);
+
+  // Test optional zero_points
+  std::string shape_string_4_1 = "qint<s8<-128:127>:f32:0,{1.0:0, 2.0:0}>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_4_1, ParseShape(shape_string_4_1));
+  Shape expected_4_1 = ShapeUtil::MakeShape(
+      S8, {2}, QuantizationAttribute({F32, {1.0, 2.0}, {}, -128, 127, 0}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_4_1, actual_4_1))
+      << "expected: " << ShapeUtil::HumanString(expected_4_1)
+      << "actual:   " << ShapeUtil::HumanString(actual_4_1);
+
+  std::string shape_string_4_2 = "qint<s8<-128:127>:f32:0,{1.0, 2.0}>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_4_2, ParseShape(shape_string_4_2));
+  Shape expected_4_2 = ShapeUtil::MakeShape(
+      S8, {2}, QuantizationAttribute({F32, {1.0, 2.0}, {0, 0}, -128, 127, 0}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_4_2, actual_4_2))
+      << "expected: " << ShapeUtil::HumanString(expected_4_2)
+      << "actual:   " << ShapeUtil::HumanString(actual_4_2);
+
+  std::string shape_string_4_3 = "qint<s8<-128:127>:f32:0,{1.0, 2.0}>[2]";
+  TF_ASSERT_OK_AND_ASSIGN(Shape actual_4_3, ParseShape(shape_string_4_3));
+  Shape expected_4_3 = ShapeUtil::MakeShape(
+      S8, {2}, QuantizationAttribute({F32, {1.0, 2.0}, {}, -128, 127, 0}));
+  ASSERT_TRUE(ShapeUtil::Equal(expected_4_3, actual_4_3))
+      << "expected: " << ShapeUtil::HumanString(expected_4_3)
+      << "actual:   " << ShapeUtil::HumanString(actual_4_3);
 }
 
 TEST_F(HloParserTest, ParseShapeStringTupleOfArrays) {

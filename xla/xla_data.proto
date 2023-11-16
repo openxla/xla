@@ -260,6 +260,47 @@ message LayoutProto {
 //     https://www.tensorflow.org/code/tensorflow/compiler/xla/shape_util.cc,      \
 //     https://www.tensorflow.org/code/tensorflow/compiler/xla/layout_util.cc)
 
+// Describes a quantization attribute containing various properties of a
+// quantized shape other than the internal type used for storage, which is
+// expressed using Shape::element_type. The properties include the following:
+//
+// expressed type: The type that the quantized shape approximates.
+// scales_ and zero points: The quantization parameters of a quantized shape.
+// storage_min and storage_max: The minimum and maximum value the internal
+//                                storage type can take.
+// quantization_dimension: The axis along which the scales and zero_points may
+//                          vary. This is relevant for per-axis quantized shape.
+//
+//
+// LINT.IfChange
+message QuantizationAttributeProto {
+  // The expressed type for quantized shape.
+  PrimitiveType expressed_type = 7;
+
+  // The scales for quantized shape.
+  repeated double scales = 8;
+
+  // The zero points for quantized shape.
+  repeated int64 zero_points = 9;
+
+  // The storage type minimum value
+  optional int64 storage_type_min = 10;
+
+  // The storage type maximum value
+  optional int64 storage_type_max = 11;
+
+  // The quantization dimension for quantized shape.
+  optional int32 quantization_dimension = 12;
+
+  // Important: if any field is added, be sure to modify
+  // QuantizationAttribute::Equal(),
+  // ShapeUtil::PopulateShapeWithQuantizationAttribute, and
+  // ShapeUtil::ValidateQuantizationAttribute.
+}
+// LINT.ThenChange( \
+//     https://www.tensorflow.org/code/tensorflow/compiler/xla/shape_util.cc,      \
+//     https://www.tensorflow.org/code/tensorflow/compiler/xla/shape.cc)
+
 // A shape describes the number of dimensions in the array, the size of each
 // dimension, and the primitive component type.
 //
@@ -297,6 +338,9 @@ message ShapeProto {
   // zero (indicating that no dimensions are dynamic) or equal to the number of
   // elements in the 'dimensions' field.
   repeated bool is_dynamic_dimension = 6;
+
+  // The quantization properties for a quantized shape.
+  QuantizationAttributeProto quantization_attribute = 7;
 
   // Important: if any field is added, be sure to modify ShapeUtil::Equal(),
   // ShapeUtil::Compatible() and ShapeUtil::Hash() appropriately to account for

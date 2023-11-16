@@ -2856,5 +2856,33 @@ TEST_F(HloVerifierTest, EnableUnboundedDynamism) {
   ASSERT_TRUE(status.ok());
 }
 
+TEST_F(HloVerifierTest, QuantizedShape) {
+  const char* const hlo = R"(
+  HloModule Module
+
+  ENTRY entry {
+    ROOT param0 = qint<s8:f32,1.0:0>[2] parameter(0)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Quantized shape is disabled"));
+}
+
+TEST_F(HloVerifierTest, EnableQuantizedShape) {
+  const char* const hlo = R"(
+  HloModule Module
+
+  ENTRY entry {
+    ROOT param0 = qint<s8:f32,1.0:0>[2] parameter(0)
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  HloVerifier verifier{HloVerifierOpts{}.WithAllowQuantizedShape(true)};
+  auto status = verifier.Run(module.get()).status();
+  ASSERT_TRUE(status.ok());
+}
+
 }  // namespace
 }  // namespace xla

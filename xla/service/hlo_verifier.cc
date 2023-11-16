@@ -163,6 +163,10 @@ Status ShapeVerifier::Preprocess(HloInstruction* hlo) {
     return InvalidArgument("Unbounded dynamism is disabled for instruction: %s",
                            hlo->ToString());
   }
+  if (!opts_.allow_quantized_shape && hlo->shape().is_quantized()) {
+    return InvalidArgument("Quantized shape is disabled for instruction: %s",
+                           hlo->ToString());
+  }
   return OkStatus();
 }
 

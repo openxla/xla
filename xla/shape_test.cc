@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/shape.h"
 
+#include <limits>
+#include <optional>
+
 #include "absl/hash/hash_testing.h"
 #include "xla/layout.h"
 #include "xla/shape_util.h"
@@ -43,12 +46,29 @@ class ShapeTest : public ::testing::Test {
       ShapeUtil::MakeShape(S32, {5, 2}, {true, false});
   const Shape unbounded_ =
       ShapeUtil::MakeShape(F32, {Shape::kUnboundedSize, 784}, {true, false});
+  const Shape quantized_per_tensor_ = ShapeUtil::MakeShape(
+      S8, {2, 1},
+      QuantizationAttribute(/*expressed_typ*/ F32, /*scales*/ {2.0},
+                            /*zero_points*/ {5}, /*storage_min*/ -128,
+                            /*storage_max*/ 127));
+  const Shape quantized_per_axis_ = ShapeUtil::MakeShape(
+      S8, {2, 1},
+      QuantizationAttribute(/*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                            /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                            /*storage_max*/ 127, /*quantization_dimension*/ 0));
+  const Shape quantized_shape_with_missing_storage_min_max_types_ =
+      ShapeUtil::MakeShape(
+          S8, {2, 1},
+          QuantizationAttribute(/*expressed_typ*/ F32, /*scales*/ {2.0},
+                                /*zero_points*/ {5},
+                                /*storage_min*/ std::nullopt,
+                                /*storage_max*/ std::nullopt));
 };
 
 TEST_F(ShapeTest, ShapeToFromProto) {
-  for (const Shape& shape :
-       {opaque_, token_, scalar_, matrix_, matrix2_, tuple_, nested_tuple_,
-        dynamic_matrix_, unbounded_}) {
+  for (const Shape& shape : {opaque_, token_, scalar_, matrix_, matrix2_,
+                             tuple_, nested_tuple_, dynamic_matrix_, unbounded_,
+                             quantized_per_tensor_, quantized_per_axis_}) {
     Shape shape_copy(shape.ToProto());
     EXPECT_TRUE(ShapeUtil::Equal(shape, shape_copy))
         << shape << " != " << shape_copy;
@@ -77,6 +97,13 @@ TEST_F(ShapeTest, ShapeToString) {
       "((opaque[], f32[], u32[1,2]{1,0}, s32[3,4]{0,1}), u32[1,2]{1,0}, "
       "token[])",
       nested_tuple_.ToString(/*print_layout=*/true));
+  EXPECT_EQ("qint<s8<-128:127>:f32,2:5>[2,1]{1,0}",
+            quantized_per_tensor_.ToString(/*print_layout=*/true));
+  EXPECT_EQ("qint<s8<-128:127>:f32:0,{2:5,1:6}>[2,1]{1,0}",
+            quantized_per_axis_.ToString(/*print_layout=*/true));
+  EXPECT_EQ("qint<s8<-128:127>:f32,2:5>[2,1]{1,0}",
+            quantized_shape_with_missing_storage_min_max_types_.ToString(
+                /*print_layout=*/true));
 }
 
 TEST_F(ShapeTest, DynamicShapeToString) {
@@ -106,6 +133,126 @@ TEST_F(ShapeTest, EqualityTest) {
   // Equal shapes.
   EXPECT_EQ(ShapeUtil::MakeShapeWithDenseLayout(F32, {23, 44}, {1, 0}),
             ShapeUtil::MakeShapeWithDenseLayout(F32, {23, 44}, {1, 0}));
+
+  // Equality of two quantized shapes.
+  EXPECT_EQ(ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)),
+            ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)));
+
+  // Non-equality of quantized and non-quantized shapes.
+  EXPECT_NE(ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)),
+            ShapeUtil::MakeShape(S8, {2, 1}));
+
+  // Non-equality of two quantized shapes with different storage types.
+  EXPECT_NE(ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)),
+            ShapeUtil::MakeShape(
+                S32, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)));
+
+  // Non-equality of two quantized shapes with different expressed types.
+  EXPECT_NE(ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)),
+            ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F16, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)));
+
+  // Non-equality of two quantized shapes with different scales.
+  EXPECT_NE(ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)),
+            ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.5},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)));
+
+  // Non-equality of two quantized shapes with different zero-points.
+  EXPECT_NE(ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)),
+            ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 7}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)));
+
+  // Non-equality of two quantized shapes with different storage min/max.
+  EXPECT_NE(ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)),
+            ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -127,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)));
+
+  // Non-equality of two quantized shapes with different quantization dimension.
+  EXPECT_NE(ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+                    /*zero_points*/ {5, 6}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 0)),
+            ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0},
+                    /*zero_points*/ {5}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 1)));
+
+  // Non-equality of per-tensor vs per-axis quantized shapes.
+  EXPECT_NE(ShapeUtil::MakeShape(S8, {2, 1},
+                                 QuantizationAttribute(
+                                     /*expressed_typ*/ F32, /*scales*/ {2.0},
+                                     /*zero_points*/ {5}, /*storage_min*/ -128,
+                                     /*storage_max*/ 127)),
+            ShapeUtil::MakeShape(
+                S8, {2, 1},
+                QuantizationAttribute(
+                    /*expressed_typ*/ F32, /*scales*/ {2.0},
+                    /*zero_points*/ {5}, /*storage_min*/ -128,
+                    /*storage_max*/ 127, /*quantization_dimension*/ 1)));
 }
 
 TEST_F(ShapeTest, IsStatic) {
@@ -127,6 +274,8 @@ TEST_F(ShapeTest, IsStatic) {
   EXPECT_FALSE(dynamic_tuple.is_static());
 
   EXPECT_FALSE(unbounded_.is_static());
+  EXPECT_TRUE(quantized_per_tensor_.is_static());
+  EXPECT_TRUE(quantized_per_axis_.is_static());
 }
 
 TEST_F(ShapeTest, IsDynamic) {
@@ -147,6 +296,200 @@ TEST_F(ShapeTest, IsDynamic) {
   ShapeUtil::GetMutableSubshape(&unbounded_tuple, {2})
       ->set_dimensions(1, Shape::kUnboundedSize);
   EXPECT_TRUE(unbounded_tuple.is_unbounded_dynamic());
+}
+
+TEST_F(ShapeTest, QuantizedType) {
+  const Shape shape_1_ = ShapeUtil::MakeShape(F32, {2});
+  const Shape shape_2_ = ShapeUtil::MakeShape(S8, {2});
+  const Shape shape_tuple_ = ShapeUtil::MakeTupleShape({shape_1_, shape_2_});
+  Shape quantized_tuple = shape_tuple_;
+
+  Shape* mutable_quantized_tuple_1 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {0});
+  auto status_1 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0},
+          /*zero_points*/ {5}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt),
+      mutable_quantized_tuple_1);
+  EXPECT_FALSE(status_1.ok());
+  EXPECT_THAT(status_1.message(),
+              testing::HasSubstr("invalid element type for quantized shape"));
+
+  Shape* mutable_quantized_tuple_2 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_2 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ U32, /*scales*/ {2.0},
+          /*zero_points*/ {5}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt),
+      mutable_quantized_tuple_2);
+  EXPECT_FALSE(status_2.ok());
+  EXPECT_THAT(status_2.message(),
+              testing::HasSubstr("invalid expressed type for quantized shape"));
+
+  Shape* mutable_quantized_tuple_3 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_3 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+          /*zero_points*/ {5}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt, /*quantization_dimension*/ 0),
+      mutable_quantized_tuple_3);
+  EXPECT_FALSE(status_3.ok());
+  EXPECT_THAT(status_3.message(),
+              testing::HasSubstr("illegal number of scales (2) and zero_points "
+                                 "(1) for quantized shape"));
+
+  Shape* mutable_quantized_tuple_4 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_4 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+          /*zero_points*/ {5, 0}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt),
+      mutable_quantized_tuple_4);
+  EXPECT_FALSE(status_4.ok());
+  EXPECT_THAT(
+      status_4.message(),
+      testing::HasSubstr(
+          "illegal number of scales (2), expected 1, for quantized shape"));
+
+  Shape* mutable_quantized_tuple_5 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_5 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+          /*zero_points*/ {5, 0}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt, 1),
+      mutable_quantized_tuple_5);
+  EXPECT_FALSE(status_5.ok());
+  EXPECT_THAT(status_5.message(),
+              testing::HasSubstr(
+                  "illegal quantization dimension (1) for quantized shape"));
+
+  Shape* mutable_quantized_tuple_6 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_6 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0},
+          /*zero_points*/ {5}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt, -1),
+      mutable_quantized_tuple_6);
+  EXPECT_FALSE(status_6.ok());
+  EXPECT_THAT(status_6.message(),
+              testing::HasSubstr(
+                  "illegal quantization dimension (-1) for quantized shape"));
+
+  Shape* mutable_quantized_tuple_7 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_7 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0, 1.0},
+          /*zero_points*/ {5, 0, 0}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt, 0),
+      mutable_quantized_tuple_7);
+  EXPECT_FALSE(status_7.ok());
+  EXPECT_THAT(
+      status_7.message(),
+      testing::HasSubstr(
+          "illegal number of scales (3), expected 2, for quantized shape"));
+
+  Shape* mutable_quantized_tuple_8 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_8 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {-2.0, 1.0},
+          /*zero_points*/ {5, 0}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt, 0),
+      mutable_quantized_tuple_8);
+  EXPECT_FALSE(status_8.ok());
+  EXPECT_THAT(status_8.message(),
+              testing::HasSubstr("illegal scale value (-2"));
+
+  Shape* mutable_quantized_tuple_9 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_9 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32,
+          /*scales*/ {std::numeric_limits<float>::infinity(), 1.0},
+          /*zero_points*/ {5, 0}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ std::nullopt, 0),
+      mutable_quantized_tuple_9);
+  EXPECT_FALSE(status_9.ok());
+  EXPECT_THAT(
+      status_9.message(),
+      testing::HasSubstr("illegal scale value (inf) for quantized shape"));
+
+  Shape* mutable_quantized_tuple_10 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_10 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+          /*zero_points*/ {5, 0}, /*storage_min*/ -129,
+          /*storage_max*/ std::nullopt, 0),
+      mutable_quantized_tuple_10);
+  EXPECT_FALSE(status_10.ok());
+  EXPECT_THAT(
+      status_10.message(),
+      testing::HasSubstr("value of storage_type_min (-129) does not fit into "
+                         "the storage_type (s8) for quantized shape"));
+
+  Shape* mutable_quantized_tuple_11 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_11 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+          /*zero_points*/ {-129, 0}, /*storage_min*/ -128,
+          /*storage_max*/ std::nullopt, 0),
+      mutable_quantized_tuple_11);
+  EXPECT_FALSE(status_11.ok());
+  EXPECT_THAT(
+      status_11.message(),
+      testing::HasSubstr("illegal value of zero point (-129) less than "
+                         "storage_type_min (-128) for quantized shape"));
+
+  Shape* mutable_quantized_tuple_12 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_12 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+          /*zero_points*/ {5, 0}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ 128, 0),
+      mutable_quantized_tuple_12);
+  EXPECT_FALSE(status_12.ok());
+  EXPECT_THAT(
+      status_12.message(),
+      testing::HasSubstr("value of storage_type_max (128) does not fit into "
+                         "the storage_type (s8) for quantized shape"));
+
+  Shape* mutable_quantized_tuple_13 =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {1});
+  auto status_13 = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0, 1.0},
+          /*zero_points*/ {128, 0}, /*storage_min*/ std::nullopt,
+          /*storage_max*/ 127, 0),
+      mutable_quantized_tuple_13);
+  EXPECT_FALSE(status_13.ok());
+  EXPECT_THAT(
+      status_13.message(),
+      testing::HasSubstr("illegal value of zero point (128) greater than "
+                         "storage_type_max (127) for quantized shape"));
+}
+
+TEST_F(ShapeTest, IsQuantized) {
+  Shape quantized_tuple = tuple_;
+  EXPECT_FALSE(quantized_tuple.is_quantized());
+  Shape* mutable_quantized_tuple =
+      ShapeUtil::GetMutableSubshape(&quantized_tuple, {2});
+  auto status = ShapeUtil::PopulateShapeWithQuantizationAttribute(
+      QuantizationAttribute(
+          /*expressed_typ*/ F32, /*scales*/ {2.0},
+          /*zero_points*/ {5}, /*storage_min*/ 0,
+          /*storage_max*/ 127),
+      mutable_quantized_tuple);
+  EXPECT_TRUE(status.ok() && quantized_tuple.is_quantized());
 }
 
 TEST_F(ShapeTest, IsDynamicDimension) {

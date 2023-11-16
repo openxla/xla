@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <climits>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -34,6 +35,7 @@ limitations under the License.
 #include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -231,9 +233,9 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
   return accum;
 }
 
-/* static */ bool ShapeUtil::FillNewShape(PrimitiveType element_type,
-                                          absl::Span<const int64_t> dimensions,
-                                          Shape* shape) {
+/* static */ bool ShapeUtil::FillNewShape(
+    PrimitiveType element_type, absl::Span<const int64_t> dimensions,
+    Shape* shape, std::optional<QuantizationAttribute> quantization_attribute) {
   int64_t dense_shape_size = primitive_util::IsArrayType(element_type)
                                  ? primitive_util::ByteWidth(element_type)
                                  : -1;
@@ -263,6 +265,13 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
   if (any_overflows) {
     return false;
   }
+
+  if (quantization_attribute.has_value()) {
+    auto status =
+        PopulateShapeWithQuantizationAttribute(*quantization_attribute, shape);
+    return status.ok();
+  }
+
   return true;
 }
 
@@ -276,20 +285,24 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
   return program_shape;
 }
 
-/* static */ Shape ShapeUtil::MakeShape(PrimitiveType element_type,
-                                        absl::Span<const int64_t> dimensions) {
+/* static */ Shape ShapeUtil::MakeShape(
+    PrimitiveType element_type, absl::Span<const int64_t> dimensions,
+    std::optional<QuantizationAttribute> quantization_attribute) {
   Shape shape;
-  CHECK(FillNewShape(element_type, dimensions, &shape));
+  CHECK(FillNewShape(element_type, dimensions, &shape, quantization_attribute));
   return shape;
 }
 
-/* static */ Shape ShapeUtil::MakeScalarShape(PrimitiveType element_type) {
-  return MakeShape(element_type, {});
+/* static */ Shape ShapeUtil::MakeScalarShape(
+    PrimitiveType element_type,
+    std::optional<QuantizationAttribute> quantization_attribute) {
+  return MakeShape(element_type, {}, quantization_attribute);
 }
 
 /* static */ Shape ShapeUtil::MakeShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
-    const std::vector<bool>& dynamic_dimensions) {
+    const std::vector<bool>& dynamic_dimensions,
+    std::optional<QuantizationAttribute> quantization_attribute) {
   return MakeValidatedShape(element_type, dimensions, dynamic_dimensions)
       .value();
 }
@@ -302,9 +315,10 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
 }
 
 /* static */ StatusOr<Shape> ShapeUtil::MakeValidatedShape(
-    PrimitiveType element_type, absl::Span<const int64_t> dimensions) {
+    PrimitiveType element_type, absl::Span<const int64_t> dimensions,
+    std::optional<QuantizationAttribute> quantization_attribute) {
   Shape shape;
-  if (!FillNewShape(element_type, dimensions, &shape)) {
+  if (!FillNewShape(element_type, dimensions, &shape, quantization_attribute)) {
     return InvalidArgument("invalid shape type=%d, dims=[%s]",
                            static_cast<int>(element_type),
                            absl::StrJoin(dimensions, ","));
@@ -314,7 +328,8 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
 
 /* static */ StatusOr<Shape> ShapeUtil::MakeValidatedShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
-    const std::vector<bool>& dynamic_dimensions) {
+    const std::vector<bool>& dynamic_dimensions,
+    std::optional<QuantizationAttribute> quantization_attribute) {
   if (dynamic_dimensions.size() != dimensions.size()) {
     return InvalidArgument(
         "dynamic dimensions size %d did not match number of dimensions %d",
@@ -322,7 +337,7 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
   }
 
   Shape shape;
-  if (!FillNewShape(element_type, dimensions, &shape)) {
+  if (!FillNewShape(element_type, dimensions, &shape, quantization_attribute)) {
     return InvalidArgument("invalid shape type=%d, dims=[%s]",
                            static_cast<int>(element_type),
                            absl::StrJoin(dimensions, ","));
@@ -439,6 +454,32 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   }
   LayoutUtil::SetToDefaultLayout(shape);
   return ValidateShape(*shape);
+}
+
+/* static */ Status ShapeUtil::PopulateShapeWithQuantizationAttribute(
+    const QuantizationAttribute& quantization_attribute, Shape* shape) {
+  auto mutable_quantization_attribute = shape->mutable_quantization_attribute();
+  *mutable_quantization_attribute = quantization_attribute;
+
+  if (shape->element_type() == PRIMITIVE_TYPE_INVALID ||
+      !primitive_util::IsIntegralType(shape->element_type())) {
+    return InvalidArgument("invalid element type for quantized shape: %s",
+                           shape->ShortDebugString());
+  }
+
+  int64_t storage_type_min =
+      quantization_attribute.has_storage_type_min()
+          ? quantization_attribute.storage_type_min()
+          : primitive_util::GetDefaultMinimumForInteger(shape->element_type());
+  mutable_quantization_attribute->set_storage_type_min(storage_type_min);
+
+  int64_t storage_type_max =
+      quantization_attribute.has_storage_type_max()
+          ? quantization_attribute.storage_type_max()
+          : primitive_util::GetDefaultMaximumForInteger(shape->element_type());
+  mutable_quantization_attribute->set_storage_type_max(storage_type_max);
+
+  return ValidateQuantizationAttribute(shape->quantization_attribute(), *shape);
 }
 
 /* static */ Shape ShapeUtil::MakeStaticShape(const Shape& original) {
@@ -696,8 +737,17 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
     PrintTupleShapes</*kPrintLayout=*/false>(printer, shape.tuple_shapes());
     return;
   }
-  printer->Append(
-      primitive_util::LowercasePrimitiveTypeName(shape.element_type()));
+  if (shape.is_quantized()) {
+    printer->Append("qint<");
+    printer->Append(
+        primitive_util::LowercasePrimitiveTypeName(shape.element_type()));
+    shape.quantization_attribute().Print(printer);
+    printer->Append(">");
+  } else {
+    printer->Append(
+        primitive_util::LowercasePrimitiveTypeName(shape.element_type()));
+  }
+
   if (shape.dimensions().empty()) {
     printer->Append("[]");
     return;
@@ -969,6 +1019,125 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
   return OkStatus();
 }
 
+/* static */ Status ShapeUtil::ValidateQuantizationAttribute(
+    const QuantizationAttribute& quantization_attribute, const Shape& shape) {
+  if (shape.element_type() == PRIMITIVE_TYPE_INVALID ||
+      !primitive_util::IsIntegralType(shape.element_type())) {
+    return InvalidArgument("invalid element type for quantized shape: %s",
+                           shape.ShortDebugString());
+  }
+
+  if (quantization_attribute.expressed_type() == PRIMITIVE_TYPE_INVALID ||
+      !primitive_util::IsFloatingPointType(
+          quantization_attribute.expressed_type())) {
+    return InvalidArgument("invalid expressed type for quantized shape: %s",
+                           shape.ShortDebugString());
+  }
+
+  if (quantization_attribute.scales().size() !=
+      quantization_attribute.zero_points().size()) {
+    return InvalidArgument(
+        "illegal number of scales (%d) and zero_points (%d) for quantized "
+        "shape %s",
+        quantization_attribute.scales().size(),
+        quantization_attribute.zero_points().size(), shape.ShortDebugString());
+  }
+
+  if (quantization_attribute.is_per_tensor_quantized()) {
+    if (quantization_attribute.scales().size() != 1) {
+      return InvalidArgument(
+          "illegal number of scales (%d), expected 1, for quantized shape %s",
+          quantization_attribute.scales().size(), shape.ShortDebugString());
+    }
+  } else {
+    // shape is per-axis quantized
+    int32_t quantization_dimension =
+        quantization_attribute.quantization_dimension();
+    if (quantization_dimension < 0 || quantization_dimension >= shape.rank()) {
+      return InvalidArgument(
+          "illegal quantization dimension (%d) for quantized shape %s",
+          quantization_attribute.quantization_dimension(),
+          shape.ShortDebugString());
+    }
+
+    if (!shape.is_dynamic_dimension(quantization_dimension) &&
+        shape.dimensions(quantization_dimension) !=
+            quantization_attribute.scales().size()) {
+      return InvalidArgument(
+          "illegal number of scales (%d), expected %d, for quantized shape %s",
+          quantization_attribute.scales().size(),
+          shape.dimensions(quantization_dimension), shape.ShortDebugString());
+    }
+  }
+
+  for (double scale : quantization_attribute.scales()) {
+    if (scale <= 0.0 || std::isinf(scale))
+      return InvalidArgument("illegal scale value (%f) for quantized shape %s",
+                             scale, shape.ShortDebugString());
+  }
+
+  if (quantization_attribute.has_storage_type_min()) {
+    if (!primitive_util::FitsInIntegralType(
+            quantization_attribute.storage_type_min(), shape.element_type())) {
+      return InvalidArgument(
+          "value of storage_type_min (%d) does not fit into the storage_type "
+          "(%s) "
+          "for quantized shape %s",
+          quantization_attribute.storage_type_min(),
+          primitive_util::LowercasePrimitiveTypeName(shape.element_type()),
+          shape.ShortDebugString());
+    }
+
+    for (auto zero_point : quantization_attribute.zero_points()) {
+      if (zero_point < quantization_attribute.storage_type_min()) {
+        return InvalidArgument(
+            "illegal value of zero point (%d) less than storage_type_min (%d) "
+            "for quantized shape %s",
+            zero_point, quantization_attribute.storage_type_min(),
+            shape.ShortDebugString());
+      }
+    }
+  }
+
+  if (quantization_attribute.has_storage_type_max()) {
+    if (!primitive_util::FitsInIntegralType(
+            quantization_attribute.storage_type_max(), shape.element_type())) {
+      return InvalidArgument(
+          "value of storage_type_max (%d) does not fit into the storage_type "
+          "(%s) "
+          "for "
+          "quantized shape %s",
+          quantization_attribute.storage_type_max(),
+          primitive_util::LowercasePrimitiveTypeName(shape.element_type()),
+          shape.ShortDebugString());
+    }
+
+    for (auto zero_point : quantization_attribute.zero_points()) {
+      if (zero_point > quantization_attribute.storage_type_max()) {
+        return InvalidArgument(
+            "illegal value of zero point (%d) greater than storage_type_max "
+            "(%d) for quantized shape %s",
+            zero_point, quantization_attribute.storage_type_max(),
+            shape.ShortDebugString());
+      }
+    }
+  }
+
+  if (quantization_attribute.has_storage_type_min() &&
+      quantization_attribute.has_storage_type_max() &&
+      quantization_attribute.storage_type_min() >=
+          quantization_attribute.storage_type_max()) {
+    return InvalidArgument(
+        "value of storage_type_min %d should not be greater than or equal to "
+        "the "
+        "value of storage_type_max %d for quantized shape %s",
+        quantization_attribute.storage_type_min(),
+        quantization_attribute.storage_type_max(), shape.ShortDebugString());
+  }
+
+  return OkStatus();
+}
+
 /* static */ Status ShapeUtil::ValidateShapeSize(const Shape& shape) {
   VLOG(3) << "Validating shape size: " << ShapeUtil::HumanString(shape);
 
@@ -1121,23 +1290,24 @@ bool ShapeUtil::IsLeafIndex(const Shape& shape, const ShapeIndex& index) {
   // If `shape` has a layout, by contract we choose a new layout such that the
   // transpose defined by this permutation is a bitcast.
   //
-  // Some formalism helps to understand the correct way to do this.  We're going
-  // to do algebra in the group of permutations of the dimensions of `shape`.
+  // Some formalism helps to understand the correct way to do this.  We're
+  // going to do algebra in the group of permutations of the dimensions of
+  // `shape`.
   //
-  // Since the order of `shape`'s dimensions is not permuted relative to itself,
-  // `shape`'s list of dimensions is isomorphic to the identity I.
+  // Since the order of `shape`'s dimensions is not permuted relative to
+  // itself, `shape`'s list of dimensions is isomorphic to the identity I.
   //
   // Let `shape`'s layout be L.  A layout is a permutation which maps a
   // minor-to-major physical dimension ordering to a shape's logical dimension
-  // ordering.  Therefore the inverse of a layout maps from logical to physical
-  // dims, and so the physical ordering of I is simply L'.I = L', where L' is
-  // the inverse of L.
+  // ordering.  Therefore the inverse of a layout maps from logical to
+  // physical dims, and so the physical ordering of I is simply L'.I = L',
+  // where L' is the inverse of L.
   //
-  // Let the argument `permutation` be P.  This is a permutation over `shape`'s
-  // dimensions, so our return value will be a shape with dims P.I = P.  Our
-  // goal is to construct a layout permutation L* for this shape. The physical
-  // dimension ordering of this returned shape must be the same as that of the
-  // original shape, namely L'.
+  // Let the argument `permutation` be P.  This is a permutation over
+  // `shape`'s dimensions, so our return value will be a shape with dims P.I =
+  // P.  Our goal is to construct a layout permutation L* for this shape. The
+  // physical dimension ordering of this returned shape must be the same as
+  // that of the original shape, namely L'.
   //
   // Our returned shape has dims P and layout L*, so its in-memory ordering is
   // L*'.P.  Setting this equal to L' and solving for L*, we get:
@@ -1289,8 +1459,8 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
   // minor-to-major order. positions[i]=k means dimension `i` is k-th minor.
   //   input_positions = apply(dimension_mapping, output_positions)
   //
-  // Because the positions of each dimension are the inverse permutation of the
-  // minor-to-major order, the above check is equivalent to
+  // Because the positions of each dimension are the inverse permutation of
+  // the minor-to-major order, the above check is equivalent to
   //   inverse(input_dimensions) =
   //       apply(dimension_mapping, inverse(output_dimensions))
   //   # `I` indicates identity permutation.
@@ -1347,17 +1517,17 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
 
   // TL;DR: The rest of the method checks that the reshape does not change the
   // physical location of any unit input or output index. Unit indices have
-  // exactly one dimension that equals 1 and other dimensions 0. This condition
-  // is necessary for the reshape to be a bitcast, because a bitcast-equivalent
-  // reshape shouldn't change the physical location of any element. It is also a
-  // sufficient condition as is proved below (note: many details are omitted for
-  // space).
+  // exactly one dimension that equals 1 and other dimensions 0. This
+  // condition is necessary for the reshape to be a bitcast, because a
+  // bitcast-equivalent reshape shouldn't change the physical location of any
+  // element. It is also a sufficient condition as is proved below (note: many
+  // details are omitted for space).
   //
   // Definitions:
   //
-  // * Denote the input shape by IS and output shape by OS. IS[i] or OS[i] means
-  // the size of i-th least significant dimension of IS or OS (this is opposite
-  // to how we define the index of Shape::dimensions()).
+  // * Denote the input shape by IS and output shape by OS. IS[i] or OS[i]
+  // means the size of i-th least significant dimension of IS or OS (this is
+  // opposite to how we define the index of Shape::dimensions()).
   //
   // * Given an input or output index I, denote by p(I) I's physical linear
   // index (or physical index for short) and l(I) I's logical linear index (or
@@ -1366,20 +1536,20 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
   // * Given a logical index k, denote by II(k) the input index whose linear
   // index is k, and OI(k) the corresponding output index.
   //
-  // * Denote by IT[i] the increment of physical index if i-th dimension of the
-  // input index is increased by 1. Similarly, OT[i] means the increment if i-th
-  // dimension of the output index is increased by 1. Note that IT[i] or OT[i]
-  // is a function of IS or OS and the layout, and not dependent on the specific
-  // input or output index.
+  // * Denote by IT[i] the increment of physical index if i-th dimension of
+  // the input index is increased by 1. Similarly, OT[i] means the increment
+  // if i-th dimension of the output index is increased by 1. Note that IT[i]
+  // or OT[i] is a function of IS or OS and the layout, and not dependent on
+  // the specific input or output index.
   //
-  // To prove the reshape from IS to OS is a bitcast, it is sufficient to prove
-  // that, for any linear index k, p(II(k))=p(OI(k)). We prove this by
+  // To prove the reshape from IS to OS is a bitcast, it is sufficient to
+  // prove that, for any linear index k, p(II(k))=p(OI(k)). We prove this by
   // induction. We know p(II(0))=p(OI(0)) is trivially true, so what's left is
   // to prove, with every increment on k, the above formula still holds.
   //
   // First, suppose reshaping from IS to OS is non-factorizable (we discuss
-  // refactorizable reshapes later). A reshape from IS to OS is factorizable, if
-  // there exists (i,j) such that
+  // refactorizable reshapes later). A reshape from IS to OS is factorizable,
+  // if there exists (i,j) such that
   //
   //   0<=i<=|IS|
   //   0<=j<=|OS|
@@ -1396,12 +1566,12 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
   // increment of k adds IT[0] to the input physical and OT[0] (same as IT[0])
   // to the output physical.
   //
-  // When k=min(IS[0],OS[0]), the first wrap happens. Without losing generality,
-  // suppose IS[0]<OS[0] and thus k=IS[0]. Similar proof applies to IS[0]>OS[0].
-  // Note that IS[0]!=OS[0] because the reshape is non-factorizable. From
-  // logical index k-1 to logical index k, dimension 1 of the input index
-  // is increased by 1 and dimension 0 is reset to 0 thus decreased by
-  // IS[0]-1. Therefore, the physical input index is increased by
+  // When k=min(IS[0],OS[0]), the first wrap happens. Without losing
+  // generality, suppose IS[0]<OS[0] and thus k=IS[0]. Similar proof applies
+  // to IS[0]>OS[0]. Note that IS[0]!=OS[0] because the reshape is
+  // non-factorizable. From logical index k-1 to logical index k, dimension 1
+  // of the input index is increased by 1 and dimension 0 is reset to 0 thus
+  // decreased by IS[0]-1. Therefore, the physical input index is increased by
   //
   //   p(II(k)) - p(II(k-1)) = IT[1] - (IS[0]-1) * IT[0]
   //
@@ -1415,13 +1585,13 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
   //   IT[1] - (IS[0]-1) * IT[0] = IT[0]
   //   IT[1] = IS[0] * IT[0]
   // In other words, input dimension 1 is immediately more major than input
-  // dimension 0. We can now conceptually collapse these two dimensions because
-  // an increment in the logical index affecting only these two dimensions maps
-  // to IT[0] in the physical index.
+  // dimension 0. We can now conceptually collapse these two dimensions
+  // because an increment in the logical index affecting only these two
+  // dimensions maps to IT[0] in the physical index.
   //
   // By induction (omitted here), we can prove IT[i]=IS[i-1]*IT[i-1] and
-  // OT[i]=OS[i-1]*OT[i-1]. Therefore, both IS and OS are row-major and bitwise
-  // identical.
+  // OT[i]=OS[i-1]*OT[i-1]. Therefore, both IS and OS are row-major and
+  // bitwise identical.
   //
   // A factorizable reshape can be factorized into a list of non-factorizable
   // sub-reshapes, each of which can be handled similarly to the proof above.
@@ -1433,8 +1603,8 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
   //
   //   [7x9] -> [63] and [2x15] -> [6x5].
   //
-  // Suppose input index I=(x3,x2,x1,x0) and output index O=(y2,y1,y0) have the
-  // same logical linear index. According to the factorization, we know
+  // Suppose input index I=(x3,x2,x1,x0) and output index O=(y2,y1,y0) have
+  // the same logical linear index. According to the factorization, we know
   // l(x3,x2,0,0)=l(y2,0,0) and l(0,0,x1,x0)=l(0,y1,y0). Using the proof for
   // non-factorizable reshapes, we can prove p(0,0,x1,x0)=p(0,y1,y0). Using a
   // similar proof, with the increment of the logical index set to
@@ -1451,10 +1621,10 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
   // check the other way.
   auto check_input_unit_indices = [](const Shape& input_shape,
                                      const Shape& output_shape) {
-    // input_shape_dim0_major/output_shape_dim0_major has the same "dimensions"
-    // as input_shape/output_shape and the dimension-0-major layout. These two
-    // shapes are used for conversion between logical linear indices and
-    // multi-dimensional indices.
+    // input_shape_dim0_major/output_shape_dim0_major has the same
+    // "dimensions" as input_shape/output_shape and the dimension-0-major
+    // layout. These two shapes are used for conversion between logical linear
+    // indices and multi-dimensional indices.
     Shape input_shape_dim0_major = MakeShapeWithDescendingLayout(
         input_shape.element_type(), input_shape.dimensions());
     Shape output_shape_dim0_major = MakeShapeWithDescendingLayout(
@@ -1910,9 +2080,9 @@ struct ParallelState {
   return DeleteDimensions(dims_to_delete, shape);
 }
 
-// Returns the indices of the first elements of all consecutive subarrays of the
-// given array. For example:
-// ConsecutiveSegments({m, m+1, m+2, n, k, k+1}) = {0, 3, 4}
+// Returns the indices of the first elements of all consecutive subarrays of
+// the given array. For example: ConsecutiveSegments({m, m+1, m+2, n, k, k+1})
+// = {0, 3, 4}
 static std::vector<size_t> ConsecutiveSegments(absl::Span<const int64_t> xs) {
   std::vector<size_t> is = {0};
   for (size_t i = 1; i < xs.size(); ++i) {
@@ -1972,8 +2142,8 @@ static std::optional<Vector3> GetNormalizedTransposeShapeHelper(
            permutation[untransposed] != untransposed) {
       ++untransposed;
     }
-    // The desired permutation may not contain any untransposed dimension. With
-    // just 2 segments, we cannot uniquely match that.
+    // The desired permutation may not contain any untransposed dimension.
+    // With just 2 segments, we cannot uniquely match that.
     if (untransposed == permutation.size()) {
       return std::nullopt;
     }

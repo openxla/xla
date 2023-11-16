@@ -145,6 +145,11 @@ TokKind HloLexer::LexToken() {
           current_ptr_++;
           return TokKind::kLeq;
         }
+        return TokKind::kLt;
+      case '>':
+        if (current_char == '>' && PeekCurrentChar() != '=') {
+          return TokKind::kGt;
+        }
         return TokKind::kError;
       case ',':
         return TokKind::kComma;
@@ -334,6 +339,7 @@ TokKind HloLexer::LexIdentifier() {
   KEYWORD(shard_as);
   KEYWORD(shard_like);
   KEYWORD(unknown);
+  KEYWORD(qint);
 
 #undef KEYWORD
 
@@ -598,6 +604,10 @@ std::string TokKindToString(TokKind kind) {
       return "kArrow";
     case TokKind::kLeq:
       return "kLeq";
+    case TokKind::kLt:
+      return "kLt";
+    case TokKind::kGt:
+      return "kGt";
     case TokKind::kw_HloModule:
       return "kw_HloModule";
     case TokKind::kw_ENTRY:
@@ -622,6 +632,8 @@ std::string TokKindToString(TokKind kind) {
       return "kw_shard_like";
     case TokKind::kw_unknown:
       return "kw_unknown";
+    case TokKind::kw_qint:
+      return "kw_qint";
     case TokKind::kw_inf:
       return "kw_inf";
     case TokKind::kNegInf:

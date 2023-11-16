@@ -96,6 +96,11 @@ struct HloVerifierOpts {
     return std::move(*this);
   }
 
+  HloVerifierOpts&& WithAllowQuantizedShape(bool allow) {
+    allow_quantized_shape = allow;
+    return std::move(*this);
+  }
+
   bool IsLayoutSensitive() const { return layout_sensitive; }
 
   bool AllowMixedPrecision() const { return allow_mixed_precision; }
@@ -138,6 +143,9 @@ struct HloVerifierOpts {
 
   // Whether unbounded dynamic sizes should be allowed for shapes.
   bool allow_unbounded_dynamism = false;
+
+  // Whether quantized shapes are allowed.
+  bool allow_quantized_shape = false;
 
   HloPredicate instruction_can_change_layout;
 

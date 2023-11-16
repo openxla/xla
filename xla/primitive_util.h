@@ -751,6 +751,32 @@ inline bool FitsInIntegralType(int64_t x, PrimitiveType ty) {
       ty);
 }
 
+// Returns the minimum possible stored by a primitive type.
+inline int64_t GetDefaultMinimumForInteger(PrimitiveType ty) {
+  return primitive_util::PrimitiveTypeSwitch<int64_t>(
+      [&](auto primitive_type) -> int64_t {
+        if constexpr (primitive_util::IsIntegralType(primitive_type)) {
+          using NativeT = primitive_util::NativeTypeOf<primitive_type>;
+          return static_cast<int64_t>(std::numeric_limits<NativeT>::min());
+        }
+        LOG(FATAL) << "Invalid primitive type " << PrimitiveType_Name(ty);
+      },
+      ty);
+}
+
+// Returns the maximum possible stored by a primitive type.
+inline int64_t GetDefaultMaximumForInteger(PrimitiveType ty) {
+  return primitive_util::PrimitiveTypeSwitch<int64_t>(
+      [&](auto primitive_type) -> int64_t {
+        if constexpr (primitive_util::IsIntegralType(primitive_type)) {
+          using NativeT = primitive_util::NativeTypeOf<primitive_type>;
+          return static_cast<int64_t>(std::numeric_limits<NativeT>::max());
+        }
+        LOG(FATAL) << "Invalid primitive type " << PrimitiveType_Name(ty);
+      },
+      ty);
+}
+
 }  // namespace primitive_util
 }  // namespace xla
 

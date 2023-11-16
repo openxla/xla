@@ -56,7 +56,9 @@ enum class TokKind {
   kDots,    // ...
 
   kArrow,  // ->
+  kLt,     // <
   kLeq,    // <=
+  kGt,     // >
 
   // Keywords
   kw_HloModule,
@@ -71,6 +73,7 @@ enum class TokKind {
   kw_shard_as,
   kw_shard_like,
   kw_unknown,
+  kw_qint,
   kw_inf,
 
   kNegInf,  // -inf
