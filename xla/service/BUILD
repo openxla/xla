@@ -5311,6 +5311,8 @@ cc_library(
     deps = [
         "//xla:printer",
         "//xla:shape_layout",
+        "//xla:shape_util",
+        "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/algorithm:container",
