@@ -63,7 +63,7 @@ struct AutoShardingOption {
   // Enabled when memory_budget_per_device == 0;
   float memory_budget_ratio = 1.1;
 
-  // Overwrite the all gather cost with the input all reduce cost.
+  // Overwrite the all gather costs with the input all reduce cost.
   bool force_override_all_gather_cost = false;
   double all_gather_cost = 0;
 

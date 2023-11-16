@@ -267,6 +267,7 @@ build_test(
     ],
 )
 
+# Ignore this
 xla_cc_test(
     name = "auto_sharding_test",
     srcs = ["auto_sharding_test.cc"],
