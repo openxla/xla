@@ -345,6 +345,9 @@ Status AddCopiesForInPlaceOperation(const HloAliasAnalysis& alias_analysis,
                                     HloInstruction* in_place_op,
                                     int64_t operand_number) {
   VLOG(2) << "Adding copies for in-place operation " << in_place_op->name();
+  if (in_place_op->parent()->IsAsyncComputation()) {
+    return OkStatus();
+  }
   HloInstruction* operand = in_place_op->mutable_operand(operand_number);
   TF_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
                       in_place_op->parent()->DeepCopyInstruction(operand));
