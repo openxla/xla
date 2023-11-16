@@ -1499,6 +1499,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:ShapeDialect",
+        "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
     ],
 )
