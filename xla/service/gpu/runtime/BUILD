@@ -33,8 +33,8 @@ gpu_kernel_library(
         "TENSORFLOW_USE_ROCM=1",
     ]),
     deps = [
-        "//xla:util",
         "//xla/stream_executor/platform",
+        "@tsl//tsl/lib/math:math_util",
     ] + if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm_is_configured([
