@@ -350,7 +350,6 @@ cc_library(
         "//tsl:with_numa_support": ["TENSORFLOW_USE_NUMA"],
         "//conditions:default": [],
     }),
-    features = ["-layering_check"],
     tags = [
         "manual",
         "no_oss",
