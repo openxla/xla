@@ -671,11 +671,10 @@ bool IsBmm2GradGemm2(HloInstruction* instr) {
 }
 
 MatchBwdResult MatchBmm1GradGemm1(MatchBwdResult previous_result,
-                                  HloInstruction* fwd_fmha_call,
                                   HloInstruction* bmm_1) {
   MatchBwdResult match_result = previous_result;
   match_result.has_match = false;
-  const HloInstruction* q_tensor = fwd_fmha_call->operand(0);
+  const HloInstruction* q_tensor = bmm_1->operand(0);
   for (int64_t i = 0; i < q_tensor->user_count(); i++) {
     HloInstruction* q_tensor_user_i = q_tensor->users()[i];
     if (IsBatchedMatmul(q_tensor_user_i) && q_tensor_user_i != bmm_1) {
@@ -972,7 +971,7 @@ MatchBwdResult MatchBackwardBmms(HloInstruction* fwd_fmha_call,
     return matched_result;
   }
 
-  matched_result = MatchBmm1GradGemm1(matched_result, fwd_fmha_call, bmm_1);
+  matched_result = MatchBmm1GradGemm1(matched_result, bmm_1);
   if (!matched_result.has_match) {
     return matched_result;
   }
