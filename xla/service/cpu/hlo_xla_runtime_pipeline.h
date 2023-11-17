@@ -30,6 +30,7 @@ namespace xla {
 namespace cpu {
 
 struct HloXlaRuntimePipelineOptions {
+  bool enable_vectorize_copy = false;
   bool enable_tiling_and_fusion = false;
   bool enable_fusion_outlining = true;
   bool remove_copies_to_outparams = true;

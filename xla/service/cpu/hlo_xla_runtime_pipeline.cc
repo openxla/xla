@@ -267,7 +267,7 @@ static Status CreateHloXlaPipeline(
   }
   pm.addNestedPass<FuncOp>(mlir::gml_st::createInlineFusionClustersPass());
 
-  if (options.enable_tiling_and_fusion) {
+  if (options.enable_vectorize_copy) {
     pm.addNestedPass<FuncOp>(mlir::gml_st::createVectorizeCopyPass());
     pm.addNestedPass<FuncOp>(mlir::gml_st::createNaiveCopyRemovalPass());
   }
