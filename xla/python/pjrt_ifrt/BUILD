@@ -251,7 +251,7 @@ cc_library(
     srcs = ["tfrt_cpu_client_test_lib.cc"],
     deps = [
         ":pjrt_ifrt",
-        "//xla/pjrt:tfrt_cpu_pjrt_client",
+        "//xla/pjrt/cpu:cpu_client",
         "//xla/python/ifrt:test_util",
     ],
     alwayslink = True,
