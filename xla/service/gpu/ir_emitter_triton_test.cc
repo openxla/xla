@@ -1437,6 +1437,10 @@ ENTRY e {
 })";
 
   MatchOptimizedHlo(hlo_text, R"(
+; CHECK: %[[PARAM:.*]] = pred[5,5]{1,0} parameter(0)
+; CHECK: %[[CONVERT:.*]] = f32[5,5]{1,0} convert(%[[PARAM]])
+; CHECK: ROOT %{{.*}} = f32[5,5]{1,0} dot(%[[CONVERT]], %[[CONVERT]])
+; CHECK: ENTRY
 ; CHECK: fusion(%p0), kind=kCustom
 ; CHECK-SAME: "block_m":
 )");

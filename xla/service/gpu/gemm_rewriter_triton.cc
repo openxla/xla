@@ -1237,9 +1237,29 @@ void FusionContext::TryToFuseWithInputsRecursively(
   while (to_visit.size() > num_requeued) {
     HloInstruction* hlo = to_visit.front();
     to_visit.pop();
-    // Watch the total number of fusion parameters.
-    if (inputs.size() + NumAddedParameters(*hlo) >
-        TritonFusionAnalysis::kMaxParameterPerDotScope) {
+    // A target hlo can exist if this node was visited in another scope, for
+    // example this graph search was started from the RHS of the hero operation
+    // and it was already visited during the one started from the LHS.
+    HloInstruction* target_hlo = nullptr;
+    if (auto it = old_to_new_mapping.find(hlo);
+        it != old_to_new_mapping.end()) {
+      target_hlo = it->second;
+    }
+    // Don't walk through operations which were decided not to be fused in
+    // earlier scopes - that could create a disconnected fusion computation.
+    // If the operations were visited and fused, then we still have to walk
+    // through them, because it's necessary to propagate dimensions, update
+    // limits, etc. later in this method.
+    if (target_hlo != nullptr &&
+        target_hlo->opcode() == HloOpcode::kParameter) {
+      continue;
+    }
+    // Avoid increasing the total number of fusion parameters over the limit. If
+    // we already fused this hlo in another scope, this shouldn't stop us from
+    // walking through the node.
+    if (target_hlo == nullptr &&
+        inputs.size() + NumAddedParameters(*hlo) >
+            TritonFusionAnalysis::kMaxParameterPerDotScope) {
       // Re-queue: the number of parameters may go down when other instructions
       // are processed.
       to_visit.push(hlo);
