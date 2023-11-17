@@ -7,6 +7,7 @@ namespace gpu {
 
 namespace {
 nvtxStringHandle_t registerString(const char* str) {
+#if GOOGLE_CUDA
   auto domain = tsl::profiler::nvtx::GetNVTXDomain();
   if (!domain) {
     // NVTX not enabled, so don't bother registering strings with it
@@ -23,6 +24,9 @@ nvtxStringHandle_t registerString(const char* str) {
     str = buffer.c_str();
   }
   return nvtxDomainRegisterStringA(*domain, str);
+#else
+  return {};
+#endif
 }
 
 template <typename Visitor>
