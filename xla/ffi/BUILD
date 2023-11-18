@@ -18,10 +18,13 @@ cc_library(
     srcs = ["call_frame.cc"],
     hdrs = ["call_frame.h"],
     deps = [
+        ":api",
+        "//xla:status",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:c_api_internal",
+        "//xla/service:executable",
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -32,8 +35,32 @@ cc_library(
 
 cc_library(
     name = "ffi",
-    srcs = ["ffi.cc"],
     hdrs = ["ffi.h"],
+    deps = [
+        ":api",
+        ":call_frame",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla/ffi/api:c_api",
+        "//xla/ffi/api:c_api_internal",
+        "//xla/runtime:memref_view",
+        "//xla/service:executable",
+        "//xla/stream_executor:device_memory",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "ffi_api",
+    srcs = ["ffi_api.cc"],
+    hdrs = ["ffi_api.h"],
     deps = [
         ":api",
         ":call_frame",
@@ -62,6 +89,7 @@ xla_cc_test(
         ":api",
         ":call_frame",
         ":ffi",
+        ":ffi_api",
         "//xla:xla_data_proto_cc",
         "//xla/ffi/api:c_api",
         "//xla/service:executable",
