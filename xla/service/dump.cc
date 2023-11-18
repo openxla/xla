@@ -710,6 +710,11 @@ bool DumpingEnabledForHloModule(string_view hlo_module_name,
   return CanonicalDebugOptions(opts).should_dump_module(hlo_module_name);
 }
 
+bool DumpingEnabledForHloPass(string_view hlo_pass_name,
+                              const DebugOptions& opts) {
+  return CanonicalDebugOptions(opts).should_dump_pass(hlo_pass_name);
+}
+
 bool DumpingToStdout(const DebugOptions& opts) {
   return CanonicalDebugOptions(opts).dumping_to_stdout();
 }
