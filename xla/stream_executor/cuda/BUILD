@@ -536,7 +536,7 @@ cc_library(
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:plugin_registry",
-        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:stream_executor",
         "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor/gpu:asm_compiler",
         "//xla/stream_executor/gpu:gpu_command_buffer",
