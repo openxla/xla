@@ -226,6 +226,34 @@ class GpuCompiler : public LLVMCompiler {
   GpuCompiler& operator=(const GpuCompiler&) = delete;
 };
 
+// TODO(b/232263665): It should be shared between GPU and CPU.
+class GpuAotCompilationResult : public AotCompilationResult {
+ public:
+  GpuAotCompilationResult(
+      HloModuleProto hlo, std::string_view obj_file,
+      std::string_view mlir_module, EntryFunctionAttributes entry_func_attrs,
+      std::string_view gpu_asm_text, absl::Span<const uint8_t> gpu_binary,
+      absl::Span<const GpuExecutable::ConstantInfo> constants = {});
+
+  explicit GpuAotCompilationResult(XlaRuntimeGpuExecutableProto executable)
+      : executable_(executable) {}
+
+  StatusOr<std::string> SerializeAsString() const override {
+    return executable_.SerializeAsString();
+  }
+
+  static StatusOr<std::unique_ptr<GpuAotCompilationResult>> FromString(
+      const std::string& serialized);
+
+  StatusOr<std::unique_ptr<Executable>> LoadExecutable(
+      Compiler* compiler, se::StreamExecutor* executor) const override;
+
+  const XlaRuntimeGpuExecutableProto& executable() const { return executable_; }
+
+ private:
+  XlaRuntimeGpuExecutableProto executable_;
+};
+
 }  // namespace gpu
 }  // namespace xla
 

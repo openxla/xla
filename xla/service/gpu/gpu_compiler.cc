@@ -262,74 +262,52 @@ se::GpuComputeCapability GetGpuVersion(se::StreamExecutor* stream_exec) {
   return stream_exec->GetDeviceDescription().gpu_compute_capability();
 }
 
-// TODO(b/232263665): It should be shared between GPU and CPU.
-class GpuAotCompilationResult : public AotCompilationResult {
- public:
-  GpuAotCompilationResult(
-      HloModuleProto hlo, std::string_view obj_file,
-      std::string_view mlir_module, EntryFunctionAttributes entry_func_attrs,
-      std::string_view gpu_asm_text, absl::Span<const uint8_t> gpu_binary,
-      absl::Span<const GpuExecutable::ConstantInfo> constants = {}) {
-    XlaRuntimeExecutableProto xla_runtime_executable;
-    *xla_runtime_executable.mutable_hlo_module_proto() = hlo;
-    xla_runtime_executable.set_obj_file(std::string(obj_file));
-    xla_runtime_executable.set_mlir_module(std::string(mlir_module));
-    *xla_runtime_gpu_executable_.mutable_xla_runtime_executable() =
-        xla_runtime_executable;
-
-    *xla_runtime_gpu_executable_.mutable_entry_func_attrs() = entry_func_attrs;
-    xla_runtime_gpu_executable_.set_gpu_asm_text(std::string(gpu_asm_text));
-    xla_runtime_gpu_executable_.set_gpu_binary(gpu_binary.data(),
-                                               gpu_binary.size());
-
-    for (const GpuExecutable::ConstantInfo& cst : constants) {
-      auto* cst_proto = xla_runtime_gpu_executable_.add_constants();
-      cst_proto->set_symbol_name(cst.symbol_name);
-      cst_proto->set_allocation_index(cst.allocation_index);
-      cst_proto->set_content(cst.content.data(), cst.content.size());
-    }
-  }
-
-  explicit GpuAotCompilationResult(XlaRuntimeGpuExecutableProto executable)
-      : xla_runtime_gpu_executable_(executable) {}
-
-  StatusOr<std::string> SerializeAsString() const override {
-    return xla_runtime_gpu_executable_.SerializeAsString();
-  }
-
-  static StatusOr<std::unique_ptr<GpuAotCompilationResult>> FromString(
-      const std::string& serialized) {
-    XlaRuntimeGpuExecutableProto xla_runtime_gpu_executable;
-    if (!xla_runtime_gpu_executable.ParseFromString(serialized)) {
-      return InternalError("Failed to parse serialized JitRtExecutableProto.");
-    }
-    return std::make_unique<GpuAotCompilationResult>(
-        xla_runtime_gpu_executable);
-  }
-
-  StatusOr<std::unique_ptr<Executable>> LoadExecutable(
-      Compiler* compiler, se::StreamExecutor* executor) const override;
-
- private:
-  XlaRuntimeGpuExecutableProto xla_runtime_gpu_executable_;
-};
-
 }  // end anonymous namespace
+
+GpuAotCompilationResult::GpuAotCompilationResult(
+    HloModuleProto hlo, std::string_view obj_file, std::string_view mlir_module,
+    EntryFunctionAttributes entry_func_attrs, std::string_view gpu_asm_text,
+    absl::Span<const uint8_t> gpu_binary,
+    absl::Span<const GpuExecutable::ConstantInfo> constants) {
+  XlaRuntimeExecutableProto* executable =
+      executable_.mutable_xla_runtime_executable();
+  *executable->mutable_hlo_module_proto() = hlo;
+  executable->set_obj_file(std::string(obj_file));
+  executable->set_mlir_module(std::string(mlir_module));
+
+  *executable_.mutable_entry_func_attrs() = entry_func_attrs;
+  executable_.set_gpu_asm_text(std::string(gpu_asm_text));
+  executable_.set_gpu_binary(gpu_binary.data(), gpu_binary.size());
+
+  for (const GpuExecutable::ConstantInfo& cst : constants) {
+    auto* cst_proto = executable_.add_constants();
+    cst_proto->set_symbol_name(cst.symbol_name);
+    cst_proto->set_allocation_index(cst.allocation_index);
+    cst_proto->set_content(cst.content.data(), cst.content.size());
+  }
+}
+
+/*static*/ StatusOr<std::unique_ptr<GpuAotCompilationResult>>
+GpuAotCompilationResult::FromString(const std::string& serialized) {
+  XlaRuntimeGpuExecutableProto executable;
+  if (!executable.ParseFromString(serialized)) {
+    return InternalError("Failed to parse serialized JitRtExecutableProto.");
+  }
+  return std::make_unique<GpuAotCompilationResult>(executable);
+}
 
 StatusOr<std::unique_ptr<Executable>> GpuAotCompilationResult::LoadExecutable(
     Compiler* compiler, se::StreamExecutor* executor) const {
-  XlaRuntimeExecutableProto xla_runtime_executable =
-      xla_runtime_gpu_executable_.xla_runtime_executable();
-  TF_ASSIGN_OR_RETURN(HloModuleConfig hlo_module_config,
-                      HloModule::CreateModuleConfigFromProto(
-                          xla_runtime_executable.hlo_module_proto(),
-                          GetDebugOptionsFromFlags()));
+  XlaRuntimeExecutableProto executable = executable_.xla_runtime_executable();
   TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<HloModule> hlo_module,
-      HloModule::CreateFromProto(xla_runtime_executable.hlo_module_proto(),
-                                 hlo_module_config));
+      HloModuleConfig hlo_module_config,
+      HloModule::CreateModuleConfigFromProto(executable.hlo_module_proto(),
+                                             GetDebugOptionsFromFlags()));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
+                      HloModule::CreateFromProto(executable.hlo_module_proto(),
+                                                 hlo_module_config));
   std::vector<GpuExecutable::ConstantInfo> constants;
-  for (auto& cst : xla_runtime_gpu_executable_.constants()) {
+  for (auto& cst : executable_.constants()) {
     GpuExecutable::ConstantInfo constant = {
         cst.symbol_name(),
         {cst.content().begin(), cst.content().end()},
@@ -338,12 +316,10 @@ StatusOr<std::unique_ptr<Executable>> GpuAotCompilationResult::LoadExecutable(
   }
 
   return GpuExecutable::LoadFromObjFile(
-      std::move(hlo_module), xla_runtime_executable.obj_file(),
-      xla_runtime_executable.mlir_module(),
-      xla_runtime_gpu_executable_.entry_func_attrs(),
-      GetDebugOptionsFromFlags(), xla_runtime_gpu_executable_.gpu_asm_text(),
-      xla_runtime_gpu_executable_.gpu_binary(), std::move(constants),
-      GetGpuVersion(executor), executor);
+      std::move(hlo_module), executable.obj_file(), executable.mlir_module(),
+      executable_.entry_func_attrs(), GetDebugOptionsFromFlags(),
+      executable_.gpu_asm_text(), executable_.gpu_binary(),
+      std::move(constants), GetGpuVersion(executor), executor);
 }
 
 GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
