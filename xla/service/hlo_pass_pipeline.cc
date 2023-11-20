@@ -148,10 +148,10 @@ Status HloPassPipeline::RunInvariantCheckers(
 }
 
 namespace {
-std::string unique_id(HloModule const& mod) {
+std::string UniqueId(HloModule const& mod) {
   return std::to_string(mod.unique_id());
 }
-std::string unique_id(HloModuleGroup const& group) {
+std::string UniqueId(HloModuleGroup const& group) {
   return absl::StrJoin(group.modules(), "-",
                        [](std::string* out, HloModule const* mod) {
                          out->append(std::to_string(mod->unique_id()));
@@ -172,7 +172,7 @@ StatusOr<bool> HloPassPipeline::RunPassesInternal(
   std::string pipeline_name = std::string(name());
   tsl::profiler::ScopedAnnotation annotation{[&] {
     return absl::StrFormat("XlaPassPipeline:#name=%s,module=%s,program_id=%s#",
-                           pipeline_name, hlo->name(), unique_id(*hlo));
+                           pipeline_name, hlo->name(), UniqueId(*hlo));
   }};
 
   TF_RETURN_IF_ERROR(

@@ -743,7 +743,7 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 
 namespace {
 struct ModuleAnnotationManager {
-  ModuleAnnotationManager(std::optional<ModuleAnnotations> const& annotations) {
+  ModuleAnnotationManager(const std::optional<ModuleAnnotations>& annotations) {
     if (annotations.has_value()) {
       m_old_annotations = SetCurrentModuleAnnotations(&(*annotations));
     }
@@ -755,7 +755,7 @@ struct ModuleAnnotationManager {
   }
 
  private:
-  std::optional<ModuleAnnotations const*> m_old_annotations;
+  std::optional<const ModuleAnnotations*> m_old_annotations;
 };
 }  // namespace
 

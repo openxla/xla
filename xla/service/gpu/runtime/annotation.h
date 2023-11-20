@@ -1,3 +1,18 @@
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
 #ifndef XLA_SERVICE_GPU_GPU_ANNOTATION_H_
 #define XLA_SERVICE_GPU_GPU_ANNOTATION_H_
 
@@ -13,11 +28,12 @@ struct ModuleAnnotation {
   ModuleAnnotation(std::string module_name, int module_id);
   ModuleAnnotation(HloModule const& mod);
   std::string_view longest_op_name_prefix() const;
-  nvtxStringHandle_t NVTXRegisteredTitle() const;
+  nvtxStringHandle_t NvtxRegisteredTitle() const;
   std::string_view Title() const;
 
  private:
-  std::string longest_prefix{}, title_str{};
+  std::string longest_prefix;
+  std::string title_str;
   nvtxStringHandle_t title{};
 };
 
@@ -25,11 +41,11 @@ struct ModuleAnnotation {
 struct KernelAnnotation {
   KernelAnnotation(ModuleAnnotation const& module_annotaion,
                    HloInstruction const& inst);
-  nvtxStringHandle_t NVTXRegisteredTitle() const;
+  nvtxStringHandle_t NvtxRegisteredTitle() const;
   std::string_view Title() const;
 
  private:
-  std::string title_str{};
+  std::string title_str;
   nvtxStringHandle_t title{};
 };
 // Parsed/prepared information for an HloModule that gets propagated to NVTX

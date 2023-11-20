@@ -68,9 +68,11 @@ inline bool RangesEnabled() {
 // is to use std::string and have the NVTX implementation copy a C-style
 // string every time. The other option is to pass a struct implementing two
 // methods:
+//
 //   std::string_view Title() const;
-//   nvtxStringHandle_t NVTXRegisteredTitle() const;
-// in which case NVTXRegisteredTitle() will be used when starting NVTX ranges,
+//   nvtxStringHandle_t NvtxRegisteredTitle() const;
+//
+// in which case NvtxRegisteredTitle() will be used when starting NVTX ranges,
 // avoiding this string copy.
 // The Title() method is needed because AnnotationStack::PushAnnotation(...) is
 // the backend for some annotations when NVTX is not enabled, and it does not
@@ -81,14 +83,14 @@ inline constexpr bool has_annotation_api_v =
     !std::is_same_v<AnnotationType, std::string>;
 
 template <typename AnnotationType>
-void rangePush(nvtxDomainHandle_t domain, AnnotationType const& annotation) {
+void RangePush(nvtxDomainHandle_t domain, const AnnotationType& annotation) {
 #if GOOGLE_CUDA
   nvtxEventAttributes_t attrs{};
   attrs.version = NVTX_VERSION;
   attrs.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
   if constexpr (has_annotation_api_v<std::decay_t<AnnotationType>>) {
     attrs.messageType = NVTX_MESSAGE_TYPE_REGISTERED;
-    attrs.message.registered = annotation.NVTXRegisteredTitle();
+    attrs.message.registered = annotation.NvtxRegisteredTitle();
   } else {
     attrs.messageType = NVTX_MESSAGE_TYPE_ASCII;
     attrs.message.ascii = annotation.c_str();

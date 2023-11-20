@@ -1,9 +1,23 @@
+/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
 #include "xla/service/gpu/runtime/annotation.h"
 
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
 namespace {
 nvtxStringHandle_t registerString(const char* str) {
@@ -30,11 +44,11 @@ nvtxStringHandle_t registerString(const char* str) {
 }
 
 template <typename Visitor>
-Status visit_inst_and_called_but_not_operands(Visitor& visitor,
-                                              HloInstruction const& inst) {
+Status VisitInstAndCalledButNotOperands(Visitor& visitor,
+                                        HloInstruction const& inst) {
   // Visit the given instruction, and the things it calls, but not its operands.
   TF_RETURN_IF_ERROR(visitor.DefaultAction(&inst));
-  for (HloComputation const* called : inst.called_computations()) {
+  for (const HloComputation* called : inst.called_computations()) {
     HloInstruction const* const root = called->root_instruction();
     TF_RETURN_IF_ERROR(root->Accept(&visitor, false /* call_finish_visit */,
                                     true /* ignore_control_predecessors */,
@@ -93,11 +107,10 @@ class OpNamePrefixVisitor : public ConstDfsHloVisitorWithDefault {
 std::string_view get_longest_op_name_prefix(HloInstruction const& inst,
                                             bool include_operands) {
   OpNamePrefixVisitor visitor{};
-  if (!(include_operands
-            ? inst.Accept(&visitor, false /* call_finish_visit */,
-                          true /* ignore_control_predecessors */,
-                          true /* cross_computation */)
-            : visit_inst_and_called_but_not_operands(visitor, inst))
+  if (!(include_operands ? inst.Accept(&visitor, false /* call_finish_visit */,
+                                       true /* ignore_control_predecessors */,
+                                       true /* cross_computation */)
+                         : VisitInstAndCalledButNotOperands(visitor, inst))
            .ok()) {
     return "[error]";
   }
@@ -135,7 +148,7 @@ std::string_view ModuleAnnotation::longest_op_name_prefix() const {
 
 std::string_view ModuleAnnotation::Title() const { return title_str; }
 
-nvtxStringHandle_t ModuleAnnotation::NVTXRegisteredTitle() const {
+nvtxStringHandle_t ModuleAnnotation::NvtxRegisteredTitle() const {
   return title;
 }
 
@@ -175,7 +188,7 @@ KernelAnnotation::KernelAnnotation(ModuleAnnotation const& module_annotation,
 
 std::string_view KernelAnnotation::Title() const { return title_str; }
 
-nvtxStringHandle_t KernelAnnotation::NVTXRegisteredTitle() const {
+nvtxStringHandle_t KernelAnnotation::NvtxRegisteredTitle() const {
   return title;
 }
 
@@ -212,5 +225,4 @@ ModuleAnnotations::ModuleAnnotations(HloModule const& mod) : top_level{mod} {
     }
   }
 }
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

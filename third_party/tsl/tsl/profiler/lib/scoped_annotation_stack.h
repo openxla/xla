@@ -55,7 +55,7 @@ class ScopedAnnotationStack {
     std::optional<nvtxDomainHandle_t> domain =
         tsl::profiler::nvtx::GetNVTXDomain();
     if (TF_PREDICT_FALSE(domain.has_value())) {
-      tsl::profiler::nvtx::rangePush(domain.value(), name);
+      tsl::profiler::nvtx::RangePush(domain.value(), name);
     } else  // NOLINT
 #endif
         if (TF_PREDICT_FALSE(AnnotationStack::IsEnabled())) {
@@ -80,7 +80,7 @@ class ScopedAnnotationStack {
     std::optional<nvtxDomainHandle_t> domain =
         tsl::profiler::nvtx::GetNVTXDomain();
     if (TF_PREDICT_FALSE(domain.has_value())) {
-      tsl::profiler::nvtx::rangePush(domain.value(), name_generator());
+      tsl::profiler::nvtx::RangePush(domain.value(), name_generator());
     } else  // NOLINT
 #endif
         if (TF_PREDICT_FALSE(AnnotationStack::IsEnabled())) {
