@@ -91,7 +91,7 @@ bool TensorIterationSpec::operator==(const TensorIterationSpec& other) const {
 bool IsDistributiveOverAddition(const HloInstruction& hlo) {
   // The list is most likely incomplete.
   // For example division can be added too but only for operand #0.
-  if (hlo.opcode() == HloOpcode::kMultiply ||
+  if (hlo.opcode() == HloOpcode::kMultiply || hlo.opcode() == HloOpcode::kAdd ||
       hlo.opcode() == HloOpcode::kNegate ||
       hlo.opcode() == HloOpcode::kBitcast ||
       hlo.opcode() == HloOpcode::kReshape || hlo.opcode() == HloOpcode::kCopy ||
@@ -425,6 +425,15 @@ class FusionContext {
         .splittable_dimension_supported_major_part_size;
   }
   const DimOrderMap& DimOrders() const { return dim_orders_; }
+
+  // Returns true if instruction is fusible broadcast due to not paying DRAM
+  // penalty.
+  bool IsFusibleBroadcast(
+      const HloInstruction& hlo, TransformDirection transform_direction,
+      se::GpuComputeCapability gpu_version,
+      absl::flat_hash_map<const HloInstruction*, HloInstruction*>&
+          old_to_new_mapping,
+      DimOrderUpdatesOrError& result) const;
 
  private:
   DimOrderUpdatesOrError AnalyzeForFusionImpl(
@@ -1108,21 +1117,9 @@ DimOrderUpdatesOrError FusionContext::AnalyzeForFusionImpl(
       // not trivial to fuse because they increase DRAM traffic but if one
       // of the inputs is for example a broadcast that can be fused too it
       // becomes worth fusing. Look ahead and analyze operands here.
-      bool accepted = false;
-      if (hlo.IsElementwise() && hlo.operand_count() == 2) {
-        for (const HloInstruction* operand : hlo.operands()) {
-          if (operand->opcode() == HloOpcode::kBroadcast &&
-              (operand->operand(0)->opcode() == HloOpcode::kParameter ||
-               operand->operand(0)->opcode() == HloOpcode::kConstant) &&
-              std::holds_alternative<DimOrderUpdates>(AnalyzeForFusionImpl(
-                  *operand, transform_direction, old_to_new_mapping,
-                  std::get<DimOrderUpdates>(result).map, gpu_version))) {
-            accepted = true;
-            break;
-          }
-        }
-      }
-      if (!accepted && !IsInputWorthFusing(hlo)) {
+      if (!IsFusibleBroadcast(hlo, transform_direction, gpu_version,
+                              old_to_new_mapping, result) &&
+          !IsInputWorthFusing(hlo)) {
         return "Not obviously profitable to fuse as input.";
       }
     }
@@ -1144,8 +1141,14 @@ DimOrderUpdatesOrError FusionContext::AnalyzeForFusionImpl(
       }
       return "Has multiple inputs - not properly analyzed yet.";
     }
-    if (!IsOutputWorthFusing(hlo)) {
-      return "Not obviously profitable to fuse as output.";
+
+    // Exception for fusing binary elementwise ops into the output. If broadcast
+    // is one of the inputs it's fine to fuse it with the same rationale as for
+    // fusing it as an input.
+    if (!IsFusibleBroadcast(hlo, TransformDirection::kOutputToInput,
+                            gpu_version, old_to_new_mapping, result) &&
+        !IsOutputWorthFusing(hlo)) {
+      return "Not obviously profitable to fuse as input.";
     }
   }
   return std::get<DimOrderUpdates>(result);
@@ -1497,6 +1500,30 @@ Status FusionContext::PropagateDimensionOrdersToParameters(
     }
   }
   return OkStatus();
+}
+
+bool FusionContext::IsFusibleBroadcast(
+    const HloInstruction& hlo, const TransformDirection transform_direction,
+    const se::GpuComputeCapability gpu_version,
+    absl::flat_hash_map<const HloInstruction*, HloInstruction*>&
+        old_to_new_mapping,
+    DimOrderUpdatesOrError& result) const {
+  bool fusible = false;
+  if (hlo.IsElementwise() && hlo.operand_count() == 2) {
+    for (const auto* operand : hlo.operands()) {
+      if (operand->opcode() == HloOpcode::kBroadcast &&
+          (operand->operand(0)->opcode() == HloOpcode::kParameter ||
+           operand->operand(0)->opcode() == HloOpcode::kConstant) &&
+          std::holds_alternative<DimOrderUpdates>(AnalyzeForFusionImpl(
+              *operand, transform_direction, old_to_new_mapping,
+              std::get<DimOrderUpdates>(result).map, gpu_version))) {
+        fusible = true;
+        break;
+      }
+    }
+  }
+
+  return fusible;
 }
 
 }  // anonymous namespace

@@ -682,6 +682,27 @@ ENTRY e {
             HloOpcode::kBroadcast);
 }
 
+TEST_F(TritonDotAnalysisTest, FusesElementwiseWithBroadcastToOutput) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule t
+
+ENTRY e {
+  c = f32[] constant(1)
+  b = f32[6,8] broadcast(c), dimensions={}
+  p0 = f32[6,8] parameter(0)
+  p1 = f32[8,8] parameter(1)
+  dot = f32[6,8] dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT a1 = f32[6,8] add(dot, b)
+})"));
+  EXPECT_TRUE(GemmRewriterTriton(se::CudaComputeCapability{
+                                     se::CudaComputeCapability::AMPERE, 0})
+                  .Run(module.get())
+                  .value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
+}
+
 TEST_F(TritonDotAnalysisTest, DegenerateSplitFragmentIsHandled) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(
