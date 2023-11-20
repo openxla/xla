@@ -86,6 +86,7 @@ cc_library(
         ":gpu_types_header",
         "//xla/stream_executor:device_options",
         "//xla/stream_executor:stream_executor_headers",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ] + if_libtpu(
@@ -128,7 +129,10 @@ cc_library(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
-    ],
+        "@tsl//tsl/platform:statusor",
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_conditional_kernels",
+    ]),
 )
 
 cc_library(

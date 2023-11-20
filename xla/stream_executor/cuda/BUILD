@@ -426,6 +426,12 @@ cuda_library(
     deps = ["@local_config_cuda//cuda:cuda_headers"],
 )
 
+cuda_library(
+    name = "cuda_conditional_kernels",
+    srcs = if_cuda_is_configured(["cuda_conditional_kernels.cu.cc"]),
+    deps = ["@local_config_cuda//cuda:cuda_headers"],
+)
+
 xla_test(
     name = "cuda_kernel_test",
     srcs = if_cuda_is_configured(["cuda_kernel_test.cc"]),
@@ -454,6 +460,7 @@ xla_test(
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
         "@com_google_absl//absl/log:check",
+        "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test",
