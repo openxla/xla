@@ -352,6 +352,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
