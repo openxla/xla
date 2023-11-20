@@ -27,3 +27,13 @@ cc_library(
         "rand_000072.hlo",
     ],
 )]
+
+hlo_test(
+    name = "add.hlo_test",
+    hlo = "add.hlo",
+)
+
+hlo_test(
+    name = "subtract.hlo_test",
+    hlo = "subtract.hlo",
+)
