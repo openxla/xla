@@ -4723,7 +4723,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
           SpmdBuilder* b, HloInstruction* operand, HloComputation* reduction,
           const std::vector<std::vector<int64_t>>& partition_subgroups,
           int64_t channel_id) {
-        if (partition_subgroups.size() <= 1) {
+        if (partition_subgroups.empty()) {
           std::vector<ReplicaGroup> groups(num_replicas);
           // TODO(yuanzx): Unify subgroup definition with AllToAll.
           for (int64_t i = 0; i < num_replicas; ++i) {
