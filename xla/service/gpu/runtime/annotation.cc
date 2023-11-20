@@ -20,7 +20,7 @@ limitations under the License.
 namespace xla::gpu {
 
 namespace {
-nvtxStringHandle_t registerString(const char* str) {
+nvtxStringHandle_t RegisterString(const char* str) {
 #if GOOGLE_CUDA
   auto domain = tsl::profiler::nvtx::GetNVTXDomain();
   if (!domain) {
@@ -45,11 +45,11 @@ nvtxStringHandle_t registerString(const char* str) {
 
 template <typename Visitor>
 Status VisitInstAndCalledButNotOperands(Visitor& visitor,
-                                        HloInstruction const& inst) {
+                                        const HloInstruction& inst) {
   // Visit the given instruction, and the things it calls, but not its operands.
   TF_RETURN_IF_ERROR(visitor.DefaultAction(&inst));
   for (const HloComputation* called : inst.called_computations()) {
-    HloInstruction const* const root = called->root_instruction();
+    const HloInstruction* const root = called->root_instruction();
     TF_RETURN_IF_ERROR(root->Accept(&visitor, false /* call_finish_visit */,
                                     true /* ignore_control_predecessors */,
                                     true /* cross_computation */));
@@ -60,8 +60,8 @@ Status VisitInstAndCalledButNotOperands(Visitor& visitor,
 // Split `a` and `b` by `delim` into two lists of possibly-empty tokens, then
 // rejoin the first N of those lists that match by `delim`. Note: it is
 // unspecified which argument the return value points into.
-std::string_view longest_prefix(std::string_view a, std::string_view b,
-                                char delim = '/') {
+std::string_view LongestPrefix(std::string_view a, std::string_view b,
+                               char delim = '/') {
   if (a.size() > b.size()) a.swap(b);  // allow assumption that b is longer
   for (auto start_a = a.begin(), iter_a = start_a, start_b = b.begin(),
             iter_b = start_b;
@@ -89,10 +89,10 @@ std::string_view longest_prefix(std::string_view a, std::string_view b,
 // longest prefix is a/b not a/b/ca
 class OpNamePrefixVisitor : public ConstDfsHloVisitorWithDefault {
  public:
-  Status DefaultAction(HloInstruction const* inst) final {
+  Status DefaultAction(const HloInstruction* inst) final {
     auto const& op_name = inst->metadata().op_name();
     if (!op_name.empty()) {
-      prefix = prefix ? longest_prefix(*prefix, op_name) : op_name;
+      prefix = prefix ? LongestPrefix(*prefix, op_name) : op_name;
     }
     return OkStatus();
   }
@@ -104,8 +104,8 @@ class OpNamePrefixVisitor : public ConstDfsHloVisitorWithDefault {
   std::optional<std::string_view> prefix{};
 };
 
-std::string_view get_longest_op_name_prefix(HloInstruction const& inst,
-                                            bool include_operands) {
+std::string_view GetLongestOpNamePrefix(const HloInstruction& inst,
+                                        bool include_operands) {
   OpNamePrefixVisitor visitor{};
   if (!(include_operands ? inst.Accept(&visitor, false /* call_finish_visit */,
                                        true /* ignore_control_predecessors */,
@@ -117,7 +117,7 @@ std::string_view get_longest_op_name_prefix(HloInstruction const& inst,
   return visitor.longest_op_name_prefix();
 }
 
-std::string make_title(HloModule const& mod, std::string_view longest_prefix) {
+std::string MakeTitle(const HloModule& mod, std::string_view longest_prefix) {
   if (longest_prefix.empty()) {
     return absl::StrFormat("XlaModule:#hlo_module=%s,program_id=%d#",
                            mod.name(), mod.unique_id());
@@ -134,13 +134,13 @@ ModuleAnnotation::ModuleAnnotation(std::string module_name_, int module_id_)
               ? absl::StrFormat("XlaModule:#hlo_module=%s,program_id=%d",
                                 module_name_, module_id_)
               : absl::StrFormat("XlaModule:#hlo_module=%s", module_name_)},
-      title{registerString(title_str.c_str())} {}
+      title{RegisterString(title_str.c_str())} {}
 
-ModuleAnnotation::ModuleAnnotation(HloModule const& mod)
-    : longest_prefix{get_longest_op_name_prefix(
+ModuleAnnotation::ModuleAnnotation(const HloModule& mod)
+    : longest_prefix{GetLongestOpNamePrefix(
           *mod.entry_computation()->root_instruction(), true)},
-      title_str{make_title(mod, longest_prefix)},
-      title{registerString(title_str.c_str())} {}
+      title_str{MakeTitle(mod, longest_prefix)},
+      title{RegisterString(title_str.c_str())} {}
 
 std::string_view ModuleAnnotation::longest_op_name_prefix() const {
   return longest_prefix;
@@ -153,12 +153,12 @@ nvtxStringHandle_t ModuleAnnotation::NvtxRegisteredTitle() const {
 }
 
 namespace {
-std::string make_kernel_name(std::string_view prefix,
-                             HloInstruction const& inst) {
+std::string MakeKernelName(std::string_view prefix,
+                           const HloInstruction& inst) {
   // Sometimes an instruction doesn't have metadata, but the computations that
   // it calls do have metadata. Consider all of those metadata op_name entries
   // and attach the longest prefix to this launch.
-  std::string_view op_name = get_longest_op_name_prefix(inst, false);
+  std::string_view op_name = GetLongestOpNamePrefix(inst, false);
   if (op_name.empty()) {
     return absl::StrFormat("Thunk:#hlo_op=%s#", inst.name());
   } else {
@@ -180,11 +180,11 @@ std::string make_kernel_name(std::string_view prefix,
 }
 }  // namespace
 
-KernelAnnotation::KernelAnnotation(ModuleAnnotation const& module_annotation,
-                                   HloInstruction const& inst)
-    : title_str{make_kernel_name(module_annotation.longest_op_name_prefix(),
-                                 inst)},
-      title{registerString(title_str.c_str())} {}
+KernelAnnotation::KernelAnnotation(const ModuleAnnotation& module_annotation,
+                                   const HloInstruction& inst)
+    : title_str{MakeKernelName(module_annotation.longest_op_name_prefix(),
+                               inst)},
+      title{RegisterString(title_str.c_str())} {}
 
 std::string_view KernelAnnotation::Title() const { return title_str; }
 
@@ -192,12 +192,12 @@ nvtxStringHandle_t KernelAnnotation::NvtxRegisteredTitle() const {
   return title;
 }
 
-ModuleAnnotations::ModuleAnnotations(HloModule const& mod) : top_level{mod} {
+ModuleAnnotations::ModuleAnnotations(const HloModule& mod) : top_level{mod} {
   // loop through `mod` and populate `kernels` (string -> KernelAnnotation map)
   // with the information we want to attach to individual kernels.
-  for (HloComputation const* computation :
+  for (const HloComputation* computation :
        mod.computations()) {  // top-level blocks in the module
-    for (HloInstruction const* inst :
+    for (const HloInstruction* inst :
          computation->instructions()) {  // statements within block
       // working assumption: only custom calls and fusions end up with NVTX
       // ranges named after them. bad assumption [at least partially]: cuda
@@ -212,7 +212,7 @@ ModuleAnnotations::ModuleAnnotations(HloModule const& mod) : top_level{mod} {
           // range based on the content of `inst`, including `called` etc.
           // FIXME: using try_emplace here was sensitive to
           // https://github.com/abseil/abseil-cpp/issues/388.
-          auto const [iter, inserted] =
+          const auto [iter, inserted] =
               kernels.insert({inst->name(), {top_level, *inst}});
           if (!inserted) {
             throw std::runtime_error(

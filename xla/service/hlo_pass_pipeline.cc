@@ -148,12 +148,12 @@ Status HloPassPipeline::RunInvariantCheckers(
 }
 
 namespace {
-std::string UniqueId(HloModule const& mod) {
+std::string UniqueId(const HloModule& mod) {
   return std::to_string(mod.unique_id());
 }
-std::string UniqueId(HloModuleGroup const& group) {
+std::string UniqueId(const HloModuleGroup& group) {
   return absl::StrJoin(group.modules(), "-",
-                       [](std::string* out, HloModule const* mod) {
+                       [](std::string* out, const HloModule* mod) {
                          out->append(std::to_string(mod->unique_id()));
                        });
 }

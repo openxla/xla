@@ -45,7 +45,7 @@ void RegisterTracingTypeIdNames(runtime::TypeIDNameRegistry& registry) {
 //===----------------------------------------------------------------------===//
 
 namespace {
-thread_local ModuleAnnotations const* current_annotations{};
+thread_local const ModuleAnnotations* current_annotations{};
 }
 
 static absl::StatusOr<int64_t> ActivityStart(runtime::HloTrace annotation) {
@@ -53,7 +53,7 @@ static absl::StatusOr<int64_t> ActivityStart(runtime::HloTrace annotation) {
   if (current_annotations) {
     // We know which HloModule we belong to, and may have pre-prepared
     // annotation structs ready to use
-    auto const iter = current_annotations->kernels.find(annotation.hlo_op);
+    const auto iter = current_annotations->kernels.find(annotation.hlo_op);
     if (iter != current_annotations->kernels.end()) {
       // Have a pre-prepared annotation, use it
       return ScopedAnnotationStack::ActivityStart([&] { return iter->second; });
@@ -85,8 +85,8 @@ void RegisterTracingCustomCalls(runtime::DirectCustomCallRegistry& registry) {
   registry.Register("xla.trace.activity_end", End);
 }
 
-ModuleAnnotations const* SetCurrentModuleAnnotations(
-    ModuleAnnotations const* annotations) {
+const ModuleAnnotations* SetCurrentModuleAnnotations(
+    const ModuleAnnotations* annotations) {
   return std::exchange(current_annotations, annotations);
 }
 

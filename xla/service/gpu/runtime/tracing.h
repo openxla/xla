@@ -29,8 +29,8 @@ void RegisterTracingTypeIdNames(runtime::TypeIDNameRegistry& registry);
 
 void RegisterTracingCustomCalls(runtime::DirectCustomCallRegistry& registry);
 
-ModuleAnnotations const* SetCurrentModuleAnnotations(
-    ModuleAnnotations const* annotations);
+const ModuleAnnotations* SetCurrentModuleAnnotations(
+    const ModuleAnnotations* annotations);
 
 }  // namespace gpu
 }  // namespace xla
