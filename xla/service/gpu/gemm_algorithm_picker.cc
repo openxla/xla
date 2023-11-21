@@ -124,7 +124,7 @@ StatusOr<AutotuneResult> GetBestAlgorithm(
       CHECK(!autotune_config.should_crash_on_check_failure());
       continue;
     }
-#endif
+#endif // GOOGLE_CUDA
 
     if (!reference_algorithm) {
       stream->ThenMemcpy(&reference_buffer, output_buffer,

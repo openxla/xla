@@ -184,7 +184,7 @@ StatusOr<bool> BufferComparator::CompareEqual(
       return CompareEqualParameterized<tsl::float8_e5m2, float>(
           stream, current, expected, shape_, config_, "fp8_e5m2_comparison",
           buffer_comparator::fp8_e5m2_comparison());
-#endif          
+#endif // GOOGLE_CUDA
     case xla::F16:
       return CompareEqualParameterized<Eigen::half, float>(
           stream, current, expected, shape_, config_, "fp16_comparison",
