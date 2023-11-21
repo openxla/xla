@@ -49,6 +49,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla/service:compiler",
+        "//xla/service:dump",
         "//xla/service:platform_util",
         "//xla/service/gpu:executable_proto_cc",
         "//xla/stream_executor/cuda:cuda_platform_id",
