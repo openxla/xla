@@ -1,0 +1,168 @@
+diff --git a/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp b/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
+--- a/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
++++ b/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
+@@ -1346,6 +1346,30 @@ struct ExpOpConversionApprox
+   }
+ };
+ 
++struct TanhConversionApprox
++    : ElementwiseOpConversionBase<mlir::math::TanhOp, TanhConversionApprox> {
++  using Base =
++      ElementwiseOpConversionBase<mlir::math::TanhOp, TanhConversionApprox>;
++  using Base::Base;
++  using Adaptor = typename Base::OpAdaptor;
++
++  SmallVector<Value> createDestOps(mlir::math::TanhOp op, OpAdaptor adaptor,
++                                   ConversionPatternRewriter &rewriter,
++                                   Type elemTy, MultipleOperandsRange operands,
++                                   Location loc) const {
++    // For non-FP32 input, call __nv_tanh for higher-precision calculation
++    if (elemTy.getIntOrFloatBitWidth() != 32)
++      return {};
++
++    PTXBuilder ptxBuilder;
++    auto &tanh = ptxBuilder.create<PTXInstr>("tanh")->o("approx").o("f32");
++    auto output = ptxBuilder.newOperand("=f");
++    auto input = ptxBuilder.newOperand(operands[0][0], "f");
++    tanh(output, input);
++    return {ptxBuilder.launch(rewriter, loc, f32_ty, false)};
++  }
++};
++
+ struct AbsIOpConversion
+     : ElementwiseOpConversionBase<mlir::math::AbsIOp, AbsIOpConversion> {
+   using Base =
+@@ -1488,6 +1512,7 @@ void populateElementwiseOpToLLVMPatterns
+   POPULATE_UNARY_OP(math::LogOp, math::LogOp)
+   POPULATE_UNARY_OP(math::CosOp, math::CosOp)
+   POPULATE_UNARY_OP(math::SinOp, math::SinOp)
++  POPULATE_UNARY_OP(math::TanhOp, math::TanhOp)
+   POPULATE_UNARY_OP(math::SqrtOp, math::SqrtOp)
+   POPULATE_UNARY_OP(math::ExpOp, math::ExpOp)
+   POPULATE_UNARY_OP(triton::BitcastOp, LLVM::BitcastOp)
+@@ -1524,4 +1549,5 @@ void populateElementwiseOpToLLVMPatterns
+   // ElementwiseOpConversion<math::ExpOp, math::ExpOp> defined below will call
+   // __nv_expf for higher-precision calculation
+   patterns.add<ExpOpConversionApprox>(typeConverter, axisInfoAnalysis, benefit);
++  patterns.add<TanhConversionApprox>(typeConverter, axisInfoAnalysis, benefit);
+ }
+diff --git a/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp b/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
+--- a/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
++++ b/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
+@@ -122,9 +122,10 @@ void populateMathPatternsAndLegality(Tri
+   MLIRContext *context = patterns.getContext();
+   // Rewrite rule
+   patterns.add<GenericOpPattern<math::ExpOp>, GenericOpPattern<math::CosOp>,
+-               GenericOpPattern<math::SinOp>, GenericOpPattern<math::LogOp>,
+-               GenericOpPattern<math::AbsFOp>, GenericOpPattern<math::AbsIOp>,
+-               GenericOpPattern<math::SqrtOp>>(typeConverter, context);
++               GenericOpPattern<math::SinOp>, GenericOpPattern<math::TanhOp>,
++               GenericOpPattern<math::LogOp>, GenericOpPattern<math::AbsFOp>,
++               GenericOpPattern<math::AbsIOp>, GenericOpPattern<math::SqrtOp>>(
++      typeConverter, context);
+ }
+ 
+ //
+diff --git a/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp b/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp
+--- a/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp
++++ b/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp
+@@ -638,13 +638,13 @@ bool CTAPlanner::isElementwiseOp(Operati
+                 arith::SubIOp, arith::TruncFOp, arith::TruncIOp,
+                 arith::UIToFPOp, arith::XOrIOp>(op))
+     return true;
+-  if (llvm::isa<math::AbsFOp, math::AbsIOp, math::AtanOp, math::Atan2Op,
+-                math::CeilOp, math::CopySignOp, math::CosOp, math::SinOp,
+-                math::CountLeadingZerosOp, math::CountTrailingZerosOp,
+-                math::CtPopOp, math::ErfOp, math::ExpOp, math::Exp2Op,
+-                math::ExpM1Op, math::FloorOp, math::FmaOp, math::LogOp,
+-                math::Log10Op, math::Log1pOp, math::Log2Op, math::PowFOp,
+-                math::RsqrtOp, math::SqrtOp, math::TanhOp>(op))
++  if (llvm::isa<
++          math::AbsFOp, math::AbsIOp, math::AtanOp, math::Atan2Op, math::CeilOp,
++          math::CopySignOp, math::CosOp, math::SinOp, math::TanhOp,
++          math::CountLeadingZerosOp, math::CountTrailingZerosOp, math::CtPopOp,
++          math::ErfOp, math::ExpOp, math::Exp2Op, math::ExpM1Op, math::FloorOp,
++          math::FmaOp, math::LogOp, math::Log10Op, math::Log1pOp, math::Log2Op,
++          math::PowFOp, math::RsqrtOp, math::SqrtOp, math::TanhOp>(op))
+     return true;
+   if (llvm::isa<triton::IntToPtrOp, triton::PtrToIntOp, triton::BitcastOp,
+                 triton::FpToFpOp, triton::AddPtrOp>(op))
+diff --git a/python/src/triton.cc b/python/src/triton.cc
+--- a/python/src/triton.cc
++++ b/python/src/triton.cc
+@@ -1,4 +1,4 @@
+-﻿#include <mutex>
++#include <mutex>
+ #include <stack>
+ #include <unordered_map>
+ 
+@@ -1508,6 +1508,10 @@ void init_triton_ir(py::module &&m) {
+            [](TritonOpBuilder &self, mlir::Value &val) -> mlir::Value {
+              return self.create<mlir::math::SinOp>(val);
+            })
++      .def("create_tanh",
++           [](TritonOpBuilder &self, mlir::Value &val) -> mlir::Value {
++             return self.create<mlir::math::TanhOp>(val);
++           })
+       .def("create_log",
+            [](TritonOpBuilder &self, mlir::Value &val) -> mlir::Value {
+              return self.create<mlir::math::LogOp>(val);
+diff --git a/python/test/unit/language/test_core.py b/python/test/unit/language/test_core.py
+--- a/python/test/unit/language/test_core.py
++++ b/python/test/unit/language/test_core.py
+@@ -797,7 +797,7 @@ def test_unary_op(dtype_x, expr, num_cta
+ 
+ @pytest.mark.parametrize("dtype_x, expr, x", [(dtype_x, expr, x)
+                                               for dtype_x in ["float32", "float64"]
+-                                              for expr in ['exp', 'log', 'cos', 'sin']
++                                              for expr in ['exp', 'log', 'cos', 'sin', 'tanh']
+                                               for x in ['x', '3.0']])
+ def test_math_op(dtype_x, expr, device, x):
+     _test_unary(dtype_x, f'tl.{expr}({x})', f'np.{expr}({x}) ', device=device)
+diff --git a/python/triton/language/__init__.py b/python/triton/language/__init__.py
+--- a/python/triton/language/__init__.py
++++ b/python/triton/language/__init__.py
+@@ -85,6 +85,7 @@ from .core import (
+     store,
+     static_range,
+     tensor,
++    tanh,
+     trans,
+     # triton,
+     uint16,
+diff --git a/python/triton/language/core.py b/python/triton/language/core.py
+--- a/python/triton/language/core.py
++++ b/python/triton/language/core.py
+@@ -1362,7 +1362,14 @@ def sin(x, _builder=None):
+ 
+ 
+ @builtin
+-@_add_math_1arg_docstr("square root")
++@_add_math_1arg_docstr('hyperbolic tangent')
++def tanh(x, _builder=None):
++  x = _to_tensor(x, _builder)
++  return semantic.tanh(x, _builder)
++
++
++@builtin
++@_add_math_1arg_docstr('square root')
+ def sqrt(x, _builder=None):
+     x = _to_tensor(x, _builder)
+     return semantic.sqrt(x, _builder)
+diff --git a/python/triton/language/semantic.py b/python/triton/language/semantic.py
+--- a/python/triton/language/semantic.py
++++ b/python/triton/language/semantic.py
+@@ -1427,7 +1427,12 @@ def cos(x: tl.tensor, builder: ir.builde
+ 
+ @_check_dtype(dtypes=["fp32", "fp64"])
+ def sin(x: tl.tensor, builder: ir.builder) -> tl.tensor:
+-    return tl.tensor(builder.create_sin(x.handle), x.type)
++  return tl.tensor(builder.create_sin(x.handle), x.type)
++
++
++@_check_dtype(dtypes=["fp32", "fp64"])
++def tanh(x: tl.tensor, builder: ir.builder) -> tl.tensor:
++  return tl.tensor(builder.create_tanh(x.handle), x.type)
+ 
+ 
+ @_check_dtype(dtypes=["fp32", "fp64"])
