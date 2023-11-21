@@ -441,6 +441,9 @@ static Status CheckCommonAllGatherInvariants(HloInstruction* hlo,
   TF_RET_CHECK(ag->operand_count() >= 1);
 
   int64_t shard_count;
+  // There can be one token in the input Tuple. The token is a scalar or
+  // `token`.
+  bool token_encountered = false;
   for (int64_t i = 0; i < ag->operand_count(); ++i) {
     TF_RET_CHECK(ag->all_gather_dimension() < ag->operand(i)->shape().rank());
 
@@ -528,6 +531,8 @@ Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
   TF_RET_CHECK(ars->scatter_dimension() >= 0);
   TF_RET_CHECK(ars->operand_count() >= 1);
 
+  // There can be one token in the inputs. The token is a scalar or `token`.
+  bool token_encountered = false;
   for (int64_t i = 0; i < ars->operand_count(); ++i) {
     TF_RET_CHECK(ars->scatter_dimension() < ars->operand(i)->shape().rank());
 
