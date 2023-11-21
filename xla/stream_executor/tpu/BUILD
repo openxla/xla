@@ -17,7 +17,6 @@ package(
         "//tensorflow/compiler/mlir:__subpackages__",
         "//xla:__subpackages__",
         "//xla/backends/profiler/tpu:__subpackages__",
-        "//tensorflow/compiler/xrt:__subpackages__",
         "//tensorflow/core/common_runtime/next_pluggable_device:__subpackages__",
         "//tensorflow/core/tpu:__subpackages__",
         "//tensorflow/dtensor:__subpackages__",
