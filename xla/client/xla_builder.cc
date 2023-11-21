@@ -2890,6 +2890,12 @@ XlaOp XlaBuilder::AllGatherImpl(const XlaOp operand,
         return Unimplemented("0 element tuple AllGather is not supported");
       }
       for (int i = 0; i < operand_shape->tuple_shapes_size(); ++i) {
+        if (operand_shape->tuple_shapes(i).element_type() !=
+            operand_shape->tuple_shapes(0).element_type()) {
+          return Unimplemented(
+              "All the shapes of a tuple input of AllGather must have the same "
+              "element type");
+        }
         operand_shapes.push_back(&operand_shape->tuple_shapes(i));
         operands.push_back(GetTupleElement(operand, i));
       }
