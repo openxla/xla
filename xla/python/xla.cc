@@ -829,6 +829,13 @@ static void Init(py::module_& m) {
           return xla::ValueOrThrow(
               CudaArrayInterfaceToBuffer(cai, std::move(cuda_client)));
         });
+  m.def(
+      "check_dlpack_environment_setup",
+      [](std::string platform_name) {
+        return xla::ThrowIfError(CheckDlPackEnvironmentSetup(platform_name));
+      },
+      py::arg("platform_name"));
+
   BuildProfilerSubmodule(&m);
   BuildOpsSubmodule(&m);
   BuildOutfeedReceiverSubmodule(&m);

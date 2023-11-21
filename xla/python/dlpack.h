@@ -42,6 +42,8 @@ StatusOr<pybind11::object> DLPackManagedTensorToBuffer(
     const pybind11::capsule& tensor, PjRtDevice* device,
     std::shared_ptr<PyClient> client, std::optional<std::intptr_t> stream);
 
+tsl::Status CheckDlPackEnvironmentSetup(absl::string_view device_type);
+
 }  // namespace xla
 
 #endif  // XLA_PYTHON_DLPACK_H_

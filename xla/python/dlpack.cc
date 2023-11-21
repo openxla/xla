@@ -29,6 +29,8 @@ limitations under the License.
 #include "include/dlpack/dlpack.h"  // from @dlpack
 #include "pybind11/gil.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
+#include "tsl/platform/errors.h"
+#include "tsl/util/env_var.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/python/py_array.h"
@@ -37,7 +39,6 @@ limitations under the License.
 #include "xla/python/util.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
 
 namespace py = pybind11;
 
@@ -224,12 +225,16 @@ StatusOr<std::vector<int64_t>> StridesToLayout(
 }
 
 StatusOr<DLDeviceType> DLDeviceTypeForDevice(const PjRtDevice& device) {
+  TF_RETURN_IF_ERROR(
+      CheckDlPackEnvironmentSetup(device.client()->platform_name()));
   if (device.client()->platform_id() == CpuId()) {
     return kDLCPU;
   } else if (device.client()->platform_id() == CudaId()) {
     return kDLCUDA;
   } else if (device.client()->platform_id() == RocmId()) {
     return kDLROCM;
+  } else if (device.client()->platform_id() == XpuId()) {
+    return kDLOneAPI;
   }
   return InvalidArgument("Device %s cannot be used as a DLPack device.",
                          device.DebugString());
@@ -245,35 +250,67 @@ StatusOr<DLDevice> DLDeviceForDevice(const PjRtDevice& device) {
 StatusOr<PjRtDevice*> DeviceForDLDevice(const PjRtClient* cpu_client,
                                         const PjRtClient* gpu_client,
                                         const DLDevice& context) {
-  switch (context.device_type) {
-    case kDLCPU:
-      if (cpu_client == nullptr) {
-        return InvalidArgument(
-            "DLPack tensor is on CPU, but no CPU backend was provided.");
-      }
-      TF_RET_CHECK(cpu_client->platform_id() == CpuId());
-      return cpu_client->LookupAddressableDevice(context.device_id);
-    case kDLCUDA:
-      if (gpu_client == nullptr) {
-        return InvalidArgument(
-            "DLPack tensor is on GPU, but no GPU backend was provided.");
-      }
-      TF_RET_CHECK(gpu_client->platform_id() == CudaId());
-      return gpu_client->LookupAddressableDevice(context.device_id);
-    case kDLROCM:
-      if (gpu_client == nullptr) {
-        return InvalidArgument(
-            "DLPack tensor is on GPU, but no GPU backend was provided.");
-      }
-      TF_RET_CHECK(gpu_client->platform_id() == RocmId());
-      return gpu_client->LookupAddressableDevice(context.device_id);
-    default:
-      return InvalidArgument("Unknown/unsupported DLPack device type %d",
-                             context.device_type);
+  if (context.device_type == kDLCPU) {
+    if (cpu_client == nullptr)
+      return InvalidArgument(
+          "DLPack tensor is on CPU, but no CPU backend was provided.");
+
+    TF_RET_CHECK(cpu_client->platform_id() == CpuId());
+    return cpu_client->LookupAddressableDevice(context.device_id);
+  } else {
+    if (gpu_client == nullptr)
+      return InvalidArgument(
+          "DLPack tensor is on GPU, but no GPU backend was provided.");
+    TF_RETURN_IF_ERROR(
+        CheckDlPackEnvironmentSetup(gpu_client->platform_name()));
+    switch (context.device_type) {
+      case kDLCUDA:
+        TF_RET_CHECK(gpu_client->platform_id() == CudaId());
+        break;
+      case kDLROCM:
+        TF_RET_CHECK(gpu_client->platform_id() == RocmId());
+        break;
+      case kDLOneAPI:
+        TF_RET_CHECK(gpu_client->platform_id() == XpuId());
+        break;
+      default:
+        return InvalidArgument("Unknown/unsupported DLPack device type %d",
+                               context.device_type);
+    }
+    return gpu_client->LookupAddressableDevice(context.device_id);
   }
 }
 
+tsl::Status CheckXpuEnvironmentSetup() {
+  std::string oneapi_device_selector;
+  TF_CHECK_OK(tsl::ReadStringFromEnvVar("ONEAPI_DEVICE_SELECTOR", "",
+                                        &oneapi_device_selector));
+  oneapi_device_selector = tsl::str_util::Lowercase(oneapi_device_selector);
+  if (oneapi_device_selector.find("level_zero:gpu") == std::string::npos)
+    return InvalidArgument(
+        "To use the dlpack functionality for xpu you need to use the "
+        "ONEAPI_DEVICE_SELECTOR environment variable and set it to "
+        "\"level_zero:gpu\"");
+
+  std::string ze_flat_device_hierarchy;
+  TF_CHECK_OK(tsl::ReadStringFromEnvVar("ZE_FLAT_DEVICE_HIERARCHY", "",
+                                        &ze_flat_device_hierarchy));
+  ze_flat_device_hierarchy = tsl::str_util::Lowercase(ze_flat_device_hierarchy);
+  if (!ze_flat_device_hierarchy.empty() &&
+      ze_flat_device_hierarchy.find("flat") == std::string::npos)
+    return InvalidArgument(
+        "To use the dlpack functionality for xpu you need to use the "
+        "ZE_FLAT_DEVICE_HIERARCHY environment variable and set it to "
+        "\"flat\"");
+  return OkStatus();
+}
+
 }  // namespace
+
+tsl::Status CheckDlPackEnvironmentSetup(absl::string_view device_type) {
+  if (device_type == XpuName()) TF_RETURN_IF_ERROR(CheckXpuEnvironmentSetup());
+  return OkStatus();
+}
 
 StatusOr<py::capsule> BufferToDLPackManagedTensor(
     py::handle py_buffer, std::optional<std::intptr_t> stream) {
@@ -446,6 +483,10 @@ StatusOr<pybind11::object> DLPackManagedTensorToBuffer(
         "Number of dimensions in DLManagedTensor must be nonnegative, got %d",
         dlmt->dl_tensor.ndim);
   }
+
+  TF_RETURN_IF_ERROR(
+      CheckDlPackEnvironmentSetup(device->client()->platform_name()));
+
   absl::Span<int64_t const> dimensions(
       reinterpret_cast<int64_t*>(dlmt->dl_tensor.shape), dlmt->dl_tensor.ndim);
   TF_ASSIGN_OR_RETURN(PrimitiveType element_type,

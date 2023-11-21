@@ -48,6 +48,10 @@ inline const char* TpuName() {
   static constexpr char kTpuName[] = "tpu";
   return kTpuName;
 }
+inline const char* XpuName() {
+  static constexpr char kXpuName[] = "xpu";
+  return kXpuName;
+}
 inline PjRtPlatformId CpuId() {
   static const PjRtPlatformId kCpuId = tsl::Fingerprint64(CpuName());
   return kCpuId;
@@ -63,6 +67,10 @@ inline PjRtPlatformId RocmId() {
 inline PjRtPlatformId TpuId() {
   static const PjRtPlatformId kTpuId = tsl::Fingerprint64(TpuName());
   return kTpuId;
+}
+inline PjRtPlatformId XpuId() {
+  static const PjRtPlatformId kXpuId = tsl::Fingerprint64(XpuName());
+  return kXpuId;
 }
 
 class PjRtCompiler;
