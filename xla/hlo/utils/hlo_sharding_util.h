@@ -392,6 +392,11 @@ GroupedSharding GroupShardingOnAllDimsExcept(
     const HloSharding& sharding, absl::Span<const int64_t> non_group_dims,
     bool subgroup_manual = false);
 
+// Same as above, but group only up to N number of groups.
+GroupedSharding GroupShardingOnDimsUpToNGroups(
+    const HloSharding& sharding, absl::Span<const int64_t> group_dims,
+    int64_t num_groups, bool subgroup_manual = false);
+
 // Creates a GroupedSharding by trying to do the following in sequence:
 //
 // 1. Group on partially replicated dimensions, which preserves the existing
@@ -408,7 +413,7 @@ GroupedSharding GroupShardingOnAllDimsExcept(
 // This does not guarantee the consistency of the ordering of the tile
 // assignment, and should be used with AlignGroup where its tile assignment
 // doesn't matter and will always align to some other tile assignment.
-GroupedSharding GroupShardingOnReplicatedDim(
+GroupedSharding GroupShardingOnReplicableDims(
     const HloSharding& sharding, int64_t num_groups, int64_t num_tiles,
     int64_t data_rank, absl::Span<const int64_t> replicable_dims = {});
 

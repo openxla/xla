@@ -1178,7 +1178,7 @@ std::optional<HloSharding> PassthroughOperandToGatherOutputOrScatterUpdate(
     absl::Span<const int64_t> offset_or_window_dims,
     absl::Span<const int64_t> slice_size, const int64_t index_vector_dim) {
   if (operand_sharding.IsTileMaximal() || operand_sharding.IsManual()) {
-    return operand_sharding;
+    return std::nullopt;
   }
   auto operand_passthrough_dims = GetGatherScatterOperandPassthroughOperandDims(
       operand_shape, collapsed_or_inserted_dims, index_map,
@@ -2339,6 +2339,22 @@ GroupedSharding GroupShardingOnDims(const HloSharding& sharding,
   return grouped;
 }
 
+GroupedSharding GroupShardingOnDimsUpToNGroups(
+    const HloSharding& sharding, absl::Span<const int64_t> group_dims,
+    int64_t num_groups, bool subgroup_manual) {
+  std::vector<int64_t> group_dim_sizes;
+  for (const int64_t dim : group_dims) {
+    int64_t group_count_factor =
+        std::gcd(num_groups, sharding.tile_assignment().dim(dim));
+    group_dim_sizes.push_back(sharding.tile_assignment().dim(dim) /
+                              group_count_factor);
+    num_groups /= group_count_factor;
+  }
+  GroupedSharding grouped_sharding =
+      GroupShardingOnDims(sharding, group_dims, group_dim_sizes);
+  return grouped_sharding;
+}
+
 namespace {
 
 std::vector<int64_t> PrimeFactorization(int64_t num) {
@@ -2358,7 +2374,7 @@ std::vector<int64_t> PrimeFactorization(int64_t num) {
 
 }  // namespace
 
-GroupedSharding GroupShardingOnReplicatedDim(
+GroupedSharding GroupShardingOnReplicableDims(
     const HloSharding& sharding, int64_t num_groups, int64_t num_tiles,
     int64_t data_rank, absl::Span<const int64_t> replicable_dims) {
   // 1. Try group sharding on partially replicated dim.
