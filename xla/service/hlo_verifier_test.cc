@@ -2364,6 +2364,7 @@ TEST_F(HloVerifierTest, ReduceScatterNonUniformGroups) {
               HasSubstr("Replica groups expected to be of uniform size"));
 }
 
+
 TEST_F(HloVerifierTest, ScatterInvalidScatterDim) {
   const char* const hlo_string = R"(
   HloModule Module
@@ -2390,6 +2391,7 @@ TEST_F(HloVerifierTest, ScatterInvalidScatterDim) {
   EXPECT_THAT(status.message(),
               HasSubstr("Invalid scatter_dims_to_operand_dims mapping"));
 }
+
 
 TEST_F(HloVerifierTest, VerifyBroadcastDimensionsOrder) {
   const char* const hlo = R"(
