@@ -2078,10 +2078,17 @@ bool LiteralBase::IsAllFirst() const {
     return false;
   }
 
-  absl::InlinedVector<int64_t, 4> start_indices(/*n=*/shape().rank(), 0);
-  absl::InlinedVector<int64_t, 4> end_indices(/*n=*/shape().rank(), 1);
-  Literal first = Slice(start_indices, end_indices);
-  return IsAll(first.Reshape({}).value());
+  PrimitiveType type = shape().element_type();
+  return primitive_util::PrimitiveTypeSwitch<bool>(
+      [&](auto primitive_type_constant) -> bool {
+        if constexpr (primitive_util::IsArrayType(primitive_type_constant)) {
+          using NativeT = NativeTypeOf<primitive_type_constant>;
+          return AllElementsEqualValue(this->data<NativeT>(),
+                                       GetFirstElement<NativeT>());
+        }
+        return false;
+      },
+      type);
 }
 
 bool LiteralBase::IsR1Iota() const {
