@@ -104,15 +104,24 @@ class OpNamePrefixVisitor : public ConstDfsHloVisitorWithDefault {
   std::optional<std::string_view> prefix{};
 };
 
-std::string_view GetLongestOpNamePrefix(const HloInstruction& inst,
-                                        bool include_operands) {
+std::string_view GetLongestOpNamePrefix(const HloModule& mod) {
+  // In the presence of (at least) debug callbacks, calling Accept on the root
+  // instruction of the module may not reach all instructions in the module.
   OpNamePrefixVisitor visitor{};
-  if (!(include_operands ? inst.Accept(&visitor, false /* call_finish_visit */,
-                                       true /* ignore_control_predecessors */,
-                                       true /* cross_computation */)
-                         : VisitInstAndCalledButNotOperands(visitor, inst))
-           .ok()) {
-    return "[error]";
+  for (const HloComputation* computation : mod.computations()) {
+    for (const HloInstruction* inst : computation->instructions()) {
+      if (!visitor.DefaultAction(inst).ok()) {
+        return {};
+      }
+    }
+  }
+  return visitor.longest_op_name_prefix();
+}
+
+std::string_view GetLongestOpNamePrefix(const HloInstruction& inst) {
+  OpNamePrefixVisitor visitor{};
+  if (!VisitInstAndCalledButNotOperands(visitor, inst).ok()) {
+    return {};
   }
   return visitor.longest_op_name_prefix();
 }
@@ -137,8 +146,7 @@ ModuleAnnotation::ModuleAnnotation(std::string module_name_, int module_id_)
       title{RegisterString(title_str.c_str())} {}
 
 ModuleAnnotation::ModuleAnnotation(const HloModule& mod)
-    : longest_prefix{GetLongestOpNamePrefix(
-          *mod.entry_computation()->root_instruction(), true)},
+    : longest_prefix{GetLongestOpNamePrefix(mod)},
       title_str{MakeTitle(mod, longest_prefix)},
       title{RegisterString(title_str.c_str())} {}
 
@@ -158,17 +166,15 @@ std::string MakeKernelName(std::string_view prefix,
   // Sometimes an instruction doesn't have metadata, but the computations that
   // it calls do have metadata. Consider all of those metadata op_name entries
   // and attach the longest prefix to this launch.
-  std::string_view op_name = GetLongestOpNamePrefix(inst, false);
+  std::string_view op_name = GetLongestOpNamePrefix(inst);
   if (op_name.empty()) {
     return absl::StrFormat("Thunk:#hlo_op=%s#", inst.name());
+  } else if (op_name.substr(0, prefix.size()) != prefix) {
+    // the op_name we got for this instruction does not start with the prefix
+    // that we thought was common to all instructions in the module
+    return absl::StrFormat("Thunk:#name=%s,hlo_op=%s#", op_name, inst.name());
   } else {
     // remove the prefix that's in the parent module annotation
-    if (op_name.substr(0, prefix.size()) != prefix) {
-      std::string msg{op_name};
-      msg += " did not start with ";
-      msg += prefix;
-      throw std::runtime_error(std::move(msg));
-    }
     auto short_name = op_name.substr(prefix.size());
     // remove the leading / if there is one (prefix might be an empty string)
     if (!short_name.empty() && short_name.front() == '/') {
@@ -212,12 +218,7 @@ ModuleAnnotations::ModuleAnnotations(const HloModule& mod) : top_level{mod} {
           // range based on the content of `inst`, including `called` etc.
           // FIXME: using try_emplace here was sensitive to
           // https://github.com/abseil/abseil-cpp/issues/388.
-          const auto [iter, inserted] =
-              kernels.insert({inst->name(), {top_level, *inst}});
-          if (!inserted) {
-            throw std::runtime_error(
-                absl::StrCat("Name collision: ", inst->name()));
-          }
+          kernels.insert({inst->name(), {top_level, *inst}});
         } break;
         default:
           break;
