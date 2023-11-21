@@ -49,11 +49,11 @@ static constexpr bool FLAGS_gpuexec_rocm_device_0_only = false;
     hipError_t _res = (expr);                                                 \
     if (TF_PREDICT_FALSE(_res != hipSuccess)) {                               \
       if (_res == hipErrorOutOfMemory)                                        \
-        return tsl::errors::ResourceExhausted(                                \
-            __VA_ARGS__, ":", ::stream_executor::gpu::ToString(_res));        \
+        return absl::ResourceExhaustedError(absl::StrCat(                     \
+            __VA_ARGS__, ":", ::stream_executor::gpu::ToString(_res)));       \
       else                                                                    \
-        return tsl::errors::Internal(__VA_ARGS__, ": ",                       \
-                                     ::stream_executor::gpu::ToString(_res)); \
+        return absl::InternalError(absl::StrCat(                              \
+              __VA_ARGS__, ": ", ::stream_executor::gpu::ToString(_res)));    \
     }                                                                         \
   } while (0)
 
@@ -665,6 +665,26 @@ GpuDriver::GraphNodeGetType(hipGraphNode_t node) {
                        "Failed to check stream capturing status");
 
   return status == hipStreamCaptureStatusActive;
+}
+
+/* static */ tsl::Status GpuDriver::GraphConditionalHandleCreate(
+    GpuGraphConditionalHandle* handle, hipGraph_t graph, GpuContext* context,
+    unsigned int default_launch_value, unsigned int flags) {
+
+  VLOG(2) << "Create conditional handle for a graph " << graph
+          << "; context: " << context
+          << "; default_launch_value: " << default_launch_value
+          << "; flags: " << flags;
+
+  return absl::UnimplementedError(
+      "HIP graph conditional nodes are not implemented yet");
+}
+
+/* static */ tsl::StatusOr<GpuDriver::GpuGraphNodeResult>
+GpuDriver::GraphAddNode(hipGraphNode_t* node, hipGraph_t graph,
+                        absl::Span<hipGraphNode_t> deps,
+                        const GpuGraphNodeParams& params) {
+  return absl::UnimplementedError("unsupported node type");
 }
 
 /* static */ tsl::Status GpuDriver::GraphAddKernelNode(
