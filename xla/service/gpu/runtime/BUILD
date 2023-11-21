@@ -718,8 +718,14 @@ cc_library(
 
 cc_library(
     name = "tracing",
-    srcs = ["tracing.cc"],
-    hdrs = ["tracing.h"],
+    srcs = [
+        "annotation.cc",
+        "tracing.cc",
+    ],
+    hdrs = [
+        "annotation.h",
+        "tracing.h",
+    ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":support",

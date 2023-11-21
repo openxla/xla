@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/non_atomically_upgradeable_rw_lock.h"
+#include "xla/service/gpu/runtime/annotation.h"
 #include "xla/service/gpu/runtime/executable.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/hlo_execution_profile.h"
@@ -302,6 +303,8 @@ class GpuExecutable : public Executable {
   std::string module_name_;
 
   xla::Shape output_shape_;
+
+  std::optional<ModuleAnnotations> annotation_info_;
 
   // Owns the buffer data at runtime. It provides information to allocate
   // memory for every output/temp buffers.

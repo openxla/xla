@@ -200,8 +200,6 @@ class IrEmitterUnnested : public IrEmitter {
       const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
           hlo_for_lmhlo);
 
-  static Thunk::ThunkInfo GetThunkInfo(mlir::Operation* op);
-
   Status EmitTargetElementLoop(
       const HloInstruction& hlo,
       const llvm_ir::ElementGenerator& body_emitter) override;
