@@ -2366,7 +2366,7 @@ TEST_F(HloVerifierTest, ReduceScatterInvalidScatterDim) {
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(
       status.message(),
-      HasSubstr("ars->scatter_dimension() < ars->operand(i)->shape().rank()"));
+      HasSubstr("ars->scatter_dimension() < operand_shape.rank()"));
 }
 
 TEST_F(HloVerifierTest, ReduceScatterNonUniformGroups) {
@@ -2420,6 +2420,59 @@ TEST_F(HloVerifierTest, ScatterInvalidScatterDim) {
               HasSubstr("Invalid scatter_dims_to_operand_dims mapping"));
 }
 
+
+TEST_F(HloVerifierTest, ReduceScatterTwoTokens) {
+  const char* const hlo_string = R"(
+  HloModule Module
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT add = f32[] add(lhs, rhs)
+  }
+
+  ENTRY CRS {
+    input = f32[8]{0} parameter(0)
+    token1 = f32[] parameter(1)
+    token2 = f32[] parameter(2)
+    ROOT crs = (f32[4]{0}, f32[], f32[]) reduce-scatter(input, token1, token2),
+                                         replica_groups={}, to_apply=add,
+                                         dimensions={0}
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("ReduceScatter can have at most 1 token."));
+}
+
+
+
+TEST_F(HloVerifierTest, AllGatherTwoTokens) {
+  const char* const hlo_string = R"(
+  HloModule Module
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT add = f32[] add(lhs, rhs)
+  }
+
+  ENTRY CRS {
+    input = f32[8]{0} parameter(0)
+    token1 = f32[] parameter(1)
+    token2 = f32[] parameter(2)
+    ROOT crs = (f32[4]{0}, f32[], f32[]) all-gather(input, token1, token2),
+                                         replica_groups={}, dimensions={0}
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("AllGather can have at most 1 token."));
+}
 
 TEST_F(HloVerifierTest, VerifyBroadcastDimensionsOrder) {
   const char* const hlo = R"(

@@ -82,14 +82,16 @@ Status DecomposeAllGather(HloAllGatherInstruction* ag, HloComputation* comp) {
                       GetCollectiveOpGroupMode(ag->channel_id().has_value(),
                                                ag->use_global_device_ids()));
   if (ag->operand_count() > 1) {
+    HloInstruction* token = ag->mutable_operands().back();
     std::vector<HloInstruction*> tuple_inputs;
-    for (int i = 0; i < ag->operand_count(); ++i) {
+    for (int i = 0; i < ag->operand_count() - 1; ++i) {
       auto* input_operand = ag->mutable_operand(i);
       const auto& output_shape = ag->shape().tuple_shapes(i);
       auto* ar = TranslateAllGatherToAllReducePerOperand(
           group_mode, *ag, output_shape, input_operand, comp);
       tuple_inputs.push_back(ar);
     }
+    tuple_inputs.push_back(token);
     auto tup = comp->AddInstruction(HloInstruction::CreateTuple(tuple_inputs));
     TF_RETURN_IF_ERROR(ag->ReplaceAllUsesWith(tup));
   } else {
