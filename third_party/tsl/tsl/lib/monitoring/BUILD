@@ -21,6 +21,7 @@ package(
         "//tensorflow/compiler/mlir/tfrt:__subpackages__",
         "//tensorflow/compiler/xla/stream_executor:__subpackages__",
         "//tensorflow/compiler/xla/hlo/experimental:__subpackages__",
+        "//tensorflow/core/data:__subpackages__",
         "//tensorflow/core/lib/monitoring:__subpackages__",
         "//tensorflow/compiler/xla/service:__subpackages__",
         "//tsl/framework:__subpackages__",
