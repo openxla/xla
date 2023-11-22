@@ -1077,9 +1077,11 @@ XlaOp XlaBuilder::TernaryOp(HloOpcode triop, XlaOp lhs, XlaOp rhs, XlaOp ehs) {
       TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
       TF_ASSIGN_OR_RETURN(const Shape* ehs_shape, GetShapePtr(ehs));
 
+      // The shape is not scalar, and doesn't have unbounded dynamism.
       std::optional<Shape> non_scalar_shape;
       for (const Shape* shape : {lhs_shape, rhs_shape, ehs_shape}) {
-        if (shape->IsArray() && shape->rank() != 0) {
+        if (shape->IsArray() && shape->rank() != 0 &&
+            !shape->is_unbounded_dynamic()) {
           if (non_scalar_shape.has_value()) {
             // TODO(jpienaar): The case where we need to compute the broadcasted
             // shape by considering multiple of the shapes is not implemented.

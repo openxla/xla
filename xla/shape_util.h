@@ -231,6 +231,12 @@ class ShapeUtil {
   // being F32. Tuple elements are compared recursively for compatibility.
   static bool CompatibleIgnoringFpPrecision(const Shape& lhs, const Shape& rhs);
 
+  // Returns true if the dimensions in the given two shapes are compatible.
+  // That is, they are both scalars, or at least one is unranked or they have
+  // compatible dimensions. Dimensions are compatible if at least one is
+  // unbounded dynamic or both are equal. The element type does not matter.
+  static bool CompatibleDimensions(const Shape& lhs, const Shape& rhs);
+
   // Returns whether the lhs and rhs shapes are identical.
   static bool Equal(const Shape& lhs, const Shape& rhs);
 

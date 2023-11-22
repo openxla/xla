@@ -114,6 +114,10 @@ class SelectAndScatterShapeInferenceTest : public ShapeInferenceTest {
 class UnboundedBinaryOpShapeInferenceTest
     : public ::testing::TestWithParam<std::vector<std::string>> {};
 
+// Subclass for testing unbounded dynamic clamp op
+class UnboundedClampOpShapeInferenceTest
+    : public ::testing::TestWithParam<std::vector<std::string>> {};
+
 TEST_F(ShapeInferenceTest, UnaryNegateMatrix) {
   Shape matrix_shape = ShapeUtil::MakeShape(F32, {128, 64});
   auto inferred_status =
@@ -3762,6 +3766,26 @@ TEST_P(UnboundedBinaryOpShapeInferenceTest, UnboundedAdd) {
   }
 }
 
+TEST_P(UnboundedClampOpShapeInferenceTest, UnboundedClamp) {
+  StatusOr<Shape> lhs = ParseShape(GetParam()[0]);
+  StatusOr<Shape> rhs = ParseShape(GetParam()[1]);
+  StatusOr<Shape> ehs = ParseShape(GetParam()[2]);
+  StatusOr<Shape> expected = ParseShape(GetParam()[3]);
+  ASSERT_IS_OK(lhs.status());
+  ASSERT_IS_OK(rhs.status());
+  ASSERT_IS_OK(ehs.status());
+  StatusOr<Shape> inferred_status = ShapeInference::InferTernaryOpShape(
+      HloOpcode::kClamp, lhs.value(), rhs.value(), ehs.value());
+  if (inferred_status.ok()) {
+    ASSERT_IS_OK(expected.status());
+    ASSERT_TRUE(ShapeUtil::Equal(inferred_status.value(), expected.value()))
+        << "inferred: " << ShapeUtil::HumanString(inferred_status.value())
+        << " expected: " << ShapeUtil::HumanString(expected.value());
+  } else {
+    EXPECT_EQ(inferred_status.status().message(), GetParam()[4]);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     UnboundedDynamism, UnboundedBinaryOpShapeInferenceTest,
     ::testing::Values(
@@ -3782,6 +3806,28 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<std::string>({"f32[?]", "f32[?]", "f32[?]"}),
         // ?,2 | ?,3 | error
         std::vector<std::string>({"f32[?,2]", "f32[?,3]", ""})));
+
+INSTANTIATE_TEST_SUITE_P(
+    UnboundedDynamism, UnboundedClampOpShapeInferenceTest,
+    ::testing::Values(
+        // MIN | OPERAND | MAX | Result
+        // 1   | ?       | 1   | ?
+        std::vector<std::string>({"f32[1]", "f32[?]", "f32[1]", "f32[?]", ""}),
+        // 0   | ?       | 0   | ?
+        std::vector<std::string>({"f32[]", "f32[?]", "f32[]", "f32[?]", ""}),
+        // ?   | 2       | 2   | 2
+        std::vector<std::string>({"f32[?]", "f32[2]", "f32[2]", "f32[2]", ""}),
+        // ?   | <=2     | ?   | <=2
+        std::vector<std::string>({"f32[?]", "f32[<=2]", "f32[?]", "f32[<=2]",
+                                  ""}),
+        // 1   | <=2     | 1   | error
+        std::vector<std::string>(
+            {"f32[1]", "f32[<=2]", "f32[1]", "",
+             "Clamp with different shapes: f32[1], f32[<=2], f32[1]."}),
+        // 2   | ?       | 3   | error
+        std::vector<std::string>(
+            {"f32[2]", "f32[?]", "f32[3]", "",
+             "Clamp with incompatible shapes: f32[2], f32[?], f32[3]."})));
 
 }  // namespace
 }  // namespace xla

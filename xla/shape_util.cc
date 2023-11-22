@@ -828,6 +828,27 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
       .IgnoreLayout()(lhs, rhs);
 }
 
+/* static */ bool ShapeUtil::CompatibleDimensions(const Shape& lhs,
+                                                  const Shape& rhs) {
+  if (!lhs.is_unbounded_dynamic() && !rhs.is_unbounded_dynamic()) {
+    return ShapeUtil::SameDimensions(lhs, rhs);
+  }
+  if (ShapeUtil::IsScalar(lhs) || ShapeUtil::IsScalar(rhs)) {
+    return true;
+  }
+  if (lhs.rank() != rhs.rank()) {
+    return false;
+  }
+  for (int i = 0; i < lhs.dimensions_size(); ++i) {
+    if (!(lhs.is_unbounded_dynamic_dimension(i) ||
+          rhs.is_unbounded_dynamic_dimension(i) ||
+          lhs.dimensions(i) == rhs.dimensions(i))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /* static */ DimensionVector ShapeUtil::CreateDimensionVectorFromShape(
     const Shape& shape) {
   DimensionVector dimensions;
