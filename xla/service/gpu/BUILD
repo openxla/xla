@@ -2149,7 +2149,9 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
     ],
 )
 
