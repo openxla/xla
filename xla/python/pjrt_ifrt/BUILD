@@ -211,6 +211,7 @@ cc_library(
         "pjrt_tuple.h",
     ],
     deps = [
+        ":sharding_utils",
         ":xla_ifrt",
         "//xla:literal",
         "//xla:shape_util",
@@ -240,7 +241,46 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/concurrency:ref_count",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "sharding_utils",
+    srcs = [
+        "sharding_utils.cc",
+    ],
+    hdrs = [
+        "sharding_utils.h",
+    ],
+    deps = [
+        "//tensorflow/core:framework",
+        "//tensorflow/core:framework_lite",
+        "//tensorflow/core:framework_types_hdr",
+        "//tensorflow/core:protos_all_cc",
+        "//xla/python/ifrt",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
+    ],
+)
+
+cc_test(
+    name = "sharding_utils_test",
+    srcs = ["sharding_utils_test.cc"],
+    deps = [
+        ":sharding_utils",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:test",
+        "//xla/python/ifrt",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:statusor",
     ],
 )

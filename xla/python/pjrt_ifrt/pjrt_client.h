@@ -16,13 +16,18 @@ limitations under the License.
 #ifndef XLA_PYTHON_PJRT_IFRT_PJRT_CLIENT_H_
 #define XLA_PYTHON_PJRT_IFRT_PJRT_CLIENT_H_
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -171,6 +176,37 @@ class PjRtClient final
  private:
   explicit PjRtClient(std::shared_ptr<xla::PjRtClient> pjrt_client)
       : pjrt_client_(std::move(pjrt_client)), default_compiler_(this) {}
+
+  StatusOr<tsl::RCReference<Array>> MakeSingleDeviceArrayFromHostBuffer(
+      const void* data, DType dtype, Shape shape,
+      std::optional<absl::Span<const int64_t>> byte_strides,
+      std::shared_ptr<const Sharding> sharding,
+      Client::HostBufferSemantics semantics,
+      std::function<void()> on_done_with_host_buffer);
+
+  template <typename DType, int Rank>
+  std::vector<tsl::RCReference<Array>> MakeArrayFromHostBuffer(
+      const void* data, DType dtype, Shape shape,
+      std::optional<absl::Span<const int64_t>> byte_strides,
+      std::shared_ptr<const Sharding> sharding,
+      Client::HostBufferSemantics semantics,
+      std::function<void()> on_done_with_host_buffer);
+
+  template <typename T>
+  StatusOr<std::vector<tsl::RCReference<Array>>>
+  CopyAndCreateArraysFromHostBuffer(
+      const void* data, DType dtype, Shape shape,
+      std::optional<absl::Span<const int64_t>> byte_strides, int num_partitions,
+      Shape per_device_shape,
+      const std::vector<std::shared_ptr<const Sharding>>& per_device_sharding);
+
+  template <typename T, int64_t Rank>
+  StatusOr<std::vector<tsl::RCReference<Array>>>
+  CopyAndCreateArraysFromHostBufferOfRank(
+      const void* data, DType dtype, Shape shape,
+      std::optional<absl::Span<const int64_t>> byte_strides, int num_partitions,
+      Shape per_device_shapes,
+      const std::vector<std::shared_ptr<const Sharding>>& per_device_sharding);
 
   std::shared_ptr<xla::PjRtClient> pjrt_client_;
   PjRtCompiler default_compiler_;
