@@ -129,6 +129,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_reassociation_for_converted_ar(true);
 
+  opts.set_xla_enable_grad_acc_all_reduce_rewriter(false);
+
   opts.set_xla_cpu_enable_xprof_traceme(false);
   opts.set_xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found(false);
   opts.set_xla_multiheap_size_constraint_per_heap(-1);
@@ -964,6 +966,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "wider type. "
       "The reassociated allreduce will be promoted to a wider-typed "
       "allreduce."));
+  flag_list->push_back(tsl::Flag(
+      "xla_enable_grad_acc_all_reduce_rewriter",
+      bool_setter_for(
+          &DebugOptions::set_xla_enable_grad_acc_all_reduce_rewriter),
+      debug_options->xla_enable_grad_acc_all_reduce_rewriter(),
+      "Enable the rewrite of allreduce introduced by the data parallel "
+      "backward process when using gradient accumulation."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_dump_llvmir",
                 bool_setter_for(&DebugOptions::set_xla_gpu_dump_llvmir),

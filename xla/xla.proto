@@ -396,6 +396,10 @@ message DebugOptions {
   // type. The resulting allreduce will be promoted to a wider-typed allreduce.
   bool xla_gpu_enable_reassociation_for_converted_ar = 209;
 
+  // Enable the rewrite of allreduce introduced by the data parallel backward
+  // process when using gradient accumulation.
+  bool xla_enable_grad_acc_all_reduce_rewriter = 501;
+
   // Number of devices per host for first stage of BlueConnect decomposition
   // pass. The pass will attempt to decompose all-reduces ops into a
   // ReduceScatter-AllReduce-AllGather sequence, with the initial ReduceScatter

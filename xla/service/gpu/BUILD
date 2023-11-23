@@ -2842,6 +2842,7 @@ cc_library(
         "//xla/service:float_support",
         "//xla/service:gather_expander",
         "//xla/service:gather_simplifier",
+        "//xla/service:grad_acc_all_reduce_rewriter",
         "//xla/service:hlo_computation_deduplicator",
         "//xla/service:hlo_constant_folding",
         "//xla/service:hlo_cse",

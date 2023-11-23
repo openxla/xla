@@ -250,6 +250,34 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "grad_acc_all_reduce_rewriter",
+    srcs = ["grad_acc_all_reduce_rewriter.cc"],
+    hdrs = ["grad_acc_all_reduce_rewriter.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "//xla/service/spmd:spmd_partitioner",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "grad_acc_all_reduce_rewriter_test",
+    srcs = ["grad_acc_all_reduce_rewriter_test.cc"],
+    deps = [
+        ":hlo_verifier",
+        ":grad_acc_all_reduce_rewriter",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
+    ],
+)
+
+cc_library(
     name = "float_support",
     srcs = ["float_support.cc"],
     hdrs = ["float_support.h"],
