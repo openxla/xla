@@ -2552,6 +2552,7 @@ cc_library(
         ":ir_emitter_unnested",
         ":metrics",
         ":runtime_intrinsics",
+        ":thunk",
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
@@ -2932,7 +2933,11 @@ cc_library(
     ]) + xla_export_hlo_deps() + [
         ":command_buffer_scheduling",
         ":fusion_pipeline",
+        ":ir_emitter_context",
+        ":ir_emitter_unnested",
         ":prepare_hlo_for_ir_emitting_pipeline",
+        ":thunk",
+        "@llvm-project//mlir:FuncDialect",
         "@tsl//tsl/lib/monitoring:counter",
     ],
 )
