@@ -271,6 +271,7 @@ build_test(
 xla_cc_test(
     name = "auto_sharding_test",
     srcs = ["auto_sharding_test.cc"],
+    tags = ["no_oss"],
     deps = [
         ":auto_sharding",
         ":auto_sharding_option",
