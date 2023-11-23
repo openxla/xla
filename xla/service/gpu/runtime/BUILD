@@ -491,7 +491,9 @@ cc_library(
     name = "gemm",
     srcs = ["gemm.cc"],
     hdrs = ["gemm.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
     deps = [
         ":support",
         "//xla:status",
@@ -510,7 +512,7 @@ cc_library(
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:errors",
-    ] + if_cuda_is_configured([
+    ] + if_gpu_is_configured([
         "//xla/service/gpu:gemm_algorithm_picker",
         "//xla/stream_executor/gpu:redzone_allocator",
     ]),
@@ -626,7 +628,9 @@ cc_library(
     name = "gpublas_lt_matmul",
     srcs = ["gpublas_lt_matmul.cc"],
     hdrs = ["gpublas_lt_matmul.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
     deps = [
         ":support",
         "//xla:xla_proto_cc",
@@ -678,7 +682,9 @@ cc_library(
     name = "support",
     srcs = ["support.cc"],
     hdrs = ["support.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
     deps = [
         "//xla:shape_util",
         "//xla/mlir/runtime/transforms:custom_call_encoding",
