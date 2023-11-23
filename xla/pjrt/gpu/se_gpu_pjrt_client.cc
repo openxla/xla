@@ -538,6 +538,7 @@ StreamExecutorGpuClient::Compile(const XlaComputation& computation,
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   metrics::RecordFreeGpuSystemMemory();
+  // Test
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   return executable;
 }

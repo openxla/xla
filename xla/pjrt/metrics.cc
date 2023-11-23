@@ -86,6 +86,7 @@ void RecordFreeGpuSystemMemory() {
       free_gpu_system_memory->GetCell(absl::StrCat(i))->Set(free_memory);
     } else {
       LOG(ERROR) << "Failed to query available memory for GPU " << i;
+      // TEST.
     }
   }
 }
