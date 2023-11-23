@@ -4764,7 +4764,9 @@ xla_cc_test(
 xla_cc_test(
     name = "determinism_test",
     srcs = ["determinism_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    tags = tf_gpu_tests_tags(),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":autotuner_util",
         "//xla:literal",
