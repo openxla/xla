@@ -111,7 +111,7 @@ TEST_F(DeterminismTest, TritonDot) {
 #if GOOGLE_CUDA  
   auto comp = backend().default_stream_executor()->GetDeviceDescription().
                               cuda_compute_capability();
-  if (!compute_capability.IsAtLeast(se::CudaComputeCapability::VOLTA)) {
+  if (!comp.IsAtLeast(se::CudaComputeCapability::VOLTA)) {
     GTEST_SKIP() << "Triton not used on pre-Volta GPUs";
   }
 #endif // GOOGLE_CUDA  
