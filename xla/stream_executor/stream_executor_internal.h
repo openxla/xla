@@ -158,6 +158,14 @@ class CommandBufferInterface {
                              CommandBuffer::Builder then_builder,
                              CommandBuffer::Builder else_builder) = 0;
 
+  // Adds a device memory allocation node to the command buffer.
+  virtual tsl::Status Allocate(CommandBuffer::AllocIndexSize alloc) = 0;
+
+  // Get the device address for allocations performed through command buffer
+  // Allocate command.
+  virtual tsl::StatusOr<DeviceMemoryBase> GetAllocationAddress(
+      int64_t index) const = 0;
+
   // Finalizes command buffer and makes it executable. Once command buffer is
   // finalized no commands can be added to it.
   virtual tsl::Status Finalize() = 0;
@@ -248,6 +256,8 @@ class StreamExecutorInterface {
   virtual std::optional<std::string> MakeDeviceDescriptionStr() const {
     return std::nullopt;
   }
+
+  virtual int device_ordinal() const { return -1; }
 
   virtual tsl::Status GetKernel(const MultiKernelLoaderSpec& spec,
                                 Kernel* kernel) {

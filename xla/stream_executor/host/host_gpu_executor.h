@@ -59,6 +59,7 @@ class HostExecutor : public internal::StreamExecutorInterface {
     return tsl::errors::Unimplemented("Not Implemented");
   }
 
+  int device_ordinal() const override { return device_ordinal_; };
   DeviceMemoryBase Allocate(uint64_t size, int64_t memory_space) override;
   void* GetSubBuffer(DeviceMemoryBase* parent, uint64_t offset_bytes,
                      uint64_t size_bytes) override;
@@ -152,6 +153,10 @@ class HostExecutor : public internal::StreamExecutorInterface {
   std::unique_ptr<internal::StreamInterface> GetStreamImplementation() override;
 
  private:
+  // The device ordinal value that this executor was initialized with; recorded
+  // for use in getting device metadata. Immutable post-initialization.
+  int device_ordinal_;
+
   // Size of thread stacks for streams in bytes. '0' means "the default size".
   size_t thread_stack_size_in_bytes_ = 0;
 };

@@ -52,6 +52,10 @@ class CommandBuffer {
  public:
   // Builder constructs nested command buffers owned by a parent command buffer.
   using Builder = std::function<tsl::Status(CommandBuffer*)>;
+  struct AllocIndexSize {
+    int64_t index;
+    uint64_t size;
+  };
 
   ~CommandBuffer();
   CommandBuffer(CommandBuffer&&);
@@ -138,6 +142,14 @@ class CommandBuffer {
                      Builder then_builder, Builder else_builder);
 
   //--------------------------------------------------------------------------//
+
+  // Adds a device memory allocation command to the command buffer, allocated
+  // address is tracked by command buffer runtime.
+  tsl::Status Allocate(AllocIndexSize alloc);
+
+  // Get the device address for allocations previously allocated through
+  // Allocate command.
+  tsl::StatusOr<DeviceMemoryBase> GetAllocationAddress(int64_t index) const;
 
   // Finalizes command buffer and makes it executable. Once command buffer is
   // finalized no commands can be added to it.
