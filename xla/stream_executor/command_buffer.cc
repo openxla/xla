@@ -120,6 +120,15 @@ tsl::Status CommandBuffer::If(StreamExecutor* executor, DeviceMemory<bool> pred,
   return implementation_->If(executor, pred, std::move(then_builder));
 }
 
+tsl::Status CommandBuffer::Allocate(CommandBuffer::AllocIndexSize alloc) {
+  return implementation_->Allocate(alloc);
+}
+
+tsl::StatusOr<DeviceMemoryBase> CommandBuffer::GetAllocationAddress(
+    int64_t index) const {
+  return implementation_->GetAllocationAddress(index);
+}
+
 tsl::Status CommandBuffer::IfElse(StreamExecutor* executor,
                                   DeviceMemory<bool> pred, Builder then_builder,
                                   Builder else_builder) {

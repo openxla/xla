@@ -68,6 +68,7 @@ class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
   tsl::Status Init(int device_ordinal,
                    ::stream_executor::DeviceOptions device_options) override;
 
+  int device_ordinal() const override { return device_ordinal_; };
   DeviceMemoryBase Allocate(uint64_t size, int64_t memory_space) override;
 
   tsl::Status AllocateEvent(Event* event) override;
@@ -226,7 +227,7 @@ class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
     absl::MutexLock m(&tpu_platform().mutex());
     return stream_map()[ptr];
   }
-
+  int device_ordinal_;
   tensorflow::tpu::TpuPlatformInterface* platform_;
   SE_StreamExecutor* executor_;
 };
