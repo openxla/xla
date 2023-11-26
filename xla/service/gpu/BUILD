@@ -2090,6 +2090,8 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:status_matchers",
     ],
 )
 
