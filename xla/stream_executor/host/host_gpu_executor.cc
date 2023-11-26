@@ -45,6 +45,7 @@ HostStream* AsHostStream(Stream* stream) {
 
 tsl::Status HostExecutor::Init(int device_ordinal,
                                DeviceOptions device_options) {
+  device_ordinal_ = device_ordinal;
   auto it =
       device_options.non_portable_tags.find("host_thread_stack_size_in_bytes");
   if (it != device_options.non_portable_tags.end()) {

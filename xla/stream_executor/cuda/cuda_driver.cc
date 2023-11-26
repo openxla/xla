@@ -842,6 +842,7 @@ GpuDriver::GraphAddNode(CUgraphNode* node, CUgraph graph,
   return ::tsl::OkStatus();
 }
 
+
 /*static*/ tsl::Status GpuDriver::GraphExecKernelNodeSetParams(
     CUgraphExec exec, CUgraphNode node, absl::string_view kernel_name,
     CUfunction function, unsigned int grid_dim_x, unsigned int grid_dim_y,
@@ -880,6 +881,101 @@ GpuDriver::GraphAddNode(CUgraphNode* node, CUgraph graph,
                            "Failed to set CUDA graph kernel node params");
 
   return ::tsl::OkStatus();
+}
+
+static tsl::StatusOr<CUmemAccess_flags> toCudaMemAccessFlags(
+   GpuDriver::MemAccessFlags access_flags) {
+  switch (access_flags) {
+    case GpuDriver::MemAccessFlags::kNone:
+      return CU_MEM_ACCESS_FLAGS_PROT_NONE;
+    case GpuDriver::MemAccessFlags::kRead:
+      return CU_MEM_ACCESS_FLAGS_PROT_READ;
+    case GpuDriver::MemAccessFlags::kReadWrite:
+      return CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+    default:
+      return tsl::errors::Internal("Unknown cuda memory access flag type");
+  }
+}
+
+static tsl::StatusOr<CUmemLocationType> toCudaLocationType(
+    GpuDriver::MemLocationType location_type) {
+  switch (location_type) {
+    case GpuDriver::MemLocationType::kInvalid:
+      return CU_MEM_LOCATION_TYPE_INVALID;
+    case GpuDriver::MemLocationType::kDevice:
+      return CU_MEM_LOCATION_TYPE_DEVICE;
+    case GpuDriver::MemLocationType::kHost:
+      return CU_MEM_LOCATION_TYPE_HOST;
+    case GpuDriver::MemLocationType::kHostNuma:
+      return CU_MEM_LOCATION_TYPE_HOST_NUMA;
+    case GpuDriver::MemLocationType::kHostNumaCurrent:
+      return CU_MEM_LOCATION_TYPE_HOST_NUMA_CURRENT;
+    default:
+      return tsl::errors::Internal("Unknown cuda memory location type");
+  }
+}
+
+static tsl::StatusOr<CUmemAllocationType> toCudaAllocationType(
+    GpuDriver::MemAllocationType alocation_type) {
+  switch (alocation_type) {
+    case GpuDriver::MemAllocationType::kInvalid:
+      return CU_MEM_ALLOCATION_TYPE_INVALID;
+    case GpuDriver::MemAllocationType::kPinned:
+      return CU_MEM_ALLOCATION_TYPE_PINNED;
+    default:
+      return tsl::errors::Internal("Unknown cuda memory allocation type");
+  }
+}
+
+/*static*/ tsl::Status GpuDriver::GraphAddMemAllocNode(
+    CUgraphNode* node, CUgraph graph, absl::Span<CUgraphNode> deps,
+    GpuDriver::MemAccessFlags access_flags,
+    GpuDriver::MemLocationType location_type, int device_id,
+    GpuDriver::MemAllocationType allocation_type, uint64_t size,
+    CUdeviceptr* d_ptr, uint64_t max_pool_size) {
+  CUDA_MEM_ALLOC_NODE_PARAMS memAllocParams;
+
+  CUmemLocation mem_location;
+  mem_location.id = device_id;
+  TF_ASSIGN_OR_RETURN(mem_location.type, toCudaLocationType(location_type));
+
+  CUmemAccessDesc mem_desc;
+  TF_ASSIGN_OR_RETURN(mem_desc.flags, toCudaMemAccessFlags(access_flags));
+  mem_desc.location = mem_location;
+
+  CUmemPoolProps mem_pool_props;
+  TF_ASSIGN_OR_RETURN(mem_pool_props.allocType,
+                      toCudaAllocationType(allocation_type));
+  mem_pool_props.handleTypes = CU_MEM_HANDLE_TYPE_NONE;
+  mem_pool_props.location = mem_location;
+  mem_pool_props.maxSize = max_pool_size;
+  mem_pool_props.win32SecurityAttributes = nullptr;
+
+  // cuda graph requires reserved space initialized to 0
+  memset(mem_pool_props.reserved, 0, sizeof(mem_pool_props.reserved));
+
+  memAllocParams.accessDescCount = 1;
+  memAllocParams.bytesize = size;
+  memAllocParams.accessDescs = &mem_desc;
+  memAllocParams.poolProps = mem_pool_props;
+
+  RETURN_IF_CUDA_RES_ERROR(
+      cuGraphAddMemAllocNode(node, graph, deps.data(), deps.size(), &memAllocParams),
+      "Failed to add memory allocation node to a CUDA graph");
+
+  VLOG(2) << "Add MemAllocNode to a graph " << graph << " size " << size
+          << " address " << reinterpret_cast<void*>(memAllocParams.dptr);
+
+  *d_ptr = memAllocParams.dptr;
+  return ::tsl::OkStatus();
+}
+
+/*static*/ tsl::StatusOr<std::pair<CUdeviceptr, uint64_t>>
+GpuDriver::GraphGetMemAllocNodeParams(CUgraphNode& node) {
+  CUDA_MEM_ALLOC_NODE_PARAMS memAllocParams;
+  RETURN_IF_CUDA_RES_ERROR(cuGraphMemAllocNodeGetParams(node, &memAllocParams),
+                           "Failed to get memory allocation node parameter");
+  return std::pair<CUdeviceptr, uint64_t>{memAllocParams.dptr, memAllocParams.bytesize};
 }
 
 /* static */ tsl::Status GpuDriver::GraphAddMemcpyD2DNode(

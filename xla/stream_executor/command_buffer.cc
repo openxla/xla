@@ -148,6 +148,15 @@ tsl::Status CommandBuffer::While(StreamExecutor* executor,
                                 std::move(body_builder));
 }
 
+tsl::Status CommandBuffer::Allocate(CommandBuffer::AllocIndexSize alloc) {
+  return implementation_->Allocate(alloc);
+}
+
+tsl::StatusOr<DeviceMemoryBase> CommandBuffer::GetAllocationAddress(
+    int64_t index) const {
+  return implementation_->GetAllocationAddress(index);
+}
+
 CommandBuffer::Mode CommandBuffer::mode() const {
   return implementation_->mode();
 }

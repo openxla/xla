@@ -33,6 +33,11 @@ namespace stream_executor {
 class DeviceMemoryAllocator;
 class StreamExecutor;
 
+// This special address is used to indicate that the allocation is not ready
+// when constructing DeviceMemory object, and will be lazily allocated by
+// command buffer runtime.
+#define LAZY_ALLOCATION_MARKER 0xDEADBEEF
+
 // void*-analogous device memory allocation. For the typed variation, see
 // DeviceMemory<T>.
 //
@@ -54,6 +59,11 @@ class DeviceMemoryBase {
   // Returns whether the backing memory is the null pointer.
   // A `== nullptr` convenience method is also provided.
   bool is_null() const { return opaque_ == nullptr; }
+
+  bool isLazyAllocationMarker() const {
+    return reinterpret_cast<uint64_t>(opaque_) ==
+           LAZY_ALLOCATION_MARKER;
+  }
   bool operator==(std::nullptr_t other) const { return is_null(); }
   bool operator!=(std::nullptr_t other) const { return !is_null(); }
 
@@ -96,7 +106,11 @@ class DeviceMemoryBase {
   }
 
  private:
-  void *opaque_;  // Platform-dependent value representing allocated memory.
+  // Platform-dependent value representing allocated memory.
+  // User may also constructs the boject with special address
+  // (LAZY_ALLOCATION_MARKER) and non-zero size, which indicates the case
+  // that buffer is allocated lazily through command buffer;
+  void *opaque_;  
   uint64_t size_;         // Size in bytes of this allocation.
   uint64_t payload_ = 0;  // Payload data associated with this allocation.
 };
@@ -134,6 +148,11 @@ class DeviceMemory final : public DeviceMemoryBase {
   // distinguish bytes from an element count.
   static DeviceMemory<ElemT> MakeFromByteSize(void *opaque, uint64_t bytes) {
     return DeviceMemory<ElemT>(opaque, bytes);
+  }
+
+  static DeviceMemory<ElemT> MakeLazyAllocationFromByteSize(uint64_t bytes) {
+    return DeviceMemory<ElemT>(
+        reinterpret_cast<void *>(LAZY_ALLOCATION_MARKER), bytes);
   }
 
   // Resets the DeviceMemory data, in MakeFromByteSize fashion.

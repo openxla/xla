@@ -172,6 +172,11 @@ class CommandBufferInterface {
   virtual tsl::Status For(StreamExecutor* executor, int32_t num_iteration,
                           DeviceMemory<int32_t> loop_index,
                           CommandBuffer::Builder body_builder) = 0;
+  // Adds a device memory allocation node to the command buffer.
+  virtual tsl::Status Allocate(CommandBuffer::AllocIndexSize alloc) = 0;
+
+  // Get the device address for allocations performed through command buffer Allocate command.
+  virtual tsl::StatusOr<DeviceMemoryBase> GetAllocationAddress(int64_t index) const = 0;
 
   // Adds a conditional operation that will execute a command buffer constructed
   // by the `cond_builder` that must update `pred` value, and then depending on
@@ -279,6 +284,10 @@ class StreamExecutorInterface {
   virtual std::optional<std::string> MakeDeviceDescriptionStr() const {
     return std::nullopt;
   }
+
+  virtual int device_ordinal() const {
+    return -1;
+  };
 
   virtual tsl::Status GetKernel(const MultiKernelLoaderSpec& spec,
                                 Kernel* kernel) {

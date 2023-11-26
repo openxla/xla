@@ -23,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -77,6 +76,10 @@ class GpuCommandBuffer : public internal::CommandBufferInterface {
   tsl::Status While(StreamExecutor* executor, DeviceMemory<bool> pred,
                     CommandBuffer::Builder cond_builder,
                     CommandBuffer::Builder body_builder) override;
+
+  tsl::Status Allocate(CommandBuffer::AllocIndexSize alloc) override;
+
+  tsl::StatusOr<DeviceMemoryBase> GetAllocationAddress(int64_t index) const override;
 
   tsl::Status Finalize() override;
   tsl::Status Update() override;
@@ -199,6 +202,8 @@ class GpuCommandBuffer : public internal::CommandBufferInterface {
       ConditionType type, SetConditionFn set_condition,
       absl::Span<const ConditionBuilder> builders);
 
+  using AllocationResult = std::pair<GpuDevicePtr, uint64_t>;
+
   // TODO(ezhulenev): Currently we serialize all Gpu nodes by adding a
   // dependency between all nodes added to a command buffer. We need a
   // concept of a barrier at a command buffer level.
@@ -216,6 +221,9 @@ class GpuCommandBuffer : public internal::CommandBufferInterface {
   // one, otherwise returns internal error.
   tsl::Status CheckNumCommandBuffers(
       const ConditionalCommandBuffers& cmd_buffers, size_t num_cmd_buffers);
+
+  // Keep tracks of allocations that is performed by allocation command.
+  absl::flat_hash_map<int64_t, DeviceMemoryBase> allocations_map_;
 
   static_assert(std::is_pointer_v<GpuGraphHandle>,
                 "GpuGraphHandle must be a pointer");
