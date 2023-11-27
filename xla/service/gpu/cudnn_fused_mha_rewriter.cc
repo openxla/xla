@@ -433,19 +433,20 @@ absl::StatusOr<bool> IsSupportedBMM2(const HloInstruction* bmm_2,
 
 StatusOr<bool> IsFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
                                 absl::string_view custom_call_name) {
+  const DotDimensionNumbers& dnums = bmm_1->dot_dimension_numbers();
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> seq_q_dims,
       GetNonContractingDims(
           bmm_1->operand(0)->shape(),
-          bmm_1->dot_dimension_numbers().lhs_batch_dimensions(),
-          bmm_1->dot_dimension_numbers().lhs_contracting_dimensions()));
+          dnums.lhs_batch_dimensions(),
+          dnums.lhs_contracting_dimensions()));
 
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> seq_k_dims,
       GetNonContractingDims(
           bmm_1->operand(1)->shape(),
-          bmm_1->dot_dimension_numbers().rhs_batch_dimensions(),
-          bmm_1->dot_dimension_numbers().rhs_contracting_dimensions()));
+          dnums.rhs_batch_dimensions(),
+          dnums.rhs_contracting_dimensions()));
 
   std::vector<int64_t> seq_q =
       GetDimensionVector(bmm_1->operand(0)->shape().dimensions(), seq_q_dims);
@@ -455,7 +456,7 @@ StatusOr<bool> IsFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
 
   std::vector<int64_t> hidden_dim = GetDimensionVector(
       bmm_1->operand(0)->shape().dimensions(),
-      bmm_1->dot_dimension_numbers().lhs_contracting_dimensions());
+      dnums.lhs_contracting_dimensions());
   // for now, seq_q and seq_k should be equal for flash attention to work
   // flash attention only supports fixed topology so we check if custom call is
   // such topology by checking custom_call_name
@@ -1440,12 +1441,12 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
   if (is_training) {
     activation_output = bmm_2->mutable_operand(0);
     // Sometimes activation output is bitcast, the actual activation is the
-    // second user of the producer of bmm_2's first operand.
+    // other user of the producer of bmm_2's first operand.
     if (activation_output->user_count() < 2 &&
         activation_output->opcode() == HloOpcode::kBitcast) {
       HloInstruction* producer = activation_output->mutable_operand(0);
       TF_RET_CHECK(producer->user_count() == 2);
-      HloInstruction* bmm2_grad2_user = producer->UserId(activation_output) == 0
+      HloInstruction* bmm2_grad2_user = producer->users()[0] == activation_output
                                             ? producer->users()[1]
                                             : producer->users()[0];
       // might be (transpose) - bmm2_grad2
@@ -1831,9 +1832,9 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
         original_activation_producers.push_back(operand);
       }
       // We make sure no attention block is matched and replaced twice here
-      if (matched_bmm1.find(matched_result.matched_bmm_1) != matched_bmm1.end())
+      if (!matched_bmm1.insert(matched_result.matched_bmm_1).second) {
         continue;
-      matched_bmm1.insert(matched_result.matched_bmm_1);
+      }
       // If we need to canonicalize the bmm, we will assign the newly
       // canonicalized bmm to bmm_2.
       if (matched_result.need_canonicalization) {

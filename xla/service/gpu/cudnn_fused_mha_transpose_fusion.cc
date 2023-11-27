@@ -466,8 +466,8 @@ absl::StatusOr<bool> FusePrologueTransposeWithcuDNNFMHA(HloComputation* comp) {
       if (!config.is_flash_attention()) {
         TF_ASSIGN_OR_RETURN(changed,
                             FuseArgPrologueTransposeWithcuDNNFMHA(
-                                fmha, 4, true /*is_lhs*/,
-                                true /*should_contracting_be_fastest*/));
+                                fmha, 4, true /*is_lhs=*/,
+                                true /*should_contracting_be_fastest=*/));
       }
 
       if (changed && VLOG_IS_ON(2)) {
