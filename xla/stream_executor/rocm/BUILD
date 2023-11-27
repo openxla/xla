@@ -53,7 +53,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/strings",
-        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor",
         "//xla/stream_executor:device_options",
         "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor/platform",
@@ -84,7 +84,7 @@ cc_library(
     srcs = if_rocm_is_configured(["rocm_event.cc"]),
     deps = if_rocm_is_configured([
         ":rocm_driver",
-        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_event_header",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/gpu:gpu_stream_header",
@@ -465,7 +465,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "//xla:status",
         "//xla/stream_executor:host_or_device_scalar",
-        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor",
         "//xla/stream_executor/platform",
     ]),
 )
@@ -481,7 +481,7 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:errors",
-        "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor",
     ]),
 )
 

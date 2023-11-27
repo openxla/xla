@@ -75,8 +75,6 @@ filegroup(
         "scratch_allocator.h",
         "stream.h",
         "stream_executor.h",
-        "stream_executor_internal.h",  # TODO(ezhulenev): Remove private header
-        "stream_executor_pimpl.h",  # TODO(ezhulenev): Remove private header
         "temporary_device_memory.h",
         "temporary_memory_manager.h",
         "trace_listener.h",
@@ -133,7 +131,9 @@ cc_library(
         ":stream_executor_api_headers",
         ":stream_executor_plugin_headers",
     ],
-    deps = STREAM_EXECUTOR_DEPENDENCIES + if_static([
+    deps = STREAM_EXECUTOR_DEPENDENCIES + [
+        ":stream_executor_pimpl",
+    ] + if_static([
         ":stream_executor_impl",
         "@com_google_protobuf//:protobuf",  # indirectly-used by dnn.h
     ]),
@@ -363,21 +363,6 @@ cc_library(
 # StreamExecutor internal implementation (visible to StreamExecutor platform implementations)
 #===--------------------------------------------------------------------------------------------===#'
 
-# This header-only library is an internal implementation detail of StreamExecutor (to break
-# dependency cycles between internal libraries). All StreamExecutor clients should depend on a
-# regular `stream_executor` target that also provides an implementation for all headers.
-cc_library(
-    name = "stream_executor_headers",
-    hdrs = [
-        ":stream_executor_api_headers",
-        ":stream_executor_plugin_headers",
-    ],
-    visibility = [":internal"],
-    deps = STREAM_EXECUTOR_DEPENDENCIES + if_static([
-        "@com_google_protobuf//:protobuf",  # indirectly-used by dnn.h
-    ]),
-)
-
 cc_library(
     name = "plugin_registry",
     srcs = ["plugin_registry.cc"],
@@ -400,6 +385,22 @@ cc_library(
 #===--------------------------------------------------------------------------------------------===#
 # StreamExecutor private implementation (has private visibility)
 #===--------------------------------------------------------------------------------------------===#
+
+# This header-only library is a private implementation detail of StreamExecutor (to break dependency
+# cycles between StreamExecutor libraries). All StreamExecutor clients should depend on a regular
+# `stream_executor` target that also provides an implementation for all headers.
+cc_library(
+    name = "stream_executor_headers",
+    hdrs = [
+        "stream_executor_pimpl.h",  # TODO(ezhulenev): Remove internal header
+        ":stream_executor_api_headers",
+        ":stream_executor_plugin_headers",
+    ],
+    visibility = ["//visibility:private"],
+    deps = STREAM_EXECUTOR_DEPENDENCIES + if_static([
+        "@com_google_protobuf//:protobuf",  # indirectly-used by dnn.h
+    ]),
+)
 
 # Targets that implement StreamExecutor APIs are private, and should not be used outside of
 # `stream_executor` package. Clients should depend on `stream_executor` (headers and
