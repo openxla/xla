@@ -90,7 +90,7 @@ ENTRY e {
 })";
 
 #if TENSORFLOW_USE_ROCM
-  auto rocm =  backend().default_stream_executor()->GetDeviceDescription().
+  auto rocm = backend().default_stream_executor()->GetDeviceDescription().
               rocm_compute_capability();
   if(!rocm.has_hipblaslt()) {
     GTEST_SKIP() << "No hipblas-lt support on this architecture!";
@@ -114,7 +114,9 @@ TEST_F(DeterminismTest, TritonDot) {
   if (!comp.IsAtLeast(se::CudaComputeCapability::VOLTA)) {
     GTEST_SKIP() << "Triton not used on pre-Volta GPUs";
   }
-#endif // GOOGLE_CUDA  
+#elif TENSORFLOW_USE_ROCM
+  GTEST_SKIP() << "Triton Gemm rewriter is not yet supported on ROCM";
+#endif // TENSORFLOW_USE_ROCM  
 
   constexpr absl::string_view kHloText = R"(
 ENTRY e {

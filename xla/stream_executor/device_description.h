@@ -203,7 +203,7 @@ class RocmComputeCapability {
 
   bool has_hipblaslt() const {
     return gfx9_mi200_or_later();
-  };
+  }
 
   RocmComputeCapabilityProto ToProto() const {
     RocmComputeCapabilityProto proto;
