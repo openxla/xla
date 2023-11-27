@@ -46,7 +46,7 @@ void WriteLiteralToTempFile(const LiteralSlice& literal,
   LOG(ERROR) << "wrote Literal to " << name << " file: " << filename
              << ".{pb,txt}";
 }
-
+// Test comment
 // Callback helper that dumps literals to temporary files in the event of a
 // miscomparison.
 void OnMiscompare(const LiteralSlice& expected, const LiteralSlice& actual,
