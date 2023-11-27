@@ -1590,5 +1590,72 @@ TEST_F(XlaBuilderTest, UnboundedAddUnsupportedImplicitBroadcast) {
               HasSubstr("Unbounded dynamic shapes not supported"));
 }
 
+TEST_F(XlaBuilderTest, UnboundedConcatenate) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> operand1 = ParseShape("f32[3, ?, 2, ?, <=2, ?, ?]");
+  StatusOr<Shape> operand2 = ParseShape("f32[?, 4, ?, 2, ?, <=2, ?]");
+  StatusOr<Shape> operand3 = ParseShape("f32[?, ?, 2, 2, <=2, <=2, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[3, 4, ?, 2, <=2, <=2, ?]");
+  ASSERT_IS_OK(operand1.status());
+  ASSERT_IS_OK(operand2.status());
+  ASSERT_IS_OK(operand3.status());
+  ASSERT_IS_OK(expected.status());
+  ConcatInDim(&b,
+              {Parameter(&b, 0, operand1.value(), "operand1"),
+               Parameter(&b, 1, operand2.value(), "operand2"),
+               Parameter(&b, 2, operand3.value(), "operand3")},
+              2);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  const Shape& result =
+      module->entry_computation()->root_instruction()->shape();
+  EXPECT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanStringWithLayout(result)
+      << " expected: " << ShapeUtil::HumanStringWithLayout(expected.value());
+}
+
+TEST_F(XlaBuilderTest, UnboundedDot) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> lhs = ParseShape("f32[?, 10]");
+  StatusOr<Shape> rhs = ParseShape("f32[?, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[?, ?]");
+  ASSERT_IS_OK(lhs.status());
+  ASSERT_IS_OK(rhs.status());
+  ASSERT_IS_OK(expected.status());
+
+  Dot(Parameter(&b, 0, lhs.value(), "lhs"),
+      Parameter(&b, 1, rhs.value(), "rhs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  const Shape& result =
+      module->entry_computation()->root_instruction()->shape();
+  ASSERT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanString(result)
+      << " expected: " << ShapeUtil::HumanString(expected.value());
+}
+
+TEST_F(XlaBuilderTest, UnboundedDotGeneral) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> lhs = ParseShape("f32[?, <=3, ?]");
+  StatusOr<Shape> rhs = ParseShape("f32[2, 4, 5]");
+  StatusOr<Shape> expected = ParseShape("f32[?, <=3, 5]");
+  ASSERT_IS_OK(lhs.status());
+  ASSERT_IS_OK(rhs.status());
+  ASSERT_IS_OK(expected.status());
+
+  DotDimensionNumbers dnums;
+  dnums.add_lhs_contracting_dimensions(2);
+  dnums.add_rhs_contracting_dimensions(1);
+  dnums.add_lhs_batch_dimensions(0);
+  dnums.add_rhs_batch_dimensions(0);
+
+  DotGeneral(Parameter(&b, 0, lhs.value(), "lhs"),
+             Parameter(&b, 1, rhs.value(), "rhs"), dnums);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  const Shape& result =
+      module->entry_computation()->root_instruction()->shape();
+  ASSERT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanString(result)
+      << " expected: " << ShapeUtil::HumanString(expected.value());
+}
+
 }  // namespace
 }  // namespace xla
