@@ -8,6 +8,7 @@ load(
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = set_external_visibility([
+        "//learning/brain/google/data:__subpackages__",
         "//learning/brain/google/monitoring:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
         "//tensorflow/core:__pkg__",
