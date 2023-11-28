@@ -1217,3 +1217,13 @@ cc_library(
     name = "empty",
     visibility = ["//visibility:public"],
 )
+
+cc_test(
+    name = "debug_options_test",
+    srcs = ["debug_options_test.cc"],
+    deps = [
+        ":xla_proto_cc",
+        "//testing/base/public:gunit_main",
+        "//third_party/protobuf",
+    ],
+)
