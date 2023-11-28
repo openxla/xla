@@ -745,6 +745,7 @@ cc_library(
     hdrs = ["buffer_allocations.h"],
     deps = [
         ":gpu_constants",
+        "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:types",
