@@ -875,6 +875,10 @@ const HloInstruction& FindNonTrivialHero(const HloInstruction& instr) {
   // TODO(jreiffers): Clean this up.
   if (instr.opcode() == HloOpcode::kFusion) return instr;
 
+  // A hero instruction only makes sense in terms of a fusion computation. In a
+  // non-fusion computation, it will find an unrelated instruction.
+  if (!instr.parent()->IsFusionComputation()) return instr;
+
   return FindNonTrivialHero(instr,
                             *HloFusionAdaptor::ForComputation(instr.parent()));
 }
