@@ -832,7 +832,7 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
                             m::Constant().WithPredicate(IsScalar))),
                         m::Op()))))))));
   auto bwd_dropout_pattern = m::AnyOf<HloInstruction>(
-      bwd_dropout_pattern_form_1, bwd_dropout_pattern_form_2).WithOneUse();
+      bwd_dropout_pattern_form_1, bwd_dropout_pattern_form_2);
   // Backward softmax pattern
   HloInstruction* bwd_softmax_input = nullptr;
   HloInstruction* exp_1;
@@ -854,7 +854,7 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
                           .WithOperand(0, OptionalBitcast(m::MultiplyAnyOrder(
                                               m::MultiplyAnyOrder(
                                                   m::Op(&bwd_softmax_input),
-                                                  m::Broadcast(m::Divide().WithOneUse())).WithOneUse(),
+                                                  m::Broadcast()).WithOneUse(),
                                               m::Exp(&exp_2, m::Op())).WithOneUse())))).WithOneUse())))),
           m::Exp(&exp_1, m::Op())).WithLeNumUser(3)));
 
