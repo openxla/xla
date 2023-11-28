@@ -7219,8 +7219,33 @@ cc_library(
     hdrs = ["gpu_compilation_environment.h"],
     deps = [
         ":compilation_environments",
+        "//xla:parse_flags_from_env",
+        "//xla:statusor",
+        "//xla:util",
         "//xla:xla_proto_cc",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/util:command_line_flags",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_compilation_environment_test",
+    size = "small",
+    srcs = ["gpu_compilation_environment_test.cc"],
+    deps = [
+        ":compilation_environments",
+        ":gpu_compilation_environment",
+        "//xla:parse_flags_from_env",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
