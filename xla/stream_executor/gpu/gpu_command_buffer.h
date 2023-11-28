@@ -74,6 +74,10 @@ class GpuCommandBuffer : public internal::CommandBufferInterface {
                   DeviceMemory<int32_t> loop_index,
                   CommandBuffer::Builder body_builder) override;
 
+  tsl::Status While(StreamExecutor* executor, DeviceMemory<bool> pred,
+                    CommandBuffer::Builder cond_builder,
+                    CommandBuffer::Builder body_builder) override;
+
   tsl::Status Finalize() override;
   tsl::Status Update() override;
 
@@ -131,6 +135,9 @@ class GpuCommandBuffer : public internal::CommandBufferInterface {
 
   using SetForConditionKernel =
       TypedKernel<GpuGraphConditionalHandle, DeviceMemory<int32_t>, int32_t>;
+
+  using SetWhileConditionKernel =
+      TypedKernel<GpuGraphConditionalHandle, DeviceMemory<bool>>;
 
   // A callback to launch a kernel that updates conditional handles state.
   using SetConditionFn =
@@ -256,7 +263,7 @@ template <typename... Params, typename... Args>
 inline tsl::Status GpuCommandBuffer::Launch(
     const TypedKernel<Params...>& kernel, const ThreadDim& threads,
     const BlockDim& blocks, Args... args) {
-  auto kernel_args = PackKernelArgs(kernel, args...);
+  auto kernel_args = PackKernelArgs(kernel, 0, args...);
   TF_RETURN_IF_ERROR(Launch(threads, blocks, kernel, *kernel_args));
   return tsl::OkStatus();
 }
@@ -274,6 +281,7 @@ void* GetSetIfConditionKernel();
 void* GetSetIfElseConditionKernel();
 void* GetSetCaseConditionKernel();
 void* GetSetForConditionKernel();
+void* GetSetWhileConditionKernel();
 
 }  // namespace stream_executor::gpu
 

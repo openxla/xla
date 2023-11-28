@@ -705,13 +705,15 @@ std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(int64_t shmem_bytes,
 // checks that arguments are compatible with TypedKernel signature.
 template <typename... Params, typename... Args>
 std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
-    const TypedKernel<Params...> &kernel, Args... args) {
+    const TypedKernel<Params...> &kernel, int64_t shmem_dyn_bytes,
+    Args... args) {
   using PackedParams = KernelArgsPackedTuple<Params...>;
   using PackedArgs = KernelArgsPackedTuple<Args...>;
 
   PackedParams::template CheckCompatibleStaticAssert<Args...>();
 
-  int64_t shmem_bytes = kernel.metadata().shared_memory_bytes().value_or(0);
+  int64_t shmem_bytes =
+      kernel.metadata().shared_memory_bytes().value_or(0) + shmem_dyn_bytes;
   return std::make_unique<PackedArgs>(std::forward<Args>(args)..., shmem_bytes);
 }
 

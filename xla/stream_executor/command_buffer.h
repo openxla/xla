@@ -127,29 +127,44 @@ class CommandBuffer {
   // Command buffer condtitional commands API
   //--------------------------------------------------------------------------//
 
-  // Adds a conditional operation that will run a command buffer constructed by
-  // `then_builder` if `predicate` value is `true`.
+  // Adds a conditional operation that will execute a command buffer constructed
+  // by `then_builder` if `pred` value is `true`.
   tsl::Status If(StreamExecutor* executor, DeviceMemory<bool> pred,
                  Builder then_builder);
 
-  // Adds a conditional operation that will run a command buffer constructed by
-  // `then_builder` if `predicate` value is `true`, or a command buffer
-  // constructed by `else_builder` if `predicate` is `false`.
+  // Adds a conditional operation that will execute a command buffer constructed
+  // by `then_builder` if `pred` value is `true`, or a command buffer
+  // constructed by `else_builder` if `pred` is `false`.
   tsl::Status IfElse(StreamExecutor* executor, DeviceMemory<bool> pred,
                      Builder then_builder, Builder else_builder);
 
-  // Adds a conditional operation that will run a command buffer constructed by
-  // the `branches` builder at `index`. If `index` is out of range, then it will
-  // run a conditional command buffer constructed by the last builder.
+  // Adds a conditional operation that will execute a command buffer constructed
+  // by the `branches` builder at `index`. If `index` is out of range, then it
+  // will run a conditional command buffer constructed by the last builder.
   //
   // See: https://github.com/openxla/stablehlo/blob/main/docs/spec.md#case
   tsl::Status Case(StreamExecutor* executor, DeviceMemory<int32_t> index,
                    std::vector<Builder> branches);
 
-  // Adds a conditional operation that will run a command buffer constructed by
-  // the `body_builder` exactly `num_iteration` times.
+  // Adds a conditional operation that will execute a command buffer constructed
+  // by the `body_builder` exactly `num_iteration` times.
   tsl::Status For(StreamExecutor* executor, int32_t num_iteration,
                   DeviceMemory<int32_t> loop_index, Builder body_builder);
+
+  // Adds a conditional operation that will execute a command buffer constructed
+  // by the `cond_builder` that must update `pred` value, and then depending on
+  // the value might execute command buffer constructed by `body_builder` and
+  // `cond_builder`. Will continue while `pred` value is `true`.
+  //
+  // In pseudocode:
+  //
+  //   cond_builder()
+  //   while(pred):
+  //     body_builder()
+  //     cond_builder()
+  //
+  tsl::Status While(StreamExecutor* executor, DeviceMemory<bool> pred,
+                    Builder cond_builder, Builder body_builder);
 
   //--------------------------------------------------------------------------//
 
@@ -206,7 +221,7 @@ template <typename... Params, typename... Args>
 inline tsl::Status CommandBuffer::Launch(const TypedKernel<Params...>& kernel,
                                          const ThreadDim& threads,
                                          const BlockDim& blocks, Args... args) {
-  auto kernel_args = PackKernelArgs(kernel, args...);
+  auto kernel_args = PackKernelArgs(kernel, 0, args...);
   TF_RETURN_IF_ERROR(Launch(threads, blocks, kernel, *kernel_args));
   return tsl::OkStatus();
 }

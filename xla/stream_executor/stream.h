@@ -1544,7 +1544,7 @@ inline tsl::Status Stream::ThenLaunch(ThreadDim thread_dims,
                                       BlockDim block_dims,
                                       const TypedKernel<Params...> &kernel,
                                       Args... args) {
-  auto kernel_args = PackKernelArgs(kernel, args...);
+  auto kernel_args = PackKernelArgs(kernel, 0, args...);
   TF_RETURN_IF_ERROR(
       parent_->Launch(this, thread_dims, block_dims, kernel, *kernel_args));
   return ::tsl::OkStatus();

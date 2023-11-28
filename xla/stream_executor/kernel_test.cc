@@ -107,7 +107,7 @@ TEST(KernelTest, PackTypedKernelArguments) {
   auto executor = NewStreamExecutor();
   TypedKernel<int32_t, float, double> kernel(executor.get());
 
-  auto args = PackKernelArgs(kernel, 1, 2.0f, 3.0);
+  auto args = PackKernelArgs(kernel, 0, 1, 2.0f, 3.0);
   ASSERT_EQ(args->number_of_arguments(), 3);
 
   auto packed = args->argument_addresses();
