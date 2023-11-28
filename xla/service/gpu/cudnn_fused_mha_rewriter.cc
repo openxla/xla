@@ -212,22 +212,31 @@ auto GetUnfusedReduceMaxSumSoftmaxPattern(
     HloInstruction** softmax_reduce_sum = nullptr,
     HloInstruction** softmax_reduce_sum_bcast = nullptr) {
   // The reduce-max part of the softmax
+  // reduce_max and subtract will always have exactly 1 user
+  // in both training and inference
+  // softmax_input should always have exactly 2 users
   auto unfused_softmax_max_subpattern = m::SharedSubpattern(m::Subtract(
-      m::Op(), m::Broadcast(OptionalConvert(OptionalConvert(
+      m::Op(), m::Broadcast(OptionalConvert(
                    m::Op()
                        .WithPredicate(IsReduceMax)
+                       .WithOneUse()
                        .WithOperand(0, OptionalBitcast(OptionalConvert(
-                                           m::Op(softmax_input)))))))));
+                                           m::Op(softmax_input).WithNumUser(2)
+                                           )))))).WithOneUse());
   // The reduce-add part of the softmax
+  // reduce_sum and reduce_sum_broadcast should have 2 users in training
+  // and 1 user in inference
   auto unfused_softmax_sum_subpattern = m::SharedSubpattern(m::Divide(
       OptionalBitcast(m::Exp(unfused_softmax_max_subpattern)),
       m::Broadcast(
           softmax_reduce_sum_bcast,
-          OptionalConvert(OptionalConvert(
+          OptionalConvert(
               m::Op(softmax_reduce_sum)
                   .WithOperand(0, OptionalBitcast(OptionalConvert(
                                       m::Exp(unfused_softmax_max_subpattern))))
-                  .WithPredicate(IsReduceSum))))));
+                  .WithPredicate(IsReduceSum)
+                  .WithLeNumUser(2)))
+                  .WithLeNumUser(2)));
   return unfused_softmax_sum_subpattern;
 }
 
@@ -409,12 +418,16 @@ MatchFwdResult MatchDefaultFwdBmmBmm(MatchFwdResult previous_result,
   // Try matching default bmm1-bmm2 pattern
   HloInstruction* bmm_1;
   HloInstruction* bmm_2;
-
+  // bmm1 should have at most 2 users at this case
+  // 1. 1 user(bmm2) in case of inference
+  // 2. 2 users(bmm2 and backward bmm) in case of training
   auto default_bmm_bmm_pattern =
       m::Op(&bmm_2)
           .WithPredicate(IsBatchedMatmul)
           .WithOperand(bmm2_operand_position,
-                       m::Op(&bmm_1).WithPredicate(IsBatchedMatmul));
+                       m::Op(&bmm_1)
+                       .WithPredicate(IsBatchedMatmul)
+                       .WithLeNumUser(2));
 
   // If any of bmm1's operands is coming from a forward fMHA call, then return
   // false
@@ -513,11 +526,12 @@ MatchFwdResult MatchBmm1UnfusedBiasSoftmaxBmm2(MatchFwdResult previous_result,
   HloInstruction* bmm_1;
   HloInstruction* bias = nullptr;
   HloInstruction* scale = nullptr;
-
+  // bmm1/scale/bias add should have 2 users if being connected to softmax
+  // otherwise should have exactly 1 user
   auto first_bmm_pattern =
       m::SharedSubpattern(m::Op(&bmm_1).WithPredicate(IsBatchedMatmul));
   auto unfused_scaled_bmm_subpattern = m::MultiplyAnyOrder(
-      OptionalConvert(first_bmm_pattern),
+      OptionalConvert(first_bmm_pattern.WithOneUse()),
       OptionalConvert(
           m::Broadcast(m::Constant(&scale).WithPredicate(IsScalar))));
 
@@ -531,7 +545,8 @@ MatchFwdResult MatchBmm1UnfusedBiasSoftmaxBmm2(MatchFwdResult previous_result,
   } else if (Match(softmax_input,
                    OptionalBitcast(m::AddAnyOrder(
                        OptionalConvert(OptionalBitcast(m::AnyOf<HloInstruction>(
-                           unfused_scaled_bmm_subpattern, first_bmm_pattern))),
+                           unfused_scaled_bmm_subpattern.WithOneUse(),
+                           first_bmm_pattern.WithOneUse()))),
                        m::Op(&bias))))) {
     match_result.matched_bmm_1 = bmm_1;
     match_result.matched_scale = scale;
@@ -561,7 +576,8 @@ MatchFwdResult MatchBmm1ScaleBiasMaskSoftmaxDropoutBmm2(
       OptionalConvert(
           m::Op(&bmm_1).WithPredicate(IsBatchedMatmul).WithOneUse()),
       m::Broadcast(m::Constant(&scale).WithPredicate(IsScalar))));
-
+  // bmm1/scale/bias add/mask should have 2 users if being connected to softmax
+  // otherwise should have exactly 1 user
   if (Match(
           softmax_input,
           OptionalConvert(m::Select(
@@ -581,8 +597,8 @@ MatchFwdResult MatchBmm1ScaleBiasMaskSoftmaxDropoutBmm2(
                                              m::Op(&bmm_1)
                                                  .WithPredicate(IsBatchedMatmul)
                                                  .WithOneUse()),
-                                         unfused_scaled_bmm_subpattern)),
-                      unfused_scaled_bmm_subpattern))),
+                                         unfused_scaled_bmm_subpattern.WithOneUse())),
+                      unfused_scaled_bmm_subpattern.WithOneUse()))),
               m::Op())))) {
     if (!IsSupportedPrimitiveType(bmm_1)) {
       matched_result.has_match = false;
@@ -694,40 +710,38 @@ MatchBwdResult MatchBmm1GradGemm2(MatchBwdResult previous_result,
   HloInstruction* bmm_1_grad_2 = nullptr;
   MatchBwdResult match_result = previous_result;
   match_result.has_match = false;
-  // bmm1 gradient gemm2 shares the same input as bmm1 gradient gemm1.
+  // bmm1 gradient gemm2 shares the same input d_s as bmm1 gradient gemm1.
   // Check to see if bmm1 grad gemm1 needs canonicalization or not, if not,
   // then the shared input is the first operand.
-  int64_t parent_nodex_index =
+  int64_t d_s_index =
       match_result.bmm_1_grad_1_need_canonicalization ? 1 : 0;
   HloInstruction* d_s_user_0 = match_result.matched_bmm_1_grad_1;
 
-  HloInstruction* parent_node = d_s_user_0->mutable_operand(parent_nodex_index);
-  if (parent_node->opcode() == HloOpcode::kBitcast &&
-      parent_node->user_count() == 1) {
-    d_s_user_0 = parent_node;
-    parent_node = parent_node->mutable_operand(0);
+  HloInstruction* d_s = d_s_user_0->mutable_operand(d_s_index);
+  if (d_s->opcode() == HloOpcode::kBitcast && d_s->user_count() == 1) {
+    d_s = d_s->mutable_operand(0);
   }
 
   auto bmm_1_grad_2_it =
-      std::find_if(parent_node->users().begin(), parent_node->users().end(),
+      std::find_if(d_s->users().begin(), d_s->users().end(),
                    [&](HloInstruction* instr) {
                      return instr != match_result.matched_bmm_1_grad_1 &&
                             instr->opcode() != HloOpcode::kReduce;
                    });
-  if (bmm_1_grad_2_it != parent_node->users().end()) {
+  if (bmm_1_grad_2_it != d_s->users().end()) {
     bmm_1_grad_2 = *bmm_1_grad_2_it;
   } else {
     return match_result;
   }
   if (bmm_1_grad_2->opcode() == HloOpcode::kBitcast &&
       bmm_1_grad_2->user_count() == 1) {
-    parent_node = bmm_1_grad_2;
+    d_s = bmm_1_grad_2;
     bmm_1_grad_2 = bmm_1_grad_2->users()[0];
   }
 
   match_result.matched_bmm_1_grad_2 = bmm_1_grad_2;
 
-  if (match_result.matched_bmm_1_grad_2->operand_index(parent_node) != 0) {
+  if (match_result.matched_bmm_1_grad_2->operand_index(d_s) != 0) {
     match_result.bmm_1_grad_2_need_canonicalization = true;
   }
   match_result.has_match = true;
@@ -818,28 +832,31 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
                             m::Constant().WithPredicate(IsScalar))),
                         m::Op()))))))));
   auto bwd_dropout_pattern = m::AnyOf<HloInstruction>(
-      bwd_dropout_pattern_form_1, bwd_dropout_pattern_form_2);
+      bwd_dropout_pattern_form_1, bwd_dropout_pattern_form_2).WithOneUse();
   // Backward softmax pattern
   HloInstruction* bwd_softmax_input = nullptr;
   HloInstruction* exp_1;
   HloInstruction* exp_2;
   HloInstruction* d_softmax;
 
+  // d_softmax = exp * (dy / s_b - sum(dy * exp * 1 / s^2))
+  // there could be at most 3 users of d_softmax: bmm1grad1 bmm1grad2 and dbias
   auto bwd_softmax_pattern =
       OptionalBitcast(OptionalConvert(m::MultiplyAnyOrder(
           &d_softmax,
           m::AddAnyOrder(
-              m::Divide(),
+              m::Divide().WithOneUse(),
               m::Broadcast(OptionalBitcast(
-                  OptionalConvert(OptionalConvert(m::Negate(OptionalBitcast(
+                  OptionalConvert(m::Negate(OptionalBitcast(
                       m::Op()
                           .WithPredicate(IsReduceSum)
+                          .WithOneUse()
                           .WithOperand(0, OptionalBitcast(m::MultiplyAnyOrder(
                                               m::MultiplyAnyOrder(
                                                   m::Op(&bwd_softmax_input),
-                                                  m::Broadcast()),
-                                              m::Exp(&exp_2, m::Op()))))))))))),
-          m::Exp(&exp_1, m::Op()))));
+                                                  m::Broadcast(m::Divide().WithOneUse())).WithOneUse(),
+                                              m::Exp(&exp_2, m::Op())).WithOneUse())))).WithOneUse())))),
+          m::Exp(&exp_1, m::Op())).WithLeNumUser(3)));
 
   // Backward mask input pattern
   // we already matched this in the fwd. Just make sure the same mask is used in
