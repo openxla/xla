@@ -429,7 +429,7 @@ cc_library(
         ],
         "//conditions:default": [],
     }),
-    visibility = [":internal"],
+    visibility = ["//visibility:private"],
     deps = [
         ":stream_executor_headers",
         ":stream_executor_internal",
@@ -496,7 +496,7 @@ cc_library(
     name = "kernel",
     srcs = ["kernel.cc"],
     hdrs = ["kernel.h"],
-    visibility = [":internal"],
+    visibility = ["//visibility:private"],
     deps = [
         ":device_memory",
         ":platform",
