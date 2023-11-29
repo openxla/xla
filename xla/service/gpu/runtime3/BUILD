@@ -155,6 +155,7 @@ xla_test(
     deps = [
         ":command_buffer_cmd",
         ":command_buffer_thunk",
+        ":command_buffer_allocations",
         "//xla:shape_util",
         "//xla:types",
         "//xla/service:buffer_assignment",
