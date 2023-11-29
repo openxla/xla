@@ -52,6 +52,11 @@ class TfAllocatorAdapter : public DeviceMemoryAllocator {
 
   tsl::Status Deallocate(int device_ordinal, DeviceMemoryBase mem) override;
 
+  tsl::Status NotifyExternalAllocate(int device_ordinal, DeviceMemoryBase mem) override;
+  tsl::Status NotifyExternalFree(int device_ordinal, DeviceMemoryBase mem) override;
+  tsl::StatusOr<bool> IsExternalAllocationAlive(int device_ordinal,
+                                               DeviceMemoryBase mem) override;
+
   // The Tensorflow BFC allocator used on GPU allows host-side deallocation
   // before GPU execution takes place. Tensorflow uses the ordering of the main
   // compute stream to enforce a happens-before relationship between a memory
@@ -125,6 +130,25 @@ class MultiDeviceAdapter : public DeviceMemoryAllocator {
     CHECK_LT(device_ordinal, per_device_allocators_.size());
     return per_device_allocators_[device_ordinal]->Deallocate(device_ordinal,
                                                               mem);
+  }
+
+  tsl::Status NotifyExternalAllocate(int device_ordinal, DeviceMemoryBase mem) {
+    CHECK_LT(device_ordinal, per_device_allocators_.size());
+    return per_device_allocators_[device_ordinal]->NotifyExternalAllocate(
+        device_ordinal, mem);
+  }
+
+  tsl::Status NotifyExternalFree(int device_ordinal, DeviceMemoryBase mem) {
+    CHECK_LT(device_ordinal, per_device_allocators_.size());
+    return per_device_allocators_[device_ordinal]->NotifyExternalFree(
+        device_ordinal, mem);
+  }
+
+  tsl::StatusOr<bool> IsExternalAllocationAlive(int device_ordinal,
+                                               DeviceMemoryBase mem) {
+    CHECK_LT(device_ordinal, per_device_allocators_.size());
+    return per_device_allocators_[device_ordinal]->IsExternalAllocationAlive(
+        device_ordinal, mem);
   }
 
   // The Tensorflow BFC allocator used on GPU allows host-side deallocation

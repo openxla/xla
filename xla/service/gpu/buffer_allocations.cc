@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/types/span.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/gpu_constants.h"
 #include "xla/status.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/util.h"
@@ -29,7 +30,7 @@ namespace xla {
 namespace gpu {
 
 Status BufferAllocations::TearDown(
-    const std::set<se::DeviceMemoryBase>& live_addresses,
+    const absl::flat_hash_set<BufferAllocation::Index>& live_allocations,
     absl::Span<const BufferAllocation> allocations) {
   // Deallocate temporary buffers, taking care to try to deallocate all of them
   // even if one of the deallocations fails.
@@ -37,12 +38,15 @@ Status BufferAllocations::TearDown(
   const int64_t num_buffers = allocations.size();
   for (BufferAllocation::Index i = 0; i < num_buffers; ++i) {
     const BufferAllocation& allocation = allocations[i];
-    se::DeviceMemoryBase buffer_address = GetDeviceAddress(allocation.index());
     // Deallocate buffers marked "maybe_live_out" but aren't actually live out,
-    // and temp buffers.
-    if ((allocation.maybe_live_out() &&
-         !live_addresses.count(buffer_address)) ||
-        allocation.IsPreallocatedTempBuffer()) {
+    // and temp buffers. For external allocations, the free should performed by
+    // external allocator, so skip external allocations free here.
+    if (((allocation.maybe_live_out() &&
+          !live_allocations.count(allocation.index())) ||
+         allocation.IsPreallocatedTempBuffer()) &&
+        !IsExternalAllocation(i)) {
+      se::DeviceMemoryBase buffer_address =
+          GetDeviceAddress(allocation.index());
       auto dealloc_result =
           memory_allocator_->Deallocate(device_ordinal_, buffer_address);
       if (!dealloc_result.ok() && status.ok()) {
@@ -52,6 +56,14 @@ Status BufferAllocations::TearDown(
   }
   return status;
 }
+
+bool BufferAllocations::IsExternalAllocation(
+    BufferAllocation::Index index) const {
+  CHECK_GE(index, 0);
+  CHECK_LT(index, buffers_.size());
+  return reinterpret_cast<uintptr_t>(buffers_[index].opaque()) ==
+         kExternalAllocationMarker;
+};
 
 se::DeviceMemoryBase BufferAllocations::GetDeviceAddress(
     BufferAllocation::Index buffer_index) const {
@@ -64,6 +76,14 @@ se::DeviceMemoryBase BufferAllocations::GetDeviceAddress(
                  << buffer_index;
       return se::DeviceMemoryBase();
     }
+
+    if (!external_allocations_->IsAllocated(buffer_index)) {
+        return base;
+    }
+
+    VLOG(2) << "GetDeviceAddress from external allocations "
+            << reinterpret_cast<void*>(external_allocations_);
+
     auto external_address =
         external_allocations_->GetDeviceAddress(buffer_index);
     if (external_address.ok()) {
@@ -81,6 +101,13 @@ se::DeviceMemoryBase& BufferAllocations::GetMutableDeviceAddress(
   CHECK_GE(buffer_index, 0);
   CHECK_LT(buffer_index, buffers_.size());
   return buffers_[buffer_index];
+}
+
+uint64_t BufferAllocations::GetAllocationSize(
+    BufferAllocation::Index buffer_index) const {
+  CHECK_GE(buffer_index, 0);
+  CHECK_LT(buffer_index, buffers_.size());
+  return buffers_[buffer_index].size();
 }
 
 se::DeviceMemoryBase BufferAllocations::GetDeviceAddress(

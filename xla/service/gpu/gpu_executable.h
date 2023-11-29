@@ -40,12 +40,15 @@ limitations under the License.
 #include "xla/service/gpu/non_atomically_upgradeable_rw_lock.h"
 #include "xla/service/gpu/runtime/annotation.h"
 #include "xla/service/gpu/runtime/executable.h"
+#include "xla/service/gpu/runtime3/command_buffer_thunk.h"
+#include "xla/service/gpu/runtime3/command_buffer_allocations.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/hlo_execution_profile.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/gpu/gpu_graph.h"
 #include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
@@ -96,6 +99,9 @@ class GpuExecutable : public Executable {
     xla::Shape output_shape;
     std::optional<std::vector<BufferAllocation>> mlir_allocations;
     std::unique_ptr<const BufferAssignment> buffer_assignment;
+    bool enable_persistent_input_buffers;
+    bool enable_persistent_temp_buffers;
+    bool enable_persistent_output_buffers;
     int64_t debug_buffer_assignment_show_max;
     std::unique_ptr<HloModule> debug_module = nullptr;
     bool enable_debug_info_manager = true;
@@ -226,6 +232,11 @@ class GpuExecutable : public Executable {
   using BufferAllocToDeviceMemoryMap =
       absl::flat_hash_map<BufferAllocation::Index, se::DeviceMemoryBase>;
 
+  // Tracks which input buffer needs to be copied, and its original device
+  // address.
+  using ParameterCopyInfo =
+      absl::flat_hash_map<BufferAllocation::Index, se::DeviceMemoryBase>;
+
   // Loads the PTX or CUBIN for this executable and initializes all
   // constants that haven't already been initialized by the CUDA driver. Loaded
   // modules are owned by this executable.
@@ -244,17 +255,24 @@ class GpuExecutable : public Executable {
   Status CheckCompatibilityWithServiceExecutableRunOptions(
       const ServiceExecutableRunOptions* run_options);
 
+  // Calculate addresses for input buffers, for allocations that are lazilly
+  // allocated, specify the address as se::LAZY_ALLOCATION_MARKER
   StatusOr<BufferAllocations> GenerateBufferAllocations(
-      VariantArguments arguments,
+      VariantArguments& arguments, ExecutionOutput& result,
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
-      se::DeviceMemoryAllocator* memory_allocator, int device_ordinal);
+      const ServiceExecutableRunOptions* run_options,
+      bool enable_persistent_input_buffers, bool enable_persistent_temp_buffers,
+      bool enable_persistent_output_buffers);
 
   StatusOr<se::DeviceMemoryBase> BufferForAllocation(
-      VariantArguments arguments,
+      VariantArguments& arguments, ExecutionOutput& result,
       const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
       const BufferAllocation& allocation,
-      se::DeviceMemoryAllocator* memory_allocator, int device_ordinal,
-      int64_t arg_idx);
+      const ServiceExecutableRunOptions* run_options,
+      bool enable_persistent_input_buffers,
+      bool enable_persistent_temp_buffers,
+      bool enable_persistent_output_buffers,
+      ParameterCopyInfo& param_copy_info);
 
   // The LLVM IR, in string format, of the unoptimized module generated for
   // this GpuExecutable. We save a string instead of an llvm::Module* because
@@ -305,6 +323,15 @@ class GpuExecutable : public Executable {
   std::unique_ptr<const xla::BufferAssignment> buffer_assignment_;
 
   std::optional<ModuleAnnotations> annotation_info_;
+
+  absl::Mutex persistent_buffers_mu_;
+  bool enable_persistent_input_buffers_ = false;
+  bool enable_persistent_temp_buffers_ = false;
+  bool enable_persistent_output_buffers_ = false;
+
+  absl::flat_hash_map<stream_executor::StreamExecutor*,
+                      std::unique_ptr<CommandBufferAllocations>>
+      persistent_buffer_allocations_map_ ABSL_GUARDED_BY(persistent_buffers_mu_);
 
   int64_t debug_buffer_assignment_show_max_;
 

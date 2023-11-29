@@ -849,7 +849,7 @@ GpuDriver::GraphAddNode(CUgraphNode* node, CUgraph graph,
 }
 
 /* static */ tsl::Status GpuDriver::GraphAddKernelNode(
-    CUgraphNode* node, CUgraph graph, absl::Span<CUgraphNode> deps,
+    CUgraphNode* node, CUgraph graph, absl::Span<GpuGraphNodeHandle> deps,
     absl::string_view kernel_name, CUfunction function, unsigned int grid_dim_x,
     unsigned int grid_dim_y, unsigned int grid_dim_z, unsigned int block_dim_x,
     unsigned int block_dim_y, unsigned int block_dim_z,
@@ -892,6 +892,7 @@ GpuDriver::GraphAddNode(CUgraphNode* node, CUgraph graph,
 
   return ::tsl::OkStatus();
 }
+
 
 /*static*/ tsl::Status GpuDriver::GraphExecKernelNodeSetParams(
     CUgraphExec exec, CUgraphNode node, absl::string_view kernel_name,
@@ -1043,7 +1044,7 @@ GpuDriver::GraphGetMemAllocNodeParams(CUgraphNode node) {
 
 /* static */ tsl::Status GpuDriver::GraphAddMemcpyD2DNode(
     GpuContext* context, CUgraphNode* node, CUgraph graph,
-    absl::Span<CUgraphNode> deps, CUdeviceptr gpu_dst, CUdeviceptr gpu_src,
+    absl::Span<GpuGraphNodeHandle> deps, CUdeviceptr gpu_dst, CUdeviceptr gpu_src,
     uint64_t size) {
   VLOG(2) << "Add memcpy d2d node to a graph " << graph
           << "; dst: " << reinterpret_cast<void*>(gpu_dst)
@@ -1188,7 +1189,7 @@ struct BitPatternToValue {
 }
 
 /* static */ tsl::Status GpuDriver::GraphAddChildNode(
-    CUgraphNode* node, CUgraph graph, absl::Span<CUgraphNode> deps,
+    CUgraphNode* node, CUgraph graph, absl::Span<GpuGraphNodeHandle> deps,
     CUgraph child) {
   VLOG(2) << "Create a new node by cloning the child graph " << child
           << " and add it to " << graph << "; deps: " << deps.size();
@@ -2101,6 +2102,8 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
                                                    CUstream stream) {
   ScopedActivateContext activation(context);
   CUresult result;
+  VLOG(2) << "AsynchronousMemcpyD2D dst: " << reinterpret_cast<void*>(gpu_dst)
+          << " src " << reinterpret_cast<void*>(gpu_src);
 
   // In graph capture mode we never have operations that access peer memory, so
   // we can always make a call to cuMemcpyDtoDAsync.

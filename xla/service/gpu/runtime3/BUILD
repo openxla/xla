@@ -23,6 +23,7 @@ cc_library(
     srcs = ["command_buffer_allocations.cc"],
     hdrs = ["command_buffer_allocations.h"],
     deps = [
+        ":command_buffer_thunk",
         "//xla:status",
         "//xla:statusor",
         "//xla/service:buffer_assignment",
@@ -40,7 +41,6 @@ cc_library(
     srcs = ["command_buffer_cmd.cc"],
     hdrs = ["command_buffer_cmd.h"],
     deps = [
-        ":command_buffer_allocations",
         "//xla:status",
         "//xla:types",
         "//xla/service:buffer_assignment",
@@ -148,7 +148,6 @@ cc_library(
     srcs = ["command_buffer_thunk.cc"],
     hdrs = ["command_buffer_thunk.h"],
     deps = [
-        ":command_buffer_allocations",
         ":command_buffer_cmd",
         "//xla:status",
         "//xla:statusor",
@@ -172,12 +171,10 @@ xla_test(
     name = "command_buffer_thunk_test",
     srcs = if_gpu_is_configured(["command_buffer_thunk_test.cc"]),
     backend_tags = {
-        "gpu_a100": ["config-cuda-only"],
-        "gpu_v100": ["config-cuda-only"],
+        "gpu": ["config-cuda-only"],
     },
     backends = [
-        "gpu_a100",
-        "gpu_v100",
+        "gpu",
     ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [

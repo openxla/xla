@@ -76,6 +76,11 @@ class GpuCudaMallocAsyncAllocator : public tsl::Allocator {
                     size_t num_bytes) override ABSL_NO_THREAD_SAFETY_ANALYSIS;
   void DeallocateRaw(void* ptr) override ABSL_NO_THREAD_SAFETY_ANALYSIS;
 
+  void FreeExternalAllocation(void* ptr) override {
+    NotifyExternalFree(ptr);
+    cuMemFree(reinterpret_cast<const CUdeviceptr&>(ptr));
+  }
+
   bool TracksAllocationSizes() const override;
 
   size_t RequestedSize(const void* ptr) const override;

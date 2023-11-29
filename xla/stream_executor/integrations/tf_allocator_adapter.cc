@@ -58,6 +58,23 @@ tsl::Status TfAllocatorAdapter::Deallocate(int device_ordinal,
   return ::tsl::OkStatus();
 }
 
+tsl::Status TfAllocatorAdapter::NotifyExternalAllocate(int device_ordinal,
+                                                       DeviceMemoryBase mem) {
+  wrapped_->NotifyExternalAllocate(mem.opaque(), mem.size());
+  return ::tsl::OkStatus();
+}
+
+tsl::Status TfAllocatorAdapter::NotifyExternalFree(int device_ordinal,
+                                                   DeviceMemoryBase mem) {
+  wrapped_->NotifyExternalFree(mem.opaque());
+  return ::tsl::OkStatus();
+}
+
+tsl::StatusOr<bool> TfAllocatorAdapter::IsExternalAllocationAlive(
+    int device_ordinal, DeviceMemoryBase mem) {
+  return wrapped_->IsExternalAllocationAlive(mem.opaque());
+}
+
 tsl::StatusOr<Stream *> TfAllocatorAdapter::GetStream(int device_ordinal) {
   CHECK_EQ(stream_->parent()->device_ordinal(), device_ordinal);
   return stream_;

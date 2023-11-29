@@ -67,6 +67,13 @@ class BufferAllocations {
     // Erases an external allocation for a given buffer index. Returns error if
     // allocation does not exists.
     virtual Status EraseAllocation(BufferAllocation::Index index) = 0;
+
+    // Check whether a given allocation is allocated by external allocation.
+    virtual bool IsAllocated(BufferAllocation::Index index) const = 0;
+
+    // Clear all the allocations.
+    virtual Status Clear() = 0;
+
   };
 
   BufferAllocations(absl::Span<se::DeviceMemoryBase const> buffers,
@@ -88,6 +95,16 @@ class BufferAllocations {
   }
   int device_ordinal() const { return device_ordinal_; }
 
+  bool IsExternalAllocation(BufferAllocation::Index index) const;
+
+  const ExternalAllocations* GetExternalAllocations() const {
+    return external_allocations_;
+  }
+
+  ExternalAllocations* GetMutableExternalAllocations() const {
+    return external_allocations_;
+  }
+
   // Returns the device address of buffer `buffer_index`. `buffer_index` must be
   // a valid index, i.e., in [0, buffer_count). This function returns null if
   // `buffer_index` is not assigned to a buffer address.
@@ -103,6 +120,9 @@ class BufferAllocations {
   se::DeviceMemoryBase GetDeviceAddress(
       const BufferAllocation::Slice& buffer_slice) const;
 
+  // Get the size of a given allocation
+  uint64_t GetAllocationSize(BufferAllocation::Index index) const;
+
   // Add new allocation allocated by external allocator.
   Status AddExternalAllocation(BufferAllocation::Index index,
                                se::DeviceMemoryBase memory) const;
@@ -112,15 +132,25 @@ class BufferAllocations {
 
   // Tears down all buffers allocated by this object that are not in
   // `live_addresses`.
-  Status TearDown(const std::set<se::DeviceMemoryBase>& live_addresses,
-                  absl::Span<const BufferAllocation> allocations);
+  Status TearDown(
+      const absl::flat_hash_set<BufferAllocation::Index>& live_allocations,
+      absl::Span<const BufferAllocation> allocations);
 
   std::string ToString() const {
     std::string out;
     for (BufferAllocation::Index i = 0; i < buffers_.size(); ++i) {
-      const auto& buf = buffers_[i];
-      absl::StrAppendFormat(&out, "Buffer %d -> %p (%d B)", i, buf.opaque(),
-                            buf.size());
+      // const auto& buf = buffers_[i];
+      StatusOr<se::DeviceMemoryBase> buf = GetDeviceAddress(i);
+      if (buf.ok()) {
+        absl::StrAppendFormat(&out, "Buffer %d -> %p (%d B)", i, buf.value().opaque(),
+                              buf.value().size());
+      } else {
+        absl::StrAppendFormat(&out, "Buffer %d -> ERROR", i);
+      }
+    }
+    if (external_allocations_) {
+      absl::StrAppendFormat(&out, " ExternalAllocation %p",
+                            reinterpret_cast<void*>(external_allocations_));
     }
     return out;
   }

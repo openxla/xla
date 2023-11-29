@@ -20,9 +20,11 @@ limitations under the License.
 
 #include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
 
 #include "absl/strings/string_view.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/types/optional.h"
 #include "tsl/framework/numeric_types.h"
 #include "tsl/framework/type_traits.h"
@@ -30,6 +32,7 @@ limitations under the License.
 #include "tsl/platform/macros.h"
 #include "tsl/platform/numa.h"
 #include "tsl/platform/types.h"
+#include "tsl/platform/mutex.h"
 
 namespace tsl {
 
@@ -237,6 +240,49 @@ class Allocator {
   virtual AllocatorMemoryType GetMemoryType() const {
     return AllocatorMemoryType::kUnknown;
   }
+
+  void NotifyExternalAllocate(void* ptr, size_t num_bytes) {
+    tsl::mutex_lock l(external_allocate_lock_);
+    // We do not check there exists a live allocation for the ptr previously,
+    // because some external allocation may implement auto free on allocate
+    // (e.g, cuda-graph allocate), so external_allocation_map_ may have the
+    // allocation ptr already.
+    VLOG(2) << "Notify external allocation for ptr " << ptr;
+    external_allocation_map_[ptr] = num_bytes;
+  }
+
+  size_t GetExternalAllocationSize(void* ptr) {
+    tsl::mutex_lock l(external_allocate_lock_);
+    // We do not check there exists a live allocation for the ptr previously,
+    // because some external allocation may implement auto free on allocate
+    // (e.g, cuda-graph allocate), so external_allocation_map_ may have the
+    // allocation ptr already.
+    return external_allocation_map_.at(ptr);
+  }
+
+  void NotifyExternalFree(void* ptr) {
+    tsl::mutex_lock l(external_allocate_lock_);
+    CHECK(external_allocation_map_.contains(ptr))
+        << " External allocation has already allocated for ptr " << ptr;
+
+    VLOG(2) << "Notify external free for ptr " << ptr;
+    external_allocation_map_.erase(ptr);
+  }
+
+  bool IsExternalAllocationAlive(void* ptr) {
+    tsl::mutex_lock l(external_allocate_lock_);
+    return external_allocation_map_.contains(ptr);
+  }
+
+  // Perf the free for the allocation that is allocated by external allocator.
+  virtual void FreeExternalAllocation(void* ptr) {
+    LOG(FATAL) << "External deallocation is not implemented";
+  }
+
+ private:
+  mutable tsl::mutex external_allocate_lock_;
+  absl::flat_hash_map<const void*, size_t> external_allocation_map_
+      ABSL_GUARDED_BY(external_allocate_lock_);
 };
 
 // An implementation of Allocator that delegates all calls to another Allocator.

@@ -241,6 +241,9 @@ class GpuCommandBuffer : public internal::CommandBufferInterface {
   tsl::Status CheckNumCommandBuffers(
       const ConditionalCommandBuffers& cmd_buffers, size_t num_cmd_buffers);
 
+  // Keep tracks of allocations that is performed by allocation command.
+  absl::flat_hash_map<int64_t, DeviceMemoryBase> allocations_map_;
+
   static_assert(std::is_pointer_v<GpuGraphHandle>,
                 "GpuGraphHandle must be a pointer");
   static_assert(std::is_pointer_v<GpuGraphExecHandle>,

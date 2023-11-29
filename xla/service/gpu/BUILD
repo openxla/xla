@@ -761,6 +761,7 @@ cc_library(
     srcs = ["buffer_allocations.cc"],
     hdrs = ["buffer_allocations.h"],
     deps = [
+        ":gpu_constants",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
@@ -1092,6 +1093,8 @@ cc_library(
         "//xla/service/gpu/runtime3:custom_call_thunk",
         "//xla/service/gpu/runtime3:fft_thunk",
         "//xla/service/gpu/runtime3:send_recv_thunk",
+        "//xla/service/gpu/runtime3:command_buffer_thunk",
+        "//xla/service/gpu/runtime3:command_buffer_allocations",
         "//xla/stream_executor",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_description",

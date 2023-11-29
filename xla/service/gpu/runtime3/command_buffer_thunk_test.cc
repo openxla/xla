@@ -229,7 +229,6 @@ TEST(CommandBufferThunkTest, Memset32Cmd) {
 // 1. Allocates memory region "a" and "c" outside command buffer.
 // 2. Allocates memory region "b" inside command buffer.
 // 3. MemCopyDeviceToDevice from "a" to "b" inside command buffer.
-
 // 4. MemCopyDeviceToDevice from "b" to "c" inside command buffer.
 // 5. Free memory region "b" inside command buffer.
 // 6. Verify that region "c" has the same content as "a".
@@ -280,14 +279,16 @@ TEST(CommandBufferThunkTest, MemallocFreeCmdSameThunk) {
 
   // Execute command buffer thunk and verify that it copied the memory.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
 
-  // Copy `b` data back to host.
+  // Copy `c` data back to host.
   std::vector<int32_t> dst(4, 0);
   stream.ThenMemcpy(dst.data(), allocations.GetMutableDeviceAddress(2),
                     byte_length);
 
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
+  ASSERT_EQ(external_allocation->Size(), 0);
+
+  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
 }
 
 // This test does the following operations:
@@ -328,8 +329,8 @@ TEST(CommandBufferThunkTest, MemallocFreeCmdAcrossThunk) {
   se::DeviceMemory<int32_t> a = executor->AllocateArray<int32_t>(length, 0);
   stream.ThenMemset32(&a, 42, byte_length);
   se::DeviceMemory<int32_t> b(se::DeviceMemoryBase(
-      reinterpret_cast<int32_t*>(BufferAllocations::kExternalAllocationMarker),
-      byte_length));
+    reinterpret_cast<int32_t*>(BufferAllocations::kExternalAllocationMarker),
+    byte_length));
   se::DeviceMemory<int32_t> c = executor->AllocateArray<int32_t>(length, 0);
 
   auto external_allocation = std::make_unique<CommandBufferAllocations>();
@@ -342,6 +343,8 @@ TEST(CommandBufferThunkTest, MemallocFreeCmdAcrossThunk) {
 
   // Execute command buffer thunk and verify that it copied the memory.
   TF_ASSERT_OK(thunk1.ExecuteOnStream(params));
+  ASSERT_EQ(external_allocation->Size(), 1);
+  se::DeviceMemoryBase addr1 = allocations.GetDeviceAddress(1);
 
   // =================Thunk 2=================================
   CommandBufferCmdSequence commands2;
@@ -353,6 +356,7 @@ TEST(CommandBufferThunkTest, MemallocFreeCmdAcrossThunk) {
 
   // Execute command buffer thunk and verify that it copied the memory.
   TF_ASSERT_OK(thunk2.ExecuteOnStream(params));
+  ASSERT_EQ(external_allocation->Size(), 0);
 
   // Copy `c` data back to host.
   std::vector<int32_t> dst(4, 0);
@@ -360,6 +364,20 @@ TEST(CommandBufferThunkTest, MemallocFreeCmdAcrossThunk) {
                     byte_length);
 
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42));
+
+  // When the same command buffer executed multiple times, address allocated
+  // should kepp same through cuda-graphs, and for the second iteraton, graph
+  // update should happen.
+  TF_ASSERT_OK(thunk1.ExecuteOnStream(params));
+  se::DeviceMemoryBase addr2 = allocations.GetDeviceAddress(1);
+  TF_ASSERT_OK(thunk2.ExecuteOnStream(params));
+  ASSERT_TRUE(addr1.IsSameAs(addr2));
+
+  // During 3rd iteration, graph update should not happen.
+  TF_ASSERT_OK(thunk1.ExecuteOnStream(params));
+  se::DeviceMemoryBase addr3 = allocations.GetDeviceAddress(1);
+  TF_ASSERT_OK(thunk2.ExecuteOnStream(params));
+  ASSERT_TRUE(addr1.IsSameAs(addr3));
 }
 
 TEST(CommandBufferThunkTest, LaunchCmd) {

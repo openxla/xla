@@ -440,18 +440,18 @@ tsl::StatusOr<DeviceMemoryBase> GpuCommandBuffer::Allocate(size_t bytes) {
     return DeviceMemoryBase(reinterpret_cast<void*>(ptr), bytes);
   }
 
-  if (state_ == State::kUpdate) {
-    // Memory allocation node implemented through CUDA graph does not allocate
-    // new memory region on update, just return the memory region allocated
-    // during the create step.
-    TF_ASSIGN_OR_RETURN(AllocationResult params,
-                        GpuDriver::GraphGetMemAllocNodeParams(
-                            nodes_[update_state_.node_idx++]));
-    return DeviceMemoryBase(reinterpret_cast<void*>(params.first),
-                            params.second);
-  }
+  // Memory allocation node implemented through CUDA graph does not allocate
+  // new memory region on update, just return the memory region allocated
+  // during the create step.
+  TF_ASSIGN_OR_RETURN(AllocationResult params,
+                      GpuDriver::GraphGetMemAllocNodeParams(
+                          nodes_[update_state_.node_idx++]));
+  VLOG(2) << "Re-allocating device memory base with opaque pointer "
+          << reinterpret_cast<void*>(params.first)
+          << " device ordinal: " << parent_->device_ordinal();
+  return DeviceMemoryBase(reinterpret_cast<void*>(params.first),
+                          params.second);
 
-  return UnsupportedStateError(state_);
 }
 
 tsl::Status GpuCommandBuffer::Free(DeviceMemoryBase dst) {
@@ -464,6 +464,8 @@ tsl::Status GpuCommandBuffer::Free(DeviceMemoryBase dst) {
     GpuDevicePtr gpu_dptr = AsDevicePtr(dst);
     TF_RETURN_IF_ERROR(GpuDriver::GraphAddMemFreeNode(
         node, graph_, absl::MakeSpan(barrier), gpu_dptr));
+    VLOG(2) << "Adding free graph node with address: "
+            << reinterpret_cast<void*>(gpu_dptr);
     return tsl::OkStatus();
   }
 
@@ -472,6 +474,7 @@ tsl::Status GpuCommandBuffer::Free(DeviceMemoryBase dst) {
     // allocated through memory alloc node, so buffer address will not change,
     // no update is required.
     update_state_.node_idx++;
+    VLOG(2) << "Running free node update.";
     return tsl::OkStatus();
   }
 
@@ -828,6 +831,12 @@ tsl::Status GpuCommandBuffer::Finalize() {
     // If this is the first time we finalize command buffer after construction,
     // we need to instantiate it to an executable graph.
     GpuDriver::GraphInstantiateFlags flags;
+
+    // current allocations that are made in comamnd buffer are for temp/output
+    // buffers. Temp buffers will be freed through comamnd buffers. For output
+    // buffers, it is not freed and will be auto freed when relauching the same
+    // command buffer.
+    flags.auto_free_on_launch = false;
 
     uint64_t start_nanos = tsl::Env::Default()->NowNanos();
 

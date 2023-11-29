@@ -52,6 +52,7 @@ TpuExecutor::~TpuExecutor() { ExecutorApiFn()->TpuExecutor_FreeFn(executor_); }
 
 Status TpuExecutor::Init(int device_ordinal,
                          ::stream_executor::DeviceOptions device_options) {
+  device_ordinal_ = device_ordinal;
   StatusHelper status;
   SE_DeviceOptions* options =
       ExecutorApiFn()->TpuExecutor_NewDeviceOptionsFn(device_options.flags());

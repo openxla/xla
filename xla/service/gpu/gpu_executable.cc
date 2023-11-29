@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -44,6 +45,8 @@ limitations under the License.
 #include "xla/service/gpu/non_atomically_upgradeable_rw_lock.h"
 #include "xla/service/gpu/runtime/executable.h"
 #include "xla/service/gpu/runtime/tracing.h"
+#include "xla/service/gpu/runtime3/command_buffer_allocations.h"
+#include "xla/service/gpu/runtime3/command_buffer_thunk.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/hlo_parser.h"
@@ -58,6 +61,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/gpu/gpu_graph.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/stream.h"
@@ -134,6 +138,9 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
       output_shape_(params.output_shape),
       allocations_(std::move(params.mlir_allocations)),
       buffer_assignment_(std::move(params.buffer_assignment)),
+      enable_persistent_input_buffers_(params.enable_persistent_input_buffers),
+      enable_persistent_temp_buffers_(params.enable_persistent_temp_buffers),
+      enable_persistent_output_buffers_(params.enable_persistent_output_buffers),
       debug_buffer_assignment_show_max_(
           params.debug_buffer_assignment_show_max),
       constants_(std::move(params.constants)),
@@ -386,15 +393,23 @@ GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
 }
 
 StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
-    VariantArguments arguments,
-    const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
+    VariantArguments& arguments, ExecutionOutput& result,
+    const BufferAllocToDeviceMemoryMap* globals,
     const BufferAllocation& allocation,
-    se::DeviceMemoryAllocator* const memory_allocator, int device_ordinal,
-    int64_t arg_idx) {
+    const ServiceExecutableRunOptions* run_options,
+    bool enable_persistent_input_buffers, bool enable_persistent_temp_buffers,
+    bool enable_persistent_output_buffers, ParameterCopyInfo& param_copy_info) {
+
+  se::StreamExecutor* executor = run_options->stream()->parent();
+  auto device_ordinal = executor->device_ordinal();
+  se::DeviceMemoryAllocator* const memory_allocator = run_options->allocator();
+  VLOG(2) << "BufferForAllocation processing allocation " << allocation.ToString();
+
   if (allocation.is_thread_local()) {
     return se::DeviceMemoryBase{};
   } else if (allocation.is_entry_computation_parameter()) {
     int64_t param_no = allocation.parameter_number();
+
     se::DeviceMemoryBase registered_buffer = [&] {
       if (auto unowned_shapedbuffers =
               std::get_if<absl::Span<const ShapedBuffer* const>>(&arguments)) {
@@ -406,6 +421,10 @@ StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
             .AsDeviceMemoryBase();
       }
     }();
+
+    VLOG(2) << "Processing allocation " << allocation.ToString()
+            << " registred buffer:" << registered_buffer.opaque();
+
     if (registered_buffer.is_null() && registered_buffer.size() > 0) {
       return FailedPrecondition(
           "Cannot run XLA computation because pointer to (sub-)buffer at "
@@ -414,9 +433,131 @@ StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
           "zero elements.",
           allocation.param_shape_index().ToString(), param_no);
     }
+
+    MaybeOwningDeviceMemory* maybe_owning_memory =
+        [&]() -> xla::MaybeOwningDeviceMemory* {
+      // ScopedBuffer is never an owned buffer.
+      if (std::holds_alternative<absl::Span<const ShapedBuffer* const>>(
+              arguments)) {
+        return nullptr;
+      } else {
+        auto unowned_execution_input =
+            std::get<absl::Span<ExecutionInput>>(arguments);
+        ExecutionInput& input = unowned_execution_input[param_no];
+        return input.MutableBuffer(allocation.param_shape_index());
+      }
+    }();
+
+    // Get possible aliased output for current parameter allocation;
+    auto aliased_output =
+        [&]() -> std::optional<std::pair<ShapeIndex, OutputInfo>> {
+      for (auto p : result.MutableResult()->buffers()) {
+        const ShapeIndex index = p.first;
+        if (!output_info_.contains(index)) {
+          continue;
+        }
+        const OutputInfo output_info = output_info_.at(index);
+        if (output_info.alias_config &&
+            output_info.allocation_index == allocation.index()) {
+          CHECK(!ShapeUtil::GetSubshape(output_shape_, index).IsTuple())
+              << "output aliased is only for dense elements type";
+          VLOG(2) << "Found aliased output for parameter " << param_no
+                  << " with output shapeIndex " << index.ToString()
+                  << " alias type " << output_info.alias_config->ToString();
+          return std::make_pair(index, output_info);
+        }
+      }
+      return std::nullopt;
+    }();
+
+    if (aliased_output && aliased_output->second.alias_config) {
+      if (aliased_output->second.alias_config->must_alias()) {
+        if (maybe_owning_memory && maybe_owning_memory->HasOwnership()) {
+          // remove ownership, so will not free the buffer after execution.
+          VLOG(2) << "Reuse donated buffer  with must_alias constraint: "
+                  << allocation.ToString();
+          std::optional<tensorflow::se::OwningDeviceMemory> owning =
+              maybe_owning_memory->Release();
+          // If the caller passes the ownership of the device memory, reuse it
+          // as the output buffer. It is up to the caller whether or not to
+          // donate a buffer; the aliasing information describes which buffers
+          // may alias, not buffers that must alias.
+          se::DeviceMemoryBase argument_buffer = owning->Release();
+          *maybe_owning_memory = argument_buffer;
+          result.AddAliasedIndex(aliased_output->first);
+          return registered_buffer;
+        }
+
+        // for pass through output buffers, it works even user does not donate
+        // the input, as there is no writes.
+        if (aliased_output->second.passthrough) {
+          return registered_buffer;
+        }
+
+        // for must_alias output, not trying to copy parameter buffers if user
+        // does not donate it.
+        return FailedPrecondition(
+            "Must aliased output buffer, but user does not donate it ");
+      }
+
+      if (maybe_owning_memory && maybe_owning_memory->HasOwnership()) {
+        // alias type is may_alias, and user has donated the buffer.
+        VLOG(2) << "Reuse donated buffer for allocation "
+                << allocation.ToString();
+        std::optional<tensorflow::se::OwningDeviceMemory> owning =
+            maybe_owning_memory->Release();
+        se::DeviceMemoryBase argument_buffer = owning->Release();
+        *maybe_owning_memory = argument_buffer;
+        result.AddAliasedIndex(aliased_output->first);
+        return registered_buffer;
+      } else if (!aliased_output->second.passthrough) {
+        // alias type is may_alias, and user does not donate the buffer, create
+        // a copy of the parameter allocation, and aliased output allocation
+        // with it.
+        VLOG(2) << "Reuse copied donated buffer for parameter allocation "
+                << allocation.ToString();
+        if (enable_persistent_output_buffers) {
+          param_copy_info[param_no] = registered_buffer;
+          return se::DeviceMemoryBase{
+              reinterpret_cast<void*>(
+                  BufferAllocations::kExternalAllocationMarker),
+              registered_buffer.size()};
+        } else {
+          StatusOr<se::OwningDeviceMemory> allocated_buffer =
+              memory_allocator->Allocate(device_ordinal,
+                                         registered_buffer.size());
+          if (!allocated_buffer.ok()) {
+            return ResourceExhausted("%s\n%s\n",
+                                     allocated_buffer.status().message(),
+                                     buffer_assignment_->ToVerboseString(
+                                         debug_buffer_assignment_show_max_));
+          }
+          se::DeviceMemoryBase result_buffer = allocated_buffer->Release();
+          CHECK_EQ(registered_buffer.size(), result_buffer.size());
+          run_options->stream()->ThenMemcpyD2D(
+              &result_buffer, registered_buffer, registered_buffer.size());
+          return result_buffer;
+        }
+      }
+    } else if (enable_persistent_input_buffers) {
+      // Enable copying of input buffer for inputs that are not aliased with
+      // output buffer, from experience of training, alised input buffer has
+      // already be stable pointer, so no need to do the copying.
+
+      // TODO(shawnw): checks whether input buffer are with stable pointer
+      // through profiling.
+      param_copy_info[param_no] = registered_buffer;
+      VLOG(2) << "Use persistent input buffer for parameter allocation "
+              << param_no;
+      return se::DeviceMemoryBase{
+          reinterpret_cast<void*>(BufferAllocations::kExternalAllocationMarker),
+          registered_buffer.size()};
+    }
+
+    // Input parameter is not aliased
     return registered_buffer;
   } else if (allocation.is_constant()) {
-    auto it = globals->find(arg_idx);
+    auto it = globals->find(allocation.index());
     if (it == globals->end()) {
       return se::DeviceMemoryBase();
     }
@@ -424,17 +565,28 @@ StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
   } else {
     // Allocate each allocation that might escape, or is the temp buffer.
     CHECK(allocation.maybe_live_out() || allocation.IsPreallocatedTempBuffer());
-    const int64_t buffer_size = allocation.size();
+    const size_t buffer_size = allocation.size();
     se::DeviceMemoryBase buffer_address;
     if (buffer_size > 0) {
-      StatusOr<se::OwningDeviceMemory> buffer =
-          memory_allocator->Allocate(device_ordinal, buffer_size);
-      if (!buffer.ok()) {
-        return ResourceExhausted("%s\n%s\n", buffer.status().message(),
-                                 buffer_assignment_->ToVerboseString(
-                                     debug_buffer_assignment_show_max_));
+      if ((allocation.maybe_live_out() && enable_persistent_output_buffers) ||
+          (allocation.IsPreallocatedTempBuffer() &&
+           enable_persistent_temp_buffers)) {
+        buffer_address = se::DeviceMemoryBase{
+            reinterpret_cast<void*>(
+                BufferAllocations::kExternalAllocationMarker),
+            buffer_size};
+        VLOG(2) << "Use persistent allocating for " << allocation.ToString();
+      } else {
+        StatusOr<se::OwningDeviceMemory> buffer =
+            memory_allocator->Allocate(device_ordinal, buffer_size);
+        if (!buffer.ok()) {
+          return ResourceExhausted("%s\n%s\n", buffer.status().message(),
+                                   buffer_assignment_->ToVerboseString(
+                                       debug_buffer_assignment_show_max_));
+        }
+        VLOG(2) << "Allocating allocations " << allocation.ToString();
+        buffer_address = buffer->Release();
       }
-      buffer_address = buffer->Release();
     }
     return buffer_address;
   }
@@ -452,6 +604,8 @@ static Status CheckAlignment(const BufferAllocation& allocation,
     }
   }();
   if (!buffer.is_null() &&
+      (reinterpret_cast<uintptr_t>(buffer.opaque()) !=
+       BufferAllocations::kExternalAllocationMarker) &&
       reinterpret_cast<uintptr_t>(buffer.opaque()) % expected_alignment != 0) {
     return InternalError(
         "Address of buffer %d must be a multiple of %x, but "
@@ -462,26 +616,88 @@ static Status CheckAlignment(const BufferAllocation& allocation,
 }
 
 StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
-    VariantArguments arguments,
+    VariantArguments& arguments, ExecutionOutput& result,
     const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
-    se::DeviceMemoryAllocator* const memory_allocator, int device_ordinal) {
+    const ServiceExecutableRunOptions* run_options,
+    bool enable_persistent_input_buffers, bool enable_persistent_temp_buffers,
+    bool enable_persistent_output_buffers) {
+
   tsl::profiler::TraceMe hlo_module_activity(
       [&] { return std::string("Build buffer allocations"); },
       tsl::profiler::TraceMeLevel::kInfo);
 
+  se::StreamExecutor* executor = run_options->stream()->parent();
+  auto device_ordinal = executor->device_ordinal();
+  se::DeviceMemoryAllocator* const memory_allocator = run_options->allocator();
+
   absl::Span<const BufferAllocation> allocations = GetAllocations();
-  const int64_t num_buffers = allocations.size();
+  int64_t const num_buffers = allocations.size();
+  const bool enable_persistent_buffer = enable_persistent_input_buffers ||
+                                        enable_persistent_temp_buffers ||
+                                        enable_persistent_output_buffers;
+
   std::vector<se::DeviceMemoryBase> buffers;
-  buffers.reserve(num_buffers);
+  if (enable_persistent_input_buffers) {
+    // with persistent input buffers, parameter buffers are copied to some
+    // persisitent VA range, calculates the reserved buffers size.
+    uint64_t param_size = [&]() -> uint64_t {
+      // ScopedBuffer is never an owned buffer.
+      if (std::holds_alternative<absl::Span<const ShapedBuffer* const>>(
+              arguments)) {
+        return std::get<absl::Span<const ShapedBuffer* const>>(arguments).size();
+      } else {
+        return std::get<absl::Span<ExecutionInput>>(arguments).size();
+      }
+    }();
+    buffers.reserve(num_buffers + param_size);
+  } else {
+    buffers.reserve(num_buffers);
+  }
+
+  ParameterCopyInfo param_copy_info;
   for (int64_t i = 0; i < num_buffers; ++i) {
     const BufferAllocation& allocation = allocations[i];
     TF_ASSIGN_OR_RETURN(
-        buffers.emplace_back(),
-        BufferForAllocation(arguments, globals, allocations[i],
-                            memory_allocator, device_ordinal, i));
-    TF_RETURN_IF_ERROR(CheckAlignment(allocation, buffers.back(), i));
+        se::DeviceMemoryBase buffer,
+        BufferForAllocation(arguments, result, globals, allocation,
+                            run_options, enable_persistent_input_buffers_,
+                            enable_persistent_temp_buffers,
+                            enable_persistent_output_buffers, param_copy_info));
+    buffers.push_back(buffer);
+    TF_RETURN_IF_ERROR(CheckAlignment(allocation, buffer, i));
   }
-  return {{buffers, device_ordinal, memory_allocator}};
+
+  CommandBufferAllocations* persistent_allocations = nullptr;
+  if (enable_persistent_buffer) {
+    // Instantiate persistent allocations, allocation addresses will be
+    // populated after calling the CommandBufferAllocations::Allocate function.
+    if (!persistent_buffer_allocations_map_.contains(executor)) {
+      persistent_buffer_allocations_map_[executor] =
+          std::move(std::make_unique<CommandBufferAllocations>());
+    }
+    persistent_allocations =
+        persistent_buffer_allocations_map_.at(executor).get();
+
+    CHECK(persistent_allocations != nullptr)
+        << "Persistent allocations is null";
+
+    VLOG(2) << "using persistent allocation "
+            << reinterpret_cast<void*>(persistent_allocations);
+
+    // Hanlde the paramter allocations copy due to persistent input buffer
+    // requirement.
+    CommandBufferAllocations::RemappedAllocations remapped_allocation_indexes;
+    for (auto& item : param_copy_info) {
+      // put the original allocation at end of buffer list.
+      buffers.push_back(item.second);
+      remapped_allocation_indexes[item.first] = buffers.size();
+    }
+    persistent_allocations->SetRemappedAllocations(
+        remapped_allocation_indexes);
+  }
+
+  return BufferAllocations{buffers, device_ordinal, memory_allocator,
+                           persistent_allocations};
 }
 
 StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStream(
@@ -540,6 +756,14 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   se::gpu::ScopedActivateExecutorContext activation(gpu_executor);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
+  // If persistent buffers are enabled, the executable cannot execute
+  // concurrently, therefore performance can suffer under contention.
+  bool enable_persistent_buffer = enable_persistent_input_buffers_ ||
+                                  enable_persistent_temp_buffers_ ||
+                                  enable_persistent_output_buffers_;
+  absl::MutexLockMaybe lock(enable_persistent_buffer ? &persistent_buffers_mu_
+                                                     : nullptr);
+
   // Force synchronous execution if the allocator requires it.
   const bool block_host_until_done =
       !memory_allocator->AllowsAsynchronousDeallocation();
@@ -568,13 +792,67 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   auto device_ordinal = executor->device_ordinal();
   ExecutionOutput result(/*on_device_shape=*/output_shape_, memory_allocator,
                          device_ordinal);
+  absl::Span<const BufferAllocation> allocations = GetAllocations();
 
+  // For output buffer that was allocated with stable pointer, the user may not
+  // free it before re-calling the module, this function check whether there are
+  // any persistent output buffer is still alive, if so, we fall back to normal
+  // memory allocator to do the new allocation.
+  TF_ASSIGN_OR_RETURN(
+      const bool has_conflict_persistent_output_buffer, [&] -> StatusOr<bool> {
+        if (!persistent_buffer_allocations_map_.contains(executor)) {
+          return false;
+        }
+        CommandBufferAllocations* persistent_allocations =
+            persistent_buffer_allocations_map_.at(executor).get();
+        bool has_persistent_output_alive = false;
+        for (auto& p : result.MutableResult()->buffers().leaves()) {
+          if (!output_info_.contains(p.first)) {
+            continue;
+          }
+          const OutputInfo& output_info = output_info_.at(p.first);
+          if (persistent_allocations->IsAllocated(
+                  output_info.allocation_index)) {
+            TF_ASSIGN_OR_RETURN(se::DeviceMemoryBase addr,
+                                persistent_allocations->GetDeviceAddress(
+                                    output_info.allocation_index));
+            TF_ASSIGN_OR_RETURN(bool current_allocation_alive,
+                                memory_allocator->IsExternalAllocationAlive(
+                                    device_ordinal, addr));
+            if (current_allocation_alive) {
+              VLOG(2) << module_name_ << " has alive persistent output buffer: "
+                      << allocations[output_info.allocation_index].ToString()
+                      << ", using memory allocator to do the allocations";
+              has_persistent_output_alive = true;
+            }
+          }
+        }
+        return has_persistent_output_alive;
+      }());
+
+  // If enabling persistent allocations and it is the first iteration, then
+  // will instantiate persistent allocations.
   TF_ASSIGN_OR_RETURN(
       BufferAllocations buffer_allocations,
-      GenerateBufferAllocations(arguments, globals, memory_allocator,
-                                device_ordinal));
-  VLOG(2) << buffer_allocations.ToString();
-  std::set<se::DeviceMemoryBase> buffers_in_result;
+      GenerateBufferAllocations(arguments, result, globals, run_options,
+                                enable_persistent_input_buffers_ &&
+                                    !has_conflict_persistent_output_buffer,
+                                enable_persistent_temp_buffers_ &&
+                                    !has_conflict_persistent_output_buffer,
+                                enable_persistent_output_buffers_ &&
+                                    !has_conflict_persistent_output_buffer));
+  VLOG(2) << "Buffer allocations for module " << module_name_
+          << " user input: " << buffer_allocations.ToString();
+  if (enable_persistent_buffer && !has_conflict_persistent_output_buffer) {
+    CHECK(persistent_buffer_allocations_map_.contains(executor))
+        << "Persistent buffer allocation is not constructed yet.";
+    CommandBufferAllocations* persistent_allocations =
+        persistent_buffer_allocations_map_.at(executor).get();
+
+    // Perform persistent memory allocation.
+    TF_RETURN_IF_ERROR(
+        persistent_allocations->Allocate(buffer_allocations, *run_options));
+  }
 
   const bool is_entire_tuple_contents_aliased = [&] {
     for (auto& p : result.MutableResult()->buffers().leaves()) {
@@ -589,109 +867,43 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     return true;
   }();
 
-  absl::Span<const BufferAllocation> allocations = GetAllocations();
+  absl::flat_hash_set<BufferAllocation::Index> buffers_in_result;
   for (auto& p : result.MutableResult()->buffers()) {
     const ShapeIndex& index = p.first;
     if (!output_info_.contains(index)) {
       continue;
     }
     const OutputInfo& output_info = output_info_.at(index);
-    const BufferAllocation* allocation =
-        &allocations[output_info.allocation_index];
     se::DeviceMemoryBase& result_buffer = p.second;
+    result_buffer =
+        buffer_allocations.GetDeviceAddress(output_info.allocation_index);
+    CHECK((reinterpret_cast<uintptr_t>(result_buffer.opaque()) !=
+           BufferAllocations::kExternalAllocationMarker))
+        << "External allocation should have all been allocated.";
+    buffers_in_result.insert(output_info.allocation_index);
 
-    VLOG(4) << "Looking at: allocation " << output_info.allocation_index
-            << " @ index: " << index.ToString();
-
-    if (output_info.alias_config) {
-      MaybeOwningDeviceMemory* maybe_owning_memory =
-          [&]() -> xla::MaybeOwningDeviceMemory* {
-        // ScopedBuffer is never an owned buffer.
-        if (std::holds_alternative<absl::Span<const ShapedBuffer* const>>(
-                arguments)) {
-          return nullptr;
-        } else {
-          auto unowned_execution_input =
-              std::get<absl::Span<ExecutionInput>>(arguments);
-          ExecutionInput& input =
-              unowned_execution_input[allocation->parameter_number()];
-          return input.MutableBuffer(allocation->param_shape_index());
-        }
-      }();
-      if (output_info.alias_config->must_alias() && maybe_owning_memory &&
-          !maybe_owning_memory->HasOwnership()) {
-        return InvalidArgument(
-            "An input was configured to be must-alias at "
-            "compile time but not donated at runtime: allocation %d",
-            output_info.allocation_index);
-      }
-      if (maybe_owning_memory && maybe_owning_memory->HasOwnership()) {
-        std::optional<tensorflow::se::OwningDeviceMemory> owning =
-            maybe_owning_memory->Release();
-        // If the caller passes the ownership of the device memory, reuse it
-        // as the output buffer. It is up to the caller whether or not to
-        // donate a buffer; the aliasing information describes which buffers
-        // may alias, not buffers that must alias.
-        se::DeviceMemoryBase argument_buffer = owning->Release();
-        *maybe_owning_memory = argument_buffer;
-        result_buffer = argument_buffer;
-        // The caller is giving us the
-        // input buffer, but in case of error from the execute call, we should
-        // not be releasing it as it contains valid data (for example, it is a
-        // parameter which the user wants us to alias, in a gradient update
-        // computation). So we store the index into the result in the aliased
-        // vector, which will be fed to the ExecutionOutput, which will use
-        // the indices to drop the addresses from its own ScopedShapedBuffer
-        // result, if the ExecutionOutput is not committed.
-        result.AddAliasedIndex(index);
-      } else if (!output_info.passthrough &&
-                 !ShapeUtil::GetSubshape(output_shape_, index).IsTuple()) {
-        // The guard is above is not to insert copy-protection when aliasing
-        // pass-through params, as we do not need to write into the output
-        // buffer.
-        VLOG(3) << "Using copy-protection: aliasing is specified, but the "
-                   "buffer is not donated; allocating a fresh buffer";
-        int64_t allocation_size =
-            ShapeUtil::ByteSizeOf(ShapeUtil::GetSubshape(output_shape_, index));
-        StatusOr<se::OwningDeviceMemory> allocated_buffer =
-            memory_allocator->Allocate(device_ordinal, allocation_size);
-        if (!allocated_buffer.ok()) {
-          return ResourceExhausted("%s\n%s\n",
-                                   allocated_buffer.status().message(),
-                                   buffer_assignment_->ToVerboseString(
-                                       debug_buffer_assignment_show_max_));
-        }
-        result_buffer = allocated_buffer->Release();
-        se::DeviceMemoryBase& aliased_buffer =
-            buffer_allocations.GetMutableDeviceAddress(
-                output_info.allocation_index);
-        CHECK_EQ(aliased_buffer.size(), result_buffer.size());
-        run_options->stream()->ThenMemcpyD2D(&result_buffer, aliased_buffer,
-                                             aliased_buffer.size());
-        aliased_buffer = result_buffer;
-      }
+    // If the entire tuple contents is aliased, the copy insertion will *not*
+    // materialize a new tuple, so we mark it as aliased as well.
+    if (ShapeUtil::GetSubshape(output_shape_, index).IsTuple() &&
+        is_entire_tuple_contents_aliased) {
+      result.AddAliasedIndex(index);
     }
-
-    if (result_buffer.is_null()) {
-      // The source instruction should have a non-parameter buffer
-      // assigned.
-      result_buffer =
-          buffer_allocations.GetDeviceAddress(output_info.allocation_index);
-
-      // If the entire tuple contents is aliased, the copy insertion will *not*
-      // materialize a new tuple, so we mark it as aliased as well.
-      if (is_entire_tuple_contents_aliased) {
-        result.AddAliasedIndex(index);
-      }
-    }
-    buffers_in_result.insert(result_buffer);
   }
 
   TF_RETURN_IF_ERROR(ExecuteThunksOrXlaRuntime(
       run_options, buffer_allocations, block_host_until_done, gpu_lock));
 
+  // For buffers allocated through command buffer, the free should also
+  // through command buffer.
+  if (enable_persistent_buffer && !has_conflict_persistent_output_buffer) {
+    CommandBufferAllocations* persistent_allocations =
+        persistent_buffer_allocations_map_.at(executor).get();
+    TF_RETURN_IF_ERROR(persistent_allocations->Free(
+        buffer_allocations, buffers_in_result, *run_options));
+  }
+
   TF_RETURN_IF_ERROR(
-      buffer_allocations.TearDown(buffers_in_result, GetAllocations()));
+      buffer_allocations.TearDown(buffers_in_result, allocations));
 
   // Free allocations for arguments.
   if (auto args = std::get_if<absl::Span<ExecutionInput>>(&arguments)) {

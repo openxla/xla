@@ -480,6 +480,18 @@ GpuThunkAotCompilationResult::LoadExecutable(
     return std::string();
   };
 
+  bool enable_persistent_input_buffers =
+      hlo_module->config()
+          .debug_options()
+          .xla_gpu_enable_persistent_input_buffers();
+  bool enable_persistent_temp_buffers =
+      hlo_module->config()
+          .debug_options()
+          .xla_gpu_enable_persistent_temp_buffers();
+  bool enable_persistent_output_buffers =
+      hlo_module->config()
+          .debug_options()
+          .xla_gpu_enable_persistent_output_buffers();
   int64_t debug_buffer_assignment_show_max =
       hlo_module->config()
           .debug_options()
@@ -498,6 +510,9 @@ GpuThunkAotCompilationResult::LoadExecutable(
           /*output_shape=*/std::move(output_shape),
           /*mlir_allocations=*/std::nullopt,
           /*buffer_assignment=*/std::move(buffer_assignment),
+          /*enable_persistent_input_buffers=*/enable_persistent_input_buffers,
+          /*enable_persistent_temp_buffers=*/enable_persistent_temp_buffers,
+          /*enable_persistent_output_buffers=*/enable_persistent_output_buffers,
           /*debug_buffer_assignment_show_max=*/debug_buffer_assignment_show_max,
           /*debug_module=*/std::move(hlo_module),
           /*enable_debug_info_manager=*/true}));
@@ -1845,6 +1860,14 @@ StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
       module->config().debug_options().xla_embed_ir_in_executable();
   int64_t debug_buffer_assignment_show_max =
       module->config().debug_options().xla_debug_buffer_assignment_show_max();
+  bool enable_persistent_input_buffers =
+      module->config()
+          .debug_options()
+          .xla_gpu_enable_persistent_input_buffers();
+  bool enable_persistent_temp_buffers =
+      module->config().debug_options().xla_gpu_enable_persistent_temp_buffers();
+  bool enable_persistent_output_buffers =
+      module->config().debug_options().xla_gpu_enable_persistent_output_buffers();
 
   TF_ASSIGN_OR_RETURN(
       auto gpu_executable,
@@ -1866,6 +1889,9 @@ StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
                : std::move(res.compile_module_results.allocations)),
           /*buffer_assignment=*/
           std::move(res.compile_module_results.buffer_assignment),
+          /*enable_persistent_input_buffers=*/enable_persistent_input_buffers,
+          /*enable_persistent_temp_buffers=*/enable_persistent_temp_buffers,
+          /*enable_persistent_output_buffers=*/enable_persistent_output_buffers,
           /*debug_buffer_assignment_show_max=*/debug_buffer_assignment_show_max,
           /*debug_module=*/options.is_autotuning_compilation
               ? std::unique_ptr<HloModule>()

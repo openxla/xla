@@ -340,6 +340,12 @@ void* GpuCudaMallocAsyncAllocator::AllocateRaw(size_t alignment,
 }
 void GpuCudaMallocAsyncAllocator::DeallocateRaw(void* ptr) {
 #if TF_CUDA_MALLOC_ASYNC_SUPPORTED
+  // Allocation was made by external allocator, removing tracking pointers.
+  if (IsExternalAllocationAlive(ptr)) {
+    FreeExternalAllocation(ptr);
+    return;
+  }
+  
   if (ptr == nullptr) return;
   // The lock is only needed when stats are enabled, but it must be around
   // the cuMemFreeAsync call as well to ensure consistency of the stats update.

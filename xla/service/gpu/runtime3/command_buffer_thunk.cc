@@ -69,8 +69,8 @@ CommandBufferThunk::CommandBufferThunk(CommandBufferCmdSequence commands,
   // In a perfect world higher level framework (JAX, Tensorflow, PyTorch) would
   // be more aggressive with destroying unused executables, however today they
   // all have a pretty large LRU cache for keeping O(1000) XLA executables.
-  EvictCommandBuffers();
-  TrackCommandBuffers(state_);
+  // EvictCommandBuffers();
+  // TrackCommandBuffers(state_);
 }
 
 bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
@@ -89,12 +89,16 @@ bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
       should_update = true;
     }
 
-    if (!recorded_allocs[index].IsSameAs(alloc)) {
+    // For allocate command, it needs to run record function on every
+    // iteration to populate external allocatiosn. 
+    if (!recorded_allocs[index].IsSameAs(alloc) ||
+        allocs->IsExternalAllocation(index)) {
       recorded_allocs[index] = alloc;
       should_update = true;
     }
   }
-
+  VLOG(2) << "Thunk " << reinterpret_cast<void*>(this)
+          << " should_update: " << should_update;
   return should_update;
 }
 
@@ -154,6 +158,9 @@ Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   if (commands_.empty()) return OkStatus();
 
   se::StreamExecutor* executor = params.stream->parent();
+  VLOG(2) << "Running CommandBufferThunk with executor " << reinterpret_cast<void*>(executor);
+  VLOG(2) << "Running CommandBufferThunk with stream "
+          << reinterpret_cast<void*>(params.stream);
   TF_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
                       GetOrCreateCommandBuffer(executor));
 
@@ -166,7 +173,7 @@ Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   if (cmd_buffer->ShouldUpdateCommandBuffer(commands_, record_params)) {
     VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
-            << " by recoding command buffer cmd sequence"
+            << " by recording command buffer cmd sequence"
             << " after " << cmd_buffer->num_executions
             << " executions since last update"
             << "; num_commands=" << commands_.size();

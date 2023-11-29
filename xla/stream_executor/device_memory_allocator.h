@@ -213,6 +213,17 @@ class DeviceMemoryAllocator {
   // TODO(cheshire): Add deprecation notice.
   virtual tsl::Status Deallocate(int device_ordinal, DeviceMemoryBase mem) = 0;
 
+  virtual tsl::Status NotifyExternalAllocate(int device_ordinal,
+                                             DeviceMemoryBase mem) {}
+
+  virtual tsl::Status NotifyExternalFree(int device_ordinal,
+                                         DeviceMemoryBase mem) {}
+
+  virtual tsl::StatusOr<bool> IsExternalAllocationAlive(int device_ordinal,
+                                                       DeviceMemoryBase mem) {
+    return false;
+  }
+
   // Return the platform that the allocator allocates memory on.
   const Platform *platform() const { return platform_; }
 

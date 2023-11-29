@@ -636,7 +636,10 @@ Status AllocateCmd::Record(const RecordParams& params,
                                                           buffer);
 }
 
-CommandBufferCmd::BufferUsageVector AllocateCmd::buffers() { return {}; }
+CommandBufferCmd::BufferUsageVector AllocateCmd::buffers() {
+  return {{BufferAllocation::Slice{&allocation_, 0, allocation_.size()},
+           MemoryAccess::kWrite}};
+}
 
 //===----------------------------------------------------------------------===//
 // FreeCmd
@@ -659,7 +662,10 @@ Status FreeCmd::Record(const RecordParams& params,
       allocation_.index());
 }
 
-CommandBufferCmd::BufferUsageVector FreeCmd::buffers() { return {}; }
+CommandBufferCmd::BufferUsageVector FreeCmd::buffers() {
+  return {{BufferAllocation::Slice{&allocation_, 0, allocation_.size()},
+          MemoryAccess::kWrite}};
+}
 
 //===----------------------------------------------------------------------===//
 // GemmCmd

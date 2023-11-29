@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
 #define XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
 
+#include "absl/container/inlined_vector.h"
 #if TENSORFLOW_USE_ROCM
 
 #define __HIP_DISABLE_CPP_FUNCTIONS__

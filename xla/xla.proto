@@ -491,6 +491,23 @@ message DebugOptions {
   // executed to free space on device.
   int32 xla_gpu_graph_eviction_timeout_seconds = 230;
 
+  // Allocate input buffers once during the first execution of an executable.
+  // Reuse the allocated buffers in subsequent executions. User's input 
+  //buffer will be copied to the allocations on each iteration. 
+  // Executables cannot run concurrently if this is enabled.
+  bool xla_gpu_enable_persistent_input_buffers = 340;
+
+  // Allocate temp buffers once during the first execution of an executable.
+  // Reuse the allocated buffers in subsequent executions. Executables cannot
+  // run concurrently if this is enabled.
+  bool xla_gpu_enable_persistent_temp_buffers = 280;
+
+  // Allocate output buffers once during the first execution of an 
+  // executable. Reuse the allocated buffers in subsequent executions. Executables 
+  // cannot run concurrently if this is enabled. User should make sure that result 
+  // are consumed before re-calling the executable, as output buffer will be overwritten.
+  bool xla_gpu_enable_persistent_output_buffers = 300;
+
   // Size threshold (in megabytes) for the GPU redzone scratch allocator.
   int64 xla_gpu_redzone_scratch_max_megabytes = 167;
 

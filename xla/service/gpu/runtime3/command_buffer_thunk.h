@@ -23,7 +23,6 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/service/gpu/runtime3/command_buffer_allocations.h"
 #include "xla/service/gpu/runtime3/command_buffer_cmd.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status.h"
@@ -42,12 +41,6 @@ class CommandBufferThunk : public Thunk {
   Status Initialize(const InitializeParams& params) override;
   Status ExecuteOnStream(const ExecuteParams& params) override;
 
-  // Return the allocation address that was lazilly allocated inside command
-  // buffer. This API is required when the buffers are allocated inside command
-  // buffer but will be consumed by non-command buffer operations.
-  StatusOr<se::DeviceMemoryBase> GetCommandBufferAllocationAddress(
-      const ExecuteParams& params, int64_t index);
-
  private:
   // Command buffer instantiated on a `se::StreamExecutor` instance, and
   // auxiliary state required for efficient command buffer updates.
@@ -64,14 +57,6 @@ class CommandBufferThunk : public Thunk {
     // guarantee that we do not mutate it concurrently.
     absl::Mutex mutex;
     se::CommandBuffer command_buffer ABSL_GUARDED_BY(mutex);
-
-    // TODO(ezhulenev): We need to move command buffer allocations all the way
-    // up to the GpuExecutable as we can have Allocate and Free commands in
-    // different command buffers. Consider making it a part of
-    // BufferAllocations (as std::unique_ptr<ExternalAllocations> member).
-
-    // Memory allocations performed by a `command_buffer`.
-    CommandBufferAllocations allocations ABSL_GUARDED_BY(mutex);
 
     // Mapping from buffer allocation index to the device memory passed at
     // that index to the last call of `commands_.Record(...)` for
@@ -98,7 +83,7 @@ class CommandBufferThunk : public Thunk {
         command_buffers ABSL_GUARDED_BY(mutex);
   };
 
-  // Returns a command buffer instantiated for `executor` or creates new one.
+// Returns a command buffer instantiated for `executor` or creates new one.
   StatusOr<std::shared_ptr<ExecutorCommandBuffer>> GetOrCreateCommandBuffer(
       se::StreamExecutor* executor);
 

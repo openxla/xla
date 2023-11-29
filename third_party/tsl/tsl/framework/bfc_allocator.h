@@ -107,6 +107,8 @@ class BFCAllocator : public Allocator {
 
   MemoryDump RecordMemoryMap();
 
+void FreeExternalAllocation(void* ptr) override;
+
  private:
   struct Bin;
 

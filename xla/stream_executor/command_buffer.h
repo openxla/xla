@@ -55,6 +55,10 @@ class CommandBuffer {
  public:
   // Builder constructs nested command buffers owned by a parent command buffer.
   using Builder = std::function<tsl::Status(CommandBuffer*)>;
+  struct AllocIndexSize {
+    int64_t index;
+    uint64_t size;
+  };
 
   ~CommandBuffer();
   CommandBuffer(CommandBuffer&&);

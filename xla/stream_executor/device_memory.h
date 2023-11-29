@@ -78,6 +78,11 @@ class DeviceMemoryBase {
   void *opaque() { return opaque_; }
   const void *opaque() const { return opaque_; }
 
+  // This function is called when memory allocation is not ready when the object
+  // is constructed, e.g, the memory allocation node in GPU cuda-graph is
+  // available when the after memory allocation node is added to the graph.
+  void SetOpaque(void *dptr) { opaque_ = dptr; }
+
   // Returns the payload of this memory region.
   uint64_t payload() const { return payload_; }
 
@@ -101,6 +106,12 @@ class DeviceMemoryBase {
 
     return DeviceMemoryBase(
         reinterpret_cast<std::byte *>(opaque_) + offset_bytes, size_bytes);
+  }
+
+  std::string ToString() const {
+    std::string out;
+    absl::StrAppendFormat(&out, "(Addr: %p, ByteSize: %d)", opaque_, size_);
+    return out;
   }
 
  protected:

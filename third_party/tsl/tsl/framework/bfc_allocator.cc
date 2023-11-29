@@ -683,7 +683,16 @@ void BFCAllocator::SplitChunk(BFCAllocator::ChunkHandle h, size_t num_bytes) {
   InsertFreeChunkIntoBin(h_new_chunk);
 }
 
+void BFCAllocator::FreeExternalAllocation(void* ptr) {
+  sub_allocator_->Free(ptr, GetExternalAllocationSize(ptr));
+}
+
 void BFCAllocator::DeallocateRaw(void* ptr) {
+  // Allocation was made by external allocator, removing tracking pointers.
+  if (IsExternalAllocationAlive(ptr)) {
+    FreeExternalAllocation(ptr);
+    return;
+  }
   VLOG(3) << "DeallocateRaw " << Name() << " "
           << (ptr ? RequestedSize(ptr) : 0);
   VLOG(4) << "[mem-debug] DeallocateRaw," << Name() << ","
