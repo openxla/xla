@@ -1891,9 +1891,9 @@ class HloInstructionPatternNumUserImpl {
   int64_t user_num_;
 };
 
-class HloInstructionPatternLeNumUserImpl {
+class HloInstructionPatternAtMostNumUserImpl {
  public:
-  explicit constexpr HloInstructionPatternLeNumUserImpl(
+  explicit constexpr HloInstructionPatternAtMostNumUserImpl(
       int64_t user_num)
       : user_num_(user_num) {}
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
@@ -1907,7 +1907,7 @@ class HloInstructionPatternLeNumUserImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
-    *os << "which has less than or euqal " << user_num_
+    *os << "which has less than or equal " << user_num_
         << " users (but possibly is used multiple times by "
            "same instruction)";
   }
@@ -2475,8 +2475,8 @@ class HloInstructionPattern {
 
   // Modifies the pattern to match if the instruction is used by less than user_num
   // times by other instruction.
-  constexpr auto WithLeNumUser(int64_t user_num) const {
-    return AppendImpl(HloInstructionPatternLeNumUserImpl(user_num));
+  constexpr auto WithAtMostNumUser(int64_t user_num) const {
+    return AppendImpl(HloInstructionPatternAtMostNumUserImpl(user_num));
   }
 
   // Modifies the pattern to match only if the instruction has the given

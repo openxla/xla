@@ -235,8 +235,8 @@ auto GetUnfusedReduceMaxSumSoftmaxPattern(
                   .WithOperand(0, OptionalBitcast(OptionalConvert(
                                       m::Exp(unfused_softmax_max_subpattern))))
                   .WithPredicate(IsReduceSum)
-                  .WithLeNumUser(2)))
-                  .WithLeNumUser(2)));
+                  .WithAtMostNumUser(2)))
+                  .WithAtMostNumUser(2)));
   return unfused_softmax_sum_subpattern;
 }
 
@@ -427,7 +427,7 @@ MatchFwdResult MatchDefaultFwdBmmBmm(MatchFwdResult previous_result,
           .WithOperand(bmm2_operand_position,
                        m::Op(&bmm_1)
                        .WithPredicate(IsBatchedMatmul)
-                       .WithLeNumUser(2));
+                       .WithAtMostNumUser(2));
 
   // If any of bmm1's operands is coming from a forward fMHA call, then return
   // false
@@ -856,7 +856,7 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
                                                   m::Op(&bwd_softmax_input),
                                                   m::Broadcast()).WithOneUse(),
                                               m::Exp(&exp_2, m::Op())).WithOneUse())))).WithOneUse())))),
-          m::Exp(&exp_1, m::Op())).WithLeNumUser(3)));
+          m::Exp(&exp_1, m::Op())).WithAtMostNumUser(3)));
 
   // Backward mask input pattern
   // we already matched this in the fwd. Just make sure the same mask is used in
