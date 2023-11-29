@@ -767,7 +767,7 @@ GpuDriver::GraphAddNode(hipGraphNode_t* node, hipGraph_t graph,
         "Failed to set shared memory size");
   }
 
-  RETURN_IF_ROCM_ERROR(hipGraphExecKernelNodeSetParams(exec, node, &params),
+  RETURN_IF_ROCM_ERROR(wrap::hipGraphExecKernelNodeSetParams(exec, node, &params),
                        "Failed to set HIP graph kernel node params");
 
   return ::tsl::OkStatus();
@@ -865,7 +865,7 @@ static hipMemAllocationType ToHipAllocationType(
   };
 
   RETURN_IF_ROCM_ERROR(
-      hipGraphAddMemAllocNode(node, graph, deps.data(), deps.size(), &params),
+      wrap::hipGraphAddMemAllocNode(node, graph, deps.data(), deps.size(), &params),
       "Failed to add memory allocation node to a CUDA graph");
 
   VLOG(2) << "Add MemAllocNode to a graph " << graph << " size " << size
@@ -879,7 +879,7 @@ static hipMemAllocationType ToHipAllocationType(
   GpuDriver::GraphGetMemAllocNodeParams(GpuGraphNodeHandle node) {
   
   hipMemAllocNodeParams params;
-  RETURN_IF_ROCM_ERROR(hipGraphMemAllocNodeGetParams(node, &params),
+  RETURN_IF_ROCM_ERROR(wrap::hipGraphMemAllocNodeGetParams(node, &params),
                            "Failed to get memory allocation node parameter");
   return std::pair<GpuDevicePtr, uint64_t>{params.dptr, params.bytesize};
 }
@@ -906,7 +906,7 @@ static hipMemAllocationType ToHipAllocationType(
   };
 
   RETURN_IF_ROCM_ERROR(
-      hipGraphAddMemcpyNode(node, graph, deps.data(), deps.size(), &params),
+      wrap::hipGraphAddMemcpyNode(node, graph, deps.data(), deps.size(), &params),
       "Failed to add memcpy d2d node to a HIP graph");
 
   return ::tsl::OkStatus();
@@ -933,7 +933,7 @@ static hipMemAllocationType ToHipAllocationType(
   };
 
   RETURN_IF_ROCM_ERROR(
-      hipGraphExecMemcpyNodeSetParams(exec, node, &params),
+      wrap::hipGraphExecMemcpyNodeSetParams(exec, node, &params),
       "Failed to set memcpy d2d node params");
 
   return ::tsl::OkStatus();
@@ -994,7 +994,7 @@ struct BitPatternToValue {
   };
 
   RETURN_IF_ROCM_ERROR(
-      hipGraphAddMemsetNode(node, graph, deps.data(), deps.size(), &params),
+      wrap::hipGraphAddMemsetNode(node, graph, deps.data(), deps.size(), &params),
       "Failed to add memset node to a CUDA graph");
 
   return ::tsl::OkStatus();
@@ -1022,7 +1022,7 @@ struct BitPatternToValue {
   };
 
   RETURN_IF_ROCM_ERROR(
-      hipGraphExecMemsetNodeSetParams(exec, node, &params),
+      wrap::hipGraphExecMemsetNodeSetParams(exec, node, &params),
       "Failed to set memset node params");
 
   return ::tsl::OkStatus();
