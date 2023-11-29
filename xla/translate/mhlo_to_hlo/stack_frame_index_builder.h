@@ -21,10 +21,11 @@ limitations under the License.
 #include <tuple>
 
 #include "mlir/IR/Location.h"  // from @llvm-project
+#include "xla/hlo/utils/stack_frame_index_builder.h"
 #include "xla/service/hlo.pb.h"
 
 namespace mlir {
-class StackFrameIndexBuilder {
+class MlirToHloStackFrameIndexBuilder {
  public:
   constexpr static int kInvalidIndex = 0;
 
@@ -33,15 +34,7 @@ class StackFrameIndexBuilder {
   int AddCallStackAndGetFirstFrameId(const mlir::Location &root_loc);
 
  private:
-  int AddStackFrameLocation(const mlir::NameLoc &name_location,
-                            int parent_frame_id);
-
-  xla::StackFrameIndexProto indexes_;
-
-  std::map<std::string_view, int> function_name_to_id_;
-  std::map<std::string_view, int> file_name_to_id_;
-  std::map<std::tuple<int, int, int, int>, int> file_location_to_id_;
-  std::map<std::tuple<int, int>, int> frame_to_id_;
+  xla::StackFrameIndexBuilder builder_;
 };
 }  // namespace mlir
 
