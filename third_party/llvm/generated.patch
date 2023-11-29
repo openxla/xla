@@ -1,1 +1,17 @@
 Auto generated patch. Do not edit or delete it, even if empty.
+diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/libc/libc_build_rules.bzl b/utils/bazel/llvm-project-overlay/libc/libc_build_rules.bzl
+--- a/utils/bazel/llvm-project-overlay/libc/libc_build_rules.bzl
++++ b/utils/bazel/llvm-project-overlay/libc/libc_build_rules.bzl
+@@ -47,10 +47,8 @@
+ # A convenience function which should be used to list all libc support libraries.
+ # Any library which does not define a public function should be listed with
+ # libc_support_library.
+-def libc_support_library(name, copts = None, **kwargs):
+-    copts = copts or []
+-    copts = copts + ["-O3", "-fno-builtin", "-fno-lax-vector-conversions"]
+-    _libc_library(name = name, copts = copts, hidden = False, **kwargs)
++def libc_support_library(name, **kwargs):
++    _libc_library(name = name, hidden = False, **kwargs)
+ 
+ def libc_function(
+         name,
