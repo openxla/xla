@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("//xla:xla.bzl", "auto_sharding_deps", "auto_sharding_solver_deps", "xla_cc_binary", "xla_cc_test")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -79,6 +80,7 @@ cc_library(
     name = "auto_sharding_solver_impl",
     srcs = ["auto_sharding_solver_impl.cc"],
     deps = [
+        ":auto_sharding_proto_cc",
         ":auto_sharding_strategy",
         "@com_google_ortools//ortools/linear_solver",
     ],
@@ -88,6 +90,7 @@ cc_library(
     name = "auto_sharding_solver",
     srcs = ["auto_sharding_solver.cc"],
     deps = [
+        ":auto_sharding_proto_cc",
         ":auto_sharding_strategy",
         "//xla:statusor",
         "//xla:util",
@@ -113,6 +116,7 @@ cc_library(
         "auto_sharding_strategy.h",
     ],
     deps = [
+        ":auto_sharding_proto_cc",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
@@ -261,6 +265,11 @@ xla_cc_binary(
     ],
 )
 
+tf_proto_library(
+    name = "auto_sharding_proto",
+    srcs = ["auto_sharding.proto"],
+)
+
 build_test(
     name = "auto_sharding_runner_build_test",
     targets = [
@@ -279,6 +288,7 @@ xla_cc_test(
     deps = [
         ":auto_sharding",
         ":auto_sharding_option",
+        ":auto_sharding_proto_cc",
         ":auto_sharding_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
@@ -301,6 +311,7 @@ xla_cc_test(
         "no_oss",
     ],
     deps = [
+        ":auto_sharding_proto_cc",
         ":auto_sharding_solver",
         ":auto_sharding_strategy",
         "//xla/tests:xla_internal_test_main",
