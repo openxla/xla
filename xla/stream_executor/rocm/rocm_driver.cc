@@ -773,24 +773,6 @@ GpuDriver::GraphAddNode(hipGraphNode_t* node, hipGraph_t graph,
   return ::tsl::OkStatus();
 }
 
-/* static */ tsl::Status GpuDriver::GraphAddMemcpyD2DNode(
-    GpuContext* context, hipGraphNode_t* node, hipGraph_t graph,
-    absl::Span<hipGraphNode_t> deps, hipDeviceptr_t gpu_dst,
-    hipDeviceptr_t gpu_src, uint64_t size) {
-  VLOG(2) << "Add memcpy d2d node to a graph " << graph
-          << "; dst: " << reinterpret_cast<void*>(gpu_dst)
-          << "; src: " << reinterpret_cast<void*>(gpu_src) << "; size: " << size
-          << "; context: " << context->context() << "; deps: " << deps.size();
-
-  RETURN_IF_ROCM_ERROR(
-      wrap::hipGraphAddMemcpyNode1D(
-          node, graph, deps.data(), deps.size(),
-          reinterpret_cast<void*>(gpu_dst), reinterpret_cast<void*>(gpu_src),
-          static_cast<size_t>(size), hipMemcpyDeviceToDevice),
-      "Failed to add memcpy d2d node to a HIP graph");
-  return tsl::OkStatus();
-}
-
 /* static */ tsl::Status GpuDriver::GraphAddChildNode(
     hipGraphNode_t* node, hipGraph_t graph, absl::Span<hipGraphNode_t> deps,
     hipGraph_t child) {
@@ -814,6 +796,18 @@ GpuDriver::GraphAddNode(hipGraphNode_t* node, hipGraph_t graph,
       "Failed to set ROCm graph child node params");
 
   return tsl::OkStatus();
+}
+
+static hipMemAccessFlags ToHipMemAccessFlags(
+    GpuDriver::MemAccessFlags access_flags) {
+  switch (access_flags) {
+    case GpuDriver::MemAccessFlags::kNone:
+      return hipMemAccessFlagsProtNone;
+    case GpuDriver::MemAccessFlags::kRead:
+      return hipMemAccessFlagsProtRead;
+    case GpuDriver::MemAccessFlags::kReadWrite:
+      return hipMemAccessFlagsProtReadWrite;
+  }
 }
 
 static hipMemLocationType ToHipLocationType(
@@ -841,54 +835,34 @@ static hipMemAllocationType ToHipAllocationType(
 }
 
 /*static*/ tsl::Status GpuDriver::GraphAddMemAllocNode(
-    CUgraphNode* node, CUgraph graph, absl::Span<CUgraphNode> deps,
-    GpuDriver::MemAccessFlags access_flags,
-    GpuDriver::MemLocationType location_type, int device_id,
-    GpuDriver::MemAllocationType allocation_type, uint64_t size,
-    CUdeviceptr* d_ptr, uint64_t max_pool_size) {
+    GpuGraphNodeHandle* node, GpuGraphHandle graph,
+      absl::Span<GpuGraphNodeHandle> deps, MemAccessFlags access_flags,
+      MemLocationType location_type, int device_id,
+      MemAllocationType allocation_type, uint64_t size, GpuDevicePtr* d_ptr,
+      uint64_t max_pool_size ) {
   
-  CUmemLocation mem_location;
-  mem_location.id = device_id;
-  mem_location.type = ToCudaLocationType(location_type);
-
-  CUmemAccessDesc mem_desc;
-  mem_desc.flags = ToCudaMemAccessFlags(access_flags);
-  mem_desc.location = mem_location;
-
-  CUmemPoolProps mem_pool_props;
-  mem_pool_props.allocType = ToCudaAllocationType(allocation_type);
-  mem_pool_props.handleTypes = CU_MEM_HANDLE_TYPE_NONE;
-  mem_pool_props.location = mem_location;
-#if CUDA_VERSION >= 12000
-  mem_pool_props.maxSize = max_pool_size;
-#endif  // CUDA_VERSION >= 12000
-
-  params.accessDescCount = 1;
-  params.bytesize = size;
-  params.accessDescs = &mem_desc;
-  params.poolProps = mem_pool_props;
+  hipMemLocation mem_loc = {
+    .type = ToHipLocationType(location_type),
+    .id = device_id,
+  };
 
   hipMemPoolProps props{};
   props.allocType = ToHipAllocationType(allocation_type);
   props.handleTypes = hipMemHandleTypeNone;
-  props.location = {
-    .type = ToHipLocationType(location_type),
-    .id = device_id
+  props.location = mem_loc;
+
+  hipMemAccessDesc mem_desc = {
+    .location = mem_loc,
+    .flags = ToHipMemAccessFlags(access_flags),
   };
   
-
   hipMemAllocNodeParams params{
-    .poolProps = {
-      .allocType = 
-      .handleTypes = 
-      .location = 
-    },
-    .accessDescs = {},
+    .poolProps = props,
+    .accessDescs = &mem_desc,
     .accessDescCount = 1,
     .bytesize = size,
     .dptr = nullptr,
   };
-
 
   RETURN_IF_ROCM_ERROR(
       hipGraphAddMemAllocNode(node, graph, deps.data(), deps.size(), &params),
@@ -901,38 +875,39 @@ static hipMemAllocationType ToHipAllocationType(
   return ::tsl::OkStatus();
 }
 
-/*static*/ tsl::StatusOr<std::pair<CUdeviceptr, uint64_t>>
-GpuDriver::GraphGetMemAllocNodeParams(CUgraphNode node) {
-  CUDA_MEM_ALLOC_NODE_PARAMS params;
-  RETURN_IF_CUDA_RES_ERROR(cuGraphMemAllocNodeGetParams(node, &params),
+/*static*/ tsl::StatusOr<std::pair<GpuDevicePtr, uint64_t>>
+  GpuDriver::GraphGetMemAllocNodeParams(GpuGraphNodeHandle node) {
+  
+  hipMemAllocNodeParams params;
+  RETURN_IF_ROCM_ERROR(hipGraphMemAllocNodeGetParams(node, &params),
                            "Failed to get memory allocation node parameter");
-  return std::pair<CUdeviceptr, uint64_t>{params.dptr, params.bytesize};
+  return std::pair<GpuDevicePtr, uint64_t>{params.dptr, params.bytesize};
 }
 
-/* static */ tsl::Status GpuDriver::GraphAddMemcpyD2DNode(
-    GpuContext* context, CUgraphNode* node, CUgraph graph,
-    absl::Span<CUgraphNode> deps, CUdeviceptr gpu_dst, CUdeviceptr gpu_src,
-    uint64_t size) {
+/* static */ tsl::Status GpuDriver::GraphAddMemcpyD2DNode(GpuContext* context,
+      GpuGraphNodeHandle* node, GpuGraphHandle graph,
+      absl::Span<GpuGraphNodeHandle> deps, GpuDevicePtr gpu_dst,
+      GpuDevicePtr gpu_src, uint64_t size) {
   VLOG(2) << "Add memcpy d2d node to a graph " << graph
           << "; dst: " << reinterpret_cast<void*>(gpu_dst)
           << "; src: " << reinterpret_cast<void*>(gpu_src) << "; size: " << size
           << "; context: " << context->context() << "; deps: " << deps.size();
 
-  CUDA_MEMCPY3D params;
-  memset(&params, 0, sizeof(params));
+  hipMemcpy3DParms params{
+    .srcArray = {},
+    .srcPos = {},
+    .srcPtr = { .ptr = gpu_src },
+    .dstArray = {},
+    .dstPos = {},
+    .dstPtr = { .ptr = gpu_dst },
+    .extent = hipExtent{ 
+        .width = size, .height = 1, .depth = 1 },
+    .kind = hipMemcpyDeviceToDevice
+  };
 
-  params.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-  params.srcDevice = gpu_src;
-  params.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-  params.dstDevice = gpu_dst;
-  params.WidthInBytes = size;
-  params.Height = 1;
-  params.Depth = 1;
-
-  RETURN_IF_CUDA_RES_ERROR(
-      cuGraphAddMemcpyNode(node, graph, deps.data(), deps.size(), &params,
-                           context->context()),
-      "Failed to add memcpy d2d node to a CUDA graph");
+  RETURN_IF_ROCM_ERROR(
+      hipGraphAddMemcpyNode(node, graph, deps.data(), deps.size(), &params),
+      "Failed to add memcpy d2d node to a HIP graph");
 
   return ::tsl::OkStatus();
 }
@@ -945,15 +920,17 @@ GpuDriver::GraphGetMemAllocNodeParams(CUgraphNode node) {
           << "; src: " << reinterpret_cast<void*>(gpu_src) << "; size: " << size
           << "; context: " << context->context();
 
-  hipMemcpy3DParms params{};
-
-  params.kind = hipMemcpyDeviceToDevice;
-  params.srcArray = static_cast< hipArray_t >(gpu_src);
-  params.dstArray = static_cast< hipArray_t >(gpu_dst);
-  params.extent = hipExtent{ 
-                    .width = size,
-                    .height = 1,
-                    .depth = 1 };
+  hipMemcpy3DParms params{
+    .srcArray = {},
+    .srcPos = {},
+    .srcPtr = { .ptr = gpu_src },
+    .dstArray = {},
+    .dstPos = {},
+    .dstPtr = { .ptr = gpu_dst },
+    .extent = hipExtent{ 
+        .width = size, .height = 1, .depth = 1 },
+    .kind = hipMemcpyDeviceToDevice
+  };
 
   RETURN_IF_ROCM_ERROR(
       hipGraphExecMemcpyNodeSetParams(exec, node, &params),
@@ -995,60 +972,57 @@ struct BitPatternToValue {
 }  // namespace
 
 /* static */ tsl::Status GpuDriver::GraphAddMemsetNode(
-    GpuContext* context, CUgraphNode* node, GpuGraphHandle graph,
-    absl::Span<CUgraphNode> deps, CUdeviceptr dst,
-    std::variant<uint8_t, uint16_t, uint32_t> bit_pattern,
-    uint64_t num_elements) {
+    GpuContext* context, GpuGraphNodeHandle* node, GpuGraphHandle graph,
+      absl::Span<GpuGraphNodeHandle> deps, GpuDevicePtr dst,
+      std::variant<uint8_t, uint16_t, uint32_t> bit_pattern,
+      uint64_t num_elements) {
   VLOG(2) << "Add memset node to a graph " << graph
           << "; dst: " << reinterpret_cast<void*>(dst)
           << "; bit_pattern: " << std::visit(BitPatternToString(), bit_pattern)
           << "; num_elements: " << num_elements
           << "; context: " << context->context() << "; deps: " << deps.size();
 
-  CUDA_MEMSET_NODE_PARAMS params;
-  memset(&params, 0, sizeof(params));
-
   auto [value, element_size] = std::visit(BitPatternToValue(), bit_pattern);
 
-  params.dst = dst;
-  params.elementSize = element_size;
-  params.height = 1;
-  params.pitch = 0;  // unused if height is 1
-  params.value = value;
-  params.width = num_elements;
+  hipMemsetParams params{
+    .dst = dst,
+    .elementSize = element_size,
+    .height = 1,
+    .pitch = 0, // unused if height is 1
+    .value = value,
+    .width = num_elements,
+  };
 
-  RETURN_IF_CUDA_RES_ERROR(
-      cuGraphAddMemsetNode(node, graph, deps.data(), deps.size(), &params,
-                           context->context()),
+  RETURN_IF_ROCM_ERROR(
+      hipGraphAddMemsetNode(node, graph, deps.data(), deps.size(), &params),
       "Failed to add memset node to a CUDA graph");
 
   return ::tsl::OkStatus();
 }
 
 /* static */ tsl::Status GpuDriver::GraphExecMemsetNodeSetParams(
-    GpuContext* context, CUgraphExec exec, CUgraphNode node, CUdeviceptr dst,
-    std::variant<uint8_t, uint16_t, uint32_t> bit_pattern,
-    uint64_t num_elements) {
+    GpuContext* context, GpuGraphExecHandle exec, GpuGraphNodeHandle node,
+      GpuDevicePtr dst, std::variant<uint8_t, uint16_t, uint32_t> bit_pattern,
+      uint64_t num_elements) {
   VLOG(2) << "Set memset node params " << node << " in graph executable "
           << exec << "; dst: " << reinterpret_cast<void*>(dst)
           << "; bit_pattern: " << std::visit(BitPatternToString(), bit_pattern)
           << "; num_elements: " << num_elements
           << "; context: " << context->context();
 
-  CUDA_MEMSET_NODE_PARAMS params;
-  memset(&params, 0, sizeof(params));
-
   auto [value, element_size] = std::visit(BitPatternToValue(), bit_pattern);
 
-  params.dst = dst;
-  params.elementSize = element_size;
-  params.height = 1;
-  params.pitch = 0;  // unused if height is 1
-  params.value = value;
-  params.width = num_elements;
+  hipMemsetParams params{
+    .dst = dst,
+    .elementSize = element_size,
+    .height = 1,
+    .pitch = 0, // unused if height is 1
+    .value = value,
+    .width = num_elements,
+  };
 
-  RETURN_IF_CUDA_RES_ERROR(
-      cuGraphExecMemsetNodeSetParams(exec, node, &params, context->context()),
+  RETURN_IF_ROCM_ERROR(
+      hipGraphExecMemsetNodeSetParams(exec, node, &params),
       "Failed to set memset node params");
 
   return ::tsl::OkStatus();
