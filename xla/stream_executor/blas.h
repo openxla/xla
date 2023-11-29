@@ -61,6 +61,8 @@ namespace stream_executor {
 
 namespace gpu {
 struct BlasLt;
+struct MatrixDescriptor;
+struct OutputMatrixDescriptor;
 }
 
 class Stream;
@@ -310,8 +312,10 @@ class BlasSupport {
       const NumericOptions &numeric_options, blas::CallContext context) = 0;
 
   // Gets a list of supported algorithms for DoBlasGemmWithAlgorithm.
-  virtual bool GetBlasGemmAlgorithms(
-      Stream *stream, std::vector<AlgorithmType> *out_algorithms) = 0;
+  virtual bool GetBlasGemmAlgorithms(Stream* stream,
+      const gpu::MatrixDescriptor& a, const gpu::MatrixDescriptor& b,
+      gpu::OutputMatrixDescriptor *c, const void *alpha, const void *beta, 
+      std::vector<blas::AlgorithmType> *out_algorithms) = 0;
 
   // Like DoBlasGemm, but accepts an algorithm and an compute type.
   //
@@ -563,9 +567,10 @@ class BlasSupport {
       const void *beta, DeviceMemoryBase *c, int ldc,                          \
       const NumericOptions &numeric_options, blas::CallContext context)        \
       override;                                                                \
-  bool GetBlasGemmAlgorithms(Stream *stream,                                   \
-                             std::vector<blas::AlgorithmType> *out_algorithms) \
-      override;                                                                \
+  bool GetBlasGemmAlgorithms(Stream* stream,                                   \
+      const gpu::MatrixDescriptor& a, const gpu::MatrixDescriptor& b,          \
+      gpu::OutputMatrixDescriptor *c, const void *alpha, const void *beta,     \
+      std::vector<blas::AlgorithmType> *out_algorithms) override;              \
   absl::Status DoBlasGemmWithAlgorithm(                                        \
       Stream *stream, blas::Transpose transa, blas::Transpose transb,          \
       uint64_t m, uint64 n, uint64 k, const void *alpha,                       \

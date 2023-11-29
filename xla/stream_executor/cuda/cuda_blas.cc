@@ -832,8 +832,10 @@ absl::Status CUDABlas::DoBlasGemmStridedBatchedWithAlgorithm(
   return absl::OkStatus();
 }
 
-bool CUDABlas::GetBlasGemmAlgorithms(
-    Stream *stream, std::vector<blas::AlgorithmType> *out_algorithms) {
+bool CUDABlas::GetBlasGemmAlgorithms(Stream* stream, 
+  const gpu::MatrixDescriptor&, const gpu::MatrixDescriptor&,
+  gpu::OutputMatrixDescriptor *, const void *, const void *,
+  std::vector<blas::AlgorithmType> *out_algorithms) {
   // cublasGemmAlgo_t (and the function that accepts this type, cublasGemmEx)
   // were first introduced in CUDA 8.
   //

@@ -281,7 +281,9 @@ class StreamExecutor {
 
   // Get the list of supported algorithms for BLAS gemm.
   bool GetBlasGemmAlgorithms(Stream* stream,
-                             std::vector<blas::AlgorithmType>* out_algorithms);
+      const gpu::MatrixDescriptor& a, const gpu::MatrixDescriptor& b,
+      gpu::OutputMatrixDescriptor *c, const void *alpha, const void *beta, 
+      std::vector<blas::AlgorithmType> *out_algorithms);
 
   // Returns the device ordinal that this StreamExecutor was initialized with.
   // Meaningless before initialization.

@@ -493,7 +493,7 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
 }
 
 absl::StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
-    se::DeviceMemoryBase lhs_buf, se::DeviceMemoryBase rhs_buf,
+    se::DeviceMemoryBase lhs_buf, se::DeviceMemoryBase rhs_buf, 
     se::DeviceMemoryBase out_buf) const {
   auto create_matrix_desc = [](const se::gpu::MatrixLayout& layout,
                                se::DeviceMemoryBase data)
@@ -507,7 +507,7 @@ absl::StatusOr<GemmConfig::DescriptorsTuple> GemmConfig::GetMatrixDescriptors(
              ? se::blas::Transpose::kNoTranspose
              : se::blas::Transpose::kTranspose)};
   };
-  // make a local copy to prevent modification of layouts,
+  // TODO: make a local copy to prevent modification of layouts,
   // but maybe we can modify them once instead during creation ?
   se::gpu::MatrixLayout lhs = lhs_layout, rhs = rhs_layout, out = output_layout;
 
@@ -595,14 +595,11 @@ absl::Status DoGemm(const se::gpu::MatrixDescriptor& lhs,
   se::blas::BlasSupport::ScopedWorkspace scoped_workspace(
       stream->parent()->AsBlas(), &workspace);
 
-// TODO: enable DoGemmWithAlgorithm for ROCm !
-#if GOOGLE_CUDA
   if (algorithm) {
     return DoGemmWithAlgorithm<Scale, Input, Output>(
         lhs, rhs, output, workspace, alpha, beta, stream, *algorithm,
         compute_precision, numeric_options, profile_result, context);
   }
-#endif
 
   if (output.batch_size != 1) {
     return stream->ThenBlasGemmStridedBatched(
@@ -631,8 +628,7 @@ absl::Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
                      se::blas::ProfileResult* profile_result) {
   VLOG(2) << "Executing a GemmThunk";
 
-  TF_ASSIGN_OR_RETURN(
-      GemmConfig::DescriptorsTuple desc,
+  TF_ASSIGN_OR_RETURN(GemmConfig::DescriptorsTuple desc, 
       config.GetMatrixDescriptors(lhs_buffer, rhs_buffer, output_buffer));
 
   se::NumericOptions numeric_options{

@@ -54,13 +54,17 @@ using xla::runtime::StridedMemrefView;
 absl::Status DoRuntimeAutotuning(se::Stream* stream, GemmConfig* config,
                                  se::DeviceMemoryBase lhs_buffer,
                                  se::DeviceMemoryBase rhs_buffer,
-                                 se::DeviceMemoryBase output_buffer,
+                                 se::DeviceMemoryBase out_buffer,
                                  const Shape& output_shape, double beta,
                                  const DebugOptions* debug_options,
                                  NonAtomicallyUpgradeableRWLock* gpu_lock) {
   VLOG(3) << "Running GEMM runtime autotuning";
   std::vector<se::blas::AlgorithmType> algorithms;
-  stream->parent()->GetBlasGemmAlgorithms(stream, &algorithms);
+  TF_ASSIGN_OR_RETURN(GemmConfig::DescriptorsTuple desc,
+      config->GetMatrixDescriptors(lhs_buffer, rhs_buffer, out_buffer));
+
+  stream->parent()->GetBlasGemmAlgorithms(stream, desc.lhs, desc.rhs, 
+              &desc.output, &config->alpha, &config->beta, &algorithms);
   const bool deterministic_ops = debug_options->xla_gpu_deterministic_ops();
 
   AutotuneConfig autotune_config{
@@ -88,7 +92,7 @@ absl::Status DoRuntimeAutotuning(se::Stream* stream, GemmConfig* config,
       AutotuneResult best_algorithm,
       GetBestBlasAlgorithm(
           stream, buffer_allocator, /*gemm_str=*/std::nullopt, autotune_config,
-          lhs_buffer, rhs_buffer, output_buffer, algorithms, output_shape,
+          lhs_buffer, rhs_buffer, out_buffer, algorithms, output_shape,
           HloModuleConfig(), beta,
           [&](const se::blas::AlgorithmType& algorithm)
               -> absl::StatusOr<se::blas::ProfileResult> {
@@ -99,7 +103,7 @@ absl::Status DoRuntimeAutotuning(se::Stream* stream, GemmConfig* config,
             // always return true, and the actual success-ness is returned in
             // ProfileResult::is_valid.
             TF_RETURN_IF_ERROR(
-                RunGemm(*config, lhs_buffer, rhs_buffer, output_buffer,
+                RunGemm(*config, lhs_buffer, rhs_buffer, out_buffer,
                         se::DeviceMemoryBase(nullptr, 0), deterministic_ops,
                         stream, algorithm, &profile_result));
             return std::move(profile_result);
