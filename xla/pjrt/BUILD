@@ -372,10 +372,7 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = [
-        "//xla/stream_executor",
-        "//xla/stream_executor/gpu:gpu_init",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/monitoring:counter",
         "@tsl//tsl/lib/monitoring:gauge",
