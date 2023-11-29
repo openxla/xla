@@ -675,6 +675,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_fuel", setter_for_xla_fuel, /*default_value_for_display=*/"",
       "Sets compiler fuel, useful for bisecting bugs in passes. Format "
       "--xla_fuel=PASS1=NUM1,PASS2=NUM2,..."));
+  flag_list->push_back(
+      tsl::Flag("xla_enable_dumping",
+                bool_setter_for(&DebugOptions::set_xla_enable_dumping),
+                debug_options->xla_enable_dumping(),
+                "Control whether any kind of dumping is enabled. Overrides "
+                "--xla_dump_* if they are also set."));
   flag_list->push_back(tsl::Flag(
       "xla_dump_to", string_setter_for(&DebugOptions::set_xla_dump_to),
       debug_options->xla_dump_to(),
