@@ -32,7 +32,6 @@ struct CublasPaddingRequirement {
 };
 
 struct HipblasPaddingRequirement {
-  // std::string_view gpu_arch;
   PrimitiveType data_type;
   int multiple_of;
 };

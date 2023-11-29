@@ -61,6 +61,9 @@ namespace gpu {
 
 namespace {
 
+template<class... Ts> struct Overload : Ts... { using Ts::operator()...; };
+template<class... Ts> Overload(Ts...) -> Overload<Ts...>;
+
 using triton_fusion::CombineRequirements;
 using triton_fusion::DimensionOrder;
 using triton_fusion::DimOrderMap;
@@ -683,12 +686,14 @@ FusionDecision CanTritonHandleGEMM(const HloDotInstruction& dot,
       case F32:
         return true;
       case BF16:
-        if (auto pcuda = std::get_if<se::CudaComputeCapability>(&gpu_version); pcuda) {
-          return pcuda->IsAtLeast(stream_executor::CudaComputeCapability::AMPERE);
-        } 
-        else if (auto procm = std::get_if<se::RocmComputeCapability>(&gpu_version); procm) {
-          return true; // TODO check rocm support!
-        }
+        return std::visit(Overload{
+          [](const se::CudaComputeCapability& cc) {
+            return cc.IsAtLeast(stream_executor::CudaComputeCapability::AMPERE);
+          },
+          [](const se::RocmComputeCapability&) {
+            return true; // TODO check rocm support!
+          }
+        }, gpu_version);
       default:
         return false;
     }

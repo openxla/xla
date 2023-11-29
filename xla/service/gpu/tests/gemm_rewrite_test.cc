@@ -44,6 +44,9 @@ namespace gpu {
 
 namespace {
 
+template<class... Ts> struct Overload : Ts... { using Ts::operator()...; };
+template<class... Ts> Overload(Ts...) -> Overload<Ts...>;
+
 namespace m = ::xla::match;
 
 class GemmRewriteTest : public GpuCodegenTest {
@@ -71,12 +74,14 @@ class GemmRewriteTest : public GpuCodegenTest {
   };
   // switch based on architecture only
   bool CudaOrRocmCheck(Switch cuda_set, Switch rocm_set) {
-    const auto& gcomp = GpuComputeComp();            
-    if(auto pcuda = std::get_if< se::CudaComputeCapability >(&gcomp); pcuda) {
-      return cuda_set == Switch::False ? false : true;
-    } else {
-      return rocm_set == Switch::False ? false : true;
-    }
+    return std::visit(Overload{
+      [cuda_set](const se::CudaComputeCapability&) {
+        return cuda_set == Switch::False ? false : true;
+      },
+      [rocm_set](const se::RocmComputeCapability&) {
+        return rocm_set == Switch::False ? false : true;
+      }
+    }, GpuComputeComp());
   }
   // major version check for CUDA and true/false for rocm
   bool CudaOrRocmCheck(int cuda_major, Switch rocm_set) {
@@ -84,25 +89,28 @@ class GemmRewriteTest : public GpuCodegenTest {
   }
   // full version check for CUDA and true/false for rocm
   bool CudaOrRocmCheck(int cuda_major, int cuda_minor, Switch rocm_set) {
-    return CudaOrRocmCheck( 
-          [cuda_major, cuda_minor](se::CudaComputeCapability cuda) {
-            return cuda.IsAtLeast(cuda_major, cuda_minor);
-          },
-          [rocm_set](se::RocmComputeCapability) {
-            return rocm_set == Switch::False ? false : true;
-          });
+    return std::visit(Overload{
+        [cuda_major, cuda_minor](const se::CudaComputeCapability& cc) {
+          return cc.IsAtLeast(cuda_major, cuda_minor);
+        },
+        [rocm_set](const se::RocmComputeCapability&) {
+          return rocm_set == Switch::False ? false : true;
+        }, 
+      }, GpuComputeComp());
   }
   // most generic check: passes if NULL function is specified
   bool CudaOrRocmCheck(
-          absl::AnyInvocable<bool(se::CudaComputeCapability)> cuda_fun,
-          absl::AnyInvocable<bool(se::RocmComputeCapability)> rocm_fun) {
-    const auto& gcomp = GpuComputeComp();            
-    if(auto pcuda = std::get_if< se::CudaComputeCapability >(&gcomp); pcuda) {
-      return (cuda_fun ? cuda_fun(*pcuda) : true); 
-    } else {
-      auto rocm = std::get< se::RocmComputeCapability >(gcomp);
-      return (rocm_fun ? rocm_fun(rocm) : true); 
-    }
+          absl::AnyInvocable<bool(const se::CudaComputeCapability&)> cuda_fun,
+          absl::AnyInvocable<bool(const se::RocmComputeCapability&)> rocm_fun) {
+
+    return std::visit(Overload{
+        [&cuda_fun](const se::CudaComputeCapability& cc) {
+          return (cuda_fun ? cuda_fun(cc) : true); 
+        },
+        [&rocm_fun](const se::RocmComputeCapability& cc) {
+          return (rocm_fun ? rocm_fun(cc) : true); 
+        }
+      }, GpuComputeComp());
   }
 
   DebugOptions GetDebugOptionsForTest() override {

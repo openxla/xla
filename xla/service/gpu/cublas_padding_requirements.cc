@@ -26,24 +26,31 @@ namespace gpu {
 
 namespace {
 
-bool DimensionRequiresPadding(const int64_t size, const PrimitiveType data_type,
-                              const se::GpuComputeCapability cc) {
+template<class... Ts> struct Overload : Ts... { using Ts::operator()...; };
+template<class... Ts> Overload(Ts...) -> Overload<Ts...>;
 
-  if (auto pcc = std::get_if<se::CudaComputeCapability>(&cc); pcc) {                                
-    for (const auto& req : CublasPaddingRequirements) {
-      if (pcc->IsAtLeast(req.min_compute_capability) &&
-          data_type == req.data_type && size % req.multiple_of != 0) {
-        return true;
+bool DimensionRequiresPadding(const int64_t size, const PrimitiveType data_type,
+                              const se::GpuComputeCapability& gpu_cc) {
+
+  return std::visit(Overload{
+      [&](const se::CudaComputeCapability& cc) {
+        for (const auto& req : CublasPaddingRequirements) {
+          if (cc.IsAtLeast(req.min_compute_capability) &&
+            data_type == req.data_type && size % req.multiple_of != 0) {
+            return true;
+          }  
+        }
+        return false;
+      },
+      [&](const se::RocmComputeCapability& cc) {
+        for (const auto& req : HipblasPaddingRequirements) {
+          if (data_type == req.data_type && size % req.multiple_of != 0) {
+            return true;
+          }
+        }
+        return false; 
       }
-    }
-  } else if (auto pcc = std::get_if<se::RocmComputeCapability>(&cc); pcc) {         
-    for (const auto& req : HipblasPaddingRequirements) {
-      if (data_type == req.data_type && size % req.multiple_of != 0) {
-        return true;
-      }
-    } // for
-  }
-  return false;
+    }, gpu_cc);
 }
 
 bool ShapeRequiresPadding(const Shape& shape,
