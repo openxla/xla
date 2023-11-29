@@ -340,13 +340,16 @@ bool StreamExecutor::GetRnnAlgorithms(
   return dnn_support->GetRnnAlgorithms(out_algorithms);
 }
 
-bool StreamExecutor::GetBlasGemmAlgorithms(
-    Stream* stream, std::vector<blas::AlgorithmType>* out_algorithms) {
+bool StreamExecutor::GetBlasGemmAlgorithms(Stream* stream, 
+     const gpu::MatrixDescriptor& a, const gpu::MatrixDescriptor& b,
+     gpu::MatrixOutDescriptor *c, const void *alpha, const void *beta, 
+     std::vector<blas::AlgorithmType> *out_algorithms) {
   blas::BlasSupport* blas_support = AsBlas();
   if (!blas_support) {
     return false;
   }
-  return blas_support->GetBlasGemmAlgorithms(stream, out_algorithms);
+  return blas_support->GetBlasGemmAlgorithms(stream, a, b, c, 
+     alpha, beta, out_algorithms);
 }
 
 tsl::StatusOr<std::unique_ptr<dnn::RnnDescriptor>>

@@ -44,13 +44,6 @@ namespace gpu {
 
 namespace {
 
-template <class... Ts>
-struct Overload : Ts... {
-  using Ts::operator()...;
-};
-template <class... Ts>
-Overload(Ts...) -> Overload<Ts...>;
-
 namespace m = ::xla::match;
 
 class GemmRewriteTest : public GpuCodegenTest {
@@ -63,11 +56,15 @@ class GemmRewriteTest : public GpuCodegenTest {
     return device_desc().gpu_compute_capability();
   }
   se::GpuComputeCapability CudaHopperOrRocm() {
-#if GOOGLE_CUDA
-    return se::CudaComputeCapability{se::CudaComputeCapability::HOPPER, 0};
-#elif TENSORFLOW_USE_ROCM
-    return device_desc().rocm_compute_capability();
-#endif
+    return std::visit(
+        se::VariantVisitor{[](const se::CudaComputeCapability&) {
+          return se::GpuComputeCapability{
+            se::CudaComputeCapability{se::CudaComputeCapability::HOPPER, 0}};
+        },
+        [](const se::RocmComputeCapability& rocm) {
+          return se::GpuComputeCapability{rocm};
+        }}, 
+      GpuComputeComp());
   }
 
   enum class Switch : uint32_t {
@@ -77,11 +74,11 @@ class GemmRewriteTest : public GpuCodegenTest {
   // switch based on architecture only
   bool CudaOrRocmCheck(Switch cuda_set, Switch rocm_set) {
     return std::visit(
-        Overload{[cuda_set](const se::CudaComputeCapability&) {
-                   return cuda_set == Switch::False ? false : true;
+        se::VariantVisitor{[cuda_set](const se::CudaComputeCapability&) {
+                   return cuda_set == Switch::True;
                  },
                  [rocm_set](const se::RocmComputeCapability&) {
-                   return rocm_set == Switch::False ? false : true;
+                   return rocm_set == Switch::True;
                  }},
         GpuComputeComp());
   }
@@ -92,12 +89,12 @@ class GemmRewriteTest : public GpuCodegenTest {
   // full version check for CUDA and true/false for rocm
   bool CudaOrRocmCheck(int cuda_major, int cuda_minor, Switch rocm_set) {
     return std::visit(
-        Overload{
+        se::VariantVisitor{
             [cuda_major, cuda_minor](const se::CudaComputeCapability& cc) {
               return cc.IsAtLeast(cuda_major, cuda_minor);
             },
             [rocm_set](const se::RocmComputeCapability&) {
-              return rocm_set == Switch::False ? false : true;
+              return rocm_set == Switch::True;
             },
         },
         GpuComputeComp());
@@ -107,7 +104,7 @@ class GemmRewriteTest : public GpuCodegenTest {
       absl::AnyInvocable<bool(const se::CudaComputeCapability&)> cuda_fun,
       absl::AnyInvocable<bool(const se::RocmComputeCapability&)> rocm_fun) {
     return std::visit(
-        Overload{[&cuda_fun](const se::CudaComputeCapability& cc) {
+        se::VariantVisitor{[&cuda_fun](const se::CudaComputeCapability& cc) {
                    return (cuda_fun ? cuda_fun(cc) : true);
                  },
                  [&rocm_fun](const se::RocmComputeCapability& cc) {
@@ -126,10 +123,10 @@ class GemmRewriteTest : public GpuCodegenTest {
 
   bool SkipGpuBlasLtTest() {
     return CudaOrRocmCheck(
-        [](se::CudaComputeCapability) {  // never skip gpublas-lt tests for CUDA
+        [](const se::CudaComputeCapability&) {  // never skip gpublas-lt tests for CUDA
           return false;
         },
-        [this](se::RocmComputeCapability rocm) {
+        [this](const se::RocmComputeCapability& rocm) {
           bool blaslt = GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
           return (blaslt && !rocm.has_hipblaslt());
         });
@@ -984,9 +981,6 @@ ENTRY bf16gemm {
 }
 
 TEST_P(ParameterizedGemmRewriteTest, Int8Gemm) {
-  if (CudaOrRocmCheck(Switch::False, Switch::True)) {
-    GTEST_SKIP() << "DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
-  }
 
   const char* hlo_text = R"(
 HloModule int8gemm
@@ -1043,10 +1037,6 @@ ENTRY main.4 {
 }
 
 TEST_P(ParameterizedGemmRewriteTest, Int8GemmNoAlphaRewrite) {
-  if (CudaOrRocmCheck(Switch::False, Switch::True)) {
-    GTEST_SKIP() << "DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
-  }
-
   const char* hlo_text = R"(
 HloModule int8gemm
 
@@ -1082,9 +1072,6 @@ ENTRY int8gemm {
 }
 
 TEST_P(ParameterizedGemmRewriteTest, Int8GemmNoBetaRewrite) {
-  if (CudaOrRocmCheck(Switch::False, Switch::True)) {
-    GTEST_SKIP() << "DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
-  }
   const char* hlo_text = R"(
 HloModule int8gemm
 
@@ -1898,10 +1885,6 @@ ENTRY test {
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 // Test gemm matrix bias add fusion with mix type
 TEST_F(LegacyCublasGemmRewriteTest, MatrixBiasMixType) {
-  if (CudaOrRocmCheck(Switch::False, Switch::True)) {
-    GTEST_SKIP()
-        << "TODO: DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
-  }
   std::vector<std::tuple<absl::string_view, absl::string_view>>
       type_combinations = {
           {"f16", "f32"},
@@ -1940,10 +1923,6 @@ ENTRY test {
 
 // Test batch gemm matrix bias add fusion with mix type
 TEST_F(LegacyCublasGemmRewriteTest, MatrixBiasMixTypeBatched) {
-  if (CudaOrRocmCheck(Switch::False, Switch::True)) {
-    GTEST_SKIP()
-        << "TODO: DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
-  }
   std::vector<std::tuple<absl::string_view, absl::string_view>>
       type_combinations = {
           {"f16", "f32"},
