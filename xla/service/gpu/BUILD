@@ -1128,6 +1128,7 @@ cc_library(
     hdrs = ["reduction_utils.h"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
+        ":ir_emission_utils",
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
