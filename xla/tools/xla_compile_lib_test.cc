@@ -79,14 +79,16 @@ class XlaCompileLibTest : public HloTestBase {
 };
 
 TEST_F(XlaCompileLibTest, DISABLED_ON_GPU(CompilesForCpu)) {
+  CompilationResult result;
   EXPECT_THAT(
-      CompileExecutable(std::move(module_), "cpu", std::nullopt, std::nullopt),
+      CompileExecutable(std::move(module_), "cpu", std::nullopt, result),
       IsOkAndHolds(Not(IsEmpty())));
 }
 
 TEST_F(XlaCompileLibTest, DISABLED_ON_CPU(CompilesForGpuWithDevice)) {
+  CompilationResult result;
   EXPECT_THAT(
-      CompileExecutable(std::move(module_), "gpu", std::nullopt, std::nullopt),
+      CompileExecutable(std::move(module_), "gpu", std::nullopt, result),
       IsOkAndHolds(Not(IsEmpty())));
 }
 
@@ -97,8 +99,9 @@ TEST_F(XlaCompileLibTest, DISABLED_ON_CPU(CompilesForGpuWithoutDevice)) {
   stream_executor::GpuTargetConfigProto target_config;
   TF_ASSERT_OK(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,
                                   &target_config));
+  CompilationResult result;
   EXPECT_THAT(
-      CompileExecutable(std::move(module_), "gpu", std::nullopt, std::nullopt),
+      CompileExecutable(std::move(module_), "gpu", std::nullopt, result),
       IsOkAndHolds(Not(IsEmpty())));
 }
 
@@ -112,7 +115,8 @@ TEST_F(XlaCompileLibTest,
 }
 
 TEST_F(XlaCompileLibTest, DISABLED_ON_GPU(ErrorsOnUnexpectedPlatform)) {
-  EXPECT_THAT(CompileExecutable(nullptr, "tpu", std::nullopt, std::nullopt),
+  CompilationResult result;
+  EXPECT_THAT(CompileExecutable(nullptr, "tpu", std::nullopt, result),
               StatusIs(tsl::error::UNIMPLEMENTED));
 }
 
