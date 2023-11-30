@@ -100,7 +100,7 @@ static StatusOr<std::string> CompileGpuExecutable(
       gpu_compiler.RunHloPasses(std::move(hlo_module), stream_executor,
                                 compile_options));
 
-  *result->mutable_hlo_module() = module_after_opt->ToProto();
+  *result.mutable_hlo_module() = module_after_opt->ToProto();
   if (aot) {
     auto module_group =
         std::make_unique<HloModuleGroup>(std::move(module_after_opt));
