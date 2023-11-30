@@ -15,23 +15,17 @@ limitations under the License.
 
 #include "xla/tools/xla_compile_lib.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include "google/protobuf/duration.pb.h"
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/platform_util.h"
-#include "xla/service/xla_compile_result.pb.h"
-#include "xla/stream_executor/device_description.pb.h"
-#include "xla/tests/hlo_test_base.h"
-#include "xla/tests/test_macros.h"
-#include "xla/util.h"
+#include "google/protobuf/duration.pb.h"
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/env_time.h"
@@ -40,6 +34,13 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 #include "tsl/protobuf/error_codes.pb.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/platform_util.h"
+#include "xla/service/xla_compile_result.pb.h"
+#include "xla/stream_executor/device_description.pb.h"
+#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/test_macros.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace {
@@ -78,13 +79,15 @@ class XlaCompileLibTest : public HloTestBase {
 };
 
 TEST_F(XlaCompileLibTest, DISABLED_ON_GPU(CompilesForCpu)) {
-  EXPECT_THAT(CompileExecutable(std::move(module_), "cpu", std::nullopt),
-              IsOkAndHolds(Not(IsEmpty())));
+  EXPECT_THAT(
+      CompileExecutable(std::move(module_), "cpu", std::nullopt, std::nullopt),
+      IsOkAndHolds(Not(IsEmpty())));
 }
 
 TEST_F(XlaCompileLibTest, DISABLED_ON_CPU(CompilesForGpuWithDevice)) {
-  EXPECT_THAT(CompileExecutable(std::move(module_), "gpu", std::nullopt),
-              IsOkAndHolds(Not(IsEmpty())));
+  EXPECT_THAT(
+      CompileExecutable(std::move(module_), "gpu", std::nullopt, std::nullopt),
+      IsOkAndHolds(Not(IsEmpty())));
 }
 
 TEST_F(XlaCompileLibTest, DISABLED_ON_CPU(CompilesForGpuWithoutDevice)) {
@@ -94,12 +97,22 @@ TEST_F(XlaCompileLibTest, DISABLED_ON_CPU(CompilesForGpuWithoutDevice)) {
   stream_executor::GpuTargetConfigProto target_config;
   TF_ASSERT_OK(tsl::ReadTextProto(tsl::Env::Default(), target_config_path,
                                   &target_config));
-  EXPECT_THAT(CompileExecutable(std::move(module_), "gpu", std::nullopt),
-              IsOkAndHolds(Not(IsEmpty())));
+  EXPECT_THAT(
+      CompileExecutable(std::move(module_), "gpu", std::nullopt, std::nullopt),
+      IsOkAndHolds(Not(IsEmpty())));
+}
+
+TEST_F(XlaCompileLibTest,
+       DISABLED_ON_CPU(ReturnsOptimizedModuleWhenRequested)) {
+  CompilationResult result;
+  EXPECT_THAT(
+      CompileExecutable(std::move(module_), "gpu", std::nullopt, result),
+      IsOkAndHolds(Not(IsEmpty())));
+  EXPECT_TRUE(result.has_hlo_module()) << result.DebugString();
 }
 
 TEST_F(XlaCompileLibTest, DISABLED_ON_GPU(ErrorsOnUnexpectedPlatform)) {
-  EXPECT_THAT(CompileExecutable(nullptr, "tpu", std::nullopt),
+  EXPECT_THAT(CompileExecutable(nullptr, "tpu", std::nullopt, std::nullopt),
               StatusIs(tsl::error::UNIMPLEMENTED));
 }
 

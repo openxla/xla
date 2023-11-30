@@ -22,11 +22,16 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/duration.pb.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "google/protobuf/duration.pb.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/env_time.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/service/compiler.h"
@@ -36,11 +41,6 @@ limitations under the License.
 #include "xla/service/xla_compile_result.pb.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/env_time.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/service/gpu/executable.pb.h"
@@ -67,7 +67,8 @@ static StatusOr<std::string> AotCompileCpuExecutable(
 
 static StatusOr<std::string> CompileGpuExecutable(
     std::unique_ptr<HloModule> hlo_module,
-    std::optional<Compiler::TargetConfig> target_config) {
+    std::optional<Compiler::TargetConfig> target_config,
+    std::optional<CompilationResult> result) {
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   const bool aot = target_config.has_value();
 
@@ -99,6 +100,9 @@ static StatusOr<std::string> CompileGpuExecutable(
       gpu_compiler.RunHloPasses(std::move(hlo_module), stream_executor,
                                 compile_options));
 
+  if (result.has_value()) {
+    *result.mutable_hlo_module() = module_after_opt->ToProto();
+  }
   if (aot) {
     auto module_group =
         std::make_unique<HloModuleGroup>(std::move(module_after_opt));

@@ -21,24 +21,26 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/xla_compile_result.pb.h"
 #include "xla/util.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
 // Compiles the provided module for the given platform, either "cpu" or "gpu".
 // When compiling for GPU, if the target config is provided, the compilation
 // will be AOT. If it is not provided, an attached GPU will be used. When
-// compiling for CPU, the compilation will always be AOT.
+// compiling for CPU, the compilation will always be AOT. If a result is
+// provided, the post-optimization module will be stored in it.
 //
 // This is the expected entry point to the compilation functionality.
 StatusOr<std::string> CompileExecutable(
     std::unique_ptr<HloModule> hlo_module, absl::string_view platform,
-    std::optional<Compiler::TargetConfig> target_config);
+    std::optional<Compiler::TargetConfig> target_config,
+    CompilationResult& result);
 
 // Merges the measured duration into compilation_result and writes
 // compilation_result to result_output_file in the wire format.
