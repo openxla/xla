@@ -155,7 +155,7 @@ bool CheckCanonical(HloDotInstruction* dot) {
 }  // namespace
 
 static std::vector<HloDotInstruction*> GetRelevantDots(
-    const se::GpuComputeCapability gpu_compute_capability,
+    const se::GpuComputeCapability& gpu_compute_capability,
     HloComputation* comp, PrimitiveType datatype) {
   std::vector<HloDotInstruction*> gemms;
 

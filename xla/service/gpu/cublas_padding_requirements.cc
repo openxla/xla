@@ -54,7 +54,7 @@ bool DimensionRequiresPadding(const int64_t size, const PrimitiveType data_type,
 }
 
 bool ShapeRequiresPadding(const Shape& shape,
-                          const se::GpuComputeCapability cc) {
+                          const se::GpuComputeCapability& cc) {
   // Since dots are canonicalized before padding only the last two dimensions
   // of each operand represent non-batch dimensions and may need padding.
   return DimensionRequiresPadding(shape.dimensions(shape.rank() - 1),
@@ -66,7 +66,7 @@ bool ShapeRequiresPadding(const Shape& shape,
 }  // namespace
 
 bool CublasRequiresPadding(const HloDotInstruction& dot,
-                           const se::GpuComputeCapability cc) {
+                           const se::GpuComputeCapability& cc) {
   return ShapeRequiresPadding(dot.operand(0)->shape(), cc) ||
          ShapeRequiresPadding(dot.operand(1)->shape(), cc);
 }

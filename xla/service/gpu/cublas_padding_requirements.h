@@ -48,7 +48,7 @@ constexpr std::array<HipblasPaddingRequirement, 2> HipblasPaddingRequirements{
 
 // Tell if either of the operands of the dot requires padding.
 bool CublasRequiresPadding(const HloDotInstruction& dot,
-                           se::GpuComputeCapability cc);
+                           const se::GpuComputeCapability& cc);
 
 }  // namespace gpu
 }  // namespace xla
