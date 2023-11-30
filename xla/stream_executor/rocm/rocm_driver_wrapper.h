@@ -111,7 +111,7 @@ namespace wrap {
   __macro(hipGraphCreate)                           \
   __macro(hipGraphDebugDotPrint)                    \
   __macro(hipGraphDestroy)                          \
-  __macro(hipGraphExecChildGraphNodeSetParams)      \  
+  __macro(hipGraphExecChildGraphNodeSetParams)      \
   __macro(hipGraphExecDestroy)                      \
   __macro(hipGraphExecKernelNodeSetParams)          \
   __macro(hipGraphExecMemcpyNodeSetParams)          \
