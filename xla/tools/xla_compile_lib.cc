@@ -101,7 +101,7 @@ static StatusOr<std::string> CompileGpuExecutable(
                                 compile_options));
 
   if (result.has_value()) {
-    *result.mutable_hlo_module() = module_after_opt->ToProto();
+    *result->mutable_hlo_module() = module_after_opt->ToProto();
   }
   if (aot) {
     auto module_group =
@@ -131,11 +131,12 @@ static StatusOr<std::string> CompileGpuExecutable(
 
 StatusOr<std::string> CompileExecutable(
     std::unique_ptr<HloModule> hlo_module, absl::string_view platform,
-    std::optional<Compiler::TargetConfig> target_config) {
+    std::optional<Compiler::TargetConfig> target_config,
+    CompilationResult& result) {
   if (platform == "cpu") {
     return AotCompileCpuExecutable(std::move(hlo_module));
   } else if (platform == "gpu") {
-    return CompileGpuExecutable(std::move(hlo_module), target_config);
+    return CompileGpuExecutable(std::move(hlo_module), target_config, result);
   }
 
   return absl::UnimplementedError(
