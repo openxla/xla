@@ -20,28 +20,57 @@ limitations under the License.
 #include <string_view>
 #include <tuple>
 
+#include "absl/container/flat_hash_map.h"
 #include "mlir/IR/Location.h"  // from @llvm-project
 #include "xla/service/hlo.pb.h"
 
 namespace mlir {
-class StackFrameIndexBuilder {
+class BaseStackFrameIndexBuilder {
  public:
   constexpr static int kInvalidIndex = 0;
 
   xla::StackFrameIndexProto Build() const;
 
-  int AddCallStackAndGetFirstFrameId(const mlir::Location &root_loc);
+  // Returns the new stack frame index in the indexes_ proto
+  // To add a full call stack, the result of one call to this function should be
+  // the parent_frame_id of the next call.
+  // Use parent_frame_id = StackFrameIndexBuilder::kInvalidIndex for the root
+  // of the stack.
+  int AddStackFrameAndReturnId(std::string file_name, int line_number,
+                               std::string function_name, int column_number,
+                               int parent_frame_id);
 
  private:
-  int AddStackFrameLocation(const mlir::NameLoc &name_location,
-                            int parent_frame_id);
+  int FindOrAddFileName(std::string filename);
+  int FindOrAddFunctionName(std::string function_name);
+  int FindOrAddFileLocation(
+      const xla::StackFrameIndexProto::FileLocation& file_location);
+  int FindOrAddStackFrame(const xla::StackFrameIndexProto::StackFrame& frame);
 
   xla::StackFrameIndexProto indexes_;
 
   std::map<std::string_view, int> function_name_to_id_;
   std::map<std::string_view, int> file_name_to_id_;
-  std::map<std::tuple<int, int, int, int>, int> file_location_to_id_;
-  std::map<std::tuple<int, int>, int> frame_to_id_;
+
+  // Equivalent to the FileLocation proto
+  using HashableFileLocation = std::tuple<int, int, int, int>;
+  // Equivalent to the StackFrame proto
+  using HashableStackFrame = std::tuple<int, int>;
+
+  absl::flat_hash_map<HashableFileLocation, int> file_location_to_id_;
+  absl::flat_hash_map<HashableStackFrame, int> frame_to_id_;
+};
+
+class StackFrameIndexBuilder {
+ public:
+  int AddCallStackAndGetFirstFrameId(const mlir::Location& root_loc);
+  xla::StackFrameIndexProto Build() const;
+
+ private:
+  int AddStackFrameLocation(const mlir::NameLoc& name_location,
+                            int parent_frame_id);
+
+  BaseStackFrameIndexBuilder builder_;
 };
 }  // namespace mlir
 
