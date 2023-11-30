@@ -111,9 +111,10 @@ TEST_P(TopkTest, TopKFloat) {
   std::vector<T> got(k);
   ASSERT_TRUE(stream.BlockHostUntilDone().ok());
   for (int i = 0; i < batch_size; i++) {
-    stream.ThenMemcpy(got.data(),
-                      executor->GetSubBuffer<T>(&output_values, k * i, k),
-                      k * sizeof(T));
+    stream.ThenMemcpy(
+        got.data(),
+        se::DeviceMemory<T>::GetSlice<T>(output_values, k * i, k).value(),
+        k * sizeof(T));
     std::vector<T> slice(source.data() + n * i, source.data() + n * (i + 1));
     std::sort(slice.begin(), slice.end(), std::greater<T>());
     slice.resize(k);
@@ -153,7 +154,7 @@ TEST_P(TopkTest, TopKPackedNegative) {
   ASSERT_TRUE(stream.BlockHostUntilDone().ok());
   for (int i = 0; i < batch_size; i++) {
     stream.ThenMemcpy(got.data(),
-                      executor->GetSubBuffer<T>(&output_values, k * i, k),
+                      se::DeviceMemory<T>::GetSlice<T>(output_values, k * i, k),
                       k * sizeof(T));
     std::vector<T> slice(source.data() + n * i, source.data() + n * (i + 1));
     std::sort(slice.begin(), slice.end(), std::greater<T>());

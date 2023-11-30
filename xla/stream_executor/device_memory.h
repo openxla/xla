@@ -29,6 +29,8 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 
+#include "absl/status/statusor.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/platform/port.h"
 
 namespace stream_executor {
@@ -89,6 +91,15 @@ class DeviceMemoryBase {
     return opaque() == other.opaque() && size() == other.size();
   }
 
+  // Allocates a memory region (slice) inside another allocated memory region.
+  static DeviceMemoryBase GetSlice(DeviceMemoryBase &parent,
+                                   uint64_t offset_bytes, uint64_t size_bytes) {
+    // offset and size are in bytes, so char* works as the pointer type.
+    return DeviceMemoryBase(
+        reinterpret_cast<std::byte *>(parent.opaque()) + offset_bytes,
+        size_bytes);
+  }
+
  protected:
   friend class StreamExecutor;
 
@@ -139,11 +150,32 @@ class DeviceMemory final : public DeviceMemoryBase {
   // Returns whether this is a single-element allocation.
   bool IsScalar() const { return ElementCount() == 1; }
 
-  // Create a typed area of DeviceMemory with a given opaque pointer and the
+  // Creates a typed area of DeviceMemory with a given opaque pointer and the
   // quantity of bytes in the allocation. This function is broken out to
   // distinguish bytes from an element count.
   static DeviceMemory<ElemT> MakeFromByteSize(void *opaque, uint64_t bytes) {
     return DeviceMemory<ElemT>(opaque, bytes);
+  }
+
+  // Allocates a memory region (slice) inside another allocated memory region.
+  // Offset and size are specified in terms of ElemT elements.
+  // Warning: Do not free a parent memory region before its slices; this may
+  // cause use-after-free issues (the specific behavior is not consistent across
+  // platforms).
+  //  - Note: OpenCL uses refcounting to manage memory lifetimes, so use of a
+  //    slice after parent deallocation is expected to be safe. This will
+  //    render your code non-platform-portable, however.
+  template <typename T>
+  static absl::StatusOr<DeviceMemory<T>> GetSlice(DeviceMemory<T> &parent,
+                                                  uint64_t element_offset,
+                                                  uint64_t element_count) {
+    TF_RET_CHECK(element_offset + element_count <= parent.ElementCount())
+        << "requested slice allocation (offset + size) is greater "
+        << "than parent allocation size: (" << element_offset << " + "
+        << element_count << ") vs. (" << parent.ElementCount() << ")";
+
+    return DeviceMemory<T>(DeviceMemoryBase::GetSlice(
+        parent, sizeof(T) * element_offset, sizeof(T) * element_count));
   }
 
   // Resets the DeviceMemory data, in MakeFromByteSize fashion.

@@ -123,8 +123,9 @@ Status GpuTransferManager::ReadDynamicShapes(se::Stream* stream,
         }
 
         auto buffer_8 = se::DeviceMemory<uint8_t>(buffer);
-        auto metadata_buffer =
-            stream->parent()->GetSubBuffer(&buffer_8, offset, metadata_size);
+        TF_ASSIGN_OR_RETURN(auto metadata_buffer,
+                            se::DeviceMemory<uint8_t>::GetSlice<uint8_t>(
+                                buffer_8, offset, metadata_size));
         copies.push_back(std::make_pair(metadata_buffer, &device_sub_shape));
 
         return OkStatus();

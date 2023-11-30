@@ -134,6 +134,8 @@ cc_library(
     ],
     deps = STREAM_EXECUTOR_DEPENDENCIES + [
         ":stream_executor_pimpl",
+        "//xla:status_macros",
+        "@com_google_absl//absl/status:statusor",
     ] + if_static([
         ":stream_executor_impl",
         "@com_google_protobuf//:protobuf",  # indirectly-used by dnn.h
@@ -176,7 +178,11 @@ cc_library(
 cc_library(
     name = "device_memory",
     hdrs = ["device_memory.h"],
-    deps = ["//xla/stream_executor/platform"],
+    deps = [
+        "//xla:status_macros",
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/status:statusor",
+    ],
 )
 
 # TODO(ezhulenev): Merge this target into `stream_executor`.
@@ -377,7 +383,10 @@ cc_library(
     visibility = [":internal"],
     deps = STREAM_EXECUTOR_DEPENDENCIES + if_static([
         "@com_google_protobuf//:protobuf",  # indirectly-used by dnn.h
-    ]),
+    ]) + [
+        "//xla:status_macros",
+        "@com_google_absl//absl/status:statusor",
+    ],
 )
 
 cc_library(
