@@ -59,9 +59,10 @@ cc_library(
     srcs = ["stack_frame_index_builder.cc"],
     hdrs = ["stack_frame_index_builder.h"],
     deps = [
+        "//xla/hlo/utils:stack_frame_index_builder",
         "//xla/service:hlo_proto_cc",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
 

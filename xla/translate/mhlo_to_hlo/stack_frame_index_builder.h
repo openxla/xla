@@ -16,33 +16,21 @@ limitations under the License.
 #ifndef XLA_TRANSLATE_MHLO_TO_HLO_STACK_FRAME_INDEX_BUILDER_H_
 #define XLA_TRANSLATE_MHLO_TO_HLO_STACK_FRAME_INDEX_BUILDER_H_
 
-#include <map>
-#include <string_view>
-#include <tuple>
-
 #include "mlir/IR/Location.h"  // from @llvm-project
+#include "xla/hlo/utils/stack_frame_index_builder.h"
 #include "xla/service/hlo.pb.h"
 
 namespace mlir {
+
 class StackFrameIndexBuilder {
  public:
-  constexpr static int kInvalidIndex = 0;
-
+  int AddCallStackAndGetFirstFrameId(const mlir::Location& root_loc);
   xla::StackFrameIndexProto Build() const;
 
-  int AddCallStackAndGetFirstFrameId(const mlir::Location &root_loc);
-
  private:
-  int AddStackFrameLocation(const mlir::NameLoc &name_location,
-                            int parent_frame_id);
-
-  xla::StackFrameIndexProto indexes_;
-
-  std::map<std::string_view, int> function_name_to_id_;
-  std::map<std::string_view, int> file_name_to_id_;
-  std::map<std::tuple<int, int, int, int>, int> file_location_to_id_;
-  std::map<std::tuple<int, int>, int> frame_to_id_;
+  xla::StackFrameIndexBuilder builder_;
 };
+
 }  // namespace mlir
 
 #endif  // XLA_TRANSLATE_MHLO_TO_HLO_STACK_FRAME_INDEX_BUILDER_H_
