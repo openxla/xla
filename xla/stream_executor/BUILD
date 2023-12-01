@@ -176,7 +176,10 @@ cc_library(
 cc_library(
     name = "device_memory",
     hdrs = ["device_memory.h"],
-    deps = ["//xla/stream_executor/platform"],
+    deps = [
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/log:check",
+    ],
 )
 
 # TODO(ezhulenev): Merge this target into `stream_executor`.
