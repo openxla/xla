@@ -79,6 +79,7 @@ cc_library(
 #         ":custom_fusion",
 #         ":custom_fusion_pattern",
 #         ":custom_kernel",
+#         ":cutlass_gemm",
 #         ":cutlass_gemm_custom_kernel",
 #         "@com_google_absl//absl/status",
 #         "//xla:shape_util",
@@ -102,8 +103,12 @@ cc_library(
 #         ":custom_fusion_pattern",
 #         ":cutlass_gemm_fusion",
 #         "@com_google_absl//absl/strings",
+#         "//xla:array",
+#         "//xla:array2d",
+#         "//xla:array3d",
 #         "//xla:debug_options_flags",
 #         "//xla:error_spec",
+#         "//xla:literal_util",
 #         "//xla/service/gpu:custom_fusion_rewriter",
 #         "//xla/tests:hlo_test_base",
 #         "@tsl//tsl/platform:test",
@@ -122,9 +127,10 @@ cc_library(
 #     visibility = ["//visibility:private"],
 #     deps = [
 #         ":custom_kernel",
+#         ":cutlass_gemm",
+#         ":cutlass_gemm_kernel",
 #         ":cutlass_gemm_kernels",
 #         ":cutlass_gemm_kernels_header",
-#         ":cutlass_gemm_universal",
 #         "@com_google_absl//absl/status",
 #         "@com_google_absl//absl/strings",
 #         "//third_party/gpus/cutlass",
@@ -158,11 +164,17 @@ cc_library(
 # # CUTLASS GemmUniversal-base kernels <-> StreamExecutor adaptor
 # #===--------------------------------------------------------------------------------------------===#
 #
+# cc_library(
+#     name = "cutlass_gemm",
+#     hdrs = ["cutlass_gemm.h"],
+# )
+#
 # cuda_library(
-#     name = "cutlass_gemm_universal",
-#     hdrs = ["cutlass_gemm_universal.cu.h"],
+#     name = "cutlass_gemm_kernel",
+#     hdrs = ["cutlass_gemm_kernel.cu.h"],
 #     visibility = ["//visibility:private"],
 #     deps = [
+#         ":cutlass_gemm",
 #         "@com_google_absl//absl/status",
 #         "@com_google_absl//absl/strings",
 #         "//third_party/gpus/cutlass",
@@ -188,7 +200,10 @@ cc_library(
 #     name = "cutlass_gemm_kernels_header",
 #     hdrs = ["cutlass_gemm_kernels.cu.h"],
 #     visibility = ["//visibility:private"],
-#     deps = ["//third_party/gpus/cutlass"],
+#     deps = [
+#         ":cutlass_gemm",
+#         "//third_party/gpus/cutlass",
+#     ],
 # )
 #
 # cuda_library(
