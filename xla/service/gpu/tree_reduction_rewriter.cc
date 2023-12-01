@@ -46,13 +46,6 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
       : gpu_version_(gpu_version) {}
 
   Status HandleReduce(HloInstruction *hlo) override {
-    if (IsMinMaxReduction(hlo)) {
-      // TODO(cheshire): Also enable for integers.
-      VLOG(1) << "Not performing tree expansion on min/max-reduction: "
-              << hlo->ToString() << " since min/max operations are associative";
-      return OkStatus();
-    }
-
     if (!IsReductionFromOrToContiguousDimensions(*hlo)) {
       return OkStatus();
     }
@@ -60,16 +53,6 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
  private:
-  bool IsMinMaxReduction(HloInstruction *hlo) {
-    HloComputation *called = hlo->called_computations()[0];
-    if (std::optional<ReductionKind> reduction_kind =
-            MatchReductionComputation(called)) {
-      return reduction_kind == ReductionKind::MAX ||
-             reduction_kind == ReductionKind::MIN;
-    }
-    return false;
-  }
-
   Status RewriteReduction(HloInstruction *hlo) {
     ReductionDimensions reduction_dimensions =
         GetReductionKindAndContiguousComponents(*hlo);
