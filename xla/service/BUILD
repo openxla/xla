@@ -1082,6 +1082,7 @@ cc_library(
     name = "service",
     srcs = ["service.cc"],
     hdrs = ["service.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":allocation_tracker",
         ":backend",
@@ -1128,6 +1129,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
     alwayslink = 1,
 )
@@ -4948,6 +4950,7 @@ cc_library(
     hdrs = [
         "hlo_pass_pipeline.h",
     ],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":compilation_stats",
         ":dump",
@@ -4966,6 +4969,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
