@@ -165,7 +165,7 @@ class HloComputation {
                                    std::unique_ptr<HloInstruction> instruction);
 
   // Remove the param_no'th parameter from the computation.
-  // Note this is only applicatable to the computation for the fusion
+  // Note this is only applicable to the computation for the fusion
   // instruction.
   Status RemoveParameter(int64_t param_no);
 
@@ -215,7 +215,7 @@ class HloComputation {
   // removed instruction before its deallocation. If ignore_control_dependencies
   // is set to true, if will remove the unused operands even when they have
   // control dependencies, and transitively pass the control dependencies from
-  // the predecessors to the succesors of the removed instructions, so that the
+  // the predecessors to the successors of the removed instructions, so that the
   // logical exeuction order of the remaining unremoved instructions are
   // preserved.
   Status RemoveInstructionAndUnusedOperands(
@@ -343,6 +343,11 @@ class HloComputation {
   using ChannelDependencies =
       absl::flat_hash_map<const HloInstruction*,
                           absl::InlinedVector<HloInstruction*, 1>>;
+
+  // TODO: Create InlinedVector versions of MakeInstructionPostOrder() to
+  // further reduce the number of heap allocations.
+  // Currently, there are over 300 callers of MakeInstructionPostOrder(), so
+  // changing the existing signatures in-place will be a challenge.
 
   // Compute and return a post-order of the instructions in the computation. In
   // this order, definitions of values always appear before their uses.
@@ -821,13 +826,13 @@ class HloComputation {
       HloInstruction* root, const ChannelDependencies& channel_dependencies,
       absl::flat_hash_map<HloInstruction*, VisitState>& visited,
       std::vector<HloInstruction*>& post_order,
-      std::vector<HloInstruction*>* dfs_stack_scratch) const;
+      absl::InlinedVector<HloInstruction*, 8>* dfs_stack_scratch) const;
 
   void ForEachInstructionPostOrderImpl(
       absl::FunctionRef<void(HloInstruction*)> func, HloInstruction* root,
       const ChannelDependencies& channel_dependencies,
       absl::flat_hash_map<HloInstruction*, VisitState>& visited,
-      std::vector<HloInstruction*>* dfs_stack_scratch) const;
+      absl::InlinedVector<HloInstruction*, 8>* dfs_stack_scratch) const;
 
   Status RemoveUnusedParametersImpl(bool allow_non_fusion);
 

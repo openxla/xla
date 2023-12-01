@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -418,7 +419,7 @@ void HloComputation::ComputeInstructionPostOrder(
     HloInstruction* root, const ChannelDependencies& channel_dependencies,
     absl::flat_hash_map<HloInstruction*, VisitState>& visited,
     std::vector<HloInstruction*>& post_order,
-    std::vector<HloInstruction*>* dfs_stack_scratch) const {
+    absl::InlinedVector<HloInstruction*, 8>* dfs_stack_scratch) const {
   ForEachInstructionPostOrderImpl(
       [&post_order](HloInstruction* hlo) { post_order.push_back(hlo); }, root,
       channel_dependencies, visited, dfs_stack_scratch);
@@ -428,7 +429,7 @@ void HloComputation::ForEachInstructionPostOrderImpl(
     absl::FunctionRef<void(HloInstruction*)> func, HloInstruction* root,
     const ChannelDependencies& channel_dependencies,
     absl::flat_hash_map<HloInstruction*, VisitState>& visited,
-    std::vector<HloInstruction*>* dfs_stack_scratch) const {
+    absl::InlinedVector<HloInstruction*, 8>* dfs_stack_scratch) const {
   auto* dfs_stack = dfs_stack_scratch;
   dfs_stack->clear();
   dfs_stack->push_back(root);
@@ -515,7 +516,7 @@ std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrderFrom(
     HloInstruction& postorder_root) const {
   std::vector<HloInstruction*> post_order;
   absl::flat_hash_map<HloInstruction*, VisitState> visited;
-  std::vector<HloInstruction*> dfs_stack_scratch;
+  absl::InlinedVector<HloInstruction*, 8> dfs_stack_scratch;
   ComputeInstructionPostOrder(&postorder_root, ComputeChannelDependencies(),
                               visited, post_order, &dfs_stack_scratch);
   return post_order;
@@ -531,7 +532,7 @@ std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder(
   post_order.reserve(instruction_count());
   absl::flat_hash_map<HloInstruction*, VisitState> visited;
   visited.reserve(instruction_count());
-  std::vector<HloInstruction*> dfs_stack_scratch;
+  absl::InlinedVector<HloInstruction*, 8> dfs_stack_scratch;
   dfs_stack_scratch.reserve(instruction_count());
   for (auto& instruction : instructions_) {
     if (instruction->users().empty()) {
@@ -546,8 +547,8 @@ std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder(
 
 std::vector<HloInstruction*>
 HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
-  std::vector<HloInstruction*> frontier_std;
-  std::vector<HloInstruction*> frontier_reshapes;
+  absl::InlinedVector<HloInstruction*, 8> frontier_std;
+  absl::InlinedVector<HloInstruction*, 8> frontier_reshapes;
   std::vector<HloInstruction*> sorted;
   absl::flat_hash_map<int, uint32_t> visitations;
   sorted.reserve(instruction_count());
@@ -611,7 +612,7 @@ void HloComputation::ForEachInstructionPostOrder(
     absl::FunctionRef<void(HloInstruction*)> func) const {
   absl::flat_hash_map<HloInstruction*, VisitState> visited;
   visited.reserve(instruction_count());
-  std::vector<HloInstruction*> dfs_stack_scratch;
+  absl::InlinedVector<HloInstruction*, 8> dfs_stack_scratch;
   dfs_stack_scratch.reserve(instruction_count());
   auto channel_dependencies = ComputeChannelDependencies();
   for (auto& instruction : instructions_) {
