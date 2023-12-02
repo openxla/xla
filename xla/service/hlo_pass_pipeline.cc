@@ -195,6 +195,7 @@ StatusOr<bool> HloPassPipeline::RunPassesInternal(
     std::string pass_name = std::string(pass->name());
     tsl::profiler::ScopedAnnotation annotation{
         [&] { return "XlaPass:" + pass_name; }};
+    VLOG(1) << "HLO pass " << pass_name << ":" << hlo->ToString();
     VLOG(1) << "  HLO pass " << pass_name;
     VLOG(2) << "  Module hash " << absl::HashOf(*hlo);
     if (!pass->IsPassPipeline()) {
