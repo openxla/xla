@@ -238,10 +238,12 @@ cc_library(
     hdrs = if_gpu_is_configured(["gpu_kernel.h"]),
     deps = [
         ":gpu_driver_header",
+        ":gpu_types_header",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
