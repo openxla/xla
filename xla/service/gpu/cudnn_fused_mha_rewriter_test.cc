@@ -3330,7 +3330,6 @@ ENTRY main.31 {
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
   TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
-  const HloInstruction* fmha;
 
   SCOPED_TRACE(m->ToString());
   EXPECT_THAT(
@@ -3380,7 +3379,6 @@ ENTRY main.31 {
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
   TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
-  const HloInstruction* fmha;
 
   SCOPED_TRACE(m->ToString());
   EXPECT_THAT(
@@ -3470,8 +3468,6 @@ ENTRY main.82 {
 
   ComputationLayout computation_layout(
       m->entry_computation()->ComputeProgramShape());
-
-  const HloInstruction* fmha;
 
   SCOPED_TRACE(m->ToString());
   EXPECT_THAT(
