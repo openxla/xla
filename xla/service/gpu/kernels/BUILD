@@ -41,10 +41,15 @@ cc_library(
     srcs = ["custom_fusion_pattern.cc"],
     hdrs = ["custom_fusion_pattern.h"],
     deps = [
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
