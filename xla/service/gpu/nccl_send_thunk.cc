@@ -121,15 +121,15 @@ Status RunSend(NcclP2PConfig::SourceTargetMapEntry source_target,
   se::gpu::GpuStreamHandle gpu_stream = se::gpu::AsGpuStreamValue(&stream);
 
   // Send source buffer to target peer if needed.
-  if (target_id) {
-    VLOG(3) << absl::StreamFormat(
-        "%s : Calling ncclSend(sendbuff=%p, count=%d, peer=%d "
-        "comm=%p, stream=%p)",
-        device_string, src_addr.opaque(), element_count, *target_id,
-        static_cast<const void*>(comm), gpu_stream);
-    XLA_CUDA_RETURN_IF_ERROR(ncclSend(src_addr.opaque(), element_count, dtype,
-                                      *target_id, comm, gpu_stream));
-  }
+  // if (target_id) {
+  VLOG(3) << absl::StreamFormat(
+      "%s : Calling ncclSend(sendbuff=%p, count=%d, peer=%d "
+      "comm=%p, stream=%p)",
+      device_string, src_addr.opaque(), element_count, *target_id,
+      static_cast<const void*>(comm), gpu_stream);
+  XLA_CUDA_RETURN_IF_ERROR(ncclSend(src_addr.opaque(), element_count, dtype,
+                                    *target_id, comm, gpu_stream));
+  // }
   return OkStatus();
 #else   // XLA_ENABLE_XCCL
   return Unimplemented(

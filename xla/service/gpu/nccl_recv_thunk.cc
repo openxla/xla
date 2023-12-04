@@ -121,21 +121,21 @@ Status RunRecv(NcclP2PConfig::SourceTargetMapEntry source_target,
   se::gpu::GpuStreamHandle gpu_stream = se::gpu::AsGpuStreamValue(&stream);
 
   // Receive data from the source peer to the destination buffer.
-  if (source_id) {
-    VLOG(3) << absl::StreamFormat(
-        "%s : Calling ncclRecv(recvbuff=%p, count=%d, peer=%d comm=%p, "
-        "stream=%p)",
-        device_string, dest_addr.opaque(), element_count, *source_id,
-        static_cast<const void*>(comm), gpu_stream);
-    XLA_CUDA_RETURN_IF_ERROR(ncclRecv(dest_addr.opaque(), element_count, dtype,
-                                      *source_id, comm, gpu_stream));
-  } else {
-    // If there is no source peer, i.e. no sender to this instance, zero out
-    // the destination buffer.
-    VLOG(3) << absl::StreamFormat("%s : collective-Permute: Issuing MemZero",
-                                  device_string);
-    stream.ThenMemZero(&dest_addr, dest_addr.size());
-  }
+  // if (source_id) {
+  VLOG(3) << absl::StreamFormat(
+      "%s : Calling ncclRecv(recvbuff=%p, count=%d, peer=%d comm=%p, "
+      "stream=%p)",
+      device_string, dest_addr.opaque(), element_count, *source_id,
+      static_cast<const void*>(comm), gpu_stream);
+  XLA_CUDA_RETURN_IF_ERROR(ncclRecv(dest_addr.opaque(), element_count, dtype,
+                                    *source_id, comm, gpu_stream));
+  // } else {
+  //   // If there is no source peer, i.e. no sender to this instance, zero out
+  //   // the destination buffer.
+  //   VLOG(3) << absl::StreamFormat("%s : collective-Permute: Issuing MemZero",
+  //                                 device_string);
+  //   stream.ThenMemZero(&dest_addr, dest_addr.size());
+  // }
   return OkStatus();
 #else   // XLA_ENABLE_XCCL
   return Unimplemented(
