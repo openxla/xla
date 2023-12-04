@@ -2778,6 +2778,7 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service/gpu/kernels:custom_fusion_library",
         "//xla/service/gpu/kernels:custom_fusion_pattern",
+        "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -2797,7 +2798,9 @@ xla_cc_test(
     deps = [
         ":custom_fusion_rewriter",
         "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu/kernels:custom_fusion_pattern",
+        "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
