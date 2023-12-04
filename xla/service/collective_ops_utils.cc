@@ -358,6 +358,41 @@ StatusOr<std::vector<ReplicaGroup>> GetParticipatingFlattenedIdGroups(
   return flattened_replica_groups;
 }
 
+StatusOr<int> GetGroupId(GlobalDeviceId device_id,
+                         const DeviceAssignment& device_assignment,
+                         absl::Span<const ReplicaGroup> replica_groups,
+                         CollectiveOpGroupMode group_mode) {
+  // Empty replica_groups() means all devices are in same group.
+  if (replica_groups.empty()) {
+    return 0;
+  }
+
+  // Get the current id.
+  TF_ASSIGN_OR_RETURN(const DeviceAssignment::LogicalID logical_id,
+                      device_assignment.LogicalIdForDevice(device_id));
+  int current_id = -1;
+  if (group_mode == CollectiveOpGroupMode::kCrossReplica) {
+    current_id = logical_id.replica_id;
+  } else if (group_mode == CollectiveOpGroupMode::kCrossPartition) {
+    current_id = logical_id.computation_id;
+  } else if (group_mode == CollectiveOpGroupMode::kCrossReplicaAndPartition) {
+    current_id = logical_id.replica_id;
+  } else if (group_mode == CollectiveOpGroupMode::kFlattenedID) {
+    int partition_count = device_assignment.computation_count();
+    current_id =
+        logical_id.replica_id * partition_count + logical_id.computation_id;
+  }
+  TF_RET_CHECK(current_id != -1) << "Invalid group_mode";
+
+  // Get index of group that this device is in.
+  for (int i = 0; i < replica_groups.size(); ++i) {
+    if (absl::c_linear_search(replica_groups[i].replica_ids(), current_id)) {
+      return i;
+    }
+  }
+  return InvalidArgument("ID %d doesn't appear in replica groups", current_id);
+}
+
 StatusOr<std::vector<GlobalDeviceId>> GetParticipatingDevices(
     GlobalDeviceId device_id, const DeviceAssignment& device_assignment,
     absl::Span<const ReplicaGroup> replica_groups,

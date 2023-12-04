@@ -161,7 +161,7 @@ StatusOr<NcclComm::Lock> LockNcclComm(
     const NcclExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, int64_t op_id, int64_t stream_id,
-    bool enable_clique_optimization) {
+    bool enable_clique_optimization, std::optional<ncclComm_t> parent_comm) {
   TF_ASSIGN_OR_RETURN(GlobalDeviceId global_device_id,
                       params.GetGlobalDeviceId());
 
@@ -175,6 +175,13 @@ StatusOr<NcclComm::Lock> LockNcclComm(
     return InvalidArgument(
         "Partial replica groups are not allowed when using NCCL_COMM_ID "
         "environment configuration.");
+  }
+
+  std::optional<int> group_id{};
+  if (parent_comm) {
+    TF_ASSIGN_OR_RETURN(group_id,
+                        GetGroupId(global_device_id, *params.device_assn,
+                                   replica_groups, group_mode));
   }
 
   auto it = absl::c_find(participants, global_device_id);
@@ -200,7 +207,8 @@ StatusOr<NcclComm::Lock> LockNcclComm(
 
   return AcquireNcclComm(params.run_id, OpId(op_id), std::move(participants),
                          num_local_participants, *unique_id_callback, rank,
-                         stream_id, enable_clique_optimization);
+                         stream_id, enable_clique_optimization, parent_comm,
+                         group_id);
 }
 #endif  // XLA_ENABLE_XCCL
 
@@ -233,7 +241,8 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
       NcclComm::Lock comm,
       LockNcclComm(params.nccl_params, config().replica_groups,
                    config().group_mode, config().op_id, stream_id,
-                   /*enable_clique_optimization=*/false));
+                   /*enable_clique_optimization=*/false,
+                   /*parent_comm=*/std::nullopt));
 
   // Run the collective on main stream or using the async executor.
   Status status = [&]() {

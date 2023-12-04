@@ -130,7 +130,8 @@ StatusOr<NcclComm::Lock> AcquireNcclComm(
     RunId run_id, OpId op_id, std::vector<GlobalDeviceId> participants,
     size_t num_local_participants,
     const NcclUniqueIdCallback& unique_id_callback, int rank, int64_t stream_id,
-    bool enable_clique_optimization);
+    bool enable_clique_optimization, std::optional<ncclComm_t> parent_comm,
+    std::optional<int> group_id);
 
 }  // namespace gpu
 }  // namespace xla

@@ -674,7 +674,10 @@ message DebugOptions {
   // Threshold to enable windowed einsum (collective matmul) in MB.
   int64 xla_gpu_threshold_for_windowed_einsum_mib = 265;
 
-  // Next id: 266
+  // Allow NCCL communicators to share internal resources via ncclCommSplit.
+  bool xla_gpu_enable_nccl_resource_sharing = 266;
+
+  // Next id: 267
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

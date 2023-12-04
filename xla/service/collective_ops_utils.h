@@ -108,6 +108,13 @@ absl::string_view CollectiveOpGroupModeToString(
 StatusOr<CollectiveOpGroupMode> GetCollectiveOpGroupMode(
     bool has_channel_id, std::optional<bool> use_global_device_ids);
 
+// Returns which group (by index) device_id belongs to. This is used when
+// splitting a communicator into subchannels.
+StatusOr<int> GetGroupId(GlobalDeviceId device_id,
+                         const DeviceAssignment& device_assignment,
+                         absl::Span<const ReplicaGroup> replica_groups,
+                         CollectiveOpGroupMode group_mode);
+
 // Figures out subgroups of participating devices from given replica_groups and
 // group_mode.
 //

@@ -111,10 +111,38 @@ bool ShouldEnableCliqueOptimization(const NcclExecuteParams& params,
 }
 
 StatusOr<NcclComm::Lock> GetNcclComm(
-    const NcclExecuteParams& params, int64_t group_mode, int64_t op_id,
+    const NcclExecuteParams& params, const DebugOptions* debug_options,
+    int64_t group_mode, int64_t op_id,
     absl::Span<const int64_t> replica_group_offsets,
     absl::Span<const int64_t> replica_group_values, int64_t stream_id,
     bool enable_clique_optimization) {
+  std::optional<ncclComm_t> parent_comm;
+  if (debug_options->xla_gpu_enable_nccl_resource_sharing()) {
+    // Retrieve the parent communicator which contains all devices. If it is not
+    // yet created, LockNcclComm will create and cache it.
+    std::vector<ReplicaGroup> parent_replica_groups;
+    if (group_mode ==
+        static_cast<int64_t>(CollectiveOpGroupMode::kFlattenedID)) {
+      // An empty replica group will signify that all devices are used. However,
+      // if the mode is FlattenedID, an empty group is not allowed. Create a
+      // group with all devices.
+      int total_participant_count = params.device_assn->replica_count() *
+                                    params.device_assn->computation_count();
+      ReplicaGroup parent_replica_group;
+      for (int i = 0; i < total_participant_count; ++i) {
+        parent_replica_group.add_replica_ids(i);
+      }
+      parent_replica_groups.push_back(parent_replica_group);
+    }
+    auto parent_comm_lock = LockNcclComm(
+        params, parent_replica_groups,
+        static_cast<CollectiveOpGroupMode>(group_mode), /*op_id=*/0, stream_id,
+        enable_clique_optimization, /*parent_comm=*/std::nullopt);
+    parent_comm = **parent_comm_lock;
+    // Lock on parent comm is released, so that it won't block second call to
+    // LockNcclComm below from proceeding.
+  }
+
   // TODO(b/233930690): Pass the attribute below as a nested array.
   // Pass an array of arrays using two vectors; one specifying all the values
   // and another specifying the (ending) offsets of each array in the other
@@ -131,7 +159,7 @@ StatusOr<NcclComm::Lock> GetNcclComm(
 
   return LockNcclComm(params, replica_groups,
                       static_cast<CollectiveOpGroupMode>(group_mode), op_id,
-                      stream_id, enable_clique_optimization);
+                      stream_id, enable_clique_optimization, parent_comm);
 }
 #endif  // XLA_ENABLE_XCCL
 
@@ -255,8 +283,9 @@ absl::Status P2PImplCommon(const ServiceExecutableRunOptions* run_options,
 
   const std::string device_string =
       NcclCollectiveThunk::GetDeviceString(params);
-  auto comm = GetNcclComm(params, group_mode, op_id, replica_group_offsets,
-                          replica_group_values, stream_id, enable_clique_opt);
+  auto comm = GetNcclComm(params, debug_options, group_mode, op_id,
+                          replica_group_offsets, replica_group_values,
+                          stream_id, enable_clique_opt);
   if (!comm.ok()) return comm.status();
 
   auto device_buffers = device_buffers_getter(args);
@@ -466,10 +495,10 @@ absl::Status AllGatherImplCommon(
   NcclExecuteParams params(*run_options, stream->parent());
   bool enable_clique_opt = ShouldEnableCliqueOptimization(
       params, debug_options, no_parallel_custom_call);
-  TF_ASSIGN_OR_RETURN(
-      auto comm, GetNcclComm(params, group_mode, op_id, replica_group_offsets,
-                             replica_group_values, GetStreamId(is_async),
-                             enable_clique_opt));
+  TF_ASSIGN_OR_RETURN(auto comm,
+                      GetNcclComm(params, debug_options, group_mode, op_id,
+                                  replica_group_offsets, replica_group_values,
+                                  GetStreamId(is_async), enable_clique_opt));
 
   TF_ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
 
@@ -541,10 +570,10 @@ absl::Status AllReduceImplCommon(
   bool enable_clique_opt = ShouldEnableCliqueOptimization(
       params, debug_options, no_parallel_custom_call);
 
-  TF_ASSIGN_OR_RETURN(
-      auto comm, GetNcclComm(params, group_mode, op_id, replica_group_offsets,
-                             replica_group_values, GetStreamId(is_async),
-                             enable_clique_opt));
+  TF_ASSIGN_OR_RETURN(auto comm,
+                      GetNcclComm(params, debug_options, group_mode, op_id,
+                                  replica_group_offsets, replica_group_values,
+                                  GetStreamId(is_async), enable_clique_opt));
 
   TF_ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
 
@@ -622,10 +651,10 @@ absl::Status AllToAllImplCommon(const ServiceExecutableRunOptions* run_options,
   bool enable_clique_opt = ShouldEnableCliqueOptimization(
       params, debug_options, no_parallel_custom_call);
 
-  TF_ASSIGN_OR_RETURN(
-      auto comm, GetNcclComm(params, group_mode, op_id, replica_group_offsets,
-                             replica_group_values, GetStreamId(is_async),
-                             enable_clique_opt));
+  TF_ASSIGN_OR_RETURN(auto comm,
+                      GetNcclComm(params, debug_options, group_mode, op_id,
+                                  replica_group_offsets, replica_group_values,
+                                  GetStreamId(is_async), enable_clique_opt));
 
   TF_ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
 
@@ -700,10 +729,10 @@ absl::Status ReduceScatterImplCommon(
   bool enable_clique_opt = ShouldEnableCliqueOptimization(
       params, debug_options, no_parallel_custom_call);
 
-  TF_ASSIGN_OR_RETURN(
-      auto comm, GetNcclComm(params, group_mode, op_id, replica_group_offsets,
-                             replica_group_values, GetStreamId(is_async),
-                             enable_clique_opt));
+  TF_ASSIGN_OR_RETURN(auto comm,
+                      GetNcclComm(params, debug_options, group_mode, op_id,
+                                  replica_group_offsets, replica_group_values,
+                                  GetStreamId(is_async), enable_clique_opt));
 
   TF_ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
 

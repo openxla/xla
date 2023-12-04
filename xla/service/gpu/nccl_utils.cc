@@ -259,7 +259,8 @@ StatusOr<NcclComm::Lock> AcquireNcclComm(
     RunId run_id, OpId op_id, std::vector<GlobalDeviceId> participants,
     size_t num_local_participants,
     const NcclUniqueIdCallback& unique_id_callback, int rank, int64_t stream_id,
-    bool enable_clique_optimization) {
+    bool enable_clique_optimization, std::optional<ncclComm_t> parent_comm,
+    std::optional<int> group_id) {
   // Ensure that this group of threads have exclusive access to the clique to
   // prevent threads from different groups locking communicators in the clique.
   // The enable_clique_optimization value is only used for asynchronous
@@ -302,7 +303,19 @@ StatusOr<NcclComm::Lock> AcquireNcclComm(
     const ncclUniqueId& id = state.unique_id;
 
     ncclComm_t comm = nullptr;
-    Status status = XLA_CUDA_STATUS(ncclCommInitRank(&comm, nranks, id, rank));
+    Status status;
+    if (parent_comm) {
+      TF_RET_CHECK(group_id) << "missing group id for split";
+      status = XLA_CUDA_STATUS(
+          ncclCommSplit(*parent_comm, *group_id, rank, &comm, nullptr));
+    } else {
+      ncclConfig_t config = NCCL_CONFIG_INITIALIZER;
+      // Allows child communicators created with ncclCommSplit to share the
+      // internal resources of this communicator.
+      config.splitShare = 1;
+      status = XLA_CUDA_STATUS(
+          ncclCommInitRankConfig(&comm, nranks, id, rank, &config));
+    }
 
     size_t num_initialized = [&] {
       absl::MutexLock lock(&state.mu);
