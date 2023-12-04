@@ -111,8 +111,7 @@ absl::StatusOr<bool> HorizontalInputFusionImpl::Run() {
   XLA_VLOG_LINES(3, computation_->ToString());
 
   // Using def-to-use order is sound since we do not modify users.
-  std::vector<HloInstruction*> def_to_use_order =
-      computation_->MakeInstructionPostOrder();
+  auto def_to_use_order = computation_->MakeInstructionPostOrder();
   for (HloInstruction* consumer : def_to_use_order) {
     auto candidates = FindAndSortFusionCandidates(consumer);
     if (candidates.size() <= 1) {

@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -450,8 +451,8 @@ void HloComputation::set_root_instruction(HloInstruction* new_root_instruction,
 
 void HloComputation::ComputeInstructionPostOrder(
     HloInstruction* root, const ChannelDependencies& channel_dependencies,
-    VisitMap& visited, std::vector<HloInstruction*>& post_order,
-    std::vector<HloInstruction*>* dfs_stack_scratch) const {
+    VisitMap& visited, InstructionVector& post_order,
+    InstructionVector* dfs_stack_scratch) const {
   ForEachInstructionPostOrderImpl(
       [&post_order](HloInstruction* hlo) { post_order.push_back(hlo); }, root,
       channel_dependencies, visited, dfs_stack_scratch);
@@ -460,7 +461,7 @@ void HloComputation::ComputeInstructionPostOrder(
 void HloComputation::ForEachInstructionPostOrderImpl(
     absl::FunctionRef<void(HloInstruction*)> func, HloInstruction* root,
     const ChannelDependencies& channel_dependencies, VisitMap& visited,
-    std::vector<HloInstruction*>* dfs_stack_scratch) const {
+    InstructionVector* dfs_stack_scratch) const {
   auto* dfs_stack = dfs_stack_scratch;
   dfs_stack->clear();
   dfs_stack->push_back(root);
@@ -543,26 +544,27 @@ HloComputation::ChannelDependencies HloComputation::ComputeChannelDependencies()
   return dependencies;
 }
 
-std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrderFrom(
+HloComputation::InstructionVector HloComputation::MakeInstructionPostOrderFrom(
     HloInstruction& postorder_root) const {
-  std::vector<HloInstruction*> post_order;
+  InstructionVector post_order;
   VisitMap visited;
-  std::vector<HloInstruction*> dfs_stack_scratch;
+  InstructionVector dfs_stack_scratch;
   ComputeInstructionPostOrder(&postorder_root, ComputeChannelDependencies(),
                               visited, post_order, &dfs_stack_scratch);
   return post_order;
 }
 
-std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder() const {
+HloComputation::InstructionVector HloComputation::MakeInstructionPostOrder()
+    const {
   return MakeInstructionPostOrder(ComputeChannelDependencies());
 }
 
-std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder(
+HloComputation::InstructionVector HloComputation::MakeInstructionPostOrder(
     const ChannelDependencies& channel_dependencies) const {
-  std::vector<HloInstruction*> post_order;
+  InstructionVector post_order;
   post_order.reserve(instruction_count());
   VisitMap visited(instruction_count());
-  std::vector<HloInstruction*> dfs_stack_scratch;
+  InstructionVector dfs_stack_scratch;
   dfs_stack_scratch.reserve(instruction_count());
   for (auto& instruction : instructions_) {
     if (instruction->users().empty()) {
@@ -575,11 +577,11 @@ std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder(
   return post_order;
 }
 
-std::vector<HloInstruction*>
+HloComputation::InstructionVector
 HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
-  std::vector<HloInstruction*> frontier_std;
-  std::vector<HloInstruction*> frontier_reshapes;
-  std::vector<HloInstruction*> sorted;
+  InstructionVector frontier_std;
+  InstructionVector frontier_reshapes;
+  InstructionVector sorted;
   absl::flat_hash_map<int, uint32_t> visitations;
   sorted.reserve(instruction_count());
   visitations.reserve(instruction_count());
@@ -641,7 +643,7 @@ HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
 void HloComputation::ForEachInstructionPostOrder(
     absl::FunctionRef<void(HloInstruction*)> func) const {
   VisitMap visited(instruction_count());
-  std::vector<HloInstruction*> dfs_stack_scratch;
+  InstructionVector dfs_stack_scratch;
   dfs_stack_scratch.reserve(instruction_count());
   auto channel_dependencies = ComputeChannelDependencies();
   for (auto& instruction : instructions_) {

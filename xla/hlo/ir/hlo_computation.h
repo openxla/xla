@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -205,7 +206,7 @@ class HloComputation {
                                    std::unique_ptr<HloInstruction> instruction);
 
   // Remove the param_no'th parameter from the computation.
-  // Note this is only applicatable to the computation for the fusion
+  // Note this is only applicable to the computation for the fusion
   // instruction.
   Status RemoveParameter(int64_t param_no);
 
@@ -255,7 +256,7 @@ class HloComputation {
   // removed instruction before its deallocation. If ignore_control_dependencies
   // is set to true, if will remove the unused operands even when they have
   // control dependencies, and transitively pass the control dependencies from
-  // the predecessors to the succesors of the removed instructions, so that the
+  // the predecessors to the successors of the removed instructions, so that the
   // logical exeuction order of the remaining unremoved instructions are
   // preserved.
   Status RemoveInstructionAndUnusedOperands(
@@ -364,6 +365,8 @@ class HloComputation {
   using ConstInstructionSequence = tsl::gtl::iterator_range<UnwrappingIterator<
       std::list<std::unique_ptr<HloInstruction>>::const_iterator>>;
 
+  using InstructionVector = absl::InlinedVector<HloInstruction*, 16>;
+
   // Gets the instructions in this computation.
   //
   // The returned type is a range of HloInstruction*s, so you can iterate over
@@ -386,17 +389,16 @@ class HloComputation {
 
   // Compute and return a post-order of the instructions in the computation. In
   // this order, definitions of values always appear before their uses.
-  std::vector<HloInstruction*> MakeInstructionPostOrder() const;
+  InstructionVector MakeInstructionPostOrder() const;
   // Same as MakeInstructionPostOrder but starting at any instruction in the
   // computation, not just the root. Describes the corresponding subgraph.
-  std::vector<HloInstruction*> MakeInstructionPostOrderFrom(
-      HloInstruction&) const;
-  std::vector<HloInstruction*> MakeInstructionPostOrder(
+  InstructionVector MakeInstructionPostOrderFrom(HloInstruction&) const;
+  InstructionVector MakeInstructionPostOrder(
       const ChannelDependencies& channel_dependencies) const;
   // Same as MakeInstructionPostOrder but with special tie-breaking behavior.
   // Specifically, when ties (in ordering) between instructions occur, Reshapes
   // will be sorted before other operations.
-  std::vector<HloInstruction*> MakeInstructionPostOrderWithReshapeFirst() const;
+  InstructionVector MakeInstructionPostOrderWithReshapeFirst() const;
 
   // Calls `func` with each instruction in the computation in post-order.
   void ForEachInstructionPostOrder(
@@ -885,13 +887,13 @@ class HloComputation {
   class VisitMap;
   void ComputeInstructionPostOrder(
       HloInstruction* root, const ChannelDependencies& channel_dependencies,
-      VisitMap& visited, std::vector<HloInstruction*>& post_order,
-      std::vector<HloInstruction*>* dfs_stack_scratch) const;
+      VisitMap& visited, InstructionVector& post_order,
+      InstructionVector* dfs_stack_scratch) const;
 
   void ForEachInstructionPostOrderImpl(
       absl::FunctionRef<void(HloInstruction*)> func, HloInstruction* root,
       const ChannelDependencies& channel_dependencies, VisitMap& visited,
-      std::vector<HloInstruction*>* dfs_stack_scratch) const;
+      InstructionVector* dfs_stack_scratch) const;
 
   Status RemoveUnusedParametersImpl(bool allow_non_fusion);
 

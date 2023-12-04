@@ -20,7 +20,6 @@ limitations under the License.
 #include <cstdlib>
 #include <functional>
 #include <limits>
-#include <list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1476,17 +1475,17 @@ bool HloScheduleGraph::IsPredecessorTransitively(
 }
 
 HloScheduleGraph::HloScheduleGraph(
-    const std::vector<HloInstruction*>* post_order_instructions,
+    absl::Span<const HloInstruction* const> post_order_instructions,
     HloAliasAnalysis* alias_analysis, const LatencyEstimator* latency_estimator,
     const AsyncTracker* async_tracker)
-    : original_order_(post_order_instructions->begin(),
-                      post_order_instructions->end()) {
-  HloComputation* comp = (*post_order_instructions)[0]->parent();
+    : original_order_(post_order_instructions.begin(),
+                      post_order_instructions.end()) {
+  const HloComputation* comp = post_order_instructions[0]->parent();
   auto reachability = HloReachabilityMap::Build(comp);
   int64_t current_pos = 0;
   // Allocating the graph nodes. One for each of the instructions in the
   // original instructions order.
-  for (HloInstruction* instr : *post_order_instructions) {
+  for (const HloInstruction* instr : post_order_instructions) {
     auto [new_node_it, inserted] = nodes_.try_emplace(
         instr, std::make_unique<HloGraphNode>(instr, current_pos));
     CHECK(inserted) << "Expected the value to not be already in the map";
@@ -1516,7 +1515,7 @@ HloScheduleGraph::HloScheduleGraph(
     ++from->outdegree_;
   };
   // Add dependencies edges between each of the graph nodes.
-  for (const HloInstruction* instr : *post_order_instructions) {
+  for (const HloInstruction* instr : post_order_instructions) {
     auto node_it = nodes_.find(instr);
     CHECK(node_it != nodes_.end()) << "We should have just allocated a node";
     HloGraphNode* instr_node = node_it->second.get();
@@ -1896,7 +1895,7 @@ LatencyHidingScheduler::LatencyHidingStatistics(
   std::unique_ptr<HloAliasAnalysis> hlo_alias_analysis =
       HloAliasAnalysis::Run(module).value();
   auto instructions_post_order = computation->MakeInstructionPostOrder();
-  HloScheduleGraph schedule_graph(&instructions_post_order,
+  HloScheduleGraph schedule_graph(instructions_post_order,
                                   /*alias_analysis=*/nullptr, latency_estimator,
                                   async_tracker);
   async_tracker->PostProcessScheduleGraph(&schedule_graph, latency_estimator);

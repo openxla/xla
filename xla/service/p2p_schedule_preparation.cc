@@ -496,9 +496,9 @@ Status OrderBefore(HloReachabilityMap* reachability, HloInstruction* a,
 // and collective ops ordered after Recv-Done after Send-Done.
 Status ChainCollectivesWithUnpipelinedP2P(
     const P2PGroupMap& p2p_group_map, const P2PGroupNode& node,
-    const std::vector<HloInstruction*>::iterator& begin,
-    const std::vector<HloInstruction*>::iterator& recv_done_iter,
-    const std::vector<HloInstruction*>::iterator& end,
+    const HloComputation::InstructionVector::iterator& begin,
+    const HloComputation::InstructionVector::iterator& recv_done_iter,
+    const HloComputation::InstructionVector::iterator& end,
     const CollectiveInComputation& collective_in_computation,
     HloReachabilityMap* reachability) {
   HloSendRecvInstruction* send_done =
@@ -572,9 +572,9 @@ Status ChainCollectivesWithUnpipelinedP2P(
 // Recv and collective ops ordered after the while-loop after Send-Done.
 Status ChainCollectivesWithPipelinedP2PParent(
     const P2PGroupMap& p2p_group_map, const P2PGroupNode& node,
-    const std::vector<HloInstruction*>::iterator& begin,
-    const std::vector<HloInstruction*>::iterator& while_loop_iter,
-    const std::vector<HloInstruction*>::iterator& end,
+    const HloComputation::InstructionVector::iterator& begin,
+    const HloComputation::InstructionVector::iterator& while_loop_iter,
+    const HloComputation::InstructionVector::iterator& end,
     const CollectiveInComputation& collective_in_computation,
     HloReachabilityMap* reachability) {
   HloInstruction* recv = node.recv_done->mutable_operand(0);
@@ -652,8 +652,8 @@ Status ChainCollectivesWithPipelinedP2PParent(
 // All collective ops should be scheduled after Send-Done and Before
 Status ChainCollectivesWithPipelinedP2PChild(
     const P2PGroupMap& p2p_group_map, const P2PGroupNode& node,
-    const std::vector<HloInstruction*>::iterator& begin,
-    const std::vector<HloInstruction*>::iterator& end,
+    const HloComputation::InstructionVector::iterator& begin,
+    const HloComputation::InstructionVector::iterator& end,
     const CollectiveInComputation& collective_in_computation,
     HloReachabilityMap* reachability) {
   HloInstruction* send_done = node.send_done;
@@ -774,10 +774,9 @@ StatusOr<bool> P2PSchedulePreparation::Run(
     // Add control dependence to linearize collective operations with respect to
     // each P2P chain.
     std::unique_ptr<HloReachabilityMap> reachability;
-    std::vector<HloInstruction*> all_instructions =
-        computation->MakeInstructionPostOrder();
-    std::vector<HloInstruction*>::iterator begin = all_instructions.begin();
-    std::vector<HloInstruction*>::iterator end = all_instructions.end();
+    auto all_instructions = computation->MakeInstructionPostOrder();
+    auto begin = all_instructions.begin();
+    auto end = all_instructions.end();
     for (auto instr_it = begin; instr_it != end; ++instr_it) {
       HloInstruction* hlo = *instr_it;
       if (!IsP2POp(hlo)) {
@@ -819,7 +818,8 @@ StatusOr<bool> P2PSchedulePreparation::Run(
         // Send-Done.
         const HloInstruction* while_loop =
             p2p_group.nodes[kPipelinedParentNodeIdx].while_loop;
-        std::vector<HloInstruction*>::iterator while_loop_it = instr_it + 1;
+        HloComputation::InstructionVector::iterator while_loop_it =
+            instr_it + 1;
         while ((*while_loop_it) != while_loop) while_loop_it++;
         TF_RETURN_IF_ERROR(ChainCollectivesWithPipelinedP2PParent(
             p2p_group_map, p2p_group.nodes[kPipelinedParentNodeIdx], begin,

@@ -29,7 +29,7 @@ StatusOr<bool> CanonicalizeAllGatherForCSE::RunOnComputation(
   bool changed = false;
   // Helper to find the respective shape input dimension of an shape output
   // dimension of a reshape.
-  std::vector<HloInstruction*> ordered_hlos = comp->MakeInstructionPostOrder();
+  auto ordered_hlos = comp->MakeInstructionPostOrder();
   for (HloInstruction* hlo : ordered_hlos) {
     HloAllGatherInstruction* ag = DynCast<HloAllGatherInstruction>(hlo);
 
