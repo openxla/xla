@@ -1217,10 +1217,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                            const HloInstruction *gemm,
                            HloInstruction *bitcast = nullptr,
                            HloInstruction *slice = nullptr) {
-    TF_RET_CHECK(Shape::Equal().IgnoreElementType()(bias->shape(),
-                                                    bitcast ? bitcast->shape()
-                                                    : slice ? slice->shape()
-                                                            : gemm->shape()));
+    TF_RET_CHECK(Shape::Equal().IgnoreElementType()(
+        bias->shape(),
+        bitcast ? bitcast->shape() : slice ? slice->shape() : gemm->shape()));
 
     // Do not fuse bias into S32 GEMM, as for this datatype cuBLAS only
     // supports fixed values for alpha/beta.
