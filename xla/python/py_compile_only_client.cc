@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "pybind11/stl.h"  // from @pybind11
 #include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device.h"
 #include "tsl/python/lib/core/numpy.h"  //NOLINT
@@ -46,6 +47,15 @@ class PjRtCompileOnlyDevice : public PjRtDevice {
   PjRtClient* client() const override { return nullptr; }
   bool IsAddressable() const override { return false; }
   int local_hardware_id() const override { return -1; }
+
+  PjRtLocalHardwareId local_hardware_id_typed() const override {
+    return PjRtLocalHardwareId(-1);
+  }
+
+  PjRtLocalDeviceId local_device_id() const override {
+    return PjRtLocalDeviceId(local_hardware_id_typed().value());
+  }
+
   std::unique_ptr<ScopedAsyncTrackingEvent> CreateAsyncTrackingEvent(
       absl::string_view description) const override {
     return nullptr;

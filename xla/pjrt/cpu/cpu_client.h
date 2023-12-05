@@ -115,6 +115,14 @@ class TfrtCpuDevice final : public PjRtDevice {
     return description_.local_hardware_id();
   }
 
+  PjRtLocalHardwareId local_hardware_id_typed() const override {
+    return PjRtLocalHardwareId(description_.local_hardware_id());
+  }
+
+  PjRtLocalDeviceId local_device_id() const override {
+    return PjRtLocalDeviceId(local_hardware_id_typed().value());
+  }
+
   Status TransferToInfeed(const LiteralSlice& literal) override;
 
   Status TransferFromOutfeed(MutableBorrowingLiteral literal) override;
@@ -165,9 +173,13 @@ class TfrtCpuClient final : public PjRtClient {
   }
 
   StatusOr<PjRtDevice*> LookupDevice(int device_id) const override;
+  StatusOr<PjRtDevice*> LookupDevice(
+      PjRtGlobalDeviceId global_device_id) const override;
 
   StatusOr<PjRtDevice*> LookupAddressableDevice(
       int local_hardware_id) const override;
+  StatusOr<PjRtDevice*> LookupAddressableDevice(
+      PjRtLocalDeviceId local_device_id) const override;
 
   absl::Span<PjRtMemorySpace* const> memory_spaces() const override;
 

@@ -141,6 +141,14 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
 
   int local_hardware_id() const override { return device_ordinal_; }
 
+  PjRtLocalHardwareId local_hardware_id_typed() const override {
+    return PjRtLocalHardwareId(device_ordinal_);
+  }
+
+  PjRtLocalDeviceId local_device_id() const override {
+    return PjRtLocalDeviceId(local_hardware_id_typed().value());
+  }
+
   // If this is a device local to this host, returns a LocalDeviceState object
   // that can be used to manipulate the device. Returns nullptr if the device is
   // not local to this host.
@@ -199,16 +207,23 @@ class PjRtStreamExecutorClient : public PjRtClient {
   }
 
   StatusOr<PjRtDevice*> LookupDevice(int device_id) const override {
-    auto it = id_to_device_.find(device_id);
+    return LookupDevice(PjRtGlobalDeviceId(device_id));
+  }
+
+  StatusOr<PjRtDevice*> LookupDevice(
+      PjRtGlobalDeviceId global_device_id) const override {
+    auto it = id_to_device_.find(global_device_id.value());
     if (it != id_to_device_.end()) {
       return it->second;
     }
-    return InvalidArgument("No matching device found for device_id %d",
-                           device_id);
+    return InvalidArgument("No matching device found for global_device_id %d",
+                           global_device_id.value());
   }
 
   StatusOr<PjRtDevice*> LookupAddressableDevice(
       int local_hardware_id) const override;
+  StatusOr<PjRtDevice*> LookupAddressableDevice(
+      PjRtLocalDeviceId local_device_id) const override;
 
   absl::Span<PjRtMemorySpace* const> memory_spaces() const override;
 
