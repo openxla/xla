@@ -105,16 +105,12 @@ GetNcclP2PConfigForSendRecv(OpT op, int64_t replica_count,
   }
 
   // All execution instances of a send/recv together form a replica group.
-  // const int64_t num_participants =
-  //     config.group_mode == CollectiveOpGroupMode::kCrossReplica
-  //         ? replica_count
-  //         : partition_count;
-  // const int64_t num_participants = 2;
+  const int64_t num_participants = replica_count * partition_count;
   config.replica_groups.emplace_back();
   ReplicaGroup& replica_group = config.replica_groups.front();
-  // for (int i = 0; i < num_participants; ++i) {
-  //   replica_group.add_replica_ids(i);
-  // }
+  for (int i = 0; i < num_participants; ++i) {
+    replica_group.add_replica_ids(i);
+  }
 
   auto source_target_pairs = GetSourceTargetPairs(op.getFrontendAttributes());
   TF_CHECK_OK(source_target_pairs.status());
@@ -127,13 +123,6 @@ GetNcclP2PConfigForSendRecv(OpT op, int64_t replica_count,
         source;
     p2p_config.id_to_source_target.insert({source, {}}).first->second.target =
         target;
-    if (source <= target) {
-      replica_group.add_replica_ids(source);
-      replica_group.add_replica_ids(target);
-    } else {
-      replica_group.add_replica_ids(target);
-      replica_group.add_replica_ids(source);
-    }
   }
   return p2p_config;
 }
