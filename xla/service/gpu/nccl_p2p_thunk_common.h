@@ -105,6 +105,8 @@ GetNcclP2PConfigForSendRecv(OpT op, int64_t replica_count,
   }
 
   // All execution instances of a send/recv together form a replica group.
+  config.replica_count = replica_count;
+  config.partition_count = partition_count;
   const int64_t num_participants = replica_count * partition_count;
   config.replica_groups.emplace_back();
   ReplicaGroup& replica_group = config.replica_groups.front();

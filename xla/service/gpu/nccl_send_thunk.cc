@@ -82,10 +82,16 @@ Status NcclSendThunk::RunNcclCollective(const ExecuteParams& params,
   TF_ASSIGN_OR_RETURN(
       const DeviceAssignment::LogicalID current_logical_id,
       params.nccl_params.device_assn->LogicalIdForDevice(global_device_id));
+  // const int64_t current_id =
+  //     config_.config.group_mode == CollectiveOpGroupMode::kCrossReplica
+  //         ? current_logical_id.replica_id
+  //         : current_logical_id.computation_id;
   const int64_t current_id =
-      config_.config.group_mode == CollectiveOpGroupMode::kCrossReplica
-          ? current_logical_id.replica_id
-          : current_logical_id.computation_id;
+      current_logical_id.replica_id * config_.config.partition_count +
+      current_logical_id.computation_id;
+  VLOG(3) << "Performing Send, replica_id: " << current_logical_id.replica_id
+          << ", partition_count: " << config_.config.partition_count
+          << ", computation_id:  " << current_logical_id.computation_id;
   std::string device_string = GetDeviceString(params.nccl_params);
 
   const NcclP2PConfig::SourceTargetMapEntry source_target =
@@ -103,7 +109,7 @@ Status RunSend(NcclP2PConfig::SourceTargetMapEntry source_target,
   // to which this instance will copy its data.
 
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "Performing collective permute from device ordinal: "
+  VLOG(3) << "Performing Send from device ordinal: "
           << device_ordinal << "current_id " << current_id;
 
   const std::optional<int64_t> target_id = source_target.target;

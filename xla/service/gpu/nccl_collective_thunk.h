@@ -55,6 +55,8 @@ struct NcclCollectiveConfig {
   RendezvousKey::CollectiveOpKind collective_op_kind;
   int64_t op_id;
   CollectiveOpGroupMode group_mode;
+  int partition_count;
+  int replica_count;
 
   template <typename OpT>
   void SetCollectiveOpKindAndID(OpT op);

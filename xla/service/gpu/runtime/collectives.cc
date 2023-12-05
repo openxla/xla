@@ -265,10 +265,24 @@ absl::Status P2PImplCommon(const ServiceExecutableRunOptions* run_options,
   TF_ASSIGN_OR_RETURN(DeviceAssignment::LogicalID current_logical_id,
                       params.device_assn->LogicalIdForDevice(global_device_id));
 
-  const int64_t current_id = static_cast<CollectiveOpGroupMode>(group_mode) ==
-                                     CollectiveOpGroupMode::kCrossReplica
-                                 ? current_logical_id.replica_id
-                                 : current_logical_id.computation_id;
+  int64_t current_id = 0;
+  switch (static_cast<CollectiveOpGroupMode>(group_mode)) {
+    case CollectiveOpGroupMode::kFlattenedID: {
+      int replica_count = params.device_assn->replica_count();
+      int computation_count = params.device_assn->computation_count();
+      current_id = current_logical_id.replica_id * computation_count +
+                   current_logical_id.computation_id;
+      break;
+    }
+    case CollectiveOpGroupMode::kCrossReplica: {
+      current_id = current_logical_id.replica_id;
+      break;
+    }
+    default: {
+      current_id = current_logical_id.computation_id;
+      break;
+    }
+  }
 
   NcclP2PConfig::IdToSourceTargetMap id_to_source_target;
   for (int i = 0; i < source_peers.size(); ++i) {
