@@ -173,6 +173,7 @@ cc_library(
 #     name = "cutlass_gemm_custom_kernel_benchmarks",
 #     srcs = if_cuda_is_configured(["cutlass_gemm_custom_kernel_benchmarks.cc"]),
 #     backends = ["gpu"],
+#     linkstatic = 1,  # benchmarks
 #     deps = [
 #         ":cutlass_gemm_custom_kernel",
 #         "//xla:types",
@@ -224,6 +225,7 @@ cc_library(
 #     visibility = ["//visibility:private"],
 #     deps = [
 #         ":cutlass_gemm_kernels_bf16xbf16_to_bf16",
+#         ":cutlass_gemm_kernels_bf16xbf16_to_bf16_sm80",
 #         ":cutlass_gemm_kernels_f32xf32_to_f32",
 #     ],
 # )
@@ -242,9 +244,19 @@ cc_library(
 # # to unroll them with extra compiler options because by default LLVM is not as aggressive with loop
 # # unrolling as NVCC.
 #
+# # TODO(ezhulenev): Write a build rule to simplify kernel target declarations.
+#
 # cuda_library(
 #     name = "cutlass_gemm_kernels_bf16xbf16_to_bf16",
 #     srcs = ["cutlass_gemm_kernels_bf16xbf16_to_bf16.cu.cc"],
+#     copts = ["-mllvm -unroll-threshold=100000"],
+#     visibility = ["//visibility:private"],
+#     deps = [":cutlass_gemm_kernels_header"],
+# )
+#
+# cuda_library(
+#     name = "cutlass_gemm_kernels_bf16xbf16_to_bf16_sm80",
+#     srcs = ["cutlass_gemm_kernels_bf16xbf16_to_bf16_sm80.cu.cc"],
 #     copts = ["-mllvm -unroll-threshold=100000"],
 #     visibility = ["//visibility:private"],
 #     deps = [":cutlass_gemm_kernels_header"],
