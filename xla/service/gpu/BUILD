@@ -2209,6 +2209,31 @@ xla_cc_test(
     ],
 )
 
+cc_library(
+    name = "rename_instructions",
+    srcs = ["rename_instructions.cc"],
+    hdrs = ["rename_instructions.h"],
+    deps = [
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+xla_cc_test(
+    name = "rename_instructions_test",
+    srcs = ["rename_instructions_test.cc"],
+    deps = [
+        ":rename_instructions",
+        "//xla/tests:hlo_test_base",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 tf_proto_library(
     name = "fusion_process_dump_proto",
     srcs = ["fusion_process_dump.proto"],
@@ -3034,6 +3059,7 @@ cc_library(
         ":reduction_layout_normalizer",
         ":reduction_splitter",
         ":reduction_utils",
+        ":rename_instructions",
         ":runtime_intrinsics",
         ":scatter_slice_simplifier",
         ":softmax_rewriter_triton",

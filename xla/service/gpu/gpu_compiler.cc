@@ -164,6 +164,7 @@ limitations under the License.
 #include "xla/service/gpu/reduction_layout_normalizer.h"
 #include "xla/service/gpu/reduction_splitter.h"
 #include "xla/service/gpu/reduction_utils.h"
+#include "xla/service/gpu/rename_instructions.h"
 #include "xla/service/gpu/runtime/executable.h"
 #include "xla/service/gpu/runtime_intrinsics.h"
 #include "xla/service/gpu/scatter_slice_simplifier.h"
@@ -1005,6 +1006,10 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
   const se::DeviceDescription& gpu_device_info =
       gpu_target_config.device_description;
 
+  HloPassPipeline pre_fusion("pre-fusion");
+  pre_fusion.AddPass<RenameInstructions>();
+  TF_RETURN_IF_ERROR(pre_fusion.Run(hlo_module).status());
+
   TF_RETURN_IF_ERROR(FusionPipeline(debug_options, ShapeSizeBytesFunction(),
                                     thread_pool.get(), gpu_device_info)
                          .Run(hlo_module)
@@ -1020,7 +1025,7 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
         /*per_second_rates=*/{},
         /*count_multiple_input_accesses=*/true};
 
-    HloPassPipeline post_fusion_analysis("post_fusion_analysis");
+    HloPassPipeline post_fusion_analysis("post-fusion analysis");
     post_fusion_analysis.AddPass<GpuCostModelStatsCollection>(
         gpu_device_info, cost_analysis_options);
     TF_RETURN_IF_ERROR(post_fusion_analysis.Run(hlo_module).status());
