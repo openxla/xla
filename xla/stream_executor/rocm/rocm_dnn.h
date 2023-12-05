@@ -575,7 +575,7 @@ class MIOpenSupport : public dnn::DnnSupport {
       DeviceMemory<U>* offset_backprop);
 
   template <class T>
-  bool DoRnnForwardImpl(Stream* stream, const MIOpenRnnDescriptor& rnn_desc,
+  tsl::Status DoRnnForwardImpl(Stream* stream, const MIOpenRnnDescriptor& rnn_desc,
                         const MIOpenRnnSequenceTensorDescriptor& input_desc,
                         const DeviceMemory<T>& input_data,
                         const MIOpenRnnStateTensorDescriptor& input_h_desc,
@@ -593,7 +593,7 @@ class MIOpenSupport : public dnn::DnnSupport {
                         ScratchAllocator* workspace_allocator,
                         dnn::ProfileResult* output_profile_result);
   template <class T>
-  bool DoRnnBackwardImpl(Stream* stream, const MIOpenRnnDescriptor& rnn_desc,
+  tsl::Status DoRnnBackwardImpl(Stream* stream, const MIOpenRnnDescriptor& rnn_desc,
                          const MIOpenRnnSequenceTensorDescriptor& input_desc,
                          const DeviceMemory<T>& input_data,
                          const MIOpenRnnStateTensorDescriptor& input_h_desc,
