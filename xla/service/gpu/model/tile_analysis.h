@@ -117,6 +117,40 @@ StatusOr<HloInstructionIndexing> ComputeOutputToInputIndexing(
 StatusOr<HloInstructionIndexing> ComputeInputToOutputIndexing(
     const HloInstruction* instr, int input_id, mlir::MLIRContext* mlir_context);
 
+// Computes HloInstructionIndexing that maps the iteration space of the
+// consumer's output tensor to the iteration space of the producer's inputs and
+// the remaining outputs of the consumer as if the producer was fused.
+//
+// Example:
+//
+//  operand1 operand2
+//     |        |       # producer_instr_indexing edges
+//  producer_instr
+//      |               # consumer_operand_indexing edge
+//  consumer
+//
+// The function has three inputs:
+//
+// 1. `producer_instr_indexing` is the producer's HloInstructionIndexing
+//    that maps the iteration space of its output tensor to the inputs of
+//    producers.
+// 2. `consumer_instr_indexing` is the producer's HloInstructionIndexing
+//    that maps the iteration space of its output tensor to the inputs of
+//    producers.
+// 3. `operand_id` is the id of the consumer's operand that takes the value of
+//    the producer.
+HloInstructionIndexing ComputeFusedProducerConsumerIndexing(
+    const HloInstructionIndexing& producer_indexing,
+    const HloInstructionIndexing& consumer_indexing, int64_t operand_id);
+
+// Computes HloInstructionIndexing that maps the iteration space of the
+// consumer's output tensor to the iteration space of the producer's inputs and
+// the remaining outputs of the consumer as if the producer was fused.
+StatusOr<HloInstructionIndexing> ComputeFusedProducerConsumerIndexing(
+    const HloInstruction* producer_instr, const HloInstruction* consumer_instr,
+    const HloInstructionIndexing& consumer_indexing,
+    mlir::MLIRContext* mlir_context);
+
 }  // namespace gpu
 }  // namespace xla
 

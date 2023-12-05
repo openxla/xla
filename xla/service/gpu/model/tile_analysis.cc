@@ -186,47 +186,6 @@ IndexingMap ComposeIndexingMaps(const IndexingMap& producer_map,
                      .input_dims_sizes = std::move(combined_sizes)};
 }
 
-// Computes HloInstructionIndexing that maps the iteration space of the
-// consumer's output tensor to the iteration space of the producer's inputs and
-// the remaining outputs of the consumer as if the producer was fused.
-//
-// Example:
-//
-//  operand1 operand2
-//     |        |       # producer_instr_indexing edges
-//  producer_instr
-//      |               # consumer_operand_indexing edge
-//  consumer
-//
-// The function has two inputs:
-//
-// 1. `producer_instr_indexing` is the producer's HloInstructionIndexing
-//    that maps the iteration space of its output tensor to the inputs of
-//    producers.
-// 2. `consumer_operand_indexing` is the consumer's HloOperandIndexing for the
-//    operand that corresponds to the provided producer.
-HloInstructionIndexing ComputeFusedProducerConsumerIndexing(
-    const HloInstructionIndexing& producer_indexing,
-    const absl::flat_hash_set<IndexingMap>& operand_indexing_maps) {
-  HloInstructionIndexing fused_instr_indexing;
-
-  // Every operand can be read 1 or more times by the consumer which also can
-  // have 1 or more read accesses to its operands. So, to get the composed
-  // indexing maps we have to compute a "cross product" here.
-  for (const auto& [producer_operand_id, producer_operand_indexing] :
-       producer_indexing.indexing_maps) {
-    auto& composed_operand_indexing =
-        fused_instr_indexing.indexing_maps[producer_operand_id];
-    for (const IndexingMap& producer_map : producer_operand_indexing) {
-      for (const IndexingMap& consumer_map : operand_indexing_maps) {
-        composed_operand_indexing.insert(
-            ComposeIndexingMaps(producer_map, consumer_map));
-      }
-    }
-  }
-  return fused_instr_indexing;
-}
-
 // Composes instruction indexing maps starting at the root instruction
 // until the HloParameterInstruction is found.
 StatusOr<HloInstructionIndexing> ComputeOutputToInputFusionOpIndexing(
@@ -255,12 +214,11 @@ StatusOr<HloInstructionIndexing> ComputeOutputToInputFusionOpIndexing(
             operand_indexing_maps.begin(), operand_indexing_maps.end());
         continue;
       }
-      TF_ASSIGN_OR_RETURN(auto producer_instr_indexing,
-                          ComputeOutputToInputIndexing(
-                              producer_instr, /*output_id=*/0, mlir_context));
-      bfs.push(std::make_pair(
-          producer_instr, ComputeFusedProducerConsumerIndexing(
-                              producer_instr_indexing, operand_indexing_maps)));
+      TF_ASSIGN_OR_RETURN(
+          auto fused_indexing,
+          ComputeFusedProducerConsumerIndexing(producer_instr, instr,
+                                               instr_indexing, mlir_context));
+      bfs.push(std::make_pair(producer_instr, std::move(fused_indexing)));
     }
     bfs.pop();
   }
@@ -1129,6 +1087,42 @@ StatusOr<HloInstructionIndexing> ComputeInputToOutputIndexing(
     return ComputeInputToOutputTransposeOpIndexing(transpose, mlir_context);
   }
   return InvalidArgument("Unsupported instruction type");
+}
+
+HloInstructionIndexing ComputeFusedProducerConsumerIndexing(
+    const HloInstructionIndexing& producer_indexing,
+    const HloInstructionIndexing& consumer_indexing, int64_t operand_id) {
+  const absl::flat_hash_set<IndexingMap>& operand_indexing_maps =
+      consumer_indexing.indexing_maps.at(operand_id);
+
+  HloInstructionIndexing fused_instr_indexing;
+  // Every operand can be read 1 or more times by the consumer which also can
+  // have 1 or more read accesses to its operands. So, to get the composed
+  // indexing maps we have to compute a "cross product" here.
+  for (const auto& [producer_operand_id, producer_operand_indexing] :
+       producer_indexing.indexing_maps) {
+    auto& composed_operand_indexing =
+        fused_instr_indexing.indexing_maps[producer_operand_id];
+    for (const IndexingMap& producer_map : producer_operand_indexing) {
+      for (const IndexingMap& consumer_map : operand_indexing_maps) {
+        composed_operand_indexing.insert(
+            ComposeIndexingMaps(producer_map, consumer_map));
+      }
+    }
+  }
+  return fused_instr_indexing;
+}
+
+StatusOr<HloInstructionIndexing> ComputeFusedProducerConsumerIndexing(
+    const HloInstruction* producer_instr, const HloInstruction* consumer_instr,
+    const HloInstructionIndexing& consumer_indexing,
+    MLIRContext* mlir_context) {
+  TF_ASSIGN_OR_RETURN(auto producer_instr_indexing,
+                      ComputeOutputToInputIndexing(
+                          producer_instr, /*output_id=*/0, mlir_context));
+  int64_t operand_id = consumer_instr->operand_index(producer_instr);
+  return ComputeFusedProducerConsumerIndexing(producer_instr_indexing,
+                                              consumer_indexing, operand_id);
 }
 
 }  // namespace gpu
