@@ -85,8 +85,6 @@ std::string AutoShardingOption::ToString() const {
       absl::StrCat("allow_mixed_mesh_shape: ", allow_mixed_mesh_shape));
   lines.push_back(
       absl::StrCat("grad_acc_num_micro_batches: ", grad_acc_num_micro_batches));
-  lines.push_back(
-      absl::StrCat("force_simple_heuristic: ", force_simple_heuristic));
   lines.push_back(absl::StrCat("force_strategy: ", force_strategy));
 
   if (force_strategy) {

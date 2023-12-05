@@ -143,13 +143,6 @@ std::unique_ptr<StrategyGroup> CreateTupleStrategyGroup(size_t instruction_id) {
   return strategy_group;
 }
 
-// ShardingPropagation::GetShardingFromUser does not handle TopK custom
-// calls. Mirroring that function's handling of kSort, we handle TopK below.
-HloSharding InferInputShardingForTopK(const HloInstruction* ins,
-                                      const HloSharding& output_sharding) {
-  return output_sharding;
-}
-
 // Compute the resharding costs as well as input shardings (when missing) for
 // all operands of a given instruction, and an output sharding for that
 // instruction.
@@ -173,13 +166,12 @@ GenerateReshardingCostsAndMissingShardingsForAllOperands(
       }
     } else {
       std::optional<HloSharding> cur_input_sharding;
+      CHECK_EQ(input_shardings.size(), ins->operand_count());
       if (input_shardings[k].has_value()) {
-        CHECK_EQ(input_shardings.size(), ins->operand_count());
         cur_input_sharding = input_shardings[k];
       } else {
-        cur_input_sharding =
-            GetInputSharding(ins, operand, k, output_sharding, call_graph,
-                             cluster_env.NumDevices());
+        cur_input_sharding = GetInputSharding(
+            ins, k, output_sharding, call_graph, cluster_env.NumDevices());
       }
       bool is_sharding_default_replicated = false;
       if (!cur_input_sharding.has_value()) {
@@ -187,8 +179,6 @@ GenerateReshardingCostsAndMissingShardingsForAllOperands(
             (ins->opcode() == HloOpcode::kScatter && k != 0)) {
           is_sharding_default_replicated = true;
           cur_input_sharding = HloSharding::Replicate();
-        } else if (IsTopKCustomCall(ins)) {
-          cur_input_sharding = InferInputShardingForTopK(ins, output_sharding);
         } else if (ins->opcode() == HloOpcode::kCustomCall) {
           is_sharding_default_replicated = true;
           cur_input_sharding = HloSharding::Replicate();
@@ -2031,23 +2021,33 @@ Status SetHloShardingPostProcessing(
     // Here we insert some extra annotated identity instructions to help the
     // spmd partitioner generate correct code.
 
-    if (inst->opcode() == HloOpcode::kDot) {
+    if (inst->opcode() == HloOpcode::kDot ||
+        inst->opcode() == HloOpcode::kConvolution) {
       const ShardingStrategy& stra =
           GetShardingStrategy(inst, strategy_map, cost_graph, s_val);
       const HloInstruction* lhs = inst->operand(0);
       const HloInstruction* rhs = inst->operand(1);
       const HloSharding& lhs_sharding = lhs->sharding();
       const HloSharding& rhs_sharding = rhs->sharding();
-      const DotDimensionNumbers& dot_dnums = inst->dot_dimension_numbers();
-      const auto& lhs_con_dims = dot_dnums.lhs_contracting_dimensions();
-      const auto& rhs_con_dims = dot_dnums.rhs_contracting_dimensions();
+      std::vector<int64_t> lhs_con_dims;
+      std::vector<int64_t> rhs_con_dims;
+      if (inst->opcode() == HloOpcode::kDot) {
+        const DotDimensionNumbers& dot_dnums = inst->dot_dimension_numbers();
+        lhs_con_dims.push_back(dot_dnums.lhs_contracting_dimensions()[0]);
+        rhs_con_dims.push_back(dot_dnums.rhs_contracting_dimensions()[0]);
+      } else {
+        const ConvolutionDimensionNumbers& conv_dnums =
+            inst->convolution_dimension_numbers();
+        lhs_con_dims.push_back(conv_dnums.input_feature_dimension());
+        rhs_con_dims.push_back(conv_dnums.kernel_input_feature_dimension());
+      }
 
-      const auto& lhs_tensor_dim_to_mesh_dim =
+      const std::vector<int64_t>& lhs_tensor_dim_to_mesh_dim =
           cluster_env.GetTensorDimToMeshDimWrapper(
               lhs->shape(), lhs_sharding,
               /* consider_reverse_device_meshes */ true,
               /* crash_at_error */ crash_at_error);
-      const auto& rhs_tensor_dim_to_mesh_dim =
+      const std::vector<int64_t>& rhs_tensor_dim_to_mesh_dim =
           cluster_env.GetTensorDimToMeshDimWrapper(
               rhs->shape(), rhs_sharding,
               /* consider_reverse_device_meshes */ true,
@@ -2058,61 +2058,23 @@ Status SetHloShardingPostProcessing(
         return absl::InvalidArgumentError(
             "Cannot generate tensor dim to mesh dim mapping");
       }
+
       if (absl::StrContains(stra.name, "allreduce") &&
-          lhs_tensor_dim_to_mesh_dim[lhs_con_dims[0]] == -1 &&
-          rhs_tensor_dim_to_mesh_dim[rhs_con_dims[0]] == -1) {
-        // Allow duplicatd dot computation in this case to reduce
+          std::any_of(lhs_con_dims.begin(), lhs_con_dims.end(),
+                      [&lhs_tensor_dim_to_mesh_dim](int64_t dim) {
+                        return lhs_tensor_dim_to_mesh_dim[dim] == -1;
+                      }) &&
+          std::any_of(rhs_con_dims.begin(), rhs_con_dims.end(),
+                      [&rhs_tensor_dim_to_mesh_dim](int64_t dim) {
+                        return rhs_tensor_dim_to_mesh_dim[dim] == -1;
+                      })) {
+        // Allow duplicated dot computation in this case to reduce
         // communication
       } else {
         CHECK(stra.input_shardings.size() == 2)
             << "Dot op requires both operands to have input shardings, "
                "but get instruction: "
             << inst->ToString() << ", strategy : " << stra.ToString();
-        if (stra.input_shardings[0].has_value()) {
-          FixMixedMeshShapeResharding(inst, 0, stra.input_shardings[0].value(),
-                                      device_mesh, resharding_cache);
-        }
-        if (stra.input_shardings[1].has_value()) {
-          FixMixedMeshShapeResharding(inst, 1, stra.input_shardings[1].value(),
-                                      device_mesh, resharding_cache);
-        }
-      }
-    } else if (inst->opcode() == HloOpcode::kConvolution) {
-      const ShardingStrategy& stra =
-          GetShardingStrategy(inst, strategy_map, cost_graph, s_val);
-      const HloInstruction* lhs = inst->operand(0);
-      const HloInstruction* rhs = inst->operand(1);
-      const HloSharding& lhs_sharding = lhs->sharding();
-      const HloSharding& rhs_sharding = rhs->sharding();
-      const ConvolutionDimensionNumbers& conv_dnums =
-          inst->convolution_dimension_numbers();
-      const int lhs_in_channel_dim = conv_dnums.input_feature_dimension();
-      const int rhs_in_channel_dim =
-          conv_dnums.kernel_input_feature_dimension();
-
-      const auto& lhs_tensor_dim_to_mesh_dim =
-          cluster_env.GetTensorDimToMeshDimWrapper(
-              lhs->shape(), lhs_sharding,
-              /* consider_reverse_device_meshes */ true,
-              /* crash_at_error */ crash_at_error);
-      const auto& rhs_tensor_dim_to_mesh_dim =
-          cluster_env.GetTensorDimToMeshDimWrapper(
-              rhs->shape(), rhs_sharding,
-              /* consider_reverse_device_meshes */ true,
-              /* crash_at_error */ crash_at_error);
-
-      if (lhs_tensor_dim_to_mesh_dim.size() != lhs->shape().rank() ||
-          rhs_tensor_dim_to_mesh_dim.size() != rhs->shape().rank()) {
-        return absl::InvalidArgumentError(
-            "Cannot generate tensor dim to mesh dim mapping");
-      }
-
-      if (absl::StrContains(stra.name, "allreduce") &&
-          lhs_tensor_dim_to_mesh_dim[lhs_in_channel_dim] == -1 &&
-          rhs_tensor_dim_to_mesh_dim[rhs_in_channel_dim] == -1) {
-        // Allow duplicatd conv computation in this case to reduce
-        // communication
-      } else {
         if (stra.input_shardings[0].has_value()) {
           FixMixedMeshShapeResharding(inst, 0, stra.input_shardings[0].value(),
                                       device_mesh, resharding_cache);
@@ -2959,121 +2921,6 @@ void GenerateReduceScatter(
   }
 }
 
-void AnnotateShardingWithSimpleHeuristic(
-    HloModule* module, const std::string& heuristic, const AliasMap& alias_map,
-    const ClusterEnvironment& cluster_env) {
-  const Array<int64_t>& device_mesh = cluster_env.device_mesh_;
-  const Array<int64_t>& device_mesh_1d = cluster_env.device_mesh_1d_;
-  int64_t num_devices = device_mesh.num_elements();
-
-  // Count the non-one mesh dimension.
-  size_t mesh_nn_dims = 0;
-  for (int dim : device_mesh.dimensions()) {
-    if (dim > 1) {
-      mesh_nn_dims++;
-    }
-  }
-
-  // Shard instructions
-  HloComputation* entry_computation = module->entry_computation();
-  for (HloInstruction* inst : entry_computation->instructions()) {
-    if (inst->opcode() == HloOpcode::kParameter) {
-      HloSharding output_spec = HloSharding::Replicate();
-      inst->set_sharding(output_spec);
-
-      if (heuristic == "shard-largest") {
-        std::vector<int64_t> lengths;
-        for (int64_t i = 0; i < inst->shape().rank(); ++i) {
-          lengths.push_back(inst->shape().dimensions(i));
-        }
-
-        std::vector<int> indices = Argsort(lengths);
-        int common_dims = std::min(mesh_nn_dims, indices.size());
-
-        if (common_dims < 1) {
-          continue;
-        }
-
-        if (common_dims == 1) {
-          int dim = indices[0];
-          int length = lengths[dim];
-          if (length % num_devices == 0) {
-            output_spec = Tile(inst->shape(), {dim}, {0}, device_mesh_1d);
-          }
-        } else {
-          int dim1 = indices[0];
-          int length1 = lengths[dim1];
-          int dim0 = indices[1];
-          int length0 = lengths[dim0];
-
-          if (length0 % device_mesh.dim(0) == 0 &&
-              length1 % device_mesh.dim(1) == 0) {
-            output_spec =
-                Tile(inst->shape(), {dim0, dim1}, {0, 1}, device_mesh);
-          }
-        }
-      } else if (heuristic == "shard-first") {
-        if (inst->shape().rank() > 0 &&
-            inst->shape().dimensions(0) % num_devices == 0) {
-          output_spec = Tile(inst->shape(), {0}, {0}, device_mesh_1d);
-        }
-      } else if (heuristic == "shard-last") {
-        int64_t last_dim = inst->shape().rank() - 1;
-        if (inst->shape().rank() > 0 &&
-            inst->shape().dimensions(last_dim) % num_devices == 0) {
-          output_spec = Tile(inst->shape(), {last_dim}, {0}, device_mesh_1d);
-        }
-      } else {
-        LOG(FATAL) << "Invalid heuristic: " << heuristic;
-      }
-
-      inst->set_sharding(output_spec);
-    } else if (inst->opcode() == HloOpcode::kDot) {
-      const HloInstruction* lhs = inst->operand(0);
-      const HloInstruction* rhs = inst->operand(1);
-      const DotDimensionNumbers& dot_dnums = inst->dot_dimension_numbers();
-      // const auto& lhs_con_dims = dot_dnums.lhs_contracting_dimensions();
-      // const auto& rhs_con_dims = dot_dnums.rhs_contracting_dimensions();
-      tsl::protobuf::RepeatedField<int64_t> lhs_space_dims, rhs_space_dims;
-      std::tie(lhs_space_dims, rhs_space_dims) =
-          GetSpaceDims(lhs->shape(), rhs->shape(), dot_dnums);
-    }
-  }
-
-  // Meet the alias requirement for the output tuple.
-  HloInstruction* output = entry_computation->root_instruction();
-  const Shape& out_shape = output->shape();
-  ShapeTree<HloSharding> tuple_sharding(out_shape, HloSharding::Replicate());
-  std::vector<HloSharding> flattened_shardings;
-
-  std::function<void(HloInstruction*)> get_flattened_shardings;
-  get_flattened_shardings = [&](HloInstruction* cur) {
-    for (int64_t i = 0; i < cur->operand_count(); ++i) {
-      HloInstruction* operand = cur->mutable_operand(i);
-
-      if (operand->shape().IsTuple()) {
-        get_flattened_shardings(operand);
-      } else {
-        if (alias_map.contains(operand)) {
-          operand = alias_map.at(operand);
-        }
-        if (!operand->has_sharding()) {
-          operand->set_sharding(HloSharding::Replicate());
-        }
-        CHECK(operand->has_sharding());
-        flattened_shardings.push_back(operand->sharding());
-      }
-    }
-  };
-  get_flattened_shardings(output);
-  int i = 0;
-  for (auto& leaf : tuple_sharding.leaves()) {
-    leaf.second = flattened_shardings[i++];
-  }
-  CHECK_EQ(i, flattened_shardings.size());
-  output->set_sharding(HloSharding::Tuple(tuple_sharding));
-}
-
 // Filter strategies according to the option.force_batch_dim_to_mesh_dim.
 // This can be used to forcibly generate data-parallel strategies.
 Status FilterStrategy(const HloInstruction* ins, const Shape& shape,
@@ -3536,12 +3383,6 @@ StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
                                          device_mesh.num_elements();
       LOG(INFO) << "Setting option.memory_budget_per_device to "
                 << option_.memory_budget_per_device;
-    }
-
-    if (!option_.force_simple_heuristic.empty()) {
-      AnnotateShardingWithSimpleHeuristic(
-          module, option_.force_simple_heuristic, alias_map, cluster_env);
-      return AutoShardingResult::kModuleChangedShardingPerformed;
     }
 
     if (option_.force_batch_dim_to_mesh_dim >= 0) {
