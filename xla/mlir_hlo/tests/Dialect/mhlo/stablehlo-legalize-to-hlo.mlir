@@ -1969,3 +1969,10 @@ func.func @op_topk_mhlo_v1(%arg0: tensor<5x10xf32>) -> (tensor<5x8xf32>, tensor<
   } : (tensor<5x10xf32>) -> (tensor<5x8xf32>, tensor<5x8xi32>)
   func.return %0#0, %0#1 : tensor<5x8xf32>, tensor<5x8xi32>
 }
+
+// -----
+
+// CHECK-LABEL: "op_unit_attributes"
+func.func @op_unit_attributes(%arg0: tensor<2xui64> {tf.example_unit_attr}) -> tensor<2xui64> {
+  func.return %arg0 : tensor<2xui64>
+}

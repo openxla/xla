@@ -337,6 +337,11 @@ func.func @attr_type_extensions_bounds(
   func.return %arg0 : tensor<?x?xf32, #mhlo.type_extensions<bounds = [16, ?]>>
 }
 
+// CHECK-LABEL: "op_unit_attributes"
+func.func @op_unit_attributes(%arg0: tensor<2xui64> {tf.example_unit_attr}) -> tensor<2xui64> {
+  func.return %arg0 : tensor<2xui64>
+}
+
 // ============ OPS ============
 
 // CHECK-LABEL: "op_abs"
