@@ -8,6 +8,7 @@ load(
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
+    "if_rocm",
 )
 load(
     "@tsl//tsl:tsl.bzl",
@@ -27,6 +28,18 @@ load(
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+)
+load(
+    "//xla/service/gpu:build_defs.bzl",
+    "gpu_kernel_library",
+)
+load(
+    "//xla/tests:build_defs.bzl",
+    "xla_test"
+)
+load(
+    "@local_config_cuda//cuda:build_defs.bzl",
+    "if_cuda",
 )
 
 package(
@@ -538,5 +551,63 @@ cc_library(
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
     ]) + if_static([
         "@tsl//tsl/platform:tensor_float_32_utils",
+    ]),
+)
+
+gpu_kernel_library(
+    name = "gpu_test_kernels",
+    testonly = 1,
+    srcs = if_gpu_is_configured(["gpu_test_kernels.cu.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_test_kernels.h"]),
+    deps = if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        "//xla/stream_executor/rocm:add_i32_kernel",
+    ]),
+)
+
+xla_test(
+    name = "gpu_kernel_test",
+    srcs = if_gpu_is_configured(["gpu_kernel_test.cc"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
+    backends = ["gpu"],
+    deps = [
+        "//xla/service:platform_util",
+        "//xla/stream_executor/gpu:gpu_test_kernels",
+        "//xla/stream_executor",
+        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:platform",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ] + if_cuda([
+        "//xla/stream_executor/cuda:cuda_platform",
+    ]) + if_rocm([
+        "//xla/stream_executor/rocm:rocm_platform",
+    ]),
+)
+
+xla_test(
+    name = "gpu_command_buffer_test",
+    srcs = if_gpu_is_configured(["gpu_command_buffer_test.cc"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
+    backends = ["gpu"],
+    deps = [
+        "//xla/stream_executor/gpu:gpu_test_kernels",
+        "//xla/stream_executor",
+        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:platform",
+        "@com_google_absl//absl/log:check",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ] + if_cuda([
+        "//xla/stream_executor/cuda:cuda_platform",
+    ]) + if_rocm([
+        "//xla/stream_executor/rocm:rocm_platform",
     ]),
 )

@@ -1,5 +1,6 @@
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
@@ -81,6 +82,7 @@ cc_library(
 xla_test(
     name = "command_buffer_cmd_test",
     srcs = if_gpu_is_configured(["command_buffer_cmd_test.cc"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     backends = ["gpu"],
     deps = [
         ":command_buffer_cmd",
@@ -91,7 +93,7 @@ xla_test(
         "//xla/stream_executor",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor/cuda:cuda_test_kernels",
+        "//xla/stream_executor/gpu:gpu_test_kernels",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
@@ -151,6 +153,7 @@ cc_library(
 xla_test(
     name = "command_buffer_thunk_test",
     srcs = if_gpu_is_configured(["command_buffer_thunk_test.cc"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     backends = ["gpu"],
     deps = [
         ":command_buffer_allocations",
@@ -167,7 +170,7 @@ xla_test(
         "//xla/stream_executor",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor/cuda:cuda_test_kernels",
+        "//xla/stream_executor/gpu:gpu_test_kernels",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",

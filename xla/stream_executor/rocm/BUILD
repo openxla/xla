@@ -5,6 +5,7 @@ load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
 )
+load("//xla/stream_executor/rocm:build_defs.bzl", "rocm_embedded_test_modules")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_hipblaslt",
@@ -557,4 +558,9 @@ cc_library(
     ] + if_static(
         [":all_runtime"],
     ),
+)
+
+rocm_embedded_test_modules(
+    name = "add_i32_kernel",
+    srcs = if_rocm_is_configured(["add_i32_kernel.cu.cc"])
 )
