@@ -115,11 +115,14 @@ bool IsInputFusibleScatter(const HloInstruction& instr);
 // and outputs than is allowed or occupy too much shared memory. If the fusion
 // is a producer/consumer fusion and `instr1` is the consumer and `instr2` is
 // the producer, set consumer_producer_fusion to true to enable more fusion.
-FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
-                                  const HloInstruction& instr2,
-                                  const se::DeviceDescription& device_info,
-                                  bool is_consumer_producer_fusion = false,
-                                  FusionInfoCache* cache = nullptr);
+// If the shared memory usage is already known, pass it in
+// `instr$n_shmem_usage`. Otherwise, it will be computed.
+FusionDecision FusionFitsInBudget(
+    const HloInstruction& instr1, const HloInstruction& instr2,
+    const se::DeviceDescription& device_info,
+    bool is_consumer_producer_fusion = false, FusionInfoCache* cache = nullptr,
+    std::optional<int64_t> instr1_shmem_usage = std::nullopt,
+    std::optional<int64_t> instr2_shmem_usage = std::nullopt);
 
 // Check if fusing producer and consumer will generate a heavy computation, e.g.
 // producer has a complex computation per output and consumer calls this

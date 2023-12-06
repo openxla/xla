@@ -20,11 +20,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/container/inlined_vector.h"
 #include "absl/types/span.h"
-#include "llvm/IR/Value.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -195,6 +192,22 @@ class ReductionCodegenInfo {
   int GetNumPartialResults() const { return num_partial_results_; }
   bool IsRowReduction() const { return is_row_reduction_; }
   bool IsRaceFree() const { return is_race_free_; }
+
+  // For a row reduction, returns the number of rows we can process in parallel
+  // per warp.
+  int RowReductionGetRowsPerWarp() const {
+    constexpr int64_t kWarpSize = 32;
+    int reduced_dimension_size = ReducedDimensionSize();
+    if (kWarpSize % reduced_dimension_size != 0 ||
+        reduced_dimension_size >= kWarpSize) {
+      return 1;
+    }
+    return kWarpSize / reduced_dimension_size;
+  }
+
+  int ReducedDimensionSize() const {
+    return tiling_scheme_.GetDimsInElems()[2];
+  }
 
  private:
   TilingScheme tiling_scheme_;

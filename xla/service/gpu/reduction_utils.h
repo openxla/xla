@@ -16,8 +16,10 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_REDUCTION_UTILS_H_
 #define XLA_SERVICE_GPU_REDUCTION_UTILS_H_
 
+#include "absl/container/inlined_vector.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/gpu/kernel_mapping_scheme.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/util.h"
 
@@ -68,6 +70,11 @@ int64_t ReductionDimensionRaceFreeBound(
 // that is, at most one block will write to every output element.
 bool ReductionIsRaceFree(const HloModuleConfig& hlo_module_config,
                          const ReductionDimensions& reduction_dimensions);
+
+// Returns the dimensions of shared memory tiles required by the reduction
+// emitter.
+absl::InlinedVector<int64_t, 2> GetReductionSharedMemoryTileSize(
+    const ReductionCodegenInfo& reduction_info);
 
 }  // namespace gpu
 }  // namespace xla

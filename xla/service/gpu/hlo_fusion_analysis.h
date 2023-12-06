@@ -91,6 +91,11 @@ class HloFusionAnalysis {
   // Returns the hero reduction of the computation.
   const HloInstruction* FindHeroReduction() const;
 
+  // Returns the exact number of bytes required by this fusion. Does not work
+  // for Triton fusions.
+  // TODO(jreiffers): Move this to the emitter classes.
+  int64_t GetSharedMemoryUsageBytes() const;
+
  private:
   // Precomputed information about inputs (arguments) and outputs (roots) of the
   // fusion.

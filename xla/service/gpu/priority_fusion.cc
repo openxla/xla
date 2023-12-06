@@ -614,11 +614,17 @@ FusionDecision GpuPriorityFusion::ShouldFuse(HloInstruction* consumer,
     }
   }
 
+  auto shmem_usage = [this](const auto& instr) -> int64_t {
+    const auto& analysis = fusion_analysis_cache_.Get(instr);
+    return analysis ? analysis->GetSharedMemoryUsageBytes() : 0;
+  };
+
   // Avoid cases where we'd create a fusion that hit limitations in ptxas.
   // Would be nice to model this with cost instead.
-  if (auto fits_budget =
-          FusionFitsInBudget(*consumer, *producer, device_info_,
-                             /*is_consumer_producer_fusion=*/true);
+  if (auto fits_budget = FusionFitsInBudget(
+          *consumer, *producer, device_info_,
+          /*is_consumer_producer_fusion=*/true,
+          /*cache=*/nullptr, shmem_usage(*consumer), shmem_usage(*producer));
       !fits_budget) {
     return fits_budget;
   }

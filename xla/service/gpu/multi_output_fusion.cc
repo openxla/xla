@@ -207,7 +207,9 @@ std::vector<HloInstruction*> GetProducerConsumerMultiOutputFusionCandidates(
       std::bind(OperandReachableFromProducer, _1, _2, std::cref(reachability)),
       std::bind(FusionFitsInBudget, _1, _2,
                 std::cref(*cost_analysis->device_info_),
-                /*is_consumer_producer_fusion=*/false, fusion_info_cache),
+                /*is_consumer_producer_fusion=*/false, fusion_info_cache,
+                /*instr1_shmem_usage=*/std::nullopt,
+                /*instr2_shmem_usage=*/std::nullopt),
       [&](const HloInstruction& producer,
           const HloInstruction& consumer) -> FusionDecision {
         return {

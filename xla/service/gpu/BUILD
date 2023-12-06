@@ -388,7 +388,6 @@ cc_library(
         "elemental_ir_emitter.h",
         "ir_emitter.h",
         "ir_emitter_nested.h",
-        "kernel_mapping_scheme.h",
     ],
     copts = if_cuda_is_configured(["-DGOOGLE_CUDA=1"]),
     deps = [
@@ -397,6 +396,7 @@ cc_library(
         ":hlo_to_ir_bindings",
         ":ir_emission_utils",
         ":ir_emitter_context",
+        ":kernel_mapping_scheme",
         ":kernel_reuse_cache",
         ":target_util",
         "//xla:literal",
@@ -422,6 +422,19 @@ cc_library(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:errors",
+    ],
+)
+
+cc_library(
+    name = "kernel_mapping_scheme",
+    hdrs = ["kernel_mapping_scheme.h"],
+    deps = [
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/llvm_ir:loop_emitter",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:ir_headers",
     ],
 )
 
@@ -1124,11 +1137,13 @@ cc_library(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":ir_emission_utils",
+        ":kernel_mapping_scheme",
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
     ] + if_cuda_is_configured([
@@ -3756,6 +3771,7 @@ cc_library(
     hdrs = ["gpu_fusible.h"],
     deps = [
         ":ir_emission_utils",
+        ":kernel_mapping_scheme",
         ":reduction_utils",
         "//xla:shape_util",
         "//xla:util",

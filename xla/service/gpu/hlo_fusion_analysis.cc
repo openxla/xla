@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/kernel_mapping_scheme.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/reduction_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/statusor.h"
@@ -916,6 +917,62 @@ HloFusionAnalysis::ComputeReductionCodegenInfo(
   return ReductionCodegenInfo(
       tiling_scheme, num_partial_results, reduction_dimensions.is_row_reduction,
       reduction_is_race_free, std::move(instr_index_groups), hero_reduction);
+}
+
+int64_t HloFusionAnalysis::GetSharedMemoryUsageBytes() const {
+  auto element_size = [](const Shape& shape) {
+    if (!shape.IsTuple()) {
+      return ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type());
+    }
+    int64_t size = 0;
+    for (auto& tuple_shape : shape.tuple_shapes()) {
+      // We don't need nested tuples here.
+      size += ShapeUtil::ByteSizeOfPrimitiveType(tuple_shape.element_type());
+    }
+    return size;
+  };
+
+  switch (GetEmitterFusionKind()) {
+    case EmitterFusionKind::kReduction: {
+      const auto* reduction_info = GetReductionCodegenInfo();
+      if (!reduction_info) return 0;
+      auto tile_sizes = GetReductionSharedMemoryTileSize(*reduction_info);
+      if (tile_sizes.empty()) return 0;
+
+      int64_t num_elements = 1;
+      for (auto size : tile_sizes) {
+        num_elements *= size;
+      }
+      int64_t result = 0;
+      for (const auto& group : reduction_info->GetIndexGroups()) {
+        for (const auto* reduce : group) {
+          result += num_elements * element_size(reduce->shape());
+        }
+      }
+      return result;
+    }
+    case EmitterFusionKind::kTranspose: {
+      const auto& tiling_scheme = *GetTransposeTilingScheme();
+      int64_t num_elements =
+          tiling_scheme.GetBlockTileSizeFor(
+              tiled_transpose_->permutation[TilingScheme::DimX]) *
+          (tiling_scheme.GetBlockTileSizeFor(TilingScheme::DimX) + 1);
+
+      int64_t result = 0;
+      for (auto [root, hero] : llvm::zip(fusion_roots_, fusion_heroes_)) {
+        if (auto tr = GetDescriptionForTiledTransposeEmitter(*root, *hero)) {
+          result += num_elements * element_size(hero->shape());
+        }
+      }
+      return result;
+    }
+    case EmitterFusionKind::kTriton:
+      LOG(FATAL) << "Triton fusions are not supported.";
+      break;
+    default:
+      // Other emitters do not use shared memory.
+      return 0;
+  }
 }
 
 std::optional<HloFusionAnalysis> AnalyzeProducerConsumerFusion(

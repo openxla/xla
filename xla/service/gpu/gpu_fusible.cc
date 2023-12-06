@@ -706,12 +706,21 @@ static int64_t NumUnnestedReductions(const HloInstruction& instr,
 // If the fusion is a producer/consumer fusion and instr1 is the
 // consumer and instr2 is the producer, set is_consumer_producer_fusion
 // to true to enable more fusion.
-FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
-                                  const HloInstruction& instr2,
-                                  const se::DeviceDescription& device_info,
-                                  bool is_consumer_producer_fusion,
-                                  FusionInfoCache* cache /*=nullptr*/) {
-  if (SharedMemoryUsage(instr1, cache) + SharedMemoryUsage(instr2, cache) >
+FusionDecision FusionFitsInBudget(
+    const HloInstruction& instr1, const HloInstruction& instr2,
+    const se::DeviceDescription& device_info, bool is_consumer_producer_fusion,
+    FusionInfoCache* cache /*=nullptr*/,
+    std::optional<int64_t> instr1_shmem_usage /*=std::nullopt*/,
+    std::optional<int64_t> instr2_shmem_usage /*=std::nullopt*/
+) {
+  if (!instr1_shmem_usage) {
+    instr1_shmem_usage = SharedMemoryUsage(instr1, cache);
+  }
+  if (!instr2_shmem_usage) {
+    instr2_shmem_usage = SharedMemoryUsage(instr2, cache);
+  }
+
+  if (*instr1_shmem_usage + *instr2_shmem_usage >
       device_info.shared_memory_per_block()) {
     return FusionDecision{}
            << "shared memory usage would be over the budget of "

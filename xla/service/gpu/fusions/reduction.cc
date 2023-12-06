@@ -146,23 +146,6 @@ class ReductionEmitter {
   void MaybeEmitFenceForAMDGPU();
   void EmitSyncThreads();
 
-  // For a row reduction, returns the number of rows we can process in parallel
-  // per warp.
-  int RowReductionGetRowsPerWarp() const {
-    int reduced_dimension_size = ReducedDimensionSize();
-    if (WarpSize() % reduced_dimension_size != 0 ||
-        reduced_dimension_size >= WarpSize()) {
-      return 1;
-    }
-    return WarpSize() / reduced_dimension_size;
-  }
-
-  int ReducedDimensionSize() const {
-    return analysis_.GetReductionCodegenInfo()
-        ->GetTilingScheme()
-        .GetDimsInElems()[2];
-  }
-
   HloFusionAnalysis& analysis_;
   IrEmitterContext& ir_emitter_context_;
   ElementalIrEmitter& elemental_emitter_;
@@ -258,7 +241,9 @@ llvm::GlobalVariable* AllocateShared(
     llvm::Type* element_type,
     absl::Span<int64_t const> dimensions_major_to_minor,
     absl::string_view buffer_name) {
-  CHECK(!dimensions_major_to_minor.empty());
+  if (dimensions_major_to_minor.empty()) {
+    return nullptr;
+  }
   llvm::Type* ty = element_type;
   for (auto dim : llvm::reverse(dimensions_major_to_minor)) {
     ty = llvm::ArrayType::get(ty, dim);
@@ -282,6 +267,10 @@ ReductionGroupEmitter::ReductionGroupEmitter(
            << reduction_emitter_.fusion_.ToString();
 
   auto* builder = reduction_emitter_.builder_;
+
+  auto shared_memory_tile_size =
+      GetReductionSharedMemoryTileSize(reduction_info);
+
   for (const HloReduceInstruction* reduce_hlo : reduce_instr_index_group) {
     int num_partial_results = reduction_info.GetNumPartialResults();
     for (int op_result_idx = 0;
@@ -318,37 +307,9 @@ ReductionGroupEmitter::ReductionGroupEmitter(
       }
 
       const TilingScheme& tiling_scheme = reduction_info.GetTilingScheme();
-      llvm::GlobalVariable* shared_cache = [&]() -> llvm::GlobalVariable* {
-        if (reduction_info.IsRowReduction()) {
-          // Multi-row reductions do not use shared memory.
-          if (reduction_emitter_.RowReductionGetRowsPerWarp() > 1) {
-            return nullptr;
-          }
-          // Allocate __shared__
-          // cache[num_partial_results][num_warps][scaling_factor].
-          CHECK_EQ(tiling_scheme.GetNumThreadsPerBlock() % WarpSize(), 0);
-          int num_warps = tiling_scheme.GetNumThreadsPerBlock() / WarpSize();
-          return AllocateShared(builder, tiling_scheme, element_type,
-                                {num_partial_results, num_warps},
-                                "shared_cache");
-        } else {
-          int64_t num_threads_x =
-              tiling_scheme.GetNumThreadsFor(TilingScheme::DimX);
-          // Allocate __shared__
-          // cache[num_threads][num_threads + 1], where
-          // num_threads == num_threads_x == num_threads_y.  The "+1" is used to
-          // avoid bank conflicts.
-          //
-          // (Although each thread produces num_partial_results results, we
-          // don't need that much cache: Only one result is live at a time.)
-          CHECK_EQ(num_threads_x,
-                   tiling_scheme.GetNumThreadsFor(TilingScheme::DimY));
-          return AllocateShared(builder, tiling_scheme, element_type,
-                                {num_threads_x, num_threads_x + 1},
-                                "shared_cache");
-        }
-      }();
-
+      llvm::GlobalVariable* shared_cache =
+          AllocateShared(builder, tiling_scheme, element_type,
+                         shared_memory_tile_size, "shared_cache");
       llvm_ir::ElementGenerator input_gen =
           *fused_emitter.GetGenerator(*reduce_hlo->inputs()[op_result_idx]);
       SetCalculationStateFor(
@@ -767,7 +728,7 @@ void ReductionGroupEmitter::EmitReductionOutputForRowReduction(
   const auto& reduction_info =
       *reduction_emitter_.analysis_.GetReductionCodegenInfo();
   const TilingScheme& tiling_scheme = reduction_info.GetTilingScheme();
-  int num_rows_per_warp = reduction_emitter_.RowReductionGetRowsPerWarp();
+  int num_rows_per_warp = reduction_info.RowReductionGetRowsPerWarp();
   EmitFullWarpShuffleDownLoopForReduce(
       reducer, absl::MakeSpan(current_outputs),
       tiling_scheme.GetNumThreadsPerBlockPhysical(), num_rows_per_warp);
@@ -787,7 +748,7 @@ void ReductionGroupEmitter::EmitReductionOutputForRowReduction(
   if (num_rows_per_warp > 1) {
     llvm::Value* is_writing_thread = is_zero(builder->CreateAnd(
         thread_id_info.thread_id_x,
-        constant(reduction_emitter_.ReducedDimensionSize() - 1)));
+        constant(reduction_info.ReducedDimensionSize() - 1)));
     emit_write_output(is_writing_thread, current_outputs);
     return;
   }

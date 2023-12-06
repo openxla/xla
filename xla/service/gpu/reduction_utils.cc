@@ -219,5 +219,24 @@ ReductionDimensions GetReductionKindAndContiguousComponents(
   return {/*is_row_reduction=*/false, shape_partition};
 }
 
+absl::InlinedVector<int64_t, 2> GetReductionSharedMemoryTileSize(
+    const ReductionCodegenInfo& reduction_info) {
+  int num_partial_results = reduction_info.GetNumPartialResults();
+  const auto& tiling_scheme = reduction_info.GetTilingScheme();
+  if (reduction_info.IsRowReduction()) {
+    // Multi-row reductions do not use shared memory.
+    if (reduction_info.RowReductionGetRowsPerWarp() > 1) {
+      return {};
+    }
+    CHECK_EQ(tiling_scheme.GetNumThreadsPerBlock() % WarpSize(), 0);
+    int num_warps = tiling_scheme.GetNumThreadsPerBlock() / WarpSize();
+    return {num_partial_results, num_warps};
+  }
+
+  int64_t num_threads_x = tiling_scheme.GetNumThreadsFor(TilingScheme::DimX);
+  CHECK_EQ(num_threads_x, tiling_scheme.GetNumThreadsFor(TilingScheme::DimY));
+  return {num_threads_x, num_threads_x + 1};
+}
+
 }  // namespace gpu
 }  // namespace xla

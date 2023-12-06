@@ -97,6 +97,77 @@ TEST_F(HloFusionAnalysisTest, ReductionWithMultipleUsers) {
   // users.
   EXPECT_EQ(analysis.GetEmitterFusionKind(),
             HloFusionAnalysis::EmitterFusionKind::kLoop);
+  EXPECT_EQ(analysis.GetSharedMemoryUsageBytes(), 0);
+}
+
+TEST_F(HloFusionAnalysisTest, ReductionSharedMemory) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    add {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      ROOT add = f32[] add(p0, p1)
+    }
+
+    fused_computation {
+      %p0 = f32[1024,64] parameter(0)
+      %p1 = f32[1024,64] parameter(1)
+      %p2 = f32[] parameter(2)
+      %reduce1 = f32[64] reduce(%p0, %p2), dimensions={0}, to_apply=add
+      %reduce2 = f32[64] reduce(%p1, %p2), dimensions={0}, to_apply=add
+      ROOT %tuple = (f32[64], f32[64]) tuple(%reduce1, %reduce2)
+    }
+
+    ENTRY main {
+      %p0 = f32[1024,64] parameter(0)
+      %p1 = f32[1024,64] parameter(1)
+      %p2 = f32[] parameter(2)
+      ROOT %fusion = (f32[64], f32[64]) fusion(%p0, %p1, %p2), kind=kInput, calls=fused_computation
+    })")
+                    .value();
+
+  auto device_info = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto analysis, HloFusionAnalysis::Create(
+                         FusionBackendConfig::default_instance(),
+                         HloFusionAdaptor::ForInstruction(
+                             module->entry_computation()->root_instruction()),
+                         &device_info));
+  EXPECT_EQ(analysis.GetSharedMemoryUsageBytes(), 2 * sizeof(float) * 32 * 33);
+}
+
+TEST_F(HloFusionAnalysisTest, TransposeSharedMemory) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    add {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      ROOT add = f32[] add(p0, p1)
+    }
+
+    fused_computation {
+      %p0 = f32[32,5623,64] parameter(0)
+      ROOT %transpose = f32[64,5623,32] transpose(%p0), dimensions={2,1,0}
+    }
+
+    ENTRY main {
+      %p0 = f32[32,5623,64] parameter(0)
+      ROOT %fusion = f32[64,5623,32] fusion(%p0), kind=kInput, calls=fused_computation
+    })")
+                    .value();
+
+  auto device_info = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto analysis, HloFusionAnalysis::Create(
+                         FusionBackendConfig::default_instance(),
+                         HloFusionAdaptor::ForInstruction(
+                             module->entry_computation()->root_instruction()),
+                         &device_info));
+  EXPECT_EQ(analysis.GetSharedMemoryUsageBytes(), 4224);
 }
 
 TEST_F(HloFusionAnalysisTest, ReductionEpilogueFusion) {
