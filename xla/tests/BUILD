@@ -1874,6 +1874,7 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test",
     ],

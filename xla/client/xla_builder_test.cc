@@ -1748,6 +1748,23 @@ TEST_F(XlaBuilderTest, UnboundedPowUnsupportedImplicitBroadcast) {
               HasSubstr("Unbounded dynamic shapes not supported"));
 }
 
+TEST_F(XlaBuilderTest, UnboundedSlice) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> operand = ParseShape("f32[1, <=3, ?]");
+  StatusOr<Shape> expected = ParseShape("f32[1, <=2, 3]");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  Slice(Parameter(&b, 0, operand.value(), "operand"),
+        /*start_indices=*/{0, 1, 2},
+        /*limit_indices=*/{1, 3, 5},
+        /*strides=*/{1, 1, 1});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  auto result = module->entry_computation()->root_instruction()->shape();
+  EXPECT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanString(result)
+      << " expected: " << ShapeUtil::HumanString(expected.value());
+}
+
 TEST_F(XlaBuilderTest, UnboundedSub) {
   XlaBuilder b(TestName());
   StatusOr<Shape> lhs = ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]");
@@ -1778,6 +1795,22 @@ TEST_F(XlaBuilderTest, UnboundedSubUnsupportedImplicitBroadcast) {
   EXPECT_FALSE(build_status.ok());
   EXPECT_THAT(build_status.status().message(),
               HasSubstr("Unbounded dynamic shapes not supported"));
+}
+
+TEST_F(XlaBuilderTest, UnboundedTranspose) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> operand = ParseShape("f32[1, ?, 2, ?, <=2]{4,3,2,1,0}");
+  StatusOr<Shape> expected = ParseShape("f32[<=2, 1, ?, 2, ?]{0,2,3,4,1}");
+  ASSERT_IS_OK(operand.status());
+  ASSERT_IS_OK(expected.status());
+  Transpose(Parameter(&b, 0, operand.value(), "operand"),
+            /*permutation=*/{4, 0, 3, 2, 1});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  const Shape& result =
+      module->entry_computation()->root_instruction()->shape();
+  EXPECT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanStringWithLayout(result)
+      << " expected: " << ShapeUtil::HumanStringWithLayout(expected.value());
 }
 
 }  // namespace

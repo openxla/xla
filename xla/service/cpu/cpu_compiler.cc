@@ -189,9 +189,9 @@ limitations under the License.
 #include "xla/service/map_inliner.h"
 #include "xla/service/operand_upcaster.h"
 #include "xla/service/optimization_barrier_expander.h"
+#include "xla/service/optimize_input_output_buffer_alias.h"
 #include "xla/service/qr_expander.h"
 #include "xla/service/reduce_decomposer.h"
-#include "xla/service/reduce_scatter_decomposer.h"
 #include "xla/service/reshape_decomposer.h"
 #include "xla/service/reshape_mover.h"
 #include "xla/service/result_caster.h"
@@ -686,7 +686,6 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<EighExpander>();
   pipeline.AddPass<TriangularSolveExpander>();
   pipeline.AddPass<AllToAllDecomposer>();
-  pipeline.AddPass<ReduceScatterDecomposer>();
   pipeline.AddPass<StochasticConvertDecomposer>();
 
   // Inline computations with a single call site.
@@ -948,6 +947,7 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   pipeline.AddPass<HloDCE>();
   pipeline.AddPass<CopyInsertion>();
   pipeline.AddPass<HloDCE>();
+  pipeline.AddPass<OptimizeInputOutputBufferAlias>(true);
   return pipeline.Run(module).status();
 }
 
