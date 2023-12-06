@@ -138,7 +138,7 @@ cc_library(
 #     deps = [
 #         ":custom_kernel",
 #         ":cutlass_gemm",
-#         ":cutlass_gemm_kernel",
+#         ":cutlass_gemm_adaptor",
 #         ":cutlass_gemm_kernels",
 #         ":cutlass_gemm_kernels_header",
 #         "@com_google_absl//absl/status",
@@ -200,8 +200,8 @@ cc_library(
 # )
 #
 # cuda_library(
-#     name = "cutlass_gemm_kernel",
-#     hdrs = ["cutlass_gemm_kernel.cu.h"],
+#     name = "cutlass_gemm_adaptor",
+#     hdrs = ["cutlass_gemm_adaptor.cu.h"],
 #     visibility = ["//visibility:private"],
 #     deps = [
 #         ":cutlass_gemm",
