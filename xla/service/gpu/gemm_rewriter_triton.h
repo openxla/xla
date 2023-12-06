@@ -35,8 +35,8 @@ FusionDecision CanTritonHandleGEMM(const HloDotInstruction&,
                                    const se::GpuComputeCapability&);
 
 // Filters GEMMs which are better to handle using Triton.
-bool ShouldTritonHandleGEMM(HloDotInstruction&,
-                            const se::GpuComputeCapability& gpu_version);
+bool ShouldTritonHandleGEMM(HloDotInstruction&, 
+                                    const se::GpuComputeCapability&);
 
 // Rewrite compatible dot() calls into custom calls with fused computations
 // that target Triton-based matmul emitter.

@@ -540,19 +540,11 @@ HlosAndRequirements FuseDotOutput(
 // get populated with the non-fused instructions that become operands of the
 // call to this fusion. fusion_output_ptr (if not nullptr) gets assigned the
 // original instruction that has to be replaced by the call to the fusion.
-<<<<<<< HEAD
 StatusOr<FusionDecision> CreateDotFusion(
-    const HloDotInstruction& dot, const se::GpuComputeCapability& gpu_version,
+    const HloDotInstruction& dot, const se::GpuComputeCapability gpu_version,
     HloComputation::Builder& builder,
     std::vector<HloInstruction*>& fusion_inputs,
     HloInstruction** fusion_output_ptr) {
-=======
-StatusOr<FusionDecision> FuseDot(HloInstruction& dot,
-                                 const se::GpuComputeCapability& gpu_version,
-                                 HloComputation::Builder& builder,
-                                 std::vector<HloInstruction*>& fusion_inputs,
-                                 HloInstruction** fusion_output_ptr) {
->>>>>>> enabling gemm_rewriter subtests on ROCM + DotDimensionMerger + Padding
   VLOG(5) << dot.ToString();
   if (FusionDecision can_handle = CanTritonHandleGEMM(dot, gpu_version);
       !can_handle) {
@@ -681,7 +673,7 @@ FusionDecision CanTritonHandleGEMM(const HloDotInstruction& dot,
   }
 
   auto supported_output_type = [&](const PrimitiveType t) {
-    switch (t) {
+        switch (t) {
       case F16:
       case F32:
         return true;
@@ -689,7 +681,7 @@ FusionDecision CanTritonHandleGEMM(const HloDotInstruction& dot,
         return std::visit(Overload{
           [](const se::CudaComputeCapability& cc) {
             return cc.IsAtLeast(stream_executor::CudaComputeCapability::AMPERE);
-          },
+},
           [](const se::RocmComputeCapability&) {
             return true; // TODO check rocm support!
           }
