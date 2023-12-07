@@ -442,12 +442,27 @@ DimOrderMapOrError GetPropagatedDimOrdersForBitcast(
     const HloInstruction& hlo, const TransformDirection direction,
     const DimensionOrder& src_dim_order, const HeroProperties& properties) {
   const HloInstruction& dst = GetDestHlo(hlo, direction);
+  const Shape& src_shape = hlo.shape();
   const Shape& dst_shape = dst.shape();
   const Fragments& src_fragments_order = src_dim_order.TensorFragmentsOrder();
   DimOrderMap dst_dim_orders;
   DimensionOrder& dst_dim_order =
       dst_dim_orders.insert({&dst, DimensionOrder()}).first->second;
   Fragments& dst_fragments_order = dst_dim_order.TensorFragmentsOrder();
+  if (std::holds_alternative<SoftmaxProperties>(properties)) {
+    // Checks our assumption that the minormost dim contains the reduce dim
+    CHECK_EQ(
+        src_fragments_order.cbegin()->dst_dim_number(),
+        std::get<SoftmaxProperties>(properties).softmax_reduction_dimension);
+    int src_reduce_size =
+        src_shape.dimensions(src_shape.layout().minor_to_major().front());
+    int dst_reduce_size =
+        dst_shape.dimensions(dst_shape.layout().minor_to_major().front());
+    if (dst_reduce_size != src_reduce_size) {
+      return R"(Unsupported bitcast splits dimension between batch and
+                  reduction dimensions in softmax)";
+    }
+  }
   // Size of not yet assigned part of current target dimension.
   int64_t dst_remaining_size = 1;
   // Track destination fragments created from a source one.
