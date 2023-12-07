@@ -9305,7 +9305,7 @@ CudnnSupport::FusedMHARunnerFromDesc(
     scalar_input_values.push_back(dropout_scale);
     dropout_rng_offset = GetDropoutRngOffset(intermediate_shape);
 
-    if (bias_descriptor == std::nullopt) {
+    if (is_causal_mask) {
       // push negative infinity here
       scalar_input_uids.push_back(CudnnfMHAUid::NEG_INFINITY_ID);
       double negative_infinity_value = -std::numeric_limits<float>::infinity();
