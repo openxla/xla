@@ -10,6 +10,10 @@ load(
     "xla_cc_test",
 )
 load(
+    "//xla/stream_executor:build_defs.bzl",
+    "if_gpu_is_configured",
+)
+load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
@@ -22,10 +26,6 @@ load(
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
-)
-load(
-    "//xla/stream_executor:build_defs.bzl",
-    "if_gpu_is_configured",
 )
 
 package(
@@ -893,10 +893,12 @@ xla_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "gpu_fused_mha_test",
     srcs = ["gpu_fused_mha_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    backends = [
+        "gpu_a100",
+    ],
     deps = [
         ":gpu_codegen_test",
         "//xla:array4d",
