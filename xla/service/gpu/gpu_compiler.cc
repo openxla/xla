@@ -1219,12 +1219,18 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           &gpu_target_config.device_description);
     }
 
-    // Rewrite GEMMs into custom calls.
-    se::GpuComputeCapability gpu_version =
+    const se::GpuComputeCapability gpu_version =
         gpu_target_config.device_description.gpu_compute_capability();
     const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
-    if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
-        cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
+
+    // We only allow Triton use on Volta and more recent GPUs. We explicitly
+    // disable Triton use on Turing, since we do not have tests in place for it.
+    bool allow_using_triton =
+        cuda_cc != nullptr && cuda_cc->IsAtLeastVolta() &&
+        *cuda_cc != se::CudaComputeCapability(/*major=*/7, /*minor=*/5);
+
+    // Rewrite GEMMs into custom calls.
+    if (debug_options.xla_gpu_enable_triton_gemm() && allow_using_triton) {
       pipeline.AddPass<GemmRewriterTriton>(gpu_version);
     }
     pipeline.AddPass<GemmRewriter>(gpu_version);
@@ -1245,8 +1251,7 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // ReductionDimensionGrouper, as that makes matching the softmax pattern
     // harder.
     if (debug_options.xla_gpu_enable_triton_softmax_fusion() &&
-        cuda_cc != nullptr &&
-        cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
+        allow_using_triton) {
       pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(simplifier_options);
       pipeline.AddPass<SoftmaxRewriterTriton>(gpu_version);
     }
