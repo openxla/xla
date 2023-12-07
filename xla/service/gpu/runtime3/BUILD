@@ -273,6 +273,35 @@ cc_library(
 )
 
 cc_library(
+    name = "send_recv_thunk",
+    srcs = ["send_recv_thunk.cc"],
+    hdrs = ["send_recv_thunk.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/service/gpu:thunk",
+        "//xla/stream_executor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/concurrency:async_value",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
+    ],
+)
+
+cc_library(
     name = "triangular_solve_thunk",
     srcs = if_gpu_is_configured(["triangular_solve_thunk.cc"]),
     hdrs = if_gpu_is_configured(["triangular_solve_thunk.h"]),
