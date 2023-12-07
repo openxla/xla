@@ -584,11 +584,9 @@ xla_test(
 xla_test(
     name = "ir_emitter_triton_parametrized_test",
     srcs = if_cuda_is_configured(["ir_emitter_triton_parametrized_test.cc"]),
-    backend_tags = {"gpu": [
-        "requires-gpu-sm70",
-    ]},
     backends = [
-        "gpu",
+        "gpu_a100",
+        "gpu_v100",
     ],
     shard_count = 10,
     tags = ["nomac"],
@@ -3002,6 +3000,7 @@ cc_library(
         "//xla/service:loop_schedule_linearizer",
         "//xla/service:operand_upcaster",
         "//xla/service:optimization_barrier_expander",
+        "//xla/service:optimize_input_output_buffer_alias",
         "//xla/service:qr_expander",
         "//xla/service:real_imag_expander",
         "//xla/service:reduce_decomposer",
@@ -3042,7 +3041,6 @@ cc_library(
         "//xla/translate/hlo_to_mhlo:hlo_utils",
         "//xla/translate/mhlo_to_hlo:location_exporter",
         "//xla/translate/mhlo_to_lhlo_with_xla",
-        "//tensorflow/core/platform:logging",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
@@ -3082,8 +3080,6 @@ cc_library(
         ":ir_emitter_unnested",
         ":prepare_hlo_for_ir_emitting_pipeline",
         ":thunk",
-        "//xla/stream_executor/rocm:rocm_platform_id",
-        "@com_google_absl//absl/strings:str_format",
         "@llvm-project//mlir:FuncDialect",
         "@tsl//tsl/lib/monitoring:counter",
     ],

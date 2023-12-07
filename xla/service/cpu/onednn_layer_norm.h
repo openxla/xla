@@ -13,33 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_CPU_ONEDNN_UTIL_H_
-#define XLA_SERVICE_CPU_ONEDNN_UTIL_H_
+#ifndef XLA_SERVICE_CPU_ONEDNN_LAYER_NORM_H_
+#define XLA_SERVICE_CPU_ONEDNN_LAYER_NORM_H_
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-
-#include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 namespace cpu {
 
-inline bool IsSupportedType(xla::PrimitiveType dtype) {
-  using tsl::port::CPUFeature;
-  static bool is_bf16_supported = TestCPUFeature(CPUFeature::AVX512_BF16) ||
-                                  TestCPUFeature(CPUFeature::AMX_BF16);
-  switch (dtype) {
-    case F32:
-      return true;
-    case BF16:
-      return is_bf16_supported;
-    default:
-      break;
-  }
-  return false;
-}
+extern "C" {
+extern void __xla_cpu_runtime_OneDnnLayerNorm(void* result, void** args);
+}  // extern "C"
 
 }  // namespace cpu
 }  // namespace xla
 
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
-#endif  // XLA_SERVICE_CPU_ONEDNN_UTIL_H_
+#endif  // XLA_SERVICE_CPU_ONEDNN_LAYER_NORM_H_

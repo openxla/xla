@@ -160,6 +160,8 @@ extern const char* const kOneDnnMatMulSymbolName =
     "__xla_cpu_runtime_OneDnnMatMul";
 extern const char* const kOneDnnSoftmaxSymbolName =
     "__xla_cpu_runtime_OneDnnSoftmax";
+extern const char* const kOneDnnLayerNormSymbolName =
+    "__xla_cpu_runtime_OneDnnLayerNorm";
 
 namespace {
 

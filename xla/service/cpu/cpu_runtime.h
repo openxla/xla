@@ -88,6 +88,7 @@ extern const char* const kAllGatherSymbolName;
 extern const char* const kReduceScatterSymbolName;
 extern const char* const kOneDnnMatMulSymbolName;
 extern const char* const kOneDnnSoftmaxSymbolName;
+extern const char* const kOneDnnLayerNormSymbolName;
 
 // All symbol names for XLA CPU runtime functions need to start with this
 // prefix.
