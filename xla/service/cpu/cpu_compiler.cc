@@ -195,9 +195,9 @@ limitations under the License.
 #include "xla/service/map_inliner.h"
 #include "xla/service/operand_upcaster.h"
 #include "xla/service/optimization_barrier_expander.h"
+#include "xla/service/optimize_input_output_buffer_alias.h"
 #include "xla/service/qr_expander.h"
 #include "xla/service/reduce_decomposer.h"
-#include "xla/service/reduce_scatter_decomposer.h"
 #include "xla/service/reshape_decomposer.h"
 #include "xla/service/reshape_mover.h"
 #include "xla/service/result_caster.h"
@@ -236,6 +236,7 @@ limitations under the License.
 
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
+#include "xla/service/cpu/onednn_ops_rewriter.h"
 #endif
 
 namespace {
@@ -685,13 +686,23 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<EighExpander>();
   pipeline.AddPass<TriangularSolveExpander>();
   pipeline.AddPass<AllToAllDecomposer>();
-  pipeline.AddPass<ReduceScatterDecomposer>();
   pipeline.AddPass<StochasticConvertDecomposer>();
 
   // Inline computations with a single call site.
   pipeline.AddPass<CallInliner>(/*single_call_site=*/true);
   pipeline.AddPass<BatchDotSimplification>();
   pipeline.AddPass<DotDecomposer>();
+
+  // Rewrite to custom calls with target as oneDNN library calls.
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+  // AOT compiled code runs in single thread.
+  if (!is_aot_compile) {
+    // Placing OneDnnOpsRewriter here to match the flax patterns
+    // TODO: Decide where would be the appropriate place for this pass to make
+    // it more generic
+    pipeline.AddPass<OneDnnOpsRewriter>();
+  }
+#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
 
   // Promote BF16 all-reduce to F32.
   const std::pair<PrimitiveType, PrimitiveType> ar_promoted_types[] = {
@@ -941,6 +952,7 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   pipeline.AddPass<HloDCE>();
   pipeline.AddPass<CopyInsertion>();
   pipeline.AddPass<HloDCE>();
+  pipeline.AddPass<OptimizeInputOutputBufferAlias>(true);
   return pipeline.Run(module).status();
 }
 

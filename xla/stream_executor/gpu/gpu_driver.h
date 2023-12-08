@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
@@ -288,14 +289,23 @@ class GpuDriver {
       GpuContext* context, GpuSharedMemConfig shared_mem_config);
 
   // Launches a CUDA/ROCm kernel via cuLaunchKernel/hipModuleLaunchKernel.
-  // TODO(leary) describe the structure of kernel_params and extra in a readable
-  // way.
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1gb8f3dc3031b40da29d5f9a7139e52e15
   // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#execution-control
   static tsl::Status LaunchKernel(
       GpuContext* context, absl::string_view kernel_name,
       GpuFunctionHandle function, unsigned int grid_dim_x,
       unsigned int grid_dim_y, unsigned int grid_dim_z,
+      unsigned int block_dim_x, unsigned int block_dim_y,
+      unsigned int block_dim_z, unsigned int shared_mem_bytes,
+      GpuStreamHandle stream, void** kernel_params, void** extra);
+
+  // Launches a CUDA/ROCm kernel via cuLaunchKernelEx/hipModuleLaunchKernelEx.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html#group__CUDA__EXEC_1gb9c891eb6bb8f4089758e64c9c976db9
+  static tsl::Status LaunchKernel(
+      GpuContext* context, absl::string_view kernel_name,
+      GpuFunctionHandle function, unsigned int cluster_dim_x,
+      unsigned int cluster_dim_y, unsigned int cluster_dim_z,
+      unsigned int grid_dim_x, unsigned int grid_dim_y, unsigned int grid_dim_z,
       unsigned int block_dim_x, unsigned int block_dim_y,
       unsigned int block_dim_z, unsigned int shared_mem_bytes,
       GpuStreamHandle stream, void** kernel_params, void** extra);
@@ -530,6 +540,13 @@ class GpuDriver {
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gee2c7d66d3d96b1470c1d1a769f250a2
   static tsl::StatusOr<std::pair<GpuDevicePtr, uint64_t>>
   GraphGetMemAllocNodeParams(GpuGraphNodeHandle node);
+
+  // Create a memfree node and adds it to a graph.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1geb7cdce5d9be2d28d9428e74eb00fa53
+  static tsl::Status GraphAddMemFreeNode(GpuGraphNodeHandle* node,
+                                         GpuGraphHandle graph,
+                                         absl::Span<GpuGraphNodeHandle> deps,
+                                         GpuDevicePtr gpu_dst);
 
   // Creates a memcpy node and adds it to a graph.
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g674da6ab54a677f13e0e0e8206ff5073

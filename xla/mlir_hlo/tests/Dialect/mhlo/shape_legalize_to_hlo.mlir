@@ -186,3 +186,23 @@ func.func @shape_broadcast_too_many_operands(%arg0: tensor<4xindex>, %arg1: tens
   %0 = shape.broadcast %arg0, %arg1, %arg2 : tensor<4xindex>, tensor<4xindex>, tensor<4xindex> -> tensor<4xindex>
   func.return %0 : tensor<4xindex>
 }
+
+// -----
+
+func.func @shape_cstr_broadcastable(%arg0: tensor<2xindex>, %arg1: tensor<2xindex>) -> !shape.witness {
+  // expected-error@+1 {{failed to legalize operation 'shape.cstr_broadcastable' that was explicitly marked illegal}}
+  %0 = shape.cstr_broadcastable %arg0, %arg1 : tensor<2xindex>, tensor<2xindex>
+  func.return %0 : !shape.witness
+}
+
+// -----
+
+func.func @mhlo_cstr_reshapable(%arg0: index, %arg1: tensor<2xindex>, %arg2: tensor<?x2xf32>) -> tensor<?x4xf32> {
+  // expected-error@+1 {{failed to legalize operation 'mhlo.cstr_reshapable' that was explicitly marked illegal}}
+  %0 = mhlo.cstr_reshapable %arg0, %arg1 : (index, tensor<2xindex>) -> !shape.witness
+  %1 = shape.assuming %0 -> (tensor<?x4xf32>) {
+    %2 = mhlo.dynamic_reshape %arg2, %arg1 : (tensor<?x2xf32>, tensor<2xindex>) -> tensor<?x4xf32>
+    shape.assuming_yield %2 : tensor<?x4xf32>
+  }
+  func.return %1 : tensor<?x4xf32>
+}

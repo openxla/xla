@@ -119,8 +119,12 @@ class GpuExecutor : public internal::StreamExecutorInterface {
       Stream* stream, absl::Span<const uint8_t> content) override;
 
   tsl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
-                     const BlockDim& block_dims, const Kernel& k,
+                     const BlockDim& block_dims, const Kernel& kernel,
                      const KernelArgs& args) override;
+
+  tsl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
+                     const BlockDim& block_dims, const ClusterDim& cluster_dims,
+                     const Kernel& kernel, const KernelArgs& args) override;
 
   tsl::Status Submit(Stream* stream,
                      const CommandBuffer& command_buffer) override;
@@ -139,9 +143,6 @@ class GpuExecutor : public internal::StreamExecutorInterface {
                        const ThreadDim& thread_dims, GpuFunctionHandle func);
 
   DeviceMemoryBase Allocate(uint64_t size, int64_t memory_space) override;
-
-  void* GetSubBuffer(DeviceMemoryBase* mem, uint64_t offset_bytes,
-                     uint64_t size_bytes) override;
 
   void Deallocate(DeviceMemoryBase* mem) override;
 
@@ -331,6 +332,11 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   // (supported on ROCm only)
   tsl::Status LoadModuleFromHsaco(const char* hsaco, GpuModuleHandle* module)
       TF_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
+
+  tsl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
+                     const BlockDim& block_dims,
+                     const std::optional<ClusterDim>& cluster_dims,
+                     const Kernel& kernel, const KernelArgs& args);
 
   bool UnloadGpuBinary(const void* gpu_binary)
       TF_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);

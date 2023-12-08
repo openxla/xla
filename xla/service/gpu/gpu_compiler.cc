@@ -191,6 +191,7 @@ limitations under the License.
 #include "xla/service/loop_schedule_linearizer.h"
 #include "xla/service/operand_upcaster.h"
 #include "xla/service/optimization_barrier_expander.h"
+#include "xla/service/optimize_input_output_buffer_alias.h"
 #include "xla/service/qr_expander.h"
 #include "xla/service/real_imag_expander.h"
 #include "xla/service/reduce_decomposer.h"
@@ -333,8 +334,8 @@ class GpuAotCompilationResult : public AotCompilationResult {
 
 class GpuThunkAotCompilationResult : public AotCompilationResult {
  public:
-  GpuThunkAotCompilationResult(HloModule* hlo_module,
-                               BufferAssignment* buffer_assignment,
+  GpuThunkAotCompilationResult(const HloModule* hlo_module,
+                               const BufferAssignment* buffer_assignment,
                                std::string_view asm_text,
                                absl::Span<const uint8_t> binary) {
     *proto_.mutable_hlo_module() = hlo_module->ToProto();
@@ -439,7 +440,8 @@ GpuThunkAotCompilationResult::LoadExecutable(Compiler* compiler,
   IrEmitterContext ir_emitter_context(hlo_module.get(), buffer_assignment.get(),
                                       platform_name, gpu_device_info,
                                       mlir_context.get(), llvm_module.get(),
-                                      /*emit_ir_from_hlo=*/true);
+                                      /*emit_ir_from_hlo=*/true,
+                                      /*emit_kernels=*/false);
   mlir::OwningOpRef<mlir::ModuleOp> mlir_module = llvm_ir::CreateMlirModuleOp(
       mlir::Builder(mlir_context.get()).getUnknownLoc(), hlo_module->name());
   std::vector<const BufferAllocation*> ordered_allocations;
@@ -495,7 +497,7 @@ GpuThunkAotCompilationResult::LoadExecutable(Compiler* compiler,
           /*buffer_assignment=*/std::move(buffer_assignment),
           /*enable_persistent_temp_buffers=*/enable_persistent_temp_buffers,
           /*debug_buffer_assignment_show_max=*/debug_buffer_assignment_show_max,
-          /*debug_module=*/std::unique_ptr<HloModule>(),
+          /*debug_module=*/std::move(hlo_module),
           /*enable_debug_info_manager=*/true}));
   return executable;
 }
@@ -971,6 +973,7 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
     // Layout's element_size_in_bits field.
     pipeline.AddPass<SubByteNormalization>(
         SubByteNormalization::SET_ELEMENT_SIZE);
+    pipeline.AddPass<OptimizeInputOutputBufferAlias>(true);
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
 
@@ -1212,7 +1215,8 @@ Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // heuristic, so we can mix and match various Gemm implementations based
     // on projected (measured) performance.
     if (debug_options.xla_gpu_enable_custom_fusions()) {
-      pipeline.AddPass<CustomFusionRewriter>();
+      pipeline.AddPass<CustomFusionRewriter>(
+          &gpu_target_config.device_description);
     }
 
     // Rewrite GEMMs into custom calls.
@@ -1975,15 +1979,19 @@ StatusOr<std::unique_ptr<AotCompilationResult>> GpuCompiler::Export(
     Executable* executable) const {
   auto* gpu_executable = tensorflow::down_cast<GpuExecutable*>(executable);
   if (!gpu_executable) return Internal("GpuExecutable is null");
-  HloModuleProto module_proto = gpu_executable->module().ToProto();
-  auto obj_file = gpu_executable->GetObjFile().value_or("");
-  auto mlir_module = gpu_executable->GetMlirModule().value_or("");
-  auto text = gpu_executable->text();
-  auto binary = gpu_executable->binary();
 
-  return std::make_unique<xla::gpu::GpuAotCompilationResult>(
-      module_proto, obj_file, mlir_module, text, binary,
-      gpu_executable->constants());
+  if (gpu_executable->IsXlaRuntimeEnabled()) {
+    HloModuleProto module_proto = gpu_executable->module().ToProto();
+    auto obj_file = gpu_executable->GetObjFile().value_or("");
+    auto mlir_module = gpu_executable->GetMlirModule().value_or("");
+    return std::make_unique<xla::gpu::GpuAotCompilationResult>(
+        module_proto, obj_file, mlir_module, gpu_executable->text(),
+        gpu_executable->binary(), gpu_executable->constants());
+  } else {
+    return std::make_unique<xla::gpu::GpuThunkAotCompilationResult>(
+        &gpu_executable->module(), gpu_executable->buffer_assignment(),
+        gpu_executable->text(), gpu_executable->binary());
+  }
 }
 
 Status GpuCompiler::RunPostSchedulingPipelines(

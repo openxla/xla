@@ -154,6 +154,14 @@ class GpuPriorityFusionQueue : public FusionQueue {
         continue;
       }
       current_consumers_ = current_producer_->users();
+
+      if (current_producer_->opcode() == HloOpcode::kBitcast) {
+        // We don't check if bitcasts can be fused with all consumers, so we
+        // have to do it here.
+        llvm::erase_if(current_consumers_, [&](HloInstruction* consumer) {
+          return !CanFuseCached(current_producer_, consumer);
+        });
+      }
     }
 
     auto next_consumer = current_consumers_.back();
@@ -286,6 +294,17 @@ class GpuPriorityFusionQueue : public FusionQueue {
   // Returns the priority of the producer based on its current operands and
   // users.
   Priority CalculateProducerPriority(HloInstruction* producer) {
+    // Bitcasts should always be fused first, since they are no-ops.
+    if (producer->opcode() == HloOpcode::kBitcast) {
+      return std::numeric_limits<Priority>::max();
+    }
+    // We always fuse constants, but the cost model doesn't handle them very
+    // well: fusing constants changes costs significantly. Also, there's no
+    // point recomputing priorities. Therefore, we fuse all of them at the end.
+    if (producer->opcode() == HloOpcode::kConstant) {
+      return std::numeric_limits<Priority>::min();
+    }
+
     // Don't fuse if we can't fuse in all users.
     if (auto fusion_decision = CanFuseWithAllUsers(producer);
         !fusion_decision) {
@@ -443,6 +462,45 @@ class GpuPriorityFusionQueue : public FusionQueue {
   return InstructionFusion::IsExpensive(instruction);
 }
 
+bool IsFusible(const HloInstruction& instr) {
+  // Side-effecting operations are not fusible.
+  if (!instr.IsFusible()) {
+    return false;
+  }
+
+  // Element-wise operations are always fusible.
+  if (instr.IsElementwise()) {
+    return true;
+  }
+
+  // Other non-elementwise ops also supported by elemental fusion.
+  switch (instr.opcode()) {
+    case HloOpcode::kFusion:
+      return instr.fusion_kind() != HloInstruction::FusionKind::kCustom;
+
+    case HloOpcode::kCopy:
+    case HloOpcode::kIota:
+    case HloOpcode::kConstant:
+    case HloOpcode::kReduce:
+    case HloOpcode::kBitcast:
+    case HloOpcode::kBroadcast:
+    case HloOpcode::kConcatenate:
+    case HloOpcode::kDynamicSlice:
+    case HloOpcode::kDynamicUpdateSlice:
+    case HloOpcode::kGather:
+    case HloOpcode::kPad:
+    case HloOpcode::kReduceWindow:
+    case HloOpcode::kReshape:
+    case HloOpcode::kReverse:
+    case HloOpcode::kScatter:
+    case HloOpcode::kSlice:
+    case HloOpcode::kTranspose:
+      return true;
+    default:
+      return false;
+  }
+}
+
 StatusOr<bool> GpuPriorityFusion::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -469,6 +527,29 @@ StatusOr<bool> GpuPriorityFusion::Run(
 
   auto result = InstructionFusion::Run(module, execution_threads);
 
+  // Fuse all constants.
+  if (result.ok()) {
+    // Note: `GetFusionComputations` doesn't return the fusion computations, but
+    // the computations to be fused.
+    for (auto* computation : GetFusionComputations(module, execution_threads)) {
+      std::vector<HloInstruction*> constants;
+      for (auto* instruction : computation->instructions()) {
+        if (instruction->opcode() == HloOpcode::kConstant) {
+          constants.push_back(instruction);
+        }
+      }
+      for (auto* constant : constants) {
+        auto users = constant->users();
+        for (auto* user : users) {
+          if (IsFusible(*user)) {
+            result.value() = true;
+            InstructionFusion::Fuse(constant, user, computation);
+          }
+        }
+      }
+    }
+  }
+
   if (dump_enabled) {
     DumpPerModuleProtobufToFile(*module, *fusion_process_dump_,
                                 module->config().debug_options(),
@@ -480,51 +561,12 @@ StatusOr<bool> GpuPriorityFusion::Run(
 
 FusionDecision GpuPriorityFusion::ShouldFuse(HloInstruction* consumer,
                                              int64_t operand_index) {
-  auto isFusible = [](const HloInstruction& instr) {
-    // Side-effecting operations are not fusible.
-    if (!instr.IsFusible()) {
-      return false;
-    }
-
-    // Element-wise operations are always fusible.
-    if (instr.IsElementwise()) {
-      return true;
-    }
-
-    // Other non-elementwise ops also supported by elemental fusion.
-    switch (instr.opcode()) {
-      case HloOpcode::kFusion:
-        return instr.fusion_kind() != HloInstruction::FusionKind::kCustom;
-
-      case HloOpcode::kCopy:
-      case HloOpcode::kIota:
-      case HloOpcode::kConstant:
-      case HloOpcode::kReduce:
-      case HloOpcode::kBitcast:
-      case HloOpcode::kBroadcast:
-      case HloOpcode::kConcatenate:
-      case HloOpcode::kDynamicSlice:
-      case HloOpcode::kDynamicUpdateSlice:
-      case HloOpcode::kGather:
-      case HloOpcode::kPad:
-      case HloOpcode::kReduceWindow:
-      case HloOpcode::kReshape:
-      case HloOpcode::kReverse:
-      case HloOpcode::kScatter:
-      case HloOpcode::kSlice:
-      case HloOpcode::kTranspose:
-        return true;
-      default:
-        return false;
-    }
-  };
-
   HloInstruction* producer = consumer->mutable_operand(operand_index);
-  if (!isFusible(*producer)) {
+  if (!IsFusible(*producer)) {
     return "the producer is not fusible";
   }
 
-  if (!isFusible(*consumer)) {
+  if (!IsFusible(*consumer)) {
     return "the consumer is not fusible";
   }
 
@@ -560,12 +602,16 @@ FusionDecision GpuPriorityFusion::ShouldFuse(HloInstruction* consumer,
   // switch it to the loop emitter. This often occurs during epilog fusion for
   // reductions, which suffer from limited emitter support.
   // TODO(b/312686229): Cost model should handle this.
-  auto analysis_fused =
-      AnalyzeProducerConsumerFusion(*producer, *consumer, device_info_);
+  const auto& analysis_fused = fusion_analysis_cache_.Get(*producer, *consumer);
   if (producer->IsInputFusion() && analysis_fused &&
       analysis_fused->GetEmitterFusionKind() ==
           HloFusionAnalysis::EmitterFusionKind::kLoop) {
-    return "fusion into output of an input fusion would create a loop fusion";
+    const auto& analysis = fusion_analysis_cache_.Get(*producer);
+    if (!analysis || analysis->GetEmitterFusionKind() ==
+                         HloFusionAnalysis::EmitterFusionKind::kReduction) {
+      return "fusion into output of a reduce fusion would create a loop "
+             "fusion";
+    }
   }
 
   // Avoid cases where we'd create a fusion that hit limitations in ptxas.

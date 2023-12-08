@@ -45,7 +45,9 @@ namespace gpu {
 namespace {
 
 // Estimated values in the absence of easy ways to query them.
-static constexpr absl::Duration kKernelLaunchOverhead = absl::Microseconds(5);
+static constexpr absl::Duration kKernelLaunchOverhead = absl::Microseconds(1);
+static constexpr absl::Duration kNcclKernelLaunchOverhead =
+    absl::Microseconds(5);
 static constexpr float kL2CacheSpeedup = 2.5;
 static constexpr float kL1CacheSpeedup = 8;
 // A very conservative estimate. L1 size varies because it can be dynamically
@@ -275,8 +277,33 @@ bool IsReadCoalesced(const std::optional<HloFusionAnalysis>& fusion_analysis,
   // Transposing minor dimension breaks coalescing.
   if (analyzed_kind_or_reduction !=
       HloFusionAnalysis::EmitterFusionKind::kTranspose) {
-    if (TransposesMinorDimension(producer)) return false;
-    if (consumer && TransposesMinorDimension(consumer)) return false;
+    auto is_broadcast = [&](const HloInstruction* instr) {
+      while (true) {
+        if (instr->opcode() == HloOpcode::kBroadcast) return true;
+        if (instr->operand_count() != 1) return false;
+        if (instr->opcode() != HloOpcode::kBitcast && !instr->IsElementwise()) {
+          return false;
+        }
+        instr = instr->operand(0);
+      }
+    };
+
+    auto is_bad_transpose = [&](const HloInstruction* instr) {
+      if (instr->opcode() == HloOpcode::kFusion) {
+        for (auto* instr : instr->fused_instructions()) {
+          // Hack: we allow transposes of broadcasts.
+          if (TransposesMinorDimension(instr) &&
+              !is_broadcast(instr->operand(0))) {
+            return true;
+          }
+        }
+        return false;
+      }
+      return TransposesMinorDimension(instr);
+    };
+
+    if (is_bad_transpose(producer)) return false;
+    if (consumer && is_bad_transpose(consumer)) return false;
   }
 
   // Fusing two row reductions breaks coalescing.
@@ -908,7 +935,7 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
     const se::DeviceDescription& gpu_device_info) {
   // We use nccl group call to launch multiple allreduces so launch overhead
   // only occurs once.
-  absl::Duration total_time = kKernelLaunchOverhead;
+  absl::Duration total_time = kNcclKernelLaunchOverhead;
   stream_executor::CudaComputeCapability compute_cap =
       gpu_device_info.cuda_compute_capability();
 
@@ -985,7 +1012,7 @@ GpuPerformanceWithCollectiveModel::ComputeCollectiveTime(
     const se::DeviceDescription& gpu_device_info) {
   if (cost_analysis->NumOfDevices(instr) == 1) {
     VLOG(8) << "Returning only kernel launch overhead for a single partition.";
-    return kKernelLaunchOverhead;
+    return kNcclKernelLaunchOverhead;
   }
 
   if (HloDataflowAnalysis::IsAsynchronousOperationDone(instr.opcode())) {
@@ -1000,7 +1027,7 @@ GpuPerformanceWithCollectiveModel::ComputeCollectiveTime(
       LOG(WARNING)
           << "Runtime estimate for " << instr.name()
           << " not implemented. Returning only the kernel launch time.";
-      return kKernelLaunchOverhead;
+      return kNcclKernelLaunchOverhead;
     }
   }
 }

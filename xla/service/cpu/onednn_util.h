@@ -17,14 +17,14 @@ limitations under the License.
 #define XLA_SERVICE_CPU_ONEDNN_UTIL_H_
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 
-#include "tsl/platform/cpu_info.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 namespace cpu {
 
 inline bool IsSupportedType(xla::PrimitiveType dtype) {
-  using namespace tsl::port;
+  using tsl::port::CPUFeature;
   static bool is_bf16_supported = TestCPUFeature(CPUFeature::AVX512_BF16) ||
                                   TestCPUFeature(CPUFeature::AMX_BF16);
   switch (dtype) {

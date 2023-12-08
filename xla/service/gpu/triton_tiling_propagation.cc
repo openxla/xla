@@ -399,17 +399,7 @@ DimOrderMap GetPropagatedDimOrdersForElementwise(
     return map;
   }
 
-  DimOrderMap map;
-  map.insert({&hlo, src_dim_order});
-  // TODO(tdanyluk): For now, the "input to output" direction of this function
-  // also returns the dim orders for the operands, not just the output. This is
-  // needed to propagate the dim order of one input to the other(s) when fusing
-  // elementwise ops to the output. Perhaps we can separate the "input to
-  // output" and "output to input" directions of that in a later CL.
-  for (const HloInstruction* operand : hlo.operands()) {
-    map.insert({operand, src_dim_order});
-  }
-  return map;
+  return {{&hlo, src_dim_order}};
 }
 
 const HloInstruction& GetSourceHlo(const HloInstruction& hlo,
@@ -611,6 +601,12 @@ DimOrderMapOrError GetPropagatedDimOrdersForDimAlteringOp(
   // full dimensions and matching by total size.
   std::vector<std::vector<Fragment*>> src_physical;
   src_physical.reserve(src.shape().rank());
+  if (src_fragments_order.size() < src.shape().rank()) {
+    // It's not supported currently to further propagate dimensions after
+    // reaching a trivial sized tensor. We could probably support it, but now we
+    // just prevent crashing here.
+    return FusionDecision("Cannot propagate further from trivial sized tensor");
+  }
   auto src_fragment_it = src_fragments_order.begin();
   for (int64_t dim_index : src.shape().layout().minor_to_major()) {
     const int64_t dim_size = src.shape().dimensions(dim_index);
@@ -836,6 +832,10 @@ DimOrderMapOrError GetPropagatedDimOrders(const HloInstruction& hlo,
     return GetPropagatedDimOrdersForDimAlteringOp(hlo, direction, src_dim_order,
                                                   properties);
   } else if (hlo.opcode() == HloOpcode::kPad) {
+    if (std::holds_alternative<SoftmaxProperties>(properties)) {
+      return "Pad ops are only supported when they are generated as part of "
+             "the split-k transform of dot fusions.";
+    }
     if (direction != TransformDirection::kOutputToInput) {
       return "Unsupported pad direction.";
     }

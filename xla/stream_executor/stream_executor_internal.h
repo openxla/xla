@@ -99,6 +99,13 @@ class KernelInterface {
   // Gets the preferred cache configuration.
   virtual KernelCacheConfig GetPreferredCacheConfig() const = 0;
 
+  // Returns the maximum number of blocks (per multiprocessor) occupied by the
+  // kernel given the number of threads per block and shared memory size.
+  virtual tsl::StatusOr<int32_t> GetMaxOccupiedBlocksPerCore(
+      ThreadDim threads, size_t dynamic_shared_memory_bytes) const {
+    return absl::UnimplementedError("Not Implemented");
+  }
+
  private:
   KernelInterface(const KernelInterface&) = delete;
   void operator=(const KernelInterface&) = delete;
@@ -196,6 +203,10 @@ class CommandBufferInterface {
   virtual tsl::Status While(StreamExecutor* executor, DeviceMemory<bool> pred,
                             CommandBuffer::Builder cond_builder,
                             CommandBuffer::Builder body_builder) = 0;
+
+  // Adds a device memory free command to the command buffer, buffer is
+  // allocated in other command buffer, free through real address.
+  virtual tsl::Status Free(DeviceMemoryBase dst) = 0;
 
   // Finalizes command buffer and makes it executable. Once command buffer is
   // finalized no commands can be added to it.
@@ -309,6 +320,13 @@ class StreamExecutorInterface {
     return absl::UnimplementedError("Not Implemented");
   }
 
+  virtual tsl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
+                             const BlockDim& block_dims,
+                             const ClusterDim& cluster_dims, const Kernel& k,
+                             const KernelArgs& args) {
+    return absl::UnimplementedError("Not Implemented");
+  }
+
   virtual tsl::Status Submit(Stream* stream,
                              const CommandBuffer& command_buffer) {
     return absl::UnimplementedError("Not Implemented");
@@ -320,8 +338,6 @@ class StreamExecutorInterface {
   DeviceMemoryBase Allocate(uint64_t size) {
     return Allocate(size, /*memory_space=*/0);
   }
-  virtual void* GetSubBuffer(DeviceMemoryBase* parent, uint64_t offset,
-                             uint64_t size) = 0;
   virtual void Deallocate(DeviceMemoryBase* mem) = 0;
   // Allocates unified memory space of the given size, if supported.
   // See

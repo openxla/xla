@@ -86,6 +86,7 @@ cc_library(
         ":gpu_types_header",
         "//xla/stream_executor:device_options",
         "//xla/stream_executor:stream_executor_headers",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -238,10 +239,12 @@ cc_library(
     hdrs = if_gpu_is_configured(["gpu_kernel.h"]),
     deps = [
         ":gpu_driver_header",
+        ":gpu_types_header",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor:stream_executor_internal",
         "//xla/stream_executor/platform",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

@@ -621,18 +621,31 @@ cc_library(
     deps = [
         ":concurrent_region",
         ":support",
+        "//xla:statusor",
         "//xla:types",
+        "//xla/hlo/ir:hlo",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
+        "//xla/runtime:memref_view",
         "//xla/runtime:state",
         "//xla/service:executable",
+        "//xla/service:hlo_proto_cc",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:stream_executor_util",
+        "//xla/service/gpu/kernels:custom_fusion",
+        "//xla/service/gpu/kernels:custom_kernel",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_graph",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -686,7 +699,7 @@ cc_library(
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
         "//xla/service:executable",
-        "//xla/service/gpu:io_feed_manager",
+        "@com_google_absl//absl/base",
     ],
 )
 
@@ -736,19 +749,26 @@ cc_library(
 
 cc_library(
     name = "tracing",
-    srcs = ["tracing.cc"],
-    hdrs = ["tracing.h"],
+    srcs = [
+        "annotation.cc",
+        "tracing.cc",
+    ],
+    hdrs = [
+        "annotation.h",
+        "tracing.h",
+    ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":support",
-        "//xla/runtime:custom_call",
+        "//xla/hlo/ir:hlo",
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
         "//xla/runtime:tracing",
         "//xla/runtime:type_id",
-        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/profiler/lib:nvtx_utils",
         "@tsl//tsl/profiler/lib:scoped_annotation_stack",
     ],
 )

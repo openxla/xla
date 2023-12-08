@@ -2,6 +2,7 @@
 #    LLVM-based CPU backend for XLA.
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "//xla:xla.bzl",
     "ORC_JIT_MEMORY_MAPPER_TARGETS",
@@ -43,6 +44,18 @@ filegroup(
         "**/*.cc",
         "**/*.h",
     ]),
+)
+
+bool_flag(
+    name = "experimental_mlir_gpu",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "experimental_mlir_gpu_enabled",
+    flag_values = {
+        ":experimental_mlir_gpu": "True",
+    },
 )
 
 cc_library(
@@ -212,6 +225,7 @@ cc_library(
         ":ir_emission_utils",
         ":ir_emitter",
         ":onednn_matmul_rewriter",
+        ":onednn_ops_rewriter",
         ":parallel_task_assignment",
         ":simple_orc_jit",
         ":target_machine_features",
@@ -298,9 +312,9 @@ cc_library(
         "//xla/service:map_inliner",
         "//xla/service:operand_upcaster",
         "//xla/service:optimization_barrier_expander",
+        "//xla/service:optimize_input_output_buffer_alias",
         "//xla/service:qr_expander",
         "//xla/service:reduce_decomposer",
-        "//xla/service:reduce_scatter_decomposer",
         "//xla/service:reshape_decomposer",
         "//xla/service:reshape_mover",
         "//xla/service:result_caster",
@@ -460,6 +474,10 @@ cc_library(
     name = "hlo_xla_runtime_pipeline",
     srcs = ["hlo_xla_runtime_pipeline.cc"],
     hdrs = ["hlo_xla_runtime_pipeline.h"],
+    local_defines = select({
+        ":experimental_mlir_gpu_enabled": ["EXPERIMENTAL_MLIR_GPU=1"],
+        "//conditions:default": [],
+    }),
     deps = [
         "//xla:status",
         "//xla/mlir/backends/cpu/transforms:passes",
@@ -474,8 +492,6 @@ cc_library(
         "@llvm-project//mlir:ComplexToStandard",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncTransforms",
-        "@llvm-project//mlir:GPUDialect",
-        "@llvm-project//mlir:GPUToNVVMTransforms",
         "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MemRefTransforms",
         "@llvm-project//mlir:Pass",
@@ -493,7 +509,13 @@ cc_library(
         "@llvm-project//mlir:VectorTransforms",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-    ],
+    ] + select({
+        ":experimental_mlir_gpu_enabled": [
+            "@llvm-project//mlir:GPUDialect",
+            "@llvm-project//mlir:GPUToNVVMTransforms",
+        ],
+        "//conditions:default": [],
+    }),
     alwayslink = 1,  # has pipeline registration
 )
 
@@ -509,6 +531,7 @@ cc_library(
     deps = [
         ":compiler_functor",
         ":cpu_runtime",
+        ":onednn_layer_norm",
         ":onednn_matmul",
         ":orc_jit_memory_mapper",
         ":runtime_conv2d",
@@ -877,6 +900,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:types",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/service:collective_ops_utils",
         "//xla/service:computation_placer",
@@ -886,6 +910,8 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -1622,6 +1648,29 @@ cc_library(
 )
 
 cc_library(
+    name = "onednn_layer_norm",
+    srcs = ["onednn_layer_norm.cc"],
+    hdrs = [
+        "onednn_layer_norm.h",
+        "@tsl//tsl/util:onednn_util_hdrs",
+    ],
+    copts = runtime_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":backend_config_proto_cc",
+        ":onednn_memory_util",
+        ":runtime_lightweight_check",
+        "//xla:executable_run_options",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:platform_port",
+    ] + mkl_deps(),
+)
+
+cc_library(
     name = "onednn_matmul_rewriter",
     srcs = ["onednn_matmul_rewriter.cc"],
     hdrs = [
@@ -1685,4 +1734,24 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
     ],
+)
+
+cc_library(
+    name = "onednn_ops_rewriter",
+    srcs = ["onednn_ops_rewriter.cc"],
+    hdrs = [
+        "onednn_ops_rewriter.h",
+        "onednn_util.h",
+    ],
+    copts = tsl_copts(),
+    deps = [
+        ":backend_config_proto_cc",
+        ":onednn_memory_util",
+        "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+    ] + mkl_deps(),
 )
