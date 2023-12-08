@@ -27,7 +27,7 @@ limitations under the License.
 namespace xla {
 namespace cpu {
 
-// This pass pattern-matches hlo dot instructions and rewrites into custom
+// This pass pattern-matches HLO Dot instructions and rewrites into custom
 // calls.
 class OneDnnMatMulRewriter : public HloModulePass {
  public:

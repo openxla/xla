@@ -899,7 +899,6 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   // AOT compiled code runs in single thread.
   if (!is_aot_compile) {
     pipeline.AddPass<OneDnnMatMulRewriter>();
-    pipeline.AddPass<ReshapeDecomposer>();
   }
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
 

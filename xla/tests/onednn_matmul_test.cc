@@ -30,7 +30,7 @@ namespace cpu {
 
 class MatmulTest : public HloTestBase {
  protected:
-  const char* fused_matmul_bias = R"(
+  const char* fused_matmul_bias_ = R"(
     ; CHECK:     custom_call_target="__onednn$matmul",
     ; CHECK:       backend_config={
     ; CHECK-DAG:     "outer_dimension_partitions":[],
@@ -118,7 +118,7 @@ TEST_F(MatmulTest, SimpleTestF32WithBiasAddFusion1) {
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32WithBiasAddFusion2) {
@@ -141,7 +141,7 @@ TEST_F(MatmulTest, SimpleTestF32WithBiasAddFusion2) {
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter1) {
@@ -160,7 +160,7 @@ TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter1) {
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter2) {
@@ -180,7 +180,7 @@ TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter2) {
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter2D) {
@@ -200,16 +200,7 @@ TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter2D) {
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str,
-                    R"(
-  ; CHECK:     custom_call_target="__onednn$matmul",
-  ; CHECK:       backend_config={
-  ; CHECK-DAG:     "outer_dimension_partitions":[],
-  ; CHECK-DAG:     "onednn_matmul_config":{
-  ; CHECK-DAG:       "fused_ops":["BIAS"]
-  ; CHECK-DAG:   }
-  ; CHECK:     }
-  )");
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter3) {
@@ -229,7 +220,7 @@ TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter3) {
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32TransposeBWithBiasAddFusion) {
@@ -250,7 +241,7 @@ TEST_F(MatmulTest, SimpleTestF32TransposeBWithBiasAddFusion) {
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias);
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_);
 }
 
 }  // namespace cpu

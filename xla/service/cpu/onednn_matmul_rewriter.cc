@@ -34,7 +34,8 @@ namespace cpu {
 namespace {
 namespace m = match;
 
-Status ValidateDotDimensionNumbers(const DotDimensionNumbers& dim_numbers) {
+inline Status ValidateDotDimensionNumbers(
+    const DotDimensionNumbers& dim_numbers) {
   // Checks some invariants that do not hold in general, but DotDecomposer
   // should have established for us.
   TF_RET_CHECK(dim_numbers.lhs_contracting_dimensions_size() == 1);
@@ -49,8 +50,8 @@ Status ValidateDotDimensionNumbers(const DotDimensionNumbers& dim_numbers) {
 }
 
 template <typename Pattern>
-auto IntermediateAllowedInstructions(HloInstruction** bitcast,
-                                     Pattern pattern) {
+inline auto AllowedIntermediateInstructions(HloInstruction** bitcast,
+                                            Pattern pattern) {
   // Checks the presence of some intermediate operations that can be moved /
   // folded to allow dot fusion with add.
   // We try to match either of the following:
@@ -66,7 +67,7 @@ auto IntermediateAllowedInstructions(HloInstruction** bitcast,
 }
 
 // We also check if the convert instruction has only one use.
-bool AllOperandsConvertedFromBF16ToF32(const HloInstruction* instr) {
+inline bool AllOperandsConvertedFromBF16ToF32(const HloInstruction* instr) {
   return absl::c_all_of(instr->operands(), [](HloInstruction* operand) {
     return Match(operand,
                  m::Convert(m::Op().WithElementType(PrimitiveType::BF16))
@@ -75,17 +76,17 @@ bool AllOperandsConvertedFromBF16ToF32(const HloInstruction* instr) {
   });
 }
 
-auto ConvertPattern(HloInstruction** instr) {
+inline auto ConvertBF16ToF32(HloInstruction** instr) {
   return m::Convert(m::Op(instr).WithElementType(PrimitiveType::BF16))
       .WithElementType(PrimitiveType::F32);
 }
 
-void GetBF16Bias(HloInstruction* dot, HloInstruction** old_bias,
-                 HloInstruction** new_bias) {
+inline void GetBF16Bias(HloInstruction* dot, HloInstruction** old_bias,
+                        HloInstruction** new_bias) {
   if (dot->shape().element_type() == PrimitiveType::BF16 &&
       (((*old_bias)->operand_count() == 1 &&
-        Match((*old_bias)->mutable_operand(0), ConvertPattern(new_bias))) ||
-       Match(*old_bias, ConvertPattern(new_bias)))) {
+        Match((*old_bias)->mutable_operand(0), ConvertBF16ToF32(new_bias))) ||
+       Match(*old_bias, ConvertBF16ToF32(new_bias)))) {
     *old_bias = *new_bias;
   }
 }
@@ -141,32 +142,33 @@ bool OneDnnMatMulRewriter::ShouldRewrite(const HloInstruction* dot_instr) {
   const Shape& lhs_shape = dot_instr->operand(0)->shape();
   const Shape& rhs_shape = dot_instr->operand(1)->shape();
   const Shape& output_shape = dot_instr->shape();
-  bool should_rewrite = true;
   // None of the operands and result should be ZeroElementArray.
-  should_rewrite &= !ShapeUtil::IsZeroElementArray(lhs_shape);
-  should_rewrite &= !ShapeUtil::IsZeroElementArray(rhs_shape);
-  should_rewrite &= !ShapeUtil::IsZeroElementArray(output_shape);
+  if (ShapeUtil::IsZeroElementArray(lhs_shape) ||
+      ShapeUtil::IsZeroElementArray(rhs_shape) ||
+      ShapeUtil::IsZeroElementArray(output_shape)) {
+    return false;
+  }
   // OneDNN only supports 2 <= rank <= kOneDnnMaxNDims.
-  should_rewrite &= (lhs_shape.rank() == rhs_shape.rank());
-  should_rewrite &= (rhs_shape.rank() == output_shape.rank());
-  should_rewrite &=
-      (lhs_shape.rank() >= 2 && lhs_shape.rank() <= kOneDnnMaxNDims);
-  if (!should_rewrite) return false;
+  if (lhs_shape.rank() != rhs_shape.rank() ||
+      rhs_shape.rank() != output_shape.rank() || lhs_shape.rank() < 2 ||
+      lhs_shape.rank() > kOneDnnMaxNDims) {
+    return false;
+  }
   // Layout should be row-major, contraction dimensions captures transpose
   // scenarios in last two dimensions.
-  should_rewrite &= LayoutUtil::IsMonotonicWithDim0Major(lhs_shape.layout());
-  if (!should_rewrite) return false;
-  should_rewrite &= LayoutUtil::IsMonotonicWithDim0Major(rhs_shape.layout());
-  if (!should_rewrite) return false;
-  should_rewrite &= LayoutUtil::IsMonotonicWithDim0Major(output_shape.layout());
-  if (!should_rewrite) return false;
+  if (!LayoutUtil::IsMonotonicWithDim0Major(lhs_shape.layout()) ||
+      !LayoutUtil::IsMonotonicWithDim0Major(rhs_shape.layout()) ||
+      !LayoutUtil::IsMonotonicWithDim0Major(output_shape.layout())) {
+    return false;
+  }
 
   auto dot_dim_numbers = dot_instr->dot_dimension_numbers();
   int64_t lhs_dim_k = dot_dim_numbers.lhs_contracting_dimensions(0);
   int64_t rhs_dim_k = dot_dim_numbers.rhs_contracting_dimensions(0);
   // Supported contraction is only in one of last two dimensions.
-  should_rewrite &= (lhs_dim_k >= lhs_shape.rank() - 2);
-  should_rewrite &= (rhs_dim_k >= rhs_shape.rank() - 2);
+  if (lhs_dim_k < lhs_shape.rank() - 2 || rhs_dim_k < rhs_shape.rank() - 2) {
+    return false;
+  }
 
   // OneDNN matmul has scratch allocation and copy overheads. The overheads
   // can be amortized if there is sufficient MAC (multiply-accumulate)
@@ -176,19 +178,14 @@ bool OneDnnMatMulRewriter::ShouldRewrite(const HloInstruction* dot_instr) {
   auto rank = lhs_shape.rank();
   auto rhs_dims = rhs_shape.dimensions();
   int64_t num_mac_ops = ShapeUtil::ElementsIn(lhs_shape) * rhs_dims.back();
-  if (rank == 2) {
-    should_rewrite &= num_mac_ops >= (1 << 23);
-  } else {
-    should_rewrite &= num_mac_ops >= (1 << 18);
-  }
-
-  return should_rewrite;
+  int mac_ops_threshold = (rank == 2) ? (1 << 23) : (1 << 18);
+  return (num_mac_ops >= mac_ops_threshold);
 }
 
 class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
  public:
   // Matches patterns for possible MatMul fusions that are supported by oneDNN
-  // library. Matched hlo instruction(s) are replaced by custom call.
+  // library. Matched HLO instruction(s) are replaced by custom call.
   Status HandleDot(HloInstruction* instr) override {
     HloInstruction* dot_instr;
     auto pattern = m::Op(&dot_instr).WithOpcode(HloOpcode::kDot);
@@ -213,8 +210,8 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
     BackendConfig backend_config;
     OneDnnMatMulConfig* matmul_config =
         backend_config.mutable_onednn_matmul_config();
-    bool transpose_a = (lhs_dim_k == lhs_shape.rank() - 1) ? false : true;
-    bool transpose_b = (rhs_dim_k == rhs_shape.rank() - 2) ? false : true;
+    bool transpose_a = (lhs_dim_k != lhs_shape.rank() - 1);
+    bool transpose_b = (rhs_dim_k != rhs_shape.rank() - 2);
     matmul_config->set_transpose_a(transpose_a);
     matmul_config->set_transpose_b(transpose_b);
     TF_RETURN_IF_ERROR(matmul_call->set_backend_config(backend_config));
@@ -254,7 +251,7 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
         m::Op(&instr)
             .WithOpcode(HloOpcode::kAdd)
             .WithBinaryOperandsAnyOrder(
-                IntermediateAllowedInstructions(
+                AllowedIntermediateInstructions(
                     &bitcast, m::Op(&dot)
                                   .WithOneUser()
                                   .WithOpcode(HloOpcode::kCustomCall)
@@ -288,24 +285,24 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
         new_operands.push_back(operand);
       }
 
-      // For addened, match one of these patterns:
+      // For addend, match one of these patterns:
       // 1. any(addend) -> broadcast -> add
       // 2. any(addend) -> bitcast -> add
-      bool bias_broad = Match(addend, nonscalar_broadcast);
+      bool bias_bcast = Match(addend, nonscalar_broadcast);
       bool check_addend = Match(addend, addend_reshape);
 
       HloInstruction *bf16_addend, *bf16_bcast_input, *bf16_bitcast_input;
       // If addend is bf16 and being converted to f32, get the original bf16
       // one.
       GetBF16Bias(dot, &addend, &bf16_addend);
-      if (bias_broad) {
+      if (bias_bcast) {
         GetBF16Bias(dot, &bcast_input, &bf16_bcast_input);
       }
       if (check_addend) {
         GetBF16Bias(dot, &bitcast_input, &bf16_bitcast_input);
       }
 
-      if (bias_broad) {
+      if (bias_bcast) {
         if (bcast_input->shape().rank() == 1) {
           new_operands.push_back(bcast_input);
         } else {
@@ -341,14 +338,14 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
       backend_config->mutable_onednn_matmul_config()->add_fused_ops(
           OneDnnMatMulConfig::BIAS);
       backend_config->mutable_onednn_matmul_config()->set_bias_broadcast(
-          bias_broad);
+          bias_bcast);
 
       TF_RETURN_IF_ERROR(matmul_call->set_backend_config(*backend_config));
 
       HloInstruction* new_instr;
       // If matched pattern has custom-call -> bitcast -> add, then we need to
       // insert bitcast after the new fusion to maintain the correct shape
-      // (new-custom-call -> bitcast). Also, this will be followd by -> convert
+      // (new-custom-call -> bitcast). Also, this will be followed by -> convert
       // for bf16 case to avoid datatype mismatch.
       if (bitcast != nullptr && bitcast->opcode() == HloOpcode::kBitcast) {
         if (matmul_call->shape().element_type() == PrimitiveType::BF16) {
