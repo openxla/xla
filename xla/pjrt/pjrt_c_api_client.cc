@@ -313,6 +313,7 @@ StatusOr<DeviceAssignment> PjRtCApiClient::GetDefaultDeviceAssignment(
                                     param);
 }
 
+// todo
 StatusOr<PjRtDevice*> PjRtCApiClient::LookupDevice(int device_id) const {
   PJRT_Client_LookupDevice_Args args;
   args.struct_size = PJRT_Client_LookupDevice_Args_STRUCT_SIZE;
@@ -323,6 +324,7 @@ StatusOr<PjRtDevice*> PjRtCApiClient::LookupDevice(int device_id) const {
   return GetCppDevice(args.device);
 }
 
+// todo
 StatusOr<PjRtDevice*> PjRtCApiClient::LookupAddressableDevice(
     int local_hardware_id) const {
   PJRT_Client_LookupAddressableDevice_Args args;
@@ -761,6 +763,7 @@ bool PjRtCApiDevice::IsAddressable() const {
   return args.is_addressable;
 }
 
+// todo - see how to handle C APIs.
 int PjRtCApiDevice::local_hardware_id() const {
   PJRT_Device_LocalHardwareId_Args args;
   args.struct_size = PJRT_Device_LocalHardwareId_Args_STRUCT_SIZE;
