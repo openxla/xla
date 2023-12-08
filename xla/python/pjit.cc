@@ -732,6 +732,7 @@ void PjitFunction::ClearPythonReferences() {
   // Swap values for nulls before they are destroyed. See the Python
   // Py_CLEAR() documentation for a discussion of this topic.
   std::swap(cache_miss_, cache_miss);
+  fun_ = std::nullopt;
 }
 
 struct PjitFunctionObject {
@@ -821,6 +822,9 @@ int PjitFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
 #endif
   Py_VISIT(o->dict);
   Py_VISIT(o->fun.cache_miss().ptr());
+  if (o->fun.fun().has_value()) {
+    Py_VISIT(o->fun.fun()->ptr());
+  }
   return 0;
 }
 
