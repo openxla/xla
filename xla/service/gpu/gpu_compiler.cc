@@ -540,6 +540,15 @@ Status GpuCompiler::OptimizeHloModule(HloModule* hlo_module,
                                       se::StreamExecutor* stream_exec,
                                       const CompileOptions& options,
                                       const TargetConfig& gpu_target_config) {
+
+  CHECK(!hlo_module->has_schedule())
+      << "\nThe current HLO module "
+      << hlo_module->name() << " is scheduled and optimized. \n"
+      << "It is not expected to run optimization passes again.\nPlease use "
+      << "RunAndCompareNoHloPasses() or RunAndCompareTwoModules() instead of "
+      << "RunAndCompare()\nif running unit tests as they set"
+      << " run_hlo_passes=false.";
+
   const DebugOptions& debug_options = hlo_module->config().debug_options();
 
   MaybeOwningThreadPool thread_pool = MaybeOwningThreadPool::GetOrCreate(
