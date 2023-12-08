@@ -255,7 +255,7 @@ StatusOr<std::unique_ptr<LoadedExecutable>> PjRtLoadedExecutable::Create(
   if (VLOG_IS_ON(3)) {
     module.dump();
   }
-  VLOG(3) << compile_options.ToProto()->DebugString();
+  VLOG(3) << *compile_options.ToProto();
   const auto& build_options = compile_options.executable_build_options;
   const bool auto_spmd_partitioning =
       build_options.use_spmd_partitioning() &&
