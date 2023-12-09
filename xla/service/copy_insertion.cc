@@ -1321,6 +1321,7 @@ class CopyRemover {
     ValueNode* tail = nullptr;
     ValueNode* head = nullptr;
     for (const HloValue* value : values) {
+      LOG(INFO) << "Add_Value: " << value->ToString();
       auto new_node = new ValueNode(value);
       (*value_to_node)[value] = new_node;
 
@@ -1328,6 +1329,8 @@ class CopyRemover {
       // uses in ValueNode are updated as copies are removed.
       new_node->uses.reserve(value->GetUses().size());
       for (const HloUse& use : value->GetUses()) {
+        VLOG(1) << "Add_Use: " << new_node->value->ToString() << ";"
+                << use.instruction->ToString();
         new_node->uses.push_back(&use);
       }
 
@@ -1448,6 +1451,13 @@ class CopyRemover {
     const CopyNodes& copy_node = copy_map_.at(copy);
     DCHECK(copy_node.src != nullptr);
     DCHECK(copy_node.dest != nullptr);
+    /*
+    if (copy_node.dest->prev->uses.empty()) {
+      LOG(INFO) << "Skip due to no uses for "
+                << copy_node.dest->prev->value->ToString();
+      return false;
+    }
+    */
 
     int64_t live_range_size1 = 0, live_range_size2 = 0;
     ForEachValueInRange(copy_node.src, [&](const ValueNode* node) {
@@ -1622,7 +1632,7 @@ class CopyRemover {
                  "of destination buffer";
       return false;
     }
-
+    LOG(INFO) << "Removing copy " << copy_node.dest->value->ToShortString();
     RemoveCopyValue(copy_node.dest);
 
     XLA_VLOG_LINES(4, ToString());
@@ -1647,19 +1657,33 @@ class CopyRemover {
     operand_node->next = copy_value_node->next;
     copy_value_node->next->prev = operand_node;
 
+    LOG(INFO) << "defining_instruction: "
+              << copy_value_node->value->defining_instruction()->ToString();
+    for (const HloUse* use : operand_node->uses) {
+      LOG(INFO) << "Use: " << use->instruction->ToString();
+    }
+
     // Patch up uses. Remove use of copy from operand_node uses.
     auto it = absl::c_find_if(operand_node->uses, [copy_value_node](
                                                       const HloUse* use) {
       return use->instruction == copy_value_node->value->defining_instruction();
     });
-    CHECK(it != operand_node->uses.end());
-    operand_node->uses.erase(it);
+    //    CHECK(it != operand_node->uses.end());
+    if (it != operand_node->uses.end()) {
+      CHECK(it != operand_node->uses.end());
+      operand_node->uses.erase(it);
+    } else {
+      VLOG(1) << "No use of copy_instruction: "
+              << operand_node->value->ToString();
+    }
 
     // If the elided copy has any uses which are themselves kCopy instructions
     // then patch up the copy info to reflect the that this kCopy instruction
     // has a different operand (the operand of the elided copy).
     for (const HloUse* copy_use : copy_value_node->uses) {
       operand_node->uses.push_back(copy_use);
+      VLOG(1) << "Add_Use: " << operand_node->value->ToString() << ";"
+              << copy_use->instruction->ToString();
       if (copy_use->instruction->opcode() == HloOpcode::kCopy &&
           ContainsKey(copy_map_, copy_use->instruction)) {
         copy_map_.at(copy_use->instruction).src = operand_node;
@@ -1679,6 +1703,8 @@ class CopyRemover {
   // to directly drive copy elision, use_is_always_before_def_in_same_instr is
   // set to false.
   bool LiveRangeBefore(const ValueNode& a, const ValueNode& b) {
+    VLOG(1) << "Checking live ranges before :" << ValueListToString(&a)
+            << " vs " << ValueListToString(&b) << "\n";
     if (a.uses.empty()) {
       VLOG(2) << "Empty uses for " << *a.value;
       return ordering_->IsDefinedBefore(*a.value, *b.value);
@@ -2162,7 +2188,7 @@ static int64_t GetNumExistingCopies(
 Status CopyInsertion::RemoveUnnecessaryCopies(
     HloModule* module, bool check_live_range_ordering,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  XLA_VLOG_LINES(4, module->ToString());
+  XLA_VLOG_LINES(1, module->ToString());
 
   // Use SequentialHloOrdering if the module has a schedule. The schedule can
   // provide more information on the ordering, allowing for detecting more
@@ -2176,9 +2202,15 @@ Status CopyInsertion::RemoveUnnecessaryCopies(
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer_));
+  for (const HloBuffer& buffer : alias_analysis->buffers()) {
+    LOG(INFO) << "HloBuffer " << buffer.id();
+    for (const HloValue* value : buffer.values()) {
+      LOG(INFO) << "  " << value->ToString();
+    }
+  }
   CopyRemover copy_remover(*module, *alias_analysis, ordering.get(),
                            check_live_range_ordering, execution_threads);
-  if (VLOG_IS_ON(3)) {
+  if (VLOG_IS_ON(1)) {
     LOG(INFO) << "Removing unnecessary copies in " << module->name();
     LOG(INFO) << "Buffer values, in dependency order: ";
     for (const HloBuffer& buffer : alias_analysis->buffers()) {
@@ -2191,19 +2223,23 @@ Status CopyInsertion::RemoveUnnecessaryCopies(
   int64_t num_existing_copies = GetNumExistingCopies(module, execution_threads);
   bool changed = true;
   int64_t num_iterations = -1;
-  VLOG(6) << "Copy Insertion analyzing module with instruction count = "
+  VLOG(1) << "Copy Insertion analyzing module with instruction count = "
           << module->instruction_count() << "\n";
   BoundNonLinearCompilerAnalysis allowance(module, name(), 10);
   while (changed) {
     CHECK_LE(++num_iterations, num_existing_copies);
     changed = false;
-    VLOG(2) << "Running fixpoint iteration " << num_iterations
+    VLOG(1) << "Running fixpoint iteration " << num_iterations
             << " of copy elision";
     for (HloComputation* computation :
          module->computations(execution_threads)) {
-      VLOG(2) << "computation:" << computation->name() << "\n";
+      VLOG(1) << "computation:" << computation->name() << "\n";
+      LOG(INFO) << "computation:" << computation->ToString() << "\n";
       for (HloInstruction* instruction : computation->instructions()) {
-        VLOG(2) << instruction->ToString() << "\n";
+        VLOG(1) << instruction->ToString() << "\n";
+      }
+      for (HloInstruction* instruction : computation->instructions()) {
+        VLOG(1) << instruction->ToString() << "\n";
         // The region_analysis_cost_now is always set to
         // use_region_based_live_range_analysis_ if it is < 0, in which case the
         // analysis is always performed.

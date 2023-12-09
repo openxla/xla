@@ -169,8 +169,11 @@ HloValue::Uses HloValue::ComputeUses() const {
 
   Uses uses;
   // Build vector of HloUses for the value.
+  VLOG(1) << "ComputeUses: " << instruction()->ToString();
   for (const HloPosition& position : positions_) {
+    VLOG(1) << "position: " << position.ToString();
     for (HloInstruction* const user : position.instruction->users()) {
+      VLOG(1) << "user: " << user->ToString();
       int i = -1;
       for (const auto& operand : user->operands()) {
         ++i;
