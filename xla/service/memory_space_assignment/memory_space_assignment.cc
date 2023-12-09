@@ -5499,6 +5499,37 @@ AlternateMemoryBestFitHeap::GetRepeatedInstructionList(
   return &repeated_insts_it->second;
 }
 
+void AlternateMemoryBestFitHeap::ResetPeakMemoryUsage() {
+  for (int64_t& value : peak_memory_usage_) {
+    value = 0;
+  }
+}
+
+void AlternateMemoryBestFitHeap::UpdatePeakMemoryUsage(
+    PeakMemoryUsageUpdateType type, int64_t start_time_inclusive,
+    int64_t end_time_inclusive, const Chunk& chunk) {
+  for (int64_t t = start_time_inclusive; t <= end_time_inclusive; ++t) {
+    switch (type) {
+      case PeakMemoryUsageUpdateType::kCommit:
+        peak_memory_usage_[t] += chunk.size;
+        CHECK_LE(peak_memory_usage_[t], options_.max_size_in_bytes)
+            << "Peak memory usage at " << t
+            << " exceeds the max size of alternate memory, after commiting "
+            << chunk.ToString() << " during [" << start_time_inclusive << ", "
+            << end_time_inclusive << "]";
+        break;
+      case PeakMemoryUsageUpdateType::kUncommit:
+        peak_memory_usage_[t] -= chunk.size;
+        CHECK_GE(peak_memory_usage_[t], 0)
+            << "Peak memory usage at " << t
+            << " is < 0, after uncommitting chunk " << chunk.ToString()
+            << " during [" << start_time_inclusive << ", " << end_time_inclusive
+            << "]";
+        break;
+    }
+  }
+}
+
 void AlternateMemoryBestFitHeap::UpdateReservedScopedAllocationSize() {
   // Check all instructions, if their operands/outputs have been placed in
   // alternate memory, update their scoped allocation size.
@@ -5579,6 +5610,9 @@ void AlternateMemoryBestFitHeap::ExportAllocationsForRepacking(
 
 void AlternateMemoryBestFitHeap::ImportRepackedAllocations() {
   interval_tree_ = {};
+  // We need to reset the peak_memory_usage calculations because the repacker
+  // can permute the start times of slices.
+  ResetPeakMemoryUsage();
   for (RepackAllocationBlock& allocation_block : repack_allocation_blocks_) {
     if (allocation_block.allocation->is_sliced_copy_allocation()) {
       ImportRepackedSlicedAllocation(allocation_block);
@@ -5598,9 +5632,11 @@ void AlternateMemoryBestFitHeap::ImportRepackedNonSlicedAllocation(
   allocation->set_offset(repacked_offset);
   block.initial_offset = repacked_offset;
   block.offset = -1;
-  interval_tree_.Add(
-      block.inclusive_start_time, block.end_time,
-      HeapSimulator::Chunk::FromOffsetSize(repacked_offset, block.size));
+  Chunk chunk =
+      HeapSimulator::Chunk::FromOffsetSize(repacked_offset, block.size);
+  UpdatePeakMemoryUsage(PeakMemoryUsageUpdateType::kCommit,
+                        block.inclusive_start_time, block.end_time, chunk);
+  interval_tree_.Add(block.inclusive_start_time, block.end_time, chunk);
 
   VLOG(3) << "Repacking move. offset: " << original_offset << " -> "
           << repacked_offset << "; size: " << block.size
@@ -5640,6 +5676,10 @@ void AlternateMemoryBestFitHeap::ImportRepackedSlicedAllocation(
   // we don't need to worry about modifying the chunks here.
   for (const SliceDetail& slice_detail :
        allocation->slice_details_sorted_by_start_time()) {
+    UpdatePeakMemoryUsage(
+        PeakMemoryUsageUpdateType::kCommit,
+        ExclusiveToInclusiveStartTime(slice_detail.copy_start_after_time),
+        block.end_time, slice_detail.slice_decision.chunk);
     interval_tree_.Add(
         /*start=*/
         ExclusiveToInclusiveStartTime(slice_detail.copy_start_after_time),
@@ -5676,14 +5716,8 @@ void AlternateMemoryBestFitHeap::UncommitPendingChunks(
     const Chunk& chunk = interval_and_chunk.second;
     VLOG(3) << "Uncommitting: (" << interval.start << ", " << interval.end
             << ") off = " << chunk.offset << " size = " << chunk.size;
-    for (int i = interval.start; i <= interval.end; ++i) {
-      peak_memory_usage_[i] -= chunk.size;
-      CHECK_GE(peak_memory_usage_[i], 0)
-          << "Peak memory usage at " << i
-          << " is below zero after uncommitting. " << interval.start << "-"
-          << interval.end << " : [" << chunk.offset << ", " << chunk.size
-          << "]";
-    }
+    UpdatePeakMemoryUsage(PeakMemoryUsageUpdateType::kUncommit, interval.start,
+                          interval.end, chunk);
     interval_tree_.Remove(interval.start, interval.end, chunk);
   }
   for (const AsynchronousCopy& async_copy : pending_async_copies_) {
@@ -5792,14 +5826,9 @@ void AlternateMemoryBestFitHeap::AddToPendingChunks(
   VLOG(3) << "Committing chunk: " << buffer_interval.start << "-"
           << buffer_interval.end << " : " << chunk_candidate.ToString();
   pending_chunks_.emplace_back(buffer_interval, chunk_candidate);
-  for (int i = buffer_interval.start; i <= buffer_interval.end; ++i) {
-    peak_memory_usage_[i] += chunk_candidate.size;
-    CHECK_LE(peak_memory_usage_[i], options_.max_size_in_bytes)
-        << "Peak memory usage at " << i
-        << " exceeds the max size of alternate memory. "
-        << buffer_interval.start << "-" << buffer_interval.end << " : "
-        << chunk_candidate.ToString();
-  }
+  UpdatePeakMemoryUsage(PeakMemoryUsageUpdateType::kCommit,
+                        buffer_interval.start, buffer_interval.end,
+                        chunk_candidate);
   CommitChunk(buffer_interval, chunk_candidate);
 }
 
@@ -6493,7 +6522,8 @@ std::string DescribeSlicedBufferMove(
   }
 
   return absl::StrCat(
-      "Moving buffer to alternate memory in slices. Slices(start_time, offset, "
+      "Moving buffer to alternate memory in slices. "
+      "Slices(exclusive_start_time, offset, "
       "size) = [",
       absl::StrJoin(slice_strings, ", "),
       "]. Heap size = ", heap_result.UpdatedHeapSize(full_chunk),

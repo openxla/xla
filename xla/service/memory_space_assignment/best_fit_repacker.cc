@@ -363,7 +363,7 @@ class BestFitRepacker
       result_.heap_size = result_.UpdatedHeapSize(chunks.front());
       VLOG(3) << "Adding unsliced chunk " << chunks.front().ToString()
               << " at [" << allocation_block->inclusive_start_time << ", "
-              << allocation_block->end_time << ")";
+              << allocation_block->end_time << "]";
       interval_tree_.Add(allocation_block->inclusive_start_time,
                          allocation_block->end_time, chunks.front());
     }

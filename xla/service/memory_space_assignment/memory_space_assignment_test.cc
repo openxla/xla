@@ -12348,6 +12348,242 @@ ENTRY main {
   EXPECT_EQ(p2_slice_offsets[1], 2048);
 }
 
+// Initially, p1 and p2 are slice prefetched and placed similar to the following
+// diagram:
+//
+// space
+//   ^
+//   |        +------+               * p1.1 means p1, slice 1
+//   |        | p2.2 |               * p1 and p2 each have 2 slices
+//   |   +----+------+               * slice 2 is twice as big as slice 1
+//   |   |           |
+//   |   |   p2.1    |
+//   |   +----+------+
+//   |        | p1.2 |
+//   | +------+------+
+//   | |             |
+//   | |     p1.1    |
+//   +-+-------------+----> time
+//
+// We then force repacking to changed the placements to also accomodate a:
+//
+// space
+//   ^
+//   |   +-----------+
+//   |   |   p2.2    |
+//   |   +-+--+------+
+//   |     |  |      |
+//   |     |a | p2.1 |
+//   |     |  +------+
+//   |     |  | p1.2 |
+//   | +---+--+------+
+//   | |             |
+//   | |     p1.1    |
+//   +-+-------------+----> time
+//
+// In the past, this test would crash because peak_memory_usage, at each point
+// in the schedule, was not recomputed after repacking.
+TEST_F(SlicedPrefetchTest, RepackUnequalSlices) {
+  std::string_view hlo_string = R"(
+HloModule Slice, is_scheduled=true
+
+ENTRY main {
+  /* parameters */
+  p0 = f32[16,12] parameter(0)
+  p1 = f32[16,12] parameter(1)
+  p2 = f32[16,12] parameter(2)
+
+  /* filler that we can prefetch over */
+  a = f32[16,12] tanh(p0)
+  b = f32[16,12] tanh(a)
+  c = f32[16,12] tanh(b)
+  d = f32[16,12] tanh(c)
+  e = f32[16,12] tanh(d)
+
+  /* uses of p1 and p3 */
+  y = f32[16,12] add(p1, p2)
+
+  ROOT z = f32[16,12] add(e, y)
+})";
+
+  using Slice = MemorySpaceAssignmentRepacker::Slice;
+  using SlicedAllocationData =
+      MemorySpaceAssignmentRepacker::SlicedAllocationData;
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  VLOG(1) << "Original module:\n"
+          << module->ToString(HloPrintOptions::ShortParsable());
+
+  // Setup slicing expectations.
+  Shape f32_16_12 = ShapeUtil::MakeShape(F32, {16, 12});
+  Shape f32_16_8 = ShapeUtil::MakeShape(F32, {16, 8});
+  Shape f32_16_4 = ShapeUtil::MakeShape(F32, {16, 4});
+  EXPECT_CALL(slice_proposer_,
+              ProposeSlices(f32_16_12, EqualsSlicedPrefetchOptions(
+                                           options_.sliced_prefetch_options)))
+      .WillRepeatedly(Return(SliceProposalCollection({
+          SliceProposal({f32_16_8, std::vector<SliceParam>({{0, 16}, {0, 8}}),
+                         ShapeSize(f32_16_8)}),
+          SliceProposal({f32_16_4, std::vector<SliceParam>({{0, 16}, {8, 12}}),
+                         ShapeSize(f32_16_4)}),
+      })));
+
+  // Force MSA to prefer placing (in order) p1, p2, a, and then anything else.
+  MemorySpaceAssignment::BufferIntervalCompare buffer_interval_compare =
+      [](const MemorySpaceAssignment::BufferInterval& lhs,
+         const MemorySpaceAssignment::BufferInterval& rhs) {
+        auto lookup = [](const MemorySpaceAssignment::BufferInterval& x) {
+          // An arbitrary value that is greater than that for p1, p2, and a.
+          int priority = 100;
+          if (x.buffer->instruction()->name() == "p1") {
+            priority = 1;
+          } else if (x.buffer->instruction()->name() == "p2") {
+            priority = 2;
+          } else if (x.buffer->instruction()->name() == "a") {
+            priority = 3;
+          }
+          return std::make_tuple(priority, x.buffer->instruction()->name());
+        };
+
+        return lookup(lhs) < lookup(rhs);
+      };
+
+  // Configure MSA.
+  InstructionCountPrefetchIntervalPicker prefetch_interval_picker(2, 50);
+  options_.max_size_in_bytes = 4 * 16 * 12 * 2;  // Fits 2 f32[16, 12] tensors
+  // Configure MSA to repack.
+  MockRepacker repacker;
+  absl::flat_hash_map<std::pair<int64_t, int64_t>, int64_t> repack_map;
+  // Make the repacker swap the times that p2's slices start.
+  EXPECT_CALL(repacker, Repack(_))
+      .WillRepeatedly([](absl::Span<MockRepacker::AllocationBlock*> allocations)
+                          -> StatusOr<bool> {
+        bool found_p1 = false;
+        bool found_p2 = false;
+        for (MockRepacker::AllocationBlock* block : allocations) {
+          VLOG(1) << "Allocation block: " << block->ToString();
+
+          if (block->inclusive_start_time == 2 && block->initial_offset == 0 &&
+              block->size == 768) {
+            // Leave p1 as initially configured
+            found_p1 = true;
+            block->offset = 0;
+            // We expect p1 to be sliced.
+            EXPECT_TRUE(block->original_slice_data.has_value());
+            if (!block->original_slice_data.has_value()) {
+              continue;
+            }
+            SlicedAllocationData original_slice_data(
+                {{Slice{/*size=*/512, /*offset=*/0, /*inclusive_start_time=*/2},
+                  Slice{/*size=*/256, /*offset=*/512,
+                        /*inclusive_start_time=*/5}}});
+            EXPECT_EQ(*block->original_slice_data, original_slice_data)
+                << "\nExpected: " << original_slice_data.ToString()
+                << "\nGot: " << block->original_slice_data->ToString();
+            block->repacked_slice_data = original_slice_data;
+          } else if (block->inclusive_start_time == 3 &&
+                     block->initial_offset == 768 && block->size == 768) {
+            // Leave p2 at its initial offset, but reorder its slice times.
+            found_p2 = true;
+            block->offset = 768;
+            // We expect p2 to be sliced.
+            EXPECT_TRUE(block->original_slice_data.has_value());
+            if (!block->original_slice_data.has_value()) {
+              continue;
+            }
+            SlicedAllocationData original_slice_data(
+                {{Slice{/*size=*/512, /*offset=*/768,
+                        /*inclusive_start_time=*/3},
+                  Slice{/*size=*/256, /*offset=*/1280,
+                        /*inclusive_start_time=*/5}}});
+            EXPECT_EQ(*block->original_slice_data, original_slice_data)
+                << "\nExpected: " << original_slice_data.ToString()
+                << "\nGot: " << block->original_slice_data->ToString();
+            SlicedAllocationData new_slice_data(
+                {{Slice{/*size=*/512, /*offset=*/768,
+                        /*inclusive_start_time=*/5},
+                  Slice{/*size=*/256, /*offset=*/1280,
+                        /*inclusive_start_time=*/3}}});
+            block->repacked_slice_data = new_slice_data;
+          } else {
+            block->offset = block->initial_offset;
+          }
+        }
+
+        EXPECT_TRUE(found_p1);
+        EXPECT_TRUE(found_p2);
+
+        return true;
+      });
+  options_.max_repacks = 1;
+  options_.repacker = &repacker;
+
+  // Run MSA.
+  std::unique_ptr<PresetAssignments> assignments =
+      AssignMemorySpace(module.get(), options_, buffer_interval_compare,
+                        &prefetch_interval_picker);
+  VLOG(1) << "Post-MSA module:\n"
+          << module->ToString(HloPrintOptions::ShortParsable());
+
+  // The real test here is that we don't crash. In the past, we would have
+  // crashed.
+
+  // Find the slice dones for p1 and p2.
+  std::vector<const HloInstruction*> p1_slice_dones;
+  std::vector<const HloInstruction*> p2_slice_dones;
+  for (const HloInstruction* i : module->entry_computation()->instructions()) {
+    if (!IsAsyncSliceStart(i)) {
+      continue;
+    }
+    ASSERT_EQ(i->operand_count(), 1);
+    ASSERT_EQ(i->user_count(), 1);
+    if (i->operand(0)->name() == "p1") {
+      p1_slice_dones.push_back(i->users()[0]);
+    } else if (i->operand(0)->name() == "p2") {
+      p2_slice_dones.push_back(i->users()[0]);
+    } else {
+      FAIL() << "We only expect p1 and p2 to be sliced. We also found that "
+             << i->operand(0)->name() << " is sliced.";
+    }
+  }
+  // Order the p1's slices and p2's slices by their schedule start times,
+  // respectively.
+  auto entry_schedule =
+      module->schedule().sequence(module->entry_computation()).instructions();
+  auto schedule_sort = [&entry_schedule](const HloInstruction* lhs,
+                                         const HloInstruction* rhs) {
+    return FindScheduleIndexOfInstruction(entry_schedule,
+                                          lhs->operand(0)->name(),
+                                          InstructionClass::kRelatedSliceStart)
+               .value() < FindScheduleIndexOfInstruction(
+                              entry_schedule, rhs->operand(0)->name(),
+                              InstructionClass::kRelatedSliceStart)
+                              .value();
+  };
+  absl::c_sort(p1_slice_dones, schedule_sort);
+  absl::c_sort(p2_slice_dones, schedule_sort);
+  ASSERT_EQ(p1_slice_dones.size(), 2);
+  ASSERT_EQ(p2_slice_dones.size(), 2);
+
+  // Check that p1, p2, and b are given alternate memory as expected.
+  auto get_chunk = [&](const HloInstruction* i) -> Chunk {
+    auto chunks = assignments->chunks();
+    auto it = absl::c_find_if(
+        chunks, [&](const std::pair<HloPosition, Chunk>& position_chunk_pair) {
+          return position_chunk_pair.first.instruction->name() == i->name();
+        });
+    CHECK_NE(it, chunks.end());
+    return it->second;
+  };
+  EXPECT_EQ(get_chunk(p1_slice_dones[0]), Chunk::FromOffsetSize(0, 512));
+  EXPECT_EQ(get_chunk(p1_slice_dones[1]), Chunk::FromOffsetSize(512, 256));
+  EXPECT_EQ(get_chunk(p2_slice_dones[0]), Chunk::FromOffsetSize(1280, 256));
+  EXPECT_EQ(get_chunk(p2_slice_dones[1]), Chunk::FromOffsetSize(768, 512));
+  EXPECT_EQ(get_chunk(FindNamedScheduledInstruction(*module, "a")),
+            Chunk::FromOffsetSize(512, 768));
+}
+
 struct ModuleAndAssignments {
   std::unique_ptr<VerifiedHloModule> module;
   std::unique_ptr<PresetAssignments> assignments;
