@@ -124,6 +124,9 @@ build --config=v2
 build --define=no_aws_support=true
 build --define=no_hdfs_support=true
 
+# In case of GCC version being <11
+build --define=xnn_enable_avxvnni=false
+
 # TF now has `cc_shared_library` targets, so it needs the experimental flag
 # TODO(rostam): Remove when `cc_shared_library` is enabled by default
 build --experimental_cc_shared_library
