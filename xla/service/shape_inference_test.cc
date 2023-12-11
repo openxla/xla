@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/shape_inference.h"
 
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -3896,6 +3897,47 @@ TEST_P(UnboundedBinaryOpShapeInferenceTest, UnboundedPow) {
     EXPECT_THAT(inferred_status.status().message(),
                 HasSubstr("Binary op power with incompatible shapes"));
   }
+}
+
+TEST_F(ShapeInferenceTest, UnboundedReduce) {
+  StatusOr<Shape> input0 = ParseShape("f32[7, 5]");
+  StatusOr<Shape> input1 = ParseShape("f32[?, 5]");
+  StatusOr<Shape> input2 = ParseShape("f32[7, ?]");
+  ASSERT_IS_OK(input0.status());
+  ASSERT_IS_OK(input1.status());
+  ASSERT_IS_OK(input2.status());
+  ProgramShape to_apply = ShapeUtil::MakeProgramShape(
+      {f32_, f32_, f32_, f32_, f32_, f32_},
+      ShapeUtil::MakeTupleShape({f32_, f32_, f32_}));
+
+  StatusOr<Shape> inferred_status = ShapeInference::InferReduceShape(
+      {&input0.value(), &input1.value(), &input2.value(), &f32_, &f32_, &f32_},
+      {1}, to_apply);
+  Shape shape = ShapeUtil::MakeShape(F32, {7});
+  Shape expected = ShapeUtil::MakeTupleShape({shape, shape, shape});
+  ASSERT_IS_OK(inferred_status.status());
+  ASSERT_TRUE(ShapeUtil::Equal(inferred_status.value(), expected))
+      << "inferred: " << ShapeUtil::HumanString(inferred_status.value())
+      << " expected: " << ShapeUtil::HumanString(expected);
+}
+
+TEST_F(ShapeInferenceTest, UnboundedReduceInvalidReduceDimension) {
+  StatusOr<Shape> input0 = ParseShape("f32[7, 5]");
+  StatusOr<Shape> input1 = ParseShape("f32[?, 5]");
+  StatusOr<Shape> input2 = ParseShape("f32[5, ?]");
+  ASSERT_IS_OK(input0.status());
+  ASSERT_IS_OK(input1.status());
+  ASSERT_IS_OK(input2.status());
+  ProgramShape to_apply = ShapeUtil::MakeProgramShape(
+      {f32_, f32_, f32_, f32_, f32_, f32_},
+      ShapeUtil::MakeTupleShape({f32_, f32_, f32_}));
+
+  StatusOr<Shape> inferred_status = ShapeInference::InferReduceShape(
+      {&input0.value(), &input1.value(), &input2.value(), &f32_, &f32_, &f32_},
+      {1}, to_apply);
+  ASSERT_IS_NOT_OK(inferred_status.status());
+  EXPECT_THAT(inferred_status.status().message(),
+              HasSubstr("All reduced tensors must have the same dimension"));
 }
 
 TEST_F(ShapeInferenceTest, UnboundedSlice) {
