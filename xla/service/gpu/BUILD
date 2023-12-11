@@ -369,6 +369,7 @@ cc_library(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:NVVMToLLVMIRTranslation",
         "@llvm-project//mlir:ROCDLToLLVMIRTranslation",
+        "@llvm-project//mlir:Support",
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:human_readable_json",
