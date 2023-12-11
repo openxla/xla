@@ -895,6 +895,7 @@ cc_library(
     copts = runtime_copts(),
     deps = [
         ":collectives_interface",
+        ":cpu_executable_run_options",
         ":in_process_collectives",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -1733,6 +1734,15 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+    ],
+)
+
+cc_library(
+    name = "cpu_executable_run_options",
+    hdrs = ["cpu_executable_run_options.h"],
+    deps = [
+        ":collectives_interface",
+        "@com_google_absl//absl/container:flat_hash_set",
     ],
 )
 

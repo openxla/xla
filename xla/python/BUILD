@@ -1112,6 +1112,8 @@ cc_library(
         "//xla/pjrt:status_casters",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/cpu:cpu_client",
+        "//xla/pjrt/cpu:gloo_collectives",
+        "//xla/pjrt/cpu:gloo_kv_store",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:protocol_proto_cc",
@@ -1123,6 +1125,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform/cloud:gcs_file_system",
         "@tsl//tsl/python/lib/core:numpy",
+        "@gloo//:transport_tcp",
         "@pybind11",
     ] + select({
         ":gpu_enabled": [
