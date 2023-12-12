@@ -896,6 +896,7 @@ cc_library(
     copts = runtime_copts(),
     deps = [
         ":collectives_interface",
+        ":cpu_executable_run_options",
         ":in_process_collectives",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -1715,26 +1716,6 @@ cc_library(
 )
 
 cc_library(
-    name = "onednn_ops_rewriter",
-    srcs = ["onednn_ops_rewriter.cc"],
-    hdrs = [
-        "onednn_ops_rewriter.h",
-        "onednn_util.h",
-    ],
-    copts = tsl_copts(),
-    deps = [
-        ":backend_config_proto_cc",
-        ":onednn_memory_util",
-        "//xla:status_macros",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_creation_utils",
-        "//xla/service:hlo_pass",
-        "//xla/service:pattern_matcher",
-    ] + mkl_deps(),
-)
-
-cc_library(
     name = "cpu_symbol_repository",
     hdrs = ["cpu_symbol_repository.h"],
     deps = [
@@ -1778,4 +1759,33 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
     ],
+)
+
+cc_library(
+    name = "cpu_executable_run_options",
+    hdrs = ["cpu_executable_run_options.h"],
+    deps = [
+        ":collectives_interface",
+        "@com_google_absl//absl/container:flat_hash_set",
+    ],
+)
+
+cc_library(
+    name = "onednn_ops_rewriter",
+    srcs = ["onednn_ops_rewriter.cc"],
+    hdrs = [
+        "onednn_ops_rewriter.h",
+        "onednn_util.h",
+    ],
+    copts = tsl_copts(),
+    deps = [
+        ":backend_config_proto_cc",
+        ":onednn_memory_util",
+        "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+    ] + mkl_deps(),
 )
