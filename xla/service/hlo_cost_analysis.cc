@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/algorithm/container.h"
+#include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -605,7 +606,7 @@ Status HloCostAnalysis::HandleBitcast(const HloInstruction*) {
 Status HloCostAnalysis::HandleBroadcast(const HloInstruction* broadcast) {
   if (options_.count_multiple_input_accesses) {
     current_properties_.set_operand_bytes_accessed(
-        0, ShapeUtil::ElementsIn(broadcast->shape()));
+        0, GetShapeSize(broadcast->shape()));
     current_properties_.set_operand_utilization(
         0, 1.0 * ShapeUtil::ElementsIn(broadcast->shape()) /
                ShapeUtil::ElementsIn(broadcast->operand(0)->shape()));
@@ -1420,19 +1421,17 @@ std::unique_ptr<HloCostAnalysis> HloCostAnalysis::CreateNestedCostAnalysis() {
 
 /*static*/ std::string HloCostAnalysis::GetOperandBytesAccessedKey(
     int64_t operand_num, const ShapeIndex& index) {
-  return absl::StrCat(kBytesAccessedKey, " operand ", operand_num, " ",
-                      index.ToString());
+  return absl::StrCat(kBytesAccessedKey, operand_num, index.ToString());
 }
 
 /*static*/ std::string HloCostAnalysis::GetOperandUtilizationKey(
     int64_t operand_num, const ShapeIndex& index) {
-  return absl::StrCat(kUtilizationKey, " operand ", operand_num, " ",
-                      index.ToString());
+  return absl::StrCat(kUtilizationKey, operand_num, index.ToString());
 }
 
 /*static*/ std::string HloCostAnalysis::GetOutputBytesAccessedKey(
     const ShapeIndex& index) {
-  return absl::StrCat(kBytesAccessedKey, " output ", index.ToString());
+  return absl::StrCat(kBytesAccessedKey, "out", index.ToString());
 }
 
 bool HloCostAnalysis::KeyToCopyFromSubcomputation(absl::string_view key) const {

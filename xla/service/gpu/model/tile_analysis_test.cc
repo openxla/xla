@@ -22,6 +22,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/status_macros.h"
 #include "xla/statusor.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
@@ -37,6 +39,7 @@ using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::ExplainMatchResult;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 using ::testing::Pair;
 using ::testing::PrintToString;
 using ::testing::UnorderedElementsAre;
@@ -88,6 +91,44 @@ class TileAnalysisTest : public HloTestBase {
   }
   mlir::MLIRContext mlir_context_;
 };
+
+TEST_F(TileAnalysisTest, FuseProducerConsumerOutputToInputIndexing) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule m
+    ENTRY e {
+      p0 = f32[1000, 1000] parameter(0)
+      transpose_p0 = f32[1000, 1000]{0, 1} transpose(p0), dimensions={1, 0}
+      ROOT a0 = f32[1000, 1000] add(p0, transpose_p0)
+    }
+  )"));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  const HloInstruction* parameter = root->operand(0);
+  const HloInstruction* transpose = root->operand(1);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto root_indexing,
+      ComputeOutputToInputIndexing(root, /*output_id=*/0, &mlir_context_));
+
+  auto grouped_by_key = GroupIndexingMapsByProducers(root_indexing, root);
+
+  EXPECT_THAT(
+      grouped_by_key,
+      UnorderedElementsAre(
+          Pair(parameter, ElementsAre(MatchIndexingMap("(d0, d1) -> (d0, d1)",
+                                                       std::vector<int>{}))),
+          Pair(transpose, ElementsAre(MatchIndexingMap("(d0, d1) -> (d0, d1)",
+                                                       std::vector<int>{})))));
+
+  TF_CHECK_OK(FuseProducerConsumerOutputToInputIndexing(
+      transpose, &grouped_by_key, &mlir_context_));
+  EXPECT_THAT(
+      grouped_by_key,
+      UnorderedElementsAre(Pair(
+          parameter,
+          UnorderedElementsAre(
+              MatchIndexingMap("(d0, d1) -> (d0, d1)", std::vector<int>{}),
+              MatchIndexingMap("(d0, d1) -> (d1, d0)", std::vector<int>{})))));
+}
 
 TEST_F(TileAnalysisTest, ElementwiseOp) {
   auto ir = R"(
@@ -199,6 +240,18 @@ TEST_F(TileAnalysisTest, BroadcastOp) {
               UnorderedElementsAre(Pair(0, ElementsAre(MatchIndexingMap(
                                                "(d0)[s0, s1] -> (s0, d0, s1)",
                                                std::vector<int>{10, 30})))));
+}
+
+TEST_F(TileAnalysisTest, ConstantOp) {
+  auto ir = R"(
+    HloModule m
+    ENTRY e {
+      ROOT c1 = bf16[17, 22] constant(1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto input_indexing,
+                          GetOutputToInputIndexingForEntryComputation(ir));
+  EXPECT_THAT(input_indexing.indexing_maps, IsEmpty());
 }
 
 TEST_F(TileAnalysisTest, FusionOpWithSingleBinaryOp) {
@@ -580,6 +633,18 @@ TEST_F(TileAnalysisTest, FusionOpWithSliceOfSlice) {
           Pair(0, ElementsAre(MatchIndexingMap(
                       "(d0, d1, d2) -> (d0 * 2 + 8, d1 * 6 + 8, d2 * 12 + 65)",
                       std::vector<int>{})))));
+}
+
+TEST_F(TileAnalysisTest, IotaOp) {
+  auto ir = R"(
+    HloModule m
+    ENTRY e {
+      ROOT iota = s32[5,5,111,42] iota(), iota_dimension=0
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto input_indexing,
+                          GetOutputToInputIndexingForEntryComputation(ir));
+  EXPECT_THAT(input_indexing.indexing_maps, IsEmpty());
 }
 
 TEST_F(TileAnalysisTest, ReshapeOpCollapseShape) {
