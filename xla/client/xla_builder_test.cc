@@ -1591,6 +1591,19 @@ TEST_F(XlaBuilderTest, UnboundedAdd) {
       << " expected: " << ShapeUtil::HumanString(expected.value());
 }
 
+TEST_F(XlaBuilderTest, UnboundedBroadcastInDimUnsupported) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> operand = ParseShape("f32[<=2, 3]");
+  ASSERT_IS_OK(operand.status());
+  BroadcastInDim(Parameter(&b, 0, operand.value(), "operand"),
+                 {2, Shape::kUnboundedSize, 3},
+                 /*broadcast_dimensions=*/{0, 2});
+  auto statusor = BuildHloModule(&b);
+  ASSERT_FALSE(statusor.ok());
+  EXPECT_THAT(statusor.status().message(),
+              HasSubstr("Broadcasting unbounded dimensions is not supported."));
+}
+
 TEST_F(XlaBuilderTest, UnboundedAddUnsupportedImplicitBroadcast) {
   XlaBuilder b(TestName());
   StatusOr<Shape> lhs = ParseShape("f32[?, 10]");

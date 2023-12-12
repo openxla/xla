@@ -1241,6 +1241,13 @@ XlaOp XlaBuilder::BroadcastInDim(
     const absl::Span<const int64_t> broadcast_dimensions) {
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
+    if (operand_shape->is_unbounded_dynamic() ||
+        absl::c_any_of(out_dim_size, [](int64_t size) {
+          return size == Shape::kUnboundedSize;
+        })) {
+      return InvalidArgument(
+          "Broadcasting unbounded dimensions is not supported.");
+    }
     // Output shape, in the case of degenerate broadcast, the out_dim_size is
     // not necessarily the same as the dimension sizes of the output shape.
     TF_ASSIGN_OR_RETURN(auto output_shape,
