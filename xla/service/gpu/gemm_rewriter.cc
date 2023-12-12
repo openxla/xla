@@ -593,10 +593,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (Match(instr, m::MultiplyAnyOrder(
                          m::AnyOf<HloInstruction>(
                              m::Slice(&slice_or_bitcast,
-                                      CublasLtMatmul(&existing_gemm)),
+                                      CublasLtMatmulMaybeF8(&existing_gemm)),
                              m::Bitcast(&slice_or_bitcast,
-                                        CublasLtMatmul(&existing_gemm)),
-                             CublasLtMatmul(&existing_gemm)),
+                                        CublasLtMatmulMaybeF8(&existing_gemm)),
+                             CublasLtMatmulMaybeF8(&existing_gemm)),
                          m::Op(&cdf).WithOneUser())) &&
         Match(cdf,
               m::MultiplyAnyOrder(
@@ -1513,6 +1513,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return OkStatus();
     }
 
+    // cublasLt F8 gemm has a known issue when fusing gelu epilogue with f32
+    // output.
+    if (gemm->shape().element_type() == F32 &&
+        gemm->custom_call_target() == kCublasLtMatmulF8CallTarget) {
+      return OkStatus();
+    }
     // There are four users of the gemm output within the GELU calculation.
     bool has_aux = gemm->user_count() > 4;
 
