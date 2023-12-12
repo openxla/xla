@@ -29,6 +29,12 @@ function is_linux_gpu_job() {
 
 clone_main_jax() {
   git clone https://github.com/google/jax.git
+  # DO NOT SUBMIT THIS:
+  # It's needed to make the tests pass but I will remove it before submitting
+  pushd jax
+  git fetch origin pull/18456/head:pr
+  git switch pr
+  popd
 }
 
 prelude() {
@@ -80,7 +86,7 @@ build_and_test_on_rbe_gpu() {
     --override_repository=xla="${KOKORO_ARTIFACTS_DIR}"/github/xla \
     --config=avx_posix \
     --config=mkl_open_source_only \
-    --config="rbe_linux_cuda12.2_nvcc_py3.9" \
+    --config="rbe_linux_cuda12.3_nvcc_py3.9" \
     --config=tensorflow_testing_rbe_linux \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
     --test_output=errors \
