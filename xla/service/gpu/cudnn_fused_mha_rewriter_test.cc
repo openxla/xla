@@ -3555,7 +3555,10 @@ ENTRY main {
   CudnnFusedMHARewriter fusedMhaRewriter{
       GetCudaComputeCapability(),
       GetCudnnVersionWithDbiasAndMaskBwdInputSupport()};
-  TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
+  const auto status_or = RunHloPass(&fusedMhaRewriter, m.get());
+  TF_ASSERT_OK(status_or.status());
+  EXPECT_FALSE(status_or.value());
+
   HloDCE dce;
   TF_ASSERT_OK(RunHloPass(&dce, m.get()).status());
 
@@ -3640,7 +3643,10 @@ ENTRY main.82 {
   CudnnFusedMHARewriter fusedMhaRewriter{
       GetCudaComputeCapability(),
       GetCudnnVersionWithDbiasAndMaskBwdInputSupport()};
-  TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
+  const auto status_or = RunHloPass(&fusedMhaRewriter, m.get());
+  TF_ASSERT_OK(status_or.status());
+  EXPECT_FALSE(status_or.value());
+
   HloDCE dce;
   TF_ASSERT_OK(RunHloPass(&dce, m.get()).status());
 
