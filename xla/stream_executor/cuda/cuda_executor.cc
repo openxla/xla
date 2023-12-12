@@ -926,10 +926,11 @@ GpuExecutor::GetStreamImplementation() {
 }
 
 tsl::StatusOr<std::unique_ptr<internal::CommandBufferInterface>>
-GpuExecutor::GetCommandBufferImplementation(CommandBuffer::Mode mode) {
+GpuExecutor::GetCommandBufferImplementation(CommandBuffer::Mode mode,
+                                            bool is_tracing) {
   VLOG(2) << "Create CUDA command buffer (CUDA graph)";
   GpuGraphHandle graph = nullptr;
-  TF_RETURN_IF_ERROR(GpuDriver::CreateGraph(&graph));
+  if (!is_tracing) TF_RETURN_IF_ERROR(GpuDriver::CreateGraph(&graph));
   return std::make_unique<GpuCommandBuffer>(mode, /*parent=*/this, graph);
 }
 

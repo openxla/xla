@@ -64,14 +64,16 @@ class CommandBuffer {
   //
   //   (1) kCreate:    a new command buffer under construction
   //   (2) kUpdate:    updating a previously finalized command buffer
-  //   (3) kFinalized: command buffer ready for execution
+  //   (3) kFinalized: command buffer ready for execution, can be updated
+  //   (4) kTraced:    command buffer is created by tracing a function. ready
+  //                   for execution. can't be updated
   //
   // Supported state transitions:
   //
   //   (1) Finalize: (kCreate|kUpdate) -> kFinalized
   //   (2) Update:   kFinalized -> kUpdate
   //
-  enum class State { kCreate, kUpdate, kFinalized };
+  enum class State { kCreate, kUpdate, kFinalized, kTraced };
 
   // Command buffers have two modes of execution:
   //

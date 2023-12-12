@@ -132,7 +132,7 @@ class CommandBufferInterface {
   virtual ~CommandBufferInterface() = default;
 
   // Traces `function` invocation by recording all operations on the `stream`
-  // into the command buffer. Command buffer must be empty.
+  // into the command buffer. Command buffer must have kTraced state.
   virtual tsl::Status Trace(Stream* stream,
                             absl::AnyInvocable<tsl::Status()> function) = 0;
 
@@ -470,7 +470,7 @@ class StreamExecutorInterface {
   virtual std::unique_ptr<StreamInterface> GetStreamImplementation() = 0;
 
   virtual tsl::StatusOr<std::unique_ptr<CommandBufferInterface>>
-  GetCommandBufferImplementation(CommandBuffer::Mode mode) {
+  GetCommandBufferImplementation(CommandBuffer::Mode mode, bool is_tracing) {
     return absl::UnimplementedError("Command buffers are not implemented");
   }
 
