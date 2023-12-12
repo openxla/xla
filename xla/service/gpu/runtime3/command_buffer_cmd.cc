@@ -449,14 +449,17 @@ Status GemmCmd::Record(const RecordParams& params,
   se::DeviceMemoryBase out =
       params.buffer_allocations->GetDeviceAddress(output_buffer_);
 
-  TF_ASSIGN_OR_RETURN(
-      auto nested_buffer,
-      se::CommandBuffer::Trace(params.executor, [&](se::Stream* stream) {
-        return RunGemm(config_, lhs, rhs, out, workspace, deterministic_,
-                       stream);
-      }));
+  TF_ASSIGN_OR_RETURN(auto nested_buffer,
+                      se::CommandBuffer::Trace(
+                          params.executor,
+                          [&](se::Stream* stream) {
+                            return RunGemm(config_, lhs, rhs, out, workspace,
+                                           deterministic_, stream);
+                          },
+                          se::CommandBuffer::Mode::kNested));
 
-  return command_buffer->AddNestedCommandBuffer(nested_buffer);
+  TF_RETURN_IF_ERROR(command_buffer->AddNestedCommandBuffer(nested_buffer));
+  return OkStatus();
 }
 
 CommandBufferCmd::Slices GemmCmd::slices() {

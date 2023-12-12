@@ -58,6 +58,8 @@ std::string_view to_string(State state) {
       return "update";
     case State::kFinalized:
       return "finalized";
+    case State::kTraced:
+      return "traced";
   }
 }
 
@@ -100,7 +102,11 @@ GpuCommandBuffer::GpuCommandBuffer(Mode mode, GpuExecutor* parent,
     : mode_(mode),
       parent_(parent),
       graph_(graph),
-      is_owned_graph_(is_owned_graph) {}
+      is_owned_graph_(is_owned_graph) {
+  if (graph == nullptr) {
+    state_ = State::kTraced;
+  }
+}
 
 GpuCommandBuffer::~GpuCommandBuffer() {
   if (exec_ != nullptr && is_owned_graph_exec_) {
@@ -136,12 +142,13 @@ static GpuDevicePtr AsDevicePtr(const DeviceMemoryBase& mem) {
 
 tsl::Status GpuCommandBuffer::Trace(
     Stream* stream, absl::AnyInvocable<tsl::Status()> function) {
-  // TODO(ezhulenev): Check that graph is empty, because we should not be mixing
-  // graph tracing with explicit graph construction.
-  TF_RETURN_IF_ERROR(CheckNotFinalized());
+  if (state_ != State::kTraced)
+    return absl::InternalError("Can not trace in a non-tracing command buffer");
+  if (graph_ != nullptr)
+    return absl::InternalError("Command buffer already contains a gpu graph");
 
-  VLOG(5) << "Trace into GPU command buffer graph " << graph_
-          << " on a stream: " << stream->DebugStreamPointers();
+  VLOG(5) << "Trace into GPU command buffer graph on a stream: "
+          << stream->DebugStreamPointers();
 
   auto gpu_stream = AsGpuStreamValue(stream);
 
@@ -163,6 +170,22 @@ tsl::Status GpuCommandBuffer::Trace(
   VLOG(5) << "Traced into the GPU command buffer graph " << graph_ << " (took "
           << (end_nanos - start_nanos) / 1000 << " μs)";
 
+  if (mode_ == Mode::kPrimary) {
+    GpuDriver::GraphInstantiateFlags flags;
+    uint64_t start_nanos = tsl::Env::Default()->NowNanos();
+    TF_RETURN_IF_ERROR(GpuDriver::GraphInstantiate(&exec_, graph_, flags));
+    uint64_t end_nanos = tsl::Env::Default()->NowNanos();
+
+    VLOG(5) << "Instantiated executable graph " << exec_ << " in "
+            << (end_nanos - start_nanos) / 1000 << " μs ("
+            << "#" << NotifyExecCreated() << ", "
+            << "alive executable graphs: " << AliveExecs() << ")";
+
+  } else if (mode_ == Mode::kNested) {
+    VLOG(5) << "Traced a nested command buffer without instantiating "
+               "executable graph";
+  }
+
   return tsl::OkStatus();
 }
 
@@ -174,6 +197,10 @@ tsl::Status GpuCommandBuffer::CheckNotFinalized() {
   if (state_ == State::kFinalized)
     return absl::InternalError(
         "Command can't be added to a command buffer after it was finalized");
+  if (state_ == State::kTraced)
+    return absl::InternalError(
+        "Command can't be added to a command buffer for tracing");
+
   return tsl::OkStatus();
 }
 
@@ -680,7 +707,9 @@ tsl::Status GpuCommandBuffer::While(StreamExecutor* executor,
 }
 
 tsl::Status GpuCommandBuffer::Finalize() {
-  TF_RETURN_IF_ERROR(CheckNotFinalized());
+  if (state_ == CommandBuffer::State::kFinalized ||
+      state_ == CommandBuffer::State::kTraced)
+    return absl::InternalError("Command buffer is already finalized");
 
   if (mode_ == Mode::kPrimary && state_ == State::kCreate) {
     // If this is the first time we finalize command buffer after construction,

@@ -264,7 +264,8 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   std::unique_ptr<internal::StreamInterface> GetStreamImplementation() override;
 
   tsl::StatusOr<std::unique_ptr<internal::CommandBufferInterface>>
-  GetCommandBufferImplementation(CommandBuffer::Mode mode) override;
+  GetCommandBufferImplementation(CommandBuffer::Mode mode,
+                                 bool is_tracing) override;
 
   // Wraps existing Gpu graph handle into an instance of Gpu command buffer.
   // This is required for wrapping nested graphs constructed for conditional

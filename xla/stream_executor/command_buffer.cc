@@ -48,7 +48,9 @@ void CommandBuffer::Deleter::operator()(
     StreamExecutor* executor, Mode mode) {
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<internal::CommandBufferInterface> command_buffer,
-      executor->implementation()->GetCommandBufferImplementation(mode));
+      executor->implementation()->GetCommandBufferImplementation(
+          mode,
+          /*is_tracing=*/false));
 
   CommandBuffer cmd(std::move(command_buffer));
   return cmd;
@@ -68,13 +70,16 @@ void CommandBuffer::Deleter::operator()(
         "Failed to initialize stream for command buffer tracing");
 
   // Prepare an empty command buffer instance.
-  TF_ASSIGN_OR_RETURN(CommandBuffer command_buffer,
-                      CommandBuffer::Create(executor, mode));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<internal::CommandBufferInterface> tracing_cmd_buffer,
+      executor->implementation()->GetCommandBufferImplementation(
+          mode,
+          /*is_tracing=*/true));
+  CommandBuffer command_buffer(std::move(tracing_cmd_buffer));
 
-  // Trace and finalize the command buffer.
+  // Trace the command buffer.
   TF_RETURN_IF_ERROR(command_buffer.implementation()->Trace(
       &stream, [&]() { return function(&stream); }));
-  TF_RETURN_IF_ERROR(command_buffer.implementation()->Finalize());
 
   return command_buffer;
 }
