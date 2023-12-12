@@ -243,21 +243,24 @@ StatusOr<PjRtDevice*> DeviceForDLDevice(const PjRtClient* cpu_client,
             "DLPack tensor is on CPU, but no CPU backend was provided.");
       }
       TF_RET_CHECK(cpu_client->platform_id() == CpuId());
-      return cpu_client->LookupAddressableDevice(context.device_id);
+      return cpu_client->LookupAddressableDevice(
+          PjRtLocalDeviceId(context.device_id));
     case kDLCUDA:
       if (gpu_client == nullptr) {
         return InvalidArgument(
             "DLPack tensor is on GPU, but no GPU backend was provided.");
       }
       TF_RET_CHECK(gpu_client->platform_id() == CudaId());
-      return gpu_client->LookupAddressableDevice(context.device_id);
+      return gpu_client->LookupAddressableDevice(
+          PjRtLocalDeviceId(context.device_id));
     case kDLROCM:
       if (gpu_client == nullptr) {
         return InvalidArgument(
             "DLPack tensor is on GPU, but no GPU backend was provided.");
       }
       TF_RET_CHECK(gpu_client->platform_id() == RocmId());
-      return gpu_client->LookupAddressableDevice(context.device_id);
+      return gpu_client->LookupAddressableDevice(
+          PjRtLocalDeviceId(context.device_id));
     default:
       return InvalidArgument("Unknown/unsupported DLPack device type %d",
                              context.device_type);
