@@ -235,10 +235,37 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "indexing_map_simplifier",
+    srcs = ["indexing_map_simplifier.cc"],
+    hdrs = ["indexing_map_simplifier.h"],
+    deps = [
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "indexing_map_simplifier_test",
+    srcs = ["indexing_map_simplifier_test.cc"],
+    deps = [
+        ":indexing_map_simplifier",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
     name = "tile_analysis",
     srcs = ["tile_analysis.cc"],
     hdrs = ["tile_analysis.h"],
     deps = [
+        ":indexing_map_simplifier",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
