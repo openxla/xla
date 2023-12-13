@@ -203,9 +203,8 @@ cc_library(
     name = "device_options",
     hdrs = ["device_options.h"],
     deps = [
-        "//xla/stream_executor/platform",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
