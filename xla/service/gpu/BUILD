@@ -1446,6 +1446,7 @@ cc_library(
     hdrs = ["fusion_merger_triton.h"],
     deps = [
         ":backend_configs_cc",
+        ":gpu_fusible",
         ":ir_emission_utils",
         ":triton_fusion_analysis",
         "//xla:status",
@@ -1458,9 +1459,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -3770,6 +3769,7 @@ cc_library(
     srcs = ["gpu_fusible.cc"],
     hdrs = ["gpu_fusible.h"],
     deps = [
+        ":backend_configs_cc",
         ":ir_emission_utils",
         ":reduction_utils",
         "//xla:shape_util",
