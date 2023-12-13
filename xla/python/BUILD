@@ -1112,8 +1112,6 @@ cc_library(
         "//xla/pjrt:status_casters",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/cpu:cpu_client",
-        "//xla/pjrt/cpu:gloo_collectives",
-        "//xla/pjrt/cpu:gloo_kv_store",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:protocol_proto_cc",
@@ -1132,6 +1130,8 @@ cc_library(
         "@tsl//tsl:macos": [],
         "@tsl//tsl:windows": [],
         "//conditions:default": [
+            "//xla/pjrt/cpu:gloo_collectives",
+            "//xla/pjrt/cpu:gloo_kv_store",
             "@gloo//:transport_tcp",
         ],
     }) + select({
