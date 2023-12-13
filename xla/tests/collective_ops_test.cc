@@ -636,7 +636,8 @@ XLA_TEST_F(CollectiveOpsTest, CollectivePermute_Simple) {
     ten = u32[] constant(10)
     sum = u32[] add(replica, ten)
     p = u32[2] broadcast(sum), dimensions={}
-    permute = u32[2] collective-permute(p), source_target_pairs={{1,0}, {0,1}, {2,2}}
+    start = (u32[2], u32[2]) collective-permute-start(p), source_target_pairs={{1,0}, {0,1}, {2,2}}
+    permute = u32[2] collective-permute-done(start)
     ROOT copy = u32[2] copy(permute)
   }
   )";
