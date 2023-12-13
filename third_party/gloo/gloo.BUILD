@@ -46,6 +46,7 @@ cc_library(
             "gloo/transport/*.cc",
         ],
         exclude = [
+            "gloo/common/linux.cc",
             "gloo/common/win.cc",
             "gloo/cuda*.cc",
         ],
@@ -55,7 +56,13 @@ cc_library(
         "gloo/rendezvous/hash_store.cc",
         "gloo/rendezvous/prefix_store.cc",
         "gloo/rendezvous/store.cc",
-    ],
+    ] + select({
+        "@tsl//tsl:macos": [],
+        "@tsl//tsl:windows": [],
+        "//conditions:default": [
+            "gloo/common/linux.cc",
+        ],
+    }),
     copts = [
         "-fexceptions",
         "-Wno-unused-variable",
