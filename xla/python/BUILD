@@ -1118,6 +1118,7 @@ cc_library(
         "//xla/pjrt/distributed:service",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
+        "//xla/service/cpu:collectives_interface",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
@@ -1125,6 +1126,15 @@ cc_library(
         "@tsl//tsl/python/lib/core:numpy",
         "@pybind11",
     ] + select({
+        # gloo transport only builds on linux
+        "@tsl//tsl:macos": [],
+        "@tsl//tsl:windows": [],
+        "//conditions:default": [
+            "//xla/pjrt/cpu:gloo_collectives",
+            "//xla/pjrt/cpu:gloo_kv_store",
+            "@gloo//:transport_tcp",
+        ],
+    }) + select({
         ":gpu_enabled": [
             "//xla/pjrt/gpu:se_gpu_pjrt_client",
         ],

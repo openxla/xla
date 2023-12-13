@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/types/span.h"
 #include "xla/client/sharding_builder.h"
 #include "xla/client/value_inference.h"
 #include "xla/client/xla_computation.h"
@@ -1637,6 +1638,50 @@ TEST_F(XlaBuilderTest, UnboundedDivUnsupportedImplicitBroadcast) {
               HasSubstr("Unbounded dynamic shapes not supported"));
 }
 
+TEST_F(XlaBuilderTest, UnboundedDot) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> lhs = ParseShape("f32[?, 10]");
+  StatusOr<Shape> rhs = ParseShape("f32[?, 10]");
+  StatusOr<Shape> expected = ParseShape("f32[?, 10]");
+  ASSERT_IS_OK(lhs.status());
+  ASSERT_IS_OK(rhs.status());
+  ASSERT_IS_OK(expected.status());
+
+  Dot(Parameter(&b, 0, lhs.value(), "lhs"),
+      Parameter(&b, 1, rhs.value(), "rhs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  const Shape& result =
+      module->entry_computation()->root_instruction()->shape();
+  ASSERT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanString(result)
+      << " expected: " << ShapeUtil::HumanString(expected.value());
+}
+
+TEST_F(XlaBuilderTest, UnboundedDotGeneral) {
+  XlaBuilder b(TestName());
+  StatusOr<Shape> lhs = ParseShape("f32[?, <=3, ?]");
+  StatusOr<Shape> rhs = ParseShape("f32[2, 4, 5]");
+  StatusOr<Shape> expected = ParseShape("f32[?, <=3, 5]");
+  ASSERT_IS_OK(lhs.status());
+  ASSERT_IS_OK(rhs.status());
+  ASSERT_IS_OK(expected.status());
+
+  DotDimensionNumbers dnums;
+  dnums.add_lhs_contracting_dimensions(2);
+  dnums.add_rhs_contracting_dimensions(1);
+  dnums.add_lhs_batch_dimensions(0);
+  dnums.add_rhs_batch_dimensions(0);
+
+  DotGeneral(Parameter(&b, 0, lhs.value(), "lhs"),
+             Parameter(&b, 1, rhs.value(), "rhs"), dnums);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+  const Shape& result =
+      module->entry_computation()->root_instruction()->shape();
+  ASSERT_TRUE(ShapeUtil::Equal(result, expected.value()))
+      << "result: " << ShapeUtil::HumanString(result)
+      << " expected: " << ShapeUtil::HumanString(expected.value());
+}
+
 TEST_F(XlaBuilderTest, UnboundedExp) {
   XlaBuilder b(TestName());
   StatusOr<Shape> operand = ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]");
@@ -1746,6 +1791,35 @@ TEST_F(XlaBuilderTest, UnboundedPowUnsupportedImplicitBroadcast) {
   EXPECT_FALSE(build_status.ok());
   EXPECT_THAT(build_status.status().message(),
               HasSubstr("Unbounded dynamic shapes not supported"));
+}
+
+TEST_F(XlaBuilderTest, UnboundedReduce) {
+  XlaBuilder b(TestName());
+  XlaOp input0 = Parameter(&b, 0, ParseShape("f32[7, 5]").value(), "input0");
+  XlaOp input1 = Parameter(&b, 1, ParseShape("f32[?, 5]").value(), "input1");
+  XlaOp input2 = Parameter(&b, 2, ParseShape("f32[7, ?]").value(), "input2");
+  XlaOp init = Parameter(&b, 3, ShapeUtil::MakeShape(F32, {}), "init");
+
+  XlaBuilder bsum(TestName());
+  XlaOp arg0 = Parameter(&bsum, 0, ShapeUtil::MakeShape(F32, {}), "arg0");
+  XlaOp arg1 = Parameter(&bsum, 1, ShapeUtil::MakeShape(F32, {}), "arg1");
+  XlaOp arg2 = Parameter(&bsum, 2, ShapeUtil::MakeShape(F32, {}), "arg2");
+  XlaOp arg3 = Parameter(&bsum, 3, ShapeUtil::MakeShape(F32, {}), "arg3");
+  XlaOp arg4 = Parameter(&bsum, 4, ShapeUtil::MakeShape(F32, {}), "arg4");
+  XlaOp arg5 = Parameter(&bsum, 5, ShapeUtil::MakeShape(F32, {}), "arg5");
+
+  std::vector<XlaOp> output_operands = {Add(arg0, arg1), Add(arg2, arg3),
+                                        Add(arg4, arg5)};
+  Tuple(&bsum, absl::MakeSpan(output_operands));
+  TF_ASSERT_OK_AND_ASSIGN(auto sum, bsum.Build());
+  Reduce(&b, {input0, input1, input2}, {init, init, init}, sum, {1});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(&b));
+
+  const Shape& result =
+      module->entry_computation()->root_instruction()->shape();
+  Shape shape = ShapeUtil::MakeShape(F32, {7}, {false});
+  Shape expected = ShapeUtil::MakeTupleShape({shape, shape, shape});
+  EXPECT_TRUE(ShapeUtil::Equal(result, expected));
 }
 
 TEST_F(XlaBuilderTest, UnboundedSlice) {

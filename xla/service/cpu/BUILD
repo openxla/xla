@@ -533,6 +533,7 @@ cc_library(
         ":cpu_runtime",
         ":onednn_layer_norm",
         ":onednn_matmul",
+        ":onednn_softmax",
         ":orc_jit_memory_mapper",
         ":runtime_conv2d",
         ":runtime_conv2d_acl",
@@ -895,6 +896,7 @@ cc_library(
     copts = runtime_copts(),
     deps = [
         ":collectives_interface",
+        ":cpu_executable_run_options",
         ":in_process_collectives",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -1671,10 +1673,54 @@ cc_library(
 )
 
 cc_library(
+    name = "onednn_softmax",
+    srcs = ["onednn_softmax.cc"],
+    hdrs = [
+        "onednn_softmax.h",
+        "@tsl//tsl/util:onednn_util_hdrs",
+    ],
+    copts = runtime_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":backend_config_proto_cc",
+        ":onednn_memory_util",
+        ":runtime_lightweight_check",
+        "//xla:executable_run_options",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/log:check",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:platform_port",
+    ] + mkl_deps(),
+)
+
+cc_library(
     name = "onednn_matmul_rewriter",
     srcs = ["onednn_matmul_rewriter.cc"],
     hdrs = [
         "onednn_matmul_rewriter.h",
+        "onednn_util.h",
+    ],
+    copts = tsl_copts(),
+    deps = [
+        ":backend_config_proto_cc",
+        ":onednn_memory_util",
+        "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+    ] + mkl_deps(),
+)
+
+cc_library(
+    name = "onednn_ops_rewriter",
+    srcs = ["onednn_ops_rewriter.cc"],
+    hdrs = [
+        "onednn_ops_rewriter.h",
         "onednn_util.h",
     ],
     copts = tsl_copts(),
@@ -1737,21 +1783,10 @@ cc_library(
 )
 
 cc_library(
-    name = "onednn_ops_rewriter",
-    srcs = ["onednn_ops_rewriter.cc"],
-    hdrs = [
-        "onednn_ops_rewriter.h",
-        "onednn_util.h",
-    ],
-    copts = tsl_copts(),
+    name = "cpu_executable_run_options",
+    hdrs = ["cpu_executable_run_options.h"],
     deps = [
-        ":backend_config_proto_cc",
-        ":onednn_memory_util",
-        "//xla:status_macros",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_creation_utils",
-        "//xla/service:hlo_pass",
-        "//xla/service:pattern_matcher",
-    ] + mkl_deps(),
+        ":collectives_interface",
+        "@com_google_absl//absl/container:flat_hash_set",
+    ],
 )

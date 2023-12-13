@@ -129,6 +129,7 @@ xla_cc_test(
     tags = tf_cuda_tests_tags(),
     deps = [
         "//xla:debug_options_flags",
+        "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
         "//xla:test_helpers",
@@ -136,6 +137,7 @@ xla_cc_test(
         "//xla/client/lib:constants",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
+        "//xla/hlo/ir:hlo",
         "//xla/runtime:custom_call",
         "//xla/runtime:custom_call_registry",
         "//xla/runtime:executable",
@@ -319,11 +321,17 @@ cc_library(
         "//xla/service/gpu/fusions:tiling_util",
         "//xla/service/gpu/kernels:custom_fusion",
         "//xla/service/gpu/kernels:custom_kernel",
+        "//xla/service/gpu/kernels:topk_custom_kernel",
         "//xla/service/gpu/runtime3:command_buffer_cmd",
         "//xla/service/gpu/runtime3:command_buffer_cmd_emitter",
         "//xla/service/gpu/runtime3:command_buffer_thunk",
+        "//xla/service/gpu/runtime3:conditional_thunk",
         "//xla/service/gpu/runtime3:custom_call_thunk",
         "//xla/service/gpu/runtime3:fft_thunk",
+        "//xla/service/gpu/runtime3:for_thunk",
+        "//xla/service/gpu/runtime3:send_recv_thunk",
+        "//xla/service/gpu/runtime3:sequential_thunk",
+        "//xla/service/gpu/runtime3:while_thunk",
         "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
         "//xla/service/llvm_ir:fused_ir_emitter",
@@ -362,6 +370,7 @@ cc_library(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:NVVMToLLVMIRTranslation",
         "@llvm-project//mlir:ROCDLToLLVMIRTranslation",
+        "@llvm-project//mlir:Support",
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:human_readable_json",
@@ -513,9 +522,7 @@ xla_test(
     backend_tags = {"gpu": [
         "requires-gpu-sm70",
     ]},
-    backends = [
-        "gpu",
-    ],
+    backends = ["gpu"],
     shard_count = 20,
     tags = ["nomac"],
     deps = [
@@ -562,9 +569,7 @@ xla_test(
     backend_tags = {"gpu": [
         "requires-gpu-sm70",
     ]},
-    backends = [
-        "gpu",
-    ],
+    backends = ["gpu"],
     tags = [
         "large",
         "no_oss",  # requires-mem:16g tag doesn't work in open source
@@ -763,10 +768,12 @@ cc_library(
     deps = [
         ":buffer_allocations",
         ":gpu_executable_run_options",
+        "//xla:executable_run_options",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "//xla/stream_executor",
         "//xla/translate/mhlo_to_hlo:location_exporter",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
@@ -906,10 +913,8 @@ xla_cc_test(
 cc_library(
     name = "gpu_executable",
     srcs = [
-        "conditional_thunk.cc",
         "convolution_thunk.cc",
         "copy_thunk.cc",
-        "for_thunk.cc",
         "fused_mha_thunk.cc",
         "gpu_executable.cc",
         "infeed_thunk.cc",
@@ -918,14 +923,10 @@ cc_library(
         "norm_thunk.cc",
         "outfeed_thunk.cc",
         "replica_id_thunk.cc",
-        "sequential_thunk.cc",
-        "while_thunk.cc",
     ],
     hdrs = [
-        "conditional_thunk.h",
         "convolution_thunk.h",
         "copy_thunk.h",
-        "for_thunk.h",
         "fused_mha_thunk.h",
         "gemm_thunk.h",
         "gpu_executable.h",
@@ -935,8 +936,6 @@ cc_library(
         "norm_thunk.h",
         "outfeed_thunk.h",
         "replica_id_thunk.h",
-        "sequential_thunk.h",
-        "while_thunk.h",
     ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
@@ -993,6 +992,7 @@ cc_library(
         "//xla/service/gpu/runtime:tracing",
         "//xla/service/gpu/runtime3:custom_call_thunk",
         "//xla/service/gpu/runtime3:fft_thunk",
+        "//xla/service/gpu/runtime3:send_recv_thunk",
         "//xla/stream_executor",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_description",
@@ -1212,7 +1212,9 @@ cc_library(
     name = "gemm_rewriter",
     srcs = ["gemm_rewriter.cc"],
     hdrs = ["gemm_rewriter.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
@@ -1444,6 +1446,7 @@ cc_library(
     hdrs = ["fusion_merger_triton.h"],
     deps = [
         ":backend_configs_cc",
+        ":gpu_fusible",
         ":ir_emission_utils",
         ":triton_fusion_analysis",
         "//xla:status",
@@ -1456,9 +1459,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -2705,6 +2706,10 @@ cc_library(
         "//xla/service:dump",
         "//xla/service:hlo_dataflow_analysis",
         "//xla/service:hlo_proto_cc",
+        "//xla/service/gpu/runtime3:conditional_thunk",
+        "//xla/service/gpu/runtime3:for_thunk",
+        "//xla/service/gpu/runtime3:sequential_thunk",
+        "//xla/service/gpu/runtime3:while_thunk",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor",
         "//xla/stream_executor:device_description",
@@ -2736,6 +2741,7 @@ cc_library(
     hdrs = ["command_buffer_scheduling.h"],
     deps = [
         "//xla:shape_util",
+        "//xla:status",
         "//xla:statusor",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -2743,7 +2749,10 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
@@ -2921,6 +2930,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:variant",
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:BitReader",
@@ -3322,6 +3332,8 @@ cc_library(
         ":gpu_conv_padding_legalization",
         ":gpu_conv_rewriter",
         ":gpu_layout_assignment",
+        ":cublas_pad_for_gemms",
+        ":cublas_padding_requirements",
         ":reduction_degenerate_dim_remover",
         ":reduction_dimension_grouper",
         ":reduction_layout_normalizer",
@@ -3333,6 +3345,7 @@ cc_library(
         "//xla/service:algebraic_simplifier",
         "//xla/service:call_inliner",
         "//xla/hlo/ir:hlo",
+        "//xla/service:dot_dimension_merger",
         "//xla/service:hlo_constant_folding",
         "//xla/service:hlo_cse",
         "//xla/service:hlo_pass",
@@ -3756,6 +3769,7 @@ cc_library(
     srcs = ["gpu_fusible.cc"],
     hdrs = ["gpu_fusible.h"],
     deps = [
+        ":backend_configs_cc",
         ":ir_emission_utils",
         ":reduction_utils",
         "//xla:shape_util",
@@ -4327,13 +4341,13 @@ test_suite(
         ":cudnn_fused_conv_rewriter_test",
         ":cudnn_fused_mha_rewriter_test",
         ":custom_call_test",
-        # TODO(anlunx): Re-enable when AOT is available in Thunk-based runtime.
-        # copybara:uncomment # ":gpu_aot_compilation_test",
+        # copybara:uncomment ":gpu_aot_compilation_test",
         # copybara:uncomment "//platforms/xla/tests/internal:xfeed_test_gpu",
-        # TODO(anlunx): Re-enable when the FFI mechanism is available in Thunk-based runtime.
+        # TODO(anlunx): Re-enable when the TopK is available in Thunk-based runtime.
         # copybara:uncomment # "//third_party/py/jax/experimental/jax2tf/tests:primitives_test_gpu",
         # copybara:uncomment "//third_party/py/jax/tests:pmap_test_gpu",
         # copybara:uncomment "//tensorflow/compiler/tests:fft_test_gpu",
+        "//xla/pjrt/gpu:se_gpu_pjrt_client_test",
         "//xla/python:xla_client_test_gpu",
         # copybara:uncomment "//xla/service/gpu/kernels:cutlass_gemm_fusion_test_gpu",
         "//xla/service/gpu/tests:add_preds.hlo.test",
@@ -4364,7 +4378,8 @@ test_suite(
         "//xla/service/gpu/tests:gpu_infeed_test",
         "//xla/service/gpu/tests:gpu_input_fusible_slice_test",
         "//xla/service/gpu/tests:gpu_kernel_tiling_test",
-        "//xla/service/gpu/tests:gpu_ldg_test",
+        # TODO(ezhulenev): Re-enable this test.
+        #"//xla/service/gpu/tests:gpu_ldg_test",
         "//xla/service/gpu/tests:gpu_noalias_test",
         "//xla/service/gpu/tests:gpu_reduce_scatter_creator_test",
         "//xla/service/gpu/tests:gpu_spmd_e2e_compile_test",

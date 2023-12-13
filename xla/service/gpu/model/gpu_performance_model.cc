@@ -20,21 +20,30 @@ limitations under the License.
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
-#include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/strings/numbers.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "llvm/ADT/STLExtras.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/hlo_traversal.h"
+#include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/coalescing_analysis.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/service/hlo_dataflow_analysis.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/util.h"
+#include "tsl/platform/status.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
@@ -257,64 +266,6 @@ LaunchDimensions EstimateFusionLaunchDimensions(
   int64_t block_size = 128;  // Result for default LaunchDimensionsConfig.
   int64_t num_blocks = CeilOfRatio(estimated_num_threads, block_size);
   return LaunchDimensions(num_blocks, block_size);
-}
-
-// Returns true if all input reads are coalesced. If consumer is not nullptr,
-// producer and consumer are considered as one fusion, otherwise it's only the
-// producer.
-//
-// This is a crude heuristic until we get proper tile analysis.
-bool IsReadCoalesced(const std::optional<HloFusionAnalysis>& fusion_analysis,
-                     const GpuPerformanceModelOptions& config,
-                     const HloInstruction* producer,
-                     const HloInstruction* consumer = nullptr) {
-  if (!config.consider_coalescing) return true;
-
-  auto analyzed_kind_or_reduction =
-      fusion_analysis ? fusion_analysis->GetEmitterFusionKind()
-                      : HloFusionAnalysis::EmitterFusionKind::kReduction;
-
-  // Transposing minor dimension breaks coalescing.
-  if (analyzed_kind_or_reduction !=
-      HloFusionAnalysis::EmitterFusionKind::kTranspose) {
-    auto is_broadcast = [&](const HloInstruction* instr) {
-      while (true) {
-        if (instr->opcode() == HloOpcode::kBroadcast) return true;
-        if (instr->operand_count() != 1) return false;
-        if (instr->opcode() != HloOpcode::kBitcast && !instr->IsElementwise()) {
-          return false;
-        }
-        instr = instr->operand(0);
-      }
-    };
-
-    auto is_bad_transpose = [&](const HloInstruction* instr) {
-      if (instr->opcode() == HloOpcode::kFusion) {
-        for (auto* instr : instr->fused_instructions()) {
-          // Hack: we allow transposes of broadcasts.
-          if (TransposesMinorDimension(instr) &&
-              !is_broadcast(instr->operand(0))) {
-            return true;
-          }
-        }
-        return false;
-      }
-      return TransposesMinorDimension(instr);
-    };
-
-    if (is_bad_transpose(producer)) return false;
-    if (consumer && is_bad_transpose(consumer)) return false;
-  }
-
-  // Fusing two row reductions breaks coalescing.
-  if (analyzed_kind_or_reduction ==
-          HloFusionAnalysis::EmitterFusionKind::kReduction &&
-      IsInputFusibleReduction(*producer) && consumer &&
-      IsInputFusibleReduction(*consumer)) {
-    return false;
-  }
-
-  return true;
 }
 
 }  // namespace
@@ -542,7 +493,9 @@ float GetSharedUtilization(const GpuHloCostAnalysis* cost_analysis,
 
   // TODO(jreiffers): We should be checking each operand.
   bool coalesced =
-      IsReadCoalesced(fusion_analysis, config, producer, fused_consumer);
+      config.consider_coalescing
+          ? IsReadCoalesced(fusion_analysis, producer, fused_consumer)
+          : true;
   for (int i = 0; i < producer->operand_count(); ++i) {
     // Information about data read taking into account utilization.
     // If `operand_utilization` is 0, `operand_bytes_accessed` should be also 0.
@@ -632,7 +585,9 @@ absl::Duration GpuPerformanceModel::EstimateUnfusedExecTime(
         std::min(producer_runtime.bytes_written, n_bytes_total);
 
     bool coalesced =
-        IsReadCoalesced(analysis_unfused, config, /*producer=*/fused_consumer);
+        config.consider_coalescing
+            ? IsReadCoalesced(analysis_unfused, /*producer=*/fused_consumer)
+            : true;
     auto read_time_unfused = ReadTime(
         *device_info, launch_dimensions_unfused.num_blocks(), n_bytes_net,
         n_bytes_total, fused_consumer->shape().element_type(), coalesced,
@@ -681,8 +636,9 @@ absl::Duration GpuPerformanceModel::EstimateUnfusedExecTime(
     int64_t n_bytes_total = std::llround(operand_size * operand_utilization);
     int64_t n_bytes_net = std::min(operand_size, n_bytes_total);
 
-    bool coalesced =
-        IsReadCoalesced(fusion_analysis, config, producer, consumer);
+    bool coalesced = config.consider_coalescing
+                         ? IsReadCoalesced(fusion_analysis, producer, consumer)
+                         : true;
 
     read_time +=
         ReadTime(*device_info, launch_dimensions.num_blocks(), n_bytes_net,

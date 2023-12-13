@@ -69,6 +69,7 @@ limitations under the License.
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/IR/ValueRange.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from @llvm-project
@@ -93,10 +94,8 @@ limitations under the License.
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/conditional_thunk.h"
 #include "xla/service/gpu/convolution_thunk.h"
 #include "xla/service/gpu/copy_thunk.h"
-#include "xla/service/gpu/for_thunk.h"
 #include "xla/service/gpu/fused_mha_thunk.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/fusions/fusions.h"
@@ -116,6 +115,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_thunk.h"
 #include "xla/service/gpu/kernels/custom_fusion.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
+#include "xla/service/gpu/kernels/topk_custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/nccl_all_gather_thunk.h"
@@ -130,11 +130,14 @@ limitations under the License.
 #include "xla/service/gpu/runtime3/command_buffer_cmd.h"
 #include "xla/service/gpu/runtime3/command_buffer_cmd_emitter.h"
 #include "xla/service/gpu/runtime3/command_buffer_thunk.h"
+#include "xla/service/gpu/runtime3/conditional_thunk.h"
 #include "xla/service/gpu/runtime3/custom_call_thunk.h"
 #include "xla/service/gpu/runtime3/fft_thunk.h"
-#include "xla/service/gpu/sequential_thunk.h"
+#include "xla/service/gpu/runtime3/for_thunk.h"
+#include "xla/service/gpu/runtime3/send_recv_thunk.h"
+#include "xla/service/gpu/runtime3/sequential_thunk.h"
+#include "xla/service/gpu/runtime3/while_thunk.h"
 #include "xla/service/gpu/thunk.h"
-#include "xla/service/gpu/while_thunk.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
@@ -383,6 +386,7 @@ int DeriveNumWarpsFromTritonSoftmaxComputation(
 
 IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
     : IrEmitter(ir_emitter_context, /*is_nested=*/false),
+      send_recv_events_(std::make_shared<SendRecvAsyncEvents>()),
       elemental_emitter_(*ir_emitter_context, &b_) {}
 
 std::unique_ptr<IrEmitterUnnested> IrEmitterUnnested::Create(
@@ -436,6 +440,25 @@ Status IrEmitterUnnested::EmitConstant(mlir::Operation* op,
   ir_emitter_context_->emit_constant(num_elements, element_bytes,
                                      global.getSymName(), allocation_index,
                                      std::move(content), &b_);
+  return OkStatus();
+}
+
+Status IrEmitterUnnested::EmitConstant(const HloConstantInstruction* instr) {
+  TF_ASSIGN_OR_RETURN(DenseDataIntermediate content,
+                      LiteralToXlaFormat(instr->literal()));
+
+  int element_bytes =
+      primitive_util::ByteWidth(instr->literal().shape().element_type());
+  TF_RET_CHECK(content.span().size() % element_bytes == 0);
+  // Treat int4 constant as int8 constant with half the number of elements.
+  int num_elements = content.span().size() / element_bytes;
+
+  std::string global_name = llvm_ir::ConstantHloToGlobalName(*instr);
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
+                      GetAllocationSliceForHlo(instr, {}));
+
+  ir_emitter_context_->emit_constant(num_elements, element_bytes, global_name,
+                                     slice.index(), std::move(content), &b_);
   return OkStatus();
 }
 
@@ -1681,7 +1704,8 @@ static StatusOr<CustomCallThunk::AttributesMap> BuildAttributesMap(
   return attributes;
 }
 
-Status IrEmitterUnnested::EmitCustomCallThunk(mlir::Operation* op) {
+Status IrEmitterUnnested::EmitCustomCallThunk(
+    mlir::Operation* op, const HloCustomCallInstruction* instr) {
   auto custom_call = mlir::cast<mlir::lmhlo::CustomCallOp>(op);
   const std::string call_target_name = custom_call.getCallTargetName().str();
 
@@ -1835,9 +1859,11 @@ Status IrEmitterUnnested::EmitCustomCallThunk(mlir::Operation* op) {
   }
 
   auto ffi_thunk = [&] {
+    auto& called_computations = instr->called_computations();
     return std::make_unique<CustomCallThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(op), *handler,
-        std::move(operands), std::move(results), std::move(attributes));
+        std::move(operands), std::move(results), std::move(attributes),
+        called_computations.empty() ? nullptr : called_computations[0]);
   };
 
   auto legacy_thunk = [&] {
@@ -1971,6 +1997,52 @@ Status IrEmitterUnnested::EmitTriangularSolveCustomCall(mlir::Operation* op) {
   return OkStatus();
 }
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
+Status IrEmitterUnnested::EmitTopKCustomCall(
+    const HloCustomCallInstruction* instr) {
+  auto operands = instr->operands();
+  auto shape = instr->shape();
+  TF_RET_CHECK(operands.size() == 1)
+      << "Expect only 1 operand for TopK custom call.";
+  TF_RET_CHECK(shape.IsTuple())
+      << "Expect TopK custom call to have tuple shape.";
+  TF_RET_CHECK(shape.tuple_shapes_size() == 2)
+      << "Expect TopK custom call shape to have exactly 2 sub-shapes.";
+
+  auto data_shape = operands[0]->shape();
+  auto top_elements_shape = shape.tuple_shapes()[0];
+  auto indices_shape = shape.tuple_shapes()[1];
+
+  TF_RET_CHECK(data_shape.rank() <= 2) << "Invalid input shape.";
+  TF_RET_CHECK(indices_shape.element_type() == PrimitiveType::S32)
+      << "Indices should be S32.";
+
+  bool has_batch = data_shape.rank() == 2;
+  auto [batch_size, n, k] =
+      has_batch
+          ? std::tuple<size_t, size_t, size_t>{data_shape.dimensions(0),
+                                               data_shape.dimensions(1),
+                                               top_elements_shape.dimensions(1)}
+          : std::tuple<size_t, size_t, size_t>{
+                1, data_shape.dimensions(0), top_elements_shape.dimensions(0)};
+
+  // Load TopK custom kernel.
+  TF_ASSIGN_OR_RETURN(CustomKernel kernel,
+                      kernel::topk::GetTopKKernel(
+                          "topk", data_shape.element_type(), n, k, batch_size));
+
+  // Prepare kernel arguments.
+  TF_ASSIGN_OR_RETURN(
+      auto kernel_arguments,
+      KernelArguments::Create(ir_emitter_context_->buffer_assignment(), instr,
+                              operands));
+
+  auto thunk = std::make_unique<CustomKernelThunk>(
+      instr, std::move(kernel), std::move(kernel_arguments.args()));
+  AddThunkToThunkSequence(std::move(thunk));
+
+  return OkStatus();
+}
 
 // Convert the following form of fusion region:
 //   fusion() {
@@ -2178,9 +2250,13 @@ Status IrEmitterUnnested::EmitFusion(
     case HloFusionAnalysis::EmitterFusionKind::kLoop:
     case HloFusionAnalysis::EmitterFusionKind::kTranspose:
     case HloFusionAnalysis::EmitterFusionKind::kReduction: {
-      auto emitter = GetFusionEmitter(fusion_analysis, {}, nullptr);
-      // TODO(anlunx): Support MemcpyFusion and InPlaceDynamicUpdateSlice and
-      // remove this fallback.
+      TF_ASSIGN_OR_RETURN(
+          std::optional<std::unique_ptr<FusionInterface>> emitter,
+          GetFusionEmitter(
+              fusion_analysis,
+              HloFusionInfo(instr, &ir_emitter_context_->buffer_assignment())));
+      // TODO(anlunx): Support InPlaceDynamicUpdateSlice and remove this
+      // fallback.
       if (!emitter) {
         TF_RET_CHECK(op)
             << "Fusion should have been handled by GetFusionEmitter, fallback "
@@ -2263,9 +2339,11 @@ Status IrEmitterUnnested::EmitFusion(
     case HloFusionAnalysis::EmitterFusionKind::kLoop:
     case HloFusionAnalysis::EmitterFusionKind::kReduction:
     case HloFusionAnalysis::EmitterFusionKind::kTranspose: {
-      std::optional<std::unique_ptr<FusionInterface>> emitter =
-          GetFusionEmitter(fusion_analysis, ir_emitter_context_->allocations(),
-                           fusion_op);
+      TF_ASSIGN_OR_RETURN(
+          std::optional<std::unique_ptr<FusionInterface>> emitter,
+          GetFusionEmitter(
+              fusion_analysis,
+              LmhloFusionInfo(fusion_op, ir_emitter_context_->allocations())));
       if (emitter == std::nullopt) {
         return FailedPrecondition(
             "Fusion should have been handled by GetFusionEmitter.");
@@ -2560,7 +2638,7 @@ Status IrEmitterUnnested::EmitSelectAndScatter(
 }
 
 Status IrEmitterUnnested::EmitWhile(
-    mlir::Operation* op,
+    mlir::Operation* op, const HloInstruction* instr,
     const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
         hlo_for_lmhlo) {
   auto while_op = mlir::cast<mlir::lmhlo::WhileOp>(op);
@@ -2588,12 +2666,32 @@ Status IrEmitterUnnested::EmitWhile(
                       *while_op.getTripCount(), hlo_for_lmhlo));
     AddThunkToThunkSequence(std::move(thunk));
   } else {
-    TF_ASSIGN_OR_RETURN(
-        auto thunk,
-        BuildWhileThunk(while_op, Thunk::ThunkInfo::WithProfileAnnotation(op),
-                        hlo_for_lmhlo));
-    AddThunkToThunkSequence(std::move(thunk));
+    // TODO(ezhulenev): We have few remaining tests that depend on emitting
+    // special fusions, so we can't yet enable while thunk emission here.
+    static constexpr bool kWhileThunkNotSupported = false;
+    if (ir_emitter_context_->emit_ir_from_hlo() && kWhileThunkNotSupported) {
+      TF_ASSIGN_OR_RETURN(
+          auto thunk,
+          BuildWhileThunk(instr,
+                          Thunk::ThunkInfo::WithProfileAnnotation(instr)));
+      AddThunkToThunkSequence(std::move(thunk));
+    } else {
+      TF_ASSIGN_OR_RETURN(
+          auto thunk,
+          BuildWhileThunk(while_op, Thunk::ThunkInfo::WithProfileAnnotation(op),
+                          hlo_for_lmhlo));
+      AddThunkToThunkSequence(std::move(thunk));
+    }
   }
+  return OkStatus();
+}
+
+Status IrEmitterUnnested::EmitWhile(const HloInstruction* instr) {
+  // TODO(ezhulenev): Add support for emitting ForThunks for known trip count.
+  TF_ASSIGN_OR_RETURN(
+      auto thunk,
+      BuildWhileThunk(instr, Thunk::ThunkInfo::WithProfileAnnotation(instr)));
+  AddThunkToThunkSequence(std::move(thunk));
   return OkStatus();
 }
 
@@ -2765,31 +2863,43 @@ Status IrEmitterUnnested::EmitScatter(
                 desc.get_index_type(launch_dimensions.launch_bound()));
 }
 
-Status IrEmitterUnnested::EmitSort(
-    mlir::Operation* op,
-    const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
-        hlo_for_lmhlo) {
-  auto sort_op = mlir::cast<mlir::lmhlo::SortOp>(op);
-  auto* sort = hlo_for_lmhlo.at(op);
+Status IrEmitterUnnested::EmitSort(mlir::Operation* op,
+                                   const HloSortInstruction* sort) {
+  auto sort_op = mlir::dyn_cast_or_null<mlir::lmhlo::SortOp>(op);
+  if (!ir_emitter_context_->emit_ir_from_hlo() && !sort_op) {
+    return absl::InternalError("MLIR operations must be not null");
+  }
 
-  std::string op_name = GetIrNameFromLoc(sort_op.getLoc());
-  llvm::SmallVector<mlir::Value> operands = GetHloOperands(sort_op);
-  const Shape& keys_shape = GetShape(operands[0]);
-  int64_t dimension_to_sort = sort_op.getDimension();
-  for (int64_t i = 0; i < operands.size(); ++i) {
+  std::string op_name(sort->name());
+  const Shape& keys_shape = sort->operand(0)->shape();
+  int64_t dimension_to_sort = sort->sort_dimension();
+  for (int64_t i = 0; i < sort->operand_count(); ++i) {
+    ShapeIndex shape_index =
+        sort->operand_count() > 1 ? ShapeIndex({i}) : ShapeIndex({});
     // We assume that the layout of all involved operands and outputs is the
     // same.
-    TF_RET_CHECK(
-        LayoutUtil::LayoutsInShapesEqual(keys_shape, GetShape(operands[i])));
+    TF_RET_CHECK(LayoutUtil::LayoutsInShapesEqual(keys_shape,
+                                                  sort->operand(i)->shape()));
     TF_RET_CHECK(LayoutUtil::LayoutsInShapesEqual(
-        keys_shape, GetShape(GetHloOutputs(sort_op)[i])));
+        keys_shape, ShapeUtil::GetSubshape(sort->shape(), shape_index)));
 
-    // If possible, we share buffers. If that is not possible, we need to copy
-    // the values, because the emitter does the sorting in-place.
-    TF_ASSIGN_OR_RETURN(auto destination_buffer,
-                        GetAllocationSlice(sort_op.getOutput()[i]));
-    TF_ASSIGN_OR_RETURN(auto source_address,
-                        GetAllocationSlice(sort_op.getOperands()[i]));
+    BufferAllocation::Slice destination_buffer;
+    BufferAllocation::Slice source_address;
+
+    // If possible, we share buffers. If that is not possible, we need to
+    // copy the values, because the emitter does the sorting in-place.
+    if (ir_emitter_context_->emit_ir_from_hlo()) {
+      TF_ASSIGN_OR_RETURN(destination_buffer,
+                          GetAllocationSliceForHlo(sort, shape_index));
+      TF_ASSIGN_OR_RETURN(source_address,
+                          GetAllocationSliceForHlo(sort->operand(i), {}));
+    } else {
+      TF_ASSIGN_OR_RETURN(destination_buffer,
+                          GetAllocationSlice(sort_op.getOutput()[i]));
+      TF_ASSIGN_OR_RETURN(source_address,
+                          GetAllocationSlice(sort_op.getOperands()[i]));
+    }
+
     if (destination_buffer != source_address) {
       // TODO(b/26783907): Figure out why we never seem to share buffers for
       // key/value sort.
@@ -2798,9 +2908,9 @@ Status IrEmitterUnnested::EmitSort(
           Thunk::ThunkInfo(op),
           /*source_buffer=*/source_address,
           /*destination_buffer=*/destination_buffer,
-          /*mem_size=*/ShapeUtil::ByteSizeOf(GetShape(operands[i])),
-          /*source_value=*/sort_op.getOperands()[i],
-          /*destination_value=*/sort_op.getOutput()[i]));
+          /*mem_size=*/ShapeUtil::ByteSizeOf(sort->operand(i)->shape()),
+          /*source_value=*/sort_op ? sort_op.getOperands()[i] : nullptr,
+          /*destination_value=*/sort_op ? sort_op.getOutput()[i] : nullptr));
     }
   }
 
@@ -2872,10 +2982,10 @@ Status IrEmitterUnnested::EmitSort(
   // Check whether we should use any tiling. We might not be able to use it if
   // we have not enough threads, or not enough shared memory.
   int64_t total_shared_memory_needed = 0;
-  for (int64_t i = 0; i < operands.size(); ++i) {
+  for (int64_t i = 0; i < sort->operand_count(); ++i) {
     total_shared_memory_needed +=
         kTileSize * ShapeUtil::ByteSizeOfPrimitiveType(
-                        GetShape(operands[i]).element_type());
+                        sort->operand(i)->shape().element_type());
   }
   bool no_tiling =
       kThreadsPerBlock >
@@ -2904,9 +3014,13 @@ Status IrEmitterUnnested::EmitSort(
     LaunchDimensions launch_dimensions = xor_masks.size() > 1
                                              ? tiled_launch_dimensions
                                              : standard_launch_dimensions;
-    TF_ASSIGN_OR_RETURN(auto ir_arrays,
-                        BuildKernelThunkForNonFusionOp(
-                            sort_op, sort_op.getOutput(), launch_dimensions));
+    TF_ASSIGN_OR_RETURN(
+        auto ir_arrays,
+        ir_emitter_context_->emit_ir_from_hlo()
+            ? BuildKernelThunkForNonFusionOp(sort, {}, launch_dimensions)
+            : BuildKernelThunkForNonFusionOp(sort_op, sort_op.getOutput(),
+                                             launch_dimensions));
+
     auto& [inputs, outputs] = ir_arrays;
     auto* comparator = sort->called_computations().front();
     return llvm_ir::EmitSortInPlace(
@@ -2944,6 +3058,11 @@ Status IrEmitterUnnested::EmitSort(
     TF_RETURN_IF_ERROR(emit_kernel(xor_masks));
   }
   return OkStatus();
+}
+
+Status IrEmitterUnnested::EmitSort(const HloSortInstruction* sort) {
+  CHECK(ir_emitter_context_->emit_ir_from_hlo());  // NOLINT
+  return EmitSort(nullptr, sort);
 }
 
 template <typename ThunkType, typename OpT>
@@ -3157,6 +3276,32 @@ IrEmitterUnnested::BuildKernelThunkForNonFusionOp(
   return {{inputs, outputs}};
 }
 
+StatusOr<std::pair<std::vector<llvm_ir::IrArray> /*inputs*/,
+                   std::vector<llvm_ir::IrArray> /*outputs*/>>
+IrEmitterUnnested::BuildKernelThunkForNonFusionOp(
+    const HloInstruction* hlo,
+    absl::Span<const HloInstruction* const> needed_operands,
+    const LaunchDimensions& launch_dimensions) {
+  std::string suggested_kernel_name(hlo->name());
+
+  TF_ASSIGN_OR_RETURN(
+      auto kernel_arguments,
+      KernelArguments::Create(ir_emitter_context_->buffer_assignment(), hlo,
+                              needed_operands));
+
+  VLOG(3) << "Generating (without reuse check): " << suggested_kernel_name;
+
+  auto [kernel, inputs, outputs] = BuildKernelPrototype(
+      *ir_emitter_context_, suggested_kernel_name, kernel_arguments.args(),
+      kernel_arguments.args().size(), launch_dimensions, &b_);
+
+  AddThunkToThunkSequence(std::make_unique<KernelThunk>(
+      hlo, kernel->getName().str(), kernel_arguments.args(), launch_dimensions,
+      /*shmem_bytes=*/0));
+
+  return {{inputs, outputs}};
+}
+
 StatusOr<
     std::pair<std::vector<llvm_ir::IrArray>, std::vector<llvm_ir::IrArray>>>
 IrEmitterUnnested::BuildKernelThunkForNonFusionOp(
@@ -3235,6 +3380,28 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildWhileThunk(
       new WhileThunk(thunk_info, cond_result_slice,
                      ir_emitter_condition->ConsumeThunkSequence(),
                      ir_emitter_body->ConsumeThunkSequence()));
+}
+
+StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildWhileThunk(
+    const HloInstruction* instr, const Thunk::ThunkInfo& thunk_info) {
+  HloComputation* condition = instr->while_condition();
+  HloComputation* body = instr->while_body();
+
+  // Generate thunk sequence for while 'condition'.
+  auto ir_emitter_condition = IrEmitterUnnested::Create(ir_emitter_context_);
+  TF_RETURN_IF_ERROR(ir_emitter_condition->EmitHloComputation(condition));
+
+  // Generate thunk sequence for while 'body'.
+  auto ir_emitter_body = IrEmitterUnnested::Create(ir_emitter_context_);
+  TF_RETURN_IF_ERROR(ir_emitter_body->EmitHloComputation(body));
+
+  // Buffer slice holding while loop predicate.
+  TF_ASSIGN_OR_RETURN(
+      auto pred, GetAllocationSliceForHlo(condition->root_instruction(), {}));
+
+  return std::unique_ptr<Thunk>(new WhileThunk(
+      thunk_info, pred, ir_emitter_condition->ConsumeThunkSequence(),
+      ir_emitter_body->ConsumeThunkSequence()));
 }
 
 StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildForThunk(
@@ -3320,6 +3487,69 @@ StatusOr<FusionEmissionResult> IrEmitterUnnested::EmitScatter(
   return result;
 }
 
+static absl::flat_hash_map<std::string, std::string> ConvertFrontendAttributes(
+    const FrontendAttributes& attrs) {
+  absl::flat_hash_map<std::string, std::string> result;
+  for (auto& [k, v] : attrs.map()) result[k] = v;
+  return result;
+}
+
+Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
+  if (!instr->channel_id().has_value())
+    return absl::InternalError("Unknown send instruction channel id");
+
+  const HloInstruction* src = instr->operand(0);
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice buffer,
+                      GetAllocationSliceForHlo(src, {}));
+
+  AddThunkToThunkSequence(std::make_unique<SendThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(instr), src->shape(), buffer,
+      *instr->channel_id(), send_recv_events_,
+      ConvertFrontendAttributes(instr->frontend_attributes())));
+
+  return OkStatus();
+}
+
+Status IrEmitterUnnested::EmitSendDoneThunk(
+    const HloSendDoneInstruction* instr) {
+  if (!instr->channel_id().has_value())
+    return absl::InternalError("Unknown send done instruction channel id");
+
+  AddThunkToThunkSequence(std::make_unique<SendDoneThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(instr), *instr->channel_id(),
+      send_recv_events_));
+
+  return OkStatus();
+}
+
+Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
+  if (!instr->channel_id().has_value())
+    return absl::InternalError("Unknown recv instruction channel id");
+
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice buffer,
+                      GetAllocationSliceForHlo(instr, {0}));
+
+  AddThunkToThunkSequence(std::make_unique<RecvThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(instr),
+      instr->shape().tuple_shapes()[0], buffer, *instr->channel_id(),
+      send_recv_events_,
+      ConvertFrontendAttributes(instr->frontend_attributes())));
+
+  return OkStatus();
+}
+
+Status IrEmitterUnnested::EmitRecvDoneThunk(
+    const HloRecvDoneInstruction* instr) {
+  if (!instr->channel_id().has_value())
+    return absl::InternalError("Unknown recv done instruction channel id");
+
+  AddThunkToThunkSequence(std::make_unique<RecvDoneThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(instr), *instr->channel_id(),
+      send_recv_events_));
+
+  return OkStatus();
+}
+
 StatusOr<FusionEmissionResult> IrEmitterUnnested::EmitCustomFusion(
     const HloFusionInstruction* fusion, mlir::lmhlo::FusionOp fusion_op,
     const CustomFusionConfig& config) {
@@ -3381,6 +3611,9 @@ Status IrEmitterUnnested::EmitOp(
     return EmitConstant(op, hlo_const_instr->literal());
   }
 
+  bool is_gpu_runtime = ir_emitter_context_->debug_options()
+                            .xla_gpu_enable_xla_runtime_executable();
+
   if (auto call = mlir::dyn_cast<mlir::lmhlo::CustomCallOp>(op)) {
     if (call.getCallTargetName() == "PadToStatic") {
       return EmitPadToStatic(op);
@@ -3396,7 +3629,13 @@ Status IrEmitterUnnested::EmitOp(
     }
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
-    return EmitCustomCallThunk(op);
+    if (!is_gpu_runtime && call.getCallTargetName() == "__gpu$TopK") {
+      return EmitTopKCustomCall(
+          Cast<HloCustomCallInstruction>(hlo_for_lmhlo.at(op)));
+    }
+
+    return EmitCustomCallThunk(
+        op, Cast<HloCustomCallInstruction>(hlo_for_lmhlo.at(op)));
   }
 
   if (mlir::isa<mlir::lmhlo_gpu::GEMMOp>(op)) {
@@ -3484,7 +3723,7 @@ Status IrEmitterUnnested::EmitOp(
   }
 
   if (mlir::isa<mlir::lmhlo::SortOp>(op)) {
-    return EmitSort(op, hlo_for_lmhlo);
+    return EmitSort(op, Cast<HloSortInstruction>(hlo_for_lmhlo.at(op)));
   }
 
   if (mlir::isa<mlir::lmhlo::ReplicaIdOp>(op)) {
@@ -3560,7 +3799,7 @@ Status IrEmitterUnnested::EmitOp(
   }
 
   if (mlir::isa<mlir::lmhlo::WhileOp>(op)) {
-    return EmitWhile(op, hlo_for_lmhlo);
+    return EmitWhile(op, hlo_for_lmhlo.at(op), hlo_for_lmhlo);
   }
 
   // Remaining arith.constant ops are the gpu.launch_func dimensions as a result
@@ -3574,16 +3813,33 @@ Status IrEmitterUnnested::EmitOp(
     return EmitCommandBufferThunk(hlo_for_lmhlo.at(op));
   }
 
-  // Point to point communication operations are only implemented as XLA
-  // GPU runtime custom calls.
-  bool is_gpu_runtime = ir_emitter_context_->debug_options()
-                            .xla_gpu_enable_xla_runtime_executable();
+  // In GPU runtime point-to-point communications implemented as runtime custom
+  // calls, and we do not need real thunks to construct them, so we can emit
+  // stubs that always fail. This is deprecated and will be removed in Q1 2024.
   if (is_gpu_runtime &&
       mlir::isa<mlir::lmhlo::SendOp, mlir::lmhlo::RecvOp,
                 mlir::lmhlo::SendDoneOp, mlir::lmhlo::RecvDoneOp>(op)) {
     return EmitUnreachable(op,
                            "Point-to-point communication operations are not "
                            "implemented as thunks");
+  }
+
+  if (mlir::isa<mlir::lmhlo::SendOp>(op)) {
+    return EmitSendThunk(Cast<HloSendInstruction>(hlo_for_lmhlo.at(op)));
+  }
+
+  if (mlir::isa<mlir::lmhlo::SendDoneOp>(op)) {
+    return EmitSendDoneThunk(
+        Cast<HloSendDoneInstruction>(hlo_for_lmhlo.at(op)));
+  }
+
+  if (mlir::isa<mlir::lmhlo::RecvOp>(op)) {
+    return EmitRecvThunk(Cast<HloRecvInstruction>(hlo_for_lmhlo.at(op)));
+  }
+
+  if (mlir::isa<mlir::lmhlo::RecvDoneOp>(op)) {
+    return EmitRecvDoneThunk(
+        Cast<HloRecvDoneInstruction>(hlo_for_lmhlo.at(op)));
   }
 
   return InternalError("Unrecognized op: %s", llvm_ir::DumpToString(op));
@@ -3610,18 +3866,24 @@ Status IrEmitterUnnested::EmitHloInstruction(const HloInstruction* instr) {
           ir_emitter_context_->gpu_device_info();
       TF_ASSIGN_OR_RETURN(auto fusion_analysis,
                           HloFusionAnalysis::Create(fusion, &device_info));
-      TF_RETURN_IF_ERROR(EmitFusion(fusion, fusion_analysis, nullptr, {}));
-      return OkStatus();
+      return EmitFusion(fusion, fusion_analysis, nullptr, {});
     }
+    case HloOpcode::kWhile:
+      return EmitWhile(instr);
+    case HloOpcode::kSort:
+      return EmitSort(Cast<HloSortInstruction>(instr));
+    case HloOpcode::kConstant:
+      return EmitConstant(Cast<HloConstantInstruction>(instr));
     // We don't need to emit thunks for these operations because their semantics
     // are encoded by buffers.
+    case HloOpcode::kBitcast:
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kParameter:
-    case HloOpcode::kTuple: {
+    case HloOpcode::kTuple:
       return OkStatus();
-    }
     default:
-      return InternalError("Unsupported instruction opcode");
+      return InternalError("Unsupported instruction opcode: %s",
+                           HloOpcodeString(instr->opcode()));
   }
 
   return InternalError("Unhandled HLO instruction");

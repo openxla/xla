@@ -435,7 +435,7 @@ runtime::JitExecutable::Options GetXlaRuntimeJitExecutableOptions(
 
 StatusOr<std::unique_ptr<Executable>>
 CpuXlaRuntimeAotCompilationResult::LoadExecutable(
-    Compiler* compiler, se::StreamExecutor* executor) {
+    Compiler* compiler, const se::StreamExecutor* executor) const {
   XlaRuntimeExecutableProto xla_runtime_executable =
       xla_runtime_cpu_executable_.xla_runtime_executable();
   TF_ASSIGN_OR_RETURN(HloModuleConfig hlo_module_config,
@@ -700,6 +700,8 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     // Placing OneDnnOpsRewriter here to match the flax patterns
     // TODO: Decide where would be the appropriate place for this pass to make
     // it more generic
+    // TODO - intel: Name of the pass might seem redundant as oneDnnRewriter,
+    // but in future plan to rename oneDNNrewriter to specific to onednn matmul
     pipeline.AddPass<OneDnnOpsRewriter>();
   }
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
@@ -1092,7 +1094,7 @@ StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
 }
 
 StatusOr<std::unique_ptr<BufferAssignment>> CpuCompiler::AssignBuffers(
-    HloModule* module, se::StreamExecutor* /*stream_exec*/) {
+    HloModule* module, const se::StreamExecutor* /*stream_exec*/) {
   // Select an order for emitting the HLO instructions for each computation.
   // Using this sequence enables tighter buffer liveness analysis and reduced
   // memory usage (as compared to using DependencyHloOrdering).
