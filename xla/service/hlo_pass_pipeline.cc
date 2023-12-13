@@ -252,57 +252,60 @@ StatusOr<bool> HloPassPipeline::RunPassesInternal(
 
 std::vector<HloPassInterface*> HloPassPipeline::GetEnabledPasses(
     const DebugOptions& debug_options) {
+  // Multiple flags can be used to configure HLO passes and they are
+  // considered in order. xla_disable_all_hlo_passes is taken into account
+  // first. If it's set, we return an empty list. Flags to enable hlo passes are
+  // considered next. If they enable a non-empty set of passes, then we return
+  // immediately with a list of enabled passe and flags to disable hlo passes
+  // are ignored. If none of the flags are specified, all passes from the
+  // pipeline will be added.
   if (debug_options.xla_disable_all_hlo_passes()) {
     VLOG(1) << "*All* passes disabled by --xla_disable_all_hlo_passes.";
     return {};
+  }
+
+  absl::flat_hash_set<std::string> enabled_pass_names(
+      debug_options.xla_enable_hlo_passes_only().begin(),
+      debug_options.xla_enable_hlo_passes_only().end());
+
+  std::vector<HloPassInterface*> enabled_passes;
+  if (!enabled_pass_names.empty()) {
+    VLOG(1) << "Passes enabled by --xla_enable_hlo_passes_only: "
+            << absl::StrJoin(enabled_pass_names, ", ");
+    VLOG(1)
+        << "All other HLO passes are disabled and --xla_disable_hlo_passes is "
+           "ignored";
+    if (enabled_pass_names.contains(name())) {
+      VLOG(1) << "Enable the full pass: " << name();
+      VLOG(1) << "Ignoring --xla_disable_hlo_passes flag." << name();
+      // Enable the full pass.
+      enabled_pass_names.clear();
+    }
+
+    for (auto& pass : passes_) {
+      if (enabled_pass_names.contains(pass->name())) {
+        enabled_passes.push_back(pass.get());
+      }
+    }
+    return enabled_passes;
   }
 
   absl::flat_hash_set<std::string> disabled_pass_names(
       debug_options.xla_disable_hlo_passes().begin(),
       debug_options.xla_disable_hlo_passes().end());
 
-  absl::flat_hash_set<std::string> enabled_pass_names(
-      debug_options.xla_enable_hlo_passes_only().begin(),
-      debug_options.xla_enable_hlo_passes_only().end());
-
-  if (!disabled_pass_names.empty()) {
-    VLOG(1) << "Passes disabled by --xla_disable_hlo_passes: "
-            << absl::StrJoin(disabled_pass_names, ", ");
-  }
-
-  if (!enabled_pass_names.empty()) {
-    VLOG(1) << "Passes enabled by --xla_enable_hlo_passes_only: "
-            << absl::StrJoin(enabled_pass_names, ", ");
-  }
-
-  CHECK(disabled_pass_names.empty() || enabled_pass_names.empty());
-
   if (disabled_pass_names.contains(name())) {
-    // Disable the full pass.
     VLOG(1) << "Disable the full pass: " << name();
     return {};
   }
 
-  if (enabled_pass_names.contains(name())) {
-    VLOG(1) << "Enable the full pass: " << name();
-    // Enable the full pass.
-    enabled_pass_names.clear();
+  // Add passes that are not specified in the related hlo-pass-disable flags.
+  for (auto& pass : passes_) {
+    if (!disabled_pass_names.contains(pass->name())) {
+      enabled_passes.push_back(pass.get());
+    }
   }
 
-  std::vector<HloPassInterface*> enabled_passes;
-  if (!enabled_pass_names.empty()) {
-    for (auto& pass : passes_) {
-      if (enabled_pass_names.contains(pass->name())) {
-        enabled_passes.push_back(pass.get());
-      }
-    }
-  } else {
-    for (auto& pass : passes_) {
-      if (!disabled_pass_names.contains(pass->name())) {
-        enabled_passes.push_back(pass.get());
-      }
-    }
-  }
   return enabled_passes;
 }
 
