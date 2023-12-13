@@ -326,6 +326,7 @@ cc_library(
         "//xla/service/gpu/runtime3:command_buffer_cmd_emitter",
         "//xla/service/gpu/runtime3:command_buffer_thunk",
         "//xla/service/gpu/runtime3:conditional_thunk",
+        "//xla/service/gpu/runtime3:convolution_thunk",
         "//xla/service/gpu/runtime3:custom_call_thunk",
         "//xla/service/gpu/runtime3:fft_thunk",
         "//xla/service/gpu/runtime3:for_thunk",
@@ -913,7 +914,6 @@ xla_cc_test(
 cc_library(
     name = "gpu_executable",
     srcs = [
-        "convolution_thunk.cc",
         "copy_thunk.cc",
         "fused_mha_thunk.cc",
         "gpu_executable.cc",
@@ -925,7 +925,6 @@ cc_library(
         "replica_id_thunk.cc",
     ],
     hdrs = [
-        "convolution_thunk.h",
         "copy_thunk.h",
         "fused_mha_thunk.h",
         "gemm_thunk.h",
