@@ -1126,9 +1126,15 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform/cloud:gcs_file_system",
         "@tsl//tsl/python/lib/core:numpy",
-        "@gloo//:transport_tcp",
         "@pybind11",
     ] + select({
+        # gloo transport only builds on linux
+        "@tsl//tsl:macos": [],
+        "@tsl//tsl:windows": [],
+        "//conditions:default": [
+            "@gloo//:transport_tcp",
+        ],
+    }) + select({
         ":gpu_enabled": [
             "//xla/pjrt/gpu:se_gpu_pjrt_client",
         ],
