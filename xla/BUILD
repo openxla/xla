@@ -8,9 +8,11 @@ load(
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
+default_visibility = ["//xla:internal"]
+
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = default_visibility,
     licenses = ["notice"],
 )
 
@@ -1168,6 +1170,9 @@ tf_proto_library(
     srcs = ["autotuning.proto"],
     make_default_target_header_only = True,
     protodeps = ["@tsl//tsl/protobuf:dnn_proto"],
+    visibility = default_visibility + [
+        "//waymo/ml/deploy/system/autotuning:__subpackages__",
+    ],
 )
 
 cc_library(
