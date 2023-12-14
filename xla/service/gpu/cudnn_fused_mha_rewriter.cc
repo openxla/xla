@@ -1223,8 +1223,6 @@ absl::StatusOr<bool> IsMHABlockSupported(HloInstruction* bmm_1,
     return false;
   }
 
-  TF_ASSIGN_OR_RETURN(bool is_bmm1_supported,
-                      IsSupportedBMM1(bmm_1, is_training));
   // check if matched attention block is supported by cuDNN flash attention.
   TF_ASSIGN_OR_RETURN(
       is_flash_attention,
@@ -1239,7 +1237,8 @@ absl::StatusOr<bool> IsMHABlockSupported(HloInstruction* bmm_1,
     return true;
   }
   // otherwise check if it is supported by regular attention
-  TF_ASSIGN_OR_RETURN(bool is_bmm1_supported, IsSupportedBMM1(bmm_1));
+  TF_ASSIGN_OR_RETURN(bool is_bmm1_supported,
+                        IsSupportedBMM1(bmm_1, is_training));
   if (!is_bmm1_supported) return false;
   TF_ASSIGN_OR_RETURN(bool is_bmm2_supported,
                       IsSupportedBMM2(bmm_2, need_canonicalization));
@@ -1622,6 +1621,7 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
       HloInstruction * bmm_2_grad_1_rhs,
       ChangeCheckedDimToFastest(comp, bmm_2_grad_1, false /*is_lhs*/,
                                 false /*should_contracting_be_fastest*/));
+  (void)bmm_2_grad_1_rhs;
   // Operand order: {Q, K, V, Fwd act, d_o, mask*, bias*, O*}
   std::vector<HloInstruction*> operands = {
       rhs_bmm1_grad_gemm1, lhs_bmm1_grad_gemm2, rhs_bmm2_grad_gemm2, fwd_act,

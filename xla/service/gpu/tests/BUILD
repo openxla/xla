@@ -813,7 +813,6 @@ xla_test(
 xla_test(
     name = "gpu_fused_mha_test",
     srcs = ["gpu_fused_mha_test.cc"],
-    tags = tf_cuda_tests_tags(),
     backend_tags = {"gpu": [
         "requires-gpu-sm80",
     ]},

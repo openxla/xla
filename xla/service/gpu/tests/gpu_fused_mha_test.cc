@@ -2409,7 +2409,7 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
         GetInput4DLiteral<T>({2, 6, 2048, 128}, {3, 2, 1, 0});
     std::string hlo_string = "";
     hlo_string =
-        GetModuleFlash_Attention_BMM1_CausalMask_Softmax_BMM2_HloString_BF16();
+        GetModuleFlash_Attention_BMM1_CausalMask_Softmax_BMM2_HloString_BF16(); // NOLINT
     ExecuteAndCompare(
         hlo_string, {&lhs_bmm1_literal, &rhs_bmm1_literal, &rhs_bmm2_literal});
   }
@@ -2435,7 +2435,7 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
         GetInput4DLiteral<T>({2, 6, 1024, 64}, {3, 2, 1, 0});
     std::string hlo_string = "";
     hlo_string =
-        GetModuleFlash_Attention_Training_BMM1_CausalMask_Softmax_BMM2_HloString_BF16();
+        GetModuleFlash_Attention_Training_BMM1_CausalMask_Softmax_BMM2_HloString_BF16(); // NOLINT
     ExecuteAndCompare(
         hlo_string, {&lhs_bmm1_literal, &rhs_bmm1_literal, &rhs_bmm2_literal, &do_literal}, true);
   }
@@ -2626,7 +2626,7 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
     auto do_literal = GetInput4DLiteral<T>({2, 6, 1024, 64}, {3, 2, 1, 0});
     std::string hlo_string = "";
     hlo_string =
-        GetModuleFlash_Attention_Training_BMM1_Bias_Softmax_BMM2_HloString_BF16();
+        GetModuleFlash_Attention_Training_BMM1_Bias_Softmax_BMM2_HloString_BF16(); // NOLINT
     ExecuteAndCompare(hlo_string, {&lhs_bmm1_literal, &rhs_bmm1_literal,
                                    &rhs_bmm2_literal, &bias_literal, &do_literal}, true);
   }
