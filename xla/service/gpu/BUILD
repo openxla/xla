@@ -272,6 +272,7 @@ cc_library(
     ]),
     deps = [
         ":backend_configs_cc",
+        ":cublas_cudnn",
         ":gemm_thunk",
         ":gpu_asm_opts_util",
         ":gpu_constants",
@@ -2739,6 +2740,7 @@ cc_library(
     srcs = ["command_buffer_scheduling.cc"],
     hdrs = ["command_buffer_scheduling.h"],
     deps = [
+        ":cublas_cudnn",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
