@@ -78,6 +78,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:thunk",
+        "@com_google_absl//absl/container:inlined_vector",
         "@tsl//tsl/platform:statusor",
     ],
 )
