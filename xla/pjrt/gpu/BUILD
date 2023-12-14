@@ -42,6 +42,7 @@ cc_library(
     visibility = ["//xla/pjrt:friends"],
     deps = [
         ":gpu_helpers",
+        ":gpu_metrics",
         ":gpu_topology",
         "//xla:statusor",
         "//xla:util",
@@ -50,7 +51,6 @@ cc_library(
         "//xla/client:local_client",
         "//xla/client:xla_computation",
         "//xla/pjrt:compile_options_proto_cc",
-        "//xla/pjrt:metrics",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
@@ -253,6 +253,17 @@ cc_library(
         "//xla/service/gpu:amdgpu_compiler_impl",
     ]),
     alwayslink = True,
+)
+
+cc_library(
+    name = "gpu_metrics",
+    srcs = ["gpu_metrics.cc"],
+    hdrs = ["gpu_metrics.h"],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/lib/monitoring:gauge",
+    ],
 )
 
 xla_cc_test(
