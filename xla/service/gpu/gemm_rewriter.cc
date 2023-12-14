@@ -1513,12 +1513,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return OkStatus();
     }
 
-    // cublasLt F8 gemm has a known issue when fusing gelu epilogue with f32
-    // output.
-    if (gemm->shape().element_type() == F32 &&
-        gemm->custom_call_target() == kCublasLtMatmulF8CallTarget) {
-      return OkStatus();
-    }
     // There are four users of the gemm output within the GELU calculation.
     bool has_aux = gemm->user_count() > 4;
 
