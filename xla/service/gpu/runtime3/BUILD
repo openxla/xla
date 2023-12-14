@@ -172,6 +172,7 @@ xla_test(
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
         "//xla/stream_executor/cuda:cuda_test_kernels",
+        "//xla/stream_executor/gpu:gpu_types_header",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",

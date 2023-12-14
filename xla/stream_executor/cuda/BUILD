@@ -486,6 +486,7 @@ xla_test(
         "//xla/stream_executor",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor/gpu:gpu_types_header",
         "@com_google_absl//absl/log:check",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/lib/core:status_test_util",
