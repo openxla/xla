@@ -428,6 +428,18 @@ class HloSharding {
     return -1;
   }
 
+  // Returns the replication subgroup dim size, or -1 if it doesn't exist.
+  int64_t SubgroupReplicationDimSize() const {
+    if (!IsTiled()) {
+      return -1;
+    }
+    const int64_t replication_dim = SubgroupReplicationDim();
+    if (replication_dim == -1) {
+      return -1;
+    }
+    return tile_assignment_.dim(replication_dim);
+  }
+
   // Returns the manual subgroup dim, or -1 if it doesn't exist.
   int64_t SubgroupManualDim() const {
     auto it = absl::c_find(subgroup_types_, OpSharding::MANUAL);
