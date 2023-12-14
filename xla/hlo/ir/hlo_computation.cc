@@ -556,10 +556,26 @@ std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder(
   VisitMap visited(instruction_count());
   std::vector<HloInstruction*> dfs_stack_scratch;
   dfs_stack_scratch.reserve(instruction_count());
-  for (auto& instruction : instructions_) {
-    if (instruction->users().empty()) {
+
+  // The root instruction is guaranteed to not have any users, so start the
+  // postorder traversal at the root.
+  DCHECK(root_instruction_->users().empty());
+  ComputeInstructionPostOrder(root_instruction_, channel_dependencies, visited,
+                              post_order, &dfs_stack_scratch);
+  if (post_order.size() == instructions_.size()) {
+    // Once every instruction appears in the post order traversal, we know the
+    // traversal is done, so we can return early.
+    return post_order;
+  }
+
+  for (const auto& instruction : instructions_) {
+    if (instruction.get() != root_instruction_ &&
+        instruction->users().empty()) {
       ComputeInstructionPostOrder(instruction.get(), channel_dependencies,
                                   visited, post_order, &dfs_stack_scratch);
+      if (post_order.size() == instructions_.size()) {
+        break;
+      }
     }
   }
   CHECK_EQ(instructions_.size(), post_order.size())
