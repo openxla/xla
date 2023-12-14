@@ -267,6 +267,7 @@ cc_library(
     hdrs = ["tile_analysis.h"],
     deps = [
         ":indexing_map_simplifier",
+        "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
