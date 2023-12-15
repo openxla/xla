@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/client/local_client.h"
 #include "xla/pjrt/event_pool.h"
+#include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/worker_thread.h"
 #include "xla/status.h"
@@ -108,7 +109,8 @@ class LocalDeviceState {
 
   se::StreamExecutor* executor() const { return executor_; }
 
-  int device_ordinal() const { return device_ordinal_; }
+  PjRtLocalDeviceId local_device_id() { return local_device_id_; }
+  PjRtLocalHardwareId local_hardware_id() { return local_hardware_id_; }
 
   LocalClient* client() const { return client_; }
 
@@ -198,7 +200,8 @@ class LocalDeviceState {
   // stream by the host ahead of the device.
   Semaphore compute_semaphore_;
 
-  int device_ordinal_;
+  PjRtLocalDeviceId local_device_id_;
+  PjRtLocalHardwareId local_hardware_id_;
   se::StreamExecutor* const executor_;
   LocalClient* const client_;
   std::unique_ptr<se::Stream> compute_stream_;
