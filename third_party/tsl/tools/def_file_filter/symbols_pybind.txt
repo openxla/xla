@@ -495,6 +495,10 @@ tensorflow::GetCompilerIr
 [//tensorflow/core/common_runtime/eager:tensor_handle] # tfe
 tensorflow::TensorHandle::Tensor
 
+[//tensorflow/c:tf_buffer] # capi
+TF_NewBuffer
+TF_DeleteBuffer
+
 [//tensorflow/python:python_api_dispatcher] # python_api_dispatcher
 tensorflow::py_dispatch::PythonAPIDispatcher
 tensorflow::py_dispatch::PySignatureChecker
