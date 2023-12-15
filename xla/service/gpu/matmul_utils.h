@@ -156,6 +156,12 @@ struct GemmConfig : public se::gpu::GemmConfig {
         op.getAlgorithm(), compute_precision, /*grad_x=*/false,
         /*grad_y=*/false);
   }
+
+  using DescriptorsTuple = std::tuple< se::gpu::MatrixDescriptor, 
+                                       se::gpu::MatrixDescriptor, 
+                                       se::gpu::MatrixOutDescriptor, bool >;
+  DescriptorsTuple MatrixDescriptors(se::DeviceMemoryBase lhs_buf, 
+        se::DeviceMemoryBase rhs_buf, se::DeviceMemoryBase out_buf) const;
 };
 
 // Run the given GEMM instruction `gemm` subject to the configuration
