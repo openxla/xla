@@ -196,33 +196,30 @@ tsl::Status GpuCommandBuffer::CheckNumCommandBuffers(
   return tsl::OkStatus();
 }
 
-tsl::Status GpuCommandBuffer::Barrier(StreamExecutor* executor) {
+tsl::Status GpuCommandBuffer::Barrier() {
+  // Collect nodes that will become a new barrier dependencies.
+  Dependencies dependencies;
+
+  // We start our traversal from the previous node, which in a new command
+  // buffers means from the last node, and in updated command buffers means from
+  // the previously updated node.
+  int32_t prev_node_idx = nodes_.size() - 1;
+  if (state_ == State::kUpdate) prev_node_idx = update_state_.node_idx - 1;
+
+  for (int32_t i = prev_node_idx; i >= 0; --i) {
+    if (nodes_[i] == barrier_) break;
+    dependencies.push_back(nodes_[i]);
+  }
+
+  // There is no need to add back to back barriers.
+  if (dependencies.empty()) return tsl::OkStatus();
+
   if (state_ == State::kCreate) {
-    // Collect nodes that will become a new barrier dependencies.
-    Dependencies dependencies;
-    for (int32_t i = nodes_.size() - 1; i >= 0; --i) {
-      if (nodes_[i] == barrier_) break;
-      dependencies.push_back(nodes_[i]);
-    }
-
-    // Explicit barrier is required only if we have multiple dependencies.
-    barrier_has_node_.push_back(dependencies.size() > 1);
-
-    // Add a noop kernel node acting as a barrier.
-    if (barrier_has_node_.back()) {
-      MultiKernelLoaderSpec spec(/*arity=*/0);
-      spec.AddInProcessSymbol(gpu::GetNoOpKernel(), "noop");
-
-      NoOpKernel noop(executor);
-      TF_RETURN_IF_ERROR(executor->GetKernel(spec, &noop));
-
+    // Add an empty node acting as a barrier.
+    if (dependencies.size() > 1) {
       GpuGraphNodeHandle* node = &nodes_.emplace_back();
-      // TODO(b/316343054): This should be an empty node, however CUDA 12.3 does
-      // not support empty nodes inside conditional command buffers.
-      TF_RETURN_IF_ERROR(GpuDriver::GraphAddKernelNode(
-          node, graph_, absl::MakeSpan(dependencies), noop.name(),
-          AsGpuKernel(&noop)->AsGpuFunctionHandle(), 1, 1, 1, 1, 1, 1, 0,
-          /*kernel_params=*/nullptr, /*extra=*/nullptr));
+      TF_RETURN_IF_ERROR(GpuDriver::GraphAddEmptyNode(
+          node, graph_, absl::MakeSpan(dependencies)));
     }
 
     // Make the last node a barrier, if we didn't add a new empty node acting
@@ -232,10 +229,9 @@ tsl::Status GpuCommandBuffer::Barrier(StreamExecutor* executor) {
   }
 
   if (state_ == State::kUpdate) {
-    barrier_ = nodes_[update_state_.node_idx];
+    barrier_ = nodes_[prev_node_idx];
     // Increment update node index only if we added an empty node earlier.
-    if (barrier_has_node_[update_state_.barrier_idx++])
-      update_state_.node_idx++;
+    if (dependencies.size() > 1) update_state_.node_idx++;
     return tsl::OkStatus();
   }
 
@@ -504,7 +500,7 @@ tsl::Status GpuCommandBuffer::UpdateConditionalCommandBuffers(
 }
 
 tsl::Status GpuCommandBuffer::CreateConditionalCommand(
-    StreamExecutor* executor, ConditionType type, SetConditionFn set_condition,
+    ConditionType type, SetConditionFn set_condition,
     absl::Span<const ConditionBuilder> builders) {
   TF_RETURN_IF_ERROR(CheckNotFinalized());
 
@@ -518,7 +514,7 @@ tsl::Status GpuCommandBuffer::CreateConditionalCommand(
     TF_RETURN_IF_ERROR(set_condition(handles));
 
     // Add a barrier between conditional handles and conditional nodes.
-    TF_RETURN_IF_ERROR(Barrier(executor));
+    TF_RETURN_IF_ERROR(Barrier());
 
     // Create conditional command buffer for each builder.
     TF_ASSIGN_OR_RETURN(auto graphs, CreateConditionalNodes(type, handles));
@@ -543,7 +539,7 @@ tsl::Status GpuCommandBuffer::CreateConditionalCommand(
     TF_RETURN_IF_ERROR(set_condition(cond_cmd_buffers.handles));
 
     // Update a barrier between conditional handles and conditional nodes.
-    TF_RETURN_IF_ERROR(Barrier(executor));
+    TF_RETURN_IF_ERROR(Barrier());
 
     // Skip updating conditional nodes.
     update_state_.node_idx += num_handles;
@@ -579,8 +575,7 @@ tsl::Status GpuCommandBuffer::If(StreamExecutor* executor,
   std::array<ConditionBuilder, 1> builders = {
       ToConditionBuilder(std::move(then_builder))};
 
-  return CreateConditionalCommand(executor, ConditionType::kIf, set_cond_fn,
-                                  builders);
+  return CreateConditionalCommand(ConditionType::kIf, set_cond_fn, builders);
 }
 
 tsl::Status GpuCommandBuffer::IfElse(StreamExecutor* executor,
@@ -609,8 +604,7 @@ tsl::Status GpuCommandBuffer::IfElse(StreamExecutor* executor,
       ToConditionBuilder(std::move(then_builder)),
       ToConditionBuilder(std::move(else_builder))};
 
-  return CreateConditionalCommand(executor, ConditionType::kIf, set_cond_fn,
-                                  builders);
+  return CreateConditionalCommand(ConditionType::kIf, set_cond_fn, builders);
 }
 
 tsl::Status GpuCommandBuffer::Case(
@@ -657,8 +651,7 @@ tsl::Status GpuCommandBuffer::Case(
     builders.push_back(ToConditionBuilder(std::move(branch)));
   }
 
-  return CreateConditionalCommand(executor, ConditionType::kIf, set_cond_fn,
-                                  builders);
+  return CreateConditionalCommand(ConditionType::kIf, set_cond_fn, builders);
 }
 
 tsl::Status GpuCommandBuffer::For(StreamExecutor* executor,
@@ -680,7 +673,7 @@ tsl::Status GpuCommandBuffer::For(StreamExecutor* executor,
 
   // Reset loop counter to zero.
   TF_RETURN_IF_ERROR(Memset(&loop_counter, uint32_t{0}, 1));
-  TF_RETURN_IF_ERROR(Barrier(executor));
+  TF_RETURN_IF_ERROR(Barrier());
 
   auto set_cond_fn = [&](absl::Span<const GpuGraphConditionalHandle> handles) {
     return Launch(set_for_condition, ThreadDim(), BlockDim(), handles[0],
@@ -689,7 +682,7 @@ tsl::Status GpuCommandBuffer::For(StreamExecutor* executor,
 
   auto body = [&](CommandBuffer* body, GpuGraphConditionalHandle handle) {
     TF_RETURN_IF_ERROR(body_builder(body));
-    TF_RETURN_IF_ERROR(body->Barrier(executor));
+    TF_RETURN_IF_ERROR(body->Barrier());
 
     // Decide if we want to continue loop iteration.
     return body->Launch(set_for_condition, ThreadDim(), BlockDim(), handle,
@@ -698,8 +691,7 @@ tsl::Status GpuCommandBuffer::For(StreamExecutor* executor,
 
   std::array<ConditionBuilder, 1> builders = {std::move(body)};
 
-  return CreateConditionalCommand(executor, ConditionType::kWhile, set_cond_fn,
-                                  builders);
+  return CreateConditionalCommand(ConditionType::kWhile, set_cond_fn, builders);
 }
 
 tsl::Status GpuCommandBuffer::While(StreamExecutor* executor,
@@ -721,7 +713,7 @@ tsl::Status GpuCommandBuffer::While(StreamExecutor* executor,
 
   // Record condition commands into the parent command buffer.
   TF_RETURN_IF_ERROR(CommandBuffer::Build(this, cond_builder));
-  TF_RETURN_IF_ERROR(Barrier(executor));
+  TF_RETURN_IF_ERROR(Barrier());
 
   auto set_cond_fn = [&](absl::Span<const GpuGraphConditionalHandle> handles) {
     return Launch(set_while_condition, ThreadDim(), BlockDim(), handles[0],
@@ -730,17 +722,16 @@ tsl::Status GpuCommandBuffer::While(StreamExecutor* executor,
 
   auto body = [&](CommandBuffer* body, GpuGraphConditionalHandle handle) {
     TF_RETURN_IF_ERROR(body_builder(body));
-    TF_RETURN_IF_ERROR(body->Barrier(executor));
+    TF_RETURN_IF_ERROR(body->Barrier());
     TF_RETURN_IF_ERROR(cond_builder(body));
-    TF_RETURN_IF_ERROR(body->Barrier(executor));
+    TF_RETURN_IF_ERROR(body->Barrier());
     return body->Launch(set_while_condition, ThreadDim(), BlockDim(), handle,
                         pred);
   };
 
   std::array<ConditionBuilder, 1> builders = {std::move(body)};
 
-  return CreateConditionalCommand(executor, ConditionType::kWhile, set_cond_fn,
-                                  builders);
+  return CreateConditionalCommand(ConditionType::kWhile, set_cond_fn, builders);
 }
 
 tsl::Status GpuCommandBuffer::Finalize() {
