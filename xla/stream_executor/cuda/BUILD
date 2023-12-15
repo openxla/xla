@@ -10,7 +10,6 @@ load(
     "stream_executor_friends",
     "tf_additional_cuda_platform_deps",
     "tf_additional_cudnn_plugin_copts",
-    "tf_additional_cudnn_plugin_deps",
     "tf_additional_gpu_compilation_copts",
 )
 load("@tsl//tsl:tsl.bzl", "if_google", "set_external_visibility", "tsl_copts")
@@ -415,7 +414,7 @@ cc_library(
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
         "@tsl//tsl/platform:tensor_float_32_utils",
         "@tsl//tsl/util:env_var",
-    ]) + tf_additional_cudnn_plugin_deps(),
+    ]),
     alwayslink = True,
 )
 
