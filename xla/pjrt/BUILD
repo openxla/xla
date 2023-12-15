@@ -116,6 +116,7 @@ cc_library(
     hdrs = ["local_device_state.h"],
     deps = [
         ":event_pool",
+        ":pjrt_common",
         ":semaphore",
         ":worker_thread",
         "//xla:status",
