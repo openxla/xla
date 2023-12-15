@@ -834,6 +834,37 @@ ENTRY main {
                           TritonFusionAnalysis::Execute(*computation));
 }
 
+TEST_F(TritonSoftmaxAnalysisTest, BitcastIntroducingDegenerateDimIsSupported) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+triton_softmax_computation {
+  param = f32[3]{0} parameter(0)
+  constant = f32[] constant(0)
+  reduce = f32[] reduce(f32[3]{0} param, f32[] constant), dimensions={0}, to_apply=add
+  broadcast = f32[3]{0} broadcast(f32[] reduce), dimensions={}
+  add = f32[3]{0} add(f32[3]{0} param, f32[3]{0} broadcast)
+  ROOT bitcast = f32[1,3]{1,0} bitcast(f32[3]{0} add)
+}
+
+ENTRY main {
+  param = f32[3]{0} parameter(0)
+  ROOT fusion = f32[1,3]{1,0} fusion(param), kind=kCustom,
+   calls=triton_softmax_computation,
+   backend_config={"kind":"__triton_softmax"}
+})"));
+
+  const HloComputation* computation =
+      module->entry_computation()->root_instruction()->called_computations()[0];
+  TF_ASSERT_OK_AND_ASSIGN(const auto analysis,
+                          TritonFusionAnalysis::Execute(*computation));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

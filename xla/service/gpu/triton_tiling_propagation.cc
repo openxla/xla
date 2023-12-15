@@ -587,12 +587,13 @@ DimOrderMapOrError GetPropagatedDimOrdersForBitcast(
   FragmentOrders& dst_dim_fragment_orders = dst_dim_order.DimFragmentsOrders();
   for (const auto& [dim_index, dim_sequence] :
        src_dim_order.DimFragmentsOrders()) {
-    std::vector<int>& dst = dst_dim_fragment_orders[dim_index];
-    dst.reserve(dim_sequence.size());
     for (const int src : dim_sequence) {
-      std::copy(src_to_dst[&src_fragments_order[src]].cbegin(),
-                src_to_dst[&src_fragments_order[src]].cend(),
-                std::back_inserter(dst));
+      if (!src_to_dst[&src_fragments_order[src]].empty()) {
+        std::vector<int>& dst = dst_dim_fragment_orders[dim_index];
+        std::copy(src_to_dst[&src_fragments_order[src]].cbegin(),
+                  src_to_dst[&src_fragments_order[src]].cend(),
+                  std::back_inserter(dst));
+      }
     }
   }
 
