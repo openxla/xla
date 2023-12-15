@@ -109,8 +109,12 @@ ThreadPool::ThreadPool(Env* env, const ThreadOptions& thread_options,
 
 #ifdef TENSORFLOW_THREADSCALING_EXPERIMENTAL
   CHECK_GT(absl::GetFlag(FLAGS_tensorflow_num_threads_scale_factor), 0);
+  auto requested_num_threads = num_threads;
   num_threads *= absl::GetFlag(FLAGS_tensorflow_num_threads_scale_factor);
   if (num_threads < 1) num_threads = 1;
+  LOG(INFO) << absl::StrFormat(
+      "Scaled TF threadpool %s thread num from %d to %d.", name,
+      requested_num_threads, num_threads);
 #endif  // TENSORFLOW_THREADSCALING_EXPERIMENTAL
 
   eigen_threadpool_.reset(new Eigen::ThreadPoolTempl<EigenEnvironment>(
