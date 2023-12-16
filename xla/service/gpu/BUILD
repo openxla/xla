@@ -1075,8 +1075,10 @@ cc_library(
         "//xla/translate/mhlo_to_hlo:type_to_shape",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
@@ -1088,7 +1090,9 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:ml_dtypes",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
