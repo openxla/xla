@@ -2744,7 +2744,9 @@ cc_library(
     srcs = ["command_buffer_scheduling.cc"],
     hdrs = ["command_buffer_scheduling.h"],
     deps = [
+        ":backend_configs_cc",
         ":cublas_cudnn",
+        ":ir_emission_utils",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
