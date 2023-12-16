@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/literal_util.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/shape_inference.h"
 #include "xla/service/sharding_propagation.h"
 #include "xla/service/spmd/convolution_handler.h"
@@ -246,8 +247,8 @@ Window GenNewWindow(const HloInstruction* original_dot,
       new_dim->set_window_reversal(false);
     }
     if (rhs_concat_dim != -1) {
-      new_dim->set_size(2);          // rhs_size
-      new_dim->set_padding_low(1);   // rhs_size - 1
+      new_dim->set_size(2);  // rhs_size
+      new_dim->set_padding_low(1);  // rhs_size - 1
       new_dim->set_padding_high(1);  // rhs_size - 1
       new_dim->set_stride(1);
       new_dim->set_window_dilation(1);
@@ -977,6 +978,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
   body_name += (einsum_config.is_ag_einsum) ? "_ag" : "_rs";
   SpmdBuilder body_b(body_name, original_hlo);
 
+  bool use_multi_streamed_dots =
+      module->config().debug_options().xla_gpu_multi_streamed_windowed_einsum();
   // Generate partial results used by bidirectional algorithm.
   auto get_partial_bid_results =
       [&](HloInstruction* l, HloInstruction* r, HloInstruction* o,
@@ -1351,9 +1354,10 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
   };
 
   // Generate partial result used by unidirectional algorithm.
-  auto get_partial_unid_result =
-      [&](HloInstruction* l, HloInstruction* r, HloInstruction* o,
-          HloInstruction* i) -> absl::StatusOr<HloInstruction*> {
+  auto get_partial_unid_result = [&](HloInstruction* l, HloInstruction* r,
+                                     HloInstruction* o, HloInstruction* i,
+                                     int64_t queue_id =
+                                         0) -> absl::StatusOr<HloInstruction*> {
     auto partition_id =
         lhs.state().collective_ops_creator.create_partition_id(&body_b);
     auto data_partition_id = body_b.AddInstruction(HloInstruction::CreateBinary(
@@ -1404,6 +1408,22 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       o = body_b.AddInstruction(HloInstruction::CreateDynamicUpdateSlice(
           o->shape(), o, dot, offsets));
     }
+    if (queue_id > 0) {
+      // both the dot and its consumer are dispatched to additional stream
+      // so we don't block main stream.
+      auto dot_gpu_config = dot->backend_config<xla::gpu::GpuBackendConfig>();
+      auto o_gpu_config = o->backend_config<xla::gpu::GpuBackendConfig>();
+      dot_gpu_config->set_operation_queue_id(queue_id);
+      dot_gpu_config->mutable_wait_on_operation_queues()->Add(0);
+
+      o_gpu_config->set_operation_queue_id(queue_id);
+      o_gpu_config->mutable_wait_on_operation_queues()->Add(0);
+      o_gpu_config->mutable_wait_on_operation_queues()->Add(queue_id);
+
+      TF_CHECK_OK(dot->set_backend_config(dot_gpu_config.value()));
+      TF_CHECK_OK(o->set_backend_config(o_gpu_config.value()));
+    }
+
     return o;
   };
 
@@ -1513,6 +1533,11 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
         {second_next_l, second_next_r, o, next_cw_cp_output, i}));
 
   } else if (options.unroll_windowed_einsum && num_partitions % 2 == 0) {
+    // If using multiple streams, then assign a different queue id.
+    // Use the channel id generator to ensure uniqueness.
+    int64_t queue_id =
+        use_multi_streamed_dots ? hlo_query::NextChannelId(*module) : 0;
+
     if (operands_sharded_at_contracting_dims) {
       std::vector<std::pair<int64_t, int64_t>> output_sd_pairs(num_partitions);
       for (int64_t source = 0; source < num_partitions; ++source) {
@@ -1545,7 +1570,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           body_b.AddInstruction(HloInstruction::CreateConstant(
               LiteralUtil::CreateR0<uint32_t>(1)))));
 
-      TF_ASSIGN_OR_RETURN(o, get_partial_unid_result(l, r, o, real_i));
+      TF_ASSIGN_OR_RETURN(o,
+                          get_partial_unid_result(l, r, o, real_i, queue_id));
       body_b.AddInstruction(
           HloInstruction::CreateTuple({l, r, o, extra_inout, i}));
     } else {
@@ -1592,7 +1618,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       } else {
         second_next_r = cp_output;
       }
-      TF_ASSIGN_OR_RETURN(o, get_partial_unid_result(next_l, next_r, o, i));
+      TF_ASSIGN_OR_RETURN(
+          o, get_partial_unid_result(next_l, next_r, o, i, queue_id));
 
       // ++i
       i = body_b.AddInstruction(HloInstruction::CreateBinary(
@@ -1602,6 +1629,16 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
 
       body_b.AddInstruction(HloInstruction::CreateTuple(
           {second_next_l, second_next_r, o, extra_inout, i}));
+    }
+    if (queue_id > 0) {
+      // Tell all users of o to wait on this queue if using multiple queues.
+      for (HloInstruction* user : o->users()) {
+        auto user_backend_config =
+            user->backend_config<xla::gpu::GpuBackendConfig>();
+        user_backend_config->mutable_wait_on_operation_queues()->Add(0);
+        user_backend_config->mutable_wait_on_operation_queues()->Add(queue_id);
+        TF_CHECK_OK(user->set_backend_config(user_backend_config.value()));
+      }
     }
   } else {
     auto real_i = i;

@@ -686,7 +686,10 @@ absl::Status GpuCompiler::OptimizeHloModule(
         num_partitions, hlo_module->config().replica_count(),
         hlo_module->config()
             .debug_options()
-            .xla_gpu_threshold_for_windowed_einsum_mib());
+            .xla_gpu_threshold_for_windowed_einsum_mib(),
+        hlo_module->config()
+            .debug_options()
+            .xla_gpu_multi_streamed_windowed_einsum());
     spmd_pipeline.AddPass<CollectivePermuteMotion>();
     TF_RETURN_IF_ERROR(spmd_pipeline.Run(hlo_module).status());
   } else {
