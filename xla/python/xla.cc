@@ -66,6 +66,11 @@ limitations under the License.
 #include "xla/pjrt/cpu/gloo_collectives.h"
 #include "xla/pjrt/cpu/gloo_kv_store.h"
 #endif  // __linux__
+
+#ifndef _WIN32
+#include "xla/pjrt/cpu/mpi_collectives.h"
+#endif // _WIN32
+
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/exceptions.h"
@@ -267,6 +272,17 @@ NB_MODULE(xla_extension, m_nb) {
       },
       nb::arg("distributed_client"), nb::arg("hostname").none() = std::nullopt,
       nb::arg("interface").none() = std::nullopt);
+
+  m_nb.def(
+      "make_mpi_collectives",
+      []() -> std::shared_ptr<xla::cpu::CollectivesInterface> {
+#ifndef _WIN32
+        return std::make_shared<cpu::MpiCollectives>();
+#else  // _WIN32
+        throw xla::XlaRuntimeError(
+            "make_mpi_collectives is not implemented for Windows");
+#endif // _WIN32
+      });
 
   m_nb.def(
       "get_tfrt_cpu_client",
