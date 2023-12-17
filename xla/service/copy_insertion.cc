@@ -1652,8 +1652,11 @@ class CopyRemover {
                                                       const HloUse* use) {
       return use->instruction == copy_value_node->value->defining_instruction();
     });
+    // The uses is empty.
+    //    if (!operand_node->uses.empty()) {
     CHECK(it != operand_node->uses.end());
     operand_node->uses.erase(it);
+    //    }
 
     // If the elided copy has any uses which are themselves kCopy instructions
     // then patch up the copy info to reflect the that this kCopy instruction
@@ -1829,7 +1832,12 @@ class CopyRemover {
         StrAppend(&result, ", ", node->value->ToShortString());
       }
     };
-    VisitValueNode(element);
+    const ValueNode* node = element;
+    while (node != nullptr) {
+      VisitValueNode(node);
+      node = node->next;
+      if (node == nullptr || node == element) break;
+    }
     StrAppend(&result, "}");
     return result;
   }
