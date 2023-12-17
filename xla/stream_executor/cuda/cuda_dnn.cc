@@ -9427,7 +9427,8 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
         CudnnfMHAUid::d_Q_accum_ID, CudnnfMHAUid::O_ID};
     if (bias_descriptor != std::nullopt) {
       uids.push_back(CudnnfMHAUid::BIAS_ID);
-    } else {
+    }
+    if (is_causal_mask) {
       // is causal mask
       // negative infinity
       double negative_infinity_value = -std::numeric_limits<float>::infinity();
