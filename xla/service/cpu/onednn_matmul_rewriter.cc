@@ -15,8 +15,12 @@ limitations under the License.
 
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 
+#define EIGEN_USE_THREADS
+
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
 
+#include "xla/executable_run_options.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -28,6 +32,7 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/status_macros.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/util/onednn_threadpool.h"
 
 namespace xla {
 namespace cpu {
@@ -658,6 +663,45 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
 
 class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
  public:
+  OneDnnMatMulReorderVisitor(const Eigen::ThreadPoolDevice* threadpool_device)
+    : threadpool_device_(threadpool_device)
+    , evaluator_(/*max_loop_iterations=*/0) {
+    evaluator_.set_custom_call_handler([this](
+                                    const HloInstruction* custom_call_instr,
+                                    absl::Span<const Literal*> operands)
+                                -> StatusOr<Literal> {
+      TF_ASSIGN_OR_RETURN(auto backend_config,
+                          custom_call_instr->backend_config<BackendConfig>());
+      auto& matmul_config = backend_config.onednn_matmul_config();
+
+      auto output = Literal::CreateFromShape(custom_call_instr->shape());
+
+      int64_t nargs = operands.size() + 3;
+      std::vector<void*> args;
+      args.push_back(&nargs);
+
+      ExecutableRunOptions run_options;
+      run_options.set_intra_op_thread_pool(threadpool_device_);
+      args.push_back(&run_options);  // No ExecutableRunOptions.
+
+      // OneDnnMatMulConfig
+      std::string config;
+      matmul_config.SerializeToString(&config);
+      args.push_back(config.data());
+
+      std::vector<MemrefInfoHandler> minfo_ptrs(operands.size());
+      std::transform(operands.begin(), operands.end(), minfo_ptrs.begin(), CreateMemrefInfoFromLiteral);
+      for (auto& minfo_ptr : minfo_ptrs) {
+        args.push_back(static_cast<void*>(minfo_ptr.get()));
+      }
+
+      auto result_ptr = CreateMemrefInfoFromLiteral(&output);
+      __xla_cpu_runtime_OneDnnMatMulReorder(result_ptr.get(), args.data());
+
+      return output;
+    });
+  }
+
   Status HandleCustomCall(HloInstruction* custom_call) override {
     HloInstruction *matmul;
     if (Match(custom_call, OneDnnMatmulInstr(&matmul))) {
@@ -683,6 +727,14 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
 
       auto output_shape = custom_call->shape();
 
+#ifndef ENABLE_ONEDNN_OPENMP
+      // set oneDNN cuncurrency settings (which is thread-local)
+      if (threadpool_device_ != nullptr &&
+          threadpool_device_->getPool() != nullptr) {
+            tsl::OneDnnThreadPool::set_onednn_max_threads(
+              threadpool_device_->getPool()->NumThreads());
+      }
+#endif
       auto new_weight_shape = OneDnnMatMulOptWeightsShape(input_shape,
                                                           weight_shape,
                                                           bias_shape,
@@ -713,10 +765,24 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
 
       reorder_call->CopyBackendConfigFrom(custom_call);
 
-      return custom_call->ReplaceOperandWithDifferentShape(1, reorder_call);
+      Literal result;
+
+      if (evaluator_.TryEvaluate(reorder_call, &result, true)) {
+        HloInstruction* reordered_weight = custom_call->AddInstruction(
+            HloInstruction::CreateConstant(std::move(result)));
+        return custom_call->ReplaceOperandWithDifferentShape(1,
+                                                             reordered_weight);
+
+      } else {
+        return DefaultAction(custom_call);
+      }
     }
     return DefaultAction(custom_call);
   }
+
+ private:
+  const Eigen::ThreadPoolDevice* threadpool_device_;
+  HloEvaluator evaluator_;
 };
 
 StatusOr<bool> OneDnnMatMulRewriter::Run(
@@ -726,7 +792,7 @@ StatusOr<bool> OneDnnMatMulRewriter::Run(
   TF_ASSIGN_OR_RETURN(auto result, visitor.RunOnModule(module,
                                                        execution_threads));
 
-  OneDnnMatMulReorderVisitor reorder_visitor;
+  OneDnnMatMulReorderVisitor reorder_visitor(threadpool_device_);
   TF_ASSIGN_OR_RETURN(auto result2, reorder_visitor.RunOnModule(module,
                                                        execution_threads));
 

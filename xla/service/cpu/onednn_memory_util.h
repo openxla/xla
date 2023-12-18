@@ -22,8 +22,11 @@ limitations under the License.
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Value.h"
+#include "xla/literal.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/xla_data.pb.h"
+
+#include <memory>
 
 namespace xla {
 namespace cpu {
@@ -40,6 +43,9 @@ struct StackAlloca {
 
 // Declare as opaque to put structure definition together with dependant code.
 struct MemrefInfoPOD;
+using MemrefInfoHandler = std::shared_ptr<MemrefInfoPOD>;
+
+MemrefInfoHandler CreateMemrefInfoFromLiteral(const Literal* literal);
 
 StackAlloca GetAllocaAndEmitMemrefInfo(llvm::IRBuilder<>& builder,
                                        const llvm_ir::IrArray& ir_array);

@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
+#include "unsupported/Eigen/CXX11/Tensor" // from @eigen_archive
 
 namespace xla {
 namespace cpu {
@@ -31,6 +32,9 @@ namespace cpu {
 // calls.
 class OneDnnMatMulRewriter : public HloModulePass {
  public:
+  OneDnnMatMulRewriter(const Eigen::ThreadPoolDevice* threadpool_device)
+      : threadpool_device_(threadpool_device) {}
+
   absl::string_view name() const override { return "onednn-matmul-rewriter"; }
 
   using HloPassInterface::Run;
@@ -39,6 +43,9 @@ class OneDnnMatMulRewriter : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
   static bool ShouldRewrite(const HloInstruction* dot_instr);
+
+private:
+  const Eigen::ThreadPoolDevice* threadpool_device_;
 };
 
 }  // namespace cpu

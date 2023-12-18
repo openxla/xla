@@ -600,7 +600,8 @@ void AddHloVerifier(HloPassPipeline* pipeline, bool allow_sparse_shapes,
 
 Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool is_aot_compile,
-    LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
+    LLVMTargetMachineFeatures* target_machine_features,
+    const CompileOptions& compile_options, bool is_mlir_compile) {
   const int64_t num_partitions = module->config().num_partitions();
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
@@ -857,7 +858,8 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 
 Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     HloModule* module, bool is_aot_compile,
-    LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
+    LLVMTargetMachineFeatures* target_machine_features,
+    const CompileOptions& compile_options, bool is_mlir_compile) {
   HloPassPipeline pipeline("HLO passes after layout assignment");
 
   // CopyInsertion is still needed by BufferAssignment. MLIR passes will handle
@@ -884,13 +886,29 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   pipeline.AddPass<ReshapeDecomposer>();
 
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+  std::unique_ptr<tsl::thread::ThreadPool> eigen_intraop_pool;
+  std::unique_ptr<Eigen::ThreadPoolDevice> threadpool_device;
   // AOT compiled code runs in single thread.
   if (!is_aot_compile) {
     // Run SimplifyFPConversions pass to simplify the BF16 pattern and make it
     // easier to match.
     pipeline.AddPass<SimplifyFPConversions>(
         SimplifyFPConversions::Scope::kSimplifyAllConversions);
-    pipeline.AddPass<OneDnnMatMulRewriter>();
+
+    if (compile_options.thread_pool) {
+      threadpool_device.reset(new Eigen::ThreadPoolDevice(
+          compile_options.thread_pool->AsEigenThreadPool(),
+          compile_options.thread_pool->NumThreads()));
+    } else {
+      eigen_intraop_pool.reset(new tsl::thread::ThreadPool(
+          tsl::Env::Default(), "XLACpuCompile",
+          tsl::port::MaxParallelism()));
+      threadpool_device.reset(new Eigen::ThreadPoolDevice(
+          eigen_intraop_pool->AsEigenThreadPool(),
+          eigen_intraop_pool->NumThreads()));
+    }
+
+    pipeline.AddPass<OneDnnMatMulRewriter>(threadpool_device.get());
     // Run SimplifyFPConversions pass again to remove redundant Convert ops
     // that may exist as a result of running OneDnnMatMulRewriter pass.
     pipeline.AddPass<SimplifyFPConversions>(
@@ -953,13 +971,16 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
 
 Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
                                  llvm::TargetMachine* target_machine,
+                                 const CompileOptions& compile_options,
                                  bool is_mlir_compile) {
   LLVMTargetMachineFeatures target_machine_features(target_machine);
   TF_RETURN_IF_ERROR(RunHloPassesThroughLayoutAssn(
-      module, is_aot_compile, &target_machine_features, is_mlir_compile));
+      module, is_aot_compile, &target_machine_features,
+      compile_options, is_mlir_compile));
 
   return RunHloPassesAfterLayoutAssn(module, is_aot_compile,
-                                     &target_machine_features, is_mlir_compile);
+                                     &target_machine_features,
+                                     compile_options, is_mlir_compile);
 }
 
 namespace {
@@ -1074,7 +1095,7 @@ Status CreateHloProfilingArtifacts(
 
 StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
     std::unique_ptr<HloModule> module, se::StreamExecutor* /*stream_exec*/,
-    const CompileOptions& /*options*/) {
+    const CompileOptions& options) {
   std::unique_ptr<llvm::TargetMachine> jit_target_machine =
       SimpleOrcJIT::InferTargetMachineForJIT(
           CompilerTargetOptions(module->config()),
@@ -1082,6 +1103,7 @@ StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
 
   TF_RETURN_IF_ERROR(RunHloPasses(
       module.get(), /*is_aot_compile=*/false, jit_target_machine.get(),
+      /*compile_options=*/ options,
       /*is_mlir_compile=*/
       module->config().debug_options().xla_cpu_use_xla_runtime()));
   return std::move(module);
@@ -1695,6 +1717,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
 
     TF_RETURN_IF_ERROR(
         RunHloPasses(module, /*is_aot_compile=*/true, target_machine.get(),
+                     /*dummy*/ CompileOptions{},
                      /*is_mlir_compile=*/options.use_mlir_hlo_lowering()));
 
     TF_ASSIGN_OR_RETURN(HloSchedule schedule,

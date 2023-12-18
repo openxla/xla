@@ -641,11 +641,14 @@ HloRunner::CreateExecutableWithBufferAssignment(
                       "are enabled.";
     }
     auto module_group = std::make_unique<HloModuleGroup>(std::move(module));
+    xla::Compiler::CompileOptions compile_options {
+      backend().memory_allocator(),
+      backend().eigen_intra_op_thread_pool()};
     TF_ASSIGN_OR_RETURN(
         auto executables,
         backend().compiler()->Compile(std::move(module_group),
                                       {{backend().default_stream_executor()}},
-                                      backend().memory_allocator()));
+                                      compile_options));
     return std::move(executables[0]);
   }
   return backend().compiler()->RunBackendWithBufferAssignment(

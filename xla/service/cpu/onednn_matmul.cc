@@ -310,14 +310,21 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMulReorder(
 
   const xla::ExecutableRunOptions* run_options =
       static_cast<const xla::ExecutableRunOptions*>(args[arg_indx++]);
-  XLA_LIGHTWEIGHT_CHECK(run_options != nullptr);
-  XLA_LIGHTWEIGHT_CHECK(run_options->intra_op_thread_pool() != nullptr);
-  tsl::OneDnnThreadPool thread_pool(
-      run_options->intra_op_thread_pool()->getPool(), false);
+
   engine cpu_engine(engine::kind::cpu, 0);
+
 #ifndef ENABLE_ONEDNN_OPENMP
-  auto onednn_stream =
-      stream(dnnl::threadpool_interop::make_stream(cpu_engine, &thread_pool));
+  tsl::OneDnnThreadPool thread_pool;
+  auto onednn_stream = [&]{
+    if (run_options != nullptr &&
+        run_options->intra_op_thread_pool() != nullptr) {
+      thread_pool = tsl::OneDnnThreadPool(
+        run_options->intra_op_thread_pool()->getPool(), false);
+      return stream(dnnl::threadpool_interop::make_stream(cpu_engine,
+                                                          &thread_pool));
+    } else {
+      return stream(cpu_engine);
+    }}();
 #else
   auto onednn_stream = stream(cpu_engine);
 #endif  // ENABLE_ONEDNN_OPENMP
