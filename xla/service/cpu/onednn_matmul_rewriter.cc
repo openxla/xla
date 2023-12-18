@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/cpu/onednn_matmul.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/service/pattern_matcher.h"
@@ -655,11 +656,81 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
   }
 };
 
+class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
+ public:
+  Status HandleCustomCall(HloInstruction* custom_call) override {
+    HloInstruction *matmul;
+    if (Match(custom_call, OneDnnMatmulInstr(&matmul))) {
+      TF_ASSIGN_OR_RETURN(auto backend_config,
+                          matmul->backend_config<BackendConfig>());
+      auto& matmul_config = backend_config.onednn_matmul_config();
+
+      auto operands = custom_call->operands();
+      auto input = operands[0];
+      auto weight = operands[1]; // assuming weights is the second operand
+
+      auto input_shape  = input->shape();
+      auto weight_shape = weight->shape();
+      if (weight_shape.rank() != 2) {
+        // pre-pack only 2D weights
+        return DefaultAction(custom_call);
+      }
+
+      auto bias_shape = absl::c_count(matmul_config.fused_ops(),
+                                      OneDnnMatMulConfig::BIAS) > 0
+                        ? operands.at(2)->shape()
+                        : Shape();
+
+      auto output_shape = custom_call->shape();
+
+      auto new_weight_shape = OneDnnMatMulOptWeightsShape(input_shape,
+                                                          weight_shape,
+                                                          bias_shape,
+                                                          output_shape,
+                                                          &matmul_config);
+
+
+      auto cmpt = custom_call->parent();
+      std::vector<HloInstruction*> new_operands {
+        cmpt->AddInstruction(
+                HloInstruction::CreateConstant(Literal(input_shape))),
+        weight,
+        cmpt->AddInstruction(
+                HloInstruction::CreateConstant(Literal(output_shape))),
+      };
+
+      if (ShapeUtil::IsInitialized(bias_shape)) {
+        new_operands.push_back(
+          cmpt->AddInstruction(
+            HloInstruction::CreateConstant(Literal(bias_shape))));
+      }
+
+      HloInstruction* reorder_call =
+        custom_call->AddInstruction(HloInstruction::CreateCustomCall(
+            new_weight_shape,
+            new_operands,
+            "__onednn$matmul_reorder"));
+
+      reorder_call->CopyBackendConfigFrom(custom_call);
+
+      return custom_call->ReplaceOperandWithDifferentShape(1, reorder_call);
+    }
+    return DefaultAction(custom_call);
+  }
+};
+
 StatusOr<bool> OneDnnMatMulRewriter::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   OneDnnMatMulRewriteVisitor visitor;
-  return visitor.RunOnModule(module, execution_threads);
+  TF_ASSIGN_OR_RETURN(auto result, visitor.RunOnModule(module,
+                                                       execution_threads));
+
+  OneDnnMatMulReorderVisitor reorder_visitor;
+  TF_ASSIGN_OR_RETURN(auto result2, reorder_visitor.RunOnModule(module,
+                                                       execution_threads));
+
+  return {result || result2};
 }
 
 }  // namespace cpu

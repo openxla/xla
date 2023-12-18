@@ -198,6 +198,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   Status HandleOneDnnMatMul(HloInstruction* hlo);
   Status HandleOneDnnSoftmax(HloInstruction* hlo);
   Status HandleOneDnnLayerNorm(HloInstruction* hlo);
+  Status HandleOneDnnMatMulReorder(HloInstruction* hlo);
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
   // Private helper to initialize an IR function for the computation.
   void InitializeIrFunction(const std::string& function_name);
