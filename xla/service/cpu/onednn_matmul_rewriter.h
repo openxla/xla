@@ -20,10 +20,10 @@ limitations under the License.
 #include <optional>
 
 #include "absl/algorithm/container.h"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
-#include "unsupported/Eigen/CXX11/Tensor" // from @eigen_archive
 
 namespace xla {
 namespace cpu {
@@ -44,7 +44,7 @@ class OneDnnMatMulRewriter : public HloModulePass {
 
   static bool ShouldRewrite(const HloInstruction* dot_instr);
 
-private:
+ private:
   const Eigen::ThreadPoolDevice* threadpool_device_;
 };
 

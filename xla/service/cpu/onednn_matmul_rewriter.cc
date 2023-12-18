@@ -664,46 +664,47 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
 class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
  public:
   OneDnnMatMulReorderVisitor(const Eigen::ThreadPoolDevice* threadpool_device)
-    : threadpool_device_(threadpool_device)
-    , evaluator_(/*max_loop_iterations=*/0) {
-    evaluator_.set_custom_call_handler([this](
-                                    const HloInstruction* custom_call_instr,
-                                    absl::Span<const Literal*> operands)
-                                -> StatusOr<Literal> {
-      TF_ASSIGN_OR_RETURN(auto backend_config,
-                          custom_call_instr->backend_config<BackendConfig>());
-      auto& matmul_config = backend_config.onednn_matmul_config();
+      : threadpool_device_(threadpool_device),
+        evaluator_(/*max_loop_iterations=*/0) {
+    evaluator_.set_custom_call_handler(
+        [this](const HloInstruction* custom_call_instr,
+               absl::Span<const Literal*> operands) -> StatusOr<Literal> {
+          TF_ASSIGN_OR_RETURN(
+              auto backend_config,
+              custom_call_instr->backend_config<BackendConfig>());
+          auto& matmul_config = backend_config.onednn_matmul_config();
 
-      auto output = Literal::CreateFromShape(custom_call_instr->shape());
+          auto output = Literal::CreateFromShape(custom_call_instr->shape());
 
-      int64_t nargs = operands.size() + 3;
-      std::vector<void*> args;
-      args.push_back(&nargs);
+          int64_t nargs = operands.size() + 3;
+          std::vector<void*> args;
+          args.push_back(&nargs);
 
-      ExecutableRunOptions run_options;
-      run_options.set_intra_op_thread_pool(threadpool_device_);
-      args.push_back(&run_options);  // No ExecutableRunOptions.
+          ExecutableRunOptions run_options;
+          run_options.set_intra_op_thread_pool(threadpool_device_);
+          args.push_back(&run_options);  // No ExecutableRunOptions.
 
-      // OneDnnMatMulConfig
-      std::string config;
-      matmul_config.SerializeToString(&config);
-      args.push_back(config.data());
+          // OneDnnMatMulConfig
+          std::string config;
+          matmul_config.SerializeToString(&config);
+          args.push_back(config.data());
 
-      std::vector<MemrefInfoHandler> minfo_ptrs(operands.size());
-      std::transform(operands.begin(), operands.end(), minfo_ptrs.begin(), CreateMemrefInfoFromLiteral);
-      for (auto& minfo_ptr : minfo_ptrs) {
-        args.push_back(static_cast<void*>(minfo_ptr.get()));
-      }
+          std::vector<MemrefInfoHandler> minfo_ptrs(operands.size());
+          std::transform(operands.begin(), operands.end(), minfo_ptrs.begin(),
+                         CreateMemrefInfoFromLiteral);
+          for (auto& minfo_ptr : minfo_ptrs) {
+            args.push_back(static_cast<void*>(minfo_ptr.get()));
+          }
 
-      auto result_ptr = CreateMemrefInfoFromLiteral(&output);
-      __xla_cpu_runtime_OneDnnMatMulReorder(result_ptr.get(), args.data());
+          auto result_ptr = CreateMemrefInfoFromLiteral(&output);
+          __xla_cpu_runtime_OneDnnMatMulReorder(result_ptr.get(), args.data());
 
-      return output;
-    });
+          return output;
+        });
   }
 
   Status HandleCustomCall(HloInstruction* custom_call) override {
-    HloInstruction *matmul;
+    HloInstruction* matmul;
     if (Match(custom_call, OneDnnMatmulInstr(&matmul))) {
       TF_ASSIGN_OR_RETURN(auto backend_config,
                           matmul->backend_config<BackendConfig>());
@@ -711,19 +712,19 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
 
       auto operands = custom_call->operands();
       auto input = operands[0];
-      auto weight = operands[1]; // assuming weights is the second operand
+      auto weight = operands[1];  // assuming weights is the second operand
 
-      auto input_shape  = input->shape();
+      auto input_shape = input->shape();
       auto weight_shape = weight->shape();
       if (weight_shape.rank() != 2) {
         // pre-pack only 2D weights
         return DefaultAction(custom_call);
       }
 
-      auto bias_shape = absl::c_count(matmul_config.fused_ops(),
-                                      OneDnnMatMulConfig::BIAS) > 0
-                        ? operands.at(2)->shape()
-                        : Shape();
+      auto bias_shape =
+          absl::c_count(matmul_config.fused_ops(), OneDnnMatMulConfig::BIAS) > 0
+              ? operands.at(2)->shape()
+              : Shape();
 
       auto output_shape = custom_call->shape();
 
@@ -731,37 +732,30 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
       // set oneDNN cuncurrency settings (which is thread-local)
       if (threadpool_device_ != nullptr &&
           threadpool_device_->getPool() != nullptr) {
-            tsl::OneDnnThreadPool::set_onednn_max_threads(
-              threadpool_device_->getPool()->NumThreads());
+        tsl::OneDnnThreadPool::set_onednn_max_threads(
+            threadpool_device_->getPool()->NumThreads());
       }
 #endif
-      auto new_weight_shape = OneDnnMatMulOptWeightsShape(input_shape,
-                                                          weight_shape,
-                                                          bias_shape,
-                                                          output_shape,
-                                                          &matmul_config);
-
+      auto new_weight_shape = OneDnnMatMulOptWeightsShape(
+          input_shape, weight_shape, bias_shape, output_shape, &matmul_config);
 
       auto cmpt = custom_call->parent();
-      std::vector<HloInstruction*> new_operands {
-        cmpt->AddInstruction(
-                HloInstruction::CreateConstant(Literal(input_shape))),
-        weight,
-        cmpt->AddInstruction(
-                HloInstruction::CreateConstant(Literal(output_shape))),
+      std::vector<HloInstruction*> new_operands{
+          cmpt->AddInstruction(
+              HloInstruction::CreateConstant(Literal(input_shape))),
+          weight,
+          cmpt->AddInstruction(
+              HloInstruction::CreateConstant(Literal(output_shape))),
       };
 
       if (ShapeUtil::IsInitialized(bias_shape)) {
-        new_operands.push_back(
-          cmpt->AddInstruction(
+        new_operands.push_back(cmpt->AddInstruction(
             HloInstruction::CreateConstant(Literal(bias_shape))));
       }
 
       HloInstruction* reorder_call =
-        custom_call->AddInstruction(HloInstruction::CreateCustomCall(
-            new_weight_shape,
-            new_operands,
-            "__onednn$matmul_reorder"));
+          custom_call->AddInstruction(HloInstruction::CreateCustomCall(
+              new_weight_shape, new_operands, "__onednn$matmul_reorder"));
 
       reorder_call->CopyBackendConfigFrom(custom_call);
 
@@ -789,12 +783,12 @@ StatusOr<bool> OneDnnMatMulRewriter::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   OneDnnMatMulRewriteVisitor visitor;
-  TF_ASSIGN_OR_RETURN(auto result, visitor.RunOnModule(module,
-                                                       execution_threads));
+  TF_ASSIGN_OR_RETURN(auto result,
+                      visitor.RunOnModule(module, execution_threads));
 
   OneDnnMatMulReorderVisitor reorder_visitor(threadpool_device_);
-  TF_ASSIGN_OR_RETURN(auto result2, reorder_visitor.RunOnModule(module,
-                                                       execution_threads));
+  TF_ASSIGN_OR_RETURN(auto result2,
+                      reorder_visitor.RunOnModule(module, execution_threads));
 
   return {result || result2};
 }

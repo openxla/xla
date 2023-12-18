@@ -901,11 +901,10 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
           compile_options.thread_pool->NumThreads()));
     } else {
       eigen_intraop_pool.reset(new tsl::thread::ThreadPool(
-          tsl::Env::Default(), "XLACpuCompile",
-          tsl::port::MaxParallelism()));
-      threadpool_device.reset(new Eigen::ThreadPoolDevice(
-          eigen_intraop_pool->AsEigenThreadPool(),
-          eigen_intraop_pool->NumThreads()));
+          tsl::Env::Default(), "XLACpuCompile", tsl::port::MaxParallelism()));
+      threadpool_device.reset(
+          new Eigen::ThreadPoolDevice(eigen_intraop_pool->AsEigenThreadPool(),
+                                      eigen_intraop_pool->NumThreads()));
     }
 
     pipeline.AddPass<OneDnnMatMulRewriter>(threadpool_device.get());
@@ -975,12 +974,12 @@ Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
                                  bool is_mlir_compile) {
   LLVMTargetMachineFeatures target_machine_features(target_machine);
   TF_RETURN_IF_ERROR(RunHloPassesThroughLayoutAssn(
-      module, is_aot_compile, &target_machine_features,
-      compile_options, is_mlir_compile));
+      module, is_aot_compile, &target_machine_features, compile_options,
+      is_mlir_compile));
 
   return RunHloPassesAfterLayoutAssn(module, is_aot_compile,
-                                     &target_machine_features,
-                                     compile_options, is_mlir_compile);
+                                     &target_machine_features, compile_options,
+                                     is_mlir_compile);
 }
 
 namespace {
@@ -1103,7 +1102,7 @@ StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
 
   TF_RETURN_IF_ERROR(RunHloPasses(
       module.get(), /*is_aot_compile=*/false, jit_target_machine.get(),
-      /*compile_options=*/ options,
+      /*compile_options=*/options,
       /*is_mlir_compile=*/
       module->config().debug_options().xla_cpu_use_xla_runtime()));
   return std::move(module);

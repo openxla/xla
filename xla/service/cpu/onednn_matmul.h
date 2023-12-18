@@ -17,8 +17,8 @@ limitations under the License.
 #define XLA_SERVICE_CPU_ONEDNN_MATMUL_H_
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 
-#include "xla/shape.h"
 #include "xla/service/cpu/backend_config.pb.h"
+#include "xla/shape.h"
 
 namespace xla {
 namespace cpu {

@@ -194,8 +194,7 @@ class CpuCompiler : public LLVMCompiler {
   Status RunHloPassesThroughLayoutAssn(
       HloModule* module, bool /*is_aot_compile*/,
       LLVMTargetMachineFeatures* target_machine_features,
-      const CompileOptions& compile_options,
-      bool is_mlir_compile = false);
+      const CompileOptions& compile_options, bool is_mlir_compile = false);
 
   // Runs HLO passes after layout assignment.
   Status RunHloPassesAfterLayoutAssn(

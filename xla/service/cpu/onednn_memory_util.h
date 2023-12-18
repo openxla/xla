@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_SERVICE_CPU_ONEDNN_MEMORY_UTIL_H_
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 
+#include <memory>
+
 #include "dnnl.hpp"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -25,8 +27,6 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/xla_data.pb.h"
-
-#include <memory>
 
 namespace xla {
 namespace cpu {

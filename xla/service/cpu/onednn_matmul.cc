@@ -76,20 +76,17 @@ dnnl::memory::desc ShapeToMemDesc(const Shape& shape, bool transpose = false) {
 
   auto dt = ToOneDnnDataType(static_cast<PrimitiveType>(shape.element_type()));
 
-  return transpose
-        ? Transpose(dnnl::memory::desc(dims, dt, strides))
-        : dnnl::memory::desc(dims, dt, strides);
+  return transpose ? Transpose(dnnl::memory::desc(dims, dt, strides))
+                   : dnnl::memory::desc(dims, dt, strides);
 }
 
-dnnl::memory::desc
-OneDnnMatMulOptWeightsDesc(const dnnl::engine& engine,
-                           const dnnl::memory::desc& input_md,
-                           const dnnl::memory::desc& weights_md,
-                           const dnnl::memory::desc& bias_md,
-                           const dnnl::memory::desc& output_md) {
-  auto weights_any_md = memory::desc(weights_md.get_dims(),
-                                     weights_md.get_data_type(),
-                                     dnnl::memory::format_tag::any);
+dnnl::memory::desc OneDnnMatMulOptWeightsDesc(
+    const dnnl::engine& engine, const dnnl::memory::desc& input_md,
+    const dnnl::memory::desc& weights_md, const dnnl::memory::desc& bias_md,
+    const dnnl::memory::desc& output_md) {
+  auto weights_any_md =
+      memory::desc(weights_md.get_dims(), weights_md.get_data_type(),
+                   dnnl::memory::format_tag::any);
 
   auto matmul_pd = matmul::primitive_desc(engine, input_md, weights_any_md,
                                           bias_md, output_md);
@@ -97,33 +94,29 @@ OneDnnMatMulOptWeightsDesc(const dnnl::engine& engine,
   return matmul_pd.weights_desc();
 }
 
-dnnl::memory::desc
-OneDnnMatMulOptWeightsDesc(const dnnl::engine& engine,
-                           const Shape& input_shape,
-                           const Shape& weights_shape,
-                           const Shape& bias_shape,
-                           const Shape& output_shape,
-                           const OneDnnMatMulConfig* matmul_config) {
-  auto input_md   = ShapeToMemDesc(input_shape, matmul_config->transpose_a());
+dnnl::memory::desc OneDnnMatMulOptWeightsDesc(
+    const dnnl::engine& engine, const Shape& input_shape,
+    const Shape& weights_shape, const Shape& bias_shape,
+    const Shape& output_shape, const OneDnnMatMulConfig* matmul_config) {
+  auto input_md = ShapeToMemDesc(input_shape, matmul_config->transpose_a());
   auto weights_md = ShapeToMemDesc(weights_shape, matmul_config->transpose_b());
-  auto bias_md    = absl::c_count(matmul_config->fused_ops(),
-                          OneDnnMatMulConfig::BIAS) > 0
-                    ? ShapeToMemDesc(bias_shape)
-                    : dnnl::memory::desc{};
-  auto output_md  = ShapeToMemDesc(output_shape);
+  auto bias_md =
+      absl::c_count(matmul_config->fused_ops(), OneDnnMatMulConfig::BIAS) > 0
+          ? ShapeToMemDesc(bias_shape)
+          : dnnl::memory::desc{};
+  auto output_md = ShapeToMemDesc(output_shape);
 
   // extend bias rank to match result rank
   auto missed_rank = output_md.get_ndims() - bias_md.get_ndims();
   XLA_LIGHTWEIGHT_CHECK(missed_rank >= 0);
-  if( !bias_md.is_zero() && missed_rank > 0 ) {
+  if (!bias_md.is_zero() && missed_rank > 0) {
     auto bias_dims = bias_md.get_dims();
     bias_dims.insert(bias_dims.begin(), missed_rank, 1);
     bias_md = bias_md.reshape(bias_dims);
   }
 
-  return OneDnnMatMulOptWeightsDesc(engine,
-                                    input_md, weights_md,
-                                    bias_md, output_md);
+  return OneDnnMatMulOptWeightsDesc(engine, input_md, weights_md, bias_md,
+                                    output_md);
 }
 
 Shape MemDescToXlaShape(const dnnl::memory::desc& md) {
@@ -143,12 +136,9 @@ Shape OneDnnMatMulOptWeightsShape(const Shape& input_shape,
                                   const Shape& output_shape,
                                   const OneDnnMatMulConfig* matmul_config) {
   engine cpu_engine(engine::kind::cpu, 0);
-  auto optimized_weights_md = OneDnnMatMulOptWeightsDesc(cpu_engine,
-                                                         input_shape,
-                                                         weights_shape,
-                                                         bias_shape,
-                                                         output_shape,
-                                                         matmul_config);
+  auto optimized_weights_md =
+      OneDnnMatMulOptWeightsDesc(cpu_engine, input_shape, weights_shape,
+                                 bias_shape, output_shape, matmul_config);
   return MemDescToXlaShape(optimized_weights_md);
 }
 
@@ -260,20 +250,16 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
     attrs.set_post_ops(post_ops);
   }
 
-  bool weights_packed = rhs_md.get_ndims() == 1
-                     && rhs_md.get_dims().front() != lhs_md.get_dims().back();
+  bool weights_packed = rhs_md.get_ndims() == 1 &&
+                        rhs_md.get_dims().front() != lhs_md.get_dims().back();
   if (weights_packed) {
     // expected 2D buffer with last dim of input and last dim of output
-    auto rhs_any_md = memory::desc(
-                        {
-                          lhs_md.get_dims().back(),
-                          result_md.get_dims().back()},
-                        rhs_md.get_data_type(),
-                        memory::format_tag::any);
+    auto rhs_any_md =
+        memory::desc({lhs_md.get_dims().back(), result_md.get_dims().back()},
+                     rhs_md.get_data_type(), memory::format_tag::any);
 
-    rhs_md = OneDnnMatMulOptWeightsDesc(cpu_engine,
-                                        lhs_md, rhs_any_md,
-                                        bias_md, result_md);
+    rhs_md = OneDnnMatMulOptWeightsDesc(cpu_engine, lhs_md, rhs_any_md, bias_md,
+                                        result_md);
   }
 
   auto lhs_mem = memory(lhs_md, cpu_engine, lhs_minfo.Data());
@@ -315,16 +301,17 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMulReorder(
 
 #ifndef ENABLE_ONEDNN_OPENMP
   tsl::OneDnnThreadPool thread_pool;
-  auto onednn_stream = [&]{
+  auto onednn_stream = [&] {
     if (run_options != nullptr &&
         run_options->intra_op_thread_pool() != nullptr) {
       thread_pool = tsl::OneDnnThreadPool(
-        run_options->intra_op_thread_pool()->getPool(), false);
-      return stream(dnnl::threadpool_interop::make_stream(cpu_engine,
-                                                          &thread_pool));
+          run_options->intra_op_thread_pool()->getPool(), false);
+      return stream(
+          dnnl::threadpool_interop::make_stream(cpu_engine, &thread_pool));
     } else {
       return stream(cpu_engine);
-    }}();
+    }
+  }();
 #else
   auto onednn_stream = stream(cpu_engine);
 #endif  // ENABLE_ONEDNN_OPENMP
@@ -364,25 +351,21 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMulReorder(
   if (!bias_md.is_zero()) {
     auto missed_rank = output_md.get_ndims() - bias_md.get_ndims();
     XLA_LIGHTWEIGHT_CHECK(missed_rank >= 0);
-    if( missed_rank > 0 ) {
+    if (missed_rank > 0) {
       auto bias_dims = bias_md.get_dims();
       bias_dims.insert(bias_dims.begin(), missed_rank, 1);
       bias_md = bias_md.reshape(bias_dims);
     }
   }
 
-  auto result_md = OneDnnMatMulOptWeightsDesc(cpu_engine,
-                                              input_md,
-                                              weight_md,
-                                              bias_md,
-                                              output_md);
+  auto result_md = OneDnnMatMulOptWeightsDesc(cpu_engine, input_md, weight_md,
+                                              bias_md, output_md);
 
-  XLA_LIGHTWEIGHT_CHECK(result_minfo.GetOneDnnMemDesc().get_size()
-                     == result_md.get_size());
+  XLA_LIGHTWEIGHT_CHECK(result_minfo.GetOneDnnMemDesc().get_size() ==
+                        result_md.get_size());
 
   auto weight_mem = dnnl::memory{weight_md, cpu_engine, weight_minfo.Data()};
   auto result_mem = dnnl::memory{result_md, cpu_engine, result_minfo.Data()};
-
 
   dnnl::reorder rdr{weight_mem, result_mem};
   rdr.execute(onednn_stream, weight_mem, result_mem);
