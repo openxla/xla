@@ -282,17 +282,6 @@ Status UnimplementedStrCat(Args&&... concat) {
       tsl::errors::Unimplemented(std::forward<Args>(concat)...));
 }
 
-template <typename... Args>
-Status InternalErrorStrCat(Args&&... concat) {
-  return WithLogBacktrace(tsl::errors::Internal(std::forward<Args>(concat)...));
-}
-
-template <typename... Args>
-Status ResourceExhaustedStrCat(Args&&... concat) {
-  return WithLogBacktrace(
-      tsl::errors::ResourceExhausted(std::forward<Args>(concat)...));
-}
-
 // Splits the lines of the original, replaces leading whitespace with the prefix
 // given by "indentation", and returns the string joined by newlines again. As a
 // side effect, any additional trailing whitespace is removed.

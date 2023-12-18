@@ -337,11 +337,11 @@ Status HloBisectState::ExpectModuleIsBuggy() {
     }
   }
   if (bug_count != 0) {
-    return InternalErrorStrCat("The checker is non deterministic! (only ",
-                               bug_count, " failures seen in ",
-                               (retry_count + 1), " runs)");
+    return absl::InternalError(
+        absl::StrCat("The checker is non deterministic! (only ", bug_count,
+                     " failures seen in ", (retry_count + 1), " runs)"));
   }
-  return InternalError("We \"lost\" the bug while bisecting!");
+  return absl::InternalError("We \"lost\" the bug while bisecting!");
 }
 
 }  // namespace bisect
