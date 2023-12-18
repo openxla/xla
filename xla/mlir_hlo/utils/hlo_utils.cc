@@ -165,7 +165,7 @@ DenseElementsAttr getScalarLimitOfType(Type ty, ScalarLimit limit) {
 
 std::string lmhloToMhloOpName(llvm::StringRef opName,
                               mlir::MLIRContext* context) {
-  assert(opName.startswith("lmhlo.") && "Expected an LMHLO op");
+  assert(opName.starts_with("lmhlo.") && "Expected an LMHLO op");
 
   if (opName == "lmhlo.dot") {
     return "mhlo.dot_general";
