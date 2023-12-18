@@ -200,6 +200,12 @@ void BM_SmallTopk(benchmark::State& state) {
   se::DeviceMemory<uint32_t> output_indices =
       executor->AllocateArray<uint32_t>(k, 0);
 
+  if(input_buffer.is_null() || output_values.is_null() || 
+      output_indices.is_null()) {
+    state.SkipWithError("Unable to allocate GPU memory: aborting benchmark");
+    return;
+  }
+
   auto source = RandomVec<T>(n);
   stream.ThenMemcpy(&input_buffer, source.data(), n * sizeof(T));
 
@@ -211,7 +217,7 @@ void BM_SmallTopk(benchmark::State& state) {
     CHECK_OK(stream.BlockHostUntilDone());
     auto timer_duration = timer.value().GetElapsedDuration();
     CHECK_OK(timer_duration.status());
-    state.SetIterationTime(absl::ToDoubleMicroseconds(timer_duration.value()));
+    state.SetIterationTime(absl::ToDoubleSeconds(timer_duration.value()));
   }
   size_t items_processed = batch_size * n * state.iterations();
   state.SetItemsProcessed(items_processed);
