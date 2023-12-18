@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_GPU_MULTI_OUTPUT_FUSION_H_
 
 #include <memory>
+#include <optional>
 #include <queue>
 #include <vector>
 
@@ -106,8 +107,17 @@ class GpuMultiOutputFusion : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  bool FuseSiblings(HloInstruction* parent, FusionInfoCache* fusion_info_cache,
-                    GpuHloCostAnalysis* cost_analysis);
+  bool FuseSiblings(HloInstruction* parent);
+
+  std::vector<HloInstruction*> GetProducerConsumerMultiOutputFusionCandidates(
+      const HloInstruction* producer);
+
+  FusionDecision ProducerCandidateIsFusible(const HloInstruction& producer,
+                                            const HloInstruction& consumer);
+
+  FusionDecision CanFuseSiblings(const HloInstruction& sibling_consumer_1,
+                                 const HloInstruction& sibling_consumer_2,
+                                 const HloInstruction& common_producer);
 
   StatusOr<bool> DoMultiOutputFusion();
 
@@ -125,6 +135,8 @@ class GpuMultiOutputFusion : public HloModulePass {
 
   se::DeviceDescription device_info_;
   HloCostAnalysis::ShapeSizeFunction shape_size_function_;
+  std::optional<GpuHloCostAnalysis> cost_analysis_;
+  FusionInfoCache fusion_info_cache_;
 };
 
 }  // namespace gpu
