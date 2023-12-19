@@ -51,6 +51,7 @@ class DeterminismTest : public GpuCodegenTest {
     std::vector<Literal> fake_arguments;
     std::vector<Literal*> fake_arguments_ptrs;
     std::optional<Literal> canonical_output;
+    static_assert(false);
 
     for (int i = 0; i < num_runs; ++i) {
       // Clear the autotune cache every iteration to ensure autotuning, if run,
