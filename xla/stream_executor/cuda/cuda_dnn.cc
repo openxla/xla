@@ -2052,11 +2052,6 @@ tsl::Status CreateRnnTempSpace(
     ScratchAllocator* workspace_allocator,
     ScratchAllocator* reserve_space_allocator, bool is_fwd_training,
     DeviceMemory<uint8_t>* workspace, DeviceMemory<uint8_t>* reserve_space) {
-  if (is_fwd_training && (reserve_space_allocator == nullptr ||
-                          reserve_space == nullptr)) {
-    return tsl::errors::Internal(
-        "Reserve space and its allocator are required in RNN training mode.");
-  }
 
   size_t reserve_space_size_in_bytes = 0;
   size_t workspace_size_in_bytes = 0;
@@ -2101,7 +2096,8 @@ tsl::Status CreateRnnTempSpace(
     TF_ASSIGN_OR_RETURN(*workspace, workspace_allocator->AllocateBytes(
                                         workspace_size_in_bytes));
   }
-  if (is_fwd_training && reserve_space_size_in_bytes > 0) {
+  if (reserve_space_allocator != nullptr && is_fwd_training &&
+      reserve_space_size_in_bytes > 0) {
     TF_ASSIGN_OR_RETURN(*reserve_space, reserve_space_allocator->AllocateBytes(
                                             reserve_space_size_in_bytes));
   }
@@ -2365,7 +2361,7 @@ tsl::Status CudnnSupport::DoRnnBackwardImpl(
   DeviceMemory<uint8_t> workspace;
   TF_RETURN_IF_ERROR(CreateRnnTempSpace(
       stream, cudnn, rnn_desc, model_dims, input_desc, workspace_allocator,
-      nullptr, false, &workspace, nullptr));
+      nullptr, true, &workspace, nullptr));
 
   const bool is_profiling = output_profile_result != nullptr;
   TF_ASSIGN_OR_RETURN(
