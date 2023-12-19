@@ -359,6 +359,7 @@ cc_library(
         ":serdes",
         ":sharding_proto_cc",
         "//xla:statusor",
+        "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:statusor",
     ],
@@ -371,10 +372,12 @@ xla_cc_test(
     deps = [
         ":ifrt",
         ":serdes",
+        ":serdes_proto_cc",
         ":sharding_serdes",
         ":sharding_test_util",
         "@com_google_absl//absl/functional:bind_front",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
