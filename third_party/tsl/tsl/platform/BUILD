@@ -1235,6 +1235,7 @@ cc_library(
     hdrs = ["fingerprint.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        ":platform",
         ":stringpiece",
         ":types",
     ] + tf_fingerprint_deps(),
