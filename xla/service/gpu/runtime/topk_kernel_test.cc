@@ -82,7 +82,6 @@ se::StreamExecutor *GetGpuExecutor() {
   return platform->ExecutorForDevice(0).value();
 }
 
-
 // Params:
 //  - n_kb: number of elements in kilobytes.
 //  - k: number of elements to return.
@@ -104,23 +103,23 @@ TEST_P(TopkTest, TopKFloat) {
   const auto [n_kb, k, batch_size, offset] = GetParam();
   const size_t n = n_kb * 1024 + offset;
 
-  se::DeviceMemory<T> input_buffer =
-      executor->AllocateArray<T>(n * batch_size, 0);
-  se::DeviceMemory<T> output_values =
-      executor->AllocateArray<T>(k * batch_size, 0);
-  se::DeviceMemory<uint32_t> output_indices =
-      executor->AllocateArray<uint32_t>(k * batch_size, 0);
+  auto input_buffer = executor->AllocateOwnedArray<T>(n * batch_size),
+       output_values = executor->AllocateOwnedArray<T>(k * batch_size);
+  auto output_indices = executor->AllocateOwnedArray<uint32_t>(k * batch_size);
+
+  ASSERT_TRUE(!(input_buffer.is_null() || output_values.is_null() || 
+      output_indices.is_null()));
 
   auto source = RandomVec<T>(n * batch_size);
-  stream.ThenMemcpy(&input_buffer, source.data(), n * batch_size * sizeof(T));
+  stream.ThenMemcpy(input_buffer.ptr(), source.data(), n * batch_size * sizeof(T));
 
-  ASSERT_TRUE(RunTopk(&stream, Get(T()), input_buffer, n, output_values,
-                      output_indices, k, batch_size)
+  ASSERT_TRUE(RunTopk(&stream, Get(T()), *input_buffer, n, *output_values,
+                      *output_indices, k, batch_size)
                   .ok());
   std::vector<T> got(k);
   ASSERT_TRUE(stream.BlockHostUntilDone().ok());
   for (int i = 0; i < batch_size; i++) {
-    stream.ThenMemcpy(got.data(), output_values.GetSlice(k * i, k),
+    stream.ThenMemcpy(got.data(), output_values->GetSlice(k * i, k),
                       k * sizeof(T));
     std::vector<T> slice(source.data() + n * i, source.data() + n * (i + 1));
     std::sort(slice.begin(), slice.end(), std::greater<T>());
@@ -141,23 +140,23 @@ TEST_P(TopkTest, TopKPackedNegative) {
   const auto [n_kb, k, batch_size, offset] = GetParam();
   const size_t n = n_kb * 1024 + offset;
 
-  se::DeviceMemory<T> input_buffer =
-      executor->AllocateArray<T>(n * batch_size, 0);
-  se::DeviceMemory<T> output_values =
-      executor->AllocateArray<T>(k * batch_size, 0);
-  se::DeviceMemory<uint32_t> output_indices =
-      executor->AllocateArray<uint32_t>(k * batch_size, 0);
+  auto input_buffer = executor->AllocateOwnedArray<T>(n * batch_size),
+       output_values = executor->AllocateOwnedArray<T>(k * batch_size);
+  auto output_indices = executor->AllocateOwnedArray<uint32_t>(k * batch_size);
+
+  ASSERT_TRUE(!(input_buffer.is_null() || output_values.is_null() || 
+      output_indices.is_null()));
 
   auto source = RandomVecNegative<T>(n * batch_size);
-  stream.ThenMemcpy(&input_buffer, source.data(), n * batch_size * sizeof(T));
+  stream.ThenMemcpy(input_buffer.ptr(), source.data(), n * batch_size * sizeof(T));
 
-  ASSERT_TRUE(RunTopk(&stream, Get(T()), input_buffer, n, output_values,
-                      output_indices, k, batch_size)
+  ASSERT_TRUE(RunTopk(&stream, Get(T()), *input_buffer, n, *output_values,
+                      *output_indices, k, batch_size)
                   .ok());
   std::vector<T> got(k);
   ASSERT_TRUE(stream.BlockHostUntilDone().ok());
   for (int i = 0; i < batch_size; i++) {
-    stream.ThenMemcpy(got.data(), output_values.GetSlice(k * i, k),
+    stream.ThenMemcpy(got.data(), output_values->GetSlice(k * i, k),
                       k * sizeof(T));
     std::vector<T> slice(source.data() + n * i, source.data() + n * (i + 1));
     std::sort(slice.begin(), slice.end(), std::greater<T>());
@@ -196,30 +195,29 @@ void BM_SmallTopk(benchmark::State& state) {
   stream.Init();
   ASSERT_TRUE(stream.ok());
 
-  se::DeviceMemory<T> input_buffer =
-      executor->AllocateArray<T>(n * batch_size, 0);
-  se::DeviceMemory<T> output_values = executor->AllocateArray<T>(k, 0);
-  se::DeviceMemory<uint32_t> output_indices =
-      executor->AllocateArray<uint32_t>(k, 0);
-
+  auto input_buffer = executor->AllocateOwnedArray<T>(n * batch_size),
+       output_values = executor->AllocateOwnedArray<T>(k * batch_size);
+  auto output_indices = executor->AllocateOwnedArray<uint32_t>(k * batch_size);
+  
   if(input_buffer.is_null() || output_values.is_null() || 
       output_indices.is_null()) {
     state.SkipWithError("Unable to allocate GPU memory: aborting benchmark");
     return;
   }
-  char bbf[256];
-  sprintf(bbf, "n: %d; batch_sz: %d; allocated: 0x%X",
-    n, batch_size, n * batch_size * sizeof(T));
-  VLOG(0) << bbf;
 
   auto source = RandomVec<T>(n);
-  stream.ThenMemcpy(&input_buffer, source.data(), n * sizeof(T));
-
+  // use the same random vector for all batches (otherwise it takes too much
+  // time to generate random data)
+  for(size_t i = 0; i < batch_size; i++) {
+    auto slice = input_buffer->GetSlice(i * n, n);
+    stream.ThenMemcpy(&slice, source.data(), n * sizeof(T));
+  }
+  
   for (auto _ : state) {
     auto timer = se::gpu::GpuTimer::Create(se::gpu::AsGpuStream(&stream));
     CHECK_OK(timer.status());
-    CHECK_OK(RunTopk(&stream, Get(T()), input_buffer, n, output_values,
-                     output_indices, k, batch_size));
+    CHECK_OK(RunTopk(&stream, Get(T()), *input_buffer, n, *output_values,
+                     *output_indices, k, batch_size));
     CHECK_OK(stream.BlockHostUntilDone());
     auto timer_duration = timer.value().GetElapsedDuration();
     CHECK_OK(timer_duration.status());
@@ -230,11 +228,11 @@ void BM_SmallTopk(benchmark::State& state) {
   state.SetBytesProcessed(items_processed * sizeof(T));
 }
 
-// BENCHMARK(BM_SmallTopk<1>)->RangePair(1, 512, 16, 1024)->UseManualTime();
- //BENCHMARK(BM_SmallTopk<2>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
-// BENCHMARK(BM_SmallTopk<4>)->RangePair(1, 512, 16, 1024)->UseManualTime();
-// BENCHMARK(BM_SmallTopk<8>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
-BENCHMARK(BM_SmallTopk<16>)->RangePair(1, 1024, 16, 16)->UseManualTime();
+BENCHMARK(BM_SmallTopk<1>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
+BENCHMARK(BM_SmallTopk<2>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
+BENCHMARK(BM_SmallTopk<4>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
+BENCHMARK(BM_SmallTopk<8>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
+BENCHMARK(BM_SmallTopk<16>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
 
 }  // namespace
 }  // namespace xla::gpu
