@@ -1608,10 +1608,11 @@ tsl::Status CheckAndFetchProjectionWeights(
       /*outProjSize*/ &out_proj_size_v));
 #endif  // CUDNN_VERSION >= 8100
   if (rec_proj_size_v != hidden_size_v) {
-    void* offset = nullptr;
     int region_id = 8;
 #if CUDNN_VERSION >= 8100
-    void* b_offset = nullptr;
+    void* b_ptr = nullptr;
+    void* m_ptr = nullptr;
+    void* w_ptr = nullptr;
     TensorDescriptor m_region_desc_handle = CreateTensorDescriptor();
     TensorDescriptor b_region_desc_handle = CreateTensorDescriptor();
     RETURN_IF_CUDNN_ERROR(cudnnGetRNNWeightParams(
@@ -1619,12 +1620,12 @@ tsl::Status CheckAndFetchProjectionWeights(
         /*rnnDesc=*/rnn_desc,
         /*pseudoLayer=*/layer,
         /*weightSpaceSize=*/params_size_in_bytes,
-        /*weightSpace=*/nullptr,
+        /*weightSpace=*/w_ptr,
         /*linLayerID=*/region_id,
         /*mDesc=*/m_region_desc_handle.get(),
-        /*mAddr=*/&offset,
+        /*mAddr=*/&m_ptr,
         /*bDesc=*/b_region_desc_handle.get(),
-        /*bAddr=*/&b_offset));
+        /*bAddr=*/&b_ptr));
     int dims[] = {1, 1, 1};
     int strides[] = {1, 1, 1};
     cudnnDataType_t data_type;
@@ -1638,7 +1639,9 @@ tsl::Status CheckAndFetchProjectionWeights(
         /*strideA*/strides));
     int64_t size =
         dims[0] * dims[1] * dims[2] * CudnnDataTypeToByteSize(data_type);
+    int64_t offset = static_cast<char*>(m_ptr) - static_cast<char*>(w_ptr);
 #else
+    void* offset = nullptr;
     RETURN_IF_CUDNN_ERROR(cudnnGetRNNLinLayerMatrixParams(
         /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc,
         /*layer=*/layer, /*xDesc=*/input_desc.get(),
@@ -1728,8 +1731,9 @@ tsl::StatusOr<CudnnRnnParamsDescriptor> CudnnRnnParamsDescriptor::Create(
   for (int layer = 0; layer < layer_count; layer++) {
     for (int region = 0; region < region_count_per_layer; region++) {
 #if CUDNN_VERSION >= 8100
-      void* m_offset = nullptr;
-      void* b_offset = nullptr;
+      void* m_ptr = nullptr;
+      void* b_ptr = nullptr;
+      void* w_ptr = nullptr;
       TensorDescriptor m_region_desc_handle = CreateTensorDescriptor();
       TensorDescriptor b_region_desc_handle = CreateTensorDescriptor();
       RETURN_IF_CUDNN_ERROR(cudnnGetRNNWeightParams(
@@ -1737,12 +1741,12 @@ tsl::StatusOr<CudnnRnnParamsDescriptor> CudnnRnnParamsDescriptor::Create(
           /*rnnDesc=*/rnn_desc,
           /*pseudoLayer=*/layer,
           /*weightsSize=*/params_size_in_bytes,
-          /*weights=*/nullptr,
+          /*weights=*/&w_ptr,
           /*linID=*/region,
           /*mDesc=*/m_region_desc_handle.get(),
-          /*mAddr=*/&m_offset,
+          /*mAddr=*/&m_ptr,
           /*bDesc=*/b_region_desc_handle.get(),
-          /*bAddr=*/&b_offset));
+          /*bAddr=*/&b_ptr));
 
       int dims[] = {1, 1, 1};
       int strides[] = {1, 1, 1};
@@ -1762,13 +1766,13 @@ tsl::StatusOr<CudnnRnnParamsDescriptor> CudnnRnnParamsDescriptor::Create(
         return size;
       };
       TF_ASSIGN_OR_RETURN(int64_t m_size, get_size(m_region_desc_handle));
-      dnn::RnnDescriptor::ParamsRegion m_region = {
-          reinterpret_cast<int64_t>(m_offset), m_size};
+      int64_t m_offset = static_cast<char*>(m_ptr) - static_cast<char*>(w_ptr);
+      dnn::RnnDescriptor::ParamsRegion m_region = {m_offset, m_size};
       weights.push_back(m_region);
 
       TF_ASSIGN_OR_RETURN(int64_t b_size, get_size(b_region_desc_handle));
-      dnn::RnnDescriptor::ParamsRegion b_region = {
-          reinterpret_cast<int64_t>(b_offset), b_size};
+      int64_t b_offset = static_cast<char*>(b_ptr) - static_cast<char*>(w_ptr);
+      dnn::RnnDescriptor::ParamsRegion b_region = {b_offset, b_size};
       biases.push_back(b_region);
 #else
       for (int type = 0; type < 2; type++) {
@@ -2041,34 +2045,67 @@ tsl::Status CheckRNNParameterSize(
   return ::tsl::OkStatus();
 }
 
-tsl::StatusOr<DeviceMemory<uint8_t>> CreateRnnWorkspace(
+tsl::Status CreateRnnTempSpace(
     Stream* stream, const CudnnHandle& cudnn,
-    const CudnnRnnDescriptor& rnn_desc,
+    const CudnnRnnDescriptor& rnn_desc, RnnModelDims model_dims,
     const CudnnRnnSequenceTensorDescriptor& input_desc,
-    ScratchAllocator* workspace_allocator, bool is_training) {
-  // Query the workspace size.
-  size_t workspace_size_in_bytes = 0;
-#if CUDNN_VERSION >= 8100
-  auto fwd_mode = is_training
-      ? CUDNN_FWD_MODE_TRAINING : CUDNN_FWD_MODE_INFERENCE;
-  RETURN_IF_CUDNN_ERROR(cudnnGetRNNTempSpaceSizes(
-      /*handle=*/cudnn.handle(),
-      /*rnnDesc=*/rnn_desc.handle(),
-      /*fwdMode=*/fwd_mode,
-      /*xDesc=*/input_desc.data_handle(),
-      /*workSpaceSize=*/&workspace_size_in_bytes,
-      /*reserveSpaceSize=*/nullptr));
-#else
-  RETURN_IF_CUDNN_ERROR(cudnnGetRNNWorkspaceSize(
-      /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
-      /*seqLength=*/input_desc.max_seq_length(), /*xDesc=*/input_desc.handles(),
-      /*sizeInBytes=*/&workspace_size_in_bytes));
-#endif  // CUDNN_VERSION >= 8100
-  // Allocate the workspace.
-  if (workspace_size_in_bytes == 0) {
-    return DeviceMemory<uint8_t>();
+    ScratchAllocator* workspace_allocator,
+    ScratchAllocator* reserve_space_allocator, bool is_fwd_training,
+    DeviceMemory<uint8_t>* workspace, DeviceMemory<uint8_t>* reserve_space) {
+  if (is_fwd_training && (reserve_space_allocator == nullptr ||
+                          reserve_space == nullptr)) {
+    return tsl::errors::Internal(
+        "Reserve space and its allocator are required in RNN training mode.");
   }
-  return workspace_allocator->AllocateBytes(workspace_size_in_bytes);
+
+  size_t reserve_space_size_in_bytes = 0;
+  size_t workspace_size_in_bytes = 0;
+  if (input_desc.is_var_seq_lengths()) {
+#if CUDNN_VERSION >= 8100
+    auto rnn_fwd_mode = is_fwd_training
+        ? CUDNN_FWD_MODE_TRAINING : CUDNN_FWD_MODE_INFERENCE;
+    RETURN_IF_CUDNN_ERROR(cudnnGetRNNTempSpaceSizes(
+        /*handle=*/cudnn.handle(),
+        /*rnnDesc=*/rnn_desc.handle(),
+        /*fMode=*/rnn_fwd_mode,
+        /*xDesc=*/input_desc.data_handle(),
+        /*workSpaceSize=*/&workspace_size_in_bytes,
+        /*reserveSpaceSize=*/&reserve_space_size_in_bytes));
+#else
+    return tsl::errors::Internal(
+        "Sequence lengths for RNN are supported from CUDNN 8.1+");
+#endif  // CUDNN_VERSION >= 8100
+  } else {
+#if CUDNN_VERSION >= 9000
+    return tsl::errors::Internal(
+        "Sequence lengths for RNN are required from CUDNN 9.0+");
+#else
+    RETURN_IF_CUDNN_ERROR(cudnnGetRNNWorkspaceSize(
+        /*handle=*/cudnn.handle(),
+        /*rnnDesc=*/rnn_desc.handle(),
+        /*seqLength=*/input_desc.max_seq_length(),
+        /*xDesc=*/input_desc.handles(),
+        /*sizeInBytes=*/&workspace_size_in_bytes));
+    if (is_fwd_training) {
+      RETURN_IF_CUDNN_ERROR(cudnnGetRNNTrainingReserveSize(
+          /*handle=*/cudnn.handle(),
+          /*rnnDesc=*/rnn_desc.handle(),
+          /*seqLength=*/model_dims.max_seq_length,
+          /*xDesc=*/input_desc.handles(),
+          /*sizeInBytes=*/&reserve_space_size_in_bytes));
+    }
+#endif  // CUDNN_VERSION >= 9000
+  }
+
+  if (workspace_size_in_bytes > 0) {
+    TF_ASSIGN_OR_RETURN(*workspace, workspace_allocator->AllocateBytes(
+                                        workspace_size_in_bytes));
+  }
+  if (is_fwd_training && reserve_space_size_in_bytes > 0) {
+    TF_ASSIGN_OR_RETURN(*reserve_space, reserve_space_allocator->AllocateBytes(
+                                            reserve_space_size_in_bytes));
+  }
+  return ::tsl::OkStatus();
 }
 
 #if CUDNN_VERSION >= 7402
@@ -2173,41 +2210,11 @@ tsl::Status CudnnSupport::DoRnnForwardImpl(
 
   TF_RETURN_IF_ERROR(CheckRNNParameterSize(cudnn, rnn_desc, input_desc));
 
-  size_t reserve_space_size_in_bytes = 0;
-  size_t workspace_size_in_bytes = 0;
   DeviceMemory<uint8_t> reserve_space;
   DeviceMemory<uint8_t> workspace;
-#if CUDNN_VERSION >= 8100
-  auto rnn_fwd_mode = is_training
-      ? CUDNN_FWD_MODE_TRAINING : CUDNN_FWD_MODE_INFERENCE;
-  RETURN_IF_CUDNN_ERROR(cudnnGetRNNTempSpaceSizes(
-      /*handle=*/cudnn.handle(),
-      /*rnnDesc=*/rnn_desc.handle(),
-      /*fMode=*/rnn_fwd_mode,
-      /*xDesc=*/input_desc.data_handle(),
-      /*workSpaceSize=*/&workspace_size_in_bytes,
-      /*reserveSpaceSize=*/&reserve_space_size_in_bytes));
-  if (workspace_size_in_bytes > 0) {
-    TF_ASSIGN_OR_RETURN(workspace, workspace_allocator->AllocateBytes(
-                                       workspace_size_in_bytes));
-  }
-#else
-  if (is_training) {
-    RETURN_IF_CUDNN_ERROR(cudnnGetRNNTrainingReserveSize(
-        /*handle=*/cudnn.handle(),
-        /*rnnDesc=*/rnn_desc.handle(),
-        /*seqLength=*/model_dims.max_seq_length,
-        /*xDesc=*/input_desc.handles(),
-        /*sizeInBytes=*/&reserve_space_size_in_bytes));
-  }
-  TF_ASSIGN_OR_RETURN(workspace,
-                      CreateRnnWorkspace(stream, cudnn, rnn_desc, input_desc,
-                                         workspace_allocator, is_training));
-#endif  // CUDNN_VERSION >= 8100
-  if (reserve_space_size_in_bytes > 0) {
-    TF_ASSIGN_OR_RETURN(reserve_space, reserve_space_allocator->AllocateBytes(
-                                           reserve_space_size_in_bytes));
-  }
+  TF_RETURN_IF_ERROR(CreateRnnTempSpace(
+      stream, cudnn, rnn_desc, model_dims, input_desc, workspace_allocator,
+      reserve_space_allocator, is_training, &workspace, &reserve_space));
 
   const bool is_profiling = output_profile_result != nullptr;
   TF_ASSIGN_OR_RETURN(
@@ -2219,6 +2226,8 @@ tsl::Status CudnnSupport::DoRnnForwardImpl(
     // deprecated. Instead, we use the cudnnRNNForward which requires the
     // sequence_lengths parameter.
 #if CUDNN_VERSION >= 8100
+    auto rnn_fwd_mode = is_training
+        ? CUDNN_FWD_MODE_TRAINING : CUDNN_FWD_MODE_INFERENCE;
     RETURN_IF_CUDNN_ERROR(cudnnRNNForward(
         /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
         /*fwdMode=*/rnn_fwd_mode,
@@ -2353,26 +2362,10 @@ tsl::Status CudnnSupport::DoRnnBackwardImpl(
 
   TF_RETURN_IF_ERROR(CheckRNNParameterSize(cudnn, rnn_desc, input_desc));
 
-#if CUDNN_VERSION >= 8100
   DeviceMemory<uint8_t> workspace;
-  if (input_desc.is_var_seq_lengths()) {
-    size_t workspace_size_in_bytes = 0;
-    RETURN_IF_CUDNN_ERROR(cudnnGetRNNTempSpaceSizes(
-        /*handle=*/cudnn.handle(), /*rnnDesc=*/rnn_desc.handle(),
-        /*fMode=*/CUDNN_FWD_MODE_TRAINING, /*xDesc=*/input_desc.data_handle(),
-        /*workSpaceSize=*/&workspace_size_in_bytes,
-        /*reserveSpaceSize=*/NULL));
-    if (workspace_size_in_bytes > 0) {
-      TF_ASSIGN_OR_RETURN(workspace, workspace_allocator->AllocateBytes(
-                                         workspace_size_in_bytes));
-    }
-  }
-#else
-  TF_ASSIGN_OR_RETURN(DeviceMemory<uint8_t> workspace,
-                      CreateRnnWorkspace(stream, cudnn, rnn_desc, input_desc,
-                                         workspace_allocator,
-                                         /*is_training=*/true));
-#endif  // CUDNN_VERSION >= 8100
+  TF_RETURN_IF_ERROR(CreateRnnTempSpace(
+      stream, cudnn, rnn_desc, model_dims, input_desc, workspace_allocator,
+      nullptr, false, &workspace, nullptr));
 
   const bool is_profiling = output_profile_result != nullptr;
   TF_ASSIGN_OR_RETURN(
