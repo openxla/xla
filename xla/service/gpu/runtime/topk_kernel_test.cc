@@ -72,6 +72,17 @@ std::vector<T> RandomVecNegative(int num_elements) {
 PrimitiveType Get(float) { return PrimitiveType::F32; }
 PrimitiveType Get(Eigen::bfloat16) { return PrimitiveType::BF16; }
 
+se::StreamExecutor *GetGpuExecutor() {
+  se::Platform* platform =
+#if GOOGLE_CUDA
+      se::MultiPlatformManager::PlatformWithName("CUDA").value();
+#elif TENSORFLOW_USE_ROCM
+      se::MultiPlatformManager::PlatformWithName("ROCM").value();
+#endif
+  return platform->ExecutorForDevice(0).value();
+}
+
+
 // Params:
 //  - n_kb: number of elements in kilobytes.
 //  - k: number of elements to return.
@@ -85,10 +96,7 @@ using TopkTest = ::testing::TestWithParam<std::tuple<int, int, int, int>>;
 TEST_P(TopkTest, TopKFloat) {
   using T = float;
 
-  se::Platform* platform =
-      se::MultiPlatformManager::PlatformWithName("CUDA").value();
-  se::StreamExecutor* executor = platform->ExecutorForDevice(0).value();
-
+  auto* executor = GetGpuExecutor();
   se::Stream stream(executor);
   stream.Init();
   ASSERT_TRUE(stream.ok());
@@ -125,10 +133,7 @@ TEST_P(TopkTest, TopKFloat) {
 TEST_P(TopkTest, TopKPackedNegative) {
   using T = float;
 
-  se::Platform* platform =
-      se::MultiPlatformManager::PlatformWithName("CUDA").value();
-  se::StreamExecutor* executor = platform->ExecutorForDevice(0).value();
-
+  auto* executor = GetGpuExecutor();
   se::Stream stream(executor);
   stream.Init();
   ASSERT_TRUE(stream.ok());
@@ -186,10 +191,7 @@ void BM_SmallTopk(benchmark::State& state) {
   state.SetLabel(
       absl::Substitute("n=$0Ki k=$1 batch_size=$2", n / 1024, k, batch_size));
 
-  se::Platform* platform =
-      se::MultiPlatformManager::PlatformWithName("CUDA").value();
-  se::StreamExecutor* executor = platform->ExecutorForDevice(0).value();
-
+  auto* executor = GetGpuExecutor();
   se::Stream stream(executor);
   stream.Init();
   ASSERT_TRUE(stream.ok());
@@ -205,6 +207,10 @@ void BM_SmallTopk(benchmark::State& state) {
     state.SkipWithError("Unable to allocate GPU memory: aborting benchmark");
     return;
   }
+  char bbf[256];
+  sprintf(bbf, "n: %d; batch_sz: %d; allocated: 0x%X",
+    n, batch_size, n * batch_size * sizeof(T));
+  VLOG(0) << bbf;
 
   auto source = RandomVec<T>(n);
   stream.ThenMemcpy(&input_buffer, source.data(), n * sizeof(T));
@@ -224,11 +230,11 @@ void BM_SmallTopk(benchmark::State& state) {
   state.SetBytesProcessed(items_processed * sizeof(T));
 }
 
-BENCHMARK(BM_SmallTopk<1>)->RangePair(1, 512, 16, 1024)->UseManualTime();
-BENCHMARK(BM_SmallTopk<2>)->RangePair(1, 512, 16, 1024)->UseManualTime();
-BENCHMARK(BM_SmallTopk<4>)->RangePair(1, 512, 16, 1024)->UseManualTime();
-BENCHMARK(BM_SmallTopk<8>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
-BENCHMARK(BM_SmallTopk<16>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
+// BENCHMARK(BM_SmallTopk<1>)->RangePair(1, 512, 16, 1024)->UseManualTime();
+ //BENCHMARK(BM_SmallTopk<2>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
+// BENCHMARK(BM_SmallTopk<4>)->RangePair(1, 512, 16, 1024)->UseManualTime();
+// BENCHMARK(BM_SmallTopk<8>)->RangePair(1, 1024, 16, 1024)->UseManualTime();
+BENCHMARK(BM_SmallTopk<16>)->RangePair(1, 1024, 16, 16)->UseManualTime();
 
 }  // namespace
 }  // namespace xla::gpu
