@@ -246,7 +246,7 @@ cuda_library(
     strip_include_prefix = "src",
     target_compatible_with = select({
         "@local_config_cuda//cuda:using_clang": [],
-        "//conditions:default": ["@platforms//:incompatible"],
+        "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
     deps = [
@@ -267,7 +267,7 @@ cc_library(
     strip_include_prefix = "src",
     target_compatible_with = select({
         "@local_config_cuda//cuda:using_nvcc": [],
-        "//conditions:default": ["@platforms//:incompatible"],
+        "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
     deps = [
