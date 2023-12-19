@@ -2897,6 +2897,7 @@ cc_library(
     srcs = ["custom_fusion_rewriter.cc"],
     hdrs = ["custom_fusion_rewriter.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
