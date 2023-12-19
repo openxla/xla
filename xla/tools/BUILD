@@ -320,7 +320,9 @@ cc_library(
         "//xla/service:hlo_verifier",
         "//xla/service:rng_bit_generator_expander",
         "//xla/service:rng_expander",
+        "//xla/service:sharding_propagation",
         "//xla/service:triangular_solve_expander",
+        "//xla/service/spmd:stateful_rng_spmd_partitioner",
         "@tsl//tsl/util:command_line_flags",
     ],
 )
@@ -331,6 +333,7 @@ xla_cc_test(
     data = [
         "tests/cholesky.hlo",
         "tests/invalid_concat.hlo",
+        "tests/spmd.hlo",
         ":hlo-expand",
     ],
     tags = [
