@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
@@ -64,6 +65,7 @@ limitations under the License.
 #include "xla/client/lib/matrix.h"
 #include "xla/client/lib/quantize.h"
 #include "xla/client/lib/slicing.h"
+#include "xla/client/sharding_builder.h"
 #include "xla/client/xla_builder.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/dynamic_parameter_binding.h"
@@ -2146,15 +2148,8 @@ LogicalResult ExportXlaOp(OutfeedOp op, OpLoweringContext ctx) {
   if (failed(GetTuple(op, op.getInputs(), ctx, operands))) return failure();
 
   const auto sharding = ctx.builder->sharding();
-  xla::XlaOp operand;
+  xla::XlaOp operand = Tuple(ctx.builder, operands);
 
-  if (sharding.has_value() &&
-      sharding->tuple_shardings_size() != operands.size()) {
-    xla::XlaScopedShardingAssignment scoped_sharding(ctx.builder, std::nullopt);
-    operand = Tuple(ctx.builder, operands);
-  } else {
-    operand = Tuple(ctx.builder, operands);
-  }
   std::vector<xla::Shape> subshapes;
   for (auto operand : op.getInputs())
     subshapes.push_back(xla::TypeToShape(operand.getType()));
@@ -2162,10 +2157,37 @@ LogicalResult ExportXlaOp(OutfeedOp op, OpLoweringContext ctx) {
   xla::Shape shape_with_layout = xla::ShapeUtil::MakeTupleShape(subshapes);
 
   xla::XlaOp token;
-  if (failed(GetXlaOp(op.getToken(), value_map, &token, op))) return failure();
+  if (sharding.has_value()) {
+    xla::XlaScopedShardingAssignment scoped_sharding(
+        ctx.builder, xla::sharding_builder::AssignDevice(0));
+    if (failed(GetXlaOp(op.getToken(), value_map, &token, op)))
+      return failure();
+  } else {
+    if (failed(GetXlaOp(op.getToken(), value_map, &token, op)))
+      return failure();
+  }
 
-  value_map[op] = xla::OutfeedWithToken(operand, token, shape_with_layout,
-                                        std::string(op.getOutfeedConfig()));
+  if (sharding.has_value()) {
+    xla::OpSharding tuple_sharding = *sharding;
+    if (tuple_sharding.type() != xla::OpSharding::TUPLE) {
+      tuple_sharding = xla::sharding_builder::Tuple({});
+      *tuple_sharding.add_tuple_shardings() = *sharding;
+    }
+    CHECK_EQ(sharding->tuple_shardings_size(), operands.size())
+        << "Tuple shardings size: " << sharding->tuple_shardings_size()
+        << " Operands size: " << operands.size();
+    *tuple_sharding.add_tuple_shardings() =
+        xla::sharding_builder::AssignDevice(0);
+
+    xla::XlaScopedShardingAssignment scoped_sharding(ctx.builder,
+                                                     tuple_sharding);
+    value_map[op] = xla::OutfeedWithToken(operand, token, shape_with_layout,
+                                          std::string(op.getOutfeedConfig()));
+  } else {
+    value_map[op] = xla::OutfeedWithToken(operand, token, shape_with_layout,
+                                          std::string(op.getOutfeedConfig()));
+  }
+
   return success();
 }
 
