@@ -15,10 +15,9 @@ cc_library(
     srcs = ["interpreter_transfer_manager.cc"],
     hdrs = ["interpreter_transfer_manager.h"],
     deps = [
-        "//xla/backends/interpreter:platform_id",
+        ":platform_id",
         "//xla/service:generic_transfer_manager",
         "//xla/service:transfer_manager",
-        "@com_google_absl//absl/memory",
     ],
     alwayslink = True,  # Contains per-platform transfer manager registration
 )
@@ -120,12 +119,9 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:mutex",
     ],
 )
 
@@ -157,6 +153,5 @@ cc_library(
         "//xla/stream_executor/host:host_stream",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
     ],
 )

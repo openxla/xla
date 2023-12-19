@@ -44,13 +44,8 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:abi",
-        "@tsl//tsl/platform:env_time",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
@@ -96,9 +91,7 @@ tsl_gpu_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/debugging:leak_check",
-        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:thread_annotations",
@@ -257,7 +250,6 @@ tsl_gpu_library(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:mutex",
     ],
 )
 

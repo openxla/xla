@@ -1,9 +1,9 @@
 # Description:
 #    Libraries for helping construct LLVM IR for XLA backends.
 
+load("//xla:xla.bzl", "xla_cc_test")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -42,7 +42,6 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Core",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -53,7 +52,6 @@ xla_cc_test(
         ":alias_analysis",
         "//xla/service:custom_call_status_public_headers",
         "//xla/service:custom_call_target_registry",
-        "//xla/service:hlo_parser",
         "//xla/service/cpu/tests:cpu_codegen_test",
         "//xla/tests:filecheck",
         "@tsl//tsl/platform:test",
@@ -160,7 +158,6 @@ cc_library(
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:types",
-        "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:errors",

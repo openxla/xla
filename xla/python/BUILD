@@ -40,7 +40,7 @@ pytype_strict_library(
     srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
-        ":xla_extension",
+        ":xla_extension",  # buildcleaner: keep
         "@ml_dtypes",
     ],
 )
@@ -472,25 +472,14 @@ cc_library(
     deps = [
         ":py_client",
         ":python_ref_manager",
-        ":python_utils",
         ":pytree",
         ":types",
-        ":util",
         # placeholder for index annotation deps
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@local_config_python//:python_headers",  # build_cleaner: keep
-        "//xla:shape_util",
-        "//xla:statusor",
-        "//xla:types",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/pjrt:exceptions",
-        "//xla/pjrt:lru_cache",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
         "//xla/python/ifrt",
@@ -615,7 +604,6 @@ cc_library(
         "//xla/pjrt:lru_cache",
         "//xla/pjrt:status_casters",
         "//xla/python/ifrt",
-        "//xla/python/pjrt_ifrt",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/profiler/lib:traceme",
         "@pybind11",
@@ -652,7 +640,6 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
         "//xla/python/ifrt",
-        "//xla/python/pjrt_ifrt",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
@@ -1157,7 +1144,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",

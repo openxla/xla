@@ -261,8 +261,6 @@ cc_library(
         ":gpu_types_header",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor:stream_executor_internal",
-        "//xla/stream_executor/platform",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -274,7 +272,6 @@ cc_library(
         ":gpu_types_header",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor:stream_executor_internal",
-        "@com_google_absl//absl/base:core_headers",
     ],
 )
 
@@ -602,11 +599,11 @@ xla_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":gpu_test_kernels",
+        ":gpu_types_header",
         "//xla/service:platform_util",
         "//xla/stream_executor",
         "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor/gpu:gpu_types_header",
         "@com_google_absl//absl/log:check",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/lib/core:status_test_util",

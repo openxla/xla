@@ -1,5 +1,5 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -121,7 +121,6 @@ xla_cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -148,7 +147,6 @@ cc_library(
         "//xla/service:hlo_parser",
         "//xla/service:hlo_proto_cc",
         "//xla/service/llvm_ir:llvm_util",
-        "//xla/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:protobuf",
     ],

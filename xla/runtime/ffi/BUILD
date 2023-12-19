@@ -1,5 +1,5 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],

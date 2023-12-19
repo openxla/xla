@@ -80,8 +80,6 @@ xla_cc_test(
         ":llvm_gpu_backend",
         "//xla/tests:xla_internal_test_main",
         "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:resource_loader",
         "@tsl//tsl/platform:test",

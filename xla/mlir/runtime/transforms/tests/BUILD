@@ -1,5 +1,5 @@
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("//xla:glob_lit_test.bzl", "glob_lit_tests")
+load("@tsl//tsl:tsl.default.bzl", "filegroup")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -41,7 +41,6 @@ cc_library(
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncToLLVM",
-        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MemRefToLLVM",

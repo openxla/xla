@@ -120,7 +120,6 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -150,7 +149,6 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -188,7 +186,6 @@ cc_library(
     srcs = ["spmd_prepare.cc"],
     hdrs = ["spmd_prepare.h"],
     deps = [
-        ":spmd_partitioner",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:hlo_pass",
@@ -205,7 +202,6 @@ cc_library(
         ":spmd_partitioner",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
-        "@com_google_absl//absl/memory",
     ],
 )
 
@@ -226,7 +222,6 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -280,8 +275,6 @@ xla_cc_test(
         "//xla:xla_proto_cc",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:test",
     ],
 )
 

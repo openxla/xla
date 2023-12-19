@@ -1,6 +1,6 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -106,7 +106,5 @@ cc_library(
         "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:SideEffectInterfaces",
-        "@llvm-project//mlir:Support",
     ],
 )
