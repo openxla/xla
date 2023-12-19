@@ -3567,6 +3567,7 @@ cc_library(
         ":backend_configs_cc",
         ":ir_emission_utils",
         ":matmul_utils",
+        ":reduction_utils",
         ":stream_executor_util",
         "//xla:shape_util",
         "//xla:status_macros",
