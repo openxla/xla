@@ -118,7 +118,7 @@ StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
       absl::StrCat("GPU_", device_ordinal, "_bfc"), opts);
 }
 
-// Builds a BFCAllocator for all local GPUs.
+// Builds a BFCAllocator for all local GPUs that uses collective memory.
 StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
     se::StreamExecutor* executor, size_t allocator_memory, bool preallocate) {
   int device_ordinal = executor->device_ordinal();

@@ -70,7 +70,7 @@ std::unique_ptr<tsl::BFCAllocator> GetGpuHostAllocator(
 StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
     se::StreamExecutor* executor, double memory_fraction, bool preallocate);
 
-// Builds a BFCAllocator for all local GPUs using collective memory.
+// Builds a BFCAllocator for all local GPUs that uses collective memory.
 StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
     se::StreamExecutor* executor, size_t allocator_memory, bool preallocate);
 
