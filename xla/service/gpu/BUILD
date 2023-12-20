@@ -3674,6 +3674,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
     ],
 )
