@@ -877,6 +877,12 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
       std::optional<std::vector<PjRtFuture<Status>>>& returned_futures)
       override;
 
+  using PjRtLoadedExecutable::ExecuteLocal;
+  StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteLocal(
+      absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
+      const ExecuteOptions& options,
+      std::optional<PjRtFuture<Status>>& returned_future) override;
+
   using PjRtLoadedExecutable::ExecuteSharded;
   StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
       absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,

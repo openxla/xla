@@ -1401,6 +1401,12 @@ class PjRtLoadedExecutable : public PjRtExecutable {
     return Execute(std::move(argument_handles), options, returned_futures);
   }
 
+  virtual StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteLocal(
+      absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
+      const ExecuteOptions& options,
+      std::optional<PjRtFuture<Status>>& returned_future) {
+  }
+
   // Execute the assigned replica/partition on a given `device`. Requires
   // executable has a device_assignment, `device` is present in the
   // device_assignment and addressable by the client.

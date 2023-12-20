@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 #include <vector>
+#include <iostream>
 
 #include <gmock/gmock.h>
 #include "absl/functional/any_invocable.h"
@@ -94,6 +95,32 @@ Status ExecuteWithSameInputBuffer(
                       ToyExecutable(*client, shape, std::move(set_up_aliases)));
   return executable->Execute({{buffer.get(), buffer.get()}}, /*options=*/{})
       .status();
+}
+
+Status LocalExecute(
+    absl::AnyInvocable<void(XlaBuilder&)> set_up_aliases) {
+  auto shape = xla::ShapeUtil::MakeScalarShape(xla::F32);
+  TF_ASSIGN_OR_RETURN(auto client, GetClient());
+  TF_ASSIGN_OR_RETURN(auto* device0, client->LookupDevice(0));
+  TF_ASSIGN_OR_RETURN(auto buffer,
+                      client->CreateUninitializedBuffer(shape, device0));
+  std::optional<xla::PjRtFuture<xla::Status>> returned_future;
+  TF_ASSIGN_OR_RETURN(auto executable,
+                      ToyExecutable(*client, shape, std::move(set_up_aliases)));
+  auto ans = executable->ExecuteLocal({{buffer.get(), buffer.get()}}, /*options=*/{},
+                            returned_future);
+  
+  returned_future->OnReady(
+      std::move([](xla::Status unused) mutable {
+        VLOG(0) << "ExecuteReplicated returned_future->OnReady finished";
+      }));
+  return ans.status();
+}
+
+TEST(PjRtStreamExecutorClientTest, LocalExecute) {
+  // f(a, a)
+  auto status = ExecuteWithSameInputBuffer([](XlaBuilder& builder) {});
+  ASSERT_TRUE(status.ok());
 }
 
 TEST(PjRtStreamExecutorClientTest, DonateSameBufferTwice) {
