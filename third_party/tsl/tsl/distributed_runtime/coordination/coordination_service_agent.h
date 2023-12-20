@@ -184,6 +184,8 @@ class CoordinationServiceAgent {
 
   // Get config key-value from the service.
   //   - NotFound: the requested key does not exist.
+  virtual StatusOr<std::string> TryGetKeyValue(const char* key,
+                                               int64_t key_size) = 0;
   virtual StatusOr<std::string> TryGetKeyValue(std::string_view key) = 0;
 
   // Get all values under a directory (key).

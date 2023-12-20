@@ -369,6 +369,25 @@ TEST_F(CoordinationServiceAgentTest, TryGetKeyValue_Simple_Success) {
   EXPECT_EQ(*result, test_value);
 }
 
+TEST_F(CoordinationServiceAgentTest, TryGetKeyValue_CAPI_Success) {
+  const std::string& test_key = "test_key";
+  const std::string& test_value = "test_value";
+  // Mock server response: set key-value pair and invoke done callback.
+  TryGetKeyValueResponse mocked_response;
+  auto kv = mocked_response.mutable_kv();
+  kv->set_key(test_key);
+  kv->set_value(test_value);
+  ON_CALL(*GetClient(), TryGetKeyValueAsync(_, _, _))
+      .WillByDefault(DoAll(SetArgPointee<1>(mocked_response),
+                           InvokeArgument<2>(OkStatus())));
+
+  // Initialize coordination agent.
+  InitializeAgent();
+  auto result = agent_->TryGetKeyValue(test_key.data(), test_key.size());
+  TF_ASSERT_OK(result.status());
+  EXPECT_EQ(*result, test_value);
+}
+
 TEST_F(CoordinationServiceAgentTest, GetKeyValueDir_Simple_Success) {
   const std::string test_key = "test_key_dir";
   std::vector<KeyValueEntry> test_values;

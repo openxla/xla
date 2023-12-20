@@ -105,6 +105,8 @@ class CoordinationServiceAgentImpl : public CoordinationServiceAgent {
                                     absl::Duration timeout) override;
   std::shared_ptr<CallOptions> GetKeyValueAsync(
       std::string_view key, StatusOrValueCallback done) override;
+  StatusOr<std::string> TryGetKeyValue(const char* key,
+                                       int64_t key_size) override;
   StatusOr<std::string> TryGetKeyValue(std::string_view key) override;
   StatusOr<std::vector<KeyValueEntry>> GetKeyValueDir(
       std::string_view key) override;
@@ -645,6 +647,11 @@ std::shared_ptr<CallOptions> CoordinationServiceAgentImpl::GetKeyValueAsync(
         }
       });
   return call_opts;
+}
+
+StatusOr<std::string> CoordinationServiceAgentImpl::TryGetKeyValue(
+    const char* key, int64_t key_size) {
+  return TryGetKeyValue(std::string_view(key, key_size));
 }
 
 StatusOr<std::string> CoordinationServiceAgentImpl::TryGetKeyValue(
