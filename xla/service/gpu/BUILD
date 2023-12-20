@@ -2112,6 +2112,9 @@ cc_library(
     name = "cusolver_context",
     srcs = if_gpu_is_configured(["cusolver_context.cc"]),
     hdrs = if_gpu_is_configured(["cusolver_context.h"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
     deps = [
         "//xla:comparison_util",
         "//xla:status",
@@ -4730,7 +4733,6 @@ cc_library(
     ] + if_cuda_is_configured([
         ":make_batch_pointers_kernel",
     ]) + if_rocm_is_configured([
-        "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/rocm:rocm_helpers",
     ]),
 )
