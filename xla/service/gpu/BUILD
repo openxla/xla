@@ -2883,6 +2883,7 @@ xla_cc_test(
         "//xla/tests:verified_hlo_module",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
