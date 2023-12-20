@@ -128,6 +128,7 @@ cc_library(
         "//xla/pjrt:semaphore",
         "//xla/pjrt:transpose",
         "//xla/pjrt:utils",
+        "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:topology_util",
         "//xla/runtime:cpu_event",
         "//xla/service:buffer_assignment",
@@ -213,8 +214,8 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
+        "//xla/pjrt/distributed:key_value_store_interface",
         "@com_google_absl//absl/time",
         "@gloo",
     ],
