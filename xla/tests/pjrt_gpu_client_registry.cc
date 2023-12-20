@@ -26,6 +26,7 @@ const bool kUnused =
        gpu_config.kind = xla::GpuAllocatorConfig::Kind::kDefault;
        gpu_config.preallocate = true;
        gpu_config.memory_fraction = 0.08;
+       gpu_config.collective_memory_size = 0;
        GpuClientOptions options;
        options.allocator_config = gpu_config;
        return GetStreamExecutorGpuClient(options);
