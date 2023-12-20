@@ -13,12 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifdef GOOGLE_CUDA
 
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 
 #include <cstdint>
-
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/stream_executor/multi_platform_manager.h"
@@ -27,8 +25,7 @@ limitations under the License.
 #include "tsl/platform/test.h"
 
 namespace stream_executor {
-namespace cuda {
-namespace {
+namespace gpu {
 
 using RedzoneCheckStatus = RedzoneAllocator::RedzoneCheckStatus;
 
@@ -42,6 +39,14 @@ static void EXPECT_REDZONE_VIOLATION(tsl::StatusOr<RedzoneCheckStatus> status) {
   EXPECT_FALSE(status.value().ok());
 }
 
+static const char *platform_name() {
+#if GOOGLE_CUDA
+  return "CUDA";
+#else TENSORFLOW_USE_ROCM
+  return "ROCM";
+#endif
+}
+
 TEST(RedzoneAllocatorTest, WriteToRedzone) {
   constexpr int64_t kRedzoneSize = 1 << 23;  // 8MiB redzone on each side
   // Redzone pattern should not be equal to zero; otherwise modify_redzone will
@@ -51,7 +56,8 @@ TEST(RedzoneAllocatorTest, WriteToRedzone) {
   // Allocate 32MiB + 1 byte (to make things misaligned)
   constexpr int64_t kAllocSize = (1 << 25) + 1;
 
-  Platform* platform = MultiPlatformManager::PlatformWithName("cuda").value();
+  Platform* platform = MultiPlatformManager::PlatformWithName(
+          platform_name()).value();
   StreamExecutor* stream_exec = platform->ExecutorForDevice(0).value();
   GpuAsmOpts opts;
   StreamExecutorMemoryAllocator se_allocator(platform, {stream_exec});
@@ -124,7 +130,8 @@ TEST(RedzoneAllocatorTest, WriteToRedzone) {
 TEST(RedzoneAllocatorTest, VeryLargeRedzone) {
   // Make sure the redzone size would require grid dimension > 65535.
   constexpr int64_t kRedzoneSize = 65535 * 1024 + 1;
-  Platform* platform = MultiPlatformManager::PlatformWithName("cuda").value();
+  Platform* platform = MultiPlatformManager::PlatformWithName(
+          platform_name()).value();
   StreamExecutor* stream_exec = platform->ExecutorForDevice(0).value();
   GpuAsmOpts opts;
   StreamExecutorMemoryAllocator se_allocator(platform, {stream_exec});
@@ -138,8 +145,5 @@ TEST(RedzoneAllocatorTest, VeryLargeRedzone) {
   EXPECT_REDZONE_OK(allocator.CheckRedzones());
 }
 
-}  // namespace
-}  // namespace cuda
+}  // namespace gpu
 }  // namespace stream_executor
-
-#endif  // GOOGLE_CUDA

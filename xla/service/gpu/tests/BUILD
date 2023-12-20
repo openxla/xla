@@ -675,13 +675,11 @@ xla_cc_binary(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor/host:host_platform",
-        "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tests:test_utils",
         "//xla/tools:hlo_module_loader",
         "@llvm-project//llvm:Target",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:rocm_rocdl_path",
         "@tsl//tsl/util:command_line_flags",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_platform_id",
