@@ -75,6 +75,7 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla/service:buffer_assignment",
+        "//xla/service/gpu:gemm_thunk",
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/container:inlined_vector",
@@ -302,6 +303,21 @@ cc_library(
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+cc_library(
+    name = "infeed_thunk",
+    srcs = ["infeed_thunk.cc"],
+    hdrs = ["infeed_thunk.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/service/gpu:io_feed_manager",
+        "//xla/service/gpu:thunk",
+        "//xla/stream_executor",
     ],
 )
 
