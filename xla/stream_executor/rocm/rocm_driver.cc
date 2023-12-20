@@ -1083,6 +1083,21 @@ GpuDriver::GraphAddNode(hipGraphNode_t* node, hipGraph_t graph,
       << "Feature not supported on ROCm platform (UnifiedMemoryDeallocate)";
 }
 
+/* static */ void* GpuDriver::CollectiveMemoryAllocate(GpuContext* context,
+                                                       uint64_t bytes) {
+  ScopedActivateContext activated{context};
+
+  LOG(ERROR)
+      << "Feature not supported on ROCm platform (CollectiveMemoryAllocate)";
+  return nullptr;
+}
+
+/* static */ void GpuDriver::CollectiveMemoryDeallocate(GpuContext* context,
+                                                        void* location) {
+  LOG(ERROR)
+      << "Feature not supported on ROCm platform (CollectiveMemoryDeallocate)";
+}
+
 /* static */ void* GpuDriver::HostAllocate(GpuContext* context,
                                            uint64_t bytes) {
   ScopedActivateContext activation{context};

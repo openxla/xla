@@ -42,6 +42,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
+#include "third_party/nccl/nccl.h"
 #include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/gpu/gpu_diagnostics.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
@@ -1496,6 +1497,44 @@ struct BitPatternToValue {
                << "; result: " << ToString(res);
   } else {
     VLOG(2) << "deallocated unified memory at " << location << " for context "
+            << context->context();
+  }
+}
+
+/* static */ void* GpuDriver::CollectiveMemoryAllocate(GpuContext* context,
+                                                       uint64_t bytes) {
+  if (bytes == 0) {
+    return nullptr;
+  }
+
+  ScopedActivateContext activated{context};
+  void* ptr = 0;
+  ncclResult_t res = ncclMemAlloc(&ptr, bytes);
+  if (res != ncclSuccess) {
+    LOG(INFO) << "failed to allocate "
+              << tsl::strings::HumanReadableNumBytes(bytes) << " (" << bytes
+              << " bytes) from device collective memory: "
+              << ncclGetErrorString(res)
+              << " Last NCCL warning(error) log entry (may be unrelated): "
+              << ncclGetLastError(NULL);
+    return nullptr;
+  }
+  VLOG(2) << "allocated collective memory " << ptr << " for context "
+          << context->context() << " of " << bytes << " bytes";
+  return ptr;
+}
+
+/* static */ void GpuDriver::CollectiveMemoryDeallocate(GpuContext* context,
+                                                        void* location) {
+  ScopedActivateContext activation(context);
+  ncclResult_t res = ncclMemFree(location);
+  if (res != ncclSuccess) {
+    LOG(ERROR) << "failed to free device memory at " << location
+               << "; result: " << ncclGetErrorString(res)
+               << " Last NCCL warning(error) log entry (may be unrelated): "
+               << ncclGetLastError(NULL);
+  } else {
+    VLOG(2) << "deallocated collective memory " << location << " for context "
             << context->context();
   }
 }

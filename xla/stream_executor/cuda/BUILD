@@ -136,6 +136,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_nccl//:nccl",
         "//xla/stream_executor:device_options",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_diagnostics_header",
