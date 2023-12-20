@@ -167,6 +167,13 @@ extern const char* const kOneDnnLayerNormSymbolName =
 
 namespace {
 
+// Returns whether the collective could be replaced with a copy.
+bool IsDegenerate(absl::Span<ReplicaGroup const> groups) {
+  return absl::c_all_of(groups, [](const ReplicaGroup& group) {
+    return group.replica_ids_size() == 1;
+  });
+}
+
 // Inverses the encoding of a Shape protobuf into an LLVM global variable.
 StatusOr<Shape> DecodeSelfDescribingShapeConstant(const void* shape_ptr,
                                                   int32_t size_bytes) {
@@ -362,6 +369,14 @@ void AllToAllImpl(const ExecutableRunOptions* run_options,
       static_cast<const char*>(replica_groups_str), replica_groups_str_size);
   std::vector<ReplicaGroup> group =
       ParseReplicaGroupsOnly(replica_groups_serialized).value();
+
+  if (IsDegenerate(group)) {
+    for (int i = 0; i < num_buffers; i++) {
+      std::memcpy(destination_buffers[i], source_buffers[i], buffer_size);
+    }
+    return;
+  }
+
   RendezvousKey rendezvous_key =
       GetRendezvousKey(run_options, device, group, channel_id_present,
                        /*use_global_device_ids=*/std::nullopt, op_id);
@@ -394,6 +409,12 @@ void AllGatherImpl(const ExecutableRunOptions* run_options,
       static_cast<const char*>(replica_groups_str), replica_groups_str_size);
   std::vector<ReplicaGroup> group =
       ParseReplicaGroupsOnly(replica_groups_serialized).value();
+
+  if (IsDegenerate(group)) {
+    std::memcpy(destination_buffer, source_buffer, buffer_size);
+    return;
+  }
+
   RendezvousKey rendezvous_key =
       GetRendezvousKey(run_options, device, group, channel_id_present,
                        use_global_device_ids, op_id);
@@ -452,14 +473,23 @@ void AllReduceImpl(const ExecutableRunOptions* run_options,
       static_cast<const char*>(replica_groups_str), replica_groups_str_size);
   std::vector<ReplicaGroup> group =
       ParseReplicaGroupsOnly(replica_groups_serialized).value();
-  RendezvousKey rendezvous_key =
-      GetRendezvousKey(run_options, device, group, channel_id_present,
-                       use_global_device_ids, op_id);
   auto shape_str = ShapeString(shape_ptr, shape_length);
   VLOG(2) << "All-reduce input/output shape : " << shape_str;
 
   Shape shape =
       DecodeSelfDescribingShapeConstant(shape_ptr, shape_length).value();
+
+  if (IsDegenerate(group)) {
+    for (int i = 0; i < num_buffers; i++) {
+      std::memcpy(output_buffers[i], input_buffers[i],
+                  ShapeUtil::ByteSizeOf(shape, /*pointer_size=*/4));
+    }
+    return;
+  }
+
+  RendezvousKey rendezvous_key =
+      GetRendezvousKey(run_options, device, group, channel_id_present,
+                       use_global_device_ids, op_id);
 
   CHECK((num_buffers > 1 && shape.IsTuple()) ||
         (num_buffers == 1 && LayoutUtil::IsDenseArray(shape)));
