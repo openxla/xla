@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
+#include "tsl/platform/logging.h"
 #include "tsl/util/onednn_threadpool.h"
 
 namespace xla {
@@ -131,10 +132,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
         bias_mem = memory(bias_md, cpu_engine, bias_minfo.Data());
       } break;
       default:
-        std::cerr << __FILE__ << ":" << __LINE__
-                  << " Attempt to call OneDNN MatMul runtime library with "
-                     "unsupported post op."
-                  << std::endl;
+        LOG(FATAL) << __FILE__ << ":" << __LINE__
+                   << " Attempt to call OneDNN MatMul runtime library with "
+                      "unsupported post op."
+                   << std::endl;
         std::abort();
     }
   }

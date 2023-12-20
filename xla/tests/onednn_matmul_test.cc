@@ -284,7 +284,7 @@ TEST_F(MatmulTest, ApproxGELUTestF32) {
   )");
 }
 
-// GPTJ BIAS+GELU pattern with reduced sizes for test time:
+// GPT-J Bias+GELU pattern with reduced sizes for test time:
 // batch=32; seq_len=32; hidden_size=64; intermediate_size=256
 TEST_F(MatmulTest, BiasAndApproxGELUTestF32) {
   const char* matmul_module_str = R"(
