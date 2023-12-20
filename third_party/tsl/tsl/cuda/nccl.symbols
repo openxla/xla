@@ -19,6 +19,8 @@ ncclGetUniqueId
 ncclGetVersion
 ncclGroupEnd
 ncclGroupStart
+ncclMemAlloc
+ncclMemFree
 ncclRecv
 ncclRedOpCreatePreMulSum
 ncclRedOpDestroy
@@ -40,6 +42,8 @@ pncclCommInitRank
 pncclCommInitRankConfig
 pncclCommSplit
 pncclCommUserRank
+pncclMemAlloc
+pncclMemFree
 pncclGetErrorString
 pncclGetLastError
 pncclGetUniqueId
