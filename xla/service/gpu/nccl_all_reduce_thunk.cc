@@ -51,6 +51,7 @@ Status RunAllReduce(ReductionKind reduction_kind,
 #if XLA_ENABLE_XCCL
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing all-reduce from device ordinal: " << device_ordinal;
+  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(device_ordinal, buffers, comm));
 
   ncclRedOp_t reduce_op = ToNcclReduction(reduction_kind);
 
@@ -370,6 +371,7 @@ Status RunReduceScatter(ReductionKind reduction_kind,
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing reduce-scatter from device ordinal: "
           << device_ordinal;
+  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(device_ordinal, buffers, comm));
 
   ncclRedOp_t reduce_op = ToNcclReduction(reduction_kind);
 
