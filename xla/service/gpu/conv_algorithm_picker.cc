@@ -71,7 +71,6 @@ limitations under the License.
 #include "tsl/util/proto/proto_utils.h"
 
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
-#include "third_party/gpus/cudnn/cudnn_ops_infer.h"
 #include "third_party/gpus/cudnn/cudnn.h"  // IWYU pragma: keep
 #include "third_party/gpus/cudnn/cudnn_ops_infer.h"
 #include "xla/service/gpu/buffer_comparator.h"
