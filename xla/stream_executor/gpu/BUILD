@@ -492,9 +492,6 @@ cc_library(
 xla_cc_test(
     name = "redzone_allocator_test",
     srcs = if_gpu_is_configured(["redzone_allocator_test.cc"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
     tags = tf_gpu_tests_tags() + [
         "no_cuda_asan",  # TODO(b/171512140): re-enable.
     ],
