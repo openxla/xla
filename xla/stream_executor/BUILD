@@ -118,7 +118,7 @@ STREAM_EXECUTOR_DEPENDENCIES = [
     "@tsl//tsl/framework:device_type",
     "@tsl//tsl/platform:env",
     "@tsl//tsl/platform:errors",
-    "@tsl//tsl/platform:float8",
+    "@tsl//tsl/platform:ml_dtypes",
     "@tsl//tsl/platform:logging",
     "@tsl//tsl/platform:status",
     "@tsl//tsl/platform:statusor",

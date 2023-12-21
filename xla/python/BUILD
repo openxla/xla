@@ -355,7 +355,7 @@ cc_library(
         "//xla/service:platform_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
-        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/python/lib/core:numpy",

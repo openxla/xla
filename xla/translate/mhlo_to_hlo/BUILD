@@ -112,7 +112,7 @@ cc_library(
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
         "@stablehlo//:stablehlo_ops",
-        "@tsl//tsl/platform:float8",
+        "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:statusor",
     ],
 )
