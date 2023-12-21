@@ -136,7 +136,6 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
                    << " Attempt to call OneDNN MatMul runtime library with "
                       "unsupported post op."
                    << std::endl;
-        std::abort();
     }
   }
 
