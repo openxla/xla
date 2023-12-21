@@ -39,6 +39,11 @@ class CommandBufferSchedulingTest : public HloTestBase {
   // Use CUDA 12.3 version for testing as it has all the features we rely on.
   static constexpr int32_t kCudaVersion = 12030;
 
+  const auto& gpu_comp() {
+    return backend().default_stream_executor()->GetDeviceDescription().
+          gpu_compute_capability();
+  }
+
   DebugOptions GetDebugOptionsForTest() override {
     auto debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
@@ -92,8 +97,8 @@ TEST_F(CommandBufferSchedulingTest, SingleCommandBuffer) {
 // CHECK:   ROOT %custom-call = s32[] custom-call(%get-tuple-element, %get-tuple-element.1), custom_call_target="some target"
 // CHECK: })";
 
-  RunAndFilecheckHloRewrite(hlo,
-                            CommandBufferScheduling(kCudaVersion, kCudaVersion),
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(gpu_comp(), 
+                            kCudaVersion, kCudaVersion),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
                               TF_CHECK_OK(module->schedule().Verify());
@@ -170,8 +175,8 @@ TEST_F(CommandBufferSchedulingTest, MultipleCommandBuffers) {
 // CHECK:    ROOT {{.*}} = s32[] custom-call(%[[CMD1]]), custom_call_target="some target"
 // CHECK:  })";
 
-  RunAndFilecheckHloRewrite(hlo,
-                            CommandBufferScheduling(kCudaVersion, kCudaVersion),
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(gpu_comp(), 
+                            kCudaVersion, kCudaVersion),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
                               TF_CHECK_OK(module->schedule().Verify());
@@ -598,8 +603,8 @@ TEST_F(CommandBufferSchedulingTest, While) {
     CHECK:   ROOT %[[BC:.+]] = f32[] bitcast(%call)
     CHECK: })";
 
-  RunAndFilecheckHloRewrite(hlo,
-                            CommandBufferScheduling(kCudaVersion, kCudaVersion),
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(gpu_comp(), 
+                            kCudaVersion, kCudaVersion),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
                               TF_CHECK_OK(module->schedule().Verify());
