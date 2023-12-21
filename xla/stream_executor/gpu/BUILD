@@ -113,6 +113,7 @@ cc_library(
     name = "gpu_runtime_header",
     hdrs = if_gpu_is_configured(["gpu_runtime.h"]),
     visibility = set_external_visibility([
+        "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
     ]),
     deps = [
