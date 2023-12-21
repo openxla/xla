@@ -79,7 +79,7 @@ void IrEmitterContext::emit_constant(int64_t num_elements,
       llvm::GlobalValue::ExternalLinkage,
       /*Initializer=*/initializer, symbol_name,
       /*TLMode=*/llvm::GlobalValue::NotThreadLocal,
-      /*AddressSpace=*/0,
+      /*AddressSpace=*/llvm_ir::GetGlobalMemoryAddressSpace(),
       /*isExternallyInitialized=*/false);
   global_for_const->setAlignment(llvm::Align(kConstantBufferAlignBytes));
   llvm_module_->insertGlobalVariable(global_for_const);
