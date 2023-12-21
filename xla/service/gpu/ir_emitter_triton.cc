@@ -84,6 +84,7 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "xla/autotuning.pb.h"
 #include "xla/comparison_util.h"
+#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -111,6 +112,7 @@ limitations under the License.
 #include "xla/translate/hlo_to_mhlo/hlo_function_importer.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/status.h"
@@ -124,6 +126,7 @@ limitations under the License.
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/Passes.h"
+#include "triton/Target/PTX/TmaMetadata.h"
 
 namespace xla {
 namespace gpu {
@@ -717,11 +720,10 @@ StatusOr<Value> EmitScope(
 }
 
 void CreateTritonPipeline(mlir::OpPassManager& pm,
-                          const se::CudaComputeCapability& cc, int num_warps,
-                          int num_stages) {
+                          const se::CudaComputeCapability& cc,
+                          const TritonGemmConfig& config) {
   const int ccAsInt = cc.major * 10 + cc.minor;
   const int threadsPerWarp = 32;
-  const int numCTAs = 1;
   // Based on make_ttir() in
   // @triton//:python/triton/compiler/backends/cuda.py
   pm.addPass(mt::createRewriteTensorPointerPass(ccAsInt));
@@ -734,8 +736,8 @@ void CreateTritonPipeline(mlir::OpPassManager& pm,
   pm.addPass(mlir::createSymbolDCEPass());
   // Based on make_ttgir() in
   // @triton//:python/triton/compiler/backends/cuda.py
-  pm.addPass(mt::createConvertTritonToTritonGPUPass(num_warps, threadsPerWarp,
-                                                    numCTAs, ccAsInt));
+  pm.addPass(mt::createConvertTritonToTritonGPUPass(
+      config.num_warps, threadsPerWarp, config.num_ctas, ccAsInt));
   pm.addPass(mlir::createTritonGPUCoalescePass());
   pm.addPass(mlir::createTritonNvidiaGPUPlanCTAPass(/*clusterInfo=*/));
   pm.addPass(mlir::createTritonGPURewriteTensorPointerPass(ccAsInt));
@@ -746,10 +748,28 @@ void CreateTritonPipeline(mlir::OpPassManager& pm,
   pm.addPass(mlir::createTritonGPURemoveLayoutConversionsPass());
   pm.addPass(mlir::createTritonGPUOptimizeDotOperandsPass());
   pm.addPass(mlir::createCSEPass());
-  pm.addPass(mlir::createTritonGPUPipelinePass(num_stages, num_warps, numCTAs,
-                                               ccAsInt));
-  pm.addPass(
-      mlir::createTritonNvidiaGPUMaterializeLoadStorePass(num_warps, ccAsInt));
+
+  if (cc.IsAtLeastHopper() && config.enable_warp_specialization &&
+      config.num_warps == 4) {
+    // Ideally, we should run
+    // 'mlir::createTritonNvidiaGPUWSFeasibilityCheckingPass(ccAsInt)' at this
+    // point on the IR to check if warp specialization is feasible. Instead, we
+    // are relying on failures as indication of infeasibility during
+    // auto-tuning.
+    pm.addPass(mlir::createTritonNvidiaGPUWSDecomposingPass(ccAsInt));
+    pm.addPass(mlir::createTritonNvidiaGPUWSPipelinePass(
+        config.num_stages, config.num_warps, ccAsInt));
+    pm.addPass(mlir::createTritonNvidiaGPUWSMutexPass(ccAsInt));
+    pm.addPass(mlir::createTritonNvidiaGPUWSMaterializationPass(ccAsInt));
+    pm.addPass(mlir::createLoopInvariantCodeMotionPass());
+    pm.addPass(mlir::createCSEPass());
+  } else {
+    pm.addPass(mlir::createTritonGPUPipelinePass(
+        config.num_stages, config.num_warps, config.num_ctas, ccAsInt));
+  }
+
+  pm.addPass(mlir::createTritonNvidiaGPUMaterializeLoadStorePass(
+      config.num_warps, ccAsInt));
   if (ccAsInt <= 80) {
     pm.addPass(mlir::createTritonGPUPrefetchPass());
   }
@@ -760,7 +780,7 @@ void CreateTritonPipeline(mlir::OpPassManager& pm,
   pm.addPass(mlir::createTritonGPUReorderInstructionsPass());
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createSymbolDCEPass());
-  if (ccAsInt >= 90) {
+  if (cc.IsAtLeastHopper()) {
     pm.addPass(mlir::createTritonNvidiaGPUFenceInsertionPass(ccAsInt));
   }
   pm.addPass(mlir::createTritonNvidiaGPUWSFixupMissingAttrs());
@@ -769,9 +789,12 @@ void CreateTritonPipeline(mlir::OpPassManager& pm,
   // @triton//:lib/Target/LLVMIR/LLVMIRTranslation.cpp
   pm.addPass(mlir::createConvertSCFToCFPass());
   pm.addPass(mlir::createConvertIndexToLLVMPass());
+
+  // TODO(b/316566238): Use TMA info collected here in XLA runtime.
+  mlir::triton::gpu::TMAMetadataTy tma_infos;
   pm.addPass(mt::createConvertTritonGPUToLLVMPass(ccAsInt,
                                                   /*target=*/mt::Default,
-                                                  /*tmaMetadata=*/nullptr));
+                                                  &tma_infos));
   pm.addPass(mt::createConvertNVGPUToLLVMPass());
   pm.addPass(mlir::createArithToLLVMConversionPass());
   pm.addPass(mlir::createCanonicalizerPass());
@@ -2003,6 +2026,13 @@ StatusOr<TritonWrapperResult> TritonWrapper(
     const se::DeviceDescription& device_info, const TritonGemmConfig& config,
     llvm::Module* llvm_module, TritonIrEmitter ir_emitter,
     mlir::MLIRContext& mlir_context) {
+  auto debug_options = GetDebugOptionsFromFlags();
+  if (debug_options.xla_gpu_enable_triton_hopper()) {
+    // Set environment variables for consumption by Triton.
+    tsl::setenv("ENABLE_MMA_V3", "true", true /*overwrite*/);
+    tsl::setenv("ENABLE_PIPELINING", "true", true /*overwrite*/);
+  }
+
   if (fusion_kind == kTritonGemmFusionKind) {
     // This is a heuristic that serves as a proxy for register usage and code
     // size.
@@ -2092,7 +2122,7 @@ StatusOr<TritonWrapperResult> TritonWrapper(
     }
   }
 
-  CreateTritonPipeline(pm, cc, config.num_warps, config.num_stages);
+  CreateTritonPipeline(pm, cc, config);
   if (log_stream.has_value()) {
     pm.printAsTextualPipeline(log_stream.value());
     log_stream->write("\n\n", 2);
