@@ -104,8 +104,8 @@ absl::StatusOr<bool> FuseArgPrologueTransposeWithcuDNNFMHA(
   absl::Span<const int64_t> checked_dims;
   std::vector<int64_t> checked_dims_vec;
 
-  // `should_contracting_be_fastest` means if contracting dim is the hidden
-  // dim. cuDNN requires hidden dim to be the fastest dim. fwd bmm1 and bwd
+  // `should_contracting_be_fastest` means if contracting dim is the head
+  // dim. cuDNN requires head dim to be the fastest dim. fwd bmm1 and bwd
   // bmm2grad1 should set this value to true.
   if (should_contracting_be_fastest) {
     checked_dims = is_lhs ? new_bmm_dot_dims.lhs_contracting_dimensions()
@@ -135,10 +135,10 @@ absl::StatusOr<bool> FuseArgPrologueTransposeWithcuDNNFMHA(
     new_bmm_checked_dims[i] = std::distance(inverse_perm.begin(), itr);
   }
   // We want to make sure that making the argument to transpose, an input to
-  // fmha, doesn't break cuDNN constraint that the checked dimensions of
-  // corresponding operand of BMM has the fastest moving dimension.
+  // fmha, doesn't break cuDNN constraint that the head dim of
+  // corresponding operand of BMM is the fastest moving dimension.
   // One exception is the forward activation which doesn't have the constraint
-  // that the fastest dim has to be 64.
+  // since it does not have head dim.
   absl::Span<const int64_t> minor_to_major_bmm =
       transpose_arg_operand->shape().layout().minor_to_major();
   if ((minor_to_major_bmm[0] != new_bmm_checked_dims[0]) &&
@@ -517,7 +517,7 @@ use(FMHA_out_t)
 absl::StatusOr<bool> FuseEpilogueTransposeWithcuDNNFMHA(HloComputation* comp) {
   bool changed = false;
 
-  auto onlyOneGTEWithSpecIndex = [](const HloInstruction* instr,
+  auto only_one_gte_with_spec_index = [](const HloInstruction* instr,
                                     int64_t index) {
     int count = 0;
     for (auto user : instr->users()) {
@@ -549,7 +549,7 @@ absl::StatusOr<bool> FuseEpilogueTransposeWithcuDNNFMHA(HloComputation* comp) {
     if (Match(instr, fwd_pattern)) {
       // check if only one gte with such index exist
       int64_t tuple_index = gte->tuple_index();
-      if (!onlyOneGTEWithSpecIndex(fmha, tuple_index)) continue;
+      if (!only_one_gte_with_spec_index(fmha, tuple_index)) continue;
 
       std::vector<int64_t> inverse_perm =
           InversePermutation(transpose->dimensions());
@@ -601,7 +601,7 @@ absl::StatusOr<bool> FuseEpilogueTransposeWithcuDNNFMHA(HloComputation* comp) {
     } else if (Match(instr, bwd_pattern)) {
       // check if only one gte with such index exist
       int64_t operand_tuple_idx = gte->tuple_index();
-      if (!onlyOneGTEWithSpecIndex(fmha, operand_tuple_idx)) continue;
+      if (!only_one_gte_with_spec_index(fmha, operand_tuple_idx)) continue;
 
       std::vector<int64_t> inverse_perm =
           InversePermutation(transpose->dimensions());

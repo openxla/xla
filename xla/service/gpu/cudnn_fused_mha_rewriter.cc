@@ -1555,7 +1555,6 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   HloInstruction* lhs_bmm2_grad_gemm1;
   HloInstruction* rhs_bmm2_grad_gemm2;
   HloInstruction* d_output_grad;
-  HloInstruction* fwd_act;
 
   DotDimensionNumbers orig_bmm1_grad1_config =
       bmm_1_grad_1->dot_dimension_numbers();
@@ -1591,6 +1590,7 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // Forward activation
   // if it is not flash attention, fwd activation is the P tensor
   // else it is the softmax_stats
+  HloInstruction* fwd_act;
   if (fwd_config.is_flash_attention()) {
     auto fwd_act_index = 2;
     fwd_act = comp->AddInstruction(HloInstruction::CreateGetTupleElement(
@@ -1841,7 +1841,7 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
               matched_result.matched_custom_call_name, debug_options));
 
       if (!is_mha_module_supported) continue;
-      // flash attention require cuDNN 8.9.3 to run non-fused QKV
+      // flash attention requires cuDNN 8.9.3 to run non-fused QKV
       // once we have fused QKV support, we can relax this contraint
       if (matched_result.is_flash_attention &&
           !IsComputeCapabilityAndCudnnSupported(

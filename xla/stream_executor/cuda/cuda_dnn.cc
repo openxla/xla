@@ -6958,7 +6958,7 @@ GetCudnnFlashAttentionBackwardOperationGraph(
       d_output_descriptor.GetCudnnCompatibleDimensions(false);
   std::vector<int64_t> do_strides =
       d_output_descriptor.GetCudnnCompatibleStrides(false);
-
+  
   VLOG(2) << "\n cuDNN compatible d_output_dims: "
           << absl::StrJoin(do_dims, ",")
           << "\n cuDNN compatible d_output_strides: "
@@ -7144,9 +7144,21 @@ GetCudnnFlashAttentionBackwardOperationGraph(
       CreateCudnnTensor(p_dims, p_strides, CudnnfMHAUid::VIRTUAL_ID + 104,
                         dnn::DataType::kFloat, 1, -1,
                         /*is_virtual*/ true));
+
+  std::vector<int64_t> p_reduction_dims(p_dims.begin(), p_dims.end() - 1);
+  p_reduction_dims.push_back(1);
+
+  // Divide every stride by the last dim value.
+  std::vector<int64_t> p_reduction_strides;
+  p_reduction_strides.reserve(p_strides.size());
+  int64_t p_reduced_dim_len = p_dims.back();
+  for (auto stride : p_strides) {
+    p_reduction_strides.push_back(stride / p_reduced_dim_len);
+  }
+
   TF_ASSIGN_OR_RETURN(
       auto tensor_softmax_stats,
-      CreateCudnnTensor(do_reduction_dims, do_reduction_strides,
+      CreateCudnnTensor(p_reduction_dims, p_reduction_strides,
                         CudnnfMHAUid::P_ID, dnn::DataType::kFloat, 1, -1));
 
   TF_ASSIGN_OR_RETURN(auto sub_desc,
