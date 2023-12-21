@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "Eigen/Core"  // from @eigen_archive
 #include "xla/service/gpu/runtime/gpu_kernel_helper.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/gpu_timer.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
@@ -73,12 +74,8 @@ PrimitiveType Get(float) { return PrimitiveType::F32; }
 PrimitiveType Get(Eigen::bfloat16) { return PrimitiveType::BF16; }
 
 se::StreamExecutor *GetGpuExecutor() {
-  se::Platform* platform =
-#if GOOGLE_CUDA
-      se::MultiPlatformManager::PlatformWithName("CUDA").value();
-#elif TENSORFLOW_USE_ROCM
-      se::MultiPlatformManager::PlatformWithName("ROCM").value();
-#endif
+  auto* platform = se::MultiPlatformManager::PlatformWithName(
+          se::GpuPlatformName()).value();
   return platform->ExecutorForDevice(0).value();
 }
 
