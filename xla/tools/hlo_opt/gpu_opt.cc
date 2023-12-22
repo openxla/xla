@@ -25,7 +25,9 @@ limitations under the License.
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/executable.pb.h"
+#include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/platform_util.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -42,7 +44,14 @@ class GpuOptProvider : public OptProvider {
  public:
   StatusOr<std::optional<std::string>> GenerateStage(
       std::unique_ptr<HloModule> module, absl::string_view s) override {
-    if (s == "llvm") {
+    if (s == "llvm-before-optimizations") {
+      TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
+                          GetOptimizedHlo(std::move(module)));
+      TF_ASSIGN_OR_RETURN(std::string llvm_ir,
+                          LlvmIrBeforeOptimizations(optimized_module.get()));
+      return llvm_ir;
+
+    } else if (s == "llvm" || s == "llvm-after-optimizations") {
       TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
                           GetExecutable(std::move(module)));
       return static_cast<gpu::GpuExecutable*>(executable.get())
@@ -69,8 +78,48 @@ class GpuOptProvider : public OptProvider {
 
   std::set<std::string> SupportedStages() override {
     std::set<std::string> supported = OptProvider::SupportedStages();
-    supported.insert({"ptx", "llvm", "buffer-assignment"});
+    supported.insert({"ptx", "llvm", "buffer-assignment",
+                      "llvm-before-optimizations", "llvm-after-optimizations"});
     return supported;
+  }
+
+ private:
+  StatusOr<std::string> LlvmIrBeforeOptimizations(HloModule* optimized_module) {
+    Compiler::CompileOptions opts;
+    TF_ASSIGN_OR_RETURN(se::StreamExecutor * executor, GetExecutor());
+    TF_ASSIGN_OR_RETURN(
+        Compiler::TargetConfig target_config,
+        gpu::GpuCompiler::GetTargetConfig(
+            opts, optimized_module->config().debug_options(), executor));
+
+    TF_ASSIGN_OR_RETURN(se::Platform * platform,
+                        PlatformUtil::GetPlatform(GetPlatformName()));
+    TF_ASSIGN_OR_RETURN(Compiler * compiler,
+                        Compiler::GetForPlatform(platform));
+
+    auto* gpu_compiler = static_cast<gpu::GpuCompiler*>(compiler);
+    if (!optimized_module->has_schedule()) {
+      TF_RETURN_IF_ERROR(gpu::ScheduleGpuModule(
+                             optimized_module, gpu_compiler->GetPointerSize(),
+                             target_config.device_description)
+                             .status());
+    }
+
+    llvm::LLVMContext llvm_context;
+
+    auto buffer_size_bytes_function = [](const xla::BufferValue& buffer) {
+      return xla::gpu::GetSizeOfShape(buffer.shape(), /*pointer_size=*/8);
+    };
+
+    TF_ASSIGN_OR_RETURN(
+        xla::gpu::CompileModuleResults results,
+        xla::gpu::CompileModuleToLlvmIr(
+            optimized_module, &llvm_context, gpu_compiler->GetTargetTriple(),
+            gpu_compiler->GetDataLayout(), platform->Name(), platform->id(),
+            target_config.device_description, &xla::gpu::CanShareBufferHint,
+            buffer_size_bytes_function));
+    llvm::Module* llvm_module = results.llvm_module.get();
+    return llvm_ir::DumpToString(llvm_module);
   }
 };
 
