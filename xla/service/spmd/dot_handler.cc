@@ -937,13 +937,31 @@ StatusOr<HloInstruction*> EmitWindowedDotGeneral(
     }
   }
 
-  auto result_buffer = CreateZero(padded_result_buffer_shape, b);
-  auto extra_buffer =
-      (!(options.bidirectional_windowed_einsum && num_partitions % 4 == 0) ||
-       operands_sharded_at_contracting_dims)
-          ? CreateZero(padded_result_buffer_shape, b)
-      : windowed_op_is_lhs ? lhs_hlo
-                           : rhs_hlo;
+  bool not_dynamic_update_slice_pattern =
+      (windowed_at_contracting_dims || windowed_at_batch_dims ||
+       !((lhs_concat_dim != -1 && windowed_op_is_lhs) ||
+         (rhs_concat_dim != -1 && !windowed_op_is_lhs)));
+  HloInstruction* result_buffer;
+  HloInstruction* extra_buffer;
+  if (not_dynamic_update_slice_pattern) {
+    result_buffer = CreateZero(padded_result_buffer_shape, b);
+    extra_buffer =
+        (!(options.bidirectional_windowed_einsum && num_partitions % 4 == 0) ||
+         operands_sharded_at_contracting_dims)
+            ? CreateZero(padded_result_buffer_shape, b)
+        : windowed_op_is_lhs ? lhs_hlo
+                             : rhs_hlo;
+  } else {
+    result_buffer = b->AddInstruction(HloInstruction::CreateCustomCall(
+        padded_result_buffer_shape, {}, "AllocateBuffer"));
+    // remove create zero to avoid broadcast and instead call allocate buffer
+    extra_buffer =
+        (!(options.bidirectional_windowed_einsum && num_partitions % 4 == 0) ||
+         operands_sharded_at_contracting_dims)
+            ? CreateZero(padded_result_buffer_shape, b)
+        : windowed_op_is_lhs ? lhs_hlo
+                             : rhs_hlo;
+  }
 
   if (options.bidirectional_windowed_einsum && num_partitions % 4 == 0 &&
       !operands_sharded_at_contracting_dims) {
