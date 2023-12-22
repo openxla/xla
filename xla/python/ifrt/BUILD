@@ -395,3 +395,20 @@ tf_proto_library(
     srcs = ["sharding.proto"],
     protodeps = [":types_proto"],
 )
+
+cc_library(
+    name = "array_to_tf",
+    srcs = ["array_to_tf.cc"],
+    hdrs = ["array_to_tf.h"],
+    deps = [
+        ":ifrt",
+        "//tensorflow/compiler/tf2xla:common",
+        "//tensorflow/core:framework",
+        "//xla/pjrt:pjrt_future",
+        "//xla/python/pjrt_ifrt",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/concurrency:ref_count",
+    ],
+)
