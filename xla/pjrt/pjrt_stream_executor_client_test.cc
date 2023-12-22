@@ -19,7 +19,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 #include <vector>
-#include <iostream>
 
 #include <gmock/gmock.h>
 #include "absl/functional/any_invocable.h"
@@ -119,7 +118,7 @@ Status LocalExecute(
 
 TEST(PjRtStreamExecutorClientTest, LocalExecute) {
   // f(a, a)
-  auto status = ExecuteWithSameInputBuffer([](XlaBuilder& builder) {});
+  auto status = LocalExecute([](XlaBuilder& builder) {});
   ASSERT_TRUE(status.ok());
 }
 

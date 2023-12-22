@@ -2901,7 +2901,6 @@ PjRtStreamExecutorLoadedExecutable::Execute(
     auto& statusor = results[i];
     if (!statusor.ok()) {
       if (returned_futures.has_value()) {
-        VLOG(0) << "returned_futures clear";
         returned_futures->clear();
       }
       if (num_addressable_devices == 1) {
