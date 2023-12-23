@@ -13,27 +13,53 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#define EIGEN_USE_THREADS
+
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "llvm/Support/Casting.h"
+#include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_tuple.h"
+#include "xla/python/pjrt_ifrt/sharding_utils.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/util.h"
 #include "tsl/concurrency/ref_count.h"
+#include "tsl/platform/env.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace ifrt {
+namespace {
+
+Eigen::ThreadPoolDevice thread_pool() {
+  constexpr int kMaxParallelism = 16;
+  static tsl::thread::ThreadPool* thread_pool = []() {
+    return new tsl::thread::ThreadPool(tsl::Env::Default(),
+                                       tsl::ThreadOptions(), "IfrtSharding",
+                                       kMaxParallelism);
+  }();
+  return Eigen::ThreadPoolDevice(thread_pool->AsEigenThreadPool(),
+                                 kMaxParallelism);
+}
+}  // namespace
 
 char PjRtCompatibleClient::ID = 0;
 char PjRtClient::ID = 0;
@@ -64,6 +90,93 @@ StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
     Client::HostBufferSemantics semantics,
     std::function<void()> on_done_with_host_buffer) {
   DCHECK(this);
+
+  if (llvm::isa<const SingleDeviceSharding>(sharding.get())) {
+    return MakeSingleDeviceArrayFromHostBuffer(
+        data, dtype, shape, byte_strides, std::move(sharding), semantics,
+        std::move(on_done_with_host_buffer));
+  } else if (llvm::isa<const ConcreteEvenSharding>(sharding.get())) {
+    // ConcreteEvenSharding
+    TF_ASSIGN_OR_RETURN(auto disassembled_shardings,
+                        sharding->Disassemble(shape));
+
+    // Sharding operation only depends on element byte sizes.
+    if (!dtype.byte_size().has_value()) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Only byte size is supported, but get type ", dtype.DebugString()));
+    }
+    std::vector<tsl::RCReference<Array>> arrays;
+    arrays.reserve(disassembled_shardings.size());
+
+    const Shape& per_device_shape = disassembled_shardings[0].first;
+    std::vector<std::shared_ptr<const Sharding>> per_device_sharding;
+    per_device_sharding.reserve(disassembled_shardings.size());
+    for (auto& disassembled_sharding : disassembled_shardings) {
+      per_device_sharding.push_back(std::move(disassembled_sharding.second));
+    }
+
+    switch (*dtype.byte_size()) {
+      case 1: {
+        TF_ASSIGN_OR_RETURN(
+            arrays,
+            (CopyAndCreateArraysFromHostBuffer<uint8_t>(
+                data, dtype, shape, byte_strides, sharding->devices().size(),
+                per_device_shape, per_device_sharding)));
+      } break;
+      case 2: {
+        TF_ASSIGN_OR_RETURN(
+            arrays,
+            (CopyAndCreateArraysFromHostBuffer<uint16_t>(
+                data, dtype, shape, byte_strides, sharding->devices().size(),
+                per_device_shape, per_device_sharding)));
+      } break;
+      case 4: {
+        TF_ASSIGN_OR_RETURN(
+            arrays,
+            (CopyAndCreateArraysFromHostBuffer<uint32_t>(
+                data, dtype, shape, byte_strides, sharding->devices().size(),
+                per_device_shape, per_device_sharding)));
+      } break;
+      case 8: {
+        TF_ASSIGN_OR_RETURN(
+            arrays,
+            (CopyAndCreateArraysFromHostBuffer<uint64_t>(
+                data, dtype, shape, byte_strides, sharding->devices().size(),
+                per_device_shape, per_device_sharding)));
+      } break;
+      default:
+        return absl::UnimplementedError(
+            absl::StrCat("Unsupported byte size: ", *dtype.byte_size()));
+        break;
+    }
+
+    VLOG(2) << "Assembling arrays";
+    TF_ASSIGN_OR_RETURN(auto assembled_array,
+                        AssembleArrayFromSingleDeviceArrays(
+                            shape, sharding, absl::MakeSpan(arrays),
+                            ArrayCopySemantics::kDonateInput));
+    // This implementation copies the input buffer to subslice buffers. Hence,
+    // immediately done.
+    on_done_with_host_buffer();
+    return assembled_array;
+  } else {
+    return InvalidArgument(
+        "Only SingleDeviceSharding or ConcreteEvenSharding is supported: "
+        "sharding=%s",
+        sharding->DebugString());
+  }
+}
+
+StatusOr<tsl::RCReference<Array>>
+PjRtClient::MakeSingleDeviceArrayFromHostBuffer(
+    const void* data, DType dtype, Shape shape,
+    std::optional<absl::Span<const int64_t>> byte_strides,
+    std::shared_ptr<const Sharding> sharding,
+    Client::HostBufferSemantics semantics,
+    std::function<void()> on_done_with_host_buffer) {
+  DCHECK(this);
+  LOG(INFO) << "MakeSingleDeviceArrayFromHostBuffer"
+            << " at " << data;
   if (!llvm::isa<const SingleDeviceSharding>(sharding.get())) {
     return InvalidArgument(
         "Only SingleDeviceSharding is supported: sharding=%s",
@@ -110,6 +223,100 @@ StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
   return PjRtArray::Create(
       this, dtype, std::move(shape), std::move(sharding),
       PjRtArray::PjRtBuffers({std::shared_ptr<PjRtBuffer>(buffer.release())}));
+}
+
+template <typename T, int64_t Rank>
+StatusOr<std::vector<tsl::RCReference<Array>>>
+PjRtClient::CopyAndCreateArraysFromHostBufferOfRank(
+    const void* data, DType dtype, Shape shape,
+    std::optional<absl::Span<const int64_t>> byte_strides, int num_partitions,
+    Shape per_device_shape,
+    const std::vector<std::shared_ptr<const Sharding>>& per_device_shardings) {
+  std::vector<tsl::RCReference<Array>> arrays;
+  arrays.reserve(num_partitions);
+
+  TF_ASSIGN_OR_RETURN(
+      auto eigen_tensors,
+      (ReplicateOrSplit<T, Rank>(num_partitions,
+                                 static_cast<T*>(const_cast<void*>(data)),
+                                 shape, per_device_shape, thread_pool())));
+  auto device_sharding = per_device_shardings.begin();
+  for (int slice_idx = 0; slice_idx < eigen_tensors.size(); ++slice_idx) {
+    auto& tensor = eigen_tensors[slice_idx];
+    VLOG(2) << "Make array for buffer slice " << slice_idx << " at "
+            << tensor.data();
+
+    TF_ASSIGN_OR_RETURN(
+        auto array,
+        MakeSingleDeviceArrayFromHostBuffer(
+            tensor.data(), dtype, per_device_shape, byte_strides,
+            *device_sharding,
+            Client::HostBufferSemantics::kImmutableUntilTransferCompletes,
+            [tensor, slice_idx]() {
+              // Keep tensor alive
+              LOG(INFO) << "Done with host buffer for slice " << slice_idx
+                        << " at " << tensor.data();
+            }));
+    arrays.push_back(std::move(array));
+    device_sharding++;
+  }
+  return arrays;
+}
+
+template <typename T>
+StatusOr<std::vector<tsl::RCReference<Array>>>
+PjRtClient::CopyAndCreateArraysFromHostBuffer(
+    const void* data, DType dtype, Shape shape,
+    std::optional<absl::Span<const int64_t>> byte_strides, int num_partitions,
+    Shape per_device_shape,
+    const std::vector<std::shared_ptr<const Sharding>>& per_device_sharding) {
+  const int64_t rank = shape.dims().size();
+  switch (rank) {
+    case 1:
+      return CopyAndCreateArraysFromHostBufferOfRank<T, 1>(
+          data, dtype, shape, byte_strides, num_partitions, per_device_shape,
+          per_device_sharding);
+      break;
+    case 2:
+      return CopyAndCreateArraysFromHostBufferOfRank<T, 2>(
+          data, dtype, shape, byte_strides, num_partitions, per_device_shape,
+          per_device_sharding);
+      break;
+    case 3:
+      return CopyAndCreateArraysFromHostBufferOfRank<T, 3>(
+          data, dtype, shape, byte_strides, num_partitions, per_device_shape,
+          per_device_sharding);
+      break;
+    case 4:
+      return CopyAndCreateArraysFromHostBufferOfRank<T, 4>(
+          data, dtype, shape, byte_strides, num_partitions, per_device_shape,
+          per_device_sharding);
+      break;
+    case 5:
+      return CopyAndCreateArraysFromHostBufferOfRank<T, 5>(
+          data, dtype, shape, byte_strides, num_partitions, per_device_shape,
+          per_device_sharding);
+      break;
+    case 6:
+      return CopyAndCreateArraysFromHostBufferOfRank<T, 6>(
+          data, dtype, shape, byte_strides, num_partitions, per_device_shape,
+          per_device_sharding);
+      break;
+    case 7:
+      return CopyAndCreateArraysFromHostBufferOfRank<T, 7>(
+          data, dtype, shape, byte_strides, num_partitions, per_device_shape,
+          per_device_sharding);
+      break;
+    case 8:
+      return CopyAndCreateArraysFromHostBufferOfRank<T, 8>(
+          data, dtype, shape, byte_strides, num_partitions, per_device_shape,
+          per_device_sharding);
+      break;
+    default:
+      break;
+  }
+  return absl::UnimplementedError(
+      absl::StrCat("Supported Max Rank is 8, but get ", rank));
 }
 
 StatusOr<tsl::RCReference<Array>>
