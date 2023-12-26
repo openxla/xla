@@ -206,16 +206,36 @@ Status FloatNormalizationVisitor::ChangeOutputTypeThenInsertConvertBack(
                 HloInstruction::CreateConvert(original_subshape, leaf));
           }));
 
+  std::vector<HloInstruction*> simplify_conversions;
   for (auto* user : materialized_users) {
     // If the user is a low-precision -> high-precision convert, we can replace
     // it with `hlo`, which has its input changed to high-precision.
+    // But we should not replace immediately, it lead to type mismatch in the
+    // below specific case:
+    //         Op
+    //   bf16 /  \ 
+    //    Convert \ bf16
+    //  fp32 |    /
+    //       Tuple [fp32, bf16]
+    // If run float normalization pass and replace `Convert` at first,
+    // the result will be:
+    //         Op
+    //    fp32 |
+    //      Convert
+    //   bf16 / \ bf16
+    //       Tuple [fp32, bf16]
+    // So we should keep the 'Convert' and replace it after all of the other
+    // users has been replaced.
     if (user->opcode() == HloOpcode::kConvert &&
         user->shape().element_type() == to && to == HighPrecisionType() &&
         from == LowPrecisionType()) {
-      TF_RETURN_IF_ERROR(user->ReplaceAllUsesWith(hlo));
+      simplify_conversions.emplace_back(user);
     } else {
       TF_RETURN_IF_ERROR(hlo->ReplaceUseWithDifferentShape(user, new_hlo));
     }
+  }
+  for (auto* convert : simplify_conversions) {
+    TF_RETURN_IF_ERROR(convert->ReplaceAllUsesWith(hlo));
   }
   if (is_root) {
     computation->set_root_instruction(new_hlo, /*accept_different_shape=*/true);
