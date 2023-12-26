@@ -1401,6 +1401,7 @@ class PjRtLoadedExecutable : public PjRtExecutable {
     return Execute(std::move(argument_handles), options, returned_futures);
   }
 
+  // Local device only execute local computation 
   virtual StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteLocal(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
       const ExecuteOptions& options,
