@@ -285,11 +285,9 @@ double GetDropoutRateFromHlo(HloInstruction* dropout) {
   return (1.0 - (1.0 / *dropout_rate_inv));
 }
 
-bool IsComputeCapabilityAndCudnnSupported(
-    stream_executor::CudaComputeCapability cc,
+se::dnn::VersionInfo GetRealCuDNNVersion(
     stream_executor::dnn::VersionInfo cudnn_version,
-    stream_executor::StreamExecutor* stream_exec,
-    stream_executor::dnn::VersionInfo supported_cudnn_version) {
+    stream_executor::StreamExecutor* stream_exec) {
   se::dnn::VersionInfo real_cudnn_version;
   if (stream_exec) {
     stream_executor::dnn::DnnSupport* dnn = stream_exec->AsDnn();
@@ -300,8 +298,15 @@ bool IsComputeCapabilityAndCudnnSupported(
   } else {
     real_cudnn_version = cudnn_version;
   }
+  return real_cudnn_version;
+}
+
+bool IsComputeCapabilityAndCudnnSupported(
+    stream_executor::CudaComputeCapability cc,
+    stream_executor::dnn::VersionInfo cudnn_version,
+    stream_executor::dnn::VersionInfo supported_cudnn_version) {
   if (!((cc.IsAtLeast(se::CudaComputeCapability::AMPERE) && cc.minor == 0) &&
-        (real_cudnn_version >= supported_cudnn_version))) {
+        (cudnn_version >= supported_cudnn_version))) {
     VLOG(2) << absl::StrFormat(
         "CudnnFusedMHARewriter did not run. Unsupported compute "
         "capability(==8.0) or cudnn version(>=%d.%d.%d)",
@@ -432,7 +437,9 @@ absl::StatusOr<bool> IsSupportedBMM2(const HloInstruction* bmm_2,
 }
 
 StatusOr<bool> IsFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
-                                absl::string_view custom_call_name) {
+                                absl::string_view custom_call_name,
+                                stream_executor::CudaComputeCapability cc,
+                                stream_executor::dnn::VersionInfo cudnn_version) {
   const DotDimensionNumbers& dnums = bmm_1->dot_dimension_numbers();
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> seq_q_dims,
@@ -468,9 +475,27 @@ StatusOr<bool> IsFlashAttention(HloInstruction* bmm_1, bool is_causal_mask,
        custom_call_name == kCudnnfMHAScaleBiasSoftmaxCallTarget);
 
   auto is_seqlen_supported =
-      seq_q[0] == seq_k[0] && seq_q[0] > 512 && seq_q[0] % 64 == 0;
+      seq_q[0] > 512 && seq_k[0] > 512 && seq_q[0] % 64 == 0 && seq_k[0] % 64 == 0;
   auto is_hidden_dim_supported = hidden_dim[0] == 64 || hidden_dim[0] == 128;
-  return is_seqlen_supported && is_hidden_dim_supported && is_fixed_topology;
+  auto is_flash_attention = is_seqlen_supported && is_hidden_dim_supported && is_fixed_topology;
+  auto is_cross_attention = seq_q[0] != seq_k[0];
+
+  // flash attention requires cuDNN 8.9.3 to run non-fused QKV
+  // once we have fused QKV support, we can relax this contraint
+  if (is_flash_attention &&
+      !IsComputeCapabilityAndCudnnSupported(cc, cudnn_version,
+            stream_executor::dnn::VersionInfo(8, 9, 3))) {
+    VLOG(2) << "Require cuDNN 8.9.3 to run flash attention.";
+    return false;
+  }
+  // flash attention cross attention requires cuDNN 8.9.4 to run
+  if (is_cross_attention &&
+      !IsComputeCapabilityAndCudnnSupported(cc, cudnn_version,
+            stream_executor::dnn::VersionInfo(8, 9, 4))) {
+    VLOG(2) << "Require cuDNN 8.9.4 to run flash cross attention.";
+    return false;
+  }
+  return is_flash_attention;
 }
 
 bool IsCausalMaskPattern(HloInstruction* mask) {
@@ -1181,12 +1206,13 @@ MatchBwdResult MatchBwdMHAPatternsForCanonicalization(
   return match_result;
 }
 
-absl::StatusOr<bool> IsMHABlockSupported(HloInstruction* bmm_1,
-                                         HloInstruction* bmm_2,
-                                         bool need_canonicalization,
-                                         bool is_training,
+absl::StatusOr<bool> IsMHABlockSupported(HloInstruction* bmm_1, HloInstruction* bmm_2,
+                                         bool need_canonicalization, bool is_training,
+                                         bool is_causal_mask, bool& is_flash_attention,
                                          std::string& custom_call_name,
-                                         const DebugOptions& debug_options) {
+                                         const DebugOptions& debug_options,
+                                         stream_executor::CudaComputeCapability cc,
+                                         stream_executor::dnn::VersionInfo cudnn_version) {
   if (MHACallHasDropout(custom_call_name) &&
       !debug_options.xla_gpu_fused_attention_use_cudnn_rng()) {
     VLOG(3) << "Using CUDNN RNG for fused attention dropout is not enabled.\n";
@@ -1226,7 +1252,7 @@ absl::StatusOr<bool> IsMHABlockSupported(HloInstruction* bmm_1,
   // check if matched attention block is supported by cuDNN flash attention.
   TF_ASSIGN_OR_RETURN(
       is_flash_attention,
-      IsFlashAttention(bmm_1, is_causal_mask, custom_call_name));
+      IsFlashAttention(bmm_1, is_causal_mask, custom_call_name, cc, cudnn_version));
   if (is_flash_attention) {
     if (is_causal_mask) {
       // if bias is causal mask, needs to remove bias from name
@@ -1815,9 +1841,11 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
        module->MakeNonfusionComputations(execution_threads)) {
     const DebugOptions& debug_options =
         comp->parent()->config().debug_options();
+    const auto cudnn_version = GetRealCuDNNVersion(
+      cudnn_version_, stream_executor_);
     if (!debug_options.xla_gpu_enable_cudnn_fmha() ||
         !IsComputeCapabilityAndCudnnSupported(
-            compute_capability_, cudnn_version_, stream_executor_,
+            compute_capability_, cudnn_version,
             stream_executor::dnn::VersionInfo(8, 8, 0))) {
       return false;
     }
@@ -1838,18 +1866,10 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
               matched_result.matched_bmm_1, matched_result.matched_bmm_2,
               matched_result.need_canonicalization, matched_result.is_training,
               matched_result.is_causal_mask, matched_result.is_flash_attention,
-              matched_result.matched_custom_call_name, debug_options));
+              matched_result.matched_custom_call_name, debug_options,
+              compute_capability_, cudnn_version));
 
       if (!is_mha_module_supported) continue;
-      // flash attention requires cuDNN 8.9.3 to run non-fused QKV
-      // once we have fused QKV support, we can relax this contraint
-      if (matched_result.is_flash_attention &&
-          !IsComputeCapabilityAndCudnnSupported(
-                compute_capability_, cudnn_version_, stream_executor_,
-                stream_executor::dnn::VersionInfo(8, 9, 3))) {
-        VLOG(2) << "Require cuDNN 8.9.3 to run flash attention.";
-        continue;
-      }
       // If we have an activation with more than 1 users in non-training mode,
       // we cannot rewrite the graph. So skip processing the rest.
       HloInstruction* activation =
@@ -1916,7 +1936,7 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
         // input if cudnn version < 8.9.1 we won't lower the bwd pass
         if (matched_result.matched_mask != nullptr &&
             !IsComputeCapabilityAndCudnnSupported(
-                compute_capability_, cudnn_version_, stream_executor_,
+                compute_capability_, cudnn_version,
                 stream_executor::dnn::VersionInfo(8, 9, 1))) {
           // restore fwd graph if bwd pattern match failed
           TF_RETURN_IF_ERROR(
@@ -1930,7 +1950,7 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
         // unswizzling now
         if (matched_bwd_result.matched_dbias &&
             !IsComputeCapabilityAndCudnnSupported(
-                compute_capability_, cudnn_version_, stream_executor_,
+                compute_capability_, cudnn_version,
                 stream_executor::dnn::VersionInfo(8, 9, 1))) {
           // restore fwd graph if bwd pattern match failed
           TF_RETURN_IF_ERROR(

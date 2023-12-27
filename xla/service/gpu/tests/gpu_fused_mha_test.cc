@@ -2582,6 +2582,56 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
   )";
     return hlo_text;
   }
+
+  const std::string  // NOLINT
+  GetModuleFlash_Attention_BMM1_Bias_Softmax_BMM2_Cross_Attention_HloString_BF16() {  // NOLINT
+    const std::string hlo_text = R"(
+    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,2048,128]{3,2,1,0},bf16[2,6,128,1024]{3,2,1,0},bf16[2,6,1024,128]{3,2,1,0},bf16[2,6,2048,1024]{3,2,1,0})->bf16[2,6,2048,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_output={true}
+
+    region_0.28 {
+      Arg_0.29 = bf16[] parameter(0)
+      Arg_1.30 = bf16[] parameter(1)
+      ROOT maximum.31 = bf16[] maximum(Arg_0.29, Arg_1.30)
+    }
+
+    region_1.40 {
+      Arg_0.41 = f32[] parameter(0)
+      Arg_1.42 = f32[] parameter(1)
+      ROOT add.43 = f32[] add(Arg_0.41, Arg_1.42)
+    }
+
+    ENTRY main.52 {
+      Arg_0.1 = bf16[2,6,2048,128]{3,2,1,0} parameter(0), sharding={replicated}
+      Arg_1.2 = bf16[2,6,128,1024]{3,2,1,0} parameter(1), sharding={replicated}
+      dot.10 = bf16[2,6,2048,1024]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+      constant.6 = bf16[] constant(2)
+      broadcast.7 = bf16[2,6,2048,1024]{3,2,1,0} broadcast(constant.6), dimensions={}
+      multiply.11 = bf16[2,6,2048,1024]{3,2,1,0} multiply(dot.10, broadcast.7)
+      Arg_3.4 = bf16[2,6,2048,1024]{3,2,1,0} parameter(3), sharding={replicated}
+      add.27 = bf16[2,6,2048,1024]{3,2,1,0} add(multiply.11, Arg_3.4)
+      constant.9 = bf16[] constant(-inf)
+      reduce.32 = bf16[2,6,2048]{2,1,0} reduce(add.27, constant.9), dimensions={3}, to_apply=region_0.28
+      reshape.33 = bf16[2,6,2048,1]{3,2,1,0} reshape(reduce.32)
+      broadcast.34 = bf16[2,6,2048,1]{3,2,1,0} broadcast(reshape.33), dimensions={0,1,2,3}
+      reshape.35 = bf16[2,6,2048]{2,1,0} reshape(broadcast.34)
+      broadcast.36 = bf16[2,6,2048,1024]{3,2,1,0} broadcast(reshape.35), dimensions={0,1,2}
+      subtract.37 = bf16[2,6,2048,1024]{3,2,1,0} subtract(add.27, broadcast.36)
+      exponential.38 = bf16[2,6,2048,1024]{3,2,1,0} exponential(subtract.37)
+      convert.39 = f32[2,6,2048,1024]{3,2,1,0} convert(exponential.38)
+      constant.8 = f32[] constant(0)
+      reduce.44 = f32[2,6,2048]{2,1,0} reduce(convert.39, constant.8), dimensions={3}, to_apply=region_1.40
+      reshape.45 = f32[2,6,2048,1]{3,2,1,0} reshape(reduce.44)
+      convert.46 = bf16[2,6,2048,1]{3,2,1,0} convert(reshape.45)
+      broadcast.47 = bf16[2,6,2048,1]{3,2,1,0} broadcast(convert.46), dimensions={0,1,2,3}
+      reshape.48 = bf16[2,6,2048]{2,1,0} reshape(broadcast.47)
+      broadcast.49 = bf16[2,6,2048,1024]{3,2,1,0} broadcast(reshape.48), dimensions={0,1,2}
+      divide.50 = bf16[2,6,2048,1024]{3,2,1,0} divide(exponential.38, broadcast.49)
+      Arg_2.3 = bf16[2,6,1024,128]{3,2,1,0} parameter(2), sharding={replicated}
+      ROOT dot.51 = bf16[2,6,2048,128]{3,2,1,0} dot(divide.50, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+    }
+  )";
+    return hlo_text;
+  }
   template <typename T>
   void TestImpl_Flash_Attention_BMM1_Bias_Softmax_BMM2() {
     stream_executor::CudaComputeCapability cc = GetCudaComputeCapability();
@@ -2629,6 +2679,30 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
         GetModuleFlash_Attention_Training_BMM1_Bias_Softmax_BMM2_HloString_BF16(); // NOLINT
     ExecuteAndCompare(hlo_string, {&lhs_bmm1_literal, &rhs_bmm1_literal,
                                    &rhs_bmm2_literal, &bias_literal, &do_literal}, true);
+  }
+
+  template <typename T>
+  void TestImpl_Flash_Attention_BMM1_Bias_Softmax_BMM2_Cross_Attention() {
+    stream_executor::CudaComputeCapability cc = GetCudaComputeCapability();
+    se::dnn::VersionInfo real_cudnn_version = GetCudnnVersion();
+    if (!(cc.IsAtLeast(se::CudaComputeCapability::AMPERE) && cc.minor == 0 &&
+          real_cudnn_version >= se::dnn::VersionInfo(8, 9, 4))) {
+      GTEST_SKIP() << "Flash Attention cross attention is supported with the Nvidia AMPERE+ "
+                      "GPUs and cuDNN >= 8.9.4.";
+    }
+    XlaBuilder builder(TestName());
+    auto lhs_bmm1_literal =
+        GetInput4DLiteral<T>({2, 6, 2048, 128}, {3, 2, 1, 0});
+    auto rhs_bmm1_literal =
+        GetInput4DLiteral<T>({2, 6, 128, 1024}, {3, 2, 1, 0});
+    auto rhs_bmm2_literal =
+        GetInput4DLiteral<T>({2, 6, 1024, 128}, {3, 2, 1, 0});
+    auto bias_literal = GetInput4DLiteral<T>({2, 6, 2048, 1024}, {3, 2, 1, 0});
+    std::string hlo_string = "";
+    hlo_string =
+        GetModuleFlash_Attention_BMM1_Bias_Softmax_BMM2_Cross_Attention_HloString_BF16(); // NOLINT
+    ExecuteAndCompare(hlo_string, {&lhs_bmm1_literal, &rhs_bmm1_literal,
+                                   &rhs_bmm2_literal, &bias_literal});
   }
 };
 
@@ -2784,6 +2858,11 @@ XLA_TEST_F(FlashAttentionBMMScaleBiasSoftmaxBMM,
 XLA_TEST_F(FlashAttentionBMMScaleBiasSoftmaxBMM,
            Flash_Attention_Training_BMM1_Bias_Softmax_BMM2_BF16) {
   TestImpl_Flash_Attention_Training_BMM1_Bias_Softmax_BMM2<bfloat16>();
+}
+
+XLA_TEST_F(FlashAttentionBMMScaleBiasSoftmaxBMM,
+           Flash_Attention_BMM1_Bias_Softmax_BMM2_BF16_Cross_Attention) {
+  TestImpl_Flash_Attention_BMM1_Bias_Softmax_BMM2_Cross_Attention<bfloat16>();
 }
 }  // namespace gpu
 }  // namespace xla
