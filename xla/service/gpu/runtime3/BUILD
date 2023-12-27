@@ -195,6 +195,7 @@ cc_library(
     hdrs = ["conditional_thunk.h"],
     deps = [
         ":sequential_thunk",
+        "//xla:status",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:buffer_allocations",
@@ -288,6 +289,7 @@ cc_library(
     hdrs = ["for_thunk.h"],
     deps = [
         ":sequential_thunk",
+        "//xla:status",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:buffer_allocations",
@@ -335,6 +337,7 @@ cc_library(
         "TENSORFLOW_USE_ROCM=1",
     ]),
     deps = [
+        "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:thunk",
@@ -396,6 +399,7 @@ cc_library(
     hdrs = ["while_thunk.h"],
     deps = [
         ":sequential_thunk",
+        "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:thunk",
