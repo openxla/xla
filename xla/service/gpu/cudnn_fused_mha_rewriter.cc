@@ -730,17 +730,12 @@ MatchBwdResult MatchBmm1GradGemm2(MatchBwdResult previous_result,
   auto bmm_1_grad_2_it = std::find_if(
       d_s->users().begin(), d_s->users().end(), [&](HloInstruction* instr) {
         return instr != match_result.matched_bmm_1_grad_1 &&
-               instr->opcode() != HloOpcode::kReduce;
+               instr->opcode() == HloOpcode::kDot;
       });
   if (bmm_1_grad_2_it != d_s->users().end()) {
     bmm_1_grad_2 = *bmm_1_grad_2_it;
   } else {
     return match_result;
-  }
-  if (bmm_1_grad_2->opcode() == HloOpcode::kBitcast &&
-      bmm_1_grad_2->user_count() == 1) {
-    d_s = bmm_1_grad_2;
-    bmm_1_grad_2 = bmm_1_grad_2->users()[0];
   }
 
   match_result.matched_bmm_1_grad_2 = bmm_1_grad_2;
