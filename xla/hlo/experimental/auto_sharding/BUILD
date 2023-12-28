@@ -85,7 +85,7 @@ cc_library(
     deps = [
         ":auto_sharding_proto_cc",
         ":auto_sharding_strategy",
-        "@com_google_ortools//ortools/linear_solver",
+        "@com_google_ortools//ortools/math_opt/cpp:math_opt",
     ],
 )
 
@@ -104,8 +104,8 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-        "@com_google_ortools//ortools/linear_solver",
-        "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
+        "@com_google_ortools//ortools/math_opt/cpp:math_opt",
+        "@com_google_ortools//ortools/math_opt/solvers:cp_sat_solver",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:hash",
         "@tsl//tsl/platform:types",
@@ -127,7 +127,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
-        "@com_google_ortools//ortools/linear_solver",
+        "@com_google_ortools//ortools/math_opt/cpp:math_opt",
     ],
 )
 
@@ -186,6 +186,7 @@ cc_library(
         "//xla/hlo/utils:hlo_live_range",
         "//xla/service:hlo_cost_analysis",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -319,5 +320,6 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
+        "@com_google_ortools//ortools/math_opt/cpp:math_opt",
     ],
 )

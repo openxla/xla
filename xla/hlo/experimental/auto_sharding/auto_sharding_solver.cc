@@ -20,7 +20,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -44,8 +44,7 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/hash.h"
 #include "tsl/platform/types.h"
-#include "ortools/linear_solver/linear_solver.h"
-#include "ortools/linear_solver/linear_solver.pb.h"
+#include "ortools/math_opt/cpp/math_opt.h"
 #ifdef PLATFORM_GOOGLE
 #include "file/base/helpers.h"
 #include "util/task/status.pb.h"
@@ -54,9 +53,17 @@ limitations under the License.
 namespace xla {
 namespace spmd {
 
-using ::operations_research::MPConstraint;
-using ::operations_research::MPSolver;
-using ::operations_research::MPVariable;
+using ::operations_research::math_opt::LinearExpression;
+using ::operations_research::math_opt::Model;
+using ::operations_research::math_opt::ModelProto;
+using ::operations_research::math_opt::ModelSolveParameters;
+using ::operations_research::math_opt::SolveArguments;
+using ::operations_research::math_opt::SolveParameters;
+using ::operations_research::math_opt::SolveResult;
+using ::operations_research::math_opt::SolveResultProto;
+using ::operations_research::math_opt::SolverType;
+using ::operations_research::math_opt::TerminationReason;
+using ::operations_research::math_opt::Variable;
 
 bool AutoShardingSolverResult::operator==(
     const AutoShardingSolverResult& other) const {
@@ -132,10 +139,12 @@ void AddSalt(const std::string& name, const double saltiplier, double* coeff) {
 
 AutoShardingSolverResult SolveAndExtractSolution(
     const AutoShardingSolverRequest& request,
-    const std::vector<std::vector<MPVariable*>>& s,
-    const std::vector<std::vector<MPVariable*>>& e,
-    const MPVariable* overbudget_var, const MPVariable* makespan_var,
-    MPSolver& solver);
+    const std::vector<std::vector<Variable>>& s,
+    const std::vector<std::vector<Variable>>& e,
+    std::optional<Variable> overbudget_var,
+    std::optional<Variable> makespan_var, const Model& model,
+    const LinearExpression& objective_expression,
+    const SolveArguments& solve_arguments);
 
 double MinimumMemoryBudgetRequired(const AutoShardingSolverRequest& request) {
   double min_memory_budget_required_estimate = 0.0;
@@ -264,48 +273,38 @@ AutoShardingSolverResult CallORToolsSolver(
   const AutoShardingSolverRequest& request = ScaleRequest(unscaled_request);
   const size_t num_edges = request.edges_size();
   const int num_workers = 32;
-  // SAT or SCIP
-  std::unique_ptr<MPSolver> solver(std::make_unique<MPSolver>("", MPSolver::SAT_INTEGER_PROGRAMMING));
-  CHECK(solver);
-  solver->MutableObjective()->SetMinimization();
-  std::string solver_parameter_str;
-#ifdef PLATFORM_GOOGLE
-  if (solver->ProblemType() ==
-      operations_research::MPSolver::SAT_INTEGER_PROGRAMMING) {
-    // Set random_seed, interleave_search and share_binary_clauses for
-    // determinism, and num_workers for parallelism.
-    solver_parameter_str =
-        request.deterministic_mode()
-            ? absl::StrCat(
-                  "share_binary_clauses:false,random_seed:1,interleave_"
-                  "search:true,num_workers:",
-                  num_workers)
-            : absl::StrCat("num_workers:", num_workers);
-    solver->SetSolverSpecificParametersAsString(solver_parameter_str);
+  Model model;
+  LinearExpression objective_expression;
+  // Set random_seed, interleave_search and share_binary_clauses for
+  // determinism, and num_workers for parallelism.
+  SolveParameters solve_parameters;
+  solve_parameters.cp_sat.set_num_workers(num_workers);
+  if (request.deterministic_mode()) {
+    solve_parameters.cp_sat.set_share_binary_clauses(false);
+    solve_parameters.cp_sat.set_random_seed(1);
+    solve_parameters.cp_sat.set_interleave_search(true);
   }
-#endif
+  SolveArguments solve_arguments = {.parameters = solve_parameters};
   // Create variables
-  std::vector<std::vector<MPVariable*>> s(request.num_nodes());
-  std::vector<std::vector<MPVariable*>> e(num_edges);
-  MPVariable* overbudget_var = nullptr;
-  MPVariable* makespan_var = nullptr;
-  MPVariable* cost_var =
-      solver->MakeNumVar(0.0,
-                         request.has_max_cost() ? request.max_cost().coeff()
-                                                : MPSolver::infinity(),
-                         "cost");
-  MPConstraint* cost_constraint =
-      solver->MakeRowConstraint(-MPSolver::infinity(), 0.0, "cost_constraint");
-  cost_constraint->SetCoefficient(cost_var, -1.0);
-  solver->MutableObjective()->SetCoefficient(cost_var, 1.0);
+  std::vector<std::vector<Variable>> s(request.num_nodes());
+  std::vector<std::vector<Variable>> e(num_edges);
+  std::optional<Variable> overbudget_var, makespan_var;
+  Variable cost_var = model.AddContinuousVariable(
+      0.0,
+      request.has_max_cost() ? request.max_cost().coeff()
+                             : std::numeric_limits<double>::infinity(),
+      "cost");
+  model.Minimize(cost_var);
 
   size_t unique_nodes = 0;
   for (NodeIdx node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
     if (request.s_follow(node_idx) < 0) {
       unique_nodes += 1;
       // Creates variables for instructions that do not follow others.
-      solver->MakeBoolVarArray(request.s_len(node_idx),
-                               absl::StrCat("s[", node_idx, "]"), &s[node_idx]);
+      for (NodeStrategyIdx j = 0; j < request.s_len(node_idx); ++j) {
+        const std::string var_name = absl::StrCat("s[", node_idx, "][", j, "]");
+        s[node_idx].push_back(model.AddBinaryVariable(var_name));
+      }
     }
   }
 
@@ -332,45 +331,42 @@ AutoShardingSolverResult CallORToolsSolver(
       continue;
     }
     unique_edges += 1;
-    solver->MakeBoolVarArray(
-        request.s_len(edge.first) * request.s_len(edge.second),
-        absl::StrCat("e[", edge.first, ",", edge.second, "]"), &e[edge_idx]);
+    int num_strategies = request.s_len(edge.first) * request.s_len(edge.second);
+    for (EdgeStrategyIdx j = 0; j < num_strategies; ++j) {
+      const std::string var_name =
+          absl::StrCat("e[", edge.first, ",", edge.second, "][", j, "]");
+      e[edge_idx].push_back(model.AddBinaryVariable(var_name));
+    }
     edge_map.insert({followed_edge, edge_idx});
   }
 
   if (request.memory_budget() > 0 && request.has_overbudget_coeff()) {
-    overbudget_var =
-        solver->MakeNumVar(0.0, MPSolver::infinity(), "overbudget");
+    overbudget_var = model.AddContinuousVariable(
+        0.0, std::numeric_limits<double>::infinity(), "overbudget");
   }
 
   if (request.has_makespan_coeff()) {
-    makespan_var = CreateMakespanVar(request, e, *solver, *cost_constraint);
+    makespan_var = CreateMakespanVar(request, e, model, objective_expression);
   }
 
   // Construct objective function.
   // Node costs
   for (NodeIdx node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
     for (NodeStrategyIdx j = 0; j < s[node_idx].size(); ++j) {
-      double accumulated_coefficient =
-          cost_constraint->GetCoefficient(s[node_idx][j]);
       double coefficient = request.computation_costs(node_idx).costs(j) +
                            request.communication_costs(node_idx).costs(j);
       AddSalt(absl::StrCat(node_idx, "S", j), request.saltiplier(),
               &coefficient);
-      cost_constraint->SetCoefficient(s[node_idx][j],
-                                      accumulated_coefficient + coefficient);
+      objective_expression += coefficient * s[node_idx][j];
     }
   }
   // Edge costs
   for (EdgeIdx edge_idx = 0; edge_idx < num_edges; ++edge_idx) {
     for (EdgeStrategyIdx j = 0; j < e[edge_idx].size(); ++j) {
-      double accumulated_coefficient =
-          cost_constraint->GetCoefficient(e[edge_idx][j]);
       double coefficient = request.resharding_costs(edge_idx).costs(j);
       AddSalt(absl::StrCat(edge_idx, "E", j), request.saltiplier(),
               &coefficient);
-      cost_constraint->SetCoefficient(e[edge_idx][j],
-                                      accumulated_coefficient + coefficient);
+      objective_expression += coefficient * e[edge_idx][j];
     }
   }
 
@@ -382,11 +378,8 @@ AutoShardingSolverResult CallORToolsSolver(
     if (s[node_idx].empty() || request.s_follow(node_idx) >= 0) continue;
     bool all_infinity = true;
     for (NodeStrategyIdx j = 0; j < s[node_idx].size(); ++j) {
-      if (cost_constraint->GetCoefficient(s[node_idx][j]) >= kInfinityCost) {
-        MPConstraint* constraint = solver->MakeRowConstraint(
-            0.0, 0.0,
-            absl::StrCat("infinitycost: s[", node_idx, "][", j, "] = 0"));
-        constraint->SetCoefficient(s[node_idx][j], 1.0);
+      if (objective_expression.terms().at(s[node_idx][j]) >= kInfinityCost) {
+        model.AddLinearConstraint(s[node_idx][j] == 0.0);
       } else {
         all_infinity = false;
       }
@@ -399,11 +392,8 @@ AutoShardingSolverResult CallORToolsSolver(
     if (e[edge_idx].empty() || e_follow[edge_idx] >= 0) continue;
     bool all_infinity = true;
     for (EdgeStrategyIdx j = 0; j < e[edge_idx].size(); ++j) {
-      if (cost_constraint->GetCoefficient(e[edge_idx][j]) >= kInfinityCost) {
-        MPConstraint* constraint = solver->MakeRowConstraint(
-            0.0, 0.0,
-            absl::StrCat("infinitycost: e[", edge_idx, "][", j, "] = 0"));
-        constraint->SetCoefficient(e[edge_idx][j], 1.0);
+      if (objective_expression.terms().at(e[edge_idx][j]) >= kInfinityCost) {
+        model.AddLinearConstraint(e[edge_idx][j] == 0.0);
       } else {
         all_infinity = false;
       }
@@ -425,13 +415,11 @@ AutoShardingSolverResult CallORToolsSolver(
   // b.
   for (NodeIdx node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
     if (request.s_follow(node_idx) >= 0) continue;
-    MPConstraint* constraint = solver->MakeRowConstraint(
-        1.0, 1.0,
-        absl::StrCat("sum(s[", node_idx, "][j] for j = [0 .. ",
-                     s[node_idx].size(), ")) = 1"));
+    LinearExpression node_var_sum;
     for (NodeStrategyIdx j = 0; j < s[node_idx].size(); ++j) {
-      constraint->SetCoefficient(s[node_idx][j], 1.0);
+      node_var_sum += s[node_idx][j];
     }
+    model.AddLinearConstraint(node_var_sum == 1.0);
   }
   // c.
   if (request.memory_budget() > 0) {
@@ -442,36 +430,28 @@ AutoShardingSolverResult CallORToolsSolver(
     for (LivenessIdx time_idx = 0; time_idx < request.live_size(); ++time_idx) {
       double upper_bound = request.memory_budget();
       if (overbudget_var) upper_bound += min_memory_overbudget;
-      MPConstraint* constraint =
-          solver->MakeRowConstraint(-MPSolver::infinity(), upper_bound,
-                                    absl::StrCat("mem[", time_idx, "]"));
-      if (overbudget_var) constraint->SetCoefficient(overbudget_var, -1.0);
+      LinearExpression mem_sum;
+      if (overbudget_var) mem_sum -= *overbudget_var;
       for (NodeIdx node_idx : request.live(time_idx).nodes()) {
         for (NodeStrategyIdx j = 0; j < s[node_idx].size(); ++j) {
-          const double accumulated_coefficient =
-              constraint->GetCoefficient(s[node_idx][j]);
           const double memory_cost = request.memory_costs(node_idx).costs(j);
-          constraint->SetCoefficient(s[node_idx][j],
-                                     accumulated_coefficient + memory_cost);
+          mem_sum += memory_cost * s[node_idx][j];
         }
       }
-      if (request.live_edges().empty()) continue;
-      for (EdgeIdx edge_idx : request.live_edges(time_idx).edges()) {
-        for (EdgeStrategyIdx j = 0; j < e[edge_idx].size(); ++j) {
-          const double accumulated_coefficient =
-              constraint->GetCoefficient(e[edge_idx][j]);
-          const double memory_cost =
-              request.memory_edge_costs(edge_idx).costs(j);
-          constraint->SetCoefficient(e[edge_idx][j],
-                                     accumulated_coefficient + memory_cost);
+      if (!request.live_edges().empty()) {
+        for (EdgeIdx edge_idx : request.live_edges(time_idx).edges()) {
+          for (EdgeStrategyIdx j = 0; j < e[edge_idx].size(); ++j) {
+            const double memory_cost =
+                request.memory_edge_costs(edge_idx).costs(j);
+            mem_sum += memory_cost * e[edge_idx][j];
+          }
         }
       }
+      model.AddLinearConstraint(mem_sum <= upper_bound);
     }
     if (overbudget_var) {
-      cost_constraint->SetCoefficient(overbudget_var,
-                                      request.overbudget_coeff().coeff());
-      solver->MutableObjective()->SetOffset(request.overbudget_coeff().coeff() *
-                                            min_memory_overbudget);
+      objective_expression += request.overbudget_coeff().coeff() *
+                              (*overbudget_var + min_memory_overbudget);
     }
     LOG(INFO) << "Minimum memory budget estimate: "
               << min_memory_budget_required_estimate;
@@ -482,27 +462,22 @@ AutoShardingSolverResult CallORToolsSolver(
   // e.
   for (EdgeIdx edge_idx = 0; edge_idx < num_edges; ++edge_idx) {
     if (e_follow[edge_idx] >= 0) continue;
-    const auto& edge = request.edges(edge_idx);
-    MPConstraint* constraint = solver->MakeRowConstraint(
-        1.0, 1.0,
-        absl::StrCat("sum(e[", edge.first(), "][", edge.second(), "][*]) = 1"));
+    LinearExpression edge_var_sum;
     for (EdgeStrategyIdx j = 0; j < e[edge_idx].size(); ++j) {
-      constraint->SetCoefficient(e[edge_idx][j], 1.0);
+      edge_var_sum += e[edge_idx][j];
     }
+    model.AddLinearConstraint(edge_var_sum == 1.0);
   }
   // f.
   for (EdgeIdx edge_idx = 0; edge_idx < num_edges; ++edge_idx) {
     if (e_follow[edge_idx] >= 0) continue;
     const auto& edge = request.edges(edge_idx);
     for (NodeStrategyIdx p = 0; p < s[edge.first()].size(); ++p) {
-      MPConstraint* constraint = solver->MakeRowConstraint(
-          -MPSolver::infinity(), 0,
-          absl::StrCat("f for i = ", edge_idx, ", p = ", p));
-      constraint->SetCoefficient(s[edge.first()][p], -1.0);
+      LinearExpression var_sum;
       for (NodeStrategyIdx q = 0; q < s[edge.second()].size(); ++q) {
-        constraint->SetCoefficient(e[edge_idx][p * s[edge.second()].size() + q],
-                                   1.0);
+        var_sum += e[edge_idx][p * s[edge.second()].size() + q];
       }
+      model.AddLinearConstraint(var_sum <= s[edge.first()][p]);
     }
   }
   // g.
@@ -510,14 +485,11 @@ AutoShardingSolverResult CallORToolsSolver(
     if (e_follow[edge_idx] >= 0) continue;
     const auto& edge = request.edges(edge_idx);
     for (NodeStrategyIdx q = 0; q < s[edge.second()].size(); ++q) {
-      MPConstraint* constraint = solver->MakeRowConstraint(
-          -MPSolver::infinity(), 0,
-          absl::StrCat("g for i = ", edge_idx, ", q = ", q));
-      constraint->SetCoefficient(s[edge.second()][q], -1.0);
+      LinearExpression var_sum;
       for (NodeStrategyIdx p = 0; p < s[edge.first()].size(); ++p) {
-        constraint->SetCoefficient(e[edge_idx][p * s[edge.second()].size() + q],
-                                   1.0);
+        var_sum += e[edge_idx][p * s[edge.second()].size() + q];
       }
+      model.AddLinearConstraint(var_sum <= s[edge.second()][q]);
     }
   }
   // h.
@@ -533,52 +505,45 @@ AutoShardingSolverResult CallORToolsSolver(
       for (NodeStrategyIdx q = 0; q < s[alias.second].size(); ++q) {
         // if lhs == 1
         if (value_costs[p * s[alias.second].size() + q] > 0.5) {
-          MPConstraint* constraint = solver->MakeRowConstraint(
-              -MPSolver::infinity(), 1,
-              absl::StrCat("s[", alias.first, "][", p, "] + s[", alias.second,
-                           "][", q, "] <= 1"));
-          constraint->SetCoefficient(s[alias.first][p], 1.0);
-          constraint->SetCoefficient(s[alias.second][q], 1.0);
+          model.AddLinearConstraint(s[alias.first][p] + s[alias.second][q] <=
+                                    1);
         }
       }
     }
   }
   if (request.has_max_departures()) {
-    MPConstraint* constraint = solver->MakeRowConstraint(
-        0, request.max_departures().coeff(),
-        absl::StrCat("departures <= ", request.max_departures().coeff()));
+    LinearExpression departure_sum;
     for (NodeIdx node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
       for (NodeStrategyIdx j = 0; j < s[node_idx].size(); ++j) {
-        double accumulated_coefficient =
-            constraint->GetCoefficient(s[node_idx][j]);
         double departure_cost = request.departure_costs(node_idx).costs(j);
-        constraint->SetCoefficient(s[node_idx][j],
-                                   accumulated_coefficient + departure_cost);
+        departure_sum += departure_cost * s[node_idx][j];
       }
     }
+    model.AddLinearConstraint(departure_sum <=
+                              request.max_departures().coeff());
   }
+  model.AddLinearConstraint(objective_expression == cost_var);
 
   if (!request.s_hint().empty() && !request.deterministic_mode()) {
-    std::vector<std::pair<const MPVariable*, double>> hint;
+    ModelSolveParameters::SolutionHint solution_hint;
     for (NodeIdx node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
       if (request.s_follow(node_idx) >= 0) continue;
       for (NodeStrategyIdx j = 0; j < s[node_idx].size(); ++j) {
         double hint_val = (request.s_hint(node_idx) == j) ? 1.0 : 0.0;
-        hint.push_back({s[node_idx][j], hint_val});
+        solution_hint.variable_values[s[node_idx][j]] = hint_val;
       }
     }
-    solver->SetHint(hint);
+    solve_arguments.model_parameters.solution_hints = {solution_hint};
   }
 
 #ifdef PLATFORM_GOOGLE
   // Exports the model for debugging.
   bool dump_model = false;
   if (dump_model) {
-    operations_research::MPModelProto model_proto;
-    solver->ExportModelToProto(&model_proto);
+    const ModelProto model_proto = model.ExportModel();
     auto write_status = file::SetTextProto(
         // Modify this file path if needed.
-        absl::StrCat("/tmp/model_", solver->NumVariables(), ".proto"),
+        absl::StrCat("/tmp/model_", model.num_variables(), ".proto"),
         model_proto, file::Defaults());
     if (!write_status.ok()) {
       LOG(ERROR) << write_status.message();
@@ -602,28 +567,33 @@ AutoShardingSolverResult CallORToolsSolver(
   }
 #endif
   if (request.has_solver_timeout()) {
-    solver->SetTimeLimit(
-        absl::Seconds(request.solver_timeout().solver_timeout_in_seconds()));
+    solve_parameters.time_limit =
+        absl::Seconds(request.solver_timeout().solver_timeout_in_seconds());
   }
-  VLOG(0) << "Starting solver " << solver->ProblemType() << "\n"
-          << "Solver parameter string: " << solver_parameter_str << "\n"
+  VLOG(0) << "Starting solver "
+          << "\n"
+          << "Solver parameter string: "
+          << solve_parameters.Proto().DebugString() << "\n"
           << "Number of workers: " << num_workers << "\n"
-          << "Number of threads: " << solver->GetNumThreads() << "\n"
-          << "Time limit: " << solver->time_limit() << "\n"
-          << "Number variables for ILP: " << solver->NumVariables() << "\n"
+          << "Number of threads: " << solve_parameters.threads.value_or(1)
+          << "\n"
+          << "Time limit: " << solve_parameters.time_limit << "\n"
+          << "Number variables for ILP: " << model.num_variables() << "\n"
           << "Unique nodes: " << unique_nodes << "\n"
           << "Unique edges: " << unique_edges << "\n"
           << "Total instructions: " << request.num_nodes() << "\n"
           << "Memory budget: " << request.memory_budget() / (1024 * 1024 * 1024)
           << "GB\n"
-          << "Number of ILP constraints: " << solver->NumConstraints() << "\n"
+          << "Number of ILP constraints: " << model.num_linear_constraints()
+          << "\n"
           << "Deterministic mode: " << request.deterministic_mode() << "\n"
           << "Module name: " << request.module_name();
   if (request.has_max_cost()) {
     VLOG(0) << "Max cost: " << request.max_cost().coeff();
   }
-  auto result = SolveAndExtractSolution(request, s, e, overbudget_var,
-                                        makespan_var, *solver);
+  auto result =
+      SolveAndExtractSolution(request, s, e, overbudget_var, makespan_var,
+                              model, objective_expression, solve_arguments);
   if (result.status.ok()) {
     const AutoShardingEvaluation evaluation =
         Evaluate(unscaled_request, result);
@@ -655,73 +625,48 @@ AutoShardingSolverResult CallORToolsSolver(
 
 AutoShardingSolverResult SolveAndExtractSolution(
     const AutoShardingSolverRequest& request,
-    const std::vector<std::vector<MPVariable*>>& s,
-    const std::vector<std::vector<MPVariable*>>& e,
-    const MPVariable* overbudget_var, const MPVariable* makespan_var,
-    MPSolver& solver) {
+    const std::vector<std::vector<Variable>>& s,
+    const std::vector<std::vector<Variable>>& e,
+    std::optional<Variable> overbudget_var,
+    std::optional<Variable> makespan_var, const Model& model,
+    const LinearExpression& objective_expression,
+    const SolveArguments& solve_arguments) {
   absl::Time start_time = absl::Now();
-  auto status = solver.Solve();
+  const absl::StatusOr<SolveResult> solve_result =
+      Solve(model, SolverType::kCpSat, solve_arguments);
   absl::Time end_time = absl::Now();
   auto duration = end_time - start_time;
   LOG(INFO) << "Solver took " << absl::ToInt64Milliseconds(duration) << " ms";
-  LOG(INFO) << "Solver Status: " << status;
+  LOG(INFO) << "Solver Status: " << solve_result.status();
 
-  if (status == operations_research::MPSolver::INFEASIBLE) {
+  if (solve_result->termination.reason == TerminationReason::kInfeasible) {
     LOG(ERROR) << "MPSolver could not find any feasible solution.";
-#ifdef PLATFORM_GOOGLE
-    if (request.compute_iis()) {
-      operations_research::MPModelRequest model_request;
-      solver.ExportModelToProto(model_request.mutable_model());
-      if (solver.ProblemType() ==
-          operations_research::MPSolver::SAT_INTEGER_PROGRAMMING) {
-        model_request.set_solver_type(
-            operations_research::MPModelRequest::SAT_INTEGER_PROGRAMMING);
-      } else if (solver.ProblemType() == operations_research::MPSolver::
-                                             SCIP_MIXED_INTEGER_PROGRAMMING) {
-        model_request.set_solver_type(operations_research::MPModelRequest::
-                                          SCIP_MIXED_INTEGER_PROGRAMMING);
-      }
-      model_request.set_solver_time_limit_seconds(100);
-      auto iis = MPSolver::ComputeIrreducibleInfeasibleSubset(model_request);
-      LOG(INFO) << iis.status().DebugString();
-      LOG(INFO) << "Infeasible constraints: ";
-      for (int index : iis.constraint_index()) {
-        LOG(INFO) << " - " << model_request.model().constraint(index).name();
-      }
-      for (int index : iis.general_constraint_index()) {
-        LOG(INFO)
-            << " - "
-            << model_request.model().general_constraint(index).DebugString();
-      }
-    }
-#endif
-
     return AutoShardingSolverResult(
         absl::InternalError("MPSolver could not find any feasible solution."),
         false);
-  } else if (status == operations_research::MPSolver::MODEL_INVALID) {
+  } else if (solve_result->termination.reason ==
+             TerminationReason::kOtherError) {
     LOG(FATAL) << "Solver says that the input MIP is invalid. This is most "
                   "likely a bug and should be reported.";
-  } else if (status != operations_research::MPSolver::OPTIMAL) {
+  } else if (solve_result->termination.reason != TerminationReason::kOptimal) {
     auto err_msg = "Solver timed out.";
     return AutoShardingSolverResult(absl::InternalError(err_msg), true);
   }
 
   // Fingerprint the model & solution (useful when checking for determinism).
   // We use TensorFlow's fingerprint library here, which differs from CP-SAT's.
-  operations_research::MPModelProto model_proto;
-  solver.ExportModelToProto(&model_proto);
+  const ModelProto model_proto = model.ExportModel();
   uint64_t model_fprint = tsl::Fingerprint64(model_proto.SerializeAsString());
-  operations_research::MPSolutionResponse response;
-  solver.FillSolutionResponseProto(&response);
-  response.clear_solve_info();  // Remove for fingerprint; can vary between runs
-  uint64_t solution_fprint = tsl::Fingerprint64(response.SerializeAsString());
+  SolveResultProto solve_result_proto = *solve_result->Proto();
+  solve_result_proto.clear_solve_stats();  // Stats can vary between runs.
+  uint64_t solution_fprint =
+      tsl::Fingerprint64(solve_result_proto.SerializeAsString());
 
-  LOG(INFO) << "Objective value: " << solver.Objective().Value()
+  LOG(INFO) << "Objective value: " << solve_result->objective_value()
             << " Model fingerprint: " << model_fprint
             << " Solution fingerprint: " << solution_fprint;
-  if (solver.Objective().Value() >= kInfinityCost) {
-    LOG(WARNING) << "Objective (" << solver.Objective().Value()
+  if (solve_result->objective_value() >= kInfinityCost) {
+    LOG(WARNING) << "Objective (" << solve_result->objective_value()
                  << ") is larger than kInfinityCost. It means the solver "
                     "chooses a solution with kInfinityCost and there may be "
                     "numerical issues when the solver considering other costs.";
@@ -732,7 +677,7 @@ AutoShardingSolverResult SolveAndExtractSolution(
     VLOG(10) << "MODEL:";
     XLA_VLOG_LINES(10, model_proto.DebugString());
     VLOG(10) << "RESPONSE:";
-    XLA_VLOG_LINES(10, response.DebugString());
+    XLA_VLOG_LINES(10, solve_result_proto.DebugString());
   }
 
   // Return value
@@ -743,7 +688,7 @@ AutoShardingSolverResult SolveAndExtractSolution(
   for (NodeIdx node_idx = 0; node_idx < request.num_nodes(); ++node_idx) {
     for (NodeStrategyIdx j = 0; j < s[node_idx].size(); ++j) {
       // if lhs == 1
-      if (s[node_idx][j]->solution_value() > 0.5) {
+      if (solve_result->variable_values().at(s[node_idx][j]) > 0.5) {
         chosen_strategy[node_idx] = j;
         unsalted_objective += request.computation_costs(node_idx).costs(j) +
                               request.communication_costs(node_idx).costs(j);
@@ -754,7 +699,7 @@ AutoShardingSolverResult SolveAndExtractSolution(
   for (EdgeIdx edge_idx = 0; edge_idx < num_edges; ++edge_idx) {
     for (EdgeStrategyIdx j = 0; j < e[edge_idx].size(); ++j) {
       // if lhs == 1
-      if (e[edge_idx][j]->solution_value() > 0.5) {
+      if (solve_result->variable_values().at(e[edge_idx][j]) > 0.5) {
         e_val[edge_idx] = j;
         unsalted_objective += request.resharding_costs(edge_idx).costs(j);
         break;
@@ -762,13 +707,13 @@ AutoShardingSolverResult SolveAndExtractSolution(
     }
   }
   if (overbudget_var) {
-    unsalted_objective +=
-        request.overbudget_coeff().coeff() * overbudget_var->solution_value();
-    unsalted_objective += solver.Objective().offset();
+    unsalted_objective += request.overbudget_coeff().coeff() *
+                          solve_result->variable_values().at(*overbudget_var);
+    unsalted_objective += objective_expression.offset();
   }
   if (makespan_var) {
-    unsalted_objective +=
-        request.makespan_coeff().coeff() * makespan_var->solution_value();
+    unsalted_objective += request.makespan_coeff().coeff() *
+                          solve_result->variable_values().at(*makespan_var);
   }
 
   LOG(INFO) << "Unsalted objective value: " << unsalted_objective;
