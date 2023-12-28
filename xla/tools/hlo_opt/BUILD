@@ -3,6 +3,10 @@ load(
     "//xla/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
 )
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
+)
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
@@ -14,7 +18,6 @@ load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
-
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = ["//xla:internal"],
@@ -47,7 +50,7 @@ cc_library(
 cc_library(
     name = "gpu_opt",
     testonly = True,
-    srcs = if_cuda_is_configured(["gpu_opt.cc"]),
+    srcs = if_gpu_is_configured(["gpu_opt.cc"]),
     deps = [
         ":opt_lib",
         "//xla:debug_options_flags",
@@ -59,7 +62,6 @@ cc_library(
         "//xla/service:hlo_graph_dumper",
         "//xla/service:platform_util",
         "//xla/service/gpu:executable_proto_cc",
-        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/container:flat_hash_map",
         "@tsl//tsl/platform:statusor",
@@ -68,6 +70,8 @@ cc_library(
         "//xla/service/gpu:gpu_executable",
     ]) + if_cuda_is_configured([
         "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor:rocm_platform",
     ]),
     alwayslink = True,  # Initializer needs to run.
 )
@@ -115,6 +119,8 @@ cc_library(
         ":gpu_opt",
     ]) + if_cuda_is_configured([
         "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor:rocm_platform",
     ]),
 )
 
@@ -125,6 +131,14 @@ glob_lit_tests(
     ],
     driver = "//xla:run_lit.sh",
     test_file_exts = ["hlo"],
+    tags_override = {
+        "gpu_hlo_ptx.hlo": ["no_rocm"],
+    },
+    features = if_cuda_is_configured([
+        "--param=GPU=a100",
+    ]) + if_rocm_is_configured([
+        "--param=GPU=mi200",
+    ])
 )
 
 # Bundle together all of the test utilities that are used by tests.
@@ -133,6 +147,7 @@ filegroup(
     testonly = True,
     data = [
         "gpu_specs/a100.txtpb",
+        "gpu_specs/mi200.txtpb",
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",
         "@llvm-project//mlir:run_lit.sh",
