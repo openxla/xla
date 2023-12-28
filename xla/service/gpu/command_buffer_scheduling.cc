@@ -305,7 +305,7 @@ StatusOr<CommandBuffer> CommandBufferScheduling::PrepareCommandBuffer(
   }
 
   // Collect command buffer `results` (instructions replaced in the original
-  // computation) and `results` (instructions in the command buffer).
+  // computation) and `returned` (instructions in the command buffer).
   std::vector<HloInstruction*> results;
   std::vector<HloInstruction*> returned;
 
@@ -364,14 +364,28 @@ Status CommandBufferScheduling::RewriteCommandBuffer(
   HloInstruction* call = parent->AddInstruction(HloInstruction::CreateCall(
       cmd_buffer_result_shape, command_buffer.arguments, computation));
 
-  // Replace all users or original results with a command buffer results.
+  // Replaces external uses of `inst` with a `result` instruction.
+  auto replace_external_uses = [&](HloInstruction* inst,
+                                   HloInstruction* result) {
+    absl::InlinedVector<HloInstruction*, 4> users;
+    for (HloInstruction* user : inst->users()) {
+      if (!command_buffer.inst_mapping.contains(user)) users.push_back(user);
+    }
+    return inst->ReplaceUsesWith(users, result);
+  };
+
+  // Collect all get-tuple-element operations corresponding to command buffer
+  // results (can be empty if we have a single result).
+  absl::InlinedVector<HloInstruction*, 4> results;
+
+  // Replace external users or original results with a command buffer results.
   if (has_single_result) {
-    TF_RETURN_IF_ERROR(command_buffer.results[0]->ReplaceAllUsesWith(call));
+    TF_RETURN_IF_ERROR(replace_external_uses(command_buffer.results[0], call));
   } else {
     for (int i = 0; i < command_buffer.results.size(); i++) {
-      TF_RETURN_IF_ERROR(
-          command_buffer.results[i]->ReplaceAllUsesWith(parent->AddInstruction(
-              HloInstruction::CreateGetTupleElement(call, i))));
+      HloInstruction* res = results.emplace_back(parent->AddInstruction(
+          HloInstruction::CreateGetTupleElement(call, i)));
+      TF_RETURN_IF_ERROR(replace_external_uses(command_buffer.results[i], res));
     }
   }
 
@@ -383,6 +397,15 @@ Status CommandBufferScheduling::RewriteCommandBuffer(
   // schedule update below.
   HloInstructionSequence& sequence = schedule.GetOrCreateSequence(parent);
   sequence.replace_instruction(seq.instructions().back(), call);
+
+  // Moves `results` right before the first user according to a `sequence`.
+  for (HloInstruction* result : results) {
+    auto user = absl::c_find_first_of(sequence.instructions(), result->users());
+    if (user == sequence.instructions().end())
+      return absl::InternalError(
+          "command buffer result does not have any uses");
+    sequence.insert_before_instruction(*user, result);
+  }
 
   // Rebuild original instruction sequence schedule in a newly created
   // command buffer computation to guarantee that we'll get exactly the same
@@ -410,8 +433,15 @@ Status CommandBufferScheduling::RewriteCommandBuffer(
     // buffer, forward the dependency to the command buffer call instead.
     for (HloInstruction* predecessor : inst->control_predecessors()) {
       if (auto it = inst_mapping.find(predecessor); it != inst_mapping.end()) {
+        // If predecessor mapped to a parameter instruction it means that we
+        // need to forward control dependency to a call operation, otherwise
+        // we add control dependency between commands in the command buffer.
         HloInstruction* cmd_predecessor = it->second;
-        TF_RETURN_IF_ERROR(cmd_predecessor->AddControlDependencyTo(cmd_inst));
+        if (IsParameter(cmd_predecessor)) {
+          TF_RETURN_IF_ERROR(predecessor->AddControlDependencyTo(call));
+        } else {
+          TF_RETURN_IF_ERROR(cmd_predecessor->AddControlDependencyTo(cmd_inst));
+        }
       } else {
         TF_RETURN_IF_ERROR(predecessor->AddControlDependencyTo(call));
       }

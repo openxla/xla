@@ -78,6 +78,22 @@ class HloInstructionSequence {
     *id_it = new_instruction->unique_id();
   }
 
+  // Inserts new instruction into a sequence right before the old instruction.
+  void insert_before_instruction(HloInstruction* old_instruction,
+                                 HloInstruction* new_instruction) {
+    auto instruction_it =
+        std::find(instruction_sequence_.begin(), instruction_sequence_.end(),
+                  old_instruction);
+    auto id_it = std::find(id_sequence_.begin(), id_sequence_.end(),
+                           old_instruction->unique_id());
+    CHECK(instruction_it != instruction_sequence_.end())
+        << "Do not find instruction id " << old_instruction->unique_id();
+    CHECK(id_it != id_sequence_.end());
+
+    instruction_sequence_.insert(instruction_it, new_instruction);
+    id_sequence_.insert(id_it, new_instruction->unique_id());
+  }
+
   // Clears the sequence of all instructions.
   void clear() {
     instruction_sequence_.clear();
