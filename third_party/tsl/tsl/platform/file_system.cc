@@ -247,7 +247,7 @@ string FileSystem::JoinPathImpl(std::initializer_list<StringPiece> paths) {
       continue;
     }
 
-    if (result[result.size() - 1] == '/') {
+    if (result[result.size() - 1] == Separator()) {
       if (this->IsAbsolutePath(path)) {
         strings::StrAppend(&result, path.substr(1));
       } else {
@@ -257,7 +257,7 @@ string FileSystem::JoinPathImpl(std::initializer_list<StringPiece> paths) {
       if (this->IsAbsolutePath(path)) {
         strings::StrAppend(&result, path);
       } else {
-        strings::StrAppend(&result, "/", path);
+        strings::StrAppend(&result, std::string{Separator()}, path);
       }
     }
   }
