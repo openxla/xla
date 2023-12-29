@@ -429,6 +429,76 @@ TEST(GpuCommandBufferTest, ConditionalIf) {
   ASSERT_EQ(dst, expected);
 }
 
+TEST(GpuCommandBufferTest, ConditionalIfWithMemset) {
+  Platform* platform = GpuPlatform();
+  if (!CommandBuffer::SupportsConditionalCommands(platform)) {
+    GTEST_SKIP() << "CUDA graph conditionals are not supported";
+  }
+
+  StreamExecutor* executor = platform->ExecutorForDevice(0).value();
+
+  Stream stream(executor);
+  stream.Init();
+  ASSERT_TRUE(stream.ok());
+
+  int64_t length = 4;
+  int64_t byte_length = sizeof(int32_t) * length;
+
+  // Prepare arguments: a=0, pred=true
+  DeviceMemory<bool> pred = executor->AllocateArray<bool>(1, 0);
+  DeviceMemory<int32_t> a = executor->AllocateArray<int32_t>(length, 0);
+
+  constexpr bool kTrue = true;
+  stream.ThenMemcpy(&pred, &kTrue, 1);
+  stream.ThenMemset32(&a, 0, byte_length);
+
+  // if (pred == true) memset(&a, ...);
+  CommandBuffer::Builder then_builder = [&](CommandBuffer* then_cmd) {
+    return then_cmd->Memset(&a, uint8_t{1}, byte_length);
+  };
+
+  // Create a command buffer with a single conditional operation.
+  auto cmd_buffer = CommandBuffer::Create(executor).value();
+  // This doesn't work:
+  TF_ASSERT_OK(cmd_buffer.If(executor, pred, then_builder));
+  // This is fine:
+  // TF_ASSERT_OK(then_builder(&cmd_buffer));
+  TF_ASSERT_OK(cmd_buffer.Finalize());
+
+  TF_ASSERT_OK(executor->Submit(&stream, cmd_buffer));
+
+  // Copy `a` data back to host.
+  std::vector<int32_t> dst(length, 42);
+  stream.ThenMemcpy(dst.data(), a, byte_length);
+
+  std::vector<int32_t> expected(length, 1 << 24 | 1 << 16 | 1 << 8 | 1);
+  ASSERT_EQ(dst, expected);
+
+  // Prepare argument for graph update: b = 0
+  DeviceMemory<int32_t> b = executor->AllocateArray<int32_t>(length, 0);
+  stream.ThenMemZero(&b, byte_length);
+
+  // if (pred == true) memset(&b, ...);
+  then_builder = [&](CommandBuffer* then_cmd) {
+    return then_cmd->Memset(&b, uint8_t{1}, byte_length);
+  };
+
+  // Update command buffer with a conditional to use new builder.
+  TF_ASSERT_OK(cmd_buffer.Update());
+  // This doesn't work:
+  TF_ASSERT_OK(cmd_buffer.If(executor, pred, then_builder));
+  // This is fine:
+  // TF_ASSERT_OK(then_builder(&cmd_buffer));
+  TF_ASSERT_OK(cmd_buffer.Finalize());
+
+  TF_ASSERT_OK(executor->Submit(&stream, cmd_buffer));
+
+  // Copy `b` data back to host.
+  std::fill(dst.begin(), dst.end(), 42);
+  stream.ThenMemcpy(dst.data(), b, byte_length);
+  ASSERT_EQ(dst, expected);
+}
+
 TEST(GpuCommandBufferTest, ConditionalIfElse) {
   Platform* platform = GpuPlatform();
   if (!CommandBuffer::SupportsConditionalCommands(platform)) {
