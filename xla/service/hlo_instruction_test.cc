@@ -2463,10 +2463,13 @@ TEST_F(HloInstructionTest, BackendConfigCanContainNonFiniteFloats) {
   gpu::GemmBackendConfig orig_config;
   orig_config.set_alpha_real(std::numeric_limits<double>::infinity());
   orig_config.set_alpha_imag(std::numeric_limits<double>::quiet_NaN());
-  TF_ASSERT_OK(dot->set_backend_config(orig_config));
+  gpu::GpuBackendConfig gpu_config;
+  *gpu_config.mutable_gemm_backend_config() = orig_config;
+  TF_ASSERT_OK(dot->set_backend_config(gpu_config));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto new_config,
-                          dot->backend_config<gpu::GemmBackendConfig>());
+  TF_ASSERT_OK_AND_ASSIGN(auto new_gpu_config,
+                          dot->backend_config<gpu::GpuBackendConfig>());
+  gpu::GemmBackendConfig new_config = new_gpu_config.gemm_backend_config();
   EXPECT_GT(new_config.alpha_real(), std::numeric_limits<double>::max());
   EXPECT_NE(new_config.alpha_imag(), new_config.alpha_imag());
 }

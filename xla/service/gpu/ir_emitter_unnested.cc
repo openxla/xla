@@ -3688,8 +3688,6 @@ absl::Status IrEmitterUnnested::EmitOp(
     if (ir_emitter_context_->emit_ir_from_hlo()) {
       const HloFusionInstruction* instr =
           Cast<HloFusionInstruction>(hlo_for_lmhlo.at(op));
-      TF_ASSIGN_OR_RETURN(auto backend_config,
-                          instr->backend_config<FusionBackendConfig>());
       const se::DeviceDescription& device_info =
           ir_emitter_context_->gpu_device_info();
       TF_ASSIGN_OR_RETURN(auto fusion_analysis,
@@ -3976,8 +3974,10 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
     }
     case HloOpcode::kFusion: {
       auto* fusion = Cast<HloFusionInstruction>(instr);
-      TF_ASSIGN_OR_RETURN(auto backend_config,
-                          instr->backend_config<FusionBackendConfig>());
+      TF_ASSIGN_OR_RETURN(auto gpu_config,
+                          instr->backend_config<GpuBackendConfig>());
+      const FusionBackendConfig& backend_config =
+        gpu_config.fusion_backend_config();
       const se::DeviceDescription& device_info =
           ir_emitter_context_->gpu_device_info();
       TF_ASSIGN_OR_RETURN(auto fusion_analysis,

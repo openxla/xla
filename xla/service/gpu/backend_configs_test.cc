@@ -51,11 +51,11 @@ TEST_F(BackendConfigsTest, DefaultCollectiveBackendConfig) {
 
   const HloInstruction* ags = FindInstruction(module.get(), "agf32-start");
   EXPECT_THAT(ags->has_backend_config(), IsFalse());
-  auto collective_backend_config =
-      ags->backend_config<CollectiveBackendConfig>();
-  EXPECT_THAT(collective_backend_config.status(), IsOk());
-  EXPECT_THAT(collective_backend_config->is_sync(), IsFalse());
-  EXPECT_THAT(collective_backend_config->no_parallel_custom_call(), IsFalse());
+  TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                          ags->backend_config<GpuBackendConfig>());
+  auto collective_backend_config = gpu_config.collective_backend_config();
+  EXPECT_THAT(collective_backend_config.is_sync(), IsFalse());
+  EXPECT_THAT(collective_backend_config.no_parallel_custom_call(), IsFalse());
 }
 
 TEST_F(BackendConfigsTest, DefaultGpuBackendConfigParseOpQueue) {
@@ -157,6 +157,8 @@ TEST_F(BackendConfigsTest, DefaultGpuBackendConfigSetWaitOnQueue) {
   EXPECT_EQ(add->raw_backend_config_string(),
             "{\"operation_queue_id\":\"0\",\"wait_on_operation_queues\":[\"0\","
             "\"1\"]}");
+  TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig config,
+                          add->backend_config<GpuBackendConfig>());
 }
 
 }  // namespace
