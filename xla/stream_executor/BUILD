@@ -107,7 +107,6 @@ STREAM_EXECUTOR_DEPENDENCIES = [
     "@com_google_absl//absl/meta:type_traits",
     "@com_google_absl//absl/container:node_hash_map",
     "@com_google_absl//absl/functional:any_invocable",
-    "@com_google_absl//absl/log:check",
     "@com_google_absl//absl/memory",
     "@com_google_absl//absl/status",
     "@com_google_absl//absl/strings",
@@ -177,7 +176,7 @@ cc_library(
     hdrs = ["device_memory.h"],
     deps = [
         "//xla/stream_executor/platform",
-        "@com_google_absl//absl/log:check",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -462,10 +461,10 @@ cc_library(
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:node_hash_map",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -477,8 +476,6 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         "//xla/stream_executor/platform",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
@@ -497,11 +494,11 @@ cc_library(
         ":stream_executor_headers",
         ":stream_executor_internal",
         "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:statusor",
     ],
