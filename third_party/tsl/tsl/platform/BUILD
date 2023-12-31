@@ -1776,6 +1776,7 @@ cc_library(
     deps = [
         ":env",
         ":errors",
+        ":logging",
         ":random",
         ":status",
     ],
