@@ -12,10 +12,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-
 #ifndef TENSORFLOW_TSL_PLATFORM_RETRYING_UTILS_H_
 #define TENSORFLOW_TSL_PLATFORM_RETRYING_UTILS_H_
 
+#include <cstdint>
 #include <functional>
 
 #include "tsl/platform/status.h"
@@ -66,6 +66,15 @@ class RetryingUtils {
   static Status DeleteWithRetries(const std::function<Status()>& delete_func,
                                   const RetryConfig& config);
 };
+
+// Given the total number of retries attempted, return a randomized amount of
+// time to delay before retrying.
+//
+// The average computed backoff increases with the number of requests attempted.
+// See implementation for details on the calculations.
+int64_t ComputeBackoffMicroseconds(int current_retry_attempt,
+                                   int64_t min_delay = 1000,
+                                   int64_t max_delay = 10000000);
 
 }  // namespace tsl
 
