@@ -698,12 +698,17 @@ xla_cc_binary(
 
 glob_lit_tests(
     name = "all_tests",
-    data = [":test_utilities"],
+    data = [
+        ":test_utilities",
+        "//xla/tools/hlo_opt:gpu_specs/a100.txtpb",
+    ],
     default_tags = tf_cuda_tests_tags() + [
     ],
     driver = "//xla:run_lit.sh",
     exclude = ["execute_memzero_thunk.mlir"],
-    features = if_cuda_is_configured([
+    features = [
+        "--param=A100_CONFIG=$(location //third_party/tensorflow/compiler/xla/tools/hlo_opt:gpu_specs/a100.txtpb)",
+    ] + if_cuda_is_configured([
         "--param=PTX=PTX",
         "--param=SUBST_TIDX=@llvm.nvvm.read.ptx.sreg.tid.x",
         "--param=SUBST_CTAIDX=@llvm.nvvm.read.ptx.sreg.ctaid.x",
@@ -733,6 +738,8 @@ filegroup(
     testonly = True,
     data = [
         ":hlo_to_llvm_ir",
+        "//xla/tools:hlo-opt",
+        "//xla/tools/hlo_opt:gpu_specs/a100.txtpb",
         "@llvm-project//llvm:FileCheck",
         "@llvm-project//mlir:run_lit.sh",
     ],

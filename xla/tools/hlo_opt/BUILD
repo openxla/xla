@@ -59,6 +59,8 @@ cc_library(
         "//xla/service:hlo_graph_dumper",
         "//xla/service:platform_util",
         "//xla/service/gpu:executable_proto_cc",
+        "//xla/service/gpu:gpu_compiler",
+        "//xla/service/gpu:gpu_hlo_schedule",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/container:flat_hash_map",
