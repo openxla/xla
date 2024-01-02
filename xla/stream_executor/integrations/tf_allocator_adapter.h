@@ -21,11 +21,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-<<<<<<< HEAD
-#include "absl/status/statusor.h"
-=======
 #include "absl/container/flat_hash_map.h"
->>>>>>> Allow MultiDeviceAdapter to switch between different allocators based on memory_space
+#include "absl/status/statusor.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/platform.h"
@@ -50,16 +47,9 @@ class TfAllocatorAdapter : public DeviceMemoryAllocator {
 
   ~TfAllocatorAdapter() override;
 
-<<<<<<< HEAD
   absl::StatusOr<OwningDeviceMemory> Allocate(int device_ordinal, uint64_t size,
                                               bool retry_on_failure,
                                               int64_t memory_space) override;
-=======
-  // Memory space is unused from this point down
-  tsl::StatusOr<OwningDeviceMemory> Allocate(int device_ordinal, uint64_t size,
-                                             bool retry_on_failure,
-                                             int64_t memory_space) override;
->>>>>>> Allow MultiDeviceAdapter to switch between different allocators based on memory_space
 
   absl::Status Deallocate(int device_ordinal, DeviceMemoryBase mem) override;
 
@@ -140,6 +130,7 @@ class MultiDeviceAdapter : public DeviceMemoryAllocator {
   }
 
   absl::Status Deallocate(int device_ordinal, DeviceMemoryBase mem) override {
+    if (mem.opaque() == nullptr) return absl::OkStatus();
     // Memory space is not passed to deallocate, look up in
     // buffer_memory_spaces_.
     int64_t memory_space;

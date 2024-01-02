@@ -58,9 +58,11 @@ struct GpuAllocatorConfig {
   // allocator will allocate more memory as allocations are requested.
   bool preallocate = true;
 
-  // Amount of collective memory (ncclMemAlloc) to reserve. If this value is 0,
-  // collective memory will not be used.
-  size_t collective_memory_size = 1 * (1LL << 30);
+  // Amount of collective memory (ncclMemAlloc) to reserve. Must be set when
+  // using `xla_gpu_enable_nccl_user_buffers=true`. If this value is 0,
+  // collective memory will not be allocated. Should be set to a multiple of
+  // 512MB to avoid wasting memory due to granularity requirements.
+  size_t collective_memory_size = 0;
 };
 
 std::unique_ptr<tsl::BFCAllocator> GetGpuHostAllocator(

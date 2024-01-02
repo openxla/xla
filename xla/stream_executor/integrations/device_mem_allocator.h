@@ -25,6 +25,7 @@ limitations under the License.
 
 namespace stream_executor {
 
+// The type of memory that the allocator will use.
 enum class MemoryType { kDevice = 0, kUnified, kCollective };
 
 // Suballocator for StreamExecutor-based device memory.
