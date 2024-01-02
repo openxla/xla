@@ -288,7 +288,29 @@ std::string PrintDotTestParam(
 
 class ParametricDotTest : public DotOperationTest,
                           public ::testing::WithParamInterface<DotTestParam> {
+ 
  protected:
+  // This method runs before each test runs.
+  void SetUp() override {
+
+    // Several F16 tests are subject to denormal issues on MI210 architeture. 
+    // For that matter, we set enable_grad_xy_ flag fot these tests, which 
+    // activates adapted GEMM algorithm on ROCM. Besides, the adapted algorithm
+    // does not work well with ROCBLAS autotuning, hence we also disable it.
+    // This also serves as a test that grad_x/y attributes are correctly
+    // propagated down to GEMM routine.
+    const auto& gpu_comp = client_->backend().default_stream_executor()->
+      GetDeviceDescription().gpu_compute_capability();
+    if(std::holds_alternative<se::RocmComputeCapability>(gpu_comp)) {
+      std::string_view name(
+              ::testing::UnitTest::GetInstance()->current_test_info()->name());
+      if(name.find("TestF16/270x270x520_MajorToMinor") != std::string::npos) {
+         execution_options_.mutable_debug_options()->set_xla_gpu_autotune_level(0);
+         enable_grad_xy_ = true;
+      }
+    }
+  }
+
   template <typename NativeT>
   void TestImpl();
 
@@ -296,6 +318,9 @@ class ParametricDotTest : public DotOperationTest,
   void ComputeAndCompareR2WithError(XlaBuilder* builder,
                                     const Array2D<NativeT>& expected,
                                     absl::Span<GlobalData* const> arguments);
+
+  bool enable_grad_xy_ = false;
+  int grad_xy_flip_ = 0;
 };
 
 template <typename NativeT>
@@ -356,6 +381,16 @@ void ParametricDotTest::TestImpl() {
 
   XlaBuilder builder(TestName());
   auto prim_type = primitive_util::NativeToPrimitiveType<NativeT>();
+    
+  if(enable_grad_xy_) {
+    FrontendAttributes attributes;
+    if(grad_xy_flip_ == 0)
+      (*attributes.mutable_map())["grad_x"] = "true";
+    else
+      (*attributes.mutable_map())["grad_y"] = "true";
+    grad_xy_flip_ ^= 1;
+    builder.SetFrontendAttributes(attributes);
+  }
   auto result =
       Dot(Parameter(&builder, 0,
                     ShapeUtil::MakeShapeWithDenseLayout(
@@ -367,6 +402,9 @@ void ParametricDotTest::TestImpl() {
                         prim_type, {param.k, param.n},
                         MinorToMajorForIsRowMajor(param.dot_rhs_row_major)),
                     "dot_rhs"));
+  if(enable_grad_xy_) {
+    builder.ClearFrontendAttributes();
+  }
 
   if (param.has_addend) {
     result =
