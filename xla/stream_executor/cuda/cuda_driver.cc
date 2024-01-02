@@ -1501,8 +1501,8 @@ struct BitPatternToValue {
   }
 }
 
-/* static */ void* GpuDriver::CollectiveMemoryAllocate(GpuContext* context,
-                                                       uint64_t bytes) {
+/* static */ tsl::StatusOr<void*> GpuDriver::CollectiveMemoryAllocate(
+    GpuContext* context, uint64_t bytes) {
   if (bytes == 0) {
     return nullptr;
   }
@@ -1511,32 +1511,31 @@ struct BitPatternToValue {
   void* ptr = 0;
   ncclResult_t res = ncclMemAlloc(&ptr, bytes);
   if (res != ncclSuccess) {
-    LOG(INFO) << "failed to allocate "
-              << tsl::strings::HumanReadableNumBytes(bytes) << " (" << bytes
-              << " bytes) from device collective memory: "
-              << ncclGetErrorString(res)
-              << " Last NCCL warning(error) log entry (may be unrelated): "
-              << ncclGetLastError(NULL);
-    return nullptr;
+    return tsl::errors::Internal(absl::StrFormat(
+        "failed to allocate %s (%llu bytes) from device collective memory: %s, "
+        "Last NCCL warning(error) log entry (may be unrelated): %s",
+        tsl::strings::HumanReadableNumBytes(bytes), bytes,
+        ncclGetErrorString(res), ncclGetLastError(NULL)));
   }
   VLOG(2) << "allocated collective memory " << ptr << " for context "
           << context->context() << " of " << bytes << " bytes";
   return ptr;
 }
 
-/* static */ void GpuDriver::CollectiveMemoryDeallocate(GpuContext* context,
-                                                        void* location) {
+/* static */ tsl::Status GpuDriver::CollectiveMemoryDeallocate(
+    GpuContext* context, void* location) {
   ScopedActivateContext activation(context);
   ncclResult_t res = ncclMemFree(location);
   if (res != ncclSuccess) {
-    LOG(ERROR) << "failed to free device memory at " << location
-               << "; result: " << ncclGetErrorString(res)
-               << " Last NCCL warning(error) log entry (may be unrelated): "
-               << ncclGetLastError(NULL);
+    return tsl::errors::Internal(absl::StrFormat(
+        "failed to free device collective memory at %p; result: %s, Last NCCL "
+        "warning(error) log entry (may be unrelated): %s",
+        location, ncclGetErrorString(res), ncclGetLastError(NULL)));
   } else {
     VLOG(2) << "deallocated collective memory " << location << " for context "
             << context->context();
   }
+  return tsl::OkStatus();
 }
 
 /* static */ void* GpuDriver::HostAllocate(GpuContext* context,

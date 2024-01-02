@@ -192,11 +192,11 @@ class StreamExecutor {
   // See
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/bufferreg.html
   // for more details on User Buffer Registration.
-  void* CollectiveMemoryAllocate(uint64_t size);
+  tsl::StatusOr<void*> CollectiveMemoryAllocate(uint64_t size);
 
   // Deallocate collective device memory previously allocated with
   // CollectiveMemoryAllocate.
-  void CollectiveMemoryDeallocate(void* mem);
+  tsl::Status CollectiveMemoryDeallocate(void* mem);
 
   // Allocates a region of host memory and registers it with the platform API.
   // Memory allocated in this manner (or allocated and registered with

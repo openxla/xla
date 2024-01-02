@@ -153,11 +153,11 @@ class GpuExecutor : public internal::StreamExecutorInterface {
     return GpuDriver::UnifiedMemoryDeallocate(context_, location);
   }
 
-  void* CollectiveMemoryAllocate(uint64_t size) override {
+  tsl::StatusOr<void*> CollectiveMemoryAllocate(uint64_t size) override {
     return GpuDriver::CollectiveMemoryAllocate(context_, size);
   }
 
-  void CollectiveMemoryDeallocate(void* location) override {
+  tsl::Status CollectiveMemoryDeallocate(void* location) override {
     return GpuDriver::CollectiveMemoryDeallocate(context_, location);
   }
 

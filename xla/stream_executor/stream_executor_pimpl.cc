@@ -524,14 +524,15 @@ void StreamExecutor::UnifiedMemoryDeallocate(void* location) {
   return implementation_->UnifiedMemoryDeallocate(location);
 }
 
-void* StreamExecutor::CollectiveMemoryAllocate(uint64_t bytes) {
-  void* buffer = implementation_->CollectiveMemoryAllocate(bytes);
+tsl::StatusOr<void*> StreamExecutor::CollectiveMemoryAllocate(uint64_t bytes) {
+  TF_ASSIGN_OR_RETURN(void* buffer,
+                      implementation_->CollectiveMemoryAllocate(bytes));
   VLOG(1) << "Called StreamExecutor::CollectiveMemoryAllocate(size=" << bytes
           << ") returns " << buffer << StackTraceIfVLOG10();
   return buffer;
 }
 
-void StreamExecutor::CollectiveMemoryDeallocate(void* location) {
+tsl::Status StreamExecutor::CollectiveMemoryDeallocate(void* location) {
   VLOG(1) << "Called StreamExecutor::CollectiveMemoryDeallocate(location="
           << location << ")" << StackTraceIfVLOG10();
 

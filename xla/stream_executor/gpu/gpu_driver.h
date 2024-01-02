@@ -136,13 +136,15 @@ class GpuDriver {
   // the given context via ncclMemAlloc.
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclmemalloc
   // (supported on CUDA only)
-  static void* CollectiveMemoryAllocate(GpuContext* context, uint64_t bytes);
+  static tsl::StatusOr<void*> CollectiveMemoryAllocate(GpuContext* context,
+                                                       uint64_t bytes);
 
   // Deallocates a collective device memory space of size bytes associated with
   // the given context via ncclMemFree.
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclmemfree
   // (supported on CUDA only)
-  static void CollectiveMemoryDeallocate(GpuContext* context, void* location);
+  static tsl::Status CollectiveMemoryDeallocate(GpuContext* context,
+                                                void* location);
 
   // Allocates page-locked and CUDA-registered memory on the host via
   // cuMemAllocHost/hipHostMalloc.
