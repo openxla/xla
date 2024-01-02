@@ -254,26 +254,13 @@ tsl::StatusOr<std::array<int64_t, 3>> GetAsmCompilerVersion(
   return GetToolVersion(ptxas_path);
 }
 
-static bool unsupported_ptxas_version(
-    const std::array<int64_t, 3>& ptxas_version_tuple) {
-  if (std::get<0>(ptxas_version_tuple) == 12 &&
-      std::get<1>(ptxas_version_tuple) == 3) {
-    int third_value = std::get<2>(ptxas_version_tuple);
-    std::string third_value_str = std::to_string(third_value);
-    if (third_value_str[0] == '1') {
-      return true;
-    }
-  }
-  return false;
-}
-
 tsl::StatusOr<std::vector<uint8_t>> CompileGpuAsm(int cc_major, int cc_minor,
                                                   const char* ptx_contents,
                                                   GpuAsmOpts options,
                                                   bool cancel_if_reg_spill) {
   TF_ASSIGN_OR_RETURN(auto ptxas_version_tuple,
                       GetAsmCompilerVersion(options.preferred_cuda_dir));
-  if (unsupported_ptxas_version(ptxas_version_tuple)) {
+  if (ptxas_version_tuple == std::array<int64_t, 3>{12, 3, 103}) {
     return tsl::errors::Internal(absl::StrFormat(
         "ptxas %d.%d.%d has a bug that we think can affect XLA. "
         "Please use a different version.",
