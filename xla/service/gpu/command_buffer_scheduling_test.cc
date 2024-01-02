@@ -422,9 +422,9 @@ TEST_F(CommandBufferSchedulingTest, ForwardControlDependencies) {
     CHECK:   ROOT %custom-call.2 = s32[] custom-call(%call, %[[F3]]), custom_call_target="some target"
     CHECK: })";
 
-  RunAndFilecheckHloRewrite(hlo,
-                            CommandBufferScheduling(kCudaVersion, kCudaVersion),
-                            expected, [](HloModule* module) {
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(gpu_comp(), 
+                                  kCudaVersion, kCudaVersion),
+                              expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
                               TF_CHECK_OK(module->schedule().Verify());
                             });
@@ -462,8 +462,8 @@ TEST_F(CommandBufferSchedulingTest, ForwardControlDependenciesToParams) {
     CHECK:   ROOT {{.*}} call(%[[CUSTOM_CALL]], %a, %b), to_apply=%command_buffer, control-predecessors={%[[CUSTOM_CALL]]}
     CHECK: })";
 
-  RunAndFilecheckHloRewrite(hlo,
-                            CommandBufferScheduling(kCudaVersion, kCudaVersion),
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(gpu_comp(), 
+                            kCudaVersion, kCudaVersion),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
                               TF_CHECK_OK(module->schedule().Verify());
@@ -541,8 +541,8 @@ TEST_F(CommandBufferSchedulingTest, WhileNotCommand) {
     CHECK:   ROOT %[[BC:.+]] = f32[] bitcast(%[[WHILE]])
     CHECK: })";
 
-  RunAndFilecheckHloRewrite(hlo,
-                            CommandBufferScheduling(kCudaVersion, kCudaVersion),
+  RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(gpu_comp(), 
+                            kCudaVersion, kCudaVersion),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
                               TF_CHECK_OK(module->schedule().Verify());
