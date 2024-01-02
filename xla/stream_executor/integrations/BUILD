@@ -1,3 +1,4 @@
+load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 load("@tsl//tsl:tsl.bzl", "set_external_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
@@ -66,5 +67,20 @@ cc_library(
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/framework:device_id",
         "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+xla_cc_test(
+    name = "tf_allocator_adapter_test",
+    srcs = ["tf_allocator_adapter_test.cc"],
+    deps = [
+        ":tf_allocator_adapter",
+        "//xla/service:cpu_plugin",
+        "//xla/service:platform_util",
+        "//xla/stream_executor",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )

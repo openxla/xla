@@ -125,7 +125,7 @@ class MultiDeviceAdapter : public DeviceMemoryAllocator {
                          device_ordinal, size, retry_on_failure, memory_space));
 
     absl::MutexLock lock(&mu_);
-    buffer_memory_spaces_[result->opaque()] = memory_space;
+    buffer_memory_spaces_[{device_ordinal, result->opaque()}] = memory_space;
     return result;
   }
 
@@ -136,7 +136,7 @@ class MultiDeviceAdapter : public DeviceMemoryAllocator {
     int64_t memory_space;
     {
       absl::MutexLock lock(&mu_);
-      auto it = buffer_memory_spaces_.find(mem.opaque());
+      auto it = buffer_memory_spaces_.find({device_ordinal, mem.opaque()});
       CHECK(it != buffer_memory_spaces_.end());
       memory_space = it->second;
     }
@@ -172,9 +172,9 @@ class MultiDeviceAdapter : public DeviceMemoryAllocator {
  private:
   absl::flat_hash_map<int64_t, std::vector<std::unique_ptr<TfAllocatorAdapter>>>
       memory_space_to_per_device_allocators_;
-  // Map of buffer to which memory space it resides in.
+  // Map of device ordinal, buffer to which memory space it resides in.
   absl::Mutex mu_;
-  absl::flat_hash_map<void *, int64_t> buffer_memory_spaces_
+  absl::flat_hash_map<std::pair<int, void *>, int64_t> buffer_memory_spaces_
       ABSL_GUARDED_BY(mu_);
   // The wrapped TF allocators backing per_device_allocators_
   // (TfAllocatorAdapter does not take ownership of its underlying Allocator).
