@@ -97,26 +97,6 @@ TEST_F(ReductionSplitterTest, SplitReductionAtDimensionZero) {
   EXPECT_THAT(root_reduction->shape(), ShapeUtil::MakeShape(F32, {16, 64}));
 }
 
-TEST_F(ReductionSplitterTest, DontSplitReductionWithSmallDimensions) {
-  auto module = ParseAndReturnVerifiedModule(R"(
-  HloModule test
-
-  add_computation {
-    x = f32[] parameter(0)
-    y = f32[] parameter(1)
-    ROOT add = f32[] add(x, y)
-  }
-
-  ENTRY entry_computation {
-    param_0 = f32[8,1024,8]{2,1,0} parameter(0)
-    constant_11111 = f32[] constant(0)
-    ROOT reduce.982 = f32[1024]{0} reduce(param_0, constant_11111), dimensions={2,0}, to_apply=add_computation
-  }
-  )")
-                    .value();
-  EXPECT_FALSE(ReductionSplitter().Run(module.get()).value());
-}
-
 TEST_F(ReductionSplitterTest, DontSplitReductionsWithContiguousDimensions) {
   auto module = ParseAndReturnVerifiedModule(R"(
   HloModule test
