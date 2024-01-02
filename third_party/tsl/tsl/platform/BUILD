@@ -1413,8 +1413,9 @@ cc_library(
     hdrs = ["notification.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        ":platform",
-    ] + tf_platform_deps("notification"),
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+    ],
 )
 
 cc_library(
