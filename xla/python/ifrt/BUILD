@@ -1,4 +1,5 @@
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 
 package_group(
@@ -66,6 +67,7 @@ cc_library(
         "tuple.h",
         "value.h",
     ],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":serdes",
         ":types_proto_cc",
@@ -315,6 +317,7 @@ cc_library(
     name = "serdes",
     srcs = ["serdes.cc"],
     hdrs = ["serdes.h"],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":serdes_proto_cc",
         "@com_google_absl//absl/base:core_headers",
@@ -354,6 +357,7 @@ cc_library(
     name = "sharding_serdes",
     srcs = ["sharding_serdes.cc"],
     hdrs = ["sharding_serdes.h"],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":ifrt",
         ":serdes",
