@@ -31,17 +31,17 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/AsmParser/AsmParser.h"  // from @llvm-project
+#include "mlir/AsmParser/AsmParser.h"      // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/IRMapping.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/Region.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"            // from @llvm-project
+#include "mlir/IR/Builders.h"              // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"     // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"          // from @llvm-project
+#include "mlir/IR/IRMapping.h"             // from @llvm-project
+#include "mlir/IR/Location.h"              // from @llvm-project
+#include "mlir/IR/Operation.h"             // from @llvm-project
+#include "mlir/IR/Region.h"                // from @llvm-project
+#include "mlir/IR/ValueRange.h"            // from @llvm-project
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -851,6 +851,19 @@ StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       }
       return new_operation;
     }
+    case HloOpcode::kCollectiveBroadcast: {
+      auto collective_broadcast = Cast<HloChannelInstruction>(instruction);
+      attributes.push_back(ConvertReplicaGroups(
+          collective_broadcast->replica_groups(), builder_));
+      if (collective_broadcast->channel_id().has_value())
+        attributes.push_back(
+            ConvertChannelHandle(collective_broadcast->channel_id().value()));
+      return func_builder
+          ->create<mlir::mhlo::CollectiveBroadcastOp>(loc, result_type,
+                                                      operands, attributes)
+          .getOperation();
+    }
+
     case HloOpcode::kCollectivePermute: {
       auto collective_permute = Cast<HloChannelInstruction>(instruction);
       attributes.push_back(ConvertSourceTargetPairs(

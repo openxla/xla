@@ -50,11 +50,14 @@ limitations under the License.
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 
+
 namespace mlir {
 namespace lmhlo_gpu {
 static FailureOr<bool> parseBool(AsmParser &parser) {
-  if (succeeded(parser.parseOptionalKeyword("true"))) return true;
-  if (succeeded(parser.parseOptionalKeyword("false"))) return false;
+  if (succeeded(parser.parseOptionalKeyword("true")))
+    return true;
+  if (succeeded(parser.parseOptionalKeyword("false")))
+    return false;
   return failure();
 }
 
@@ -62,7 +65,8 @@ static FailureOr<SmallVector<int64_t>> parseI64Array(AsmParser &parser) {
   SmallVector<int64_t> elements;
   auto elementParser = [&]() {
     int64_t element = 0;
-    if (failed(parser.parseInteger(element))) return failure();
+    if (failed(parser.parseInteger(element)))
+      return failure();
     elements.push_back(element);
     return success();
   };
@@ -71,8 +75,8 @@ static FailureOr<SmallVector<int64_t>> parseI64Array(AsmParser &parser) {
     return failure();
   return elements;
 }
-}  // namespace lmhlo_gpu
-}  // namespace mlir
+} // namespace lmhlo_gpu
+} // namespace mlir
 
 // Include order below matters.
 #include "lhlo_gpu/IR/lhlo_gpu_ops_dialect.cc.inc"
@@ -124,6 +128,18 @@ mlir::LogicalResult AllToAllStartOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// CollectiveBroadcastStartOp
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult CollectiveBroadcastStartOp::verify() {
+  CollectiveBroadcastStartOp op = *this;
+  return mlir::hlo::verifyReplicaGroups(op.getLoc(), op.getReplicaGroups(),
+                                        /*allGroupsMustHaveSameSize=*/false,
+                                        /*useGlobalDeviceIds=*/true,
+                                        /*expectedGroupSize=*/std::nullopt);
+}
+
+//===----------------------------------------------------------------------===//
 // CollectivePermuteStartOp
 //===----------------------------------------------------------------------===//
 
@@ -164,8 +180,8 @@ LogicalResult ReduceScatterStartOp::verify() {
   return success();
 }
 
-}  // namespace lmhlo_gpu
-}  // namespace mlir
+} // namespace lmhlo_gpu
+} // namespace mlir
 
 #define GET_OP_CLASSES
 #include "lhlo_gpu/IR/lhlo_gpu_ops.cc.inc"

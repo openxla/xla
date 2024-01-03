@@ -221,6 +221,9 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kNcclAllReduce);
     CASE(kNcclAllReduceStart);
     CASE(kNcclAllReduceDone);
+    CASE(kNcclCollectiveBroadcast);
+    CASE(kNcclCollectiveBroadcastStart);
+    CASE(kNcclCollectiveBroadcastDone);
     CASE(kNcclCollectivePermute);
     CASE(kNcclCollectivePermuteStart);
     CASE(kNcclCollectivePermuteDone);

@@ -1448,6 +1448,43 @@ Status IrEmitter::HandleAllGather(HloInstruction* instruction) {
   return OkStatus();
 }
 
+Status IrEmitter::HandleCollectiveBroadcast(HloInstruction* hlo) {
+  TF_RETURN_IF_ERROR(EmitTargetAddressForOp(hlo));
+  std::string replica_groups = ReplicaGroupsToString(hlo->replica_groups());
+  int32_t replica_groups_size = replica_groups.size();
+  llvm::Value* replica_groups_v = b_.CreateGlobalStringPtr(replica_groups);
+
+  Shape shape = hlo->operand(0)->shape();
+  const HloInstruction* op = hlo->operand(0);
+  TF_ASSIGN_OR_RETURN(const BufferAllocation::Slice in_slice,
+                      assignment_.GetUniqueSlice(op, {}));
+  TF_ASSIGN_OR_RETURN(const BufferAllocation::Slice out_slice,
+                      assignment_.GetUniqueSlice(hlo, {}));
+  const Shape& operand_shape = op->shape();
+
+  llvm::Value* output_buffer = EmitBufferPointer(out_slice, operand_shape);
+  llvm::Value* input_buffer = GetEmittedValueFor(op);
+  int64_t buffer_size = in_slice.size();
+
+  EmitCallToFunc(
+      runtime::kCollectiveBroadcastSymbolName,
+      {/*run_options=*/GetExecutableRunOptionsArgument(),
+       /*channel_id_present=*/
+       b_.getInt32(static_cast<int32_t>(hlo->channel_id().has_value())),
+       /*op_id=*/
+       b_.getInt64(hlo->channel_id().has_value()
+                       ? *hlo->channel_id()
+                       : hlo->GetModule()->unique_id()),
+       /*replica_groups=*/replica_groups_v,
+       /*replica_groups_size=*/b_.getInt32(replica_groups_size),
+       /*buffer_size=*/b_.getInt64(buffer_size),
+       /*input_buffer=*/input_buffer,
+       /*output_buffer=*/output_buffer},
+      b_.getVoidTy());
+
+  return OkStatus();
+}
+
 Status IrEmitter::HandleCollectivePermute(HloInstruction* crs) {
   auto* instr = Cast<HloCollectivePermuteInstruction>(crs);
   TF_RETURN_IF_ERROR(EmitTargetAddressForOp(instr));

@@ -30,11 +30,11 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "pybind11/attr.h"  // from @pybind11
-#include "pybind11/cast.h"  // from @pybind11
-#include "pybind11/numpy.h"  // from @pybind11
+#include "pybind11/attr.h"      // from @pybind11
+#include "pybind11/cast.h"      // from @pybind11
+#include "pybind11/numpy.h"     // from @pybind11
 #include "pybind11/pybind11.h"  // from @pybind11
-#include "pybind11/pytypes.h"  // from @pybind11
+#include "pybind11/pytypes.h"   // from @pybind11
 #include "pybind11/stl_bind.h"  // from @pybind11
 #include "xla/array.h"
 #include "xla/client/executable_build_options.h"
@@ -1028,6 +1028,10 @@ void BuildXlaCompilerSubmodule(py::module& m) {
       .def_property("xla_gpu_enable_async_all_gather",
                     &DebugOptions::xla_gpu_enable_async_all_gather,
                     &DebugOptions::set_xla_gpu_enable_async_all_gather)
+      .def_property(
+          "xla_gpu_enable_async_collective_broadcast",
+          &DebugOptions::xla_gpu_enable_async_collective_broadcast,
+          &DebugOptions::set_xla_gpu_enable_async_collective_broadcast)
       .def_property("xla_gpu_enable_async_collective_permute",
                     &DebugOptions::xla_gpu_enable_async_collective_permute,
                     &DebugOptions::set_xla_gpu_enable_async_collective_permute)

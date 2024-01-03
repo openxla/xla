@@ -2425,6 +2425,12 @@ ShapeInference::InferElementwiseBinaryOpShape(
 
   return InferVariadicOpShape(HloOpcode::kTuple, operand_shapes);
 }
+/* static */ StatusOr<Shape> ShapeInference::InferCollectiveBroadcastShape(
+    absl::Span<const Shape* const> operand_shapes) {
+  TF_RETURN_IF_ERROR(
+      ExpectArray(*(operand_shapes[0]), "operand of collective-broadcast"));
+  return *(operand_shapes[0]);
+}
 
 /* static */ absl::StatusOr<Shape> ShapeInference::InferCollectivePermuteShape(
     absl::Span<const Shape* const> operand_shapes) {

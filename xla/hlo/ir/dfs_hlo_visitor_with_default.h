@@ -119,6 +119,9 @@ class DfsHloVisitorWithDefaultBase
   Status HandleAllToAll(HloInstructionPtr hlo) override {
     return DefaultAction(hlo);
   }
+  Status HandleCollectiveBroadcast(HloInstructionPtr hlo) override {
+    return DefaultAction(hlo);
+  }
   Status HandleCollectivePermute(HloInstructionPtr hlo) override {
     return DefaultAction(hlo);
   }

@@ -2241,7 +2241,7 @@ class HloInstructionControlDepsImpl {
     absl::StrAppend(out, inst->name());
   };
 
-  absl::Span<HloInstruction* const> preds_, succs_;
+  absl::Span<HloInstruction*const> preds_, succs_;
 };
 
 // Matches a constant scalar or effective scalar, optionally with a given value.
@@ -2680,6 +2680,7 @@ XLA_UNOP_PATTERN(Cos)
 XLA_UNOP_PATTERN(AllReduceStart)
 XLA_UNOP_PATTERN(AllReduceDone)
 XLA_UNOP_PATTERN(AllToAll)
+XLA_UNOP_PATTERN(CollectiveBroadcast)
 XLA_UNOP_PATTERN(CollectivePermute)
 XLA_UNOP_PATTERN(CollectivePermuteStart)
 XLA_UNOP_PATTERN(CollectivePermuteDone)

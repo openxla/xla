@@ -37,26 +37,26 @@ limitations under the License.
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
-#include "mlir/Dialect/Shape/IR/Shape.h"  // from @llvm-project
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Matchers.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
-#include "mlir/IR/UseDefLists.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"     // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"    // from @llvm-project
+#include "mlir/Dialect/MemRef/IR/MemRef.h"   // from @llvm-project
+#include "mlir/Dialect/Shape/IR/Shape.h"     // from @llvm-project
+#include "mlir/Dialect/Tensor/IR/Tensor.h"   // from @llvm-project
+#include "mlir/IR/Attributes.h"              // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"       // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"              // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"            // from @llvm-project
+#include "mlir/IR/Location.h"                // from @llvm-project
+#include "mlir/IR/MLIRContext.h"             // from @llvm-project
+#include "mlir/IR/Matchers.h"                // from @llvm-project
+#include "mlir/IR/Operation.h"               // from @llvm-project
+#include "mlir/IR/TypeUtilities.h"           // from @llvm-project
+#include "mlir/IR/UseDefLists.h"             // from @llvm-project
+#include "mlir/Pass/Pass.h"                  // from @llvm-project
+#include "mlir/Pass/PassManager.h"           // from @llvm-project
 #include "mlir/Support/DebugStringHelper.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Transforms/RegionUtils.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"      // from @llvm-project
+#include "mlir/Transforms/RegionUtils.h"     // from @llvm-project
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
 #include "xla/array.h"
 #include "xla/client/lib/approx_topk.h"
@@ -834,10 +834,16 @@ bool SimplyReturnedOp(mlir::Operation* op) {
 namespace mlir {
 namespace mhlo {
 namespace {
+LogicalResult ExportXlaOp(CollectiveBroadcastOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaOp operand;
+  if (failed(GetXlaOp(op.getOperand(), value_map, &operand, op)))
+    return failure();
+  value_map[op->getResult(0)] = xla::CollectiveBroadcast(
+      operand, Convert_replica_groups(op.getReplicaGroups()),
+      Convert_channel_handle(op.getChannelHandle()));
 
-LogicalResult ExportXlaOp(CollectiveBroadcastOp, OpLoweringContext) {
-  // TODO: b/314330871 - Implement MHLO export for CollectiveBroadcastOp.
-  return failure();
+  return success();
 }
 
 LogicalResult ExportXlaOp(ComputeReshapeShapeOp, OpLoweringContext) {
