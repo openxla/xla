@@ -2897,3 +2897,19 @@ xla_test(
         "//xla:test_helpers",
     ],
 )
+
+xla_test(
+    name = "numerics_test",
+    srcs = ["numerics_test.cc"],
+    deps = [
+        ":hlo_test_base",
+        ":test_macros_header",
+        ":xla_internal_test_main",
+        "//xla:literal_util",
+        "//xla:statusor",
+        "//xla:test",
+        "//xla:types",
+        "//xla/hlo/ir:hlo",
+        "@tsl//tsl/platform:test",
+    ],
+)
