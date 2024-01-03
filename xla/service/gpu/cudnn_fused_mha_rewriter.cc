@@ -986,8 +986,6 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
   }
   // try to pattern match dbias
   if (has_scale || has_mask) {
-    std::cerr << "called\n";
-    std::cerr << d_softmax->user_count() << "\n";
     // bmm1-(scale)-(bias)-(mask)-softmax pattern
     // users could be dbias besides mask bwd or scale bwd
     if (d_softmax->user_count() == 1) {
@@ -999,7 +997,6 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
     } else {
       match_result.has_match = false;
     }
-    std::cerr << match_result.has_match << "\n";
   } else {
     // bmm1-(bias)-softmax pattern
     // users could be dbias besides bmm1grad1 bmm1grad2
