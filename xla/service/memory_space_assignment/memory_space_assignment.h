@@ -2722,6 +2722,15 @@ class AlternateMemoryBestFitHeap
   const std::vector<const HloInstruction*>* GetRepeatedInstructionList(
       const HloInstruction* instruction) const;
 
+  enum class PeakMemoryUsageUpdateType {
+    kCommit,
+    kUncommit,
+  };
+  void ResetPeakMemoryUsage();
+  void UpdatePeakMemoryUsage(PeakMemoryUsageUpdateType type,
+                             int64_t start_time_inclusive,
+                             int64_t end_time_inclusive, const Chunk& chunk);
+
   MemorySpaceAssignment::AllocationSequence* allocations_;
   const Options& options_;
   const HloAliasAnalysis& alias_analysis_;
