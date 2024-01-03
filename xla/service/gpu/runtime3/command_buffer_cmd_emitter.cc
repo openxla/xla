@@ -18,12 +18,14 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/container/inlined_vector.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/gemm_thunk.h"
 #include "xla/service/gpu/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/runtime3/command_buffer_cmd.h"
+#include "xla/service/gpu/runtime3/conditional_thunk.h"
 #include "xla/service/gpu/runtime3/copy_thunk.h"
 #include "xla/service/gpu/runtime3/kernel_thunk.h"
 #include "xla/service/gpu/runtime3/memset_thunk.h"
@@ -90,6 +92,20 @@ static StatusOr<Command> ConvertWhileThunk(const WhileThunk& thunk,
                                     std::move(cond_cmds), std::move(body_cmds));
 }
 
+static StatusOr<Command> ConvertConditionalThunk(const ConditionalThunk& thunk,
+                                                 bool force_barriers) {
+  std::vector<CommandBufferCmdSequence> branch_cmds;
+  branch_cmds.reserve(thunk.branch_thunks().size());
+  for (auto& branch_thunk : thunk.branch_thunks()) {
+    TF_ASSIGN_OR_RETURN(
+        CommandBufferCmdSequence cmds,
+        ConvertToCommands(branch_thunk->thunks(), force_barriers));
+    branch_cmds.emplace_back(std::move(cmds));
+  }
+  return std::make_unique<CaseCmd>(thunk.branch_index_buffer(),
+                                   std::move(branch_cmds));
+}
+
 static StatusOr<Command> ConvertGemmThunk(const GemmThunk& thunk) {
   std::optional<const BufferAllocation::Slice> workspace = thunk.workspace();
   if (!workspace.has_value()) {
@@ -108,6 +124,9 @@ static StatusOr<Command> ConvertAllReduceStartThunk(
 
 static StatusOr<Command> ConvertThunk(const Thunk& thunk, bool force_barriers) {
   switch (thunk.kind()) {
+    case Thunk::Kind::kConditional:
+      return ConvertConditionalThunk(
+          static_cast<const ConditionalThunk&>(thunk), force_barriers);
     case Thunk::Kind::kKernel:
       return ConvertKernelThunk(static_cast<const KernelThunk&>(thunk));
     case Thunk::Kind::kCustomKernel:

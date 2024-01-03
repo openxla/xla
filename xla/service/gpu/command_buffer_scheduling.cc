@@ -102,6 +102,18 @@ bool IsCommand<HloOpcode::kWhile>(const HloInstruction* hlo,
          IsCommand(hlo->while_condition(), config);
 }
 
+// Conditional can be executed inside command buffers only if all regions of its
+// branches can be executed as command buffers.
+template <>
+bool IsCommand<HloOpcode::kConditional>(const HloInstruction* hlo,
+                                        const CommandBufferConfig& config) {
+  return config.contains(DebugOptions::WHILE) &&
+         absl::c_all_of(hlo->branch_computations(),
+                        [&](const HloComputation* comp) {
+                          return IsCommand(comp, config);
+                        });
+}
+
 static bool IsCommand(const HloCustomCallInstruction* hlo,
                       const CommandBufferConfig& config) {
   return config.contains(DebugOptions::CUBLAS) && IsLegacyCublasMatmul(*hlo);
@@ -120,6 +132,9 @@ static bool IsCommand(const HloInstruction* hlo,
 
   if (hlo->opcode() == HloOpcode::kWhile)
     return IsCommand<HloOpcode::kWhile>(hlo, config);
+
+  if (hlo->opcode() == HloOpcode::kConditional)
+    return IsCommand<HloOpcode::kConditional>(hlo, config);
 
   return false;
 }
@@ -570,6 +585,7 @@ StatusOr<bool> CommandBufferScheduling::Run(
     erase(kRequireConditionals);  // on-device control flow
   }
 
+  std::cerr << module->ToString();
   auto order = module->MakeComputationPostOrder();
   std::reverse(order.begin(), order.end());
   absl::flat_hash_set<HloComputation*> processed_command_buffers;
@@ -601,6 +617,8 @@ StatusOr<bool> CommandBufferScheduling::Run(
     }
   }
   TF_RETURN_IF_ERROR(module->schedule().Update());
+
+  std::cerr << module->ToString();
 
   return true;
 }

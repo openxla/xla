@@ -82,6 +82,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -437,6 +438,9 @@ Status IrEmitterUnnested::EmitConditional(
     mlir::Operation* op,
     const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
         hlo_for_lmhlo) {
+  if (ir_emitter_context_->emit_ir_from_hlo())
+    return EmitConditional(hlo_for_lmhlo.at(op));
+
   auto conditional = mlir::cast<mlir::lmhlo::CaseOp>(op);
 
   std::vector<ThunkSequence> branch_thunks;
@@ -458,6 +462,43 @@ Status IrEmitterUnnested::EmitConditional(
   TF_ASSIGN_OR_RETURN(auto slice, GetAllocationSlice(conditional.getIndex()));
   AddThunkToThunkSequence(std::unique_ptr<Thunk>(new ConditionalThunk(
       Thunk::ThunkInfo::WithProfileAnnotation(op), std::move(config), slice)));
+  return OkStatus();
+}
+
+static ConditionalThunkConfig GetConditionalThunkConfig(
+    const HloInstruction* instr,
+    std::vector<ThunkSequence> branch_thunk_sequences) {
+  ConditionalThunkConfig config;
+  config.branch_index_is_bool =
+      instr->operand(0)->shape().element_type() == PRED;
+  config.branch_count = instr->branch_count();
+  config.branch_thunks.reserve(config.branch_count);
+  for (auto& branch_thunk_sequence : branch_thunk_sequences) {
+    config.branch_thunks.emplace_back(
+        new SequentialThunk(Thunk::ThunkInfo::WithProfileAnnotation(instr),
+                            std::move(branch_thunk_sequence)));
+  }
+  return config;
+}
+
+Status IrEmitterUnnested::EmitConditional(const HloInstruction* instr) {
+  std::vector<ThunkSequence> branch_thunks;
+  branch_thunks.reserve(instr->branch_count());
+
+  for (auto comp : instr->branch_computations()) {
+    auto ir_emitter = IrEmitterUnnested::Create(ir_emitter_context_);
+    TF_RETURN_IF_ERROR(ir_emitter->EmitHloComputation(comp));
+    branch_thunks.push_back(std::move(*ir_emitter->ConsumeThunkSequence()));
+  }
+
+  ConditionalThunkConfig config =
+      GetConditionalThunkConfig(instr, std::move(branch_thunks));
+
+  TF_ASSIGN_OR_RETURN(auto slice,
+                      GetAllocationSliceForHlo(instr->operand(0), {}));
+  AddThunkToThunkSequence(std::unique_ptr<Thunk>(
+      new ConditionalThunk(Thunk::ThunkInfo::WithProfileAnnotation(instr),
+                           std::move(config), slice)));
   return OkStatus();
 }
 
@@ -2409,10 +2450,7 @@ Status IrEmitterUnnested::EmitWhile(
                       *while_op.getTripCount(), hlo_for_lmhlo));
     AddThunkToThunkSequence(std::move(thunk));
   } else {
-    // TODO(ezhulenev): We have few remaining tests that depend on emitting
-    // special fusions, so we can't yet enable while thunk emission here.
-    static constexpr bool kWhileThunkNotSupported = false;
-    if (ir_emitter_context_->emit_ir_from_hlo() && kWhileThunkNotSupported) {
+    if (ir_emitter_context_->emit_ir_from_hlo()) {
       const HloInstruction* instr = hlo_for_lmhlo.at(op);
       TF_ASSIGN_OR_RETURN(
           auto thunk,
@@ -3567,6 +3605,8 @@ Status IrEmitterUnnested::EmitHloInstruction(const HloInstruction* instr) {
                           HloFusionAnalysis::Create(fusion, &device_info));
       return EmitFusion(fusion, fusion_analysis);
     }
+    case HloOpcode::kConditional:
+      return EmitConditional(instr);
     case HloOpcode::kWhile:
       return EmitWhile(instr);
     case HloOpcode::kSort:
@@ -3616,8 +3656,13 @@ Status IrEmitterUnnested::EmitHloInstruction(const HloInstruction* instr) {
 
 Status IrEmitterUnnested::EmitHloComputation(
     const HloComputation* computation) {
-  ThunkSequence thunk_sequence;
-  for (const HloInstruction* instr : computation->instructions()) {
+  const HloSchedule& schedule = computation->parent()->schedule();
+  if (!schedule.is_computation_scheduled(computation))
+    return InternalError("Sequence not found for computation: %s",
+                         computation->name());
+
+  const HloInstructionSequence& sequence = schedule.sequence(computation);
+  for (HloInstruction* instr : sequence.instructions()) {
     TF_RETURN_IF_ERROR(EmitHloInstruction(instr));
   }
   return OkStatus();
