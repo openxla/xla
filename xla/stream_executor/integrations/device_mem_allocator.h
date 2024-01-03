@@ -58,7 +58,9 @@ class DeviceMemAllocator : public tsl::SubAllocator {
       if (memory_type_ == MemoryType::kUnified) {
         ptr = stream_exec_->UnifiedMemoryAllocate(num_bytes);
       } else if (memory_type_ == MemoryType::kCollective) {
-        ptr = stream_exec_->CollectiveMemoryAllocate(num_bytes);
+        auto status_or = stream_exec_->CollectiveMemoryAllocate(num_bytes);
+        CHECK(status_or.ok()) << status_or.status().message();
+        ptr = status_or.value();
       } else {
         ptr = stream_exec_->AllocateArray<char>(num_bytes).opaque();
       }
@@ -75,7 +77,8 @@ class DeviceMemAllocator : public tsl::SubAllocator {
       if (memory_type_ == MemoryType::kUnified) {
         stream_exec_->UnifiedMemoryDeallocate(ptr);
       } else if (memory_type_ == MemoryType::kCollective) {
-        stream_exec_->CollectiveMemoryDeallocate(ptr);
+        auto status = stream_exec_->CollectiveMemoryDeallocate(ptr);
+        CHECK(status.ok()) << status.message();
       } else {
         DeviceMemoryBase device_ptr(ptr);
         stream_exec_->Deallocate(&device_ptr);
