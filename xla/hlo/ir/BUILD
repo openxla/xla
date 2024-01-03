@@ -55,6 +55,7 @@ cc_library(
         "hlo_sharding_metadata.h",
     ],
     deps = [
+        ":ptrvec",
         ":tile_assignment",
         "//xla:array",
         "//xla:comparison_util",
@@ -127,6 +128,29 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "ptrvec",
+    hdrs = ["ptrvec.h"],
+    deps = [
+        "@com_google_absl//absl/log:check",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_test(
+    name = "ptrvec_test",
+    srcs = ["ptrvec_test.cc"],
+    deps = [
+        ":ptrvec",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
