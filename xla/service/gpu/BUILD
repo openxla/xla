@@ -1173,6 +1173,11 @@ cuda_library(
 )
 
 cc_library(
+    name = "variant_visitor",
+    hdrs = ["variant_visitor.h"],
+)
+
+cc_library(
     name = "gpu_prim_rocm",
     hdrs = ["gpu_prim_rocm.h"],
     local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
@@ -1268,6 +1273,7 @@ cc_library(
     srcs = ["triton_support.cc"],
     hdrs = ["triton_support.h"],
     deps = [
+        ":variant_visitor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
@@ -1583,6 +1589,7 @@ cc_library(
         ":ir_emission_utils",
         ":matmul_utils",
         ":stream_executor_util",
+        ":variant_visitor",
         ":autotuner_util",
         "@com_google_absl//absl/strings",
         "//xla:autotune_results_proto_cc",
@@ -2681,6 +2688,7 @@ cc_library(
     srcs = ["cublas_padding_requirements.cc"],
     hdrs = ["cublas_padding_requirements.h"],
     deps = [
+        ":variant_visitor",
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -2866,6 +2874,7 @@ cc_library(
         ":backend_configs_cc",
         ":cublas_cudnn",
         ":ir_emission_utils",
+        ":variant_visitor",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
@@ -4201,6 +4210,7 @@ xla_test(
         "gpu",
     ],
     deps = [
+        ":variant_visitor",
         "//xla:error_spec",
         "//xla:xla_proto_cc",
         "//xla/stream_executor:device_description",
