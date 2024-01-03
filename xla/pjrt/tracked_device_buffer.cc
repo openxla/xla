@@ -42,16 +42,12 @@ namespace xla {
 
 void BufferSequencingEvent::SetSequencingEvent(EventPool::Handle event,
                                                se::Stream* stream) {
-  {
-    absl::MutexLock lock(&mu_);
-    defined_status_.emplace(OkStatus());
-    CHECK(!event_.event());
-    event_ = std::move(event);
-    CHECK(streams_defined_on_.empty());
-    streams_defined_on_.push_back(stream);
-    sequence_number_.store(event_.sequence_number(), std::memory_order_seq_cst);
-  }
-  this->ExecuteFutureTasks();
+  absl::MutexLock lock(&mu_);
+  CHECK(!event_.event());
+  event_ = std::move(event);
+  CHECK(streams_defined_on_.empty());
+  streams_defined_on_.push_back(stream);
+  sequence_number_.store(event_.sequence_number(), std::memory_order_seq_cst);
 }
 
 bool BufferSequencingEvent::EventHasBeenRecorded() const {
@@ -60,6 +56,7 @@ bool BufferSequencingEvent::EventHasBeenRecorded() const {
 
 uint64_t BufferSequencingEvent::sequence_number() const {
   uint64_t seq = sequence_number_.load(std::memory_order_seq_cst);
+  CHECK_NE(seq, 0);
   return seq;
 }
 
@@ -120,34 +117,6 @@ bool BufferSequencingEvent::IsComplete() {
       absl::Condition(this, &BufferSequencingEvent::EventHasBeenRecorded));
 
   return event_.event()->PollForStatus() == se::Event::Status::kComplete;
-}
-
-void BufferSequencingEvent::ExecuteOrAddToFutureTasks(
-    const std::string& task_name, std::function<void()> task) {
-  absl::MutexLock lock(&mu_);
-  tsl::profiler::TraceMeProducer producer(
-      "BufferSequencingEvent::ExecuteOrAddToFutureTasks",
-      tsl::profiler::ContextType::kPjRt);
-  uint64_t context_id = producer.GetContextId();
-  auto wrapped_task = [task = std::move(task), context_id]() {
-    tsl::profiler::TraceMeConsumer consumer("BufferSequencingEvent::Execute",
-                                            tsl::profiler::ContextType::kPjRt,
-                                            context_id);
-    task();
-  };
-  if (defined_status_.IsConcrete()) {
-    thread_pool_->Schedule(std::move(wrapped_task));
-    return;
-  }
-  on_ready_tasks_callback_[task_name] = std::move(wrapped_task);
-}
-
-void BufferSequencingEvent::ExecuteFutureTasks() {
-  absl::MutexLock lock(&mu_);
-  for (auto& [task_name, task_callback] : on_ready_tasks_callback_) {
-    thread_pool_->Schedule(std::move(task_callback));
-  }
-  on_ready_tasks_callback_.clear();
 }
 
 /* static */ std::shared_ptr<TrackedDeviceBuffer>
@@ -249,17 +218,7 @@ void TrackedDeviceBuffer::AddUsageEvent(
     bool reference_held) {
   CHECK(in_use_);
 
-  // If the event is 0, it means that the event is not recorded yet and the task
-  // related to this event is deferred, so just add it.
-  if (*event == 0) {
-    usage_events_.push_back({usage_stream, event, reference_held});
-    return;
-  }
-
   for (auto& existing : usage_events_) {
-    // If the existing event is 0, it means that the event is not recorded yet
-    // and the task related to this event is deferred, so don't replace it.
-    if (*existing.event == 0) continue;
     if (existing.stream == usage_stream) {
       if (*existing.event < *event) {
         existing.event = event;

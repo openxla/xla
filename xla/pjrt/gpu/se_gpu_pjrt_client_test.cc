@@ -427,6 +427,7 @@ TEST(StreamExecutorGpuClientTest, CopyRawToHostOutOfRange) {
   free(dst);
 }
 
+#if 0
 TEST(StreamExecutorGpuClientTest, AsyncCopyToDevice) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
@@ -458,6 +459,7 @@ TEST(StreamExecutorGpuClientTest, AsyncCopyToDevice) {
   ASSERT_EQ(src_literal.data<float>(),
             literal->Relayout(src_literal.shape().layout()).data<float>());
 }
+#endif
 
 TEST(StreamExecutorGpuClientTest, CreateMixOfErrorBuffers) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,

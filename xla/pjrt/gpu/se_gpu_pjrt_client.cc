@@ -125,8 +125,7 @@ class AsyncHostToDeviceTransferManager
       }
       // Initialize a definition event for each async buffer. The definition
       // event will block the buffer usage until the transfer is done.
-      definition_events.push_back(
-          std::make_shared<BufferSequencingEvent>(client->thread_pool()));
+      definition_events.push_back(std::make_shared<BufferSequencingEvent>());
       TF_ASSIGN_OR_RETURN(auto buffer,
                           client->CreateUninitializedBuffer(
                               shape, device, definition_events.back()));
@@ -351,15 +350,12 @@ class AsyncHostToDeviceTransferManager
   }
 
   void SetBufferError(int buffer_index, Status error) override {
-    {
-      absl::MutexLock l(&mu_);
-      // For a given buffer_index, SetBufferError can't be called twice, or
-      // called after the last transfer has been enqueued.
-      CHECK(!definition_events_[buffer_index]->IsDefined());
-      definition_events_[buffer_index]->SetDefinedStatus(error);
-    }
-    VLOG(1) << "SetBufferError sets the " << buffer_index
-            << "th buffer error: " << error;
+    // We don't have a good way to "poison" StreamExecutor buffers to make
+    // errors propagate, so for now we just kill the process if the transfers
+    // are never going to complete.
+    LOG(FATAL)
+        << "Killing process because of failed AsyncTransfer to PjRt buffers: "
+        << error;
   }
 
   void AddTransferMetadata(const TransferMetadata& meta) override {}
@@ -506,8 +502,7 @@ PjRtFuture<absl::Status> StreamExecutorGpuClient::CopyRawSubBufferToHost(
     stream->ThenMemcpy(dst, *sub_buffer, transfer_size);
   }
 
-  auto usage_event =
-      std::make_shared<BufferSequencingEvent>(this->thread_pool());
+  auto usage_event = std::make_shared<BufferSequencingEvent>();
   local_device->event_pool().ThenRecordEvent(stream.get(), event_or.value());
   usage_event->SetSequencingEvent(std::move(event_or).value(), stream.get());
   // This usage hold will prevent device_buffer from being deleted before
