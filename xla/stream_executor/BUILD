@@ -504,7 +504,6 @@ cc_library(
 
 cc_library(
     name = "scratch_allocator",
-    srcs = ["scratch_allocator.cc"],
     hdrs = ["scratch_allocator.h"],
     visibility = ["//visibility:private"],
     deps = [
