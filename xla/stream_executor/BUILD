@@ -77,7 +77,6 @@ filegroup(
         "stream_executor.h",
         "temporary_device_memory.h",
         "temporary_memory_manager.h",
-        "trace_listener.h",
     ],
     visibility = ["//visibility:private"],
 )
