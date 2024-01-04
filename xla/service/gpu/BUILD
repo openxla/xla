@@ -912,22 +912,6 @@ cuda_library(
     ],
 )
 
-tf_proto_library(
-    name = "mock_nccl_config_proto",
-    srcs = ["mock_nccl_config.proto"],
-    cc_api_version = 2,
-)
-
-cc_library(
-    name = "mock_nccl_config",
-    srcs = ["mock_nccl_config.cc"],
-    hdrs = ["mock_nccl_config.h"],
-    deps = [
-        ":mock_nccl_config_proto_cc",
-        "@com_google_absl//absl/container:inlined_vector",
-    ],
-)
-
 alias(
     name = "mock_nccl_utils",
     actual = if_google(
@@ -950,32 +934,38 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = if_cuda_is_configured([
         ":gpu_executable_run_options",
-        ":mock_nccl_config",
-        ":mock_nccl_config_proto_cc",
         ":mock_nccl_sleep_kernel_cuda",
         ":nccl_collective_thunks",
         ":nccl_utils",
         ":thunk",
-        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_nccl//:nccl",
+        "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
+        "//xla:util",
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
+        "//xla/service:rendezvous",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_activation",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/stream_executor/gpu:gpu_types_header",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ]),
@@ -992,12 +982,15 @@ cc_library(
     deps = if_gpu_is_configured([
         ":gpu_executable_run_options",
         ":nccl_collective_thunks",
+        ":nccl_utils",
         ":thunk",
         "@com_google_absl//absl/strings:string_view",
+        "//xla:executable_run_options",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
         "//xla/service:collective_ops_utils",
+        "//xla/service:global_device_id",
         "//xla/stream_executor",
     ]),
 )
