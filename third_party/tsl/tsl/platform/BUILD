@@ -1777,8 +1777,10 @@ cc_library(
     deps = [
         ":env",
         ":errors",
+        ":logging",
         ":random",
         ":status",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -1824,5 +1826,6 @@ tsl_cc_test(
         ":test",
         ":test_main",
         "//tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/time",
     ],
 )

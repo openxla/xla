@@ -1,10 +1,10 @@
 # Description:
 #   RPC communication interfaces and implementations for TensorFlow.
 
-load("//tsl/platform:rules_cc.bzl", "cc_library")
-load("//tsl/platform:build_config.bzl", "tf_proto_library", "tsl_cc_test")
-load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("//tsl/platform:build_config.bzl", "tf_proto_library", "tsl_cc_test")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -37,13 +37,14 @@ cc_library(
     hdrs = ["grpc_util.h"],
     deps = [
         "//tsl/platform:protobuf",
-        "//tsl/platform:random",
+        "//tsl/platform:retrying_utils",
         "//tsl/platform:status",
         "//tsl/platform:stringpiece",
         "//tsl/platform:stringprintf",
         "//tsl/protobuf:distributed_runtime_payloads_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:cord",
+        "@com_google_absl//absl/time",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -57,6 +58,7 @@ tsl_cc_test(
     deps = [
         ":grpc_util",
         ":test_request_proto_cc_impl",
+        "//tsl/platform:env_impl",
         "//tsl/platform:errors",
         "//tsl/platform:test",
         "//tsl/platform:test_benchmark",
@@ -109,6 +111,7 @@ tsl_cc_test(
     deps = [
         ":grpc_channel",
         "//tsl/lib/core:status_test_util",
+        "//tsl/platform:env_impl",
         "//tsl/platform:strcat",
         "//tsl/platform:test",
         "//tsl/platform:test_main",
