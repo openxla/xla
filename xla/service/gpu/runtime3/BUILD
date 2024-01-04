@@ -79,6 +79,7 @@ cc_library(
         ":command_buffer_cmd",
         ":copy_thunk",
         ":kernel_thunk",
+        ":memset_thunk",
         ":sequential_thunk",
         ":while_thunk",
         "//xla:statusor",
@@ -365,6 +366,18 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "memset_thunk",
+    srcs = ["memset_thunk.cc"],
+    hdrs = ["memset_thunk.h"],
+    deps = [
+        "//xla:status",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:thunk",
+        "//xla/stream_executor",
     ],
 )
 
