@@ -161,6 +161,38 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "compiler_macros",
+    hdrs = ["compiler_macros.h"],
+    visibility = [":friends"],
+)
+
+cc_library(
+    name = "ef57",
+    srcs = ["ef57.cc"],
+    hdrs = ["ef57.h"],
+    visibility = [":friends"],
+    deps = [
+        ":compiler_macros",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "ef57_test",
+    srcs = ["ef57_test.cc"],
+    deps = [
+        ":ef57",
+        ":test",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:log_streamer",
+        "@com_google_absl//absl/random",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
     name = "execution_options_util",
     srcs = [
         "execution_options_util.cc",
