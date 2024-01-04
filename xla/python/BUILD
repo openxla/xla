@@ -45,7 +45,10 @@ pytype_strict_library(
     ],
 )
 
-exports_files(["xla_client.pyi"])
+exports_files([
+    "xla_client.py",
+    "xla_client.pyi",
+])
 
 pyx_library(
     name = "custom_call_for_test",
