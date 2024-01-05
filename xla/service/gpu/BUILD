@@ -108,6 +108,12 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_memory_space_assignment",
+    hdrs = ["gpu_memory_space_assignment.h"],
+    deps = ["//xla/service:buffer_assignment"],
+)
+
+cc_library(
     name = "launch_dimensions",
     srcs = [
         "launch_dimensions.cc",
@@ -2907,6 +2913,7 @@ cc_library(
         ":executable_proto_cc",
         ":gpu_constants",
         ":gpu_executable",
+        ":gpu_memory_space_assignment",
         ":ir_emitter_context",
         ":ir_emitter_unnested",
         ":metrics",

@@ -16,24 +16,17 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_NCCL_COLLECTIVE_THUNK_H_
 #define XLA_SERVICE_GPU_NCCL_COLLECTIVE_THUNK_H_
 
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 #include "absl/functional/function_ref.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/shape.h"
-#include "xla/status.h"
-#include "xla/statusor.h"
 #include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/xla_data.pb.h"
 
@@ -50,6 +43,12 @@ namespace gpu {
 class NcclClique;
 
 struct NcclCollectiveConfig {
+  NcclCollectiveConfig();
+  NcclCollectiveConfig(NcclCollectiveConfig&&);
+  ~NcclCollectiveConfig();
+
+  NcclCollectiveConfig& operator=(NcclCollectiveConfig&&);
+
   int64_t operand_count;
   std::vector<PrimitiveType> operand_element_type;
   std::vector<ReplicaGroup> replica_groups;
@@ -75,9 +74,6 @@ void NcclCollectiveConfig::SetCollectiveOpKindAndID(OpT op) {
     op_id = static_cast<int64_t>(unique_id.getInt());
   }
 }
-
-NcclCollectiveConfig GetNcclCollectiveConfig(
-    const HloInstruction* hlo, std::optional<bool> use_global_device_ids);
 
 template <typename OpT>
 NcclCollectiveConfig GetNcclCollectiveConfigForMlir(
@@ -176,8 +172,6 @@ class NcclCollectiveDoneThunk : public Thunk {
 
 Status IsValidOperand(mlir::Value operand, Thunk::Kind reduction_op);
 
-Status IsValidOperand(Shape shape, Thunk::Kind reduction_op);
-
 template <typename NcclThunkType, typename OpT>
 Status AddOpDescription(Status status, OpT op, int64_t replica_count,
                         int64_t partition_count) {
@@ -185,18 +179,6 @@ Status AddOpDescription(Status status, OpT op, int64_t replica_count,
     return status;
   }
   CollectiveOpGroupMode group_mode = NcclThunkType::GetGroupMode(op);
-
-  int64_t operand_count = 0;
-  std::string str;
-
-  if constexpr (std::is_base_of_v<HloInstruction, std::remove_pointer_t<OpT>>) {
-    operand_count = op->operand_count();
-    str = op->ToString();
-  } else {
-    operand_count = op->getNumOperands() / 2;
-    str = llvm_ir::DumpToString(op.getOperation());
-  }
-
   return Status(
       status.code(),
       absl::StrFormat(
@@ -205,7 +187,7 @@ Status AddOpDescription(Status status, OpT op, int64_t replica_count,
           "operand_count: %d\n%s",
           status.message(), NcclThunkType::GetHloOpName(), replica_count,
           partition_count, CollectiveOpGroupModeToString(group_mode),
-          operand_count, str));
+          op->getNumOperands() / 2, llvm_ir::DumpToString(op.getOperation())));
 }
 
 #if XLA_ENABLE_XCCL
@@ -223,16 +205,20 @@ struct DeviceBufferPair {
   se::DeviceMemoryBase source_buffer;
   se::DeviceMemoryBase destination_buffer;
 };
-
 StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
     const Thunk::ExecuteParams& params,
     const std::vector<NcclCollectiveThunk::Buffer>& buffers,
     const std::vector<PrimitiveType>& element_types);
 
-StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
-    const BufferAllocations* buffer_allocations,
-    const std::vector<NcclCollectiveThunk::Buffer>& buffers,
-    const std::vector<PrimitiveType>& element_types);
+// When using ncclMemAlloc, register buffers with the communicator to enable
+// copyless collectives.
+// Registration is only needed when not using cudaGraphs. Remove this function
+// when cudagraphs + nccl is enabled.
+// See
+// https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/bufferreg.html
+Status MaybeRegisterBuffers(int device_ordinal,
+                            const std::vector<DeviceBufferPair>& buffers,
+                            ncclComm_t comm);
 
 }  // namespace gpu
 }  // namespace xla
