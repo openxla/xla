@@ -73,14 +73,14 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
   blas::Transpose transpose;
 };
 
-// compact version of the matrix layout to be used o pass matrices
+// compact version of the matrix layout to be used to pass matrices
 // to underlying blas API
 struct MatrixDescriptor {
   DeviceMemoryBase data;
-  int64_t leading_dim_stride;
-  int64_t batch_stride;
-  blas::DataType type;
-  blas::Transpose transpose;
+  int64_t leading_dim_stride = 0;
+  int64_t batch_stride = 0;
+  blas::DataType type{};
+  blas::Transpose transpose{};
 
   template <typename T>
   DeviceMemory<T> cast() const {
@@ -88,15 +88,18 @@ struct MatrixDescriptor {
   }
 };
 
-struct MatrixOutDescriptor : public MatrixDescriptor {
-  int64_t batch_size, m, n, k;
-  blas::ComputationType compute_type;
+struct OutputMatrixDescriptor : public MatrixDescriptor {
+  OutputMatrixDescriptor(MatrixDescriptor&& parent) noexcept :
+        MatrixDescriptor(std::move(parent)) {}
+  int64_t batch_size = 0;
+  int64_t m = 0, n = 0, k = 0;
+  blas::ComputationType compute_type{};
 };
 
 // BLAS GeMM's output is column-major. If we require row-major, use identity:
 // C^T = (A @ B)^T = B^T @ A^T.
 bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
-                           MatrixLayout& output, MatrixLayout* pc = nullptr);
+                           MatrixLayout& output, MatrixLayout* c = nullptr);
 
 struct GemmConfig {  // plain GemmConfig which is extended with create functions
                      // in matmul_utils.h

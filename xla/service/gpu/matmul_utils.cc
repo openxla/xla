@@ -485,50 +485,47 @@ StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
       grad_y);
 }
 
-auto GemmConfig::MatrixDescriptors(se::DeviceMemoryBase lhs_buf, 
-        se::DeviceMemoryBase rhs_buf, se::DeviceMemoryBase out_buf) const 
-                                                        -> DescriptorsTuple
-{
-  auto create = [](const se::gpu::MatrixLayout& m, se::DeviceMemoryBase data) {
-      // BLAS is column-major by default.
-    auto trans = (m.order == se::gpu::MatrixLayout::Order::kColumnMajor)
-         ? se::blas::Transpose::kNoTranspose : se::blas::Transpose::kTranspose;
-    auto vtype = se::gpu::AsBlasDataType(m.dtype);
-    // unsupported datatypes will be handled by the underlying BLAS layer
-    // which performs one more conversion anyway from gpu::DataType to native
-    // cu/roc BLAS datatype
-    auto type = vtype.ok() ? vtype.value() : 
-       static_cast< se::blas::DataType >(std::numeric_limits< int32_t >::max());
+tsl::StatusOr< GemmConfig::DescriptorsTuple > GemmConfig::GetMatrixDescriptors(
+        se::DeviceMemoryBase lhs_buf, se::DeviceMemoryBase rhs_buf, 
+        se::DeviceMemoryBase out_buf) const {
 
+  auto create_matrix_desc = [](const se::gpu::MatrixLayout& layout, 
+       se::DeviceMemoryBase data) -> tsl::StatusOr<se::gpu::MatrixDescriptor> {
+
+    TF_ASSIGN_OR_RETURN(se::blas::DataType type, 
+                                    se::gpu::AsBlasDataType(layout.dtype));
     return se::gpu::MatrixDescriptor{
-      data, m.leading_dim_stride, m.batch_stride, type, trans
+      data, layout.leading_dim_stride, layout.batch_stride, type, 
+      // BLAS is column-major by default.
+      (layout.order == se::gpu::MatrixLayout::Order::kColumnMajor
+         ? se::blas::Transpose::kNoTranspose : se::blas::Transpose::kTranspose)
     };
   };
   // make a local copy to prevent modification of layouts, 
   // but maybe we can modify them once instead during creation ?
-  auto lhs = lhs_layout, rhs = rhs_layout, out = output_layout;
+  se::gpu::MatrixLayout lhs = lhs_layout, rhs = rhs_layout, out = output_layout;
 
   bool must_swap_operands = MakeOutputColumnMajor(lhs, rhs, out);
   if (must_swap_operands) {
     std::swap(lhs_buf, rhs_buf);
   }
 
-   auto comp_vtype = se::gpu::GetBlasComputationType(lhs.dtype, out.dtype,
-            se::blas::kDefaultComputePrecision);
-  // unsupported datatypes will be handled by the underlying BLAS layer
-  auto comp_type = comp_vtype.ok() ? comp_vtype.value() :
-        static_cast< se::blas::ComputationType >(
-            std::numeric_limits< int32_t >::max());
-
-  auto out_desc = se::gpu::MatrixOutDescriptor{ create(out, out_buf) };
+  TF_ASSIGN_OR_RETURN(se::gpu::OutputMatrixDescriptor out_desc,
+        create_matrix_desc(out, out_buf));
   out_desc.batch_size = out.batch_size;
   out_desc.m = out.num_rows;
   out_desc.n = out.num_cols;
   out_desc.k = lhs.num_cols;
-  out_desc.compute_type = comp_type;
+  TF_ASSIGN_OR_RETURN(out_desc.compute_type, 
+            se::gpu::GetBlasComputationType(lhs.dtype, out.dtype, 
+                                        se::blas::kDefaultComputePrecision));
 
-  return std::tuple{ create(lhs, lhs_buf), create(rhs, rhs_buf),
-                     out_desc, must_swap_operands };
+  TF_ASSIGN_OR_RETURN(se::gpu::MatrixDescriptor lhs_desc, 
+                                            create_matrix_desc(lhs, lhs_buf));
+  TF_ASSIGN_OR_RETURN(se::gpu::MatrixDescriptor rhs_desc, 
+                                            create_matrix_desc(rhs, rhs_buf));
+
+  return DescriptorsTuple{ lhs_desc, rhs_desc, out_desc, must_swap_operands };
 }
 
 namespace {
@@ -536,7 +533,7 @@ namespace {
 template <typename Scale, typename Input, typename Output>
 Status DoGemmWithAlgorithm(const se::gpu::MatrixDescriptor& lhs, 
     const se::gpu::MatrixDescriptor& rhs,
-    const se::gpu::MatrixOutDescriptor& output, se::DeviceMemoryBase workspace, 
+    const se::gpu::OutputMatrixDescriptor& output, se::DeviceMemoryBase workspace, 
     Scale alpha, Scale beta, se::Stream* stream, 
     se::blas::AlgorithmType algorithm, 
     se::blas::ComputePrecision compute_precision,
@@ -575,7 +572,7 @@ Status DoGemmWithAlgorithm(const se::gpu::MatrixDescriptor& lhs,
 template <typename Scale, typename Input, typename Output>
 Status DoGemm(const se::gpu::MatrixDescriptor& lhs, 
               const se::gpu::MatrixDescriptor& rhs,
-              const se::gpu::MatrixOutDescriptor& output, 
+              const se::gpu::OutputMatrixDescriptor& output, 
               se::DeviceMemoryBase workspace,
               Scale alpha, Scale beta, se::Stream* stream,
               std::optional<se::blas::AlgorithmType> algorithm,
@@ -627,8 +624,8 @@ Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
                se::blas::ProfileResult* profile_result) {
   VLOG(2) << "Executing a GemmThunk";
 
-  auto [lhs, rhs, output, operands_swapped] = 
-        config.MatrixDescriptors(lhs_buffer, rhs_buffer, output_buffer);
+  TF_ASSIGN_OR_RETURN(GemmConfig::DescriptorsTuple desc,
+        config.GetMatrixDescriptors(lhs_buffer, rhs_buffer, output_buffer));
 
   se::NumericOptions numeric_options{deterministic_ops,
       /*allow_tf32=*/config.compute_precision <= 1};
@@ -637,12 +634,12 @@ Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
 
   se::blas::CallContext context = se::blas::CallContext::kNone;
   if (config.grad_x) {
-    context = operands_swapped ? se::blas::CallContext::kBackpropInput2
-                                 : se::blas::CallContext::kBackpropInput1;
+    context = desc.operands_swapped ? se::blas::CallContext::kBackpropInput2
+                                    : se::blas::CallContext::kBackpropInput1;
   }
   if (config.grad_y) {
-    context = operands_swapped ? se::blas::CallContext::kBackpropInput1
-                                 : se::blas::CallContext::kBackpropInput2;
+    context = desc.operands_swapped ? se::blas::CallContext::kBackpropInput1
+                                    : se::blas::CallContext::kBackpropInput2;
   }
 
   std::tuple operand_types{config.lhs_layout.dtype, config.rhs_layout.dtype, 
@@ -666,7 +663,7 @@ Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
     using NativeAType = primitive_util::PrimitiveTypeToNative<ATYPE>::type;  \
     using NativeCType = primitive_util::PrimitiveTypeToNative<CTYPE>::type;  \
     return DoGemm<NativeScaleType, NativeAType, NativeCType>(                \
-        lhs, rhs, output, workspace_buffer,                                  \
+        desc.lhs, desc.rhs, desc.output, workspace_buffer,                   \
         static_cast<NativeScaleType>(config.alpha.real()),                   \
         static_cast<NativeScaleType>(config.beta), stream, algorithm,        \
         config.compute_precision, numeric_options, profile_result, context); \
@@ -679,7 +676,7 @@ Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
     using NativeAType = primitive_util::PrimitiveTypeToNative<ATYPE>::type;  \
     using NativeCType = primitive_util::PrimitiveTypeToNative<CTYPE>::type;  \
     return DoGemm<NativeScaleType, NativeAType, NativeCType>(                \
-        lhs, rhs, output, workspace_buffer,                                  \
+        desc.lhs, desc.rhs, desc.output, workspace_buffer,                   \
         static_cast<NativeScaleType>(config.alpha),                          \
         static_cast<NativeScaleType>(config.beta), stream, algorithm,        \
         config.compute_precision, numeric_options, profile_result, context); \
@@ -688,7 +685,7 @@ Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
   if (config.output_layout.dtype == S32) {
     if (!algorithm) algorithm = se::blas::kDefaultGemmAlgo;
     return DoGemmWithAlgorithm<int32_t, int8_t, int32_t>(
-        lhs, rhs, output, workspace_buffer,
+        desc.lhs, desc.rhs, desc.output, workspace_buffer,
         static_cast<int32_t>(config.alpha.real()),
         static_cast<int32_t>(config.beta), stream, *algorithm,
         se::blas::kDefaultComputePrecision, numeric_options, profile_result,

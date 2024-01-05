@@ -232,13 +232,13 @@ StatusOr<AutotuneResult> DoGemmAutotuneNoCache(
   VLOG(3) << "Starting autotune of GemmThunk " << gemm->ToString();
   se::DeviceMemoryAllocator* allocator = autotune_config.GetAllocator();
   TF_ASSIGN_OR_RETURN(se::Stream* const stream, autotune_config.GetStream());
-  GemmBackendConfig backend_config =
+  GemmBackendConfig gemm_config =
       gemm->backend_config<GemmBackendConfig>().value();
   const DebugOptions& debug_options =
       gemm->GetModule()->config().debug_options();
   const bool deterministic_ops = debug_options.xla_gpu_deterministic_ops();
 
-  TF_ASSIGN_OR_RETURN(GemmConfig gemm_config, GemmConfig::For(gemm));
+  TF_ASSIGN_OR_RETURN(GemmConfig config, GemmConfig::For(gemm));
   // Don't run autotuning concurrently on the same GPU.
   absl::MutexLock gpu_lock(&GetGpuMutex(stream->parent()));
 
@@ -277,18 +277,18 @@ StatusOr<AutotuneResult> DoGemmAutotuneNoCache(
   HloModuleConfig& hlo_module_config = gemm->GetModule()->mutable_config();
   AutotuneResult best_algorithm;
   if (IsCublasLtMatmul(*gemm)) {
-    bool has_matrix_bias = gemm_config.beta != 0.;
+    bool has_matrix_bias = config.beta != 0.;
 
     TF_ASSIGN_OR_RETURN(
         bool has_vector_bias,
-        gpublas_lt::EpilogueAddsVectorBias(backend_config.epilogue()));
+        gpublas_lt::EpilogueAddsVectorBias(gemm_config.epilogue()));
 
     TF_ASSIGN_OR_RETURN(bool has_aux_output,
                         gpublas_lt::EpilogueHasAuxiliaryOutput(
-                            backend_config.epilogue()));
+                            gemm_config.epilogue()));
 
     TF_ASSIGN_OR_RETURN(auto epilogue,
-                        AsBlasLtEpilogue(backend_config.epilogue()));
+                        AsBlasLtEpilogue(gemm_config.epilogue()));
 
     se::DeviceMemoryBase bias_buffer;
     if (has_vector_bias) {
@@ -310,7 +310,7 @@ StatusOr<AutotuneResult> DoGemmAutotuneNoCache(
     }
 
     TF_ASSIGN_OR_RETURN(auto plan,
-                        BlasLt::GetMatmulPlan(stream, gemm_config, epilogue));
+                        BlasLt::GetMatmulPlan(stream, config, epilogue));
 
     TF_ASSIGN_OR_RETURN(auto algorithms, plan->GetAlgorithms());
 
@@ -319,7 +319,7 @@ StatusOr<AutotuneResult> DoGemmAutotuneNoCache(
         GetBestAlgorithm<BlasLt::MatmulAlgorithm>(
             stream, buffer_allocator, gemm->ToString(), autotune_config,
             lhs_buffer, rhs_buffer, output_buffer, algorithms, output_shape,
-            hlo_module_config, backend_config.beta(),
+            hlo_module_config, gemm_config.beta(),
             [&](const BlasLt::MatmulAlgorithm& algorithm)
                 -> StatusOr<se::blas::ProfileResult> {
               se::OwningScratchAllocator<> scratch_allocator(
@@ -349,7 +349,7 @@ StatusOr<AutotuneResult> DoGemmAutotuneNoCache(
         GetBestBlasAlgorithm(
             stream, buffer_allocator, gemm->ToString(), autotune_config,
             lhs_buffer, rhs_buffer, output_buffer, algorithms, output_shape,
-            hlo_module_config, backend_config.beta(),
+            hlo_module_config, gemm_config.beta(),
             [&](const se::blas::AlgorithmType& algorithm)
                 -> StatusOr<se::blas::ProfileResult> {
               se::blas::ProfileResult profile_result;
@@ -360,7 +360,7 @@ StatusOr<AutotuneResult> DoGemmAutotuneNoCache(
               // should always return true, and the actual
               // success-ness is returned in
               // ProfileResult::is_valid.
-              TF_RETURN_IF_ERROR(RunGemm(gemm_config, lhs_buffer, rhs_buffer,
+              TF_RETURN_IF_ERROR(RunGemm(config, lhs_buffer, rhs_buffer,
                                          output_buffer, workspace_buffer,
                                          deterministic_ops, stream, algorithm,
                                          &profile_result));

@@ -152,7 +152,7 @@ tsl::StatusOr<ComputationType> GetBlasComputationType(
 // BLAS GeMM's output is column-major. If we require row-major, use identity:
 // C^T = (A @ B)^T = B^T @ A^T.
 bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
-                           MatrixLayout& output, MatrixLayout* pc) {
+                           MatrixLayout& output, MatrixLayout* c) {
   bool swap_operands = output.order != MatrixLayout::Order::kColumnMajor;
   if (swap_operands) {
     std::swap(lhs, rhs);
@@ -161,8 +161,8 @@ bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
     if(&lhs != &rhs) {
       lhs.Transpose();
     }
-    if (pc != nullptr && pc != &output) {
-      pc->Transpose();
+    if (c != nullptr && c != &output) {
+      c->Transpose();
     }
     output.Transpose();
   }
