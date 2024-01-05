@@ -1031,11 +1031,13 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
   // the bwd
   HloInstruction* bwd_mask_input = nullptr;
   HloInstruction* bwd_mask = nullptr;
+  HloInstruction* d_mask = nullptr;
   auto bwd_mask_pattern = OptionalConvert(
-      m::Select(m::Op(&bwd_mask).WithPredicate([](const HloInstruction* instr) {
-        return instr->shape().element_type() == PRED;
-      }),
-                m::Op(&bwd_mask_input), m::Op()));
+      m::Select(&d_mask,
+        m::Op(&bwd_mask).WithPredicate([](const HloInstruction* instr) {
+          return instr->shape().element_type() == PRED;
+        }),
+        m::Op(&bwd_mask_input), m::Op()));
 
   // Backward scale input pattern
   HloInstruction* bwd_scale_input = nullptr;
@@ -1121,14 +1123,18 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
           kCudnnfMHASoftmaxBackwardCallTarget;
   }
   // try to pattern match dbias
-  if (has_scale || has_mask) {
+  HloInstruction* dS = has_mask? d_mask : d_softmax;
+  if (dS->users()[0]->opcode() == HloOpcode::kConvert) {
+    dS = dS->users()[0];
+  }
+  if (has_scale) {
     // bmm1-(scale)-(bias)-(mask)-softmax pattern
     // users could be dbias besides mask bwd or scale bwd
-    if (d_softmax->user_count() == 1) {
+    if (dS->user_count() == 1) {
       // no dbias
       match_result.has_match = true;
-    } else if (d_softmax->user_count() == 2) {
-      match_result = MatchDbias(match_result, d_softmax,
+    } else if (dS->user_count() == 2) {
+      match_result = MatchDbias(match_result, dS,
                                 {bwd_scale_input, bwd_mask_input});
     } else {
       match_result.has_match = false;
@@ -1136,10 +1142,10 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
   } else {
     // bmm1-(bias)-softmax pattern
     // users could be dbias besides bmm1grad1 bmm1grad2
-    if (d_softmax->user_count() == 2) {
+    if (dS->user_count() == 2) {
       match_result.has_match = true;
-    } else if (d_softmax->user_count() == 3) {
-      match_result = MatchDbias(match_result, d_softmax,
+    } else if (dS->user_count() == 3) {
+      match_result = MatchDbias(match_result, dS,
                                 {match_result.matched_bmm_1_grad_1,
                                  match_result.matched_bmm_1_grad_2});
     } else {
@@ -1190,7 +1196,6 @@ MatchBwdResult MatchBwdMHAPatternsForCanonicalization(
   if (!match_result.has_match) {
     return match_result;
   }
-
   // Found default bmm-bmm backward graph.
   if (match_result.matched_bmm_2_grad_2->users().size() == 2 &&
       (match_result.matched_bmm_1_grad_1->IsUserOf(
@@ -1574,7 +1579,7 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
     HloComputation* comp, HloInstruction* bmm_1_grad_1,
     HloInstruction* bmm_1_grad_2, HloInstruction* bmm_2_grad_1,
     HloInstruction* bmm_2_grad_2, HloInstruction* fwd_fmha_call,
-    HloInstruction* d_intermediate, HloInstruction* mask, HloInstruction* bias,
+    HloInstruction* dbias, HloInstruction* mask, HloInstruction* bias,
     std::string& bwd_custom_call_name) {
   HloInstruction* rhs_bmm1_grad_gemm1;
   HloInstruction* lhs_bmm1_grad_gemm2;
@@ -2003,10 +2008,9 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
                 matched_bwd_result.matched_bmm_1_grad_2,
                 matched_bwd_result.matched_bmm_2_grad_1,
                 matched_bwd_result.matched_bmm_2_grad_2, fwd_fmha_call,
-                matched_bwd_result.matched_dbias, matched_result.matched_mask,
-                matched_bwd_result.matched_custom_call_name,
-                matched_result.need_canonicalization,
-                matched_bwd_result.bmm_2_grad_1_need_canonicalization));
+                matched_bwd_result.matched_dbias,
+                matched_result.matched_mask, matched_result.matched_bias,
+                matched_bwd_result.matched_custom_call_name));
         any_changed |= changed;
       }
     }
