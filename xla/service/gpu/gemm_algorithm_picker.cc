@@ -90,7 +90,8 @@ StatusOr<AutotuneResult> GetBestAlgorithm(
                        output_buffer);
     }
 
-    TF_ASSIGN_OR_RETURN(auto profile_result, run_benchmark(algorithm));
+    TF_ASSIGN_OR_RETURN(se::blas::ProfileResult profile_result,
+                        run_benchmark(algorithm));
 
     results.emplace_back();
     AutotuneResult& result = results.back();

@@ -163,7 +163,7 @@ StatusOr<Shape> GetBatchRowColumnShape(const Shape& shape,
   int64_t num_rows = shape.dimensions(1);
   int64_t num_cols = shape.dimensions(2);
 
-  auto order = MatrixLayout::Order::kRowMajor;
+  Order order{Order::kRowMajor};
   int64_t leading_dim_stride = num_cols;
   int64_t batch_stride = num_rows * num_cols;
 
@@ -174,7 +174,7 @@ StatusOr<Shape> GetBatchRowColumnShape(const Shape& shape,
     case 012:  // (B,R,C) (major-to-minor)
       break;
     case 021:  // (B,C,R)
-      order = MatrixLayout::Order::kColumnMajor;
+      order = Order::kColumnMajor;
       leading_dim_stride = num_rows;
       break;
     case 0102:  // (R,B,C)
@@ -182,7 +182,7 @@ StatusOr<Shape> GetBatchRowColumnShape(const Shape& shape,
       batch_stride = num_cols;
       break;
     case 0201:  // (C,B,R)
-      order = MatrixLayout::Order::kColumnMajor;
+      order = Order::kColumnMajor;
       leading_dim_stride = batch_size * num_rows;
       batch_stride = num_rows;
       break;
