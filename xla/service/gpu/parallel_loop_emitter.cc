@@ -184,6 +184,10 @@ ParallelLoopEmitter::EmitIndexAndSetExitBasicBlock(absl::string_view loop_name,
   // in that cases.
   llvm::Value* row_index = nullptr;
   if (!launch_config_.row_vectorized) {
+    // The add operation is needed even if the offset is 0, since when the
+    // kernel is unrolled, the following GEP instruction shares the same pointer
+    // and sequential indices with others, allowing the default SLP pass to
+    // optimize them into vectorized load/store operations.
     llvm::Value* linear_index =
         b_->CreateAdd(linear_index_base, llvm::ConstantInt::get(index_type, 0),
                       absl::StrCat("linear_index", 0),
