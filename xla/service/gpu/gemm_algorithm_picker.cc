@@ -382,11 +382,11 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
                                 const AutotuneConfig& config) {
   VLOG(3) << "Loading the autotune result of GemmThunk " << gemm->ToString();
 
-  GemmBackendConfig backend_config =
+  GemmBackendConfig gemm_config =
       gemm->backend_config<GemmBackendConfig>().value();
   // Degenerate gemms replaced with memzero operation, no need to auto tune it.
-  if (backend_config.alpha_real() == 0.0 && 
-      backend_config.alpha_imag() == 0.0 && backend_config.beta() == 0.0) {
+  if (gemm_config.alpha_real() == 0.0 && 
+      gemm_config.alpha_imag() == 0.0 && gemm_config.beta() == 0.0) {
     VLOG(3) << "Skip degenerate gemm instruction auto tuning";
     return false;
   }
@@ -398,7 +398,7 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
                         return DoGemmAutotuneNoCache(gemm, key, config);
                       }));
 
-  GemmBackendConfig updated_config = backend_config;
+  GemmBackendConfig updated_config = gemm_config;
 
   // We only set the 'algorithm' field on non-Ampere architectures, as for
   // Ampere it's ignored in any case.
@@ -416,7 +416,7 @@ StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
     }
   }
   TF_RETURN_IF_ERROR(gemm->set_backend_config(updated_config));
-  return updated_config.SerializeAsString() != backend_config.SerializeAsString();
+  return updated_config.SerializeAsString() != gemm_config.SerializeAsString();
 }
 
 StatusOr<bool> RunOnComputation(HloComputation* computation,
