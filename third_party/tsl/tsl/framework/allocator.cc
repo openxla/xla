@@ -54,7 +54,10 @@ Allocator::~Allocator() {}
 // If true, cpu allocator collects full stats.
 static bool cpu_allocator_collect_full_stats = false;
 
-void EnableCPUAllocatorFullStats() { cpu_allocator_collect_full_stats = true; }
+void EnableCPUAllocatorFullStats() {
+  LOG(ERROR) << "[DEBUG] Set cpu_allocator_collect_full_stats to true.";
+  cpu_allocator_collect_full_stats = true;
+}
 bool CPUAllocatorFullStatsEnabled() { return cpu_allocator_collect_full_stats; }
 
 string AllocatorAttributes::DebugString() const {
@@ -70,7 +73,10 @@ Allocator* cpu_allocator_base() {
   // the first call in a process (but the desired effect is associated with a
   // session), and we probably ought to be tracking the highest level Allocator,
   // not the lowest.  Revisit the advertised semantics of the triggering option.
+  LOG(ERROR) << "[DEBUG] cpu_allocator_collect_full_stats = "
+             << cpu_allocator_collect_full_stats;
   if (cpu_allocator_collect_full_stats && !cpu_alloc->TracksAllocationSizes()) {
+    LOG(ERROR) << "[DEBUG] Create Tracking allocator.";
     cpu_alloc = new TrackingAllocator(cpu_alloc, true);
   }
   return cpu_alloc;
