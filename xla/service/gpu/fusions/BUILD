@@ -78,6 +78,7 @@ cc_library(
     visibility = ["//xla/service/gpu:__subpackages__"],
     deps = [
         "//xla:status",
+        "//xla:status_macros",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:lhlo",
@@ -90,6 +91,7 @@ cc_library(
         "//xla/service/gpu/runtime3:kernel_thunk",
         "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:llvm_util",
+        "//xla/stream_executor:device_description",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
@@ -97,6 +99,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -291,6 +294,7 @@ cc_library(
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:ir_emitter_context",
         "//xla/service/gpu:thunk",
+        "//xla/service/gpu/runtime3:memset_thunk",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",

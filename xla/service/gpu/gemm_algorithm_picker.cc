@@ -111,7 +111,6 @@ StatusOr<AutotuneResult> GetBestAlgorithm(
     if (!autotune_config.should_check_correctness()) {
       continue;
     }
-#if GOOGLE_CUDA  // redzone check is not yet available on ROCm
     TF_ASSIGN_OR_RETURN(
         se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
         allocator.CheckRedzones());
@@ -124,7 +123,6 @@ StatusOr<AutotuneResult> GetBestAlgorithm(
       CHECK(!autotune_config.should_crash_on_check_failure());
       continue;
     }
-#endif  // GOOGLE_CUDA
 
     if (!reference_algorithm) {
       stream->ThenMemcpy(&reference_buffer, output_buffer,
@@ -281,11 +279,11 @@ StatusOr<AutotuneResult> DoGemmAutotuneNoCache(
 
     TF_ASSIGN_OR_RETURN(
         bool has_vector_bias,
-        xla::gpu::gpublas_lt::EpilogueAddsVectorBias(gemm_config.epilogue()));
+        gpublas_lt::EpilogueAddsVectorBias(gemm_config.epilogue()));
 
-    TF_ASSIGN_OR_RETURN(bool has_aux_output,
-                        xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(
-                            gemm_config.epilogue()));
+    TF_ASSIGN_OR_RETURN(
+        bool has_aux_output,
+        gpublas_lt::EpilogueHasAuxiliaryOutput(gemm_config.epilogue()));
 
     TF_ASSIGN_OR_RETURN(auto epilogue,
                         AsBlasLtEpilogue(gemm_config.epilogue()));
