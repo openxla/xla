@@ -851,6 +851,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
