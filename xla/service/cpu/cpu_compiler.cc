@@ -885,29 +885,20 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
 
   pipeline.AddPass<ReshapeDecomposer>();
 
+  const int max_parallelism =
+      module->config().intra_op_parallelism_threads() > 0
+          ? module->config().intra_op_parallelism_threads()
+          : tsl::port::NumSchedulableCPUs();
+
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-  std::unique_ptr<tsl::thread::ThreadPool> eigen_intraop_pool;
-  std::unique_ptr<Eigen::ThreadPoolDevice> threadpool_device;
   // AOT compiled code runs in single thread.
   if (!is_aot_compile) {
     // Run SimplifyFPConversions pass to simplify the BF16 pattern and make it
     // easier to match.
     pipeline.AddPass<SimplifyFPConversions>(
         SimplifyFPConversions::Scope::kSimplifyAllConversions);
-
-    if (compile_options.thread_pool) {
-      threadpool_device.reset(new Eigen::ThreadPoolDevice(
-          compile_options.thread_pool->AsEigenThreadPool(),
-          compile_options.thread_pool->NumThreads()));
-    } else {
-      eigen_intraop_pool.reset(new tsl::thread::ThreadPool(
-          tsl::Env::Default(), "XLACpuCompile", tsl::port::MaxParallelism()));
-      threadpool_device.reset(
-          new Eigen::ThreadPoolDevice(eigen_intraop_pool->AsEigenThreadPool(),
-                                      eigen_intraop_pool->NumThreads()));
-    }
-
-    pipeline.AddPass<OneDnnMatMulRewriter>(threadpool_device.get());
+    pipeline.AddPass<OneDnnMatMulRewriter>(max_parallelism,
+                                           compile_options.thread_pool);
     // Run SimplifyFPConversions pass again to remove redundant Convert ops
     // that may exist as a result of running OneDnnMatMulRewriter pass.
     pipeline.AddPass<SimplifyFPConversions>(
@@ -942,10 +933,6 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   }();
 
   // Outline ops in the entry computation into calls to subcomputations.
-  const int max_parallelism =
-      module->config().intra_op_parallelism_threads() > 0
-          ? module->config().intra_op_parallelism_threads()
-          : tsl::port::NumSchedulableCPUs();
   if (!is_aot_compile) {
     // Run ParallelTaskAssigner to assign parallel tasks to HLOs in module.
     // Note this is not run for AOT because it would bring in thread pool

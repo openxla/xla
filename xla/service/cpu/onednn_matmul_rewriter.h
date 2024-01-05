@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
+#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace cpu {
@@ -32,8 +33,10 @@ namespace cpu {
 // calls.
 class OneDnnMatMulRewriter : public HloModulePass {
  public:
-  OneDnnMatMulRewriter(const Eigen::ThreadPoolDevice* threadpool_device)
-      : threadpool_device_(threadpool_device) {}
+  OneDnnMatMulRewriter(int intraop_parallelism,
+                       const tsl::thread::ThreadPool* compile_threadpool)
+      : intraop_parallelism_(intraop_parallelism),
+        compile_threadpool_(compile_threadpool) {}
 
   absl::string_view name() const override { return "onednn-matmul-rewriter"; }
 
@@ -45,7 +48,8 @@ class OneDnnMatMulRewriter : public HloModulePass {
   static bool ShouldRewrite(const HloInstruction* dot_instr);
 
  private:
-  const Eigen::ThreadPoolDevice* threadpool_device_;
+  int intraop_parallelism_;
+  const tsl::thread::ThreadPool* compile_threadpool_;
 };
 
 }  // namespace cpu

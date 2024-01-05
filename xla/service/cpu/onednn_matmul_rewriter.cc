@@ -663,9 +663,24 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
 
 class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
  public:
-  OneDnnMatMulReorderVisitor(const Eigen::ThreadPoolDevice* threadpool_device)
-      : threadpool_device_(threadpool_device),
+  OneDnnMatMulReorderVisitor(int intraop_parallelism,
+                             const tsl::thread::ThreadPool* compile_threadpool)
+      : intraop_parallelism_(intraop_parallelism > 0
+                                 ? intraop_parallelism
+                                 : tsl::port::MaxParallelism()),
         evaluator_(/*max_loop_iterations=*/0) {
+    if (compile_threadpool) {
+      threadpool_device_.reset(
+          new Eigen::ThreadPoolDevice(compile_threadpool->AsEigenThreadPool(),
+                                      compile_threadpool->NumThreads()));
+    } else {
+      threadpool_handle_.reset(new tsl::thread::ThreadPool(
+          tsl::Env::Default(), "XLACpuCompile", tsl::port::MaxParallelism()));
+      threadpool_device_.reset(
+          new Eigen::ThreadPoolDevice(threadpool_handle_->AsEigenThreadPool(),
+                                      threadpool_handle_->NumThreads()));
+    }
+
     evaluator_.set_custom_call_handler(
         [this](const HloInstruction* custom_call_instr,
                absl::Span<const Literal*> operands) -> StatusOr<Literal> {
@@ -681,7 +696,7 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
           args.push_back(&nargs);
 
           ExecutableRunOptions run_options;
-          run_options.set_intra_op_thread_pool(threadpool_device_);
+          run_options.set_intra_op_thread_pool(threadpool_device_.get());
           args.push_back(&run_options);  // No ExecutableRunOptions.
 
           // OneDnnMatMulConfig
@@ -730,11 +745,7 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
 
 #ifndef ENABLE_ONEDNN_OPENMP
       // set oneDNN cuncurrency settings (which is thread-local)
-      if (threadpool_device_ != nullptr &&
-          threadpool_device_->getPool() != nullptr) {
-        tsl::OneDnnThreadPool::set_onednn_max_threads(
-            threadpool_device_->getPool()->NumThreads());
-      }
+      tsl::OneDnnThreadPool::set_onednn_max_threads(intraop_parallelism_);
 #endif
       auto new_weight_shape = OneDnnMatMulOptWeightsShape(
           input_shape, weight_shape, bias_shape, output_shape, &matmul_config);
@@ -775,8 +786,10 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
   }
 
  private:
-  const Eigen::ThreadPoolDevice* threadpool_device_;
+  int intraop_parallelism_;
   HloEvaluator evaluator_;
+  std::unique_ptr<tsl::thread::ThreadPool> threadpool_handle_;
+  std::unique_ptr<Eigen::ThreadPoolDevice> threadpool_device_;
 };
 
 StatusOr<bool> OneDnnMatMulRewriter::Run(
@@ -786,7 +799,8 @@ StatusOr<bool> OneDnnMatMulRewriter::Run(
   TF_ASSIGN_OR_RETURN(auto result,
                       visitor.RunOnModule(module, execution_threads));
 
-  OneDnnMatMulReorderVisitor reorder_visitor(threadpool_device_);
+  OneDnnMatMulReorderVisitor reorder_visitor(intraop_parallelism_,
+                                             compile_threadpool_);
   TF_ASSIGN_OR_RETURN(auto result2,
                       reorder_visitor.RunOnModule(module, execution_threads));
 
