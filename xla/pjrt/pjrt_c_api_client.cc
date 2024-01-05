@@ -47,7 +47,9 @@ limitations under the License.
 #include "mlir/Parser/Parser.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "stablehlo/api/PortableApi.h"  // from @stablehlo
 #include "stablehlo/dialect/Register.h"  // from @stablehlo
+#include "stablehlo/dialect/Serialization.h"  // from @stablehlo
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
@@ -385,12 +387,10 @@ StatusOr<std::unique_ptr<PjRtLoadedExecutable>> PjRtCApiClient::Compile(
   std::string module_bytecode;
   {
     llvm::raw_string_ostream os(module_bytecode);
-    mlir::BytecodeWriterConfig config;
-    // Pin bytecode version to 1 until transition to stable.
-    // TODO(285913864): Remove post enabling frameworks to set it.
-    config.setDesiredBytecodeVersion(1);
-    if (mlir::failed(mlir::writeBytecodeToFile(module, os, config)))
-      return absl::UnknownError("writeBytecodeToFile() failed.");
+    if (mlir::failed(mlir::stablehlo::serializePortableArtifact(
+            module, mlir::stablehlo::getCurrentVersion(), os))) {
+      return absl::InvalidArgumentError("Failed to serialize StableHLO");
+    }
   }
   std::string format(pjrt::kMlirFormat);
   return InitializeArgsAndCompile(this, c_api_, c_client_.get(), options,
@@ -2202,12 +2202,10 @@ StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiCompiler::Compile(
   std::string module_bytecode;
   {
     llvm::raw_string_ostream os(module_bytecode);
-    mlir::BytecodeWriterConfig config;
-    // Pin bytecode version to 1 until transition to stable.
-    // TODO(285913864): Remove post enabling frameworks to set it.
-    config.setDesiredBytecodeVersion(1);
-    if (mlir::failed(mlir::writeBytecodeToFile(module, os, config)))
-      return absl::UnknownError("writeBytecodeToFile() failed.");
+    if (mlir::failed(mlir::stablehlo::serializePortableArtifact(
+            module, mlir::stablehlo::getCurrentVersion(), os))) {
+      return absl::InvalidArgumentError("Failed to serialize StableHLO");
+    }
   }
   std::string format(pjrt::kMlirFormat);
   return InitializeArgsAndCompileAot(c_api_, client, options, topology,
