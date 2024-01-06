@@ -48,7 +48,6 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/gpu/gpu_graph.h"
 #include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
