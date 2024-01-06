@@ -488,16 +488,11 @@ StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
           return registered_buffer;
         }
 
-        // for pass through output buffers, it works even user does not donate
-        // the input, as there is no writes.
-        if (aliased_output->second.passthrough) {
-          return registered_buffer;
-        }
-
         // for must_alias output, not trying to copy parameter buffers if user
         // does not donate it.
         return FailedPrecondition(
-            "Must aliased output buffer, but user does not donate it ");
+            "An input was configured to be must-alias at compile time but not "
+            "donated at runtime:");
       }
 
       if (maybe_owning_memory && maybe_owning_memory->HasOwnership()) {
