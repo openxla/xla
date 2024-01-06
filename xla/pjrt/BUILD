@@ -696,6 +696,8 @@ cc_library(
         "@llvm-project//mlir:ShapeDialect",
         "@llvm-project//mlir:Support",
         "@stablehlo//:register",
+        "@stablehlo//:stablehlo_portable_api",
+        "@stablehlo//:stablehlo_serialization",
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
