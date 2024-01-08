@@ -49,6 +49,8 @@ limitations under the License.
 #include "rocm/include/rccl.h"
 #endif
 #else
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/driver_types.h"
 #include "third_party/nccl/nccl.h"
 #endif
 
@@ -64,6 +66,7 @@ bool IsGlobalNcclConfig();
 
 Status ToStatus(ncclResult_t s, const char* file, int64_t line,
                 const char* expr);
+Status ToStatus(CUresult s, const char* file, int64_t line, const char* expr);
 
 // Macros to return or warn on CUDA/NCCL errors.  (The same macro works for both
 // NCCL and CUDA errors.)

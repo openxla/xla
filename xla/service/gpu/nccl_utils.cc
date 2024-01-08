@@ -73,6 +73,19 @@ Status ToStatus(ncclResult_t s, const char* file, int64_t line,
       file, line, expr, ncclGetErrorString(s), ncclGetLastError(nullptr)));
 }
 
+Status ToStatus(CUresult s, const char* file, int64_t line, const char* expr) {
+  if (s == CUDA_SUCCESS) {
+    return OkStatus();
+  }
+  const char* name;
+  cuGetErrorName(s, &name);
+  const char* message;
+  cuGetErrorString(s, &message);
+  return tsl::errors::Internal(
+      absl::StrFormat("%s:%d: CUDA operation %s failed: %s, %s", file, line,
+                      expr, name, message));
+}
+
 ncclRedOp_t ToNcclReduction(ReductionKind kind) {
   switch (kind) {
     case ReductionKind::SUM:

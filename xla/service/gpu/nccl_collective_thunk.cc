@@ -259,6 +259,44 @@ StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
   return device_buffers;
 }
 
+// This function is used to determine if a buffer resides in memory that was
+// allocated using ncclMemAlloc.
+StatusOr<bool> IsBufferInCollectiveMemory(int device_ordinal,
+                                          const void* buffer) {
+  // Get base address, size.
+  CUdeviceptr base_ptr;
+  size_t base_size;
+  XLA_CUDA_RETURN_IF_ERROR(cuMemGetAddressRange(
+      &base_ptr, &base_size, reinterpret_cast<CUdeviceptr>(buffer)));
+
+  // Get required granularity.
+  size_t granularity;
+  CUmemAllocationProp req_prop;
+  memset(&req_prop, 0, sizeof(req_prop));
+  req_prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  req_prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  req_prop.location.id = device_ordinal;
+  req_prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  XLA_CUDA_RETURN_IF_ERROR(cuMemGetAllocationGranularity(
+      &granularity, &req_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+
+  // Get properties of allocation.
+  CUmemGenericAllocationHandle handle;
+  if (cuMemRetainAllocationHandle(&handle, const_cast<void*>(buffer)) !=
+      CUDA_SUCCESS) {
+    // If cuMem* api wasn't used to allocate this buffer (used in ncclMemAlloc),
+    // cuMemRetainAllocationHandle will fail.
+    return false;
+  }
+  CUmemAllocationProp prop;
+  XLA_CUDA_RETURN_IF_ERROR(
+      cuMemGetAllocationPropertiesFromHandle(&prop, handle));
+
+  // Check granularity and property requirements are met.
+  return base_ptr % granularity == 0 && base_size % granularity == 0 &&
+         prop.requestedHandleTypes & CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+}
+
 Status MaybeRegisterBuffers(int device_ordinal,
                             const std::vector<DeviceBufferPair>& buffers,
                             ncclComm_t comm) {
@@ -280,16 +318,37 @@ Status MaybeRegisterBuffers(int device_ordinal,
   absl::MutexLock lock(&all_registered.mu);
   for (int i = 0; i < buffers.size(); ++i) {
     if (!all_registered.per_device_comms[device_ordinal].contains(comm)) {
-      void* handle;
-      VLOG(1) << "ncclCommRegister comm=" << comm << " buff=" << buffers[i].source_buffer.opaque()
-              << " size=" << buffers[i].source_buffer.size();
-      // Since source_buffer and destination_buffer are both slices into the
-      // same ncclMemAlloc buffer, we only need to register one of them and nccl
-      // will register the whole buffer.
-      XLA_CUDA_RETURN_IF_ERROR(ncclCommRegister(
-          comm, const_cast<void*>(buffers[i].source_buffer.opaque()), buffers[i].source_buffer.size(), &handle));
-      all_registered.handles.push_back(handle);
-      all_registered.per_device_comms[device_ordinal].insert(comm);
+      TF_ASSIGN_OR_RETURN(
+          bool send_buff_in_collective_mem,
+          IsBufferInCollectiveMemory(device_ordinal,
+                                     buffers[i].source_buffer.opaque()));
+      if (send_buff_in_collective_mem) {
+        void* handle;
+        VLOG(1) << "ncclCommRegister comm=" << comm
+                << " buff=" << buffers[i].source_buffer.opaque()
+                << " size=" << buffers[i].source_buffer.size();
+        XLA_CUDA_RETURN_IF_ERROR(ncclCommRegister(
+            comm, const_cast<void*>(buffers[i].source_buffer.opaque()),
+            buffers[i].source_buffer.size(), &handle));
+        all_registered.handles.push_back(handle);
+        all_registered.per_device_comms[device_ordinal].insert(comm);
+        continue;
+      }
+      TF_ASSIGN_OR_RETURN(
+          bool dest_buff_in_collective_mem,
+          IsBufferInCollectiveMemory(device_ordinal,
+                                     buffers[i].source_buffer.opaque()));
+      if (dest_buff_in_collective_mem) {
+        void* handle;
+        VLOG(1) << "ncclCommRegister comm=" << comm
+                << " buff=" << buffers[i].destination_buffer.opaque()
+                << " size=" << buffers[i].source_buffer.size();
+        XLA_CUDA_RETURN_IF_ERROR(ncclCommRegister(
+            comm, const_cast<void*>(buffers[i].destination_buffer.opaque()),
+            buffers[i].destination_buffer.size(), &handle));
+        all_registered.handles.push_back(handle);
+        all_registered.per_device_comms[device_ordinal].insert(comm);
+      }
     }
   }
   return OkStatus();
