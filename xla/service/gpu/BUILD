@@ -878,14 +878,12 @@ tsl_gpu_library(
     defines = if_gpu_is_configured(["XLA_ENABLE_XCCL"]),
     tags = ["manual"],  # Only builds with if_nccl().
     visibility = ["//visibility:private"],
-    deps = if_gpu_is_configured([
+    deps = [
         ":gpu_executable_run_options",
         ":thunk",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/time",
         "//xla:debug_options_flags",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
@@ -893,9 +891,21 @@ tsl_gpu_library(
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
         "//xla/service:rendezvous",
-        "@tsl//tsl/platform:logging",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:env",
-    ]) + if_cuda_is_configured([
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ] + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rccl",
