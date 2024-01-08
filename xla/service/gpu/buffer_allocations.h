@@ -142,7 +142,7 @@ class BufferAllocations {
       // const auto& buf = buffers_[i];
       StatusOr<se::DeviceMemoryBase> buf = GetDeviceAddress(i);
       if (buf.ok()) {
-        absl::StrAppendFormat(&out, "Buffer %d -> %p (%d B)", i, buf.value().opaque(),
+        absl::StrAppendFormat(&out, "Buffer %d -> %p (%d B) ", i, buf.value().opaque(),
                               buf.value().size());
       } else {
         absl::StrAppendFormat(&out, "Buffer %d -> ERROR", i);

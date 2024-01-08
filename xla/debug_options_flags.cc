@@ -1038,7 +1038,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
   flag_list->push_back(
       tsl::Flag("xla_gpu_enable_persistent_input_buffers",
                 bool_setter_for(
-                    &DebugOptions::set_xla_gpu_enable_persistent_temp_buffers),
+                    &DebugOptions::set_xla_gpu_enable_persistent_input_buffers),
                 debug_options->xla_gpu_enable_persistent_input_buffers(),
                 "Allocate input buffers once during the first execution of an "
                 "executable. "

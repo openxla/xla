@@ -80,11 +80,11 @@ Status CommandBufferAllocations::Allocate(
     // address.
     CommandBufferCmdSequence commands;
     for (BufferAllocation::Index i = 0; i < buffer_allocations.size(); i++) {
+      allocations_map_.emplace(
+          i, BufferAllocation{/*index=*/i,
+                              (int64_t)buffer_allocations.GetAllocationSize(i),
+                              /*color=*/0});
       if (buffer_allocations.IsExternalAllocation(i)) {
-        allocations_map_.emplace(
-            i, BufferAllocation{/*index=*/i,
-                                (int64_t)buffer_allocations.GetAllocationSize(i),
-                                /*color=*/0});
         commands.Emplace<AllocateCmd>(allocations_map_.at(i));
         VLOG(2) << "Adding AllocateCmd for allocation: " << i;
       }
@@ -93,14 +93,13 @@ Status CommandBufferAllocations::Allocate(
     // For allocations that are copied from other allocations, add Copy command.
     if (remapped_allocations_) {
       for (const auto& item : remapped_allocations_.value()) {
-        BufferAllocation& dst = allocations_map_.at(item.first);
-        BufferAllocation& src = allocations_map_.at(item.second);
-        BufferAllocation::Slice dst_slice(&dst, 0, dst.size());
-        BufferAllocation::Slice src_slice(&src, 0, src.size());
+        auto size = allocations_map_.at(item.first).size();
+        BufferAllocation::Slice dst_slice(&allocations_map_.at(item.first), 0, size);
+        BufferAllocation::Slice src_slice(&allocations_map_.at(item.second), 0, size);
         commands.Emplace<MemcpyDeviceToDeviceCmd>(dst_slice, src_slice,
                                                   dst_slice.size());
         VLOG(2) << "Adding MemcpyDeviceToDeviceCmd from allocation "
-                << src.index() << "to allocation " << dst.index();
+                << item.second << " to allocation " << item.first;
       }
     }
 

@@ -511,7 +511,7 @@ StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
         VLOG(2) << "Reuse copied donated buffer for parameter allocation "
                 << allocation.ToString();
         if (enable_persistent_output_buffers) {
-          param_copy_info[param_no] = registered_buffer;
+          param_copy_info[allocation.index()] = registered_buffer;
           return se::DeviceMemoryBase{
               reinterpret_cast<void*>(
                   BufferAllocations::kExternalAllocationMarker),
@@ -540,7 +540,7 @@ StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
 
       // TODO(shawnw): checks whether input buffer are with stable pointer
       // through profiling.
-      param_copy_info[param_no] = registered_buffer;
+      param_copy_info[allocation.index()] = registered_buffer;
       VLOG(2) << "Use persistent input buffer for parameter allocation "
               << param_no;
       return se::DeviceMemoryBase{
@@ -684,7 +684,11 @@ StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
     for (auto& item : param_copy_info) {
       // put the original allocation at end of buffer list.
       buffers.push_back(item.second);
-      remapped_allocation_indexes[item.first] = buffers.size();
+      remapped_allocation_indexes[item.first] = buffers.size() - 1;
+      VLOG(2) << "Adding remapped buffers, allocation " << item.first
+              << " remapped allocation " << buffers.size() - 1 << " address "
+              << item.second.ToString() << " copy_info: " << buffers[item.first].ToString()
+              << " <- " << buffers[buffers.size() - 1].ToString();
     }
     persistent_allocations->SetRemappedAllocations(
         remapped_allocation_indexes);
@@ -889,7 +893,10 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 
   // For buffers allocated through command buffer, the free should also
   // through command buffer.
-  if (enable_persistent_buffer && !has_conflict_persistent_output_buffer) {
+  if (enable_persistent_buffer && !has_conflict_persistent_output_buffer &&
+      persistent_buffer_allocations_map_.contains(executor)) {
+    CHECK(persistent_buffer_allocations_map_.contains(executor))
+        << "Persistent buffer allocation is not constructed yet.";
     CommandBufferAllocations* persistent_allocations =
         persistent_buffer_allocations_map_.at(executor).get();
     TF_RETURN_IF_ERROR(persistent_allocations->Free(

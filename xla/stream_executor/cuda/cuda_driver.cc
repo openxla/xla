@@ -849,7 +849,7 @@ GpuDriver::GraphAddNode(CUgraphNode* node, CUgraph graph,
 }
 
 /* static */ tsl::Status GpuDriver::GraphAddKernelNode(
-    CUgraphNode* node, CUgraph graph, absl::Span<GpuGraphNodeHandle> deps,
+    CUgraphNode* node, CUgraph graph, absl::Span<CUgraphNode> deps,
     absl::string_view kernel_name, CUfunction function, unsigned int grid_dim_x,
     unsigned int grid_dim_y, unsigned int grid_dim_z, unsigned int block_dim_x,
     unsigned int block_dim_y, unsigned int block_dim_z,
