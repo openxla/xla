@@ -82,6 +82,7 @@ cc_library(
         ":memset_thunk",
         ":sequential_thunk",
         ":while_thunk",
+        "//xla:status",
         "//xla:statusor",
         "//xla:util",
         "//xla/service:buffer_assignment",
@@ -90,6 +91,8 @@ cc_library(
         "//xla/service/gpu:nccl_collective_thunks",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
 )
