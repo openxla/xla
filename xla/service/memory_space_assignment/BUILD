@@ -89,6 +89,7 @@ xla_cc_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_live_range",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:heap_simulator",
         "//xla/service:hlo_cost_analysis",
@@ -110,6 +111,7 @@ xla_cc_test(
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
@@ -145,6 +147,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -155,6 +158,7 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service:heap_simulator",
+        "//xla/service:hlo_value",
     ],
 )
 
