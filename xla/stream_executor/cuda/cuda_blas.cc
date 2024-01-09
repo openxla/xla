@@ -494,7 +494,7 @@ absl::Status CUDABlas::DoBlasInternalImpl(FuncT cublas_func, Stream *stream,
     return absl::OkStatus();
   }
   std::string error_message = CublasLogCollector::GetCublasErrorMessage(status);
-  return absl::Internal(error_message);
+  return absl::InternalError(error_message);
 }
 
 // cublas_func may be overloaded, so we need to figure out which one we really
