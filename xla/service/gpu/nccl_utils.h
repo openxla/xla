@@ -49,10 +49,13 @@ limitations under the License.
 #include "rocm/include/rccl.h"
 #endif
 #else
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/driver_types.h"
 #include "third_party/nccl/nccl.h"
 #endif
+
+#if XLA_ENABLE_XCCL
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/driver_types.h"
+#endif  // XLA_ENABLE_XCCL
 
 namespace xla {
 namespace gpu {
@@ -66,7 +69,9 @@ bool IsGlobalNcclConfig();
 
 Status ToStatus(ncclResult_t s, const char* file, int64_t line,
                 const char* expr);
+#if XLA_ENABLE_XCCL
 Status ToStatus(CUresult s, const char* file, int64_t line, const char* expr);
+#endif  // XLA_ENABLE_XCCL
 
 // Macros to return or warn on CUDA/NCCL errors.  (The same macro works for both
 // NCCL and CUDA errors.)
