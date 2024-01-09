@@ -136,6 +136,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
     alwayslink = True,  # Registers itself with the MultiPlatformManager.
 )
