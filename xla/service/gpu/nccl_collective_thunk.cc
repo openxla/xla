@@ -263,6 +263,7 @@ StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 // allocated using ncclMemAlloc.
 StatusOr<bool> IsBufferInCollectiveMemory(int device_ordinal,
                                           const void* buffer) {
+#if XLA_ENABLE_XCCL
   // Get base address, size.
   CUdeviceptr base_ptr;
   size_t base_size;
@@ -295,6 +296,11 @@ StatusOr<bool> IsBufferInCollectiveMemory(int device_ordinal,
   // Check granularity and property requirements are met.
   return base_ptr % granularity == 0 && base_size % granularity == 0 &&
          prop.requestedHandleTypes & CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+#else  // XLA_ENABLE_XCCL
+  return Unimplemented(
+      "NCCL support is not available: this binary was not built with a CUDA "
+      "compiler, which is necessary to build the NCCL source library.");
+#endif  // XLA_ENABLE_XCCL
 }
 
 Status MaybeRegisterBuffers(int device_ordinal,
