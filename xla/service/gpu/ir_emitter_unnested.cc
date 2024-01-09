@@ -783,8 +783,10 @@ absl::Status IrEmitterUnnested::EmitConvolutionThunk(
   }
 
   TF_ASSIGN_OR_RETURN(CudnnConvKind kind, GetCudnnConvKind(instr));
-  TF_ASSIGN_OR_RETURN(auto backend_config,
-                      instr->backend_config<CudnnConvBackendConfig>());
+  TF_ASSIGN_OR_RETURN(auto gpu_config,
+                      instr->backend_config<GpuBackendConfig>());
+  const CudnnConvBackendConfig& backend_config =
+    gpu_config.cudnn_conv_backend_config();
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice scratch_slice,
                       GetAllocationSliceForHlo(
                           instr, {instr->shape().tuple_shapes_size() - 1}));

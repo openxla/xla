@@ -847,7 +847,7 @@ TEST_F(HloComputationTest, CloneWrappedAsyncInstructionSameWrappedFunc) {
     ENTRY main (data: u32[8]) -> u32[4] {
       data = u32[8]{0} parameter(0)
       reduce-scatter-start = ((u32[8]{0}), u32[4]{0}) async-start(u32[8]{0} data),
-        calls=async_wrapped, backend_config={"is_sync":false}
+        calls=async_wrapped, backend_config={"collective_backend_config": {"is_sync":false}}
       ROOT reduce-scatter-done = u32[4]{0} async-done(((u32[8]{0}), u32[4]{0}) reduce-scatter-start),
         calls=async_wrapped
 })";
@@ -887,7 +887,7 @@ TEST_F(HloComputationTest, CloneWrappedAsyncInstructionDiffWrappedFunc) {
     ENTRY main (data: u32[8]) -> u32[4] {
       data = u32[8]{0} parameter(0)
       reduce-scatter-start = ((u32[8]{0}), u32[4]{0}) async-start(u32[8]{0} data),
-        calls=async_wrapped_1, backend_config={"is_sync":false}
+        calls=async_wrapped_1, backend_config={"collective_backend_config": {"is_sync":false}}
       ROOT reduce-scatter-done = u32[4]{0} async-done(((u32[8]{0}), u32[4]{0}) reduce-scatter-start),
         calls=async_wrapped_2
 })";

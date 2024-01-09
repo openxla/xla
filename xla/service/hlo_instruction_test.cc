@@ -2459,19 +2459,19 @@ TEST_F(HloInstructionTest, BackendConfigCanContainNonFiniteFloats) {
   dot_dnums.add_rhs_contracting_dimensions(0);
   auto dot = b.AddInstruction(HloInstruction::CreateDot(
       shape, p0, p0, dot_dnums, DefaultPrecisionConfig(2)));
-
-  gpu::GemmBackendConfig orig_config;
+  gpu::GpuBackendConfig gpu_config;
+  gpu::GemmBackendConfig& orig_config =
+      *gpu_config.mutable_gemm_backend_config();
   orig_config.set_alpha_real(std::numeric_limits<double>::infinity());
   orig_config.set_alpha_imag(std::numeric_limits<double>::quiet_NaN());
-  gpu::GpuBackendConfig gpu_config;
-  *gpu_config.mutable_gemm_backend_config() = orig_config;
   TF_ASSERT_OK(dot->set_backend_config(gpu_config));
 
   TF_ASSERT_OK_AND_ASSIGN(auto new_gpu_config,
                           dot->backend_config<gpu::GpuBackendConfig>());
-  gpu::GemmBackendConfig new_config = new_gpu_config.gemm_backend_config();
-  EXPECT_GT(new_config.alpha_real(), std::numeric_limits<double>::max());
-  EXPECT_NE(new_config.alpha_imag(), new_config.alpha_imag());
+  EXPECT_GT(new_gpu_config.gemm_backend_config().alpha_real(),
+            std::numeric_limits<double>::max());
+  EXPECT_NE(new_gpu_config.gemm_backend_config().alpha_imag(),
+            new_gpu_config.gemm_backend_config().alpha_imag());
 }
 
 TEST_F(HloInstructionTest, VerifyToApplyRegionPointsToReduceScatter) {
@@ -2584,6 +2584,39 @@ TEST_F(HloInstructionTest, PrintCycle) {
               ::testing::HasSubstr("recv\n send\n send-done\n recv"));
   // Remove the cycle to avoid error when destructing the verified module.
   ASSERT_IS_OK(send_done->DropAllControlDeps());
+}
+
+TEST_F(HloInstructionTest, SetOperationQueueId) {
+  std::unique_ptr<HloComputation> main_computation;
+  HloComputation::Builder main_builder("Entry");
+  const Shape scalar_shape = ShapeUtil::MakeScalarShape(F32);
+  HloInstruction* param0 = main_builder.AddInstruction(
+      HloInstruction::CreateParameter(0, scalar_shape, "p0"));
+  HloInstruction* param1 = main_builder.AddInstruction(
+      HloInstruction::CreateParameter(1, scalar_shape, "p1"));
+
+  HloInstruction* add =
+      main_builder.AddInstruction(HloInstruction::CreateBinary(
+          scalar_shape, HloOpcode::kAdd, param0, param1));
+  add->set_operation_queue_id(3);
+  auto module = CreateNewVerifiedModule();
+  module->AddEntryComputation(main_builder.Build());
+
+  auto options = HloPrintOptions().set_print_metadata(false);
+  EXPECT_EQ(module->entry_computation()->root_instruction()->ToString(options),
+            "%add = f32[] add(f32[] %p0, f32[] %p1), operation_queue_id=3");
+}
+
+TEST_F(HloInstructionTest, ParseOperationQueueId) {
+  constexpr char kHloString[] = R"(
+  ENTRY main {
+    c0 = f32[] constant(0)
+    ROOT add0 = f32[] add(c0, c0), operation_queue_id=2
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloString));
+  EXPECT_EQ(
+      module->entry_computation()->root_instruction()->operation_queue_id(), 2);
 }
 
 TEST_F(HloInstructionTest, VerifyBodyComputationPointsToWhile) {

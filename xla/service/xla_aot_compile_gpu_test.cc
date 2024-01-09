@@ -210,6 +210,7 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
 
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
+  LOG(ERROR) << "serialized_aot_result: " << serialized_aot_result;
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LocalExecutable> local_executable,
       client->Load(serialized_aot_result, executable_build_options));

@@ -210,9 +210,9 @@ std::optional<bool> CanShareBufferHint(const HloInstruction* user,
     case HloOpcode::kCustomCall:
       // The matrix bias operand can be overwritten in-place.
       if (user->custom_call_target() == kCublasLtMatmulCallTarget) {
-        GpuBackendConfig gpu_config =
-            std::move(user->backend_config<GpuBackendConfig>()).value();
-        const GemmBackendConfig& config = gpu_config.gemm_backend_config();
+        const GemmBackendConfig& config =
+            std::move(user->backend_config<GpuBackendConfig>())
+            ->gemm_backend_config();
         return (config.beta() != 0.) && user->operand(2) == operand;
       }
       // The operand of cholesky can be shared with the first output.

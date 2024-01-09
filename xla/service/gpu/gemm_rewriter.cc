@@ -834,7 +834,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::StatusOr<bool> CreateF8CustomCall(
-      HloInstruction *instr, GpuBackendConfig &gemm_backend_config,
+      HloInstruction *instr, GpuBackendConfig &gpu_backend_config,
       HloInstruction *a, HloInstruction *b, HloInstruction *a_scale,
       HloInstruction *b_scale, bool a_mult_scale, bool b_mult_scale,
       std::vector<std::pair<HloInstruction *, int>> a_ops,

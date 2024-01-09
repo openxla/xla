@@ -3769,6 +3769,12 @@ void HloInstruction::PrintExtraAttributes(
                 "statistics=", StatisticsVizToString(statistics_viz()));
     });
   }
+
+  if (operation_queue_id_ != -1) {
+    printer.Next([this](Printer* printer) {
+      AppendCat(printer, "operation_queue_id=", operation_queue_id_);
+    });
+  }
 }
 
 std::vector<std::string> HloInstruction::ExtraAttributesToString(

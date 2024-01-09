@@ -553,7 +553,7 @@ ENTRY e {
   Arg_1.2 = bf16[58,913]{1,0} parameter(1)
   ROOT r = bf16[30,1,58,8,21]{4,3,2,1,0} fusion(Arg_0.1, Arg_1.2), kind=kCustom,
     calls=triton_gemm_r,
-    backend_config={kind: "__triton_gemm"}
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm"}}
 })"));
   const HloComputation* dot_computation =
       module->entry_computation()->root_instruction()->called_computations()[0];
@@ -588,7 +588,7 @@ triton_gemm_r {
 ENTRY e {
   a = f32[3,3]{1,0} parameter(0)
   ROOT dot = f32[3,3]{1,0} fusion(a), kind=kCustom, calls=triton_gemm_r,
-             backend_config={kind: "__triton_gemm"}
+             backend_config={"fusion_backend_config": {kind: "__triton_gemm"}}
 }
 )"));
 
@@ -625,7 +625,7 @@ ENTRY e {
   p0 = f32[1,97]{1,0} parameter(0)
   ROOT r = f32[1,97]{1,0} fusion(p0), kind=kCustom,
     calls=triton_softmax_computation,
-    backend_config={"kind":"__triton_softmax"}
+    backend_config={"fusion_backend_config": {"kind":"__triton_softmax"}}
 })"));
   const HloComputation* computation =
       module->entry_computation()->root_instruction()->called_computations()[0];
@@ -697,7 +697,7 @@ ENTRY main {
   param_0 = f32[8,4,127]{2,1,0} parameter(0)
   ROOT fusion = f32[4,127]{1,0} fusion(param_0), kind=kCustom,
     calls=triton_softmax_computation,
-    backend_config={"kind":"__triton_softmax"}
+    backend_config={"fusion_backend_config": {"kind":"__triton_softmax"}}
 })"));
 
   const HloComputation* computation =
@@ -729,7 +729,7 @@ ENTRY main {
   param_0 = f32[4,127]{1,0} parameter(0)
   ROOT fusion = f32[8,127]{1,0} fusion(param_0), kind=kCustom,
     calls=triton_softmax_computation,
-    backend_config={"kind":"__triton_softmax"}
+    backend_config={"fusion_backend_config": {"kind":"__triton_softmax"}}
 })"));
 
   const HloComputation* computation =
@@ -760,7 +760,7 @@ ENTRY main {
   param_1 = f32[8,16129]{1,0} parameter(0)
   ROOT fusion = f32[8,127,127]{2,1,0} fusion(param_1), kind=kCustom,
    calls=triton_softmax_computation,
-   backend_config={"kind":"__triton_softmax"}
+   backend_config={"fusion_backend_config": {"kind":"__triton_softmax"}}
 })"));
 
   const HloComputation* computation =
@@ -794,7 +794,7 @@ ENTRY main {
   param_1 = f32[1,8,127,128]{3,2,1,0} parameter(0)
   ROOT fusion = f32[8,127,128]{2,1,0} fusion(param_1), kind=kCustom,
    calls=triton_softmax_computation,
-   backend_config={"kind":"__triton_softmax"}
+   backend_config={"fusion_backend_config": {"kind":"__triton_softmax"}}
 })"));
 
   const HloComputation* computation =
@@ -825,7 +825,7 @@ ENTRY main {
   param_1 = f32[1,2,4,127,128]{4,3,2,1,0} parameter(0)
   ROOT fusion =  f32[8,127,128]{2,1,0} fusion(param_1), kind=kCustom,
    calls=triton_softmax_computation,
-   backend_config={"kind":"__triton_softmax"}
+   backend_config={"fusion_backend_config": {"kind":"__triton_softmax"}}
 })"));
 
   const HloComputation* computation =
