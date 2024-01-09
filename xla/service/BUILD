@@ -1718,6 +1718,7 @@ cc_library(
     srcs = ["heap_simulator.cc"],
     hdrs = ["heap_simulator.h"],
     deps = [
+        ":allocation_block",
         ":buffer_value",
         ":buffer_value_containers",
         ":hlo_alias_analysis",
@@ -1725,6 +1726,7 @@ cc_library(
         ":hlo_dataflow_analysis",
         ":hlo_ordering",
         ":hlo_proto_cc",
+        ":hlo_value",
         ":time_utils",
         ":tuple_points_to_analysis",
         "//xla:comparison_util",
@@ -7314,6 +7316,17 @@ tf_proto_library(
         "@tsl//tsl/protobuf:status_proto",
     ],
     visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "allocation_block",
+    srcs = ["allocation_block.cc"],
+    hdrs = ["allocation_block.h"],
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:logging",
+    ],
 )
 
 exports_files(["xla_aot_compile_test_gpu_target_config.prototxt"])
