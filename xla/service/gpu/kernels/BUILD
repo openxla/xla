@@ -1,6 +1,7 @@
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("@tsl//tsl:tsl.bzl", "if_cuda_or_rocm")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
@@ -120,7 +121,7 @@ xla_test(
 
 cc_library(
     name = "topk_custom_kernel",
-    srcs = if_cuda_is_configured(
+    srcs = if_cuda_or_rocm(
         ["topk_custom_kernel.cc"],
         ["topk_custom_kernel_stub.cc"],
     ),
