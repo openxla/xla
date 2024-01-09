@@ -82,6 +82,7 @@ cc_library(
         ":memset_thunk",
         ":sequential_thunk",
         ":while_thunk",
+        "//xla:status",
         "//xla:statusor",
         "//xla:util",
         "//xla/service:buffer_assignment",
@@ -90,6 +91,8 @@ cc_library(
         "//xla/service/gpu:nccl_collective_thunks",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -172,9 +175,13 @@ xla_test(
     name = "command_buffer_thunk_test",
     srcs = if_gpu_is_configured(["command_buffer_thunk_test.cc"]),
     backend_tags = {
-        "gpu": ["config-cuda-only"],
+        "gpu_a100": ["config-cuda-only"],
+        "gpu_v100": ["config-cuda-only"],
     },
-    backends = ["gpu"],
+    backends = [
+        "gpu_a100",
+        "gpu_v100",
+    ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":command_buffer_allocations",
@@ -378,6 +385,22 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
+    ],
+)
+
+cc_library(
+    name = "norm_thunk",
+    srcs = ["norm_thunk.cc"],
+    hdrs = ["norm_thunk.h"],
+    deps = [
+        "//xla:status",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:gpu_norm_runner",
+        "//xla/service/gpu:thunk",
+        "//xla/stream_executor",
+        "@com_google_absl//absl/container:flat_hash_map",
     ],
 )
 

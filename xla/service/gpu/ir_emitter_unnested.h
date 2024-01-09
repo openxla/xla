@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter.h"
-#include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime3/send_recv_thunk.h"
 #include "xla/service/gpu/thunk.h"
@@ -164,6 +163,7 @@ class IrEmitterUnnested : public IrEmitter {
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   Status EmitCustomCallThunk(mlir::Operation* op,
                              const HloCustomCallInstruction* instr);
+  Status EmitCustomCallThunk(const HloCustomCallInstruction* instr);
   Status EmitFftThunk(mlir::Operation* op);
   Status EmitFusion(
       mlir::Operation* op,
@@ -192,6 +192,7 @@ class IrEmitterUnnested : public IrEmitter {
   Status EmitSort(const HloSortInstruction* sort);
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   Status EmitTriangularSolveCustomCall(mlir::Operation* op);
+  Status EmitTriangularSolveCustomCall(const HloInstruction* instr);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   Status EmitTopKCustomCall(const HloCustomCallInstruction* instr);
 
@@ -208,7 +209,8 @@ class IrEmitterUnnested : public IrEmitter {
                            mlir::Value token);
 
   template <typename NcclThunkType, typename HloInstType>
-  Status EmitNcclThunk(Thunk::Kind kind, const HloInstType* inst,
+  Status EmitNcclThunk(Thunk::Kind kind, const HloInstruction* async_start,
+                       const HloInstType* inst,
                        std::optional<bool> use_global_device_ids);
 
   Status EmitNcclAsyncDone(Thunk::Kind kind, const HloInstruction* inst);
@@ -408,7 +410,7 @@ class IrEmitterUnnested : public IrEmitter {
                                mlir::Value init_value_mlir, mlir::Value dest);
 
   // Returns a WhileThunk that invokes thunk sequences for 'condition' and
-  // 'body' sub-computations of while instruction 'hlo'.
+  // 'body' sub-computations of while instruction.
   StatusOr<std::unique_ptr<Thunk>> BuildWhileThunk(
       mlir::lmhlo::WhileOp while_op, const Thunk::ThunkInfo& thunk_info,
       const absl::flat_hash_map<const mlir::Operation*, const HloInstruction*>&
@@ -418,7 +420,10 @@ class IrEmitterUnnested : public IrEmitter {
       const HloInstruction* instr, const Thunk::ThunkInfo& thunk_info);
 
   // Returns a ForThunk which executes 'loop_limit' invocations of a thunk
-  // sequence from the 'body' sub-computation of the while instruction 'hlo'.
+  // sequence from the 'body' sub-computation of the while instruction.
+  StatusOr<std::unique_ptr<Thunk>> BuildForThunk(const HloInstruction* instr,
+                                                 int64_t loop_limit);
+
   StatusOr<std::unique_ptr<Thunk>> BuildForThunk(
       mlir::lmhlo::WhileOp while_op, const Thunk::ThunkInfo& thunk_info,
       int64_t loop_limit,
@@ -434,7 +439,7 @@ class IrEmitterUnnested : public IrEmitter {
   Status AssertNonDeterminismIsOkay(const std::string& op_name);
 
   StatusOr<BufferAllocation::Slice> GetAllocationSliceForHlo(
-      const HloInstruction* instr, const ShapeIndex& index) const;
+      const HloInstruction* instr, const ShapeIndex& index = {}) const;
 
   // The thunk sequence this IrEmitter generates for the input computation.
   ThunkSequence thunk_sequence_;
@@ -458,8 +463,6 @@ class IrEmitterUnnested : public IrEmitter {
       mlir::Operation::operand_range operands);
 
   GpuElementalIrEmitter elemental_emitter_;
-
-  KernelReuseCache kernel_reuse_cache_;
 };
 
 }  // namespace gpu

@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/nccl_all_gather_thunk.h"
 #include "xla/service/gpu/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -59,6 +60,19 @@ limitations under the License.
 namespace xla::gpu {
 
 using MemoryAccess = CommandBufferCmd::MemoryAccess;
+
+static std::string_view ReductionKindString(ReductionKind kind) {
+  switch (kind) {
+    case ReductionKind::MAX:
+      return "max";
+    case ReductionKind::MIN:
+      return "min";
+    case ReductionKind::PRODUCT:
+      return "product";
+    case ReductionKind::SUM:
+      return "sum";
+  }
+}
 
 // Creates condition command buffer builder from a cmd sequence.
 static se::CommandBuffer::Builder ConditionBuilder(
@@ -188,8 +202,6 @@ Status CommandBufferCmdSequence::Record(
   int64_t num_recorded_commands = 0;
 
   for (auto& command : commands_) {
-    CommandBufferCmd::BufferUsageVector buffers = command.cmd->buffers();
-
     if (command.requires_barrier) {
       VLOG(3) << "Add command buffer barrier after " << num_recorded_commands
               << " recorded commands";
@@ -723,19 +735,6 @@ CommandBufferCmd::BufferUsageVector GemmCmd::buffers() {
 // AllReduceCmd
 //===----------------------------------------------------------------------===//
 
-static std::string_view ReductionKindString(ReductionKind kind) {
-  switch (kind) {
-    case ReductionKind::MAX:
-      return "max";
-    case ReductionKind::MIN:
-      return "min";
-    case ReductionKind::PRODUCT:
-      return "product";
-    case ReductionKind::SUM:
-      return "sum";
-  }
-}
-
 AllReduceCmd::AllReduceCmd(
     NcclCollectiveConfig config, ReductionKind reduction_kind,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
@@ -789,6 +788,134 @@ Status AllReduceCmd::Record(const RecordParams& params,
 }
 
 CommandBufferCmd::BufferUsageVector AllReduceCmd::buffers() {
+  BufferUsageVector buffer_usage;
+  for (auto& buffer : buffers_) {
+    buffer_usage.emplace_back(buffer.source_buffer, MemoryAccess::kRead);
+    buffer_usage.emplace_back(buffer.destination_buffer, MemoryAccess::kWrite);
+  }
+  return buffer_usage;
+}
+
+//===----------------------------------------------------------------------===//
+// ReduceScatterCmd
+//===----------------------------------------------------------------------===//
+
+ReduceScatterCmd::ReduceScatterCmd(
+    NcclCollectiveConfig config, ReductionKind reduction_kind,
+    absl::Span<const NcclCollectiveThunk::Buffer> buffers)
+    : config_(std::move(config)),
+      reduction_kind_(reduction_kind),
+      buffers_(buffers.begin(), buffers.end()) {}
+
+Status ReduceScatterCmd::Record(const RecordParams& params,
+                                se::CommandBuffer* command_buffer) {
+  TF_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+                             config_.operand_element_type));
+
+  VLOG(5) << "ReduceScatterCmd: reduction="
+          << ReductionKindString(reduction_kind_);
+
+  for (size_t i = 0; i < device_buffers.size(); ++i) {
+    VLOG(5) << "  Src: " << buffers_[i].source_buffer << " ("
+            << device_buffers[i].source_buffer.opaque() << ")";
+    VLOG(5) << "  Dst: " << buffers_[i].destination_buffer << " ("
+            << device_buffers[i].destination_buffer.opaque() << ")";
+  }
+
+  if (params.nccl_params == nullptr) {
+    return absl::InvalidArgumentError("ReduceScatterCmd requires nccl_params");
+  }
+
+#if XLA_ENABLE_XCCL
+  // Today when recording collective operations into command buffers we always
+  // use a sync mode and a stream id `0`, and enable clique optimization.
+  TF_ASSIGN_OR_RETURN(
+      NcclComm::Lock comm,
+      LockNcclComm(*params.nccl_params, config_.replica_groups,
+                   config_.group_mode, config_.op_id, /*stream_id=*/0,
+                   /*enable_clique_optimization=*/true));
+
+  TF_ASSIGN_OR_RETURN(
+      auto nested_buffer,
+      se::CommandBuffer::Trace(
+          params.executor, params.trace_stream, [&](se::Stream* stream) {
+            return RunReduceScatter(reduction_kind_, device_buffers, *stream,
+                                    *comm);
+          }));
+
+  return command_buffer->AddNestedCommandBuffer(nested_buffer);
+#else   // XLA_ENABLE_XCCL
+  return absl::UnimplementedError(
+      "NCCL support is not available: this binary was not built with a CUDA "
+      "compiler, which is necessary to build the NCCL source library.");
+#endif  // XLA_ENABLE_XCCL
+}
+
+CommandBufferCmd::BufferUsageVector ReduceScatterCmd::buffers() {
+  BufferUsageVector buffer_usage;
+  for (auto& buffer : buffers_) {
+    buffer_usage.emplace_back(buffer.source_buffer, MemoryAccess::kRead);
+    buffer_usage.emplace_back(buffer.destination_buffer, MemoryAccess::kWrite);
+  }
+  return buffer_usage;
+}
+
+//===----------------------------------------------------------------------===//
+// AllGatherCmd
+//===----------------------------------------------------------------------===//
+
+AllGatherCmd::AllGatherCmd(
+    NcclCollectiveConfig config,
+    absl::Span<const NcclCollectiveThunk::Buffer> buffers)
+    : config_(std::move(config)), buffers_(buffers.begin(), buffers.end()) {}
+
+Status AllGatherCmd::Record(const RecordParams& params,
+                            se::CommandBuffer* command_buffer) {
+  TF_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
+                             config_.operand_element_type));
+
+  VLOG(5) << "AllGatherCmd";
+
+  for (size_t i = 0; i < device_buffers.size(); ++i) {
+    VLOG(5) << "  Src: " << buffers_[i].source_buffer << " ("
+            << device_buffers[i].source_buffer.opaque() << ")";
+    VLOG(5) << "  Dst: " << buffers_[i].destination_buffer << " ("
+            << device_buffers[i].destination_buffer.opaque() << ")";
+  }
+
+  if (params.nccl_params == nullptr) {
+    return absl::InvalidArgumentError("AllGatherCmd requires nccl_params");
+  }
+
+#if XLA_ENABLE_XCCL
+  // Today when recording collective operations into command buffers we always
+  // use a sync mode and a stream id `0`, and enable clique optimization.
+  TF_ASSIGN_OR_RETURN(
+      NcclComm::Lock comm,
+      LockNcclComm(*params.nccl_params, config_.replica_groups,
+                   config_.group_mode, config_.op_id, /*stream_id=*/0,
+                   /*enable_clique_optimization=*/true));
+
+  TF_ASSIGN_OR_RETURN(
+      auto nested_buffer,
+      se::CommandBuffer::Trace(
+          params.executor, params.trace_stream, [&](se::Stream* stream) {
+            return RunAllGather(device_buffers, *stream, *comm);
+          }));
+
+  return command_buffer->AddNestedCommandBuffer(nested_buffer);
+#else   // XLA_ENABLE_XCCL
+  return absl::UnimplementedError(
+      "NCCL support is not available: this binary was not built with a CUDA "
+      "compiler, which is necessary to build the NCCL source library.");
+#endif  // XLA_ENABLE_XCCL
+}
+
+CommandBufferCmd::BufferUsageVector AllGatherCmd::buffers() {
   BufferUsageVector buffer_usage;
   for (auto& buffer : buffers_) {
     buffer_usage.emplace_back(buffer.source_buffer, MemoryAccess::kRead);

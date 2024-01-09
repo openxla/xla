@@ -1,10 +1,10 @@
-load("//tsl:tsl.bzl", "set_external_visibility")
-load("//tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl:tsl.bzl",
     "if_linux_x86_64",
+    "set_external_visibility",
     "tsl_copts",
 )
+load("//tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
@@ -29,7 +29,6 @@ cc_library(
     name = "crc32c",
     srcs = [
         "crc32c.cc",
-        "crc32c_accelerate.cc",
     ],
     hdrs = ["crc32c.h"],
     # -msse4.2 enables the use of crc32c compiler builtins.
@@ -39,6 +38,7 @@ cc_library(
         "//tsl/platform:cord",
         "//tsl/platform:raw_coding",
         "//tsl/platform:types",
+        "@com_google_absl//absl/crc:crc32c",
     ],
 )
 
@@ -48,7 +48,6 @@ filegroup(
     srcs = [
         "crc32c.cc",
         "crc32c.h",
-        "crc32c_accelerate.cc",
     ],
     visibility = set_external_visibility(["//tensorflow/core/lib/hash:__pkg__"]),
 )

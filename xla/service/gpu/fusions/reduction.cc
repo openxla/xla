@@ -56,7 +56,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/elemental_ir_emitter.h"
 #include "xla/service/gpu/elemental_ir_emitter.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/fusions/thunk_util.h"
@@ -507,30 +506,29 @@ class ReductionEmitter {
  public:
   ReductionEmitter(const HloFusionAnalysis& analysis,
                    const ReductionCodegenInfo& reduction_codegen_info,
-                   LaunchDimensions launch_dimensions,
                    IrEmitterContext& ir_emitter_context,
-                   ElementalIrEmitter& elemental_emitter,
-                   mlir::lmhlo::FusionOp fusion_op,
                    const HloFusionInstruction& fusion,
-                   KernelReuseCache& kernel_cache, llvm::IRBuilder<>* builder)
-      : analysis_(analysis),
+                   llvm::IRBuilder<>* builder)
+      : builder_(builder),
+        elemental_emitter_(ir_emitter_context, builder_),
+        analysis_(analysis),
         reduction_codegen_info_(reduction_codegen_info),
-        launch_dimensions_(std::move(launch_dimensions)),
         ir_emitter_context_(ir_emitter_context),
-        elemental_emitter_(elemental_emitter),
-        fusion_op_(fusion_op),
         fusion_(fusion),
-        kernel_cache_(kernel_cache),
-        builder_(builder),
         index_ty_(GetIndexType(fusion, reduction_codegen_info.GetTilingScheme(),
-                               builder)) {}
+                               elemental_emitter_.builder())) {}
 
-  StatusOr<FusionEmissionResult> Emit();
+  StatusOr<FusionEmissionResult> EmitInitializers(
+      mlir::lmhlo::FusionOp fusion_op);
+  Status EmitKernel(const LaunchDimensions& launch_dims,
+                    std::vector<llvm_ir::IrArray> inputs,
+                    std::vector<llvm_ir::IrArray> outputs);
 
  private:
   friend class ReductionGroupEmitter;
 
   StatusOr<std::unique_ptr<Thunk>> BuildKernelThunkForFusion(
+      mlir::lmhlo::FusionOp fusion_op,
       const LaunchDimensions& launch_dimensions,
       absl::string_view discriminator,
       std::function<Status(std::vector<llvm_ir::IrArray>,
@@ -538,8 +536,8 @@ class ReductionEmitter {
           kernel_builder_fn);
 
   StatusOr<std::unique_ptr<Thunk>> BuildFusedInitializerThunk(
-      const HloInstruction* fusion_root, mlir::Value dest,
-      BufferAllocation::Slice dest_slice, int output_index);
+      mlir::lmhlo::FusionOp fusion_op, const HloInstruction* fusion_root,
+      mlir::Value dest, BufferAllocation::Slice dest_slice, int output_index);
 
   Status EmitIRForReduction(
       absl::Span<const HloInstruction* const> instr_index_group,
@@ -553,15 +551,12 @@ class ReductionEmitter {
     return reduction_codegen_info_.GetTilingScheme().GetDimsInElems()[2];
   }
 
+  llvm::IRBuilder<>* builder_;
+  GpuElementalIrEmitter elemental_emitter_;
   const HloFusionAnalysis& analysis_;
   const ReductionCodegenInfo& reduction_codegen_info_;
-  LaunchDimensions launch_dimensions_;
   IrEmitterContext& ir_emitter_context_;
-  ElementalIrEmitter& elemental_emitter_;
-  mlir::lmhlo::FusionOp fusion_op_;
   const HloFusionInstruction& fusion_;
-  KernelReuseCache& kernel_cache_;
-  llvm::IRBuilder<>* builder_;
   llvm::Type* index_ty_;
 };
 
@@ -792,7 +787,8 @@ void ReductionEmitter::EmitSyncThreads() {
 // AddThunkToThunkSequence(std::move(thunk))
 // ```
 StatusOr<std::unique_ptr<Thunk>> ReductionEmitter::BuildKernelThunkForFusion(
-    const LaunchDimensions& launch_dimensions, absl::string_view discriminator,
+    mlir::lmhlo::FusionOp fusion_op, const LaunchDimensions& launch_dimensions,
+    absl::string_view discriminator,
     std::function<Status(std::vector<llvm_ir::IrArray>,
                          std::vector<llvm_ir::IrArray>)>
         kernel_builder_fn) {
@@ -806,10 +802,10 @@ StatusOr<std::unique_ptr<Thunk>> ReductionEmitter::BuildKernelThunkForFusion(
           ? KernelArguments::Create(ir_emitter_context_.buffer_assignment(),
                                     &fusion_)
           : KernelArguments::Create(ir_emitter_context_.allocations(),
-                                    fusion_op_));
+                                    fusion_op));
 
   auto kernel_builder_status = OkStatus();
-  auto [entry, cached] = kernel_cache_.GetWithStatus(
+  auto [entry, cached] = ir_emitter_context_.kernel_cache().GetWithStatus(
       fused_computation, kernel_arguments.args(), discriminator,
       [&]() -> StatusOr<KernelReuseCache::Entry> {
         llvm::Function* kernel;
@@ -838,11 +834,10 @@ StatusOr<std::unique_ptr<Thunk>> ReductionEmitter::BuildKernelThunkForFusion(
         /*shmem_bytes=*/0);
   }
 
-  return std::make_unique<KernelThunk>(fusion_op_, entry->kernel_name,
-                                       kernel_arguments.args(),
-                                       launch_dimensions,
-                                       // Shared memory is allocated statically.
-                                       /*shmem_bytes=*/0);
+  return std::make_unique<KernelThunk>(
+      fusion_op, entry->kernel_name, kernel_arguments.args(), launch_dimensions,
+      // Shared memory is allocated statically.
+      /*shmem_bytes=*/0);
 }
 
 Status ReductionGroupEmitter::EmitExtraOutputsForReduce(
@@ -884,8 +879,8 @@ Status ReductionGroupEmitter::EmitExtraOutputsForReduce(
 }
 
 StatusOr<std::unique_ptr<Thunk>> ReductionEmitter::BuildFusedInitializerThunk(
-    const HloInstruction* fusion_root, mlir::Value dest,
-    BufferAllocation::Slice dest_slice, int output_index) {
+    mlir::lmhlo::FusionOp fusion_op, const HloInstruction* fusion_root,
+    mlir::Value dest, BufferAllocation::Slice dest_slice, int output_index) {
   const HloReduceInstruction* reduce =
       DynCast<HloReduceInstruction>(fusion_root);
   TF_RET_CHECK(reduce);
@@ -893,8 +888,8 @@ StatusOr<std::unique_ptr<Thunk>> ReductionEmitter::BuildFusedInitializerThunk(
   const HloInstruction* init_value = reduce->init_values()[0];
   TF_ASSIGN_OR_RETURN(
       std::optional<std::unique_ptr<Thunk>> constant_init_thunk,
-      BuildConstantInitializerThunk(ir_emitter_context_, fusion_op_,
-                                    fusion_root, init_value, dest, dest_slice));
+      BuildConstantInitializerThunk(ir_emitter_context_, fusion_op, fusion_root,
+                                    init_value, dest, dest_slice));
   if (constant_init_thunk) {
     return *std::move(constant_init_thunk);
   }
@@ -932,7 +927,7 @@ StatusOr<std::unique_ptr<Thunk>> ReductionEmitter::BuildFusedInitializerThunk(
     return OkStatus();
   };
 
-  return BuildKernelThunkForFusion(launch_dimensions,
+  return BuildKernelThunkForFusion(fusion_op, launch_dimensions,
                                    /*discriminator=*/
                                    absl::StrCat("init_", output_index),
                                    builder_fn);
@@ -1496,128 +1491,122 @@ Status ReductionEmitter::EmitIRForReduction(
   return OkStatus();
 }
 
-StatusOr<FusionEmissionResult> ReductionEmitter::Emit() {
+StatusOr<FusionEmissionResult> ReductionEmitter::EmitInitializers(
+    mlir::lmhlo::FusionOp fusion_op) {
   FusionEmissionResult result;
-  VLOG(3) << "Launch dimensions of " << fusion_.name() << ": "
-          << launch_dimensions_.ToString();
-  const HloComputation* fused_computation =
-      fusion_.fused_instructions_computation();
-  if (!reduction_codegen_info_.IsRaceFree()) {
-    // We need to get the dest slice by traversing the slice assigned to
-    // fusion, because instructions inside fusion don't have buffer assignment.
-    //
-    // The order of fusion roots is determined by its position in the result
-    // tuple. For example, in the following fused computation
-    //
-    // %fused_computation {
-    //   %a = ...
-    //   &b = ...
-    //   ROOT %root = tuple(%a, %b)
-    // }
-    //
-    // The fusion root with index = 0 is %a, and the fusion root %b has index 1.
-    // Therefore we can get the ordered slices by calling ForEachSubshape on the
-    // result shape.
-    std::vector<BufferAllocation::Slice> slices;
-    if (ir_emitter_context_.emit_ir_from_hlo()) {
-      TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
-          fusion_.shape(), [&](const Shape& subshape, ShapeIndex index) {
-            if (!ShapeUtil::IsLeafIndex(fusion_.shape(), index)) {
-              return OkStatus();
-            }
-
-            TF_ASSIGN_OR_RETURN(
-                BufferAllocation::Slice slice,
-                ir_emitter_context_.buffer_assignment().GetUniqueSlice(&fusion_,
-                                                                       index));
-            slices.push_back(slice);
+  if (reduction_codegen_info_.IsRaceFree()) {
+    return result;
+  }
+  // We need to get the dest slice by traversing the slice assigned to
+  // fusion, because instructions inside fusion don't have buffer assignment.
+  //
+  // The order of fusion roots is determined by its position in the result
+  // tuple. For example, in the following fused computation
+  //
+  // %fused_computation {
+  //   %a = ...
+  //   &b = ...
+  //   ROOT %root = tuple(%a, %b)
+  // }
+  //
+  // The fusion root with index = 0 is %a, and the fusion root %b has index 1.
+  // Therefore we can get the ordered slices by calling ForEachSubshape on the
+  // result shape.
+  std::vector<BufferAllocation::Slice> slices;
+  if (ir_emitter_context_.emit_ir_from_hlo()) {
+    TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
+        fusion_.shape(), [&](const Shape& subshape, ShapeIndex index) {
+          if (!ShapeUtil::IsLeafIndex(fusion_.shape(), index)) {
             return OkStatus();
-          }));
-    }
+          }
 
-    absl::Span<const HloInstruction* const> fusion_roots =
-        analysis_.fusion_roots();
-    for (int i = 0; i < fusion_roots.size(); ++i) {
-      const HloInstruction* fusion_root = fusion_roots[i];
-
-      mlir::Value dest = ir_emitter_context_.emit_ir_from_hlo()
-                             ? nullptr
-                             : fusion_op_.getOutputBuffers()[i];
-
-      BufferAllocation::Slice dest_slice;
-      if (ir_emitter_context_.emit_ir_from_hlo()) {
-        dest_slice = slices[i];
-      } else {
-        TF_ASSIGN_OR_RETURN(
-            dest_slice,
-            GetAllocationSlice(dest, ir_emitter_context_.allocations()));
-      }
-
-      if (IsReductionFromOrToContiguousDimensions(*fusion_root)) {
-        TF_ASSIGN_OR_RETURN(
-            result.thunks.emplace_back(),
-            BuildFusedInitializerThunk(fusion_root, dest, dest_slice, i));
-      }
-    }
+          TF_ASSIGN_OR_RETURN(
+              BufferAllocation::Slice slice,
+              ir_emitter_context_.buffer_assignment().GetUniqueSlice(&fusion_,
+                                                                     index));
+          slices.push_back(slice);
+          return OkStatus();
+        }));
   }
 
-  auto builder_fn = [&, this](std::vector<llvm_ir::IrArray> inputs,
-                              std::vector<llvm_ir::IrArray> outputs) -> Status {
-    FusedIrEmitter fused_emitter(elemental_emitter_);
-    for (int i = 0; i < fused_computation->num_parameters(); i++) {
-      HloInstruction* fused_operand =
-          fused_computation->parameter_instruction(i);
-      fused_emitter.BindGenerator(
-          *fused_operand,
-          [builder = builder_, input = inputs[i],
-           fused_operand](const llvm_ir::IrArray::Index& index) {
-            return input.EmitReadArrayElement(index, builder,
-                                              fused_operand->name());
-          });
+  absl::Span<const HloInstruction* const> fusion_roots =
+      analysis_.fusion_roots();
+  for (int i = 0; i < fusion_roots.size(); ++i) {
+    const HloInstruction* fusion_root = fusion_roots[i];
+
+    mlir::Value dest = ir_emitter_context_.emit_ir_from_hlo()
+                           ? nullptr
+                           : fusion_op.getOutputBuffers()[i];
+
+    BufferAllocation::Slice dest_slice;
+    if (ir_emitter_context_.emit_ir_from_hlo()) {
+      dest_slice = slices[i];
+    } else {
+      TF_ASSIGN_OR_RETURN(
+          dest_slice,
+          GetAllocationSlice(dest, ir_emitter_context_.allocations()));
     }
 
-    // Get outputs.
-    ReductionOutputMap result_ir_arrays;
-
-    int ir_arrays_idx = 0;
-    for (const HloInstruction* root : analysis_.fusion_roots()) {
-      int get_num_results = GetNumOutputs(root->shape());
-      result_ir_arrays[root] =
-          absl::MakeSpan(outputs).subspan(ir_arrays_idx, get_num_results);
-      ir_arrays_idx += get_num_results;
+    if (IsReductionFromOrToContiguousDimensions(*fusion_root)) {
+      TF_ASSIGN_OR_RETURN(result.thunks.emplace_back(),
+                          BuildFusedInitializerThunk(fusion_op, fusion_root,
+                                                     dest, dest_slice, i));
     }
-
-    KernelSupportLibrary ksl(builder_, llvm_ir::UnrollMode::kDefaultUnroll);
-
-    // Use raw block_id_y to select the i-th parallel reduction to run. Using
-    // block_id_y instead of block_id_x simplifies the index calculation
-    // for reduction code generation as the block_id_y is orthogonal to
-    // the indices used within the reductions.
-    const std::vector<std::vector<const HloInstruction*>>& instr_index_groups =
-        reduction_codegen_info_.GetIndexGroups();
-    Shape reduce_operand_shape =
-        reduction_codegen_info_.GetReduceOperandShape();
-
-    llvm::CallInst* raw_block_id_y = gpu::EmitCallToTargetIntrinsic(
-        gpu::TargetIntrinsicID::kBlockIdy, {}, {}, builder_);
-    llvm_ir::AddRangeMetadata(0, instr_index_groups.size(),
-                              llvm::cast<llvm::Instruction>(raw_block_id_y));
-    for (int i = 0; i < instr_index_groups.size(); ++i) {
-      TF_RETURN_IF_ERROR(ksl.IfWithStatus(
-          absl::StrCat("reduce-group-", i),
-          builder_->CreateICmpEQ(raw_block_id_y, builder_->getInt32(i)), [&] {
-            return EmitIRForReduction(instr_index_groups[i], fused_emitter,
-                                      result_ir_arrays, reduce_operand_shape);
-          }));
-    }
-
-    return OkStatus();
-  };
-
-  TF_ASSIGN_OR_RETURN(
-      result.thunks.emplace_back(),
-      BuildKernelThunkForFusion(launch_dimensions_, "", builder_fn));
+  }
   return result;
+}
+
+Status ReductionEmitter::EmitKernel(const LaunchDimensions& launch_dims,
+                                    std::vector<llvm_ir::IrArray> inputs,
+                                    std::vector<llvm_ir::IrArray> outputs) {
+  const HloComputation* fused_computation =
+      fusion_.fused_instructions_computation();
+  FusedIrEmitter fused_emitter(elemental_emitter_);
+  for (int i = 0; i < fused_computation->num_parameters(); i++) {
+    HloInstruction* fused_operand = fused_computation->parameter_instruction(i);
+    fused_emitter.BindGenerator(
+        *fused_operand, [builder = builder_, input = inputs[i],
+                         fused_operand](const llvm_ir::IrArray::Index& index) {
+          return input.EmitReadArrayElement(index, builder,
+                                            fused_operand->name());
+        });
+  }
+
+  // Get outputs.
+  ReductionOutputMap result_ir_arrays;
+
+  int ir_arrays_idx = 0;
+  for (const HloInstruction* root : analysis_.fusion_roots()) {
+    int get_num_results = GetNumOutputs(root->shape());
+    result_ir_arrays[root] =
+        absl::MakeSpan(outputs).subspan(ir_arrays_idx, get_num_results);
+    ir_arrays_idx += get_num_results;
+  }
+
+  KernelSupportLibrary ksl(builder_, llvm_ir::UnrollMode::kDefaultUnroll);
+
+  // Use raw block_id_y to select the i-th parallel reduction to run. Using
+  // block_id_y instead of block_id_x simplifies the index calculation
+  // for reduction code generation as the block_id_y is orthogonal to
+  // the indices used within the reductions.
+  const std::vector<std::vector<const HloInstruction*>>& instr_index_groups =
+      reduction_codegen_info_.GetIndexGroups();
+  Shape reduce_operand_shape = reduction_codegen_info_.GetReduceOperandShape();
+
+  llvm::CallInst* raw_block_id_y = gpu::EmitCallToTargetIntrinsic(
+      gpu::TargetIntrinsicID::kBlockIdy, {}, {}, builder_);
+  llvm_ir::AddRangeMetadata(0, instr_index_groups.size(),
+                            llvm::cast<llvm::Instruction>(raw_block_id_y));
+  for (int i = 0; i < instr_index_groups.size(); ++i) {
+    TF_RETURN_IF_ERROR(ksl.IfWithStatus(
+        absl::StrCat("reduce-group-", i),
+        builder_->CreateICmpEQ(raw_block_id_y, builder_->getInt32(i)), [&] {
+          return EmitIRForReduction(instr_index_groups[i], fused_emitter,
+                                    result_ir_arrays, reduce_operand_shape);
+        }));
+  }
+
+  return OkStatus();
 }
 
 }  // namespace
@@ -1626,26 +1615,33 @@ ReductionFusion::ReductionFusion(const HloFusionAnalysis& analysis)
     : analysis_(analysis),
       reduction_codegen_info_(ComputeReductionCodegenInfo(analysis)) {}
 
-StatusOr<FusionEmissionResult> ReductionFusion::Emit(
+StatusOr<FusionEmissionResult> ReductionFusion::EmitInitializers(
     IrEmitterContext& ir_emitter_context, mlir::lmhlo::FusionOp fusion_op,
-    const HloFusionInstruction& fusion, KernelReuseCache& kernel_cache) const {
+    const HloFusionInstruction& fusion) const {
   llvm::IRBuilder<> builder(ir_emitter_context.llvm_module()->getContext());
-  GpuElementalIrEmitter elemental_emitter(ir_emitter_context, &builder);
   return ReductionEmitter(analysis_, reduction_codegen_info_,
-                          *launch_dimensions(), ir_emitter_context,
-                          elemental_emitter, fusion_op, fusion, kernel_cache,
-                          &builder)
-      .Emit();
+                          ir_emitter_context, fusion, &builder)
+      .EmitInitializers(fusion_op);
 }
 
-std::optional<LaunchDimensions> ReductionFusion::launch_dimensions() const {
+Status ReductionFusion::EmitKernel(IrEmitterContext& ir_emitter_context,
+                                   const HloFusionInstruction& fusion,
+                                   const LaunchDimensions& launch_dims,
+                                   std::vector<llvm_ir::IrArray> inputs,
+                                   std::vector<llvm_ir::IrArray> outputs,
+                                   llvm::IRBuilder<>* builder) const {
+  return ReductionEmitter(analysis_, reduction_codegen_info_,
+                          ir_emitter_context, fusion, builder)
+      .EmitKernel(launch_dims, inputs, outputs);
+}
+
+LaunchDimensions ReductionFusion::launch_dimensions() const {
   const TilingScheme& tiling_scheme = reduction_codegen_info_.GetTilingScheme();
   size_t blocks_y = reduction_codegen_info_.GetIndexGroups().size();
-  return LaunchDimensions(
-      se::BlockDim(/*x=*/tiling_scheme.GetNumberOfBlocksPhysical(),
-                   /*y=*/static_cast<int64_t>(blocks_y), /*z=*/1),
-      se::ThreadDim(/*x=*/tiling_scheme.GetNumThreadsPerBlockPhysical(),
-                    /*y=*/1, /*z=*/1));
+  return {se::BlockDim(/*x=*/tiling_scheme.GetNumberOfBlocksPhysical(),
+                       /*y=*/static_cast<int64_t>(blocks_y), /*z=*/1),
+          se::ThreadDim(/*x=*/tiling_scheme.GetNumThreadsPerBlockPhysical(),
+                        /*y=*/1, /*z=*/1)};
 }
 
 }  // namespace gpu

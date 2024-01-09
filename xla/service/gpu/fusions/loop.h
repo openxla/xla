@@ -35,7 +35,13 @@ namespace gpu {
 class LoopFusion : public KernelFusionEmitterBase {
  public:
   explicit LoopFusion(const HloFusionAnalysis& analysis);
-  std::optional<LaunchDimensions> launch_dimensions() const override;
+  LaunchDimensions launch_dimensions() const override;
+
+  std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
+      int64_t output_id, mlir::MLIRContext* ctx) const override {
+    // TODO(b/319081342): Implement this.
+    return std::nullopt;
+  }
 
  protected:
   Status EmitKernel(IrEmitterContext& ir_emitter_context,
