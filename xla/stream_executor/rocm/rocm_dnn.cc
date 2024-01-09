@@ -4275,7 +4275,7 @@ absl::Status MIOpenSupport::DoPoolForward(
       input_data.opaque(), &beta, dest_desc.handle(), output_data.opaque(),
       do_backward, workspace, workspace_size);
   if (status != miopenStatusSuccess) {
-    return absl::AbortedError(absl::StrCat("Failed to enqueue forward pooling on stream: ", ToString(status)));
+    return absl::InternalError(absl::StrCat("Failed to enqueue forward pooling on stream: ", ToString(status)));
   }
   return absl::OkStatus();
 }
