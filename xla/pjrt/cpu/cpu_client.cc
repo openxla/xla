@@ -646,15 +646,14 @@ static StatusOr<std::unique_ptr<xla::Executable>> JitCompile(
     const absl::Span<const Shape* const> argument_layouts,
     const ExecutableBuildOptions& build_options,
     const ExecutionOptions& execution_options,
-    const xla::Compiler::CompileOptions& compile_options) {
+    const xla::Compiler::CompileOptions& compile_options, int num_threads) {
   TF_ASSIGN_OR_RETURN(ProgramShape program_shape,
                       computation.GetProgramShape());
   // Unoptimized HloModuleConfig.
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<HloModuleConfig> hlo_module_config,
       CreateModuleConfig(program_shape, argument_layouts, &execution_options,
-                         execution_options.num_replicas(),
-                         /*num_threads=*/std::nullopt,
+                         execution_options.num_replicas(), num_threads,
                          /*aot_options=*/nullptr));
 
   // Unoptimized HloModule.
@@ -764,7 +763,8 @@ StatusOr<std::unique_ptr<PjRtLoadedExecutable>> TfrtCpuClient::Compile(
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<Executable> cpu_executable,
       JitCompile(computation, argument_layout_pointers, build_options,
-                 execution_options, compile_options));
+                 execution_options, compile_options,
+                 eigen_intraop_device()->getPool()->NumThreads()));
   auto cpu_executable_ptr =
       tensorflow::down_cast<cpu::CpuExecutable*>(cpu_executable.get());
 
