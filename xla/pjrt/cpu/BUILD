@@ -1,4 +1,5 @@
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -96,6 +97,34 @@ cc_library(
     ],
 )
 
+tf_proto_library(
+    name = "cpu_topology_proto",
+    srcs = ["cpu_topology.proto"],
+    cc_api_version = 2,
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "cpu_topology",
+    srcs = ["cpu_topology.cc"],
+    hdrs = ["cpu_topology.h"],
+    deps = [
+        ":cpu_topology_proto_cc",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "cpu_topology_test",
+    srcs = ["cpu_topology_test.cc"],
+    deps = [
+        ":cpu_topology",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
 cc_library(
     name = "cpu_client",
     srcs = ["cpu_client.cc"],
@@ -105,6 +134,7 @@ cc_library(
     ],
     deps = [
         ":abstract_tfrt_cpu_buffer",
+        ":cpu_topology",
         ":tracked_tfrt_cpu_device_buffer",
         "//xla:array",
         "//xla:debug_options_flags",
@@ -124,6 +154,8 @@ cc_library(
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt:semaphore",
@@ -158,6 +190,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -167,6 +200,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/concurrency:ref_count",
+        "@tsl//tsl/lib/strings:proto_serialization",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:env",
