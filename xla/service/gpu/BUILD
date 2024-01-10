@@ -3939,10 +3939,10 @@ cc_library(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":backend_configs_cc",
-        ":gpu_fusible",
         ":hlo_traversal",
         ":ir_emission_utils",
         ":launch_dimensions",
+        ":reduction_utils",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:util",
