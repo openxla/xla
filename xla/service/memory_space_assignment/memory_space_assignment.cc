@@ -550,12 +550,13 @@ void EnsureParentAllocationIsAvailableForCopy(
   }
 }
 
-void MakeCopyAllocationJitForSingleUse(
-    MemorySpaceAssignment::CopyAllocation* copy_allocation, int64_t use_time) {
-  copy_allocation->set_start_time(use_time - 1);
-  copy_allocation->set_copy_start_schedule_after(use_time - 1);
-  copy_allocation->set_end_time(use_time);
-  copy_allocation->set_copy_done_schedule_before(use_time);
+void MakeCopyAllocationJitForFirstUses(
+    MemorySpaceAssignment::CopyAllocation* copy_allocation,
+    std::pair<int64_t, int64_t> use_interval) {
+  copy_allocation->set_start_time(use_interval.first - 1);
+  copy_allocation->set_copy_start_schedule_after(use_interval.first - 1);
+  copy_allocation->set_end_time(use_interval.second);
+  copy_allocation->set_copy_done_schedule_before(use_interval.first);
   EnsureParentAllocationIsAvailableForCopy(copy_allocation);
 }
 
@@ -574,38 +575,76 @@ GetAllocationSequenceInRawPointers(
   return allocations_in_raw_pointers;
 }
 
+std::vector<std::pair<std::pair<int64_t, int64_t>, std::vector<HloUse>>>
+GroupSuccessiveUses(std::vector<HloUse> uses,
+                    const HloLiveRange& hlo_live_range) {
+  std::vector<std::pair<std::pair<int64_t, int64_t>, std::vector<HloUse>>>
+      grouped_uses;
+  for (const auto& use : uses) {
+    int64_t use_time = GetUseTime(use, hlo_live_range);
+    if (grouped_uses.empty() ||
+        grouped_uses.back().first.second + 1 < use_time) {
+      grouped_uses.push_back({{use_time, use_time}, {use}});
+    } else {
+      grouped_uses.back().first.second = use_time;
+      grouped_uses.back().second.push_back(use);
+    }
+  }
+  return grouped_uses;
+}
+
+std::vector<std::pair<std::pair<int64_t, int64_t>, std::vector<HloUse>>>
+GroupSameInstructionUses(std::vector<HloUse> uses,
+                         const HloLiveRange& hlo_live_range) {
+  std::vector<std::pair<std::pair<int64_t, int64_t>, std::vector<HloUse>>>
+      grouped_uses;
+  for (const auto& use : uses) {
+    int64_t use_time = GetUseTime(use, hlo_live_range);
+    if (grouped_uses.empty() || grouped_uses.back().first.second != use_time) {
+      grouped_uses.push_back({{use_time, use_time}, {use}});
+    } else {
+      grouped_uses.back().second.push_back(use);
+    }
+  }
+  return grouped_uses;
+}
+
 void ProcessPrefetchesToAlternateMemory(
     MemorySpaceAssignment::AllocationSequence& allocations,
     const HloLiveRange& hlo_live_range) {
   std::vector<MemorySpaceAssignment::Allocation*> allocations_in_raw_pointers =
       GetAllocationSequenceInRawPointers(allocations);
   for (auto allocation : allocations_in_raw_pointers) {
-    if (allocation->is_copy_allocation() && allocation->is_in_alternate_mem() &&
-        !allocation->uses().empty()) {
-      MemorySpaceAssignment::CopyAllocation* prefetch =
-          tensorflow::down_cast<MemorySpaceAssignment::CopyAllocation*>(
-              allocation);
-      std::vector<HloUse> uses = prefetch->uses();  // Create a copy of uses.
-      prefetch->clear_uses();                       // Clear old uses.
-      // For every prefetch, update prefetch to serve earliest use just in time.
-      prefetch->AddUse(uses[0]);
-      MakeCopyAllocationJitForSingleUse(prefetch,
-                                        GetUseTime(uses[0], hlo_live_range));
-      // For every use after the first use, create a new prefetch from the same
-      // parent allocation.
-      for (size_t use_index = 1; use_index < uses.size(); ++use_index) {
-        const HloUse& use = uses[use_index];
-        int64_t use_time = GetUseTime(use, hlo_live_range);
-        auto jit_single_use_prefetch =
-            std::make_unique<MemorySpaceAssignment::CopyAllocation>(
-                prefetch->mutable_prev_allocation(),
-                MemorySpaceAssignment::MemorySpace::kAlternate,
-                prefetch->chunk(), use_time - 1, use_time, use_time);
-        jit_single_use_prefetch->set_copy_start_schedule_after(use_time - 1);
-        jit_single_use_prefetch->AddUse(use);
-        EnsureParentAllocationIsAvailableForCopy(jit_single_use_prefetch.get());
-        allocations.push_back(std::move(jit_single_use_prefetch));
-      }
+    if (!allocation->is_copy_allocation() ||
+        !allocation->is_in_alternate_mem() || allocation->uses().empty()) {
+      continue;
+    }
+    MemorySpaceAssignment::CopyAllocation* prefetch =
+        tensorflow::down_cast<MemorySpaceAssignment::CopyAllocation*>(
+            allocation);
+    std::vector<std::pair<std::pair<int64_t, int64_t>, std::vector<HloUse>>>
+        grouped_uses = GroupSameInstructionUses(
+            prefetch->uses(), hlo_live_range);  // Create a copy of uses.
+    prefetch->clear_uses();                     // Clear old uses.
+    // For every prefetch, update prefetch to serve earliest uses just in
+    // time.
+    prefetch->AddUses(grouped_uses.front().second);
+    MakeCopyAllocationJitForFirstUses(prefetch, grouped_uses.front().first);
+    // For every set of uses after the first uses, create a new prefetch from
+    // the same parent allocation.
+    for (size_t use_index = 1; use_index < grouped_uses.size(); ++use_index) {
+      int64_t start_time = grouped_uses[use_index].first.first;
+      int64_t end_time = grouped_uses[use_index].first.second;
+      auto uses = grouped_uses[use_index].second;
+      auto jit_group_use_prefetch =
+          std::make_unique<MemorySpaceAssignment::CopyAllocation>(
+              prefetch->mutable_prev_allocation(),
+              MemorySpaceAssignment::MemorySpace::kAlternate, prefetch->chunk(),
+              start_time - 1, start_time, end_time);
+      jit_group_use_prefetch->set_copy_start_schedule_after(start_time - 1);
+      jit_group_use_prefetch->AddUses(uses);
+      EnsureParentAllocationIsAvailableForCopy(jit_group_use_prefetch.get());
+      allocations.push_back(std::move(jit_group_use_prefetch));
     }
   }
 }
@@ -662,40 +701,47 @@ void ProcessBuffersProducedInAlternateMemory(
   // 3. If buffer is also used later get or create an immediate eviction.
   // 4. For every later use prefetch just in time from the eviction.
   for (auto allocation : allocations_in_raw_pointers) {
-    if (!allocation->is_copy_allocation() &&
-        allocation->is_in_alternate_mem()) {
-      std::vector<HloUse> uses = allocation->uses();  // Create a copy of uses.
-      allocation->clear_uses();                       // Clear old uses.
-      // Make buffer short lived.
-      allocation->set_end_time(allocation->start_time() + 1);
-      for (const HloUse& use : uses) {
-        int64_t use_time = GetUseTime(use, hlo_live_range);
-        if (allocation->start_time() + 1 == use_time) {
-          allocation->AddUse(use);
-          continue;
-        }
-        if (!evictions_map.contains(allocation)) {
-          auto eviction_unique_ptr =
-              std::make_unique<MemorySpaceAssignment::CopyAllocation>(
-                  *allocation, MemorySpaceAssignment::MemorySpace::kDefault,
-                  std::nullopt, allocation->start_time(),
-                  allocation->start_time() + 1, allocation->start_time() + 1);
-          eviction_unique_ptr->set_copy_start_schedule_after(
-              allocation->start_time());
-          evictions_map[allocation] = eviction_unique_ptr.get();
-          allocations.push_back(std::move(eviction_unique_ptr));
-        }
-        MemorySpaceAssignment::CopyAllocation* eviction =
-            evictions_map[allocation];
-        auto jit_single_use_prefetch =
-            std::make_unique<MemorySpaceAssignment::CopyAllocation>(
-                *eviction, MemorySpaceAssignment::MemorySpace::kAlternate,
-                allocation->chunk(), use_time - 1, use_time, use_time);
-        jit_single_use_prefetch->set_copy_start_schedule_after(use_time - 1);
-        jit_single_use_prefetch->AddUse(use);
-        EnsureParentAllocationIsAvailableForCopy(jit_single_use_prefetch.get());
-        allocations.push_back(std::move(jit_single_use_prefetch));
+    if (allocation->is_copy_allocation() ||
+        !allocation->is_in_alternate_mem() || allocation->uses().empty()) {
+      continue;
+    }
+    std::vector<std::pair<std::pair<int64_t, int64_t>, std::vector<HloUse>>>
+        grouped_uses = GroupSameInstructionUses(
+            allocation->uses(), hlo_live_range);  // Create a copy of uses.
+    allocation->clear_uses();                     // Clear old uses.
+    // Make buffer short lived.
+    allocation->set_end_time(allocation->start_time() + 1);
+
+    for (const auto& grouped_use : grouped_uses) {
+      auto start_time = grouped_use.first.first;
+      auto end_time = grouped_use.first.second;
+      auto uses = grouped_use.second;
+      if (allocation->start_time() + 1 == start_time) {
+        allocation->set_end_time(end_time);
+        allocation->AddUses(uses);
+        continue;
       }
+      if (!evictions_map.contains(allocation)) {
+        auto eviction_unique_ptr =
+            std::make_unique<MemorySpaceAssignment::CopyAllocation>(
+                *allocation, MemorySpaceAssignment::MemorySpace::kDefault,
+                std::nullopt, allocation->start_time(),
+                allocation->start_time() + 1, allocation->start_time() + 1);
+        eviction_unique_ptr->set_copy_start_schedule_after(
+            allocation->start_time());
+        evictions_map[allocation] = eviction_unique_ptr.get();
+        allocations.push_back(std::move(eviction_unique_ptr));
+      }
+      MemorySpaceAssignment::CopyAllocation* eviction =
+          evictions_map[allocation];
+      auto jit_group_use_prefetch =
+          std::make_unique<MemorySpaceAssignment::CopyAllocation>(
+              *eviction, MemorySpaceAssignment::MemorySpace::kAlternate,
+              allocation->chunk(), start_time - 1, start_time, end_time);
+      jit_group_use_prefetch->set_copy_start_schedule_after(start_time - 1);
+      jit_group_use_prefetch->AddUses(uses);
+      EnsureParentAllocationIsAvailableForCopy(jit_group_use_prefetch.get());
+      allocations.push_back(std::move(jit_group_use_prefetch));
     }
   }
 }
@@ -8739,8 +8785,13 @@ Status MemorySpaceAssignment::FixSchedule() {
           if (new_instruction->parent() == computation) {
             VLOG(4) << "before " << instruction_index << ": "
                     << new_instruction->name();
-            TF_RETURN_IF_ERROR(InsertInstructionAndEnsureOperandsInserted(
-                new_instruction, &new_sequence, &inserted_instructions));
+            if (options_.always_spill_to_default_memory) {
+              TF_RETURN_IF_ERROR(EnsureInstructionAndOperandsInserted(
+                  new_instruction, &new_sequence, &inserted_instructions));
+            } else {
+              TF_RETURN_IF_ERROR(InsertInstructionAndEnsureOperandsInserted(
+                  new_instruction, &new_sequence, &inserted_instructions));
+            }
           }
         }
       }
@@ -8769,8 +8820,13 @@ Status MemorySpaceAssignment::FixSchedule() {
           if (new_instruction->parent() == computation) {
             VLOG(4) << "after " << instruction_index << ": "
                     << new_instruction->name();
-            TF_RETURN_IF_ERROR(InsertInstructionAndEnsureOperandsInserted(
-                new_instruction, &new_sequence, &inserted_instructions));
+            if (options_.always_spill_to_default_memory) {
+              TF_RETURN_IF_ERROR(EnsureInstructionAndOperandsInserted(
+                  new_instruction, &new_sequence, &inserted_instructions));
+            } else {
+              TF_RETURN_IF_ERROR(InsertInstructionAndEnsureOperandsInserted(
+                  new_instruction, &new_sequence, &inserted_instructions));
+            }
           }
         }
       }

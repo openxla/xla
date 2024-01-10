@@ -712,6 +712,13 @@ class MemorySpaceAssignment {
     // Adds a use to this allocation.
     void AddUse(HloUse use);
 
+    // Adds uses to this allocation.
+    void AddUses(std::vector<HloUse> uses) {
+      for (const HloUse& use : uses) {
+        AddUse(use);
+      }
+    }
+
     // Extends the end time of this allocation.
     void Extend(int64_t end_time) { end_time_ = std::max(end_time_, end_time); }
 

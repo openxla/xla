@@ -787,9 +787,9 @@ TEST_P(MemorySpaceAssignmentTest, AlwaysSpillPrefetchForSecondUseTest) {
   //
   // Setting always_spill_to_default_memory option to true makes sure the
   // negate0 buffer is copied to default memory between negate0 and negate1,
-  // so that version can be prefetched just before it is used at add0.
+  // so that version can be prefetched just before it is used at add1.
   // Additionally, we leave a copy of negate0 in alternate memory for use at
-  // negate1.
+  // negate1 and add0.
   absl::string_view hlo_string = R"(
 HloModule module, is_scheduled=true
 
@@ -798,12 +798,12 @@ ENTRY entry {
   p1 = f32[2,3]{1,0} parameter(1)
   negate0 = f32[2,3]{1,0} negate(p0)
   negate1 = f32[2,3]{1,0} negate(negate0)
-  negate2 = f32[2,3]{1,0} negate(negate1)
-  negate3 = f32[2,3]{1,0} negate(negate2)
+  add0 = f32[2,3]{1,0} add(negate0, negate1)
+  negate3 = f32[2,3]{1,0} negate(add0)
   negate4 = f32[2,3]{1,0} negate(negate3)
   negate5 = f32[2,3]{1,0} negate(negate4)
-  add0 = f32[2,3]{1,0} add(negate5, negate0)
-  ROOT add1 = f32[2,3]{1,0} add(add0, p1)
+  add1 = f32[2,3]{1,0} add(negate5, negate0)
+  ROOT add2 = f32[2,3]{1,0} add(add1, p1)
 }
   )";
 
@@ -823,25 +823,25 @@ ENTRY entry {
                           HloLiveRange::Run(module->schedule(), *alias_analysis,
                                             module->entry_computation()));
   // Check copies are made just in time for use and copies are prefetches.
-  const HloInstruction* add1 = FindInstruction(module.get(), "add1");
-  const HloInstruction* cd1 = add1->operand(1);
+  const HloInstruction* add2 = FindInstruction(module.get(), "add2");
+  const HloInstruction* cd1 = add2->operand(1);
   EXPECT_THAT(cd1, op::CopyDone());
-  EXPECT_EQ(live_range->instruction_schedule().at(add1),
+  EXPECT_EQ(live_range->instruction_schedule().at(add2),
             live_range->instruction_schedule().at(cd1) + 1);
   const HloInstruction* cs1 = cd1->operand(0);
   EXPECT_THAT(cs1, op::CopyStart());
-  EXPECT_EQ(live_range->instruction_schedule().at(add1),
+  EXPECT_EQ(live_range->instruction_schedule().at(add2),
             live_range->instruction_schedule().at(cs1) + 2);
   EXPECT_EQ(cd1->shape().layout().memory_space(), kAlternateMemorySpace);
-  const HloInstruction* add0 = FindInstruction(module.get(), "add0");
+  const HloInstruction* add1 = FindInstruction(module.get(), "add1");
 
-  const HloInstruction* cd0 = add0->operand(1);
+  const HloInstruction* cd0 = add1->operand(1);
   EXPECT_THAT(cd0, op::CopyDone());
-  EXPECT_EQ(live_range->instruction_schedule().at(add0),
+  EXPECT_EQ(live_range->instruction_schedule().at(add1),
             live_range->instruction_schedule().at(cd0) + 1);
   const HloInstruction* cs0 = cd0->operand(0);
   EXPECT_THAT(cs0, op::CopyStart());
-  EXPECT_EQ(live_range->instruction_schedule().at(add0),
+  EXPECT_EQ(live_range->instruction_schedule().at(add1),
             live_range->instruction_schedule().at(cs0) + 2);
   EXPECT_EQ(cd0->shape().layout().memory_space(), kAlternateMemorySpace);
   // Check prefetch was made from an eviction.
@@ -873,8 +873,8 @@ HloModule module, is_scheduled=true
 ENTRY entry {
   p0 = f32[4,3]{1,0} parameter(0)
   tanh0 = f32[4,3]{1,0} tanh(p0)
-  add0 = f32[4,3]{1,0} add(p0, p0)
-  add1 = f32[4,3]{1,0} add(add0, p0)
+  add0 = f32[4,3]{1,0} add(p0, tanh0)
+  add1 = f32[4,3]{1,0} add(add0, tanh0)
   add2 = f32[4,3]{1,0} add(add1, p0)
   add3 = f32[4,3]{1,0} add(add2, p0)
   add4 = f32[4,3]{1,0} add(add3, p0)
