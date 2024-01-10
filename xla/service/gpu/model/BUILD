@@ -270,8 +270,6 @@ cc_library(
         ":indexing_map_simplifier",
         "//xla:permutation_util",
         "//xla:shape_util",
-        "//xla:status",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -280,7 +278,6 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -288,8 +285,6 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -298,9 +293,6 @@ xla_cc_test(
     srcs = ["indexing_analysis_test.cc"],
     deps = [
         ":indexing_analysis",
-        "//xla:status_macros",
-        "//xla:statusor",
-        "//xla:test_helpers",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:hlo_traversal",
         "//xla/tests:hlo_test_base",
@@ -309,8 +301,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -324,7 +314,7 @@ cc_library(
         ":indexing_map_simplifier",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -336,6 +326,7 @@ xla_cc_test(
     name = "tile_analysis_test",
     srcs = ["tile_analysis_test.cc"],
     deps = [
+        ":indexing_analysis",
         ":tile_analysis",
         "//xla:status_macros",
         "//xla:statusor",
