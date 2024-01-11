@@ -233,6 +233,15 @@ AffineExpr IndexingMapSimplifier::SimplifyOnce(AffineExpr expr) {
       auto binop = mlir::cast<AffineBinaryOpExpr>(expr);
       auto lhs = SimplifyOnce(binop.getLHS());
       auto rhs = SimplifyOnce(binop.getRHS());
+      int identity = (binop.getKind() == AffineExprKind::Add) ? 0 : 1;
+      Bounds lhs_bounds = GetInclusiveBounds(lhs);
+      if (lhs_bounds.lower == identity && lhs_bounds.upper == identity) {
+        return rhs;
+      }
+      Bounds rhs_bounds = GetInclusiveBounds(rhs);
+      if (rhs_bounds.lower == identity && rhs_bounds.upper == identity) {
+        return lhs;
+      }
       if (lhs == binop.getLHS() && rhs == binop.getRHS()) {
         return expr;
       }
