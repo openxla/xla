@@ -32,7 +32,7 @@ using ::mlir::AffineMap;
 using ::mlir::getAffineBinaryOpExpr;
 using ::mlir::getAffineConstantExpr;
 using ::mlir::getAffineDimExpr;
-using ::testing::HasSubstr;
+using ::testing::StrEq;
 
 class IndexingMapSimplifierTest : public HloTestBase {
  public:
@@ -67,7 +67,7 @@ TEST_F(IndexingMapSimplifierTest, SimplifyDivsAndModsIfSmallerThanDivisor) {
   simplifier.SetInclusiveBounds(d1, 0, 15);
 
   EXPECT_THAT(ToString(simplifier.Simplify(map)),
-              HasSubstr("(d0, d1) -> (d0, d1)"));
+              StrEq("(d0, d1) -> (d0, d1)"));
 }
 
 TEST_F(IndexingMapSimplifierTest, SimplifyDivsAndModsWithMultipliers) {
@@ -103,7 +103,7 @@ TEST_F(IndexingMapSimplifierTest, SimplifyDivsAndModsWithMultipliers) {
   simplifier.SetInclusiveBounds(d2, 0, 9);
 
   EXPECT_THAT(ToString(simplifier.Simplify(map)),
-              HasSubstr("(d0, d1, d2) -> (d0, d1, d2)"));
+              StrEq("(d0, d1, d2) -> (d0, d1, d2)"));
 }
 
 TEST_F(IndexingMapSimplifierTest, SimplifyDivsAndModsWithDivisibleMultipliers) {
@@ -136,8 +136,8 @@ TEST_F(IndexingMapSimplifierTest, SimplifyDivsAndModsWithDivisibleMultipliers) {
   simplifier.SetInclusiveBounds(d2, 0, 3);
 
   EXPECT_THAT(ToString(simplifier.Simplify(map)),
-              HasSubstr("(d0, d1, d2) -> (d0 * 2 + (d1 * 4 + d2) floordiv 8, "
-                        "(d1 * 4 + d2) mod 8)"));
+              StrEq("(d0, d1, d2) -> (d0 * 2 + (d1 * 4 + d2) floordiv 8, "
+                    "(d1 * 4 + d2) mod 8)"));
 }
 
 TEST_F(IndexingMapSimplifierTest, SimplifyDivsAndModsWithReverse) {
@@ -181,7 +181,22 @@ TEST_F(IndexingMapSimplifierTest, SimplifyDivsAndModsWithReverse) {
   simplifier.SetInclusiveBounds(d1, 0, 10);
 
   EXPECT_THAT(ToString(simplifier.Simplify(map)),
-              HasSubstr("(d0, d1) -> (d0, d1)"));
+              StrEq("(d0, d1) -> (d0, d1)"));
+}
+
+TEST_F(IndexingMapSimplifierTest, ElideAddAndMulIdentity) {
+  AffineExpr s0 = getAffineSymbolExpr(0, &mlir_context_);
+  AffineExpr s1 = getAffineSymbolExpr(1, &mlir_context_);
+  AffineExpr s2 = getAffineSymbolExpr(2, &mlir_context_);
+
+  AffineMap map = AffineMap::get(0, 3, {s0 + s1 * s2}, &mlir_context_);
+  IndexingMapSimplifier simplifier(&mlir_context_);
+  simplifier.SetInclusiveBounds(s0, 0, 9);
+  simplifier.SetInclusiveBounds(s1, 0, 0);
+  simplifier.SetInclusiveBounds(s2, 1, 1);
+
+  EXPECT_THAT(ToString(simplifier.Simplify(map)),
+              StrEq("()[s0, s1, s2] -> (s0)"));
 }
 
 // TODO(b/313840171): Simplify `(d1 * 4 + d2) floordiv 8` to `d1 floordiv 2`.
