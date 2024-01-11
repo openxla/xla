@@ -6701,6 +6701,28 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "lockable",
+    hdrs = ["lockable.h"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "lockable_test",
+    srcs = ["lockable_test.cc"],
+    deps = [
+        ":lockable",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
     name = "rendezvous",
     srcs = ["rendezvous.cc"],
     hdrs = ["rendezvous.h"],
