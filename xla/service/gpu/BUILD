@@ -99,6 +99,7 @@ cc_library(
         "//xla/service:global_device_id",
         "//xla/stream_executor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -446,6 +447,7 @@ cc_library(
         "//xla/service/llvm_ir:tuple_ops",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
@@ -857,6 +859,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
@@ -1982,6 +1985,7 @@ cc_library(
         ":backend_configs_cc",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_pass",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -2582,6 +2586,7 @@ cc_library(
         "//xla/service/gpu/model:gpu_performance_model",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
     ],
@@ -2941,6 +2946,7 @@ cc_library(
         "//xla/hlo/utils:hlo_query",
         "//xla/service:collective_opt_utils",
         "//xla/service:hlo_pass",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -3419,6 +3425,7 @@ xla_cc_test(
         ":horizontal_loop_fusion",
         ":metrics",
         "//xla:autotune_results_proto_cc",
+        "//xla/service:buffer_assignment",
         "//xla/service:gpu_plugin",
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
@@ -3765,6 +3772,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_executor_header",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:notification",
     ],
@@ -3839,6 +3847,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
@@ -3965,6 +3974,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
@@ -4221,6 +4231,7 @@ xla_test(
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest_main",
@@ -4421,6 +4432,7 @@ cc_library(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
@@ -4546,6 +4558,7 @@ cc_library(
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
     ],
@@ -4638,6 +4651,7 @@ cc_library(
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -4684,6 +4698,7 @@ cc_library(
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
     ],
@@ -4724,6 +4739,7 @@ cc_library(
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
     ],
 )
