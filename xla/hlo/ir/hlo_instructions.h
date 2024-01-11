@@ -1404,9 +1404,7 @@ class HloFusionInstruction : public HloCallableInstruction {
   }
 
  protected:
-  std::string default_called_computation_name() const override {
-    return "fused_computation";
-  }
+  std::string default_called_computation_name() const override;
 
  private:
   bool IsElementwiseImpl(

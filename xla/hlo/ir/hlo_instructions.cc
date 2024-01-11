@@ -1749,7 +1749,9 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
   if (called_computations().empty()) {
     // New fusion instruction. It should not be a multioutput instruction.
     CHECK(!add_output);
-    auto builder = HloComputation::Builder(default_called_computation_name());
+    auto builder = HloComputation::Builder(
+        absl::StrCat(HloOpcodeString(instruction_to_append->opcode()), "_",
+                     default_called_computation_name()));
     builder.AddInstruction(instruction_to_append->Clone(/*suffix=*/""));
     auto* new_computation =
         CHECK_NOTNULL(GetModule())->AddEmbeddedComputation(builder.Build());
@@ -1940,13 +1942,38 @@ void HloCallableInstruction::RecursivelySetComputationsThreadName(
   }
 }
 
+namespace {
+constexpr const char* FusionKindToString(
+    HloInstruction::FusionKind fusion_kind) {
+  switch (fusion_kind) {
+    case HloInstruction::FusionKind::kLoop:
+      return "loop_";
+    case HloInstruction::FusionKind::kInput:
+      return "input_";
+    case HloInstruction::FusionKind::kOutput:
+      return "output_";
+    case HloInstruction::FusionKind::kCustom:
+      return "custom_";
+    default:
+      return "";
+  }
+}
+}  // namespace
+
+std::string HloFusionInstruction::default_called_computation_name() const {
+  return absl::StrCat(FusionKindToString(fusion_kind_), "fused_computation");
+}
+
 HloFusionInstruction::HloFusionInstruction(const Shape& shape,
                                            FusionKind fusion_kind,
                                            HloInstruction* fused_root)
     : HloCallableInstruction(HloOpcode::kFusion, shape),
       fusion_kind_(fusion_kind) {
   CHECK(fused_root != nullptr);
-  SetAndSanitizeName(HloOpcodeString(opcode()));
+  const std::string fusion_name =
+      absl::StrCat(HloOpcodeString(fused_root->opcode()), "_",
+                   FusionKindToString(fusion_kind), "fusion");
+  SetAndSanitizeName(fusion_name);
   set_parent(fused_root->parent());
   set_metadata(fused_root->metadata());
   CHECK(fused_root->IsFusible()) << fused_root->ToString();
