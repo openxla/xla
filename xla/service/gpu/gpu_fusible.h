@@ -158,8 +158,9 @@ FusionDecision CanEmitInputFusedScatter(const HloInstruction& producer,
 // i.e. whether the producer and consumer are loop/input fusible and
 // they are not library calls.
 // Used both by instruction fusion and fusion-fusion merging.
-FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
-                                         const HloInstruction& consumer);
+FusionDecision IsProducerConsumerFusible(
+    const HloInstruction& producer, const HloInstruction& consumer,
+    const se::DeviceDescription& device_info);
 
 // Whether the producer is a valid candidate for a multi-output fusion.
 // That is, the root tuple of the multi-output fusion will contain the results

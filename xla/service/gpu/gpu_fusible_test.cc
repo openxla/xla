@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/tests/hlo_test_base.h"
 
@@ -1020,7 +1021,8 @@ TEST_F(GpuFusibleTest, ProducerConsumerFusionTransposeAndLoopFusion) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* consumer = root;
   const HloInstruction* producer = root->operand(1);
-  EXPECT_TRUE(IsProducerConsumerFusible(*producer, *consumer));
+  EXPECT_TRUE(IsProducerConsumerFusible(
+      *producer, *consumer, TestGpuDeviceInfo::RTXA6000DeviceInfo()));
 }
 
 TEST_F(GpuFusibleTest, ProducerConsumerFusionReduceAndLoopFusion) {
@@ -1043,7 +1045,8 @@ TEST_F(GpuFusibleTest, ProducerConsumerFusionReduceAndLoopFusion) {
   const HloInstruction* root = module->entry_computation()->root_instruction();
   const HloInstruction* consumer = root;
   const HloInstruction* producer = root->operand(1);
-  EXPECT_TRUE(IsProducerConsumerFusible(*producer, *consumer));
+  EXPECT_TRUE(IsProducerConsumerFusible(
+      *producer, *consumer, TestGpuDeviceInfo::RTXA6000DeviceInfo()));
 }
 
 TEST_F(GpuFusibleTest, ProducerConsumerFusionLoopFusionAndReduce) {
@@ -1235,10 +1238,10 @@ TEST_F(GpuFusibleTest, NonscalarConstantsNotFused) {
   const HloInstruction* producer = root->operand(1);
   const HloInstruction* consumer2 = root->operand(2);
   const HloInstruction* producer2 = root->operand(3);
-  EXPECT_FALSE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer)));
-  EXPECT_FALSE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer2, *consumer2)));
+  EXPECT_FALSE(static_cast<bool>(IsProducerConsumerFusible(
+      *producer, *consumer, TestGpuDeviceInfo::RTXA6000DeviceInfo())));
+  EXPECT_FALSE(static_cast<bool>(IsProducerConsumerFusible(
+      *producer2, *consumer2, TestGpuDeviceInfo::RTXA6000DeviceInfo())));
 }
 
 TEST_F(GpuFusibleTest, FuseLayoutChangingOpWithElementwise) {
@@ -1254,8 +1257,8 @@ TEST_F(GpuFusibleTest, FuseLayoutChangingOpWithElementwise) {
   const HloInstruction* consumer =
       module->entry_computation()->root_instruction();
   const HloInstruction* producer = consumer->operand(0);
-  EXPECT_TRUE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer)));
+  EXPECT_TRUE(static_cast<bool>(IsProducerConsumerFusible(
+      *producer, *consumer, TestGpuDeviceInfo::RTXA6000DeviceInfo())));
 }
 
 TEST_F(GpuFusibleTest, FuseReduceWithUnaryElementwise) {
@@ -1271,8 +1274,8 @@ TEST_F(GpuFusibleTest, FuseReduceWithUnaryElementwise) {
   const HloInstruction* consumer =
       module->entry_computation()->root_instruction();
   const HloInstruction* producer = consumer->operand(0);
-  EXPECT_TRUE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer)));
+  EXPECT_TRUE(static_cast<bool>(IsProducerConsumerFusible(
+      *producer, *consumer, TestGpuDeviceInfo::RTXA6000DeviceInfo())));
 }
 
 TEST_F(GpuFusibleTest, DoNotFuseReduceWithRacesWithUnaryElementwise) {
@@ -1288,8 +1291,8 @@ TEST_F(GpuFusibleTest, DoNotFuseReduceWithRacesWithUnaryElementwise) {
   const HloInstruction* consumer =
       module->entry_computation()->root_instruction();
   const HloInstruction* producer = consumer->operand(0);
-  EXPECT_FALSE(
-      static_cast<bool>(IsProducerConsumerFusible(*producer, *consumer)));
+  EXPECT_FALSE(static_cast<bool>(IsProducerConsumerFusible(
+      *producer, *consumer, TestGpuDeviceInfo::RTXA6000DeviceInfo())));
 }
 
 TEST_F(GpuFusibleTest, CreatesHeavyComputation_NonfusionInstr) {

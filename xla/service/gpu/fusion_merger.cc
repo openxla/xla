@@ -233,7 +233,8 @@ FusionDecision FusionInstructionMerger::ShouldFuse(HloInstruction* producer) {
         !compatible) {
       return compatible;
     }
-    FusionDecision fusible = IsProducerConsumerFusible(*producer, *user);
+    FusionDecision fusible =
+        IsProducerConsumerFusible(*producer, *user, gpu_device_info_);
     if (!fusible) {
       ++num_fail_merge_all_users_;
       VLOG(9) << user->ToString();

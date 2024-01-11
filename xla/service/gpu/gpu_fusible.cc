@@ -26,11 +26,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -407,18 +409,6 @@ bool IsLoopFusibleAsProducer(const HloInstruction& instr) {
   }
 }
 
-static bool AllSatisfy(const HloInstruction& instr,
-                       const HloPredicate& predicate) {
-  if (instr.opcode() != HloOpcode::kFusion) {
-    return predicate(&instr);
-  }
-
-  return absl::c_all_of(
-      instr.fused_instructions(), [&](const HloInstruction* i) {
-        return i->opcode() == HloOpcode::kParameter || predicate(i);
-      });
-}
-
 FusionDecision CanEmitInputFusedScatter(const HloInstruction& producer,
                                         const HloInstruction& consumer) {
   if (IsInputFusibleScatter(producer)) {
@@ -446,20 +436,19 @@ FusionDecision CanEmitInputFusedScatter(const HloInstruction& producer,
   return {};
 }
 
-FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
-                                         const HloInstruction& consumer) {
-  const HloInstruction& producer_hero =
-      producer.opcode() == HloOpcode::kFusion
-          ? FindNonTrivialHero(*producer.fused_expression_root())
-          : producer;
+FusionDecision IsProducerConsumerFusible(
+    const HloInstruction& producer, const HloInstruction& consumer,
+    const se::DeviceDescription& device_info) {
+  if (!IsInputFusible(consumer) && !IsLoopFusibleAsConsumer(consumer)) {
+    return "the consumer is not input-fusible and not loop-fusible";
+  }
+
   if (IsInputFusibleTranspose(producer)) {
-    if (!AllSatisfy(consumer, [](const HloInstruction* hlo) {
-          return IsIntermediate(hlo, /*allowed_operand_count=*/3);
-        })) {
+    auto analysis =
+        AnalyzeProducerConsumerFusion(producer, consumer, device_info);
+    if (analysis->GetEmitterFusionKind() !=
+        HloFusionAnalysis::EmitterFusionKind::kTranspose) {
       return "Transpose epilogue not fusible";
-    }
-    if (producer.user_count() > 1) {
-      return "Transpose output fusion only works for single user";
     }
   } else if (IsInputFusibleReduction(producer)) {
     if (!producer.GetModule()
@@ -468,19 +457,20 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
              .xla_gpu_enable_reduction_epilogue_fusion()) {
       return "Reduction epilogue fusion is not enabled.";
     }
+    const HloInstruction& producer_hero =
+        producer.opcode() == HloOpcode::kFusion
+            ? FindNonTrivialHero(*producer.fused_expression_root())
+            : producer;
     if (!ReductionIsRaceFree(
             producer_hero.GetModule()->config(),
             GetReductionKindAndContiguousComponents(producer_hero))) {
       return "Reduction output fusion only works for race free reductions";
     }
-    if (!AllSatisfy(consumer, [](const HloInstruction* hlo) {
-          return IsIntermediate(hlo, /*allowed_operand_count=*/1);
-        })) {
+    auto analysis =
+        AnalyzeProducerConsumerFusion(producer, consumer, device_info);
+    if (analysis->GetEmitterFusionKind() !=
+        HloFusionAnalysis::EmitterFusionKind::kReduction) {
       return "Reductions from/to continuous dims epilogue not fusible";
-    }
-
-    if (producer.user_count() > 1) {
-      return "reduction output fusion only works for single user";
     }
   } else if (!IsLoopFusibleAsProducer(producer)) {
     return "the producer is not loop-fusible";
@@ -488,10 +478,6 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
 
   if (auto can_fuse = CanEmitInputFusedScatter(producer, consumer); !can_fuse) {
     return can_fuse;
-  }
-
-  if (!IsInputFusible(consumer) && !IsLoopFusibleAsConsumer(consumer)) {
-    return "the consumer is not input-fusible and not loop-fusible";
   }
 
   // Skip multiple output fusion. It's not yet supported.

@@ -86,7 +86,8 @@ FusionDecision GpuInstructionFusion::ShouldFuseInexpensiveChecks(
     return "fusing the producer would break read coalescing";
   }
 
-  RETURN_IF_NOT_FUSIBLE(IsProducerConsumerFusible(*producer, *consumer));
+  RETURN_IF_NOT_FUSIBLE(
+      IsProducerConsumerFusible(*producer, *consumer, device_info_));
 
   if (CreatesHeavyComputation(*producer, *consumer)) {
     return "the fusion would create a heavy computation";

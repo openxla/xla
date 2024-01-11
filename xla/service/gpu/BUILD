@@ -4135,6 +4135,7 @@ cc_library(
     hdrs = ["gpu_fusible.h"],
     deps = [
         ":backend_configs_cc",
+        ":hlo_fusion_analysis",
         ":hlo_traversal",
         ":ir_emission_utils",
         ":reduction_utils",
@@ -4154,6 +4155,7 @@ xla_cc_test(
         "nomsan",
     ],
     deps = [
+        ":gpu_device_info_for_tests",
         ":gpu_fusible",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_parser",
