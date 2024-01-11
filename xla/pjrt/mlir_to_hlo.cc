@@ -26,11 +26,14 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "stablehlo/dialect/ChloOps.h"  // from @stablehlo
+#include "stablehlo/dialect/Serialization.h"  // from @stablehlo
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
+#include "stablehlo/dialect/VhloOps.h"  // from @stablehlo
 #include "xla/mlir/utils/error_util.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
+#include "xla/util.h"
 
 namespace xla {
 
@@ -89,12 +92,16 @@ StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
   context.loadDialect<mlir::chlo::ChloDialect>();
   context.loadDialect<mlir::sparse_tensor::SparseTensorDialect>();
   context.loadDialect<mlir::stablehlo::StablehloDialect>();
+  context.loadDialect<mlir::vhlo::VhloDialect>();
   mlir::BaseScopedDiagnosticHandler diagnostic_handler(&context);
   module = mlir::parseSourceString<mlir::ModuleOp>(
       llvm::StringRef(mlir_module_str.data(), mlir_module_str.size()),
       &context);
   if (!module) {
     return diagnostic_handler.ConsumeStatus();
+  }
+  if (failed(mlir::stablehlo::maybeDeserializePortableArtifact(*module))) {
+    return xla::InternalError("Failed to deserialize StableHLO.");
   }
   if (failed(module->verifyInvariants())) {
     VLOG(1) << "MLIR verification failed.";

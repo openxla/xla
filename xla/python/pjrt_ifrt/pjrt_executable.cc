@@ -30,6 +30,8 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
+#include "stablehlo/dialect/Serialization.h"  // from @stablehlo
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -265,7 +267,9 @@ StatusOr<std::unique_ptr<LoadedExecutable>> PjRtLoadedExecutable::Create(
   TF_ASSIGN_OR_RETURN(
       auto pjrt_loaded_executable,
       client->pjrt_client()->Compile(module, std::move(compile_options)));
-
+  if (mlir::failed(mlir::stablehlo::maybeDeserializePortableArtifact(module))) {
+    return InvalidArgument("Failed to deserialize portable artifact");
+  }
   if (auto_spmd_partitioning) {
     // TODO(hyeontaek): Use a full shape and a sharding rather than a per-shard
     // shape.

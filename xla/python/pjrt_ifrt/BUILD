@@ -248,6 +248,8 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@stablehlo//:stablehlo_serialization",
         "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",

@@ -534,6 +534,7 @@ cc_library(
     visibility = [":friends"],
     deps = [
         "//xla:status",
+        "//xla:util",
         "//xla/client:xla_computation",
         "//xla/mlir/utils:error_util",
         "//xla/mlir_hlo",
@@ -549,6 +550,8 @@ cc_library(
         "@llvm-project//mlir:Transforms",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
+        "@stablehlo//:stablehlo_serialization",
+        "@stablehlo//:vhlo_ops",
     ],
 )
 
@@ -696,6 +699,8 @@ cc_library(
         "@llvm-project//mlir:ShapeDialect",
         "@llvm-project//mlir:Support",
         "@stablehlo//:register",
+        "@stablehlo//:stablehlo_portable_api",
+        "@stablehlo//:stablehlo_serialization",
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
