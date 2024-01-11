@@ -740,6 +740,7 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager& pm,
   clusterInfo.clusterDimX = config.cluster_dims.x;
   clusterInfo.clusterDimY = config.cluster_dims.y;
   clusterInfo.clusterDimZ = config.cluster_dims.z;
+
   // Based on make_ttir() in
   // @triton//:python/triton/compiler/backends/cuda.py
   pm.addPass(mt::createRewriteTensorPointerPass(ccAsInt));
@@ -750,6 +751,7 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager& pm,
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
   pm.addPass(mlir::createSymbolDCEPass());
+
   // Based on make_ttgir() in
   // @triton//:python/triton/compiler/backends/cuda.py
   pm.addPass(mt::createConvertTritonToTritonGPUPass(
@@ -808,16 +810,20 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager& pm,
   }
   pm.addPass(mlir::createTritonNvidiaGPUWSFixupMissingAttrs());
   pm.addPass(mlir::createCanonicalizerPass());
-  // Based on translateTritonGPUToLLVMIR() in
-  // @triton//:lib/Target/LLVMIR/LLVMIRTranslation.cpp
+
+  // Based on make_llir() in
+  // @triton//:python/triton/compiler/backends/cuda.py
   pm.addPass(mlir::createConvertSCFToCFPass());
   pm.addPass(mlir::createConvertIndexToLLVMPass());
-
-  // TODO(b/316566238): Use TMA info collected here in XLA runtime.
+  // // TODO(b/316566238): Use TMA info collected here in XLA runtime.
   mlir::triton::gpu::TMAMetadataTy tma_infos;
   pm.addPass(mt::createConvertTritonGPUToLLVMPass(ccAsInt,
-                                                  /*target=*/mt::Default,
+                                                  /*target=*/mlir::triton::NVVM,
                                                   &tma_infos));
+  if (cc.IsAtLeastHopper() && config.enable_warp_specialization) {
+    pm.addPass(mlir::createLoopInvariantCodeMotionPass());
+    pm.addPass(mlir::createCSEPass());
+  }
   pm.addPass(mt::createConvertNVGPUToLLVMPass());
   pm.addPass(mlir::createArithToLLVMConversionPass());
   pm.addPass(mlir::createCanonicalizerPass());
@@ -2062,7 +2068,7 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
   if (debug_options.xla_gpu_enable_triton_hopper()) {
     // Set environment variables for consumption by Triton.
     tsl::setenv("ENABLE_MMA_V3", "true", true /*overwrite*/);
-    tsl::setenv("ENABLE_PIPELINING", "true", true /*overwrite*/);
+    // tsl::setenv("ENABLE_PIPELINING", "true", true /*overwrite*/);
   }
 
   if (fusion_kind == kTritonGemmFusionKind) {
