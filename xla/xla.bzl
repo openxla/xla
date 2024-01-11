@@ -8,7 +8,6 @@ load(
     "@tsl//tsl:tsl.bzl",
     "if_oss",
     "tsl_copts",
-    _tsl_clean_dep = "clean_dep",
 )
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
@@ -65,7 +64,7 @@ _XLA_SHARED_OBJECT_SENSITIVE_DEPS = [
     clean_dep("@tsl//tsl/protobuf:protos_all_cc_impl"),
     clean_dep("@tsl//tsl/util:determinism"),
 ] + if_oss([
-    _tsl_clean_dep("@com_google_protobuf//:protobuf"),
+    "@com_google_protobuf//:protobuf",
 ]) + if_static(extra_deps = [], otherwise = [
     clean_dep("//xla/stream_executor/gpu:gpu_init_impl"),
     clean_dep("@tsl//tsl/framework:allocator_registry_impl"),
