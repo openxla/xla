@@ -129,7 +129,6 @@ class GrpcCompiledProgramHandle : public CompiledProgramHandle {
   std::shared_ptr<Event> OnReady() override { return event_; }
 
   EventId id() const { return id_; }
-  GrpcTpuStream* stream() const { return stream_; }
 
   Status program_shape(xla::ProgramShapeProto* program_shape) override {
     auto opt_status = OnReady()->AwaitWithTimeout(absl::Hours(1));
@@ -278,8 +277,6 @@ class GrpcTpuStream {
     requests_.push_back(std::move(req));
   }
 
-  // Unique identifier for this stream.
-  int32_t id_;
   // The parent driver that created this stream.
   GrpcTpuDriver* driver_;
 
@@ -467,8 +464,7 @@ void GrpcEvent::AddCallback(std::function<void(Status)> callback) {
 
 GrpcTpuStream::GrpcTpuStream(int32_t id, GrpcTpuDriver* driver,
                              std::unique_ptr<grpc::CloudTpuDriver::Stub> stub)
-    : id_(id),
-      driver_(driver),
+    : driver_(driver),
       stub_(std::move(stub)),
       stream_(stub_->StreamExecute(&ctx_)),
       writer_thread_(&GrpcTpuStream::StreamWriterFn, this),
