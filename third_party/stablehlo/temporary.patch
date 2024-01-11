@@ -187,6 +187,131 @@ diff --ruN a/stablehlo/stablehlo/conversions/linalg/tests/reduce.mlir b/stablehl
  // CHECK-PRIMITIVE-SAME: ins(%{{.*}}tensor<5x4xi32>)
  // CHECK-PRIMITIVE-SAME: outs(%[[FILL_TENSOR]] : tensor<5xi32>)
  // CHECK-PRIMITIVE-SAME: dimensions = [1]  {someattr}
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
+@@ -550,7 +550,7 @@
+   return rewriter.create<mlir::stablehlo::TransposeOp>(
+       loc,
+       RankedTensorType::get(transposedOperandShape, operandTy.getElementType()),
+-      operand, rewriter.getDenseI64ArrayAttr(permutation));
++      operand, rewriter.getI64VectorAttr(permutation));
+ }
+ 
+ struct BroadcastInDimOpToBroadcastConverter final
+@@ -829,11 +829,8 @@
+     Value emptyTensor =
+         getEmptyTensorFor(rewriter, loc, resultTy, op, adaptor.getOperands());
+ 
+-    auto permutation =
+-        rewriter.getDenseI64ArrayAttr(llvm::to_vector(op.getPermutation()));
+-
+     rewriter.replaceOpWithNewOp<linalg::TransposeOp>(
+-        op, adaptor.getOperand(), emptyTensor, permutation,
++        op, adaptor.getOperand(), emptyTensor, op.getPermutation(),
+         linalg::getPrunedAttributeList(op));
+     return success();
+   }
+@@ -2255,8 +2252,9 @@
+ 
+     // Create a new pad op with the positive values.
+     Value pad = rewriter.create<mlir::stablehlo::PadOp>(
+-        op.getLoc(), adaptor.getOperand(), adaptor.getPaddingValue(), padLow,
+-        padHigh, op.getInteriorPadding());
++        op.getLoc(), adaptor.getOperand(), adaptor.getPaddingValue(),
++        rewriter.getI64TensorAttr(padLow), rewriter.getI64TensorAttr(padHigh),
++        rewriter.getI64TensorAttr(op.getInteriorPadding()));
+ 
+     // Then slice according to the negative edge padding. Static shapes only for
+     // now.
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
+@@ -80,8 +80,10 @@
+                  RankedTensorType::get({}, inputType.getElementType())));
+   }
+ 
+-  return rewriter.create<mlir::stablehlo::PadOp>(loc, input, zero, padLow,
+-                                                 padHigh, padInterior);
++  return rewriter.create<mlir::stablehlo::PadOp>(
++      loc, input, zero, rewriter.getI64TensorAttr(padLow),
++      rewriter.getI64TensorAttr(padHigh),
++      rewriter.getI64TensorAttr(padInterior));
+ }
+ 
+ /// If the ConvolutionOp has a window reversal, applies it to the filter.
+@@ -100,8 +102,8 @@
+     }
+   }
+ 
+-  return b.create<mlir::stablehlo::ReverseOp>(
+-      loc, filter, b.getDenseI64ArrayAttr(reversedDims));
++  return b.create<mlir::stablehlo::ReverseOp>(loc, filter,
++                                              b.getI64TensorAttr(reversedDims));
+ }
+ 
+ /// Returns true if the given `dimensionNumbers` from a stablehlo.convolution op
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgRandom.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgRandom.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgRandom.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgRandom.cpp
+@@ -428,7 +428,9 @@
+   llvm::SmallVector<int64_t> offset(resultTy.getRank(), 0);
+   llvm::SmallVector<int64_t> stride(resultTy.getRank(), 1);
+   Value slice = builder.create<mlir::stablehlo::SliceOp>(
+-      loc, resultTy, reshape, offset, resultTy.getShape(), stride);
++      loc, resultTy, reshape, builder.getI64TensorAttr(offset),
++      builder.getI64TensorAttr(resultTy.getShape()),
++      builder.getI64TensorAttr(stride));
+ 
+   // Set the new tensor values.
+   store = setState64(builder, loc, store, newState);
+@@ -635,8 +637,9 @@
+   llvm::SmallVector<int64_t> offset(collapseShape.size(), 0);
+   llvm::SmallVector<int64_t> stride(collapseShape.size(), 1);
+   Value slice = builder.create<mlir::stablehlo::SliceOp>(
+-      loc, intermediateType.clone(collapseShape), reshapeIntermediate, offset,
+-      collapseShape, stride);
++      loc, intermediateType.clone(collapseShape), reshapeIntermediate,
++      builder.getI64TensorAttr(offset), builder.getI64TensorAttr(collapseShape),
++      builder.getI64TensorAttr(stride));
+   Value reshapeResult =
+       builder.create<mlir::stablehlo::ReshapeOp>(loc, resultTy, slice);
+ 
+@@ -723,8 +726,9 @@
+   llvm::SmallVector<int64_t> offset(collapseShape.size(), 0);
+   llvm::SmallVector<int64_t> stride(collapseShape.size(), 1);
+   Value slice = builder.create<mlir::stablehlo::SliceOp>(
+-      loc, intermediateType.clone(collapseShape), reshapeIntermediate, offset,
+-      collapseShape, stride);
++      loc, intermediateType.clone(collapseShape), reshapeIntermediate,
++      builder.getI64TensorAttr(offset), builder.getI64TensorAttr(collapseShape),
++      builder.getI64TensorAttr(stride));
+   Value reshapeResult =
+       builder.create<mlir::stablehlo::ReshapeOp>(loc, resultTy, slice);
+ 
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgReduce.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgReduce.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgReduce.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgReduce.cpp
+@@ -406,7 +406,7 @@
+       auto resultTy = llvm::cast<ShapedType>(resultTypes[i]);
+       if (!resultTy.hasStaticShape()) return failure();
+ 
+-      auto broadcastSizes = rewriter.getDenseI64ArrayAttr(resultTy.getShape());
++      auto broadcastSizes = rewriter.getI64TensorAttr(resultTy.getShape());
+       broadcastValues.push_back(rewriter.create<mlir::stablehlo::BroadcastOp>(
+           loc, resultTy, initValue, broadcastSizes));
+     }
+@@ -430,7 +430,9 @@
+ 
+       for (auto [input, initValue] : llvm::zip(inputs, initValues)) {
+         input = rewriter.create<mlir::stablehlo::PadOp>(
+-            loc, input, initValue, staticLows, staticHighs, staticInteriors);
++            loc, input, initValue, rewriter.getI64TensorAttr(staticLows),
++            rewriter.getI64TensorAttr(staticHighs),
++            rewriter.getI64TensorAttr(staticInteriors));
+       }
+     }
+ 
 diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/lit.cfg.py b/stablehlo/stablehlo/conversions/tosa/tests/lit.cfg.py
 --- stablehlo/stablehlo/conversions/tosa/tests/lit.cfg.py
 +++ stablehlo/stablehlo/conversions/tosa/tests/lit.cfg.py
@@ -201,6 +326,86 @@ diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/lit.cfg.py b/stablehlo/s
  # Make LLVM and StableHLO tools available in RUN directives
  tools = [
    'stablehlo-opt',
+diff --ruN a/stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.cpp b/stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.cpp
+--- stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.cpp
++++ stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.cpp
+@@ -438,7 +438,7 @@
+     auto type = RankedTensorType::get({static_cast<int64_t>(perms.size())},
+                                       rewriter.getI64Type());
+     auto constOp = rewriter.create<tosa::ConstOp>(
+-        op->getLoc(), type, DenseIntElementsAttr::get(type, perms));
++        op->getLoc(), type, rewriter.getI64TensorAttr(perms));
+     rewriter.replaceOpWithNewOp<tosa::TransposeOp>(op, op.getResult().getType(),
+                                                    op.getOperand(), constOp);
+     return success();
+diff --ruN a/stablehlo/stablehlo/dialect/AssemblyFormat.cpp b/stablehlo/stablehlo/dialect/AssemblyFormat.cpp
+--- stablehlo/stablehlo/dialect/AssemblyFormat.cpp
++++ stablehlo/stablehlo/dialect/AssemblyFormat.cpp
+@@ -297,9 +297,11 @@
+ }
+ 
+ void printSliceRanges(OpAsmPrinter& p, Operation* op,
+-                      ArrayRef<int64_t> startIndices,
+-                      ArrayRef<int64_t> limitIndices,
+-                      ArrayRef<int64_t> strides) {
++                      Attribute startIndicesAttr, Attribute limitIndicesAttr,
++                      Attribute stridesAttr) {
++  auto startIndices = hlo::getI64Array(startIndicesAttr);
++  auto limitIndices = hlo::getI64Array(limitIndicesAttr);
++  auto strides = hlo::getI64Array(stridesAttr);
+   p << "[";
+   // Let's be safe if we're printing invalid IR somehow: this can't be parsed
+   // back!
+@@ -326,10 +328,8 @@
+   p << "]";
+ }
+ 
+-ParseResult parseSliceRanges(OpAsmParser& parser,
+-                             DenseI64ArrayAttr& startIndices,
+-                             DenseI64ArrayAttr& limitIndices,
+-                             DenseI64ArrayAttr& strides) {
++ParseResult parseSliceRanges(OpAsmParser& parser, Attribute& startIndices,
++                             Attribute& limitIndices, Attribute& strides) {
+   if (parser.parseLSquare()) return failure();
+   // Parse groups of comma-separated: `start`:`limit`[:`stride`]
+   // If the stride isn't provided it'll be 1.
+@@ -352,9 +352,9 @@
+     } while (1);
+   }
+ 
+-  startIndices = parser.getBuilder().getDenseI64ArrayAttr(start);
+-  limitIndices = parser.getBuilder().getDenseI64ArrayAttr(limit);
+-  strides = parser.getBuilder().getDenseI64ArrayAttr(stride);
++  startIndices = parser.getBuilder().getI64TensorAttr(start);
++  limitIndices = parser.getBuilder().getI64TensorAttr(limit);
++  strides = parser.getBuilder().getI64TensorAttr(stride);
+ 
+   return success();
+ }
+diff --ruN a/stablehlo/stablehlo/dialect/AssemblyFormat.h b/stablehlo/stablehlo/dialect/AssemblyFormat.h
+--- stablehlo/stablehlo/dialect/AssemblyFormat.h
++++ stablehlo/stablehlo/dialect/AssemblyFormat.h
+@@ -200,15 +200,11 @@
+                                            Attribute& attr);
+ 
+ // SliceRanges - Used to print multi-dimensional ranges for slice.
+-void printSliceRanges(OpAsmPrinter& p, Operation* op,
+-                      ArrayRef<int64_t> startIndices,
+-                      ArrayRef<int64_t> limitIndices,
+-                      ArrayRef<int64_t> strides);
+-
+-ParseResult parseSliceRanges(OpAsmParser& parser,
+-                             DenseI64ArrayAttr& startIndices,
+-                             DenseI64ArrayAttr& limitIndices,
+-                             DenseI64ArrayAttr& strides);
++void printSliceRanges(OpAsmPrinter& p, Operation* op, Attribute startIndices,
++                      Attribute limitIndices, Attribute strides);
++
++ParseResult parseSliceRanges(OpAsmParser& parser, Attribute& startIndices,
++                             Attribute& limitIndices, Attribute& strides);
+ 
+ // DimSizes - Print an array of ints. Dynamic dimensions printed as `?`.
+ //
 diff --ruN a/stablehlo/stablehlo/dialect/Base.td b/stablehlo/stablehlo/dialect/Base.td
 --- stablehlo/stablehlo/dialect/Base.td
 +++ stablehlo/stablehlo/dialect/Base.td
@@ -224,6 +429,129 @@ diff --ruN a/stablehlo/stablehlo/dialect/StablehloAttrs.td b/stablehlo/stablehlo
 +  let storageType = "mlir::Attribute";
    let returnType = "SmallVector<bool>";
    let convertFromStorage = "hlo::getBoolArray($_self)";
+ }
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.td b/stablehlo/stablehlo/dialect/StablehloOps.td
+--- stablehlo/stablehlo/dialect/StablehloOps.td
++++ stablehlo/stablehlo/dialect/StablehloOps.td
+@@ -1612,9 +1612,9 @@
+ 
+   let arguments = (ins
+     HLO_Tensor:$operand,
+-    DenseI64ArrayAttr:$start_indices,
+-    DenseI64ArrayAttr:$limit_indices,
+-    DenseI64ArrayAttr:$strides
++    I64DenseArrayOrElements1DAttr:$start_indices,
++    I64DenseArrayOrElements1DAttr:$limit_indices,
++    I64DenseArrayOrElements1DAttr:$strides
+   );
+ 
+   let assemblyFormat = [{
+@@ -1645,14 +1645,14 @@
+   let arguments = (ins
+     HLO_Tensor:$operand /*dynamic_slice_i1*/,
+     Variadic<HLO_ScalarIntTensor>:$start_indices /*dynamic_slice_i2*/,
+-    DenseI64ArrayAttr:$slice_sizes /*dynamic_slice_i3*/
++    I64DenseArrayOrElements1DAttr:$slice_sizes /*dynamic_slice_i3*/
+   );
+ 
+   let results = (outs HLO_Tensor:$result);
+ 
+   let assemblyFormat = [{
+     $operand `,` custom<VariadicOperandWithAttribute>($start_indices)
+-      `sizes` `=` $slice_sizes
++      `sizes` `=` custom<I64DenseArrayOrElements1D>($slice_sizes)
+       attr-dict `:` functional-type(operands, results)
+   }];
+ }
+@@ -1842,13 +1842,13 @@
+   }];
+   let arguments = (ins
+     HLO_Tensor:$operand,
+-    DenseI64ArrayAttr:$broadcast_sizes
++    I64DenseArrayOrElements1DAttr:$broadcast_sizes
+   );
+ 
+   let results = (outs HLO_Tensor);
+ 
+   let assemblyFormat = [{
+-    $operand `,` `sizes` `=` $broadcast_sizes
++    $operand `,` `sizes` `=` custom<I64DenseArrayOrElements1D>($broadcast_sizes)
+       attr-dict `:` functional-type(operands, results)
+   }];
+ }
+@@ -2357,13 +2357,13 @@
+   let arguments = (ins
+     HLO_FpOrComplexTensor:$operand,
+     StableHLO_FftTypeAttr:$fft_type,
+-    DenseI64ArrayAttr:$fft_length
++    I64DenseArrayOrElements1DAttr:$fft_length
+   );
+ 
+   let results = (outs HLO_Tensor);
+ 
+   let assemblyFormat = [{
+-    $operand `,` `type` `=` $fft_type `,` `length` `=` $fft_length
++    $operand `,` `type` `=` $fft_type `,` `length` `=` custom<I64DenseArrayOrElements1D>($fft_length)
+       attr-dict `:` functional-type(operands, results)
+   }];
+ }
+@@ -2716,7 +2716,7 @@
+   }];
+   let arguments = (ins
+     HLO_Tensor:$operand,
+-    DenseI64ArrayAttr:$dimensions
++    I64DenseArrayOrElements1DAttr:$dimensions
+   );
+ 
+   let hasVerifier = 1;
+@@ -2724,7 +2724,7 @@
+   let results = (outs HLO_Tensor:$result);
+ 
+   let assemblyFormat = [{
+-    $operand `,` `dims` `=` $dimensions
++    $operand `,` `dims` `=` custom<I64DenseArrayOrElements1D>($dimensions)
+       attr-dict `:` custom<SameOperandsAndResultType>(type($operand), type($result))
+   }];
+ }
+@@ -2752,18 +2752,18 @@
+   let arguments = (ins
+     HLO_Tensor:$operand /*pad_i1*/,
+     HLO_Tensor:$padding_value /*pad_i2*/,
+-    DenseI64ArrayAttr:$edge_padding_low /*pad_i3*/,
+-    DenseI64ArrayAttr:$edge_padding_high /*pad_i4*/,
+-    DenseI64ArrayAttr:$interior_padding /*pad_i5*/
++    I64DenseArrayOrElements1DAttr:$edge_padding_low /*pad_i3*/,
++    I64DenseArrayOrElements1DAttr:$edge_padding_high /*pad_i4*/,
++    I64DenseArrayOrElements1DAttr:$interior_padding /*pad_i5*/
+   );
+ 
+   let results = (outs HLO_Tensor);
+ 
+   let assemblyFormat = [{
+     $operand `,` $padding_value `,`
+-      `low` `=` $edge_padding_low `,`
+-      `high` `=` $edge_padding_high `,`
+-      `interior` `=` $interior_padding
++      `low` `=` custom<I64DenseArrayOrElements1D>($edge_padding_low) `,`
++      `high` `=` custom<I64DenseArrayOrElements1D>($edge_padding_high) `,`
++      `interior` `=` custom<I64DenseArrayOrElements1D>($interior_padding)
+       attr-dict `:` functional-type(operands, results)
+   }];
+ }
+@@ -2808,12 +2808,12 @@
+   }];
+   let arguments = (ins
+     HLO_Tensor:$operand,
+-    DenseI64ArrayAttr:$permutation
++    I64DenseArrayOrElements1DAttr:$permutation
+   );
+   let results = (outs HLO_Tensor);
+ 
+   let assemblyFormat = [{
+-    $operand `,` `dims` `=` $permutation
++    $operand `,` `dims` `=` custom<I64DenseArrayOrElements1D>($permutation)
+       attr-dict `:` functional-type(operands, results)
+   }];
  }
 diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.cpp b/stablehlo/stablehlo/dialect/TypeInference.cpp
 --- stablehlo/stablehlo/dialect/TypeInference.cpp
@@ -2849,9 +3177,1112 @@ diff --ruN a/stablehlo/stablehlo/tests/lit.cfg.py b/stablehlo/stablehlo/tests/li
  # Make LLVM and StableHLO tools available in RUN directives
  tools = [
    'FileCheck',
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_10_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_10_0.mlir
+--- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_10_0.mlir
++++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_10_0.mlir
+@@ -160,7 +160,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -170,7 +170,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -180,7 +180,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -190,7 +190,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -492,7 +492,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -897,7 +897,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -908,7 +908,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1178,9 +1178,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1272,7 +1272,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1317,7 +1317,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1550,9 +1550,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1721,7 +1721,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1906,9 +1906,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1985,7 +1985,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_11_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_11_0.mlir
+--- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_11_0.mlir
++++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_11_0.mlir
+@@ -160,7 +160,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -170,7 +170,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -180,7 +180,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -190,7 +190,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -492,7 +492,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -897,7 +897,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -908,7 +908,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1178,9 +1178,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1272,7 +1272,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1317,7 +1317,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1550,9 +1550,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1721,7 +1721,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1906,9 +1906,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1985,7 +1985,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_12_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_12_0.mlir
+--- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_12_0.mlir
++++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_12_0.mlir
+@@ -160,7 +160,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -170,7 +170,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -180,7 +180,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -190,7 +190,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -492,7 +492,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -897,7 +897,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -908,7 +908,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1178,9 +1178,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1272,7 +1272,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1317,7 +1317,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1550,9 +1550,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1721,7 +1721,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1906,9 +1906,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1985,7 +1985,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_13_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_13_0.mlir
+--- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_13_0.mlir
++++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_13_0.mlir
+@@ -160,7 +160,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -170,7 +170,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -180,7 +180,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -190,7 +190,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -492,7 +492,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -897,7 +897,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -908,7 +908,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1178,9 +1178,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1272,7 +1272,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1317,7 +1317,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1550,9 +1550,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1721,7 +1721,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1906,9 +1906,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1985,7 +1985,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_14_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_14_0.mlir
+--- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_14_0.mlir
++++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_14_0.mlir
+@@ -160,7 +160,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -170,7 +170,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -180,7 +180,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -190,7 +190,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -492,7 +492,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -897,7 +897,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -908,7 +908,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1178,9 +1178,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1272,7 +1272,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1317,7 +1317,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1550,9 +1550,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1721,7 +1721,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1906,9 +1906,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1985,7 +1985,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_15_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_15_0.mlir
+--- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_15_0.mlir
++++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_15_0.mlir
+@@ -168,7 +168,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -178,7 +178,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -188,7 +188,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -198,7 +198,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -500,7 +500,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -905,7 +905,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -916,7 +916,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1186,9 +1186,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1280,7 +1280,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1325,7 +1325,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1558,9 +1558,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1729,7 +1729,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1914,9 +1914,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1993,7 +1993,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_16_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_16_0.mlir
+--- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_16_0.mlir
++++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_16_0.mlir
+@@ -167,7 +167,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -177,7 +177,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -187,7 +187,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -197,7 +197,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -511,7 +511,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -916,7 +916,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -927,7 +927,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1197,9 +1197,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1291,7 +1291,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1336,7 +1336,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1569,9 +1569,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1740,7 +1740,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1925,9 +1925,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -2004,7 +2004,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
 diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_17_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_17_0.mlir
 --- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_17_0.mlir
 +++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_17_0.mlir
+@@ -165,7 +165,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -175,7 +175,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -185,7 +185,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -195,7 +195,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -509,7 +509,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -933,7 +933,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -944,7 +944,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1214,9 +1214,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1308,7 +1308,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1353,7 +1353,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1586,9 +1586,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1815,7 +1815,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
 @@ -1955,7 +1955,8 @@
  func.func @op_select_and_scatter_with_promotable_types(%arg0: tensor<10x24x24x64xf32>, %arg1: tensor<12x13x13x66xf32>, %arg2: tensor<f32>) -> tensor<10x24x24x64xf64> {
    // CHECK: "vhlo.select_and_scatter_v1"(%arg0, %arg1, %arg2)
@@ -2862,9 +4293,288 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_17_0.mlir b/
    // CHECK: }) : (!vhlo.tensor_v1<10x24x24x64x!vhlo.f32_v1>, !vhlo.tensor_v1<12x13x13x66x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<10x24x24x64x!vhlo.f64_v1>
    %0 = "stablehlo.select_and_scatter"(%arg0, %arg1, %arg2) ({
      ^bb0(%arg3: tensor<f32>, %arg4: tensor<f32>):
+@@ -2048,9 +2049,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -2127,7 +2128,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_9_0.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_9_0.mlir
+--- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_9_0.mlir
++++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.0_9_0.mlir
+@@ -160,7 +160,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -170,7 +170,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -180,7 +180,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -190,7 +190,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -492,7 +492,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -897,7 +897,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -908,7 +908,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1178,9 +1178,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1272,7 +1272,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1317,7 +1317,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1550,9 +1550,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1721,7 +1721,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1906,9 +1906,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1985,7 +1985,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
 diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.mlir b/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.mlir
 --- stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.mlir
 +++ stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.mlir
+@@ -170,7 +170,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 FFT>
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -180,7 +180,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IFFT>
+     fft_type = #stablehlo<fft_type IFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -190,7 +190,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 RFFT>
+     fft_type = #stablehlo<fft_type RFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<9xcomplex<f32>>
+   func.return %0 : tensor<9xcomplex<f32>>
+ }
+@@ -200,7 +200,7 @@
+   %0 = "stablehlo.fft"(%arg0) {
+     // CHECK: fft_type = #vhlo<fft_type_v1 IRFFT>
+     fft_type = #stablehlo<fft_type IRFFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<9xcomplex<f32>>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -514,7 +514,7 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<> : tensor<0xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -938,7 +938,7 @@
+   // CHECK-SAME:   broadcast_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast_in_dim"(%arg0) {
+-    broadcast_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -949,7 +949,7 @@
+   // CHECK-SAME:   broadcast_sizes = #vhlo.tensor_v1<dense<16> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x16x!vhlo.f32_v1>
+   %0 = "stablehlo.broadcast"(%arg0) {
+-    broadcast_sizes = array<i64: 16>
++    broadcast_sizes = dense<16> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16x16xf32>
+   func.return %0 : tensor<16x16xf32>
+ }
+@@ -1219,9 +1219,9 @@
+   // CHECK-SAME:   known_nonexpanding_dimensions = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<?x?x!vhlo.f32_v1>, !vhlo.tensor_v1<2x!vhlo.index_v1>) -> !vhlo.tensor_v1<?x?x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_broadcast_in_dim"(%arg0, %arg1) {
+-    broadcast_dimensions = array<i64: 0, 1>,
+-    known_expanding_dimensions = array<i64: 0>,
+-    known_nonexpanding_dimensions = array<i64: 1>
++    broadcast_dimensions = dense<[0, 1]> : tensor<2xi64>,
++    known_expanding_dimensions = dense<0> : tensor<1xi64>,
++    known_nonexpanding_dimensions = dense<1> : tensor<1xi64>
+   } : (tensor<?x?xf32>, tensor<2xindex>) -> tensor<?x?xf32>
+   func.return %0 : tensor<?x?xf32>
+ }
+@@ -1313,7 +1313,7 @@
+   // CHECK-SAME:   slice_sizes = #vhlo.tensor_v1<dense<4> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.i64_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.dynamic_slice"(%arg0, %arg1) {
+-    slice_sizes = array<i64: 4>
++    slice_sizes = dense<4> : tensor<1xi64>
+   } : (tensor<16xf32>, tensor<i64>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -1358,7 +1358,7 @@
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>) -> !vhlo.tensor_v1<16x!vhlo.complex_v1<!vhlo.f32_v1>>
+   %0 = "stablehlo.fft"(%arg0) {
+     fft_type = #stablehlo<fft_type FFT>,
+-    fft_length = array<i64: 16>
++    fft_length = dense<16> : tensor<1xi64>
+   } : (tensor<16xcomplex<f32>>) -> tensor<16xcomplex<f32>>
+   func.return %0 : tensor<16xcomplex<f32>>
+ }
+@@ -1591,9 +1591,9 @@
+   // CHECK-SAME:   interior_padding = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<8x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.pad"(%arg0, %arg1) {
+-    edge_padding_high = array<i64: 4>,
+-    edge_padding_low = array<i64: 4>,
+-    interior_padding = array<i64: 0>
++    edge_padding_high = dense<4> : tensor<1xi64>,
++    edge_padding_low = dense<4> : tensor<1xi64>,
++    interior_padding = dense<0> : tensor<1xi64>
+   } : (tensor<8xf32>, tensor<f32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
+@@ -1820,7 +1820,7 @@
+   // CHECK-SAME:   dimensions = #vhlo.tensor_v1<dense<0> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<16x!vhlo.f32_v1>
+   %0 = "stablehlo.reverse"(%arg0) {
+-    dimensions = array<i64: 0>
++    dimensions = dense<0> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<16xf32>
+   func.return %0 : tensor<16xf32>
+ }
 @@ -1960,7 +1960,8 @@
  func.func @op_select_and_scatter_with_promotable_types(%arg0: tensor<10x24x24x64xf32>, %arg1: tensor<12x13x13x66xf32>, %arg2: tensor<f32>) -> tensor<10x24x24x64xf64> {
    // CHECK: "vhlo.select_and_scatter_v1"(%arg0, %arg1, %arg2)
@@ -2875,4 +4585,141 @@ diff --ruN a/stablehlo/stablehlo/tests/stablehlo_legalize_to_vhlo.mlir b/stableh
    // CHECK: }) : (!vhlo.tensor_v1<10x24x24x64x!vhlo.f32_v1>, !vhlo.tensor_v1<12x13x13x66x!vhlo.f32_v1>, !vhlo.tensor_v1<!vhlo.f32_v1>) -> !vhlo.tensor_v1<10x24x24x64x!vhlo.f64_v1>
    %0 = "stablehlo.select_and_scatter"(%arg0, %arg1, %arg2) ({
      ^bb0(%arg3: tensor<f32>, %arg4: tensor<f32>):
+@@ -2053,9 +2054,9 @@
+   // CHECK-SAME:   strides = #vhlo.tensor_v1<dense<1> : tensor<1xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x!vhlo.f32_v1>) -> !vhlo.tensor_v1<4x!vhlo.f32_v1>
+   %0 = "stablehlo.slice"(%arg0) {
+-    start_indices = array<i64: 0>,
+-    limit_indices = array<i64: 4>,
+-    strides = array<i64: 1>
++    start_indices = dense<0> : tensor<1xi64>,
++    limit_indices = dense<4> : tensor<1xi64>,
++    strides = dense<1> : tensor<1xi64>
+   } : (tensor<16xf32>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+@@ -2132,7 +2133,7 @@
+   // CHECK-SAME:   permutation = #vhlo.tensor_v1<dense<[1, 0]> : tensor<2xi64>>
+   // CHECK-SAME: }> : (!vhlo.tensor_v1<16x8x!vhlo.f32_v1>) -> !vhlo.tensor_v1<8x16x!vhlo.f32_v1>
+   %0 = "stablehlo.transpose"(%arg0) {
+-    permutation = array<i64: 1, 0>
++    permutation = dense<[1, 0]> : tensor<2xi64>
+   } : (tensor<16x8xf32>) -> tensor<8x16xf32>
+   func.return %0 : tensor<8x16xf32>
+ }
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
+--- stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
++++ stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
+@@ -190,9 +190,11 @@
+       return rewriter.notifyMatchFailure(op, "expected static high");
+     if (!succeeded(hlo::matchInts(op.getInteriorPadding(), interiorPadding)))
+       return rewriter.notifyMatchFailure(op, "expected static interior");
+-    rewriter.replaceOpWithNewOp<PadOp>(op, op.getType(), op.getOperand(),
+-                                       op.getPaddingValue(), edgePaddingLow,
+-                                       edgePaddingHigh, interiorPadding);
++    rewriter.replaceOpWithNewOp<PadOp>(
++        op, op.getType(), op.getOperand(), op.getPaddingValue(),
++        rewriter.getI64TensorAttr(edgePaddingLow),
++        rewriter.getI64TensorAttr(edgePaddingHigh),
++        rewriter.getI64TensorAttr(interiorPadding));
+     return success();
+   }
+ };
+@@ -260,7 +262,8 @@
+       auto startIndex1DType = RankedTensorType::get({1}, startIndexElementType);
+       auto startIndex1D = rewriter.create<SliceOp>(
+           op.getLoc(), startIndex1DType, op.getStartIndices(),
+-          ArrayRef<int64_t>{i}, ArrayRef<int64_t>{i + 1}, ArrayRef<int64_t>{1});
++          rewriter.getI64TensorAttr(i), rewriter.getI64TensorAttr(i + 1),
++          rewriter.getI64TensorAttr(1));
+       auto startIndex0DType = RankedTensorType::get({}, startIndexElementType);
+       auto startIndex0D = rewriter.create<ReshapeOp>(
+           op.getLoc(), startIndex0DType, startIndex1D);
+@@ -268,7 +271,8 @@
+     }
+ 
+     rewriter.replaceOpWithNewOp<DynamicSliceOp>(
+-        op, op.getType(), op.getOperand(), startIndices, sliceSizes);
++        op, op.getType(), op.getOperand(), startIndices,
++        rewriter.getI64TensorAttr(sliceSizes));
+     return success();
+   }
+ };
+@@ -287,8 +291,11 @@
+       return rewriter.notifyMatchFailure(op, "expected static limit");
+     if (!succeeded(hlo::matchInts(op.getStrides(), strides)))
+       return rewriter.notifyMatchFailure(op, "expected static strides");
+-    rewriter.replaceOpWithNewOp<SliceOp>(op, op.getType(), op.getOperand(),
+-                                         startIndices, limitIndices, strides);
++    rewriter.replaceOpWithNewOp<SliceOp>(
++        op, op.getType(), op.getOperand(),
++        rewriter.getI64TensorAttr(startIndices),
++        rewriter.getI64TensorAttr(limitIndices),
++        rewriter.getI64TensorAttr(strides));
+     return success();
+   }
+ };
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+--- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
++++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+@@ -896,7 +896,7 @@
+       SmallVector<ShapedTypeComponents> inferredReturnTypes;
+       if (failed(hlo::inferDynamicSliceOp(
+               op.getLoc(), op.getOperand().getType(), startIndicesTypes,
+-              rewriter.getDenseI64ArrayAttr(sliceSizes), inferredReturnTypes)))
++              sliceSizes, inferredReturnTypes)))
+         return rewriter.notifyMatchFailure(op, "inferDynamicSliceOp failed");
+       return refineReturnTypes(rewriter, op, inferredReturnTypes);
+     }
+diff --ruN a/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
+--- stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
++++ stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
+@@ -497,47 +497,6 @@
+     stablehloAttrs.emplace_back(stablehloName, stablehloAttr);
+     return specialSuccess();
+   }
+-  if constexpr (std::is_same<VhloOpTy, vhlo::FftOpV1>::value) {
+-    if (vhloName == "fft_length")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+-  if constexpr (std::is_same<VhloOpTy, vhlo::BroadcastOpV1>::value) {
+-    if (vhloName == "broadcast_sizes")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+-  if constexpr (std::is_same<VhloOpTy, vhlo::DynamicSliceOpV1>::value) {
+-    if (vhloName == "slice_sizes")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+-  if constexpr (std::is_same<VhloOpTy, vhlo::ReverseOpV1>::value) {
+-    if (vhloName == "dimensions")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+-  if constexpr (std::is_same<VhloOpTy, vhlo::TransposeOpV1>::value) {
+-    if (vhloName == "permutation")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+-  if constexpr (std::is_same<VhloOpTy, vhlo::PadOpV1>::value) {
+-    if (vhloName == "edge_padding_low" || vhloName == "edge_padding_high" ||
+-        vhloName == "interior_padding")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+-  if constexpr (std::is_same<VhloOpTy, vhlo::SliceOpV1>::value) {
+-    if (vhloName == "start_indices" || vhloName == "limit_indices" ||
+-        vhloName == "strides")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+-  if constexpr (std::is_same<VhloOpTy, vhlo::BroadcastInDimOpV1>::value) {
+-    if (vhloName == "broadcast_dimensions")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+-  if constexpr (std::is_same<VhloOpTy,
+-                             vhlo::DynamicBroadcastInDimOpV1>::value) {
+-    if (vhloName == "broadcast_dimensions" ||
+-        vhloName == "known_expanding_dimensions" ||
+-        vhloName == "known_nonexpanding_dimensions")
+-      return convertDenseI64Array(vhloName, vhloAttr, stablehloAttrs);
+-  }
+   return notSpecial();
+ }
+ 
 
