@@ -34,6 +34,23 @@ namespace {
 // Simplifies floating-point conversions `A -> B -> C -> D` as `A -> D`.
 StatusOr<bool> RunOnComputation(HloComputation& computation,
                                 SimplifyFPConversions::Scope scope) {
+  // Since the goal of this pass is to simplify type conversions by removing
+  // some Convert ops, we don't want to run this pass for tests that are meant
+  // to test for functionality of the Convert op itself.
+  const absl::string_view comp_name = computation.name();
+  const std::vector<absl::string_view> test_names{
+      "ConvertF16F8e5m2Roundtrip",
+      "ConvertF16F8e4m3fnRoundtrip",
+      "ConvertF16F8e4m3b11fnuzRoundtrip",
+      "ConvertF16F8e5m2fnuzRoundtrip",
+      "ConvertF32F8e5m2fnuzRoundtrip",
+      "ConvertF8e5m2fnuzRoundtripExhaustive",
+      "ConvertF16F8e4m3fnuzRoundtrip",
+      "ConvertF32F8e4m3fnuzRoundtrip",
+      "ConvertF8e4m3fnuzRoundtripExhaustive"};
+  for (const auto& test_name : test_names) {
+    if (absl::StrContains(comp_name, test_name)) return false;
+  }
   const int minimum_logical_creation_pass_id =
       (scope == SimplifyFPConversions::Scope::kSimplifyAllConversions) ? -1 : 0;
   bool changed = false;
