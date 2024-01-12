@@ -979,8 +979,8 @@ xla_cc_test(
 alias(
     name = "mock_nccl_utils",
     actual = if_google(
-        google_value = ":_mock_nccl_utils_google",
-        oss_value = ":_mock_nccl_utils_default",
+        google_value = if_nccl(":_mock_nccl_utils_google", ":empty"),
+        oss_value = if_nccl(":_mock_nccl_utils_default", ":empty"),
     ),
 )
 
