@@ -136,27 +136,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "async_op_canonicalizer",
-    srcs = ["async_op_canonicalizer.cc"],
-    hdrs = ["async_op_canonicalizer.h"],
-    deps = [
-        ":hlo_pass",
-        "//xla/hlo/ir:hlo",
-    ],
-)
-
-xla_cc_test(
-    name = "async_op_canonicalizer_test",
-    srcs = ["async_op_canonicalizer_test.cc"],
-    deps = [
-        ":async_op_canonicalizer",
-        ":hlo_dce",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
-    ],
-)
-
-cc_library(
     name = "all_reduce_key",
     srcs = ["all_reduce_key.cc"],
     hdrs = ["all_reduce_key.h"],
@@ -1643,7 +1622,6 @@ xla_cc_test(
     name = "buffer_assignment_test",
     srcs = ["buffer_assignment_test.cc"],
     deps = [
-        ":async_op_canonicalizer",
         ":buffer_assignment",
         ":buffer_value",
         ":call_graph",
@@ -3114,7 +3092,6 @@ cc_library(
     srcs = ["while_loop_unroller.cc"],
     hdrs = ["while_loop_unroller.h"],
     deps = [
-        ":async_op_canonicalizer",
         ":call_inliner",
         ":flatten_call_graph",
         ":hlo_cse",
@@ -4145,7 +4122,6 @@ xla_cc_test(
     name = "hlo_dataflow_analysis_test",
     srcs = ["hlo_dataflow_analysis_test.cc"],
     deps = [
-        ":async_op_canonicalizer",
         ":flatten_call_graph",
         ":hlo_creation_utils",
         ":hlo_dataflow_analysis",
