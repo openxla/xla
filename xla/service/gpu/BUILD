@@ -20,7 +20,7 @@ load(
     "if_rocm_is_configured",
     "rocm_copts",
 )
-load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
+load("@tsl//tsl:tsl.bzl", "if_google", "tsl_copts", "tsl_gpu_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/platform:build_config.bzl",
@@ -1044,14 +1044,11 @@ xla_cc_test(
     ]),
 )
 
-# Empty library to implement nested dependency conditions.
-cc_library(name = "empty")
-
 alias(
     name = "mock_nccl_utils",
     actual = if_google(
-        google_value = if_nccl(":_mock_nccl_utils_google", ":empty"),
-        oss_value = if_nccl(":_mock_nccl_utils_default", ":empty"),
+        google_value = ":_mock_nccl_utils_google",
+        oss_value = ":_mock_nccl_utils_default",
     ),
 )
 
