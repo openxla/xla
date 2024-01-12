@@ -85,6 +85,7 @@ cc_library(
     hdrs = ["command_buffer_cmd_emitter.h"],
     deps = [
         ":command_buffer_cmd",
+        ":conditional_thunk",
         ":copy_thunk",
         ":custom_call_thunk",
         ":kernel_thunk",
