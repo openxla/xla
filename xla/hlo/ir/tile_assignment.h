@@ -163,9 +163,11 @@ class IotaTileAssignment {
 // NOTE: This class is immutable.
 class TileAssignment {
  public:
-  TileAssignment() : array_(ReplicatedArray()) {}
+  TileAssignment()
+      : shared_array_(
+            std::make_shared<Array<int64_t>>(std::vector<int64_t>{0})) {}
   explicit TileAssignment(std::shared_ptr<const Array<int64_t>> array)
-      : shared_array_(std::move(array)), array_(shared_array_.get()) {}
+      : shared_array_(std::move(array)) {}
   explicit TileAssignment(int64_t device_id)
       : TileAssignment(std::make_shared<const Array<int64_t>>(
             std::initializer_list<int64_t>{1}, device_id)) {}
@@ -247,22 +249,13 @@ class TileAssignment {
   // to have so many devices to overflow int32_t in practice.
   explicit TileAssignment(IotaTileAssignment iota,
                           std::shared_ptr<const Array<int64_t>> shared_array)
-      : iota_(std::move(iota)),
-        shared_array_(std::move(shared_array)),
-        array_(shared_array_.get()) {}
+      : iota_(std::move(iota)), shared_array_(std::move(shared_array)) {}
 
   void MaybeMaterializeFullArray() const;
-
-  static const Array<int64_t>* ReplicatedArray() {
-    static auto* array = new Array<int64_t>({0});
-    return array;
-  }
 
   std::optional<IotaTileAssignment> iota_;
   // If iota_ is set, shared_array_ is a lazy cache of the materialized array.
   mutable std::shared_ptr<const Array<int64_t>> shared_array_;
-  // Pointer to the storage of the fully materialized array format.
-  mutable const Array<int64_t>* array_ = nullptr;
 };
 
 }  // namespace xla

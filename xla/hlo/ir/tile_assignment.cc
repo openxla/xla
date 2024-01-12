@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "xla/array.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -291,36 +292,38 @@ bool TileAssignment::operator==(const TileAssignment& other) const {
 }
 
 int64_t TileAssignment::operator()(absl::Span<const int64_t> indexes) const {
-  return array_ ? (*array_)(indexes) : iota_->value_at(indexes);
+  return shared_array_ ? (*shared_array_)(indexes) : iota_->value_at(indexes);
 }
 
 absl::Span<const int64_t> TileAssignment::dimensions() const {
-  return array_ ? array_->dimensions() : iota_->dims();
+  return shared_array_ ? shared_array_->dimensions() : iota_->dims();
 }
 
 int64_t TileAssignment::num_dimensions() const {
-  return array_ ? array_->num_dimensions() : iota_->ndims();
+  return shared_array_ ? shared_array_->num_dimensions() : iota_->ndims();
 }
 
 int64_t TileAssignment::dim(int64_t n) const {
-  return array_ ? array_->dim(n) : iota_->dim(n);
+  return shared_array_ ? shared_array_->dim(n) : iota_->dim(n);
 }
 int64_t TileAssignment::num_elements() const {
-  return array_ ? array_->num_elements() : iota_->num_elements();
+  return shared_array_ ? shared_array_->num_elements() : iota_->num_elements();
 }
 
-int64_t TileAssignment::first() const { return array_ ? *array_->begin() : 0; }
+int64_t TileAssignment::first() const {
+  return shared_array_ ? *shared_array_->begin() : 0;
+}
 
 void TileAssignment::Each(
     absl::FunctionRef<void(absl::Span<const int64_t>, int64_t)> f) const {
   MaybeMaterializeFullArray();
-  array_->Each(f);
+  shared_array_->Each(f);
 }
 
 Status TileAssignment::EachStatus(
     absl::FunctionRef<Status(absl::Span<const int64_t>, int64_t)> f) const {
   MaybeMaterializeFullArray();
-  return array_->EachStatus(f);
+  return shared_array_->EachStatus(f);
 }
 
 [[nodiscard]] TileAssignment TileAssignment::Reshape(
@@ -332,7 +335,7 @@ Status TileAssignment::EachStatus(
                            iota_->transpose_perm()),
         /*shared_array=*/nullptr);
   }
-  auto reshaped = std::make_shared<Array<int64_t>>(*array_);
+  auto reshaped = std::make_shared<Array<int64_t>>(*shared_array_);
   reshaped->Reshape(new_dimensions);
   return TileAssignment(std::move(reshaped));
 }
@@ -378,7 +381,7 @@ bool TileAssignment::UsesDevice(int64_t device) const {
 
 const Array<int64_t>& TileAssignment::array() const {
   MaybeMaterializeFullArray();
-  return *array_;
+  return *shared_array_;
 }
 const std::shared_ptr<const Array<int64_t>>& TileAssignment::shared_array()
     const {
@@ -388,19 +391,17 @@ const std::shared_ptr<const Array<int64_t>>& TileAssignment::shared_array()
 
 std::shared_ptr<Array<int64_t>> TileAssignment::shared_array_clone() const {
   MaybeMaterializeFullArray();
-  return std::make_shared<Array<int64_t>>(*array_);
+  return std::make_shared<Array<int64_t>>(*shared_array_);
 }
 
 void TileAssignment::MaybeMaterializeFullArray() const {
-  if (array_ == nullptr) {
-    DCHECK(shared_array_ == nullptr);
+  if (shared_array_ == nullptr) {
     DCHECK(iota_.has_value());
     auto full = std::make_shared<Array<int64_t>>(iota_->reshape_dims());
     full->FillIota(0);
     full->TransposeDimensions(iota_->transpose_perm());
     full->Reshape(iota_->dims());
     shared_array_ = std::move(full);
-    array_ = shared_array_.get();
   }
 }
 
