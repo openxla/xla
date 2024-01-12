@@ -60,8 +60,8 @@ absl::StatusOr<bool> FuseArgPrologueTransposeWithcuDNNFMHA(
     bool should_contracting_be_fastest) {
   HloInstruction* transpose_arg = fmha->mutable_operand(operand_index);
   HloInstruction* transpose_arg_operand = transpose_arg->mutable_operand(0);
-  GpuBackendConfig gpu_config;
-  TF_ASSIGN_OR_RETURN(gpu_config, fmha->backend_config<GpuBackendConfig>());
+  TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                      fmha->backend_config<GpuBackendConfig>());
   CudnnfMHABackendConfig config = gpu_config.cudnn_fmha_backend_config();
   CudnnfMHABackendConfig& new_fmha_config =
       *gpu_config.mutable_cudnn_fmha_backend_config();
@@ -461,8 +461,9 @@ absl::StatusOr<bool> FusePrologueTransposeWithcuDNNFMHA(HloComputation* comp) {
       // contracting dim.
       // make sure we dont change layout of dO in flash attention case as dO
       // should have the same layout of O
-      TF_ASSIGN_OR_RETURN(CudnnfMHABackendConfig config,
-                          fmha->backend_config<CudnnfMHABackendConfig>());
+      TF_ASSIGN_OR_RETURN(auto gpu_config,
+                          fmha->backend_config<GpuBackendConfig>());
+      const CudnnfMHABackendConfig config = gpu_config.cudnn_fmha_backend_config();
       if (!config.is_flash_attention()) {
         TF_ASSIGN_OR_RETURN(changed,
                             FuseArgPrologueTransposeWithcuDNNFMHA(

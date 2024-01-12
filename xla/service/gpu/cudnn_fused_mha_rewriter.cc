@@ -1405,7 +1405,7 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
   GpuBackendConfig gpu_config;
   CudnnfMHABackendConfig& fmha_config =
       *gpu_config.mutable_cudnn_fmha_backend_config();
-  ;
+
   *fmha_config.mutable_bmm1_dot_dimension_numbers() =
       bmm_1->dot_dimension_numbers();
   *fmha_config.mutable_bmm2_dot_dimension_numbers() =

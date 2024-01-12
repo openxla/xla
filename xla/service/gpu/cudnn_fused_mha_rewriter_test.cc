@@ -3894,8 +3894,9 @@ ENTRY main.92 {
           m::GetTupleElement(
               m::CustomCall({kCudnnfMHASoftmaxBackwardCallTarget}), 2)
               .WithShape(BF16, {2, 6, 2048, 128}))));
-  TF_ASSERT_OK_AND_ASSIGN(auto config,
-                          fmha->backend_config<CudnnfMHABackendConfig>());
+  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
+                          fmha->backend_config<GpuBackendConfig>());
+  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
   EXPECT_EQ(fmha->operands().size(), 6);
   EXPECT_NEAR(config.dropout_rate(), 0, 1e-2);
   EXPECT_EQ(config.is_flash_attention(), true);
@@ -4001,8 +4002,9 @@ ENTRY main.92 {
           m::GetTupleElement(
               m::CustomCall({kCudnnfMHAScaleBiasSoftmaxBackwardCallTarget}), 2)
               .WithShape(BF16, {2, 6, 2048, 128}))));
-  TF_ASSERT_OK_AND_ASSIGN(auto config,
-                          fmha->backend_config<CudnnfMHABackendConfig>());
+  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
+                          fmha->backend_config<GpuBackendConfig>());
+  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
   EXPECT_EQ(fmha->operands().size(), 7);
   EXPECT_NEAR(config.dropout_rate(), 0, 1e-2);
   EXPECT_EQ(config.is_flash_attention(), true);
@@ -4065,8 +4067,9 @@ ENTRY main.31 {
               GmockMatch(m::GetTupleElement(
                 m::CustomCall(&fmha, {kCudnnfMHAScaleBiasSoftmaxCallTarget}), 0)
                 .WithShape(F16, {2, 6, 2048, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto config, fmha->backend_config<CudnnfMHABackendConfig>());
+  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
+                          fmha->backend_config<GpuBackendConfig>());
+  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
   EXPECT_EQ(config.is_flash_attention(), true);
   EXPECT_EQ(config.is_causal_mask(), false);
 }
@@ -4650,8 +4653,9 @@ main {
   }
   EXPECT_NE(fwd_instruction, nullptr);
   EXPECT_NE(bwd_instruction, nullptr);
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto config, fwd_instruction->backend_config<CudnnfMHABackendConfig>());
+  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
+                          fwd_instruction->backend_config<GpuBackendConfig>());
+  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
   EXPECT_EQ(config.is_flash_attention(), true);
   EXPECT_EQ(config.is_causal_mask(), true);
 }
