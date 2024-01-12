@@ -1620,8 +1620,19 @@ CostAnalysisPrefetchIntervalPicker::BufferIntervalAlternateMemoryBenefit(
   return cost_analysis_.GetMemoryBoundedness(interval);
 }
 
-bool MemorySpaceAssignment::Allocation::operator==(
-    const MemorySpaceAssignment::Allocation& other) const {
+bool MemorySpaceAssignment::BaseAllocationImpl::operator==(
+    const MemorySpaceAssignment::BaseAllocationImpl& other) const {
+  return defining_position() == other.defining_position() &&
+         uses() == other.uses() && memory_space() == other.memory_space() &&
+         chunk() == other.chunk() && start_time() == other.start_time() &&
+         end_time() == other.end_time() &&
+         earliest_available_time() == other.earliest_available_time() &&
+         is_copy_allocation() == other.is_copy_allocation() &&
+         is_scoped_allocation() == other.is_scoped_allocation();
+}
+
+bool MemorySpaceAssignment::PinnedAllocation::operator==(
+    const MemorySpaceAssignment::PinnedAllocation& other) const {
   return defining_position() == other.defining_position() &&
          uses() == other.uses() && memory_space() == other.memory_space() &&
          chunk() == other.chunk() && start_time() == other.start_time() &&
@@ -1633,8 +1644,8 @@ bool MemorySpaceAssignment::Allocation::operator==(
 
 bool MemorySpaceAssignment::CopyAllocation::operator==(
     const MemorySpaceAssignment::CopyAllocation& other) const {
-  return static_cast<const Allocation&>(*this) ==
-             static_cast<const Allocation&>(other) &&
+  return static_cast<const BaseAllocationImpl&>(*this) ==
+             static_cast<const BaseAllocationImpl&>(other) &&
          copy_done_schedule_before() == other.copy_done_schedule_before() &&
          copy_start_schedule_after() == other.copy_start_schedule_after() &&
          copy_start() == other.copy_start() && copy_done() == other.copy_done();
@@ -1755,9 +1766,9 @@ void AlternateMemoryBestFitHeap::CreateAllocationValues(
   // Find and sort all non-trivial (excluding GTE, Tuple, and bitcast)
   // positions. We create an AllocationValue object for each non-trivial
   // position. And for each AllocationValue object, we create an
-  // AllocationSequence consisting of one or more Allocation objects.The reason
-  // why we exclude the trivial positions from AllocationValue is because
-  // Allocation objects have special support for tuples and bitcasts.
+  // AllocationSequence consisting of one or more BaseAllocationImpl objects.The
+  // reason why we exclude the trivial positions from AllocationValue is because
+  // BaseAllocationImpl objects have special support for tuples and bitcasts.
   const absl::flat_hash_map<const HloInstruction*, int64_t>&
       instruction_schedule = hlo_live_range_.instruction_schedule();
   std::vector<HloPosition> positions;
@@ -2718,8 +2729,9 @@ void MemoryBoundLoopOptimizer::AllocateLoopValues() {
 }
 
 void MemoryBoundLoopOptimizer::PostProcess() {
-  // At the end, ensure that all loop uses have a corresponding Allocation and
-  // create one in the default memory space if they don't.
+  // At the end, ensure that all loop uses have a corresponding
+  // BaseAllocationImpl and create one in the default memory space if they
+  // don't.
   for (LoopValue& value : loop_values_) {
     absl::flat_hash_set<HloUse> allocated_uses;
     for (const auto& allocation : value.allocations) {
@@ -2751,7 +2763,7 @@ void MemoryBoundLoopOptimizer::PostProcess() {
       // TODO(b/281582241): We should find the correct position. For now, we're
       // using the defining position on the first HLO value.
       value.allocations.push_back(
-          std::make_unique<MemorySpaceAssignment::Allocation>(
+          std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
               value.hlo_values.front()->defining_position(),
               MemorySpaceAssignment::MemorySpace::kDefault, std::nullopt, 0,
               loop_size_, /*is_scoped_allocation=*/false));
@@ -2799,7 +2811,7 @@ bool MemoryBoundLoopOptimizer::AllocateTemporary(LoopValue& value) {
   if (success) {
     VLOG(3) << "Pos: " << value.loop_positions[0].second;
     value.allocations.push_back(
-        std::make_unique<MemorySpaceAssignment::Allocation>(
+        std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
             value.loop_positions[0].second,
             MemorySpaceAssignment::MemorySpace::kAlternate, std::nullopt,
             definition_idx, max_use_idx,
@@ -2814,7 +2826,7 @@ bool MemoryBoundLoopOptimizer::AllocatePinned(LoopValue& value) {
   if (success) {
     CHECK(value.header_position);
     value.allocations.push_back(
-        std::make_unique<MemorySpaceAssignment::Allocation>(
+        std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
             *value.header_position,
             MemorySpaceAssignment::MemorySpace::kAlternate, std::nullopt, 0,
             loop_size_,
@@ -3190,10 +3202,11 @@ bool MemoryBoundLoopOptimizer::AllocatePrefetch(
     }
   }
 
-  // Create the Allocation objects that correspond to the scheduled prefetch.
+  // Create the BaseAllocationImpl objects that correspond to the scheduled
+  // prefetch.
   CHECK(value->header_position);
   value->allocations.push_back(
-      std::make_unique<MemorySpaceAssignment::Allocation>(
+      std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
           *value->header_position, MemorySpaceAssignment::MemorySpace::kDefault,
           std::nullopt, 0, loop_size_, /*is_scoped_allocation=*/false));
   value->allocations.push_back(
@@ -3927,7 +3940,8 @@ HloPosition TupleUseToPosition(const HloUse& use) {
   return {use.instruction, index};
 }
 
-// Returns the memory space of the defining position of an Allocation object.
+// Returns the memory space of the defining position of a BaseAllocationImpl
+// object.
 MemorySpaceAssignment::MemorySpace GetDefiningPositionMemorySpace(
     const MemorySpaceAssignment::Allocation& allocation) {
   if (!allocation.is_copy_like_allocation()) {
@@ -3950,12 +3964,12 @@ AlternateMemoryBestFitHeap::GetLinkedAllocationsInAlternateMemory(
       linked_allocations;
   // A map from position to index into linked_allocations.
   absl::flat_hash_map<HloPosition, int> link_id_map;
-  // Iterate over the allocation values. Find Allocation objects across the
-  // allocation values that are part of the same linked allocation group. We
-  // define a linked allocation group as Allocation objects that have aliased
-  // positions or uses. An example would be an Allocation object that has a
-  // dynamic-update-slice use and another Allocation object that has the same
-  // dynamic-update-slice as its defining position.
+  // Iterate over the allocation values. Find BaseAllocationImpl objects across
+  // the allocation values that are part of the same linked allocation group. We
+  // define a linked allocation group as BaseAllocationImpl objects that have
+  // aliased positions or uses. An example would be a BaseAllocationImpl object
+  // that has a dynamic-update-slice use and another BaseAllocationImpl object
+  // that has the same dynamic-update-slice as its defining position.
   for (const AllocationValue& allocation_value : allocation_values) {
     absl::flat_hash_map<HloUse, std::vector<HloPosition>> aliases;
     for (const AllocationValue::Use& allocation_value_use :
@@ -5032,10 +5046,11 @@ void AlternateMemoryBestFitHeap::AllocateCrossProgramPrefetchBuffer(
   module->AddCrossProgramPrefetch(parameter, buffer->index());
 
   MemorySpaceAssignment::AllocationSequence allocations;
-  allocations.push_back(std::make_unique<MemorySpaceAssignment::Allocation>(
-      buffer->defining_position(), MemorySpace::kDefault, kDummyChunk,
-      prefetch_candidate.start, prefetch_candidate.end,
-      /*is_scoped_allocation=*/false));
+  allocations.push_back(
+      std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
+          buffer->defining_position(), MemorySpace::kDefault, kDummyChunk,
+          prefetch_candidate.start, prefetch_candidate.end,
+          /*is_scoped_allocation=*/false));
 
   // Find the earliest use.
   const auto& instruction_schedule = hlo_live_range_.instruction_schedule();
@@ -5147,8 +5162,8 @@ void AlternateMemoryBestFitHeap::AllocateCrossProgramPrefetchBuffer(
     allocations_->push_back(std::move(allocation));
   }
 
-  // Add a repack allocation block for the Allocation objects in alternate
-  // memory.
+  // Add a repack allocation block for the BaseAllocationImpl objects in
+  // alternate memory.
   std::vector<AllocationBlock*> colocations;
   for (int i = allocations_initial_size; i < allocations_->size(); ++i) {
     const auto& allocation = allocations_->at(i);
@@ -5201,7 +5216,7 @@ void AlternateMemoryBestFitHeap::AllocateReservedScopedAllocations() {
       }
 
       allocations_->push_back(
-          std::make_unique<MemorySpaceAssignment::Allocation>(
+          std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
               HloPosition{instruction_sequence[i], {}}, MemorySpace::kAlternate,
               chunk_candidate, i, i, /*is_scoped_allocation=*/true));
 
@@ -5979,7 +5994,7 @@ AlternateMemoryBestFitHeap::Result AlternateMemoryBestFitHeap::AllocateSegment(
             required_assignment_at_start->offset->offset, request.size);
       }
       allocation_sequence->push_back(
-          std::make_unique<MemorySpaceAssignment::Allocation>(
+          std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
               defining_position, required_assignment_at_start->memory_space,
               aliased_chunk, request.inclusive_start_time,
               request.inclusive_start_time,
@@ -6033,7 +6048,7 @@ AlternateMemoryBestFitHeap::Result AlternateMemoryBestFitHeap::AllocateSegment(
     prev_allocation_in_default_mem_it = allocation_sequence->rbegin();
   } else if (prev_allocation_in_default_mem_it == allocation_sequence->rend()) {
     allocation_sequence->push_back(
-        std::make_unique<MemorySpaceAssignment::Allocation>(
+        std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
             defining_position, MemorySpace::kDefault,
             /*chunk=*/std::nullopt, request.inclusive_start_time,
             request.end_time,
@@ -6398,7 +6413,7 @@ AlternateMemoryBestFitHeap::AllocateInAlternateMemoryNoCopy(
       prev_allocation->set_end_time(request.end_time);
     } else {
       request.allocation_value->mutable_allocation_sequence()->push_back(
-          std::make_unique<MemorySpaceAssignment::Allocation>(
+          std::make_unique<MemorySpaceAssignment::PinnedAllocation>(
               defining_position, MemorySpace::kAlternate, chunk_candidate,
               request.inclusive_start_time, request.end_time,
               /*is_scoped_allocation=*/false));
@@ -7548,11 +7563,7 @@ Status MemorySpaceAssignment::FindAllocationSequence(
   return OkStatus();
 }
 
-bool MemorySpaceAssignment::Allocation::is_copy_like_allocation() const {
-  return is_copy_allocation() || is_sliced_copy_allocation();
-}
-
-void MemorySpaceAssignment::Allocation::AddUse(HloUse use) {
+void MemorySpaceAssignment::BaseAllocationImpl::AddUse(HloUse use) {
   HloInstruction* operand =
       use.instruction->mutable_operand(use.operand_number);
   // If the use is a tuple, look inside the tuple to find the actual use.
@@ -7579,10 +7590,10 @@ void MemorySpaceAssignment::Allocation::AddUse(HloUse use) {
   };
   operand = get_simplified_operand(operand);
 
-  uses_.push_back(use);
+  uses_manager_.add_use(use);
 }
 
-void MemorySpaceAssignment::Allocation::set_offset(int64_t offset) {
+void MemorySpaceAssignment::BaseAllocationImpl::set_offset(int64_t offset) {
   CHECK(chunk_.has_value());
   *chunk_ = Chunk::FromOffsetSize(offset, chunk_->size);
 }
@@ -7639,16 +7650,11 @@ float MemorySpaceAssignment::ComputeEstimatedElapsedTime(
   return total_elapsed;
 }
 
-Status MemorySpaceAssignment::Allocation::Process() {
-  if (is_scoped_allocation()) {
-    // Nothing to do here for scoped allocations.
-    return OkStatus();
-  }
-  HloInstruction* producing_instruction = AddGetTupleElements();
-  HloComputation* computation = producing_instruction->parent();
-  for (const HloUse& use : uses_) {
-    Shape operand_shape = use.instruction->operand(use.operand_number)->shape();
+Status MemorySpaceAssignment::BaseAllocationImpl::update_uses(
+    HloComputation* computation, HloInstruction* producing_instruction) {
+  for (const HloUse& use : uses()) {
     HloInstruction* replacement_instruction = producing_instruction;
+    Shape operand_shape = use.instruction->operand(use.operand_number)->shape();
     if (operand_shape.IsTuple()) {
       TF_ASSIGN_OR_RETURN(
           replacement_instruction,
@@ -7657,6 +7663,9 @@ Status MemorySpaceAssignment::Allocation::Process() {
               use.instruction->mutable_operand(use.operand_number),
               use.operand_index));
     } else if (operand_shape != producing_instruction->shape()) {
+      // When processing allocations, we treat bitcasts as trivial positions and
+      // do not create allocations for them. We insert bitcasts after copies, to
+      // account for the fact that we don't have an allocation for the bitcast.
       VLOG(4) << "Old shape = " << operand_shape.ToString()
               << ", new shape = " << producing_instruction->shape().ToString()
               << "; inserting a bitcast.";
@@ -7669,7 +7678,18 @@ Status MemorySpaceAssignment::Allocation::Process() {
   return OkStatus();
 }
 
-HloInstruction* MemorySpaceAssignment::Allocation::AddGetTupleElements() const {
+Status MemorySpaceAssignment::PinnedAllocation::Process() {
+  if (is_scoped_allocation()) {
+    // Nothing to do here for scoped allocations.
+    return OkStatus();
+  }
+  HloInstruction* producing_instruction = AddGetTupleElements();
+  HloComputation* computation = producing_instruction->parent();
+  return update_uses(computation, producing_instruction);
+}
+
+HloInstruction* MemorySpaceAssignment::BaseAllocationImpl::AddGetTupleElements()
+    const {
   CHECK_NE(defining_position().instruction, nullptr);
 
   Shape shape = defining_position().shape();
@@ -7679,24 +7699,26 @@ HloInstruction* MemorySpaceAssignment::Allocation::AddGetTupleElements() const {
   return TupleUtil::AddGetTupleElements(defining_position());
 }
 
-std::string MemorySpaceAssignment::Allocation::ToString() const {
+std::string MemorySpaceAssignment::PinnedAllocation::ToString() const {
   std::string memory_space_str =
-      memory_space_ == MemorySpace::kDefault ? "def" : "alt";
-  if (chunk_) {
-    absl::StrAppend(&memory_space_str, " (off: ", chunk_->offset, ")");
+      memory_space() == MemorySpace::kDefault ? "def" : "alt";
+  std::optional<Chunk> chunk = maybe_chunk();
+  if (chunk) {
+    absl::StrAppend(&memory_space_str, " (off: ", chunk->offset, ")");
   }
   return absl::StrCat((is_scoped_allocation() ? "Scoped " : ""),
                       "Allocation in ", memory_space_str, " defined at ",
-                      defining_position_.ToString(),
+                      get_raw_defining_position().ToString(),
                       ", start_time:", start_time(), ", end_time:", end_time(),
                       ", uses: ", UsesToString(uses()));
 }
 
 std::string MemorySpaceAssignment::CopyAllocation::ToString() const {
   std::string memory_space_str =
-      memory_space_ == MemorySpace::kDefault ? "def" : "alt";
-  if (chunk_) {
-    absl::StrAppend(&memory_space_str, " (off: ", chunk_->offset, ")");
+      memory_space() == MemorySpace::kDefault ? "def" : "alt";
+  std::optional<Chunk> chunk = maybe_chunk();
+  if (chunk) {
+    absl::StrAppend(&memory_space_str, " (off: ", chunk->offset, ")");
   }
   return absl::StrCat("Copy Allocation in ", memory_space_str,
                       ", start_time:", start_time(), ", end_time:", end_time(),
@@ -7848,7 +7870,7 @@ MemorySpaceAssignment::SlicedCopyAllocation::SliceDetail::CreateAsyncSlice(
 
 namespace {
 
-// Helper function to compute the underlying Allocation chunk for a
+// Helper function to compute the underlying BaseAllocationImpl chunk for a
 // SlicedCopyAllocation.
 std::optional<MemorySpaceAssignment::Chunk> GetSlicedCopyAllocationChunk(
     const std::vector<MemorySpaceAssignment::SliceDecision>&
@@ -7891,11 +7913,11 @@ MemorySpaceAssignment::SlicedCopyAllocation::SlicedCopyAllocation(
     const Allocation& prev_allocation, MemorySpace memory_space,
     std::vector<SliceDecision> slice_decisions_sorted_by_exclusive_start_time,
     int64_t copy_done_schedule_before_time, int64_t end_time)
-    : Allocation(
+    : BaseAllocationImpl(
           /*defining_position=*/{nullptr, {}}, memory_space,
           GetSlicedCopyAllocationChunk(
               slice_decisions_sorted_by_exclusive_start_time),
-          // Allocation uses an inclusive start time
+          // BaseAllocationImpl uses an inclusive start time
           ExclusiveToInclusiveStartTime(
               GetSlicedCopyAllocationExclusiveStartTime(
                   slice_decisions_sorted_by_exclusive_start_time)),
@@ -7919,51 +7941,6 @@ MemorySpaceAssignment::SlicedCopyAllocation::SlicedCopyAllocation(
   }
 }
 
-namespace {
-
-// Sets defining_position with the copy_complete instruction and replaces all
-// uses of the allocation with the copy_complete instruction.
-Status ProcessCopyLikeAllocationUses(HloPosition& defining_position,
-                                     std::vector<HloUse>& uses,
-                                     HloComputation* computation,
-                                     HloInstruction* copy_complete) {
-  // Update the allocation position with the copy complete instruction, so that
-  // if there are further copies from it, they can find the correct position.
-  defining_position = HloPosition{copy_complete, {}};
-
-  // Replace all the uses of the copy-like allocation with the copy complete
-  // instruction.
-  for (HloUse use : uses) {
-    // If the operand is a tuple, we need to descend to the actual instruction
-    // we want to replace.
-    HloInstruction* replacement_instruction = copy_complete;
-    Shape operand_shape = use.instruction->operand(use.operand_number)->shape();
-    if (operand_shape.IsTuple()) {
-      TF_ASSIGN_OR_RETURN(
-          replacement_instruction,
-          TupleUtil::ReplaceTupleWith(
-              copy_complete,
-              use.instruction->mutable_operand(use.operand_number),
-              use.operand_index));
-    } else if (operand_shape != copy_complete->shape()) {
-      // When processing allocations, we treat bitcasts as trivial positions and
-      // do not create allocations for them. We insert bitcasts after copies, to
-      // account for the fact that we don't have an allocation for the bitcast.
-      VLOG(4) << "Old shape = " << operand_shape.ToString()
-              << ", new shape = " << copy_complete->shape().ToString()
-              << "; inserting a bitcast.";
-      replacement_instruction = computation->AddInstruction(
-          HloInstruction::CreateBitcast(operand_shape, copy_complete));
-    }
-    TF_RETURN_IF_ERROR(use.instruction->ReplaceOperandWith(
-        use.operand_number, replacement_instruction));
-  }
-
-  return OkStatus();
-}
-
-}  // namespace
-
 Status MemorySpaceAssignment::SlicedCopyAllocation::Process() {
   Shape shape = defining_position().shape();
   HloInstruction* producing_instruction = AddGetTupleElements();
@@ -7974,7 +7951,7 @@ Status MemorySpaceAssignment::SlicedCopyAllocation::Process() {
   // slice instructions operate on the originally sliced shape.
   //
   // Note, these bitcasts are being inserted in the same cases that
-  // ProcessCopyLikeAllocationUses() is inserting bitcasts, except we are
+  // update_uses() is inserting bitcasts, except we are
   // inserting the bitcasts before the copy, instead of after the copy.
   if (!Shape::Equal().IgnoreMemorySpaceInLayout()(shape,
                                                   original_shape_to_slice_)) {
@@ -8000,8 +7977,15 @@ Status MemorySpaceAssignment::SlicedCopyAllocation::Process() {
 
   TF_RETURN_IF_ERROR(CreateBitcastConcat(shape, slice_dones));
 
-  return ProcessCopyLikeAllocationUses(defining_position_, uses_, computation,
-                                       concat_);
+  // Update the allocation position with the copy complete instruction, so that
+  // if there are further copies from it, they can find the correct position.
+  reset_defining_position(HloPosition{concat_, {}});
+  return update_uses(computation, concat_);
+}
+
+void MemorySpaceAssignment::SlicedCopyAllocation::MarkIfNeeded(
+    absl::flat_hash_set<const Allocation*>& needed_allocations) const {
+  MarkNeeded(needed_allocations);
 }
 
 void MemorySpaceAssignment::SlicedCopyAllocation::MarkNeeded(
@@ -8017,10 +8001,11 @@ HloPosition MemorySpaceAssignment::SlicedCopyAllocation::defining_position()
   // new CopyStart/CopyDone instructions until later and the position should
   // point to the previous (copy or otherwise) allocation's position for the
   // original defining position.
-  if (defining_position_.instruction == nullptr) {
+  HloPosition defining_position = get_raw_defining_position();
+  if (defining_position.instruction == nullptr) {
     return prev_allocation_.defining_position();
   }
-  return defining_position_;
+  return defining_position;
 }
 
 int64_t MemorySpaceAssignment::SlicedCopyAllocation::earliest_available_time()
@@ -8096,7 +8081,7 @@ MemorySpaceAssignment::SlicedCopyAllocation::
   return slice_details_sorted_by_start_time_;
 }
 
-std::tuple<const MemorySpaceAssignment::Allocation&,
+std::tuple<const MemorySpaceAssignment::BaseAllocationImpl&,
            const std::vector<
                MemorySpaceAssignment::SlicedCopyAllocation::SliceDetail>&,
            const HloInstruction*>
@@ -8112,8 +8097,8 @@ bool MemorySpaceAssignment::SlicedCopyAllocation::operator==(
 
 std::string MemorySpaceAssignment::SlicedCopyAllocation::ToString() const {
   std::string memory_space_str = "def";
-  if (memory_space_ == MemorySpace::kAlternate) {
-    memory_space_str = absl::StrCat("alt (off: ", chunk_->offset, ")");
+  if (memory_space() == MemorySpace::kAlternate) {
+    memory_space_str = absl::StrCat("alt (off: ", maybe_chunk()->offset, ")");
   }
   return absl::StrCat(
       "Sliced Copy Allocation in ", memory_space_str,
@@ -8141,7 +8126,7 @@ std::string MemorySpaceAssignment::MirroredAllocation::ToString() const {
 
 std::string MemorySpaceAssignment::ParentAllocation::ToString() const {
   return absl::StrCat("Parent Allocation mirrored at ",
-                      defining_position_.ToString(), ", originally ",
+                      get_raw_defining_position().ToString(), ", originally ",
                       original_allocation_.ToString());
 }
 
@@ -8150,11 +8135,12 @@ MemorySpaceAssignment::CopyAllocation::CopyAllocation(
     std::optional<Chunk> chunk, int64_t copy_start_schedule_after_time,
     int64_t copy_done_schedule_before_time, int64_t end_time,
     std::optional<int64_t> cross_program_prefetch_index)
-    : Allocation(/*defining_position=*/{nullptr, {}}, memory_space, chunk,
-                 // Allocation uses an inclusive start time
-                 ExclusiveToInclusiveStartTime(copy_start_schedule_after_time),
-                 end_time,
-                 /*is_scoped_allocation=*/false),
+    : BaseAllocationImpl(
+          /*defining_position=*/{nullptr, {}}, memory_space, chunk,
+          // Allocation uses an inclusive start time
+          ExclusiveToInclusiveStartTime(copy_start_schedule_after_time),
+          end_time,
+          /*is_scoped_allocation=*/false),
       prev_allocation_(prev_allocation),
       copy_start_schedule_after_(copy_start_schedule_after_time),
       copy_done_schedule_before_(copy_done_schedule_before_time),
@@ -8173,13 +8159,21 @@ Status MemorySpaceAssignment::CopyAllocation::Process() {
   VLOG(4) << "Created " << copy_start_->name()
           << " for copy allocation: " << ToString();
 
-  return ProcessCopyLikeAllocationUses(defining_position_, uses_, computation,
-                                       copy_done_);
+  // Update the allocation position with the copy complete instruction, so that
+  // if there are further copies from it, they can find the correct position.
+  reset_defining_position(HloPosition{copy_done_, {}});
+  return update_uses(computation, copy_done_);
 }
 
 Status MemorySpaceAssignment::MirroredAllocation::Process() {
-  defining_position_ = original_allocation_.defining_position();
-  return Allocation::Process();
+  reset_defining_position(original_allocation_.defining_position());
+  if (is_scoped_allocation()) {
+    // Nothing to do here for scoped allocations.
+    return OkStatus();
+  }
+  HloInstruction* producing_instruction = AddGetTupleElements();
+  HloComputation* computation = producing_instruction->parent();
+  return update_uses(computation, producing_instruction);
 }
 
 Status MemorySpaceAssignment::ParentAllocation::Process() {
@@ -8203,7 +8197,9 @@ Status MemorySpaceAssignment::ParentAllocation::Process() {
   *calling_instruction_->while_body()
        ->parameter_instruction(0)
        ->mutable_shape() = new_while_operand->shape();
-  defining_position_.index = {new_tuple_index};
+  HloPosition defining_position = get_raw_defining_position();
+  defining_position.index = {new_tuple_index};
+  reset_defining_position(defining_position);
   // Also replace the while op with a tuple that has the old shape. Note that we
   // need to first take a snapshot of the users before calling ExtractPrefix
   // since ExtractPrefix introduces additional gte users.
@@ -8212,7 +8208,14 @@ Status MemorySpaceAssignment::ParentAllocation::Process() {
       TupleUtil::ExtractPrefix(calling_instruction_, new_tuple_index);
   TF_RETURN_IF_ERROR(calling_instruction_->ReplaceAllUsesWithDifferentShape(
       while_users, tuple_with_old_shape));
-  return Allocation::Process();
+
+  if (is_scoped_allocation()) {
+    // Nothing to do here for scoped allocations.
+    return OkStatus();
+  }
+  HloInstruction* final_instruction = AddGetTupleElements();
+  HloComputation* computation = final_instruction->parent();
+  return update_uses(computation, final_instruction);
 }
 
 Status MemorySpaceAssignment::ParentAllocation::PostProcess() {
@@ -8225,20 +8228,25 @@ Status MemorySpaceAssignment::ParentAllocation::PostProcess() {
   TF_ASSIGN_OR_RETURN(HloInstruction * new_while_body_root,
                       TupleUtil::ReplaceTupleWith(
                           AddGetTupleElements(), while_body->root_instruction(),
-                          defining_position_.index));
+                          get_raw_defining_position().index));
   while_body->set_root_instruction(new_while_body_root,
                                    /*accept_different_shape=*/true);
   return OkStatus();
 }
 
-void MemorySpaceAssignment::Allocation::MarkIfNeeded(
+void MemorySpaceAssignment::PinnedAllocation::MarkIfNeeded(
     absl::flat_hash_set<const Allocation*>& needed_allocations) const {
   MarkNeeded(needed_allocations);
 }
 
-void MemorySpaceAssignment::Allocation::MarkNeeded(
+void MemorySpaceAssignment::PinnedAllocation::MarkNeeded(
     absl::flat_hash_set<const Allocation*>& needed_allocations) const {
   needed_allocations.insert(this);
+}
+
+void MemorySpaceAssignment::CopyAllocation::MarkIfNeeded(
+    absl::flat_hash_set<const Allocation*>& needed_allocations) const {
+  MarkNeeded(needed_allocations);
 }
 
 void MemorySpaceAssignment::CopyAllocation::MarkNeeded(
@@ -8252,7 +8260,7 @@ void MemorySpaceAssignment::ParentAllocation::MarkIfNeeded(
   // Parent allocations are only needed if they have any uses or if there is a
   // copy allocation that copies this value (in that case, the copy allocation
   // will call this allocation's MarkNeeded function).
-  if (!uses_.empty()) {
+  if (!has_no_uses()) {
     MarkNeeded(needed_allocations);
   }
 }
@@ -8261,6 +8269,11 @@ void MemorySpaceAssignment::ParentAllocation::MarkNeeded(
     absl::flat_hash_set<const Allocation*>& needed_allocations) const {
   needed_allocations.insert(this);
   original_allocation_.MarkNeeded(needed_allocations);
+}
+
+void MemorySpaceAssignment::MirroredAllocation::MarkIfNeeded(
+    absl::flat_hash_set<const Allocation*>& needed_allocations) const {
+  MarkNeeded(needed_allocations);
 }
 
 void MemorySpaceAssignment::MirroredAllocation::MarkNeeded(
