@@ -290,8 +290,6 @@ llvm::Value* EmitNVPTXShflDown(llvm::Value* value, llvm::Value* offset,
 // Helper function to emit call to SPIR shfl_down intrinsic.
 llvm::Value* EmitSPIRShflDown(llvm::Value* value, llvm::Value* offset,
                               llvm::IRBuilder<>* b) {
-  llvm::Module* module = b->GetInsertBlock()->getModule();
-  llvm::Intrinsic::ID llvm_intrinsic_id;
   CHECK_EQ(value->getType()->getPrimitiveSizeInBits(), 32);
   if (value->getType()->isFloatTy()) {
     return EmitDeviceFunctionCall(
