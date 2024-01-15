@@ -235,7 +235,7 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
   llvm::LLVMContext& context = llvm_module->getContext();
   llvm::FunctionType* kernel_type = llvm::FunctionType::get(
       /*Result=*/llvm::Type::getVoidTy(context),
-      std::vector<llvm::Type*>(kNumLlvmArgs, builder->getPtrTy()),
+      std::vector<llvm::Type*>(kNumLlvmArgs, builder->getPtrTy(1)),
       /*isVarArg=*/false);
   llvm::Function* kernel =
       llvm::Function::Create(kernel_type, llvm::GlobalValue::ExternalLinkage,

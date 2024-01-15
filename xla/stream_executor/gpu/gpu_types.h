@@ -13,12 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// GPU (ROCm / CUDA) specific type handle resolution
+// GPU (SYCL / ROCm / CUDA) specific type handle resolution
 
 #ifndef XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
 #define XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
 
-#if TENSORFLOW_USE_ROCM
+#if TENSORFLOW_USE_SYCL
+
+#include <sycl/sycl.hpp>
+
+#elif TENSORFLOW_USE_ROCM
 
 #define __HIP_DISABLE_CPP_FUNCTIONS__
 
@@ -40,7 +44,34 @@ namespace gpu {
 // current CUDA/HIP version.
 struct UnsupportedGpuFeature {};
 
-#if TENSORFLOW_USE_ROCM
+#if TENSORFLOW_USE_SYCL
+typedef struct SYCLEventWrapper {
+  ::sycl::event* event;
+  ::sycl::queue* queue;
+} EventWrapper;
+
+using GpuContextHandle = ::sycl::context*;
+using GpuStreamHandle = ::sycl::queue*;
+using GpuEventHandle = EventWrapper*;
+using GpuFunctionHandle = ::sycl::kernel*;
+using GpuFunctionAttribute = const void*;
+using GpuDeviceHandle = ::sycl::device*;
+using GpuDevicePtr = void*;
+using GpuDeviceAttribute = const void*;
+using GpuDeviceProperty = const void*;
+using GpuModuleHandle = ze_module_handle_t;
+using GpuStatus = const void*;
+using GpuFuncCachePreference = const void*;
+using GpuSharedMemConfig = const void*;
+using GpuComplexType = std::complex<float>;
+using GpuDoubleComplexType = std::complex<double>;
+using GpuRngHandle = const void*;
+using GpuGraphHandle = const void*;
+using GpuGraphExecHandle = const void*;
+using GpuGraphNodeHandle = const void*;
+using GpuGraphConditionalHandle = UnsupportedGpuFeature;
+
+#elif TENSORFLOW_USE_ROCM
 
 using GpuContextHandle = hipCtx_t;
 using GpuStreamHandle = hipStream_t;

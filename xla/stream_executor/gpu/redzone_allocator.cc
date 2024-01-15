@@ -305,6 +305,7 @@ static absl::StatusOr<RedzoneCheckStatus> CheckRedzonesForBuffer(
   return RedzoneCheckStatus::OK();
 }
 
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 absl::StatusOr<RedzoneCheckStatus> RedzoneAllocator::CheckRedzones() const {
   StreamExecutor* executor = stream_->parent();
 
@@ -356,6 +357,7 @@ absl::StatusOr<RedzoneCheckStatus> RedzoneAllocator::CheckRedzones() const {
 
   return RedzoneCheckStatus::OK();
 }
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 std::string RedzoneCheckStatus::RedzoneFailureMsg() const {
   return absl::StrFormat(

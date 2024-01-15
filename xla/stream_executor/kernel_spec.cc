@@ -35,9 +35,9 @@ KernelLoaderSpec::KernelLoaderSpec(absl::string_view kernel_name)
 InProcessSymbol::InProcessSymbol(void *symbol, std::string kernel_name)
     : KernelLoaderSpec(std::move(kernel_name)), symbol_(symbol) {}
 
-CudaCubinInMemory::CudaCubinInMemory(const char *bytes,
+CudaCubinInMemory::CudaCubinInMemory(const char *bytes, int size,
                                      absl::string_view kernel_name)
-    : KernelLoaderSpec(kernel_name), bytes_(bytes) {}
+    : KernelLoaderSpec(kernel_name), bytes_(bytes), size_(size) {}
 
 bool CompareComputeCapability(const std::tuple<int, int> &lhs,
                               const std::tuple<int, int> &rhs) {
@@ -167,9 +167,9 @@ MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddInProcessSymbol(
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaCubinInMemory(
-    const char *bytes, absl::string_view kernel_name) {
+    const char *bytes, int size, absl::string_view kernel_name) {
   CHECK(cuda_cubin_in_memory_ == nullptr);
-  cuda_cubin_in_memory_.reset(new CudaCubinInMemory{bytes, kernel_name});
+  cuda_cubin_in_memory_.reset(new CudaCubinInMemory{bytes, size, kernel_name});
   return this;
 }
 

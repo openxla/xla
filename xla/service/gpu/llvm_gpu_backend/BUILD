@@ -4,6 +4,10 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
+load(
+    "@local_config_sycl//sycl:build_defs.bzl",
+    "if_sycl_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -69,6 +73,8 @@ cc_library(
     ] + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
         "@llvm-project//llvm:AMDGPUCodeGen",
+    ]) + if_sycl_is_configured([
+        "@spirv_llvm_translator//:spirv_llvm_translator",
     ]),
 )
 

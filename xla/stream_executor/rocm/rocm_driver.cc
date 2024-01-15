@@ -1164,6 +1164,14 @@ struct BitPatternToValue {
 
   return ret;
 }
+ 
+/* static */ tsl::Status GpuDriver::LoadSpirv(GpuContext* context,
+                                              const char* spir_contents,
+                                              const size_t size,
+                                              hipModule_t* module) {
+  return absl::Status{absl::StatusCode::kInternal,
+                      "Feature not supported on ROCm platform (LoadSpirv)"};
+}
 
 /* static */ absl::Status GpuDriver::SynchronousMemsetUint8(
     GpuContext* context, hipDeviceptr_t location, uint8 value, size_t size) {

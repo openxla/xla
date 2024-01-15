@@ -2096,8 +2096,10 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     auto driver_version = se::gpu::GpuDriver::GetDriverVersion();
 #if GOOGLE_CUDA
     constexpr int toolkit_version = CUDA_VERSION;
-#else
+#elif TENSORFLOW_USE_ROCM
     constexpr int toolkit_version = TF_ROCM_VERSION;
+#else
+    constexpr int toolkit_version = -1;
 #endif
     pipeline.AddPass<CommandBufferScheduling>(
         gpu_device_info, toolkit_version,

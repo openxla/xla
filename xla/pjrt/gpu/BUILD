@@ -2,6 +2,7 @@ load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm", "if_gpu_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
 load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
@@ -259,6 +260,9 @@ cc_library(
     ]) + if_rocm([
         "@local_config_rocm//rocm:rocm_headers",
         "//xla/service/gpu:amdgpu_compiler_impl",
+    ]) + if_sycl([
+        "@local_config_sycl//sycl:sycl_headers",
+        "//xla/service/gpu:spir_compiler_impl",
     ]),
     alwayslink = True,
 )

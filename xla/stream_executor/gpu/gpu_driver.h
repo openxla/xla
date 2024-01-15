@@ -629,6 +629,13 @@ class GpuDriver {
   static absl::Status LoadHsaco(GpuContext* context, const char* hsaco_contents,
                                 GpuModuleHandle* module);
 
+  // Loads SPIR with the SYCL runtime and stores the resulting handle in
+  // "module". Any error logs that are produced are logged internally.
+  // (supported on SYCL only)
+  static absl::Status LoadSpirv(GpuContext* context,
+                                   const char* spir_contents, const size_t size,
+                                   GpuModuleHandle* module);
+
   // Retrieves a named kernel from a loaded module, and places the resulting
   // handle into function (outparam) on success. Neither kernel_name nor
   // function may be null. No ownership is taken of kernel_name.

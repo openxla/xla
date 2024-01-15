@@ -13,6 +13,7 @@ load(
 )
 load(
     "//xla/stream_executor:build_defs.bzl",
+    "if_cuda_or_rocm",
     "if_gpu_is_configured",
 )
 load(
@@ -428,7 +429,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/protobuf:dnn_proto_cc",
-    ] + if_gpu_is_configured([
+    ] + if_cuda_or_rocm([
         ":ir_emitter_triton",
         "//xla/service/gpu/runtime:cholesky_thunk",
         "//xla/service/gpu/runtime:cub_sort_thunk",
@@ -965,7 +966,7 @@ alias(
 
 cc_library(
     name = "_nccl_api_impl",
-    srcs = if_gpu_is_configured(
+    srcs = if_cuda_or_rocm(
         ["nccl_api.cc"],
         ["nccl_api_stub.cc"],
     ),
@@ -1324,7 +1325,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
-    ] + if_gpu_is_configured([
+    ] + if_cuda_or_rocm([
         ":make_batch_pointers",
     ]) + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cublas_plugin",
@@ -2367,8 +2368,8 @@ xla_test(
 
 cc_library(
     name = "cusolver_context",
-    srcs = if_gpu_is_configured(["cusolver_context.cc"]),
-    hdrs = if_gpu_is_configured(["cusolver_context.h"]),
+    srcs = if_cuda_or_rocm(["cusolver_context.cc"]),
+    hdrs = if_cuda_or_rocm(["cusolver_context.h"]),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
@@ -3076,6 +3077,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/stream_executor/sycl:sycl_platform_id",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:node_hash_map",
@@ -3915,6 +3917,61 @@ cc_library(
 )
 
 cc_library(
+    name = "spir_compiler",
+    srcs = [
+        "spir_compiler_registration.cc",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":spir_compiler_impl",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+    ],
+    alwayslink = True,  # Contains compiler registration
+)
+
+cc_library(
+    name = "spir_compiler_impl",
+    srcs = [
+        "spir_compiler.cc",
+    ],
+    hdrs = [
+        "spir_compiler.h",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":cublas_pad_for_gemms",
+        ":cublas_padding_requirements",
+        ":cudnn_fused_conv_rewriter",
+        ":gemm_rewriter",
+        ":gpu_compiler",
+        ":gpu_conv_padding_legalization",
+        ":gpu_conv_rewriter",
+        ":gpu_layout_assignment",
+        ":reduction_degenerate_dim_remover",
+        ":reduction_dimension_grouper",
+        ":reduction_layout_normalizer",
+        ":target_constants",
+        ":tree_reduction_rewriter",
+        ":triangular_solve_rewriter",
+        "//xla:statusor",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:algebraic_simplifier",
+        "//xla/service:call_inliner",
+        "//xla/service:dot_dimension_merger",
+        "//xla/service:hlo_constant_folding",
+        "//xla/service:hlo_cse",
+        "//xla/service:hlo_pass",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:hlo_verifier",
+        "//xla/service:tuple_simplifier",
+        "//xla/service/gpu/llvm_gpu_backend",
+        "//xla/service/llvm_ir:llvm_util",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+    ],
+)
+
+cc_library(
     name = "all_reduce_blueconnect",
     srcs = ["all_reduce_blueconnect.cc"],
     hdrs = ["all_reduce_blueconnect.h"],
@@ -4276,12 +4333,12 @@ xla_cc_test(
 
 cc_library(
     name = "buffer_comparator",
-    srcs = if_gpu_is_configured(["buffer_comparator.cc"]),
-    hdrs = if_gpu_is_configured(["buffer_comparator.h"]),
+    srcs = if_cuda_or_rocm(["buffer_comparator.cc"]),
+    hdrs = if_cuda_or_rocm(["buffer_comparator.h"]),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
-    deps = if_gpu_is_configured([
+    deps = if_cuda_or_rocm([
         ":buffer_comparator_kernel",
         ":gpu_asm_opts_util",
         ":launch_dimensions",

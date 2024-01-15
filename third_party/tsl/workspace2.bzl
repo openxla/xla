@@ -20,6 +20,7 @@ load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/git:git_configure.bzl", "git_configure")
 load("//third_party/gpus:cuda_configure.bzl", "cuda_configure")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
+load("//third_party/gpus:sycl_configure.bzl", "sycl_configure")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
 load("//third_party/llvm:setup.bzl", "llvm_setup")
@@ -77,6 +78,7 @@ def _tf_toolchains():
     python_configure(name = "local_config_python")
     rocm_configure(name = "local_config_rocm")
     remote_execution_configure(name = "local_config_remote_execution")
+    sycl_configure(name = "local_config_sycl")
 
     # For windows bazel build
     # TODO: Remove def file filter when TensorFlow can export symbols properly on Windows.
@@ -601,6 +603,22 @@ def _tf_repositories():
         sha256 = "f28359aeba12f30d73d9e4711ef356dc842886968112162bc73002645139c39c",
         strip_prefix = "glog-0.4.0",
         urls = tf_mirror_urls("https://github.com/google/glog/archive/refs/tags/v0.4.0.tar.gz"),
+    )
+
+    tf_http_archive(
+        name = "spirv_headers",
+        sha256 = "1a248f4199f4a30b2e7304ed4d62f731765bab12d9fa4c5abb189a5e2d57f1f5",
+        strip_prefix = "SPIRV-Headers-1c6bb2743599e6eb6f37b2969acc0aef812e32e3",
+        urls = tf_mirror_urls("https://github.com/KhronosGroup/SPIRV-Headers/archive/1c6bb2743599e6eb6f37b2969acc0aef812e32e3.tar.gz"),
+    )
+
+    tf_http_archive(
+        name = "spirv_llvm_translator",
+        sha256 = "8d33cb29a480457152ce0166bb823fddfba89dea6ce4e7d4eccef7509951f73d",
+        strip_prefix = "SPIRV-LLVM-Translator-0aab1249acbfb8d206c24988f0974638c290e931",
+        build_file = "//third_party/spirv_llvm_translator:spirv_llvm_translator.BUILD",
+        patch_file = ["//third_party/spirv_llvm_translator:spirv_llvm_translator.patch"],
+        urls = tf_mirror_urls("https://github.com/KhronosGroup/SPIRV-LLVM-Translator/archive/0aab1249acbfb8d206c24988f0974638c290e931.tar.gz"),
     )
 
 def workspace():

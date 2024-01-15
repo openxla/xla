@@ -190,6 +190,12 @@ absl::Status GpuExecutor::LoadModuleFromHsaco(const char* hsaco,
       "Feature not supported on CUDA platform (LoadModuleFromHsaco)");
 }
 
+absl::Status GpuExecutor::LoadModuleFromSpir(const char* spir, const size_t size,
+                                            CUmodule* module) {
+  return absl::InternalError(
+      "Feature not supported on CUDA platform (LoadModuleFromSpir)");
+}
+
 absl::Status GpuExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
                                     Kernel* kernel) {
   GpuKernel* cuda_kernel = AsGpuKernel(kernel);

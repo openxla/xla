@@ -20,6 +20,10 @@ load(
     "if_rocm",
     "if_rocm_is_configured",
 )
+load(
+    "@local_config_sycl//sycl:build_defs.bzl",
+    "if_sycl_is_configured",
+)
 load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
 load(
@@ -1338,6 +1342,9 @@ cc_library(
     ]) + if_rocm_is_configured([
         "//xla/service/gpu:amdgpu_compiler",
         "//xla/stream_executor/rocm:stream_executor_rocm",
+    ]) + if_sycl_is_configured([
+        "//xla/service/gpu:spir_compiler",
+        "//xla/stream_executor/sycl:stream_executor_sycl",
     ]),
 )
 
@@ -3841,6 +3848,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/stream_executor/sycl:sycl_platform_id",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",

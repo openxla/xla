@@ -343,6 +343,11 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   absl::Status LoadModuleFromHsaco(const char* hsaco, GpuModuleHandle* module)
       TF_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
 
+  // (supported on SYCL only)
+  absl::Status LoadModuleFromSpir(const char* spir, const size_t size,
+                                 GpuModuleHandle* module)
+      TF_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
+
   absl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
                       const BlockDim& block_dims,
                       const std::optional<ClusterDim>& cluster_dims,

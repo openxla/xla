@@ -461,6 +461,11 @@ absl::Status GpuExecutor::LoadModuleFromHsaco(const char* hsaco,
   return absl::OkStatus();
 }
 
+absl::Status GpuExecutor::LoadModuleFromSpir(const char* spir, const size_t size,
+                                             hipModule_t* module) {
+  LOG(FATAL) << "Feature not supported on ROCM platform (LoadModuleFromSpir)";
+}
+
 // This is a non-essential operation; if there's a failure, proceed without
 // logging an error. It's nearly certain that in case of failures, we'd never
 // get here in the first place; these are very low-impact routines.
