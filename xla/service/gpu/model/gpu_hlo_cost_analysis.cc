@@ -443,26 +443,40 @@ absl::Status GpuHloCostAnalysis::HandleAllReduce(
 }
 
 absl::Status GpuHloCostAnalysis::HandleConcatenate(const HloInstruction* hlo) {
-  // Concat turns into a compare plus branch instruction.
-  int64_t flop_per_element = 6;
+  int64_t num_elements = ShapeUtil::ElementsInRecursive(hlo->shape());
+  int64_t flops_per_element = 6;  // Compare plus branch instruction.
+  current_properties_[kFlopsKey] = flops_per_element * num_elements;
+
+  int64_t dim = Cast<HloConcatenateInstruction>(hlo)->concatenate_dimension();
+  if (dim == 0) return absl::OkStatus();
+
   // If a warp crosses the operands boundary, both branches are executed. This
-  // depends on the tiling of the final fusion and is therefore hard to predict
-  // at this level. Executing both branches drives up the flops, but not the
-  // bandwidth. So it might seem like a good idea to fuse a concat into a
-  // memory-bound consumer. However, the divergent warps increase the cost of
-  // compute-heavy producers that might be fused later. We see this issue in
-  // some important LLM models that fuse a concat into a column reduction (see
-  // PriorityFusionTest.DontFuseConcat test). To prevent this particular fusion,
-  // we add large number of flops to the concat. Both the condition and the flop
-  // count are tuned to this particular case.
+  // increases the number of perceived flops, but not the bandwidth. The exact
+  // number depends on the tiling of the final fusion and is therefore hard to
+  // predict at this level.
   // TODO(b/315776282): Model this more accurately once we can reason about
   // tiling patterns.
-  int64_t dim = Cast<HloConcatenateInstruction>(hlo)->concatenate_dimension();
-  if (dim > 0 && hlo->operand(0)->shape().dimensions()[dim] & 31) {
-    flop_per_element = 400;
+  for (int i = 0; i < hlo->operand_count(); ++i) {
+    // Take into account inactive threads. This boldly assumes that 'dim' is the
+    // minor dimension after tiling.
+    static constexpr int64_t kWarpSize = 32;
+    int64_t size = hlo->operand(i)->shape().dimensions()[dim];
+    int64_t round_up_size = RoundUpTo(size, kWarpSize);
+    // Set multiplier of flops used in EstimateRunTimeForFusion().
+    current_properties_[GetOperandUtilizationKey(i)] =
+        round_up_size / static_cast<float>(size);
+    if (size < round_up_size) {
+      // It might seem like a good idea to fuse a concat into a memory-bound
+      // consumer (because bandwidth is unaffected by warp divergence).
+      // However, the divergent warps increase the cost of compute-heavy
+      // producers that might be fused later. We see this issue in some
+      // important LLM models that fuse a concat into a column reduction (see
+      // PriorityFusionTest.DontFuseConcatIntoReduce test). To prevent this
+      // particular fusion, we artificially increase the flops for the concat.
+      // The flop count is tuned to this particular case.
+      current_properties_[kFlopsKey] = 400 * num_elements;
+    }
   }
-  current_properties_[kFlopsKey] =
-      flop_per_element * ShapeUtil::ElementsInRecursive(hlo->shape());
   return absl::OkStatus();
 }
 
