@@ -37,7 +37,10 @@ struct Range {
   std::string ToString() const;
   void Print(std::ostream& out) const;
 
-  bool operator==(const Range&) const = default;
+  bool operator==(const Range& rhs) const {
+    return lower_bound == rhs.lower_bound &&
+           upper_bound == rhs.upper_bound;
+  }
 
   int64_t lower_bound = 0;
   int64_t upper_bound = 0;
@@ -60,7 +63,10 @@ struct Domain {
       absl::Span<const int64_t> dimension_upper_bounds,
       absl::Span<const int64_t> symbol_upper_bounds);
 
-  bool operator==(const Domain&) const = default;
+  bool operator==(const Domain& rhs) const {
+    return dimension_ranges == rhs.dimension_ranges &&
+           symbol_ranges == rhs.symbol_ranges;
+  }
 
   std::vector<Range> dimension_ranges;
   std::vector<Range> symbol_ranges;
@@ -107,7 +113,10 @@ struct IndexingMap {
   // Returns true if the map was simplified.
   bool Simplify();
 
-  bool operator==(const IndexingMap&) const = default;
+  bool operator==(const IndexingMap& rhs) const {
+    return affine_map == rhs.affine_map &&
+           domain == rhs.domain;
+  }
 
   mlir::AffineMap affine_map;
   Domain domain;
