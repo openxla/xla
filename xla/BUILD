@@ -1,4 +1,4 @@
-# Placeholder: load py_proto_library
+load("@rules_python//python:defs.bzl", "py_binary")
 load("//xla:xla.bzl", "xla_cc_test", "xla_py_proto_library")
 load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
