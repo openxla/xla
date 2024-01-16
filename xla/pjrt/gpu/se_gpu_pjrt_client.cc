@@ -766,7 +766,14 @@ GetStreamExecutorGpuDeviceAllocator(
 
     case GpuAllocatorConfig::Kind::kPlatform:
       LOG(INFO) << "Using platform allocator.";
-      break;
+      if (allocator_config.collective_memory_size != 0) {
+        LOG(WARNING)
+            << "collective_memory_size is non-zero, but allocator kind is set "
+               "to \"platform\". Collective memory will not be allocated.";
+      }
+      // Returning null will cause the client to use the default backend
+      // allocator.
+      return nullptr;
   }
 
   // Add any additional allocators for alternate memory spaces.
