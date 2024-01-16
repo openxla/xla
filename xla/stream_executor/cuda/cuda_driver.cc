@@ -977,6 +977,28 @@ static CUmemAllocationType ToCudaAllocationType(
   }
 }
 
+static CUmemPool_attribute ToCudaMemPoolAttribute(
+	GpuDriver::MemPoolAttribute attr){
+  switch (attr){
+	  case GpuDriver::MemPoolAttribute::kReuseFollowEventDependencies:
+		  return CU_MEMPOOL_ATTR_REUSE_FOLLOW_EVENT_DEPENDENCIES;
+	  case GpuDriver::MemPoolAttribute::kReuseAllowOpportunistic:
+		  return CU_MEMPOOL_ATTR_REUSE_ALLOW_OPPORTUNISTIC;
+	  case GpuDriver::MemPoolAttribute::kReuseAllowInternalDependencies:
+		  return CU_MEMPOOL_ATTR_REUSE_ALLOW_INTERNAL_DEPENDENCIES;
+	  case GpuDriver::MemPoolAttribute::kReleaseThreshold:
+		  return CU_MEMPOOL_ATTR_RELEASE_THRESHOLD;
+	  case GpuDriver::MemPoolAttribute::kReservedMemCurrent:
+		  return CU_MEMPOOL_ATTR_RESERVED_MEM_CURRENT;
+	  case GpuDriver::MemPoolAttribute::kReservedMemHigh:
+		  return CU_MEMPOOL_ATTR_RESERVED_MEM_HIGH;
+	  case GpuDriver::MemPoolAttribute::kUsedMemCurrent:
+		  return CU_MEMPOOL_ATTR_USED_MEM_CURRENT;
+	  case GpuDriver::MemPoolAttribute::kUsedMemHigh:
+		  return CU_MEMPOOL_ATTR_USED_MEM_HIGH;
+  }
+}
+
 /*static*/ absl::Status GpuDriver::GraphAddMemAllocNode(
     CUgraphNode* node, CUgraph graph, absl::Span<CUgraphNode> deps,
     GpuDriver::MemAccessFlags access_flags,
@@ -2490,6 +2512,108 @@ absl::StatusOr<int64_t> GpuDriver::GetMaxSharedMemoryPerBlockOptin(
           CU_OCCUPANCY_DISABLE_CACHING_OVERRIDE),
       absl::StrFormat("Failed to calculate occupancy of kernel %p", kernel));
   return max_blocks;
+}
+
+/* static */ absl::StatusOr<GpuContextHandle> GpuDriver::DevicePrimaryCtxRetain(GpuDeviceHandle dev){
+  CUcontext ctx;
+  RETURN_IF_CUDA_RES_ERROR(cuDevicePrimaryCtxRetain(&ctx, dev),
+                           absl::StrFormat("Failed to retain context"));
+  return ctx;
+}
+
+/* static */ absl::Status GpuDriver::DeviceGetDefaultMemPool(GpuContext* context,
+                                                  GpuMemoryPoolHandle* pool_ptr,
+                                                  GpuDeviceHandle dev){
+  ScopedActivateContext activated{context};
+  CUresult res = cuDeviceGetDefaultMemPool(pool_ptr, dev);
+  if (res != CUDA_SUCCESS || pool_ptr == nullptr){
+    return absl::InternalError(
+        absl::StrFormat("Failed to get default CUDA pool: %s", ToString(res)));
+  }
+  return absl::OkStatus();
+}
+
+/* static */ absl::Status GpuDriver::MemPoolGetAttribute(GpuContext* context,
+                                              GpuMemoryPoolHandle pool,
+                                              MemPoolAttribute attr,
+                                              void* value){
+  ScopedActivateContext activated{context};
+  CUmemPool_attribute cu_mem_pool_attr = ToCudaMemPoolAttribute(attr);
+  CUresult res = cuMemPoolGetAttribute(pool, cu_mem_pool_attr, value);
+  if (res != CUDA_SUCCESS){
+    return absl::InternalError(
+        absl::StrFormat("Failed to get CUDA pool attribute: %s", ToString(res)));
+  }
+  return absl::OkStatus();
+}
+
+/* static */ absl::Status GpuDriver::MemPoolSetAttribute(GpuContext* context,
+                                              GpuMemoryPoolHandle pool,
+                                              MemPoolAttribute attr,
+                                              void* value){
+  ScopedActivateContext activated{context};
+  CUmemPool_attribute cu_mem_pool_attr = ToCudaMemPoolAttribute(attr);
+  if ((cu_mem_pool_attr == CU_MEMPOOL_ATTR_RESERVED_MEM_CURRENT) ||
+	  (cu_mem_pool_attr == CU_MEMPOOL_ATTR_USED_MEM_CURRENT)){
+	return absl::InternalError("Trying to set unsupported memory pool attribute.");
+  }
+  CUresult res = cuMemPoolSetAttribute(pool, cu_mem_pool_attr, value);
+  if (res != CUDA_SUCCESS){
+    return absl::InternalError(
+        absl::StrFormat("Failed to set CUDA pool attribute: %s", ToString(res)));
+  }
+  return absl::OkStatus();
+}
+
+/* static */ absl::Status GpuDriver::MemPoolSetAccess(GpuContext* context,
+                                           GpuMemoryPoolHandle pool,
+                                           const GpuMemAccessDesc& desc,
+                                           size_t  count){
+  ScopedActivateContext activated{context};
+  CUresult res = cuMemPoolSetAccess(pool, &desc, count);
+  if (res != CUDA_SUCCESS){
+    return absl::InternalError(
+        absl::StrFormat("Error when setting access to the pool: location id: %d\n error: %s", desc.location.id, ToString(res)));
+  }
+  return absl::OkStatus();
+}
+
+/* static */ void* GpuDriver::DeviceAllocateAsync(GpuContext* context,
+                                                  uint64_t bytes,
+                                                  CUmemoryPool pool,
+                                                  CUstream stream){
+  if (bytes == 0) {
+    return nullptr;
+  }
+
+  ScopedActivateContext activated{context};
+  CUdeviceptr result = 0;
+  CUresult res = cuMemAllocFromPoolAsync(&result, bytes, pool, stream);
+  if (res != CUDA_SUCCESS) {
+    LOG(INFO) << "failed to allocate "
+              << tsl::strings::HumanReadableNumBytes(bytes) << " (" << bytes
+              << " bytes) from memory pool on device: " << ToString(res);
+    return nullptr;
+  }
+  void* ptr = reinterpret_cast<void*>(result);
+  VLOG(2) << "allocated " << ptr << " for context " << context->context()
+          << " of " << bytes << " bytes";
+  return ptr;
+}
+
+/* static */ void GpuDriver::DeviceDeallocateAsync(GpuContext* context,
+                                                   void* location,
+                                                   CUstream stream) {
+  ScopedActivateContext activation(context);
+  CUdeviceptr pointer = absl::bit_cast<CUdeviceptr>(location);
+  CUresult res = cuMemFreeAsync(pointer, stream);
+  if (res != CUDA_SUCCESS) {
+    LOG(ERROR) << "failed to free device memory at " << location
+               << "; result: " << ToString(res);
+  } else {
+    VLOG(2) << "deallocated " << location << " for context "
+            << context->context();
+  }
 }
 
 }  // namespace gpu

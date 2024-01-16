@@ -121,7 +121,7 @@ class GpuDriver {
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g89b3f154e17cc89b6eea277dbdf5c93a
   // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#memory-management
   static void DeviceDeallocate(GpuContext* context, void* location);
-
+    
   // Allocates a unified memory space of size bytes associated with the given
   // context via cuMemAllocManaged.
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1gb347ded34dc326af404aa02af5388a32
@@ -924,6 +924,37 @@ class GpuDriver {
   static absl::StatusOr<int> GetMaxOccupiedBlocksPerCore(
       GpuContext* context, GpuFunctionHandle kernel, int threads_per_block,
       size_t dynamic_shared_memory_bytes);
+
+  static absl::StatusOr<GpuContextHandle> DevicePrimaryCtxRetain(GpuDeviceHandle dev);
+
+  static absl::Status DeviceGetDefaultMemPool(GpuContext* context, GpuMemoryPoolHandle* pool_ptr, GpuDeviceHandle dev);
+
+  enum class  MemPoolAttribute{
+	  kReuseFollowEventDependencies,
+	  kReuseAllowOpportunistic,
+	  kReuseAllowInternalDependencies,
+	  kReleaseThreshold,
+	  kReservedMemCurrent,
+	  kReservedMemHigh,
+	  kUsedMemCurrent,
+	  kUsedMemHigh,
+  };
+
+  static absl::Status MemPoolGetAttribute(GpuContext* context, GpuMemoryPoolHandle pool, MemPoolAttribute attr, void* value);
+
+  static absl::Status MemPoolSetAttribute(GpuContext* context, GpuMemoryPoolHandle pool, MemPoolAttribute attr, void* value);
+  
+  static absl::Status MemPoolSetAccess(GpuContext* context, GpuMemoryPoolHandle pool, const GpuMemAccessDesc& desc, size_t count);
+
+  // Allocates a GPU memory space of size bytes associated with the given
+  // context via cuMemAllocFromPoolAsync/hipMemAllocFromPoolAsync in stream order.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1gf1dd6e1e2e8f767a5e0ea63f38ff260b
+  static void* DeviceAllocateAsync(GpuContext* context, uint64_t bytes, GpuMemoryPoolHandle pool, GpuStreamHandle stream);
+
+  // Deallocates a GPU memory space of size bytes allocated in stream order
+  // and associated with the given context via cuMemFreeAsync/hipFree.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g41acf4131f672a2a75cd93d3241f10cf
+  static void DeviceDeallocateAsync(GpuContext* context, void* location, GpuStreamHandle stream);
 
   // Seam for injecting an error at CUDA initialization time for testing
   // purposes.

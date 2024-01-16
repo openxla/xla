@@ -62,6 +62,9 @@ using GpuGraphHandle = hipGraph_t;
 using GpuGraphExecHandle = hipGraphExec_t;
 using GpuGraphNodeHandle = hipGraphNode_t;
 using GpuGraphConditionalHandle = UnsupportedGpuFeature;
+using GpuMemoryPoolHandle = hipMemPool_t;
+using GpuMemAccessDesc = hipMemAccessDesc;
+using GpuMemPoolAttribute = hipMemPoolAttr;
 #else  // CUDA
 
 using GpuContextHandle = CUcontext;
@@ -82,6 +85,9 @@ using GpuDoubleComplexType = cuDoubleComplex;
 using GpuGraphHandle = CUgraph;
 using GpuGraphExecHandle = CUgraphExec;
 using GpuGraphNodeHandle = CUgraphNode;
+using GpuMemoryPoolHandle = CUmemoryPool;
+using GpuMemAccessDesc = CUmemAccessDesc;
+using GpuMemPoolAttribute = CUmemPool_attribute;
 
 #if CUDA_VERSION >= 12030
 using GpuGraphConditionalHandle = CUgraphConditionalHandle;

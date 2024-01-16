@@ -853,6 +853,28 @@ static hipMemAllocationType ToHipAllocationType(
   }
 }
 
+static hipMemPoolAttr ToHipMemPoolAttribute(
+	GpuDriver::MemPoolAttribute attr){
+  switch (attr){
+	  case GpuDriver::MemPoolAttribute::kReuseFollowEventDependencies:
+		  return hipMemPoolReuseFollowEventDependencies;
+	  case GpuDriver::MemPoolAttribute::kReuseAllowOpportunistic:
+		  return hipMemPoolReuseAllowOpportunistic;
+	  case GpuDriver::MemPoolAttribute::kReuseAllowInternalDependencies:
+		  return hipMemPoolReuseAllowInternalDependencies;
+	  case GpuDriver::MemPoolAttribute::kReleaseThreshold:
+		  return hipMemPoolAttrReleaseThreshold;
+	  case GpuDriver::MemPoolAttribute::kReservedMemCurrent:
+		  return hipMemPoolAttrReservedMemCurrent;
+	  case GpuDriver::MemPoolAttribute::kReservedMemHigh:
+		  return hipMemPoolAttrReservedMemHigh;
+	  case GpuDriver::MemPoolAttribute::kUsedMemCurrent:
+		  return hipMemPoolAttrUsedMemCurrent;
+	  case GpuDriver::MemPoolAttribute::kUsedMemHigh:
+		  return hipMemPoolAttrUsedMemHigh;
+  }
+}
+
 /*static*/ absl::Status GpuDriver::GraphAddMemFreeNode(
     GpuGraphNodeHandle* node, GpuGraphHandle graph,
     absl::Span<GpuGraphNodeHandle> deps, GpuDevicePtr gpu_dst) {
@@ -2097,6 +2119,109 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
           &max_blocks, kernel, threads_per_block, dynamic_shared_memory_bytes),
       "Failed to calculate maximal active blocks per SM");
   return max_blocks;
+}
+
+/* static */ absl::StatusOr<GpuContextHandle> GpuDriver::DevicePrimaryCtxRetain(GpuDeviceHandle dev){
+  hipCtx_t ctx;
+  RETURN_IF_ROCM_ERROR(hipDevicePrimaryCtxRetain(&ctx, dev),
+                       absl::StrFormat("Failed to retain context"));
+  return ctx;
+}
+
+/* static */ absl::Status GpuDriver::DeviceGetDefaultMemPool(GpuContext* context,
+                                                  GpuMemoryPoolHandle* pool_ptr,
+                                                  GpuDeviceHandle dev){
+  ScopedActivateContext activated{context};
+  hipError_t res = hipDeviceGetDefaultMemPool(pool_ptr, dev);
+  if (res != hipSuccess || pool_ptr == nullptr){
+    return absl::InternalError(
+        absl::StrFormat("Failed to get default CUDA pool: %s", ToString(res)));
+  }
+  return absl::OkStatus();
+}
+
+/* static */ absl::Status GpuDriver::MemPoolGetAttribute(GpuContext* context,
+                                              GpuMemoryPoolHandle pool,
+                                              MemPoolAttribute attr,
+                                              void* value){
+  ScopedActivateContext activated{context};
+  hipMemPoolAttr hip_mem_pool_attr = ToHipMemPoolAttribute(attr);
+  hipError_t res = hipMemPoolGetAttribute(pool, hip_mem_pool_attr, value);
+  if (res != hipSuccess){
+    return absl::InternalError(
+        absl::StrFormat("Failed to get CUDA pool attribute: %s", ToString(res)));
+  }
+  return absl::OkStatus();
+}
+
+/* static */ absl::Status GpuDriver::MemPoolSetAttribute(GpuContext* context,
+                                              GpuMemoryPoolHandle pool,
+                                              MemPoolAttribute attr,
+                                              void* value){
+  ScopedActivateContext activated{context};
+  hipMemPoolAttr hip_mem_pool_attr = ToHipMemPoolAttribute(attr);
+  if ((hip_mem_pool_attr == hipMemPoolAttrReservedMemCurrent) ||
+	  (hip_mem_pool_attr == hipMemPoolAttrUsedMemCurrent)){
+	return absl::InternalError("Trying to set unsupported memory pool attribute.");
+  }
+  hipError_t res = hipMemPoolSetAttribute(pool, hip_mem_pool_attr, value);
+  if (res != hipSuccess){
+    return absl::InternalError(
+        absl::StrFormat("Failed to set CUDA pool attribute: %s", ToString(res)));
+  }
+  return absl::OkStatus();
+}
+
+/* static */ absl::Status GpuDriver::MemPoolSetAccess(GpuContext* context,
+                                           GpuMemoryPoolHandle pool,
+                                           const GpuMemAccessDesc& desc,
+                                           size_t  count){
+  ScopedActivateContext activated{context};
+  hipError_t res = hipMemPoolSetAccess(pool, &desc, count);
+  if (res != hipSuccess){
+    return absl::InternalError(
+        absl::StrFormat("Error when setting access to the pool: location id: %d\n error: %s", desc.location.id, ToString(res)));
+  }
+  return absl::OkStatus();
+}
+
+/* static */ void* GpuDriver::DeviceAllocateAsync(GpuContext* context,
+                                                  uint64_t bytes,
+                                                  hipMemPool_t pool,
+                                                  hipStream_t stream){
+  if (bytes == 0) {
+    return nullptr;
+  }
+
+  ScopedActivateContext activated{context};
+  hipDeviceptr_t result = 0;
+  hipError_t res = 	hipMallocFromPoolAsync(&result, bytes, pool, stream);
+  if (res != hipSuccess) {
+    LOG(INFO) << "failed to allocate "
+              << tsl::strings::HumanReadableNumBytes(bytes) << " (" << bytes
+              << " bytes) in stream: "<< *stream
+              << " from memory pool on device: " << ToString(res);
+    return nullptr;
+  }
+  void* ptr = reinterpret_cast<void*>(result);
+  VLOG(2) << "allocated " << ptr << " for context " << context->context()
+          << " of " << bytes << " bytes";
+  return ptr;
+}
+
+/* static */ void GpuDriver::DeviceDeallocateAsync(GpuContext* context,
+                                                   void* location,
+                                                   hipStream_t stream) {
+  ScopedActivateContext activation(context);
+  hipDeviceptr_t pointer = absl::bit_cast<hipDeviceptr_t>(location);
+  hipError_t res = hipFreeAsync(pointer, stream);
+  if (res != hipSuccess) {
+    LOG(ERROR) << "failed to free device memory at " << location
+               << "; result: " << ToString(res);
+  } else {
+    VLOG(2) << "deallocated " << location << " for context "
+            << context->context();
+  }
 }
 
 }  // namespace gpu
