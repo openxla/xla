@@ -222,6 +222,8 @@ std::optional<DimOrdersAndReqs> GetOperandDimOrdersAndCombinedReqsIfProfitable(
           /*src_operand_index=*/std::nullopt, dim_order, gpu_version,
           properties);
   if (!std::holds_alternative<DimOrdersAndReqs>(dim_orders_and_new_reqs)) {
+    FusionDecision dec = std::get<FusionDecision>(dim_orders_and_new_reqs);
+    VLOG(1) << "FusionDecision " << dec.Explain();
     return std::nullopt;
   }
   RequirementsOrError combined_reqs = CombineRequirements(

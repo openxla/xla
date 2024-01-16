@@ -749,6 +749,43 @@ CHECK:     %[[BLOCK_BASE_PTR:.*]] = tt.addptr %[[ARG_PTR]], %[[OFFSET]]
               tsl::testing::IsOkAndHolds(true));
 }
 
+TEST_F(TritonFilecheckTest, CodegenDynamicSliceWithCorrectOffsets) {
+  constexpr absl::string_view kHloText = R"(
+HloModule t
+
+triton_gemm {
+  parameter_0 = f32[2,4]{1,0} parameter(0)
+  parameter_1 = f32[4,5,2]{2,1,0} parameter(1)
+  parameter_2 = s32[] parameter(2)
+  parameter_3 = s32[] parameter(3)
+  ds.1 = f32[1,5,2]{2,1,0} dynamic-slice(f32[4,5,2]{2,1,0} parameter_1, s32[] parameter_2, s32[] parameter_3, s32[] parameter_3), dynamic_slice_sizes={1,5,2}
+  bitcast.1 = f32[5,2]{1,0} bitcast(f32[1,5,2]{2,1,0} ds.1)
+  ROOT d.1 = f32[4,5]{1,0} dot(f32[2,4]{1,0} parameter_0, f32[5,2]{1,0} bitcast.1), lhs_contracting_dims={0}, rhs_contracting_dims={1}
+}
+
+ENTRY e {
+  p3 = f32[2,4]{1,0} parameter(3)
+  p0 = f32[4,5,2]{2,1,0} parameter(0)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  ROOT triton_gemm_d = f32[4,5]{1,0} fusion(f32[2,4]{1,0} p3, f32[4,5,2]{2,1,0} p0, p1, p2), kind=kCustom, calls=triton_gemm, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"32","block_n":"32","block_k":"32","split_k":"1","num_stages":"1","num_warps":"4"}}}
+})";
+
+  TritonGemmConfig config(16, 64, 32, 1, 1, 2);
+  ASSERT_THAT(CreateTritonIrAndFileCheck(kHloText, config, EmitMatMul,
+                                         "triton_gemm", R"(
+CHECK:     tt.func @triton_fn(
+CHECK-DAG:   %[[C5_i32:.*]]  = arith.constant 5 : i32
+CHECK-DAG:   %[[C5_i64:.*]] = arith.constant 5 : i64
+CHECK:       %[[ARG_PTR:.*]] = tt.load %arg2 {cache = 1 : i32, evict = 1 : i32, isVolatile = false} : i32
+CHECK:       %[[ROW_OFFSET:.*]] = arith.muli %[[ARG_PTR]], %[[C5_i32]] : i32
+CHECK:       %[[ROW_OFFSET_i64:.*]] = arith.extsi %[[ROW_OFFSET]] : i32 to i64
+CHECK-DAG:   %[[ROW_LIMIT:.*]] = arith.addi %[[ROW_OFFSET_i64]], %[[C5_i64]] : i64
+CHECK:     tt.make_tensor_ptr %arg1,
+)"),
+              tsl::testing::IsOkAndHolds(true));
+}
+
 TEST_F(TritonGemmTest, DoNotUseTensorCoresWithNonDefaultPrecision) {
   const std::string kHloText = R"(
 triton_gemm_r {
@@ -1554,6 +1591,99 @@ ENTRY e {
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
+}
+
+TEST_F(TritonGemmTest, DynamicSliceIsSupported) {
+  const std::string hlo_text = R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[7,2]{1,0} parameter(0)
+  c1_s32 = s32[] constant(1)
+  c2_s32 = s32[] constant(2)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  compare = pred[] compare(p1, p2), direction=LT
+  c0_s32 = s32[] constant(0)
+  select = s32[] select(compare, c2_s32, c1_s32)
+  ds = f32[5,2]{1,0} dynamic-slice(p0, select, c0_s32), dynamic_slice_sizes={5,2}
+  p3 = f32[2,4]{1,0} parameter(3)
+  ROOT d = f32[4,5]{1,0} dot(p3,ds),
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo_text));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(),
+                           m::Fusion(m::Parameter(), m::Parameter()),
+                           m::Constant())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
+}
+
+TEST_F(TritonGemmTest, DynamicSliceOfMajormostContractingDimIsSupported) {
+  // Tests that slices on the major dimension are still valid if that dimension
+  // is contracted.
+  const std::string hlo_text = R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[5,4]{1,0} parameter(0)
+  c1_s32 = s32[] constant(1)
+  c2_s32 = s32[] constant(2)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  c0_s32 = s32[] constant(0)
+  compare = pred[] compare(p1, p2), direction=LT
+  select = s32[] select(compare, c1_s32, c2_s32)
+  ds = f32[2,4]{1,0} dynamic-slice(p0,select, c0_s32), dynamic_slice_sizes={2,4}
+  p3 = f32[2,4]{1,0} parameter(3)
+  ROOT d = f32[4,4]{1,0} dot(p3,ds),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo_text));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(),
+                           m::Fusion(m::Parameter(), m::Parameter()),
+                           m::Constant())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
+}
+
+TEST_F(TritonGemmTest, DynamicSliceSingleDimensionIntoReshapeIsSupported) {
+  // This directly tests the targeted use case (b/307922364) of iterating over
+  // layer weights and extracting them with dynamic slice.
+  const std::string hlo_text = R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[4,5,2]{2,1,0} parameter(0)
+  c0_s32 = s32[] constant(0)
+  c1_s32 = s32[] constant(1)
+  c2_s32 = s32[] constant(2)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  compare = pred[] compare(p1, p2), direction=LT
+  select = s32[] select(compare, c1_s32, c2_s32)
+  ds = f32[1,5,2]{2,1,0} dynamic-slice(p0, select, c0_s32, c0_s32), dynamic_slice_sizes={1,5,2}
+  b = f32[5,2]{1,0} reshape(ds)
+  p3 = f32[2,4]{1,0} parameter(3)
+  ROOT d = f32[4,5]{1,0} dot(p3,b),
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo_text));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter(),
+                           m::Fusion(m::Parameter(), m::Parameter()),
+                           m::Constant())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
 }
 
 class TritonGemmLevel2Test : public TritonGemmTest {

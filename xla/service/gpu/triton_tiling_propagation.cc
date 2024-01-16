@@ -384,9 +384,12 @@ RequirementsOrError GetRequirementsIfSupportedOrders(
 
   Requirements requirements = empty_requirements;
   for (const HloInstruction* operand : hlo.operands()) {
+    VLOG(8) << "Operand: " << operand->ToString();
     RequirementsOrError requirements_or_error =
         CombineRequirements(requirements, get_requirements(*operand));
     if (std::holds_alternative<FusionDecision>(requirements_or_error)) {
+      VLOG(8) << "Fusion decision: "
+              << std::get<FusionDecision>(requirements_or_error).Explain();
       return requirements_or_error;
     }
     requirements = std::get<Requirements>(requirements_or_error);
@@ -398,6 +401,8 @@ RequirementsOrError GetRequirementsIfSupportedOrders(
 DimOrderMap GetPropagatedDimOrdersForElementwise(
     const HloInstruction& hlo, TransformDirection direction,
     const DimensionOrder& src_dim_order) {
+  VLOG(8) << "GetPropagatedDimOrdersForElementwise: " << hlo.ToString();
+  VLOG(8) << "elementwise src_dim_order: " << src_dim_order.ToString();
   if (direction == TransformDirection::kOutputToInput) {
     DimOrderMap map;
     for (const HloInstruction* operand : hlo.operands()) {
@@ -422,6 +427,7 @@ const HloInstruction& GetSourceHlo(const HloInstruction& hlo,
 using ConstInstructionVector = absl::InlinedVector<const HloInstruction*, 2>;
 ConstInstructionVector GetDestHlos(const HloInstruction& hlo,
                                    TransformDirection direction) {
+  VLOG(8) << "GetDestHlos: " << hlo.ToString();
   if (direction == TransformDirection::kInputToOutput) {
     return {&hlo};
   }
@@ -429,6 +435,7 @@ ConstInstructionVector GetDestHlos(const HloInstruction& hlo,
   ConstInstructionVector hlos;
   hlos.reserve(hlo.operands().size());
   for (const HloInstruction* operand : hlo.operands()) {
+    VLOG(8) << "Operand: " << operand->ToString();
     hlos.push_back(operand);
   }
   return hlos;
@@ -781,6 +788,32 @@ DimOrderMapOrError GetPropagatedDimOrdersForDimAlteringOp(
               fragment->sliced_count());
         }
       }
+    } else if (hlo.opcode() == HloOpcode::kDynamicSlice) {
+      // All operands after idx 0 are scalar indices. As such, we do not want
+      // to explicitly define dim orders.
+      if (dst != &hlo && hlo.operand_index(dst) >= 1) {
+        continue;
+      }
+      VLOG(7) << "src dim order" << src_dim_order.ToString();
+      VLOG(7) << "dst dim order" << dst_dim_order.ToString();
+      const auto dynamic_slice = Cast<HloDynamicSliceInstruction>(&hlo);
+      dst_logical.resize(src_logical.size());
+      // const auto index_operands = dynamic_slice->index_operands();
+      for (int dim = 0; dim < src_logical.size(); ++dim) {
+        dst_logical[dim] = src_logical[dim];
+        if (dynamic_slice->slice_sizes(dim) != dst->shape().dimensions(dim)) {
+          if (dst_logical[dim].size() > 1) {
+            return FusionDecision("Slicing of fragmented dimension.");
+          }
+          auto fragment = dst_logical[dim].front();
+          fragment->set_count(dst->shape().dimensions(dim));
+
+          // As we do not know which section of the tensor we keep, we retain
+          // the whole part.
+          fragment->set_slice(fragment->slice_start(),
+                              dst->shape().dimensions(dim));
+        }
+      }
     } else {
       return FusionDecision("Function called on a wrong instruction.");
     }
@@ -816,6 +849,11 @@ DimOrderMapOrError GetPropagatedDimOrdersForDimAlteringOp(
         dst_dim_fragments_order[dim_index].push_back(it->second);
       }
     }
+    VLOG(7) << "AFTER dst dim order" << dst_dim_order.ToString();
+  }
+  for (const auto& [operand, dim_order] : dst_dim_orders) {
+    VLOG(1) << "dim order " << operand->ToString() << " "
+            << dim_order.ToString();
   }
   return dst_dim_orders;
 }
@@ -830,9 +868,10 @@ DimOrderMapOrError GetPropagatedDimOrders(const HloInstruction& hlo,
   if (hlo.opcode() != HloOpcode::kParameter &&
       direction == TransformDirection::kOutputToInput &&
       absl::c_any_of(hlo.users(), [](const HloInstruction* user) {
-        return user->opcode() == HloOpcode::kConcatenate;
+        return (user->opcode() == HloOpcode::kConcatenate ||
+                user->opcode() == HloOpcode::kDynamicSlice);
       })) {
-    return "No fusion into concatenations";
+    return "No fusion into concatenations or dynamic slice.";
   }
   if (hlo.opcode() == HloOpcode::kParameter ||
       hlo_query::IsScalarConstant(&hlo)) {
@@ -882,6 +921,45 @@ DimOrderMapOrError GetPropagatedDimOrders(const HloInstruction& hlo,
     if (direction != TransformDirection::kOutputToInput) {
       return "Unsupported slice direction.";
     }
+    return GetPropagatedDimOrdersForDimAlteringOp(hlo, direction, src_dim_order,
+                                                  properties);
+  } else if (hlo.opcode() == HloOpcode::kDynamicSlice &&
+             direction == TransformDirection::kOutputToInput) {
+    // We handle the dynamic slice within EmitTensorPointer, which is only
+    // used for GEMM fusions.
+    if (!std::holds_alternative<DotProperties>(properties)) {
+      return "Dynamic slices for now are only supported in GEMM fusions.";
+    }
+    if (absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
+          return operand->user_count() > 1;
+        })) {
+      return FusionDecision(
+          "Dynamic Slice has to be the only user of its inputs.");
+    }
+    // Similar to normal slice, we cannot slice a non-major-most dimension as
+    // that would introduce non-contiguous strides under tiling. The existing
+    // check against this in GetRequirementsIfSupportedOrder is not suitable for
+    // dynamic slices, so we instead check for this here.
+    VLOG(1) << "Dynamic slice: " << hlo.ToString();
+    VLOG(1) << "dslice shape: " << hlo.shape().ToString();
+    HloInstruction* input = hlo.operands()[0];
+    Layout in_layout = input->shape().layout();
+    int64_t majormost =
+        in_layout.minor_to_major(in_layout.minor_to_major_size() - 1);
+    VLOG(1) << "majormost " << majormost;
+    const HloDynamicSliceInstruction* dynamic_slice =
+        Cast<HloDynamicSliceInstruction>(&hlo);
+
+    for (int i = 0; i < input->shape().dimensions_size(); ++i) {
+      if (i == majormost) {
+        continue;
+      } else if (input->shape().dimensions(i) !=
+                 dynamic_slice->slice_sizes(i)) {
+        return FusionDecision(
+            "Unsupported dynamic slice on non-major-most dimension.");
+      }
+    }
+
     return GetPropagatedDimOrdersForDimAlteringOp(hlo, direction, src_dim_order,
                                                   properties);
   } else if (hlo.opcode() == HloOpcode::kReshape) {
@@ -989,6 +1067,14 @@ DimOrdersAndReqsOrError GetPropagatedDimOrdersAndRequirements(
   }
   DimOrderMap propagated_dim_orders =
       std::move(std::get<DimOrderMap>(propagated_dim_orders_or_error));
+  VLOG(1) << "GetPropagatedDimOrdersAndRequirements: " << hlo.ToString()
+          << "src dim order " << src_dim_order.ToString();
+  VLOG(1) << "propagated dim orders: " << propagated_dim_orders.size();
+  for (const auto& [operand, dim_order] : propagated_dim_orders) {
+    VLOG(1) << "dim order " << operand->ToString() << " "
+            << dim_order.ToString();
+  }
+
   RequirementsOrError requirements_or_error =
       GetRequirementsIfSupportedOrders(hlo, propagated_dim_orders, properties);
   if (std::holds_alternative<FusionDecision>(requirements_or_error)) {
@@ -1007,6 +1093,8 @@ GetPropagatedDimOrdersAndRequirementsIfProfitablyFusible(
     const HeroProperties& properties) {
   CHECK_EQ(transform_direction == TransformDirection::kInputToOutput,
            src_operand_index.has_value());
+  VLOG(1) << "GetPropagatedDimOrdersAndRequirementsIfProfitablyFusible: "
+          << hlo.ToString();
 
   if (hlo.opcode() == HloOpcode::kTuple ||
       hlo.opcode() == HloOpcode::kGetTupleElement) {
@@ -1018,9 +1106,12 @@ GetPropagatedDimOrdersAndRequirementsIfProfitablyFusible(
   if (hlo.opcode() == HloOpcode::kPad) {
     return "Pads are not fused yet.";
   }
+  VLOG(1) << "GetPropagatedDimOrdersAndRequirementsIfProfitablyFusible: "
+          << hlo.ToString();
   for (const HloInstruction* operand : hlo.operands()) {
     if (!IsTritonSupportedDataType(operand->shape().element_type(),
                                    gpu_version)) {
+      VLOG(1) << "Unsupported input data type: " << operand->ToString();
       return "Unsupported input data type.";
     }
   }

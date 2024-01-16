@@ -1818,6 +1818,7 @@ cc_library(
     hdrs = if_gpu_is_configured(["autotuner_util.h"]),
     deps = if_gpu_is_configured([
         ":gpu_asm_opts_util",
+        ":ir_emission_utils",
         ":stream_executor_util",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -1836,7 +1837,6 @@ cc_library(
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla:xla_proto_cc",
@@ -1845,6 +1845,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ]),
 )

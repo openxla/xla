@@ -34,8 +34,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/compilation_environments.h"
 #include "xla/service/gpu/gpu_asm_opts_util.h"
@@ -44,7 +47,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 #include "xla/stream_executor/stream.h"
@@ -54,6 +56,7 @@ limitations under the License.
 #include "tsl/platform/logging.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
+#include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -275,6 +278,56 @@ bool IsTextProtoPath(absl::string_view file_path) {
   return absl::OkStatus();
 }
 
+// Removes instances of dynamic slice from computations, replacing them with
+// slice operations indexed at 0 for each dimension. The passed in computation
+// is modified in place. The dynamic slice indices will be removed from the
+// computation if they have no other users, including if they are parameters to
+// the computation.
+/*static*/ absl::Status RemoveDynamicSliceFromComputation(
+    HloComputation* computation) {
+  for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
+    if (instr->opcode() != HloOpcode::kDynamicSlice) {
+      continue;
+    }
+    HloDynamicSliceInstruction* dynamic_slice =
+        Cast<HloDynamicSliceInstruction>(instr);
+    VLOG(5) << "Replacing dynamic slice: " << dynamic_slice->ToString();
+
+    // Create the replacing slice op.
+    std::vector<int64_t> start_indices =
+        std::vector<int64_t>(dynamic_slice->shape().rank(), 0);
+    std::vector<int64_t> limit_indices = dynamic_slice->dynamic_slice_sizes();
+    std::unique_ptr<HloInstruction> slice_instr_ptr =
+        HloInstruction::CreateSlice(
+            dynamic_slice->shape(), dynamic_slice->mutable_operand(0),
+            start_indices, limit_indices,
+            std::vector<int64_t>(start_indices.size(), 1));
+
+    // Replace the dynamic slice with the new slice in the computation.
+    // TODO(b/322359579): This is a workaround due to the crash which occurs
+    // when RemoveUnusedParameters follows ReplaceInstruction.
+    HloInstruction* slice_instr = slice_instr_ptr.get();
+    computation->AddInstruction(std::move(slice_instr_ptr));
+    TF_CHECK_OK(dynamic_slice->ReplaceAllUsesWith(slice_instr));
+    TF_CHECK_OK(computation->RemoveInstruction(dynamic_slice));
+    TF_CHECK_OK(computation->RemoveUnusedParametersFromAnyComputation());
+  }
+  return absl::OkStatus();
+}
+
+/*static*/ bool IsOnlyDynamicSliceIndex(HloInstruction* operand) {
+  // Indices are always scalars
+  if (operand->shape().rank() > 1) {
+    return false;
+  }
+  for (HloInstruction* user : operand->users()) {
+    if (user->opcode() != HloOpcode::kDynamicSlice) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /*static*/ std::unique_ptr<HloModule>
 AutotunerUtil::ExtractInstructionIntoNewModule(const HloInstruction& hlo) {
   auto new_hlo_module = std::make_unique<HloModule>(
@@ -285,6 +338,18 @@ AutotunerUtil::ExtractInstructionIntoNewModule(const HloInstruction& hlo) {
   HloCloneContext clone_context(new_hlo_module.get());
   std::vector<HloInstruction*> new_operands;
   for (const HloInstruction* operand : hlo.operands()) {
+    // Fusion computations will have dynamic slice instances removed.
+    // Skip all operands which are only used as indices to dynamic slice.
+    if (hlo.opcode() == HloOpcode::kFusion &&
+        hlo.fused_instructions_computation() != nullptr) {
+      HloInstruction* computation_param =
+          hlo.fused_instructions_computation()->parameter_instruction(
+              hlo.operand_index(operand));
+      if (IsOnlyDynamicSliceIndex(computation_param)) {
+        continue;
+      }
+    }
+
     std::unique_ptr<HloInstruction> new_parameter =
         HloInstruction::CreateParameter(parameter_number, operand->shape(),
                                         operand->name());
@@ -293,6 +358,14 @@ AutotunerUtil::ExtractInstructionIntoNewModule(const HloInstruction& hlo) {
   }
   std::unique_ptr<HloInstruction> new_instruction =
       hlo.CloneWithNewOperands(hlo.shape(), new_operands, &clone_context);
+
+  // Remove dynamic slice instances from the cloned computation, as well as the
+  // index parameters that were not cloned into new_instruction.
+  if (new_instruction->opcode() == HloOpcode::kFusion &&
+      new_instruction->fused_instructions_computation() != nullptr) {
+    TF_CHECK_OK(RemoveDynamicSliceFromComputation(
+        new_instruction->fused_instructions_computation()));
+  }
   builder.AddInstruction(std::move(new_instruction));
   new_hlo_module->AddEntryComputationWithLayouts(builder.Build());
   return new_hlo_module;
@@ -306,8 +379,16 @@ AutotunerUtil::ExtractComputationIntoNewModule(
                                   std::make_unique<CompilationEnvironments>(
                                       computation.parent()->comp_envs()));
   HloCloneContext clone_context(new_hlo_module.get());
-  new_hlo_module->AddEntryComputationWithLayouts(
+  new_hlo_module->AddEntryComputation(
       computation.CloneInContext(clone_context));
+  TF_CHECK_OK(RemoveDynamicSliceFromComputation(
+      new_hlo_module.get()->entry_computation()));
+  TF_CHECK_OK(new_hlo_module->entry_computation()
+                  ->RemoveUnusedParametersFromAnyComputation());
+  // The entry computation layout will still reference the removed parameters.
+  // Recompute and set the new computation layout.
+  new_hlo_module->mutable_config().SetComputationLayoutIfExists(
+      new_hlo_module->entry_computation()->ComputeProgramShape());
   return new_hlo_module;
 }
 

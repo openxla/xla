@@ -104,6 +104,76 @@ ENTRY entry {
                                /*allow_mixed_precision=*/false));
 }
 
+TEST_F(HloExtractionTest, InstructionExtractionHandlesNonFusionComputation) {
+  // This test verifies that non-fusion dots can be extracted without crashing.
+  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[2,4]{1,0} parameter(0)
+  p1 = f32[7,2]{1,0} parameter(1)
+  p2 = f32[7,2]{1,0} parameter(2)
+  add = f32[7,2]{1,0} add(p1, p2)
+  ROOT dot = f32[7,4]{1,0} dot(add, p0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})")
+                                                  .value();
+
+  std::unique_ptr<HloModule> extracted_module =
+      AutotunerUtil::ExtractInstructionIntoNewModule(
+          *module->entry_computation()->root_instruction());
+
+  module.release();
+  EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Dot(m::Parameter(), m::Parameter())));
+  EXPECT_EQ(extracted_module->entry_computation()->instruction_count(), 3);
+  TF_EXPECT_OK(VerifyHloModule(extracted_module.get(),
+                               /*layout_sensitive=*/true,
+                               /*allow_mixed_precision=*/false));
+}
+
+TEST_F(HloExtractionTest, InstructionExtractionRemovesDynamicSlice) {
+  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
+HloModule module
+
+triton_gemm_d_computation {
+  parameter_0 = f32[2,4]{1,0} parameter(0)
+  parameter_1 = f32[7,2]{1,0} parameter(1)
+  parameter_2 = s32[] parameter(2)
+  parameter_3 = s32[] parameter(3)
+  dynamic-slice = f32[4,2]{1,0} dynamic-slice(parameter_1, parameter_2, parameter_3), dynamic_slice_sizes={4,2}
+  ROOT dot = f32[4,4]{1,0} dot(parameter_0, dynamic-slice), lhs_contracting_dims={0}, rhs_contracting_dims={1}
+}
+
+ENTRY entry {
+  p1 = f32[2,4]{1,0} parameter(1)
+  p0 = f32[7,2]{1,0} parameter(0)
+  c1_s32 = s32[] constant(1)
+  c0_s32 = s32[] constant(0)
+  ROOT triton_gemm_d = f32[4,4]{1,0} fusion(p1, p0, c1_s32, c0_s32),
+        kind=kCustom, calls=triton_gemm_d_computation,
+        backend_config={"kind":"__triton_gemm"}
+})")
+                                                  .value();
+
+  std::unique_ptr<HloModule> extracted_module =
+      AutotunerUtil::ExtractInstructionIntoNewModule(
+          *module->entry_computation()->root_instruction());
+
+  module.release();
+  EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
+  HloComputation* new_gemm = extracted_module->entry_computation()
+                                 ->root_instruction()
+                                 ->called_computations()
+                                 .front();
+  EXPECT_THAT(new_gemm->root_instruction(),
+              GmockMatch(m::Dot(m::Parameter(), m::Slice(m::Parameter()))));
+  EXPECT_EQ(extracted_module->entry_computation()->instruction_count(), 3);
+  TF_EXPECT_OK(VerifyHloModule(extracted_module.get(),
+                               /*layout_sensitive=*/true,
+                               /*allow_mixed_precision=*/false));
+}
+
 TEST_F(HloExtractionTest, ComputationExtractionIsCorrect) {
   std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
 HloModule module
@@ -139,6 +209,45 @@ ENTRY entry {
 
   EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
               GmockMatch(m::Dot(m::Convert(m::Parameter()), m::Parameter())));
+  EXPECT_EQ(extracted_module->entry_computation()->instruction_count(), 4);
+  TF_EXPECT_OK(VerifyHloModule(extracted_module.get(),
+                               /*layout_sensitive=*/true,
+                               /*allow_mixed_precision=*/false));
+}
+
+TEST_F(HloExtractionTest, ComputationExtractionRemovesDynamicSlice) {
+  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
+HloModule module
+
+triton_gemm_d_computation {
+  parameter_0 = f32[2,4]{1,0} parameter(0)
+  parameter_1 = f32[7,2]{1,0} parameter(1)
+  parameter_2 = s32[] parameter(2)
+  parameter_3 = s32[] parameter(3)
+  dynamic-slice = f32[4,2]{1,0} dynamic-slice(parameter_1, parameter_2, parameter_3), dynamic_slice_sizes={4,2}
+  ROOT dot = f32[4,4]{1,0} dot(parameter_0, dynamic-slice), lhs_contracting_dims={0}, rhs_contracting_dims={1}
+}
+
+ENTRY entry {
+  p1 = f32[2,4]{1,0} parameter(1)
+  p0 = f32[7,2]{1,0} parameter(0)
+  c2_s32 = s32[] constant(2)
+  c0_s32 = s32[] constant(0)
+  ROOT triton_gemm_d = f32[4,4]{1,0} fusion(p1, p0, c2_s32, c0_s32),
+        kind=kCustom, calls=triton_gemm_d_computation,
+        backend_config={"kind":"__triton_gemm"}
+})")
+                                                  .value();
+
+  std::unique_ptr<HloModule> extracted_module =
+      AutotunerUtil::ExtractComputationIntoNewModule(
+          *module->entry_computation()
+               ->root_instruction()
+               ->fused_instructions_computation());
+
+  module.release();
+  EXPECT_THAT(extracted_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Dot(m::Parameter(), m::Slice(m::Parameter()))));
   EXPECT_EQ(extracted_module->entry_computation()->instruction_count(), 4);
   TF_EXPECT_OK(VerifyHloModule(extracted_module.get(),
                                /*layout_sensitive=*/true,

@@ -601,6 +601,74 @@ ENTRY e {
   (void)analysis;
 }
 
+TEST_F(TritonDotAnalysisTest, DynamicSliceIsSupported) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+triton_gemm {
+  parameter_0 = f32[2,18]{1,0} parameter(0)
+  parameter_1 = f32[2,18]{1,0} parameter(1)
+  m1 = f32[2,18]{1,0} multiply(f32[2,18]{1,0} parameter_0, f32[2,18]{1,0} parameter_1)
+  parameter_2 = f32[96,2]{1,0} parameter(2)
+  parameter_3 = s32[] parameter(3)
+  parameter_4 = s32[] parameter(4)
+  compare = pred[] compare(parameter_3, parameter_4), direction=LT
+  c0_s32 = s32[] constant(0)
+  c1_s32 = s32[] constant(1)
+  select = s32[] select(compare, c0_s32, c1_s32)
+  ds = f32[64,2]{1,0} dynamic-slice(parameter_2, select, c0_s32), dynamic_slice_sizes={64,2}
+  ROOT dot = f32[18,64]{1,0} dot(m1, ds), lhs_contracting_dims={0}, rhs_contracting_dims={1}
+}
+
+ENTRY e {
+  p3 = f32[2,18]{1,0} parameter(3)
+  p0 = f32[96,2]{1,0} parameter(0)
+  p1 = s32[] parameter(1)
+  p2 = s32[] parameter(2)
+  ROOT triton_gemm_d = f32[18,64]{1,0} fusion(p3, p3, p0, p1, p2),
+      kind=kCustom,
+      calls=triton_gemm,
+      backend_config={"kind":"__triton_gemm"}
+}
+)"));
+  const HloComputation* dot_computation =
+      module->entry_computation()->root_instruction()->called_computations()[0];
+  TF_ASSERT_OK_AND_ASSIGN(const auto analysis,
+                          TritonFusionAnalysis::Execute(*dot_computation));
+  VLOG(1) << analysis.ToString();
+  const HloInstruction* p0 = dot_computation->parameter_instruction(0);
+  const HloInstruction* p1 = dot_computation->parameter_instruction(1);
+  const HloInstruction* p2 = dot_computation->parameter_instruction(2);
+  EXPECT_EQ(*analysis.ScopeParameters(TritonFusionAnalysis::Scope::LHS).begin(),
+            p0);
+  EXPECT_EQ(*analysis.ScopeParameters(TritonFusionAnalysis::Scope::RHS).begin(),
+            p2);
+  EXPECT_THAT(*analysis.IterSpec(TritonFusionAnalysis::Scope::LHS, p0, 0),
+              ElementsAre(FieldsAre(/*stride=*/18, /*count=*/2,
+                                    /*slice_start=*/0, /*sliced_count=*/2,
+                                    /*subfragments=*/ElementsAre(2))));
+  EXPECT_THAT(*analysis.IterSpec(TritonFusionAnalysis::Scope::LHS, p0, 1),
+              ElementsAre(FieldsAre(/*stride=*/1, /*count=*/18,
+                                    /*slice_start=*/0, /*sliced_count=*/18,
+                                    /*subfragments=*/ElementsAre(18))));
+  EXPECT_THAT(*analysis.IterSpec(TritonFusionAnalysis::Scope::LHS, p1, 0),
+              ElementsAre(FieldsAre(/*stride=*/18, /*count=*/2,
+                                    /*slice_start=*/0, /*sliced_count=*/2,
+                                    /*subfragments=*/ElementsAre(2))));
+  EXPECT_THAT(*analysis.IterSpec(TritonFusionAnalysis::Scope::LHS, p1, 1),
+              ElementsAre(FieldsAre(/*stride=*/1, /*count=*/18,
+                                    /*slice_start=*/0, /*sliced_count=*/18,
+                                    /*subfragments=*/ElementsAre(18))));
+
+  EXPECT_THAT(*analysis.IterSpec(TritonFusionAnalysis::Scope::RHS, p2, 0),
+              ElementsAre(FieldsAre(/*stride=*/2, /*count=*/96,
+                                    /*slice_start=*/0, /*sliced_count=*/96,
+                                    /*subfragments=*/ElementsAre(96))));
+  EXPECT_THAT(*analysis.IterSpec(TritonFusionAnalysis::Scope::RHS, p2, 1),
+              ElementsAre(FieldsAre(/*stride=*/1, /*count=*/2,
+                                    /*slice_start=*/0, /*sliced_count=*/2,
+                                    /*subfragments=*/ElementsAre(2))));
+}
+
 using TritonSoftmaxAnalysisTest = HloTestBase;
 
 TEST_F(TritonSoftmaxAnalysisTest, DegenerateBatchDimensionIsSupported) {
@@ -631,6 +699,7 @@ ENTRY e {
       module->entry_computation()->root_instruction()->called_computations()[0];
   TF_ASSERT_OK_AND_ASSIGN(const auto analysis,
                           TritonFusionAnalysis::Execute(*computation));
+  VLOG(1) << analysis.ToString();
   EXPECT_THAT(*analysis.IterSpec(TritonFusionAnalysis::Scope::OUTPUT,
                                  computation->root_instruction(), 0),
               ElementsAre(FieldsAre(/*stride=*/1, /*count=*/97,
