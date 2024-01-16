@@ -53,6 +53,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
