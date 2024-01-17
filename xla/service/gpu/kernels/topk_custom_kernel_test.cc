@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/random/random.h"
 #include "absl/strings/substitute.h"
 #include "Eigen/Core"  // from @eigen_archive
+#include "xla/service/platform_util.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/multi_platform_manager.h"
 #include "xla/stream_executor/platform.h"
@@ -80,8 +81,10 @@ using TopKKernelTest = ::testing::TestWithParam<std::tuple<int, int, int, int>>;
 TEST_P(TopKKernelTest, TopKFloat) {
   using T = float;
 
+  auto name =
+      absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value());
   se::Platform* platform =
-      se::MultiPlatformManager::PlatformWithName("CUDA").value();
+      se::MultiPlatformManager::PlatformWithName(name).value();
   se::StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
   se::Stream stream(executor);
@@ -132,8 +135,10 @@ TEST_P(TopKKernelTest, TopKFloat) {
 TEST_P(TopKKernelTest, TopKPackedNegative) {
   using T = float;
 
+  auto name =
+      absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value());
   se::Platform* platform =
-      se::MultiPlatformManager::PlatformWithName("CUDA").value();
+      se::MultiPlatformManager::PlatformWithName(name).value();
   se::StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
   se::Stream stream(executor);

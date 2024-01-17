@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "Eigen/Core"  // from @eigen_archive
 #include "xla/service/gpu/runtime/topk_kernel_common.h"
+#include "xla/service/gpu/runtime/gpu_kernel_helper.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/kernel.h"
@@ -45,8 +46,6 @@ namespace {
 #if defined (GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
 
 using KernelArgsPacking = se::MultiKernelLoaderSpec::KernelArgsPacking;
-
-#define WAVEFRONT_SIZE 32
 
 // The optimal number of threads is the smaller value between the number of
 // threads available per block and the number of slices of data.
@@ -98,7 +97,7 @@ template <typename T>
 absl::StatusOr<CustomKernel> GetTypedTopK(std::string name, size_t num_elements,
                                           size_t k, size_t batch_size) {
   constexpr size_t kMaxKVSize = sizeof(uint64_t);
-  constexpr size_t kWavefrontSize = 32;
+  constexpr size_t kWavefrontSize = WAVEFRONT_SIZE;
   // Allocate shmem assuming we have a full reduction.
   int shmem_size = absl::bit_ceil(k) * kMaxKVSize * kWavefrontSize;
   int num_threads = EstimateOptimalNumThreads(num_elements, k, batch_size);
