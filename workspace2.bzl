@@ -1,10 +1,10 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
-# Import TSL Workspaces
-load("@tsl//:workspace2.bzl", "tsl_workspace2")
-
 # Import third party config rules.
 load("@bazel_skylib//lib:versions.bzl", "versions")
+
+# Import TSL Workspaces
+load("@tsl//:workspace2.bzl", "tsl_workspace2")
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 # Import third party repository rules. See go/tfbr-thirdparty.
@@ -53,18 +53,6 @@ def _tf_repositories():
         strip_prefix = "boringssl-c00d7ca810e93780bd0c8ee4eea28f4f2ea4bcdc",
         system_build_file = "//third_party/systemlibs:boringssl.BUILD",
         urls = tf_mirror_urls("https://github.com/google/boringssl/archive/c00d7ca810e93780bd0c8ee4eea28f4f2ea4bcdc.tar.gz"),
-    )
-
-    tf_http_archive(
-        name = "com_google_ortools",
-        sha256 = "bc4b07dc9c23f0cca43b1f5c889f08a59c8f2515836b03d4cc7e0f8f2c879234",
-        strip_prefix = "or-tools-9.6",
-        patch_file = ["//third_party/ortools:ortools.patch"],
-        urls = tf_mirror_urls("https://github.com/google/or-tools/archive/v9.6.tar.gz"),
-        repo_mapping = {
-            "@com_google_protobuf_cc": "@com_google_protobuf",
-            "@eigen": "@eigen_archive",
-        },
     )
 
     tf_http_archive(
