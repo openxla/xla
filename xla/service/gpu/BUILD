@@ -970,6 +970,9 @@ cc_library(
     defines = if_cuda_is_configured(["XLA_ENABLE_XCCL"]),
     deps = [
         ":nccl_clique_key",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
@@ -977,8 +980,13 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ] + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
+        "//xla/stream_executor/cuda:cuda_driver",
+        "//xla/stream_executor/cuda:cuda_executor",
+    ]) + if_gpu_is_configured([
+        "//xla/stream_executor/gpu:gpu_stream",
     ]),
 )
 
@@ -989,6 +997,8 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":nccl_clique_key",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
