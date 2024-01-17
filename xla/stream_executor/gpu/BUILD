@@ -92,6 +92,15 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_collectives_header",
+    hdrs = if_gpu_is_configured(["gpu_collectives.h"]),
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "gpu_driver_header",
     hdrs = if_gpu_is_configured(["gpu_driver.h"]),
     visibility = set_external_visibility([
@@ -198,6 +207,7 @@ cc_library(
     name = "gpu_executor_header",
     hdrs = if_gpu_is_configured(["gpu_executor.h"]),
     deps = [
+        ":gpu_collectives_header",
         ":gpu_kernel_header",
         ":gpu_types_header",
         "//xla/stream_executor:platform",
