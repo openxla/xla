@@ -13,23 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <optional>
 #include <vector>
 
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.pb.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_solver.h"
-#include "ortools/linear_solver/linear_solver.h"
+#include "ortools/math_opt/cpp/math_opt.h"
 
 namespace xla {
 namespace spmd {
 
-using ::operations_research::MPConstraint;
-using ::operations_research::MPSolver;
-using ::operations_research::MPVariable;
+using ::operations_research::math_opt::LinearExpression;
+using ::operations_research::math_opt::Model;
+using ::operations_research::math_opt::Variable;
 
-MPVariable* CreateMakespanVar(const AutoShardingSolverRequest& request,
-                              const std::vector<std::vector<MPVariable*>>& e,
-                              MPSolver& solver, MPConstraint& cost_constraint) {
-  return nullptr;  // TODO(moffitt): Implement this.
+std::optional<Variable> CreateMakespanVar(
+    const AutoShardingSolverRequest& request,
+    const std::vector<std::vector<Variable>>& e, Model& model,
+    LinearExpression& objective_expression) {
+  return std::nullopt;  // TODO(moffitt): Implement this.
 }
 
 double EvaluateMakespan(const AutoShardingSolverRequest& request,

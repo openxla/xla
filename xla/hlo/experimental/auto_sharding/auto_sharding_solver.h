@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_HLO_EXPERIMENTAL_AUTO_SHARDING_AUTO_SHARDING_SOLVER_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -25,7 +26,7 @@ limitations under the License.
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.pb.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
 #include "xla/statusor.h"
-#include "ortools/linear_solver/linear_solver.h"
+#include "ortools/math_opt/cpp/math_opt.h"
 
 namespace xla {
 namespace spmd {
@@ -97,11 +98,11 @@ std::vector<std::string> Rationalize(const AutoShardingSolverRequest& request,
                                      const AutoShardingSolverResult& subopt);
 
 // Creates and returns a variable for makespan.
-operations_research::MPVariable* CreateMakespanVar(
+std::optional<operations_research::math_opt::Variable> CreateMakespanVar(
     const AutoShardingSolverRequest& request,
-    const std::vector<std::vector<operations_research::MPVariable*>>& e,
-    operations_research::MPSolver& solver,
-    operations_research::MPConstraint& cost_constraint);
+    const std::vector<std::vector<operations_research::math_opt::Variable>>& e,
+    operations_research::math_opt::Model& model,
+    operations_research::math_opt::LinearExpression& objective_expression);
 
 double EvaluateMakespan(const AutoShardingSolverRequest& request,
                         const AutoShardingSolverResult& result,
