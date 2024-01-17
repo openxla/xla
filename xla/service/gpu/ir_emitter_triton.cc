@@ -1650,6 +1650,7 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
     iter_args_next.reserve(iter_args.size());
     absl::flat_hash_map<const HloInstruction*, Value> values_lhs;
     absl::flat_hash_map<const HloInstruction*, Value> values_rhs;
+    bool has_8_bit_arg = false;
     // Load tiles of all parameters of LHS and RHS scopes and advance pointers.
     for (int i = 0; i < iter_args.size() - 1; ++i) {
       const bool is_lhs =
@@ -1659,6 +1660,9 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
 
       const HloInstruction* param_hlo = iter_args_to_inputs[i];
       Type param_ty = TritonType(b, param_hlo->shape().element_type());
+      if (param_ty.getIntOrFloatBitWidth() <= 8) {
+        has_8_bit_arg = true;
+      }
       Type param_storage_ty = StorageType(b, param_ty);
       Value param_value =
           EmitParameterLoad(b, iter_args[i], iter_args_to_boundary_checks[i]);
@@ -1727,13 +1731,18 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
       dot_input_lhs = apply_mask(0, dot_input_lhs);
       dot_input_rhs = apply_mask(1, dot_input_rhs);
     }
-
+    // TODO(b/320659359) allow tf32 for all mixed types dots.
+    bool has_8_bit_to_f32_upcast =
+        has_8_bit_arg && dot_input_lhs.getType()
+                                 .cast<mlir::RankedTensorType>()
+                                 .getElementType() == b.getF32Type();
     const bool allow_tf32 =
         tsl::tensor_float_32_execution_enabled() &&
         absl::c_none_of(dot_instr->precision_config().operand_precision(),
                         [](const int precision) {
                           return precision != PrecisionConfig::DEFAULT;
-                        });
+                        }) &&
+        !has_8_bit_to_f32_upcast;
 
     // Execute matrix multiplication of input tiles and pass the accumulator.
     // TODO(manany): Should be looked into once we enable Hopper workloads.

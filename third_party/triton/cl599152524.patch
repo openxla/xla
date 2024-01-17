@@ -1,0 +1,17 @@
+diff --git a/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp b/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp
+--- a/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp
+@@ -303,11 +303,8 @@ public:
+       b = getMMAv3Operand(b, rewriter, 1);
+     } else {
+ 
+-      // convert operands
+-      // TODO(b/296812125): Fix minBitwidth issue upstream and uncomment.
+-      // int minBitwidth =
+-      //     std::min(computeOrigBitWidth(a), computeOrigBitWidth(b));
+-      int minBitwidth = 0;
++      int minBitwidth =
++          std::min(computeOrigBitWidth(a), computeOrigBitWidth(b));
+       Type minType = IntegerType::get(ctx, minBitwidth);
+       // convert A operand
+       auto newAEncoding = ttg::DotOperandEncodingAttr::get(
