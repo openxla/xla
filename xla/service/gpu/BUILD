@@ -848,7 +848,6 @@ tsl_gpu_library(
         ":nccl_api",
         ":nccl_clique",
         ":nccl_clique_key",
-        ":nccl_errors",
         ":nccl_utils",
         ":thunk",
         "//xla:shape_util",
@@ -899,24 +898,14 @@ tsl_gpu_library(
 #===-------------------------------------------------------------------------------------------===//
 
 # A lot of build complexity below is because NCCL dependency might not always be available and we
-# have `if_nccl` and `if_gpu_configured` that do not compose. NCCL header included directly in a few
-# targets (:nccl_types and :nccl_api) and all other targets should use these headers to launch
-# collective operations. This allows to minimize the spreading of #ifdef all over the XLA code base.
+# have `if_nccl` and `if_gpu_configured` that do not compose. NCCL header included directly in
+# :nccl_api target and all other targets should use this header to launch collective operations.
+# This allows to minimize the spreading of #ifdef all over the XLA code base.
 
 # Empty library to implement nested dependency conditions.
 cc_library(
     name = "empty",
     compatible_with = get_compatible_with_portable(),
-)
-
-alias(
-    name = "nccl_types",
-    actual = if_nccl(":_nccl_types", ":empty"),
-)
-
-alias(
-    name = "nccl_errors",
-    actual = if_nccl(":_nccl_errors", ":empty"),
 )
 
 alias(
@@ -941,18 +930,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
-)
-
-tsl_gpu_library(
-    name = "_nccl_types",
-    hdrs = ["nccl_types.h"],
-    defines = if_gpu_is_configured(["XLA_ENABLE_XCCL"]),
-    visibility = ["//visibility:private"],
-    deps = if_cuda_is_configured([
-        "@local_config_nccl//:nccl",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rccl",
-    ]),
 )
 
 alias(
@@ -1008,22 +985,6 @@ cc_library(
 )
 
 tsl_gpu_library(
-    name = "_nccl_errors",
-    srcs = ["nccl_errors.cc"],
-    hdrs = ["nccl_errors.h"],
-    visibility = ["//visibility:private"],
-    deps = [
-        ":_nccl_types",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings:str_format",
-    ] + if_cuda_is_configured([
-        "@local_config_nccl//:nccl",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rccl",
-    ]),
-)
-
-tsl_gpu_library(
     name = "_nccl_clique",
     srcs = ["nccl_clique.cc"],
     hdrs = ["nccl_clique.h"],
@@ -1065,8 +1026,6 @@ tsl_gpu_library(
     compatible_with = [],  # Override tsl_gpu_library()'s internal default value
     deps = [
         ":_nccl_clique",
-        ":_nccl_errors",
-        ":_nccl_types",
         ":thunk",
         "//xla:shape_util",
         "//xla:status",
@@ -1174,7 +1133,6 @@ cc_library(
         ":mock_nccl_xml_google",
         ":nccl_collective_thunks",
         ":nccl_api",
-        ":nccl_errors",
         ":nccl_utils",
         ":nccl_clique_key",
         ":nccl_clique",
@@ -1224,7 +1182,6 @@ cc_library(
     deps = if_gpu_is_configured([
         ":gpu_executable_run_options",
         ":nccl_collective_thunks",
-        ":nccl_errors",
         ":nccl_utils",
         ":nccl_clique_key",
         ":nccl_clique",
