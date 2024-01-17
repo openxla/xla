@@ -360,7 +360,6 @@ cc_library(
 cc_library(
     name = "stream_executor_headers",
     hdrs = [
-        "stream_executor_pimpl.h",  # TODO(ezhulenev): Remove internal header
         ":stream_executor_api_headers",
         ":stream_executor_plugin_headers",
     ],
