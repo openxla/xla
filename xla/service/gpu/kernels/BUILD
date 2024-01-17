@@ -1,7 +1,7 @@
+load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
-load("@tsl//tsl:tsl.bzl", "if_cuda_or_rocm")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
@@ -121,11 +121,10 @@ xla_test(
 
 cc_library(
     name = "topk_custom_kernel",
-    srcs = if_cuda_or_rocm(
-        ["topk_custom_kernel.cc"],
-        ["topk_custom_kernel_stub.cc"],
-    ),
+    srcs = ["topk_custom_kernel.cc"],
     hdrs = ["topk_custom_kernel.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) +
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     visibility = [":friends"],
     deps = [
         ":custom_kernel",
@@ -146,7 +145,7 @@ cc_library(
 
 xla_test(
     name = "topk_custom_kernel_test",
-    srcs = if_cuda_is_configured(["topk_custom_kernel_test.cc"]),
+    srcs = if_gpu_is_configured(["topk_custom_kernel_test.cc"]),
     backends = ["gpu"],
     deps = [
         ":topk_custom_kernel",
