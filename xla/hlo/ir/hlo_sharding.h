@@ -372,7 +372,7 @@ class HloSharding {
       return H::combine(std::move(h), sharding.tuple_elements_);
     }
     return H::combine(std::move(h), sharding.replicated_, sharding.manual_,
-                      sharding.unknown_, sharding.tile_assignment_.array(),
+                      sharding.unknown_, sharding.tile_assignment_.ToString(),
                       sharding.replicate_on_last_tile_dim_,
                       sharding.shard_group_.ToString());
   }
