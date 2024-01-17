@@ -853,6 +853,7 @@ tsl_gpu_library(
         ":thunk",
         "//xla:shape_util",
         "//xla:status",
+        "//xla:status_macros",
         "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
