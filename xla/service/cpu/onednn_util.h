@@ -17,25 +17,35 @@ limitations under the License.
 #define XLA_SERVICE_CPU_ONEDNN_UTIL_H_
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 
-#include "xla/xla_data.pb.h"
 #include "tsl/platform/cpu_info.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {
 
 inline bool IsSupportedType(xla::PrimitiveType dtype) {
   using tsl::port::CPUFeature;
-  static bool is_bf16_supported = TestCPUFeature(CPUFeature::AVX512_BF16) ||
-                                  TestCPUFeature(CPUFeature::AMX_BF16);
+  bool is_supported = false;
+  // TODO(intel-tf): Enable more types.
   switch (dtype) {
     case F32:
-      return true;
+      is_supported = true;
+      break;
     case BF16:
-      return is_bf16_supported;
+      is_supported = TestCPUFeature(CPUFeature::AVX512F) ||
+                     TestCPUFeature(CPUFeature::AVX_NE_CONVERT) ||
+                     TestCPUFeature(CPUFeature::AMX_BF16);
+      break;
+    case F16:
+      is_supported = (TestCPUFeature(CPUFeature::AVX512BW) &&
+                      (TestCPUFeature(CPUFeature::AVX512_FP16) ||
+                       TestCPUFeature(CPUFeature::AMX_FP16) ||
+                       TestCPUFeature(CPUFeature::AVX_NE_CONVERT)));
+      break;
     default:
       break;
   }
-  return false;
+  return is_supported;
 }
 
 }  // namespace cpu
