@@ -972,6 +972,7 @@ cc_library(
         ":nccl_clique_key",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/service:collective_ops_utils",
         "//xla/stream_executor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/hash",
@@ -998,6 +999,7 @@ cc_library(
     deps = [
         ":nccl_clique_key",
         "//xla:xla_data_proto_cc",
+        "//xla/service:collective_ops_utils",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
