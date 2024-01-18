@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_NCCL_COLLECTIVE_THUNK_H_
 #define XLA_SERVICE_GPU_NCCL_COLLECTIVE_THUNK_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -26,20 +27,20 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
 #include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/xla_data.pb.h"
 
 #if XLA_ENABLE_XCCL
-#include "xla/service/gpu/nccl_errors.h"
-#include "xla/service/gpu/nccl_utils.h"
+#include "xla/service/gpu/nccl_clique.h"
 #endif  // XLA_ENABLE_XCCL
 
 struct ncclComm;
@@ -108,6 +109,8 @@ class NcclCollectiveThunk : public Thunk {
     int64_t element_count;
     BufferAllocation::Slice source_buffer;
     BufferAllocation::Slice destination_buffer;
+    int64_t source_memory_space;
+    int64_t destination_memory_space;
     mlir::Value source_value;
     mlir::Value destination_value;
   };
@@ -211,6 +214,10 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
           operand_count, str));
 }
 
+size_t GetNumLocalParticipants(
+    const std::vector<GlobalDeviceId>& participants,
+    const std::vector<GlobalDeviceId>* local_devices);  // may be null
+
 #if XLA_ENABLE_XCCL
 // TODO(hanbinyoon): Consider moving to nccl_utils.h when deprecating Thunks.
 absl::StatusOr<NcclComm::Lock> LockNcclComm(
@@ -225,6 +232,9 @@ struct DeviceBufferPair {
   int64_t element_count;
   se::DeviceMemoryBase source_buffer;
   se::DeviceMemoryBase destination_buffer;
+  // TODO(b/320767790): Remove once memory space added to DeviceMemoryBase.
+  int64_t source_memory_space;
+  int64_t destination_memory_space;
 };
 
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
@@ -237,11 +247,9 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
     const std::vector<NcclCollectiveThunk::Buffer>& buffers,
     const std::vector<PrimitiveType>& element_types);
 
-// When using ncclMemAlloc, register buffers with the communicator to enable
-// copyless collectives.
-// Registration is only needed when not using cudaGraphs. Remove this function
-// when cudagraphs + nccl is enabled.
-// See
+// Registers buffers allocated in collective memory (see ncclMemAlloc) with a
+// communicator to enable zero-copy collectives.
+//
 // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/bufferreg.html
 Status MaybeRegisterBuffers(int device_ordinal,
                             const std::vector<DeviceBufferPair>& buffers,

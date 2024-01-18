@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/concurrency/ref_count.h"
 
 namespace xla::gpu {
 
@@ -41,9 +42,62 @@ struct NcclApi {
   // Forward declarations of opaque structs corresponding to underlying platform
   // types (also defined as opaque structs).
   struct NcclComm;
+  struct NcclPersistentPlanAllocator;
+  struct NcclRegisteredBuffer;
 
   // Convenience handles for defining API functions.
   using NcclCommHandle = NcclComm*;
+  using NcclPersistentPlanAllocatorHandle = NcclPersistentPlanAllocator*;
+  using NcclRegisteredBufferHandle = NcclRegisteredBuffer*;
+
+  // Persistent plan allocator allows to pass XLA memory allocator to NCCL to
+  // allocate device memory for persistent execution plans for NCCL operations
+  // captured into CUDA graphs. It relies on NCCL patch that is not part of
+  // upstream NCCL.
+  class PersistentPlanAllocator
+      : public tsl::ReferenceCounted<PersistentPlanAllocator> {
+   public:
+    PersistentPlanAllocator(int64_t device_ordinal,
+                            se::DeviceMemoryAllocator* allocator,
+                            se::Stream* stream);
+    ~PersistentPlanAllocator();
+
+    // Allocates new device memory buffer and copies `size` bytes from `src`
+    // into it (NCCL persistent execution plan for a collective operation).
+    absl::StatusOr<se::DeviceMemoryBase> AllocateAndInitialize(void* src,
+                                                               size_t size);
+    absl::Status Deallocate(se::DeviceMemoryBase mem);
+
+    NcclPersistentPlanAllocatorHandle handle() const { return handle_; }
+
+   private:
+    NcclPersistentPlanAllocatorHandle handle_;  // owned
+
+    int64_t device_ordinal_;
+    se::DeviceMemoryAllocator* allocator_;
+    se::Stream* stream_;
+  };
+
+  // RAII helper to set NCCL persistent plan `allocator` for `comm`.
+  class ScopedPersistentPlanAllocator {
+   public:
+    ScopedPersistentPlanAllocator(
+        NcclCommHandle comm,
+        tsl::RCReference<PersistentPlanAllocator> allocator);
+    ~ScopedPersistentPlanAllocator();
+
+   private:
+    NcclCommHandle comm_;
+    NcclPersistentPlanAllocatorHandle recover_;
+    tsl::RCReference<PersistentPlanAllocator> allocator_;
+  };
+
+  // Returns a slice of device memory `buff` containing `count` values of data
+  // type `dtype` starting from `offset`.
+  static absl::StatusOr<se::DeviceMemoryBase> Slice(se::DeviceMemoryBase buff,
+                                                    PrimitiveType dtype,
+                                                    size_t offset,
+                                                    size_t count);
 
   // Creates a new unique clique id.
   //
@@ -111,6 +165,33 @@ struct NcclApi {
                                 se::DeviceMemoryBase recv_buffer,
                                 PrimitiveType dtype, size_t count,
                                 NcclCommHandle comm, se::Stream* stream);
+
+  // Send data from `send_buff` to rank `peer`.
+  //
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/p2p.html#ncclsend
+  static absl::Status Send(se::DeviceMemoryBase send_buffer,
+                           PrimitiveType dtype, size_t count, int32_t peer,
+                           NcclCommHandle comm, se::Stream* stream);
+
+  // Receive data from rank `peer` into `recv_buff`.
+  //
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/p2p.html#ncclrecv
+  static absl::Status Recv(se::DeviceMemoryBase recv_buffer,
+                           PrimitiveType dtype, size_t count, int32_t peer,
+                           NcclCommHandle comm, se::Stream* stream);
+
+  // Register `buffer` with communicator `comm` for zero-copy communication.
+  // Returned handle can be used for future unregistration.
+  //
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclcommregister
+  static absl::StatusOr<NcclRegisteredBufferHandle> RegisterBuffer(
+      NcclCommHandle comm, se::DeviceMemoryBase buffer);
+
+  // Deregister buffer represented by `handle` from communicator `comm`.
+  //
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclcommderegister
+  static absl::StatusOr<NcclRegisteredBufferHandle> DeregisterBuffer(
+      NcclCommHandle comm, NcclRegisteredBufferHandle handle);
 };
 
 //===----------------------------------------------------------------------===//

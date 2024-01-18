@@ -179,7 +179,16 @@ cc_library(
     ],
 )
 
-# TODO(ezhulenev): Merge this target into `stream_executor`.
+cc_library(
+    name = "data_type",
+    hdrs = ["data_type.h"],
+    visibility = [":internal"],
+    deps = [
+        "@tsl//tsl/platform:ml_dtypes",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
+    ],
+)
+
 cc_library(
     name = "device_memory_allocator",
     hdrs = ["device_memory_allocator.h"],
@@ -266,7 +275,9 @@ cc_library(
     srcs = ["blas.cc"],
     hdrs = ["blas.h"],
     deps = [
-        ":stream_executor_headers",
+        ":data_type",
+        ":device_memory",
+        ":numeric_options",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -280,10 +291,10 @@ cc_library(
     srcs = ["dnn.cc"],
     hdrs = ["dnn.h"],
     deps = [
+        ":data_type",
         ":device_description_proto_cc",
         ":device_memory",
         ":numeric_options",
-        ":stream_executor_headers",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",

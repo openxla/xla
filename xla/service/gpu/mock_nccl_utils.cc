@@ -65,9 +65,7 @@ limitations under the License.
 #include "xla/service/gpu/nccl_clique.h"
 #include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
-#include "xla/service/gpu/nccl_errors.h"
 #include "xla/service/gpu/nccl_p2p_thunk_common.h"
-#include "xla/service/gpu/nccl_utils.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/rendezvous.h"
 #include "xla/shape_util.h"
@@ -84,6 +82,99 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+//==-----------------------------------------------------------------------===//
+// Macros to return or warn on NCCL errors.
+//==-----------------------------------------------------------------------===//
+
+static absl::Status ToStatus(ncclResult_t s, const char* file, int64_t line,
+                             const char* expr) {
+  if (s == ncclSuccess) return absl::OkStatus();
+
+  return absl::InternalError(absl::StrFormat(
+      "%s:%d: NCCL operation %s failed: %s."
+      " Last NCCL warning(error) log entry (may be unrelated) '%s'.",
+      file, line, expr, ncclGetErrorString(s), ncclGetLastError(nullptr)));
+}
+
+#define XLA_NCCL_STATUS(expr) \
+  xla::gpu::ToStatus(expr, __FILE__, __LINE__, #expr)
+
+#define XLA_NCCL_RETURN_IF_ERROR(expr)      \
+  do {                                      \
+    absl::Status s = XLA_NCCL_STATUS(expr); \
+    if (!s.ok()) {                          \
+      return s;                             \
+    }                                       \
+  } while (0)
+
+#define XLA_NCCL_LOG_IF_ERROR(expr)         \
+  do {                                      \
+    absl::Status s = XLA_NCCL_STATUS(expr); \
+    if (!s.ok()) {                          \
+      LOG(ERROR) << s.ToString();           \
+    }                                       \
+  } while (0)
+
+//==-----------------------------------------------------------------------===//
+
+static absl::StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType element_type,
+                                                     Thunk::Kind reduction_op) {
+  switch (element_type) {
+    case S8:
+    case F8E5M2:
+    case F8E4M3FN:
+      return ncclInt8;
+    case PRED:
+    case U8:
+      return ncclUint8;
+    case S32:
+      return ncclInt32;
+    case U32:
+      return ncclUint32;
+    case S64:
+      return ncclInt64;
+    case U64:
+      return ncclUint64;
+    case F16:
+      return ncclFloat16;
+    case F32:
+    case C64:
+      return ncclFloat32;
+    case F64:
+    case C128:
+      return ncclFloat64;
+    case S16:
+    case U16:
+      // For all-reduce and reduce-scatter, we expect 16 bit integer types to be
+      // promoted to 32-bit.
+      if (reduction_op == Thunk::kNcclAllReduce ||
+          reduction_op == Thunk::kNcclAllReduceStart ||
+          reduction_op == Thunk::kNcclReduceScatter) {
+        return tsl::errors::InvalidArgument(absl::StrFormat(
+            "Unsupported data type: %s", PrimitiveType_Name(element_type)));
+      }
+      // For collectives that just move data around, we can use ncclFloat16 for
+      // 16-bit integer data types.
+      return ncclFloat16;
+#if defined(__CUDA_BF16_TYPES_EXIST__) || TENSORFLOW_USE_ROCM
+    case BF16:
+      return ncclBfloat16;
+#endif
+    default:
+      return tsl::errors::InvalidArgument(absl::StrFormat(
+          "Unsupported data type: %s", PrimitiveType_Name(element_type)));
+  }
+}
+
+static absl::StatusOr<std::pair<ncclDataType_t, int>>
+ToNcclDataTypeAndCountMultiplier(PrimitiveType element_type,
+                                 Thunk::Kind reduction_op) {
+  TF_ASSIGN_OR_RETURN(ncclDataType_t dtype,
+                      ToNcclDataType(element_type, reduction_op));
+  bool is_complex = primitive_util::IsComplexType(element_type);
+  return std::make_pair(dtype, is_complex ? 2 : 1);
+}
 
 using ncclInfo_t = ncclInfo*;
 
