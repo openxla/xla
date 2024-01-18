@@ -587,6 +587,7 @@ xla_cc_test(
         ":hlo_parser",
         ":shape_inference",
         "//xla:shape_util",
+        "//xla:status",
         "//xla:statusor",
         "//xla:test",
         "//xla:test_helpers",
@@ -598,6 +599,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
 )
