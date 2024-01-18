@@ -129,6 +129,7 @@ cc_library(
         ":stream_executor_plugin_headers",
     ],
     deps = STREAM_EXECUTOR_DEPENDENCIES + [
+        ":stream",
         ":stream_executor_pimpl",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:thread_annotations",
@@ -179,7 +180,16 @@ cc_library(
     ],
 )
 
-# TODO(ezhulenev): Merge this target into `stream_executor`.
+cc_library(
+    name = "data_type",
+    hdrs = ["data_type.h"],
+    visibility = [":internal"],
+    deps = [
+        "@tsl//tsl/platform:ml_dtypes",
+        "@tsl//tsl/protobuf:dnn_proto_cc",
+    ],
+)
+
 cc_library(
     name = "device_memory_allocator",
     hdrs = ["device_memory_allocator.h"],
@@ -253,6 +263,39 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "stream",
+    srcs = ["stream.cc"],
+    hdrs = ["stream.h"],
+    deps = [
+        ":blas",
+        ":device_memory",
+        ":dnn",
+        ":event",
+        ":fft",
+        ":kernel",
+        ":launch_dim",
+        ":numeric_options",
+        ":platform",
+        ":stream_executor_internal",
+        ":stream_executor_pimpl",
+        ":temporary_device_memory",
+        ":temporary_memory_manager",
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:stacktrace",
+        "@tsl//tsl/platform:thread_annotations",
+    ],
+)
+
 #===--------------------------------------------------------------------------------------------===#
 # StreamExecutor plugins
 #===--------------------------------------------------------------------------------------------===#
@@ -266,7 +309,9 @@ cc_library(
     srcs = ["blas.cc"],
     hdrs = ["blas.h"],
     deps = [
-        ":stream_executor_headers",
+        ":data_type",
+        ":device_memory",
+        ":numeric_options",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -280,10 +325,10 @@ cc_library(
     srcs = ["dnn.cc"],
     hdrs = ["dnn.h"],
     deps = [
+        ":data_type",
         ":device_description_proto_cc",
         ":device_memory",
         ":numeric_options",
-        ":stream_executor_headers",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
@@ -553,10 +598,12 @@ transitive_hdrs(
 cc_library(
     name = "stream_executor_pimpl",
     srcs = [
-        "stream.cc",
         "stream_executor_pimpl.cc",
     ],
-    hdrs = ["stream_executor_pimpl.h"],
+    hdrs = [
+        "stream_executor.h",
+        "stream_executor_pimpl.h",
+    ],
     visibility = ["//visibility:private"],
     deps = [
         ":blas",  # build_cleaner: keep
