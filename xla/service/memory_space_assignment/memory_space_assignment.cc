@@ -2641,7 +2641,9 @@ void MemoryBoundLoopOptimizer::AllocateLoopValues() {
         AllocateTemporary(value);
         break;
       case LoopValue::AllocationType::kPinned:
-        AllocatePinned(value);
+        if (value.savings > 0) {
+          AllocatePinned(value);
+        }
         break;
       case LoopValue::AllocationType::kPrefetch:
         prefetch_values.push_back(&value);
@@ -8821,7 +8823,7 @@ Status MemorySpaceAssignment::VerifyAndExportHeapSimulatorTrace() {
     for (const Chunk& overlapping_chunk :
          interval_tree.ChunksOverlappingInTime(start_time, end_time - 1)) {
       if (chunk.OverlapsWith(overlapping_chunk)) {
-        return InternalError(
+        return Internal(
             ("Value %s (%d, %d) off: %d size: %d overlaps with another chunk"
              " off: %d size: %d"),
             value->ToShortString(), start_time, end_time, chunk.offset,

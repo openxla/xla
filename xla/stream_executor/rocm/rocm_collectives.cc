@@ -13,28 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/nccl_errors.h"
-
 #include <cstdint>
 
 #include "absl/status/status.h"
-#include "absl/strings/str_format.h"
-#include "xla/service/gpu/nccl_types.h"
+#include "absl/status/statusor.h"
+#include "xla/stream_executor/gpu/gpu_driver.h"
 
-namespace xla::gpu {
+namespace stream_executor::gpu {
 
-absl::Status ToStatus(NcclStatus s, const char* file, int64_t line,
-                      const char* expr) {
-#ifdef XLA_ENABLE_XCCL
-  if (s == ncclSuccess) return absl::OkStatus();
-
-  return absl::InternalError(absl::StrFormat(
-      "%s:%d: NCCL operation %s failed: %s."
-      " Last NCCL warning(error) log entry (may be unrelated) '%s'.",
-      file, line, expr, ncclGetErrorString(s), ncclGetLastError(nullptr)));
-#else
-  return absl::InternalError("XLA compiled without NCCL support");
-#endif
+absl::StatusOr<void*> GpuCollectives::CollectiveMemoryAllocate(
+    GpuContext* context, uint64_t bytes) {
+  return absl::UnimplementedError(
+      "Feature not supported on ROCm platform (CollectiveMemoryAllocate)");
 }
 
-}  // namespace xla::gpu
+absl::Status GpuCollectives::CollectiveMemoryDeallocate(GpuContext* context,
+                                                        void* location) {
+  return absl::UnimplementedError(
+      "Feature not supported on ROCm platform (CollectiveMemoryDeallocate)");
+}
+
+}  // namespace stream_executor::gpu

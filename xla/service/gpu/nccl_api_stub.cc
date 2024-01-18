@@ -23,8 +23,48 @@ limitations under the License.
 #include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
+#include "tsl/concurrency/ref_count.h"
 
 namespace xla::gpu {
+
+using PersistentPlanAllocator = NcclApi::PersistentPlanAllocator;
+using ScopedPersistentPlanAllocator = NcclApi::ScopedPersistentPlanAllocator;
+
+PersistentPlanAllocator::PersistentPlanAllocator(int64_t,
+                                                 se::DeviceMemoryAllocator*,
+                                                 se::Stream*) {
+  // Suppress clang unused private field warnings.
+  (void)device_ordinal_;
+  (void)allocator_;
+  (void)stream_;
+}
+
+PersistentPlanAllocator::~PersistentPlanAllocator() = default;
+
+absl::StatusOr<se::DeviceMemoryBase>
+PersistentPlanAllocator::AllocateAndInitialize(void*, size_t) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+absl::Status PersistentPlanAllocator::Deallocate(se::DeviceMemoryBase mem) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+ScopedPersistentPlanAllocator::ScopedPersistentPlanAllocator(
+    NcclCommHandle, tsl::RCReference<PersistentPlanAllocator>) {
+  // Suppress clang unused private field warnings.
+  (void)comm_;
+  (void)recover_;
+  (void)allocator_;
+}
+
+ScopedPersistentPlanAllocator::~ScopedPersistentPlanAllocator() = default;
+
+absl::StatusOr<se::DeviceMemoryBase> NcclApi::Slice(se::DeviceMemoryBase,
+                                                    PrimitiveType, size_t,
+                                                    size_t) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
 
 absl::StatusOr<NcclCliqueId> NcclApi::GetUniqueId() {
   return absl::UnimplementedError("XLA compiled without NCCL support");
@@ -71,6 +111,26 @@ absl::Status NcclApi::ReduceScatter(se::DeviceMemoryBase, se::DeviceMemoryBase,
 absl::Status NcclApi::AllGather(se::DeviceMemoryBase, se::DeviceMemoryBase,
                                 PrimitiveType, size_t, NcclCommHandle,
                                 se::Stream*) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+absl::Status NcclApi::Send(se::DeviceMemoryBase, PrimitiveType, size_t, int32_t,
+                           NcclCommHandle, se::Stream*) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+absl::Status NcclApi::Recv(se::DeviceMemoryBase, PrimitiveType, size_t, int32_t,
+                           NcclCommHandle, se::Stream*) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+absl::StatusOr<NcclApi::NcclRegisteredBufferHandle> NcclApi::RegisterBuffer(
+    NcclCommHandle, se::DeviceMemoryBase) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+absl::StatusOr<NcclApi::NcclRegisteredBufferHandle> NcclApi::DeregisterBuffer(
+    NcclCommHandle, NcclRegisteredBufferHandle) {
   return absl::UnimplementedError("XLA compiled without NCCL support");
 }
 
