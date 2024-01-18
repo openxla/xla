@@ -1019,17 +1019,10 @@ tsl_gpu_library(
 )
 
 cuda_library(
-    name = "mock_nccl_sleep_kernel_cuda",
-    srcs = if_cuda_is_configured(
-        [
-            "mock_nccl_sleep_kernel.cu.cc",
-        ],
-    ),
-    hdrs = if_cuda_is_configured(["mock_nccl_sleep_kernel.h"]),
-    compatible_with = [],
-    deps = [
-        "@local_config_cuda//cuda:cuda_headers",
-    ],
+    name = "sleep_kernel",
+    srcs = if_cuda_is_configured(["sleep_kernel.cu.cc"]),
+    hdrs = if_cuda_is_configured(["sleep_kernel.h"]),
+    deps = ["@local_config_cuda//cuda:cuda_headers"],
 )
 
 cc_library(
@@ -1097,12 +1090,12 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = if_cuda_is_configured([
         ":gpu_executable_run_options",
-        ":mock_nccl_sleep_kernel_cuda",
         ":mock_nccl_xml_google",
         ":nccl_collective_thunks",
         ":nccl_api",
         ":nccl_clique_key",
         ":nccl_clique",
+        ":sleep_kernel",
         ":thunk",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
