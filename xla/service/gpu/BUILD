@@ -2268,8 +2268,8 @@ cc_library(
 
 cc_library(
     name = "gpu_sort_rewriter",
-    srcs = if_cuda_is_configured(["gpu_sort_rewriter.cc"]),
-    hdrs = if_cuda_is_configured(["gpu_sort_rewriter.h"]),
+    srcs = if_gpu_is_configured(["gpu_sort_rewriter.cc"]),
+    hdrs = if_gpu_is_configured(["gpu_sort_rewriter.h"]),
     deps = [
         ":cub_sort_thunk",
         ":cublas_cudnn",
@@ -3732,6 +3732,7 @@ cc_library(
         ":gpu_compiler",
         ":gpu_conv_padding_legalization",
         ":gpu_conv_rewriter",
+        ":gpu_sort_rewriter",
         ":gpu_layout_assignment",
         ":reduction_degenerate_dim_remover",
         ":reduction_dimension_grouper",
