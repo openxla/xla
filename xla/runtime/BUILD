@@ -155,6 +155,7 @@ xla_cc_test(
         "//xla/mlir/runtime/ir/tests:testlib",
         "//xla/mlir/runtime/transforms:compilation_pipeline_gpu",
         "//xla/mlir/runtime/transforms:custom_call_encoding",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
