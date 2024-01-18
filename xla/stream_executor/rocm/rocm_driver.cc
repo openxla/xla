@@ -2123,7 +2123,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
 
 /* static */ absl::StatusOr<GpuContextHandle> GpuDriver::DevicePrimaryCtxRetain(GpuDeviceHandle dev){
   hipCtx_t ctx;
-  RETURN_IF_ROCM_ERROR(hipDevicePrimaryCtxRetain(&ctx, dev),
+  RETURN_IF_ROCM_ERROR(wrap::hipDevicePrimaryCtxRetain(&ctx, dev),
                        absl::StrFormat("Failed to retain context"));
   return ctx;
 }
@@ -2132,7 +2132,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
                                                   GpuMemoryPoolHandle* pool_ptr,
                                                   GpuDeviceHandle dev){
   ScopedActivateContext activated{context};
-  hipError_t res = hipDeviceGetDefaultMemPool(pool_ptr, dev);
+  hipError_t res = wrap::hipDeviceGetDefaultMemPool(pool_ptr, dev);
   if (res != hipSuccess || pool_ptr == nullptr){
     return absl::InternalError(
         absl::StrFormat("Failed to get default CUDA pool: %s", ToString(res)));
@@ -2146,7 +2146,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
                                               void* value){
   ScopedActivateContext activated{context};
   hipMemPoolAttr hip_mem_pool_attr = ToHipMemPoolAttribute(attr);
-  hipError_t res = hipMemPoolGetAttribute(pool, hip_mem_pool_attr, value);
+  hipError_t res = wrap::hipMemPoolGetAttribute(pool, hip_mem_pool_attr, value);
   if (res != hipSuccess){
     return absl::InternalError(
         absl::StrFormat("Failed to get CUDA pool attribute: %s", ToString(res)));
@@ -2164,7 +2164,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
 	  (hip_mem_pool_attr == hipMemPoolAttrUsedMemCurrent)){
 	return absl::InternalError("Trying to set unsupported memory pool attribute.");
   }
-  hipError_t res = hipMemPoolSetAttribute(pool, hip_mem_pool_attr, value);
+  hipError_t res = wrap::hipMemPoolSetAttribute(pool, hip_mem_pool_attr, value);
   if (res != hipSuccess){
     return absl::InternalError(
         absl::StrFormat("Failed to set CUDA pool attribute: %s", ToString(res)));
@@ -2177,7 +2177,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
                                            const GpuMemAccessDesc& desc,
                                            size_t  count){
   ScopedActivateContext activated{context};
-  hipError_t res = hipMemPoolSetAccess(pool, &desc, count);
+  hipError_t res = wrap::hipMemPoolSetAccess(pool, &desc, count);
   if (res != hipSuccess){
     return absl::InternalError(
         absl::StrFormat("Error when setting access to the pool: location id: %d\n error: %s", desc.location.id, ToString(res)));
@@ -2195,7 +2195,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
 
   ScopedActivateContext activated{context};
   hipDeviceptr_t result = 0;
-  hipError_t res = 	hipMallocFromPoolAsync(&result, bytes, pool, stream);
+  hipError_t res = 	wrap::hipMallocFromPoolAsync(&result, bytes, pool, stream);
   if (res != hipSuccess) {
     LOG(INFO) << "failed to allocate "
               << tsl::strings::HumanReadableNumBytes(bytes) << " (" << bytes
@@ -2214,7 +2214,7 @@ static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
                                                    hipStream_t stream) {
   ScopedActivateContext activation(context);
   hipDeviceptr_t pointer = absl::bit_cast<hipDeviceptr_t>(location);
-  hipError_t res = hipFreeAsync(pointer, stream);
+  hipError_t res = wrap::hipFreeAsync(pointer, stream);
   if (res != hipSuccess) {
     LOG(ERROR) << "failed to free device memory at " << location
                << "; result: " << ToString(res);

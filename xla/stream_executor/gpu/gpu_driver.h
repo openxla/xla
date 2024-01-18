@@ -925,10 +925,19 @@ class GpuDriver {
       GpuContext* context, GpuFunctionHandle kernel, int threads_per_block,
       size_t dynamic_shared_memory_bytes);
 
+  // Returns the context on the device with ordinal number dev via cuDevicePrimaryCtxRetain.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__PRIMARY__CTX.html#group__CUDA__PRIMARY__CTX_1g9051f2d5c31501997a6cb0530290a300
+  // https://docs.amd.com/projects/HIP/en/docs-5.7.0/.doxygen/docBin/html/group___context.html#gab6e1014e9a4dbe281b84e38d89ff2409
   static absl::StatusOr<GpuContextHandle> DevicePrimaryCtxRetain(GpuDeviceHandle dev);
 
+  //Returns the default memory pool on the device (ordinal dev) via cuDeviceGetDefaultMemPool.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__DEVICE.html#group__CUDA__DEVICE_1gc8bca3c97a78816303b8aa5773b741f2
+  // https://docs.amd.com/projects/HIP/en/docs-5.7.0/.doxygen/docBin/html/group___device.html#ga16d31ff3398a0c76ea5148563406412a
   static absl::Status DeviceGetDefaultMemPool(GpuContext* context, GpuMemoryPoolHandle* pool_ptr, GpuDeviceHandle dev);
 
+  // The memory pool attribute
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g5af6ea9ddd7633be98cb7de1bbf1d9f0
+  // https://docs.amd.com/projects/HIP/en/docs-5.7.0/.doxygen/docBin/html/group___global_defs.html#ga987c8e7a7e8171832a6647150854ca2e
   enum class  MemPoolAttribute{
 	  kReuseFollowEventDependencies,
 	  kReuseAllowOpportunistic,
@@ -940,20 +949,31 @@ class GpuDriver {
 	  kUsedMemHigh,
   };
 
+  // Returns the attributes of a memory pool via cuMemPoolGetAttribute.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1gd45ea7c43e4a1add4b971d06fa72eda4
+  // https://docs.amd.com/projects/HIP/en/docs-5.7.0/.doxygen/docBin/html/group___stream_o.html#
   static absl::Status MemPoolGetAttribute(GpuContext* context, GpuMemoryPoolHandle pool, MemPoolAttribute attr, void* value);
 
+  // Set the attributes of a memory pool via cuMemPoolSetAttribute.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g223e786cb217709235a06e41bccaec00
+  // https://docs.amd.com/projects/HIP/en/docs-5.7.0/.doxygen/docBin/html/group___stream_o.html#ga89006d354ee6e0428a432d6f2e76c8bf
   static absl::Status MemPoolSetAttribute(GpuContext* context, GpuMemoryPoolHandle pool, MemPoolAttribute attr, void* value);
-  
+
+  // Set the control visibility of a pool between devices via cuMemPoolSetAccess
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1gff3ce33e252443f4b087b94e42913406
+  // https://docs.amd.com/projects/HIP/en/docs-5.7.0/.doxygen/docBin/html/group___stream_o.html#
   static absl::Status MemPoolSetAccess(GpuContext* context, GpuMemoryPoolHandle pool, const GpuMemAccessDesc& desc, size_t count);
 
   // Allocates a GPU memory space of size bytes associated with the given
   // context via cuMemAllocFromPoolAsync/hipMemAllocFromPoolAsync in stream order.
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1gf1dd6e1e2e8f767a5e0ea63f38ff260b
+  // https://docs.amd.com/projects/HIP/en/docs-5.7.0/.doxygen/docBin/html/group___stream_o.html#ga24cab3e20805d8df79a06db1bb0d9938
   static void* DeviceAllocateAsync(GpuContext* context, uint64_t bytes, GpuMemoryPoolHandle pool, GpuStreamHandle stream);
 
   // Deallocates a GPU memory space of size bytes allocated in stream order
   // and associated with the given context via cuMemFreeAsync/hipFree.
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MALLOC__ASYNC.html#group__CUDA__MALLOC__ASYNC_1g41acf4131f672a2a75cd93d3241f10cf
+  // https://docs.amd.com/projects/HIP/en/docs-5.7.0/.doxygen/docBin/html/group___stream_o.html#ga42543ee2625b87cfd4f6ec29ae11c3d8
   static void DeviceDeallocateAsync(GpuContext* context, void* location, GpuStreamHandle stream);
 
   // Seam for injecting an error at CUDA initialization time for testing
