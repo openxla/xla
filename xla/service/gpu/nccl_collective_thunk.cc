@@ -264,7 +264,7 @@ absl::StatusOr<NcclComm::Lock> LockNcclComm(
     const NcclExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, int64_t op_id, int64_t stream_id,
-    bool enable_clique_optimization) {
+    bool require_nccl_rendezvous) {
   TF_ASSIGN_OR_RETURN(GlobalDeviceId global_device_id,
                       params.GetGlobalDeviceId());
 
@@ -303,7 +303,7 @@ absl::StatusOr<NcclComm::Lock> LockNcclComm(
 
   return AcquireNcclComm(params.run_id, OpId(op_id), std::move(participants),
                          num_local_participants, *clique_id_callback, rank,
-                         stream_id, enable_clique_optimization);
+                         stream_id, require_nccl_rendezvous);
 }
 #endif  // XLA_ENABLE_XCCL
 

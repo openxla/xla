@@ -103,7 +103,7 @@ struct NcclCliques {
 std::shared_ptr<absl::StatusOr<NcclClique::Lock>> AcquireNcclClique(
     RunId run_id, OpId op_id, NcclCliqueKey clique_key,
     const NcclCliqueIdCallback& clique_id_callback,
-    size_t num_local_participants, bool may_skip_rendezvous) {
+    size_t num_local_participants, bool require_nccl_rendezvous) {
   static auto& cliques = *new NcclCliques;
 
   VLOG(2) << "AcquireNcclClique Rendezvous key (clique_key: "
@@ -114,8 +114,9 @@ std::shared_ptr<absl::StatusOr<NcclClique::Lock>> AcquireNcclClique(
   // initialization. Return the clique state when we are done with such
   // initialization.
   //
-  // TODO(bixia): enable this unconditionally after fixing a deadlock issue.
-  if (may_skip_rendezvous) {
+  // TODO(b/297843588): enable this unconditionally after fixing a deadlock
+  // issue.
+  if (!require_nccl_rendezvous) {
     // Destruct clique if it hasn't been notified.
     NcclClique::Lock clique = cliques[clique_key].Acquire();
     if (clique->ready.HasBeenNotified() && clique->run_id == run_id.ToInt()) {
@@ -209,7 +210,7 @@ absl::StatusOr<NcclComm::Lock> AcquireNcclComm(
     RunId run_id, OpId op_id, std::vector<GlobalDeviceId> participants,
     size_t num_local_participants,
     const NcclCliqueIdCallback& clique_id_callback, int32_t rank,
-    int64_t stream_id, bool enable_clique_optimization) {
+    int64_t stream_id, bool require_nccl_rendezvous) {
   // Ensure that this group of threads have exclusive access to the clique to
   // prevent threads from different groups locking communicators in the clique.
   // The enable_clique_optimization value is only used for asynchronous
@@ -221,8 +222,8 @@ absl::StatusOr<NcclComm::Lock> AcquireNcclComm(
 
   std::shared_ptr<absl::StatusOr<NcclClique::Lock>> clique = AcquireNcclClique(
       run_id, op_id, clique_key, clique_id_callback, num_local_participants,
-      enable_clique_optimization ||
-          stream_id !=
+      require_nccl_rendezvous &&
+          stream_id ==
               GetStreamId(/*is_async=*/true, AsyncStreamKind::kCollective));
 
   TF_RETURN_IF_ERROR(clique->status());

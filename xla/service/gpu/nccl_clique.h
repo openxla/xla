@@ -76,7 +76,7 @@ absl::StatusOr<NcclComm::Lock> AcquireNcclComm(
     RunId run_id, OpId op_id, std::vector<GlobalDeviceId> participants,
     size_t num_local_participants,
     const NcclCliqueIdCallback& clique_id_callback, int32_t rank,
-    int64_t stream_id, bool enable_clique_optimization);
+    int64_t stream_id, bool require_nccl_rendezvous);
 
 }  // namespace xla::gpu
 

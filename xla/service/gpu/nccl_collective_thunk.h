@@ -224,7 +224,7 @@ absl::StatusOr<NcclComm::Lock> LockNcclComm(
     const NcclExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, int64_t op_id, int64_t stream_id,
-    bool enable_clique_optimization);
+    bool require_nccl_rendezvous);
 #endif  // XLA_ENABLE_XCCL
 
 struct DeviceBufferPair {

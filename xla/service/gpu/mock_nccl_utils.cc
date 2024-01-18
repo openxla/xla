@@ -300,7 +300,6 @@ absl::StatusOr<NcclComm::Lock> LockMockNcclComm(
     const NcclExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, int64_t op_id, int64_t stream_id,
-    bool enable_clique_optimization,
     GpuExecutableRunOptions::MockNcclTopoModel topo_model) {
   TF_ASSIGN_OR_RETURN(GlobalDeviceId global_device_id,
                       params.GetGlobalDeviceId());
@@ -344,7 +343,7 @@ absl::StatusOr<NcclComm::Lock> LockMockNcclComm(
   return AcquireMockNcclComm(params.run_id, OpId(op_id),
                              std::move(participants), std::move(local_devices),
                              num_local_participants, *clique_id_callback,
-                             global_rank, stream_id, false, topo_model);
+                             global_rank, stream_id, topo_model);
 }
 
 absl::Status RunMockNcclCollectives(std::vector<DeviceBufferPair>& buffers,
@@ -756,7 +755,6 @@ absl::StatusOr<NcclComm::Lock> AcquireMockNcclComm(
     RunId run_id, OpId op_id, std::vector<GlobalDeviceId> participants,
     std::vector<GlobalDeviceId> local_devices, size_t num_local_participants,
     const NcclCliqueIdCallback& clique_id_callback, int rank, int64_t stream_id,
-    bool enable_clique_optimization,
     GpuExecutableRunOptions::MockNcclTopoModel topo_model) {
   int nRanks = participants.size();
   std::vector<std::pair<int, int>> local_ranks;
@@ -772,7 +770,6 @@ absl::StatusOr<NcclComm::Lock> AcquireMockNcclComm(
   NcclCliqueKey clique_key(std::move(participants), stream_id);
   auto clique = AcquireNcclClique(
       run_id, op_id, clique_key, clique_id_callback, 1,
-      enable_clique_optimization ||
           stream_id == GetStreamId(true, AsyncStreamKind::kP2P));
 
   if (!clique->ok()) return clique->status();

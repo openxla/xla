@@ -634,8 +634,11 @@ message DebugOptions {
 
   // Whether reduction epilogue fusion is enabled in fusion passes.
   bool xla_gpu_enable_reduction_epilogue_fusion = 243;
-  // Allow early return when acquiring NCCL cliques.
-  bool xla_gpu_enable_nccl_clique_optimization = 244;
+
+  reserved 244;  // Was xla_gpu_enable_nccl_clique_optimization
+
+  // Require acquiring NCCL rendezvous.
+  bool xla_gpu_require_nccl_rendezvous = 268;
 
   // Replace custom calls with noop operations.
   bool xla_gpu_mock_custom_calls = 245;
@@ -671,7 +674,7 @@ message DebugOptions {
   // Enable NCCL user buffers.
   bool xla_gpu_enable_nccl_user_buffers = 267;
 
-  // Next id: 268
+  // Next id: 269
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

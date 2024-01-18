@@ -24,7 +24,6 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "xla/runtime/custom_call.h"
 #include "xla/runtime/executable.h"
@@ -94,22 +93,23 @@ absl::Status RunSyncOrAsync(
 }
 
 #if XLA_ENABLE_XCCL
-bool ShouldEnableCliqueOptimization(const NcclExecuteParams& params,
-                                    const DebugOptions* debug_options,
-                                    bool no_parallel_custom_call) {
-  // Enable clique optimization for single-host application, which is indicated
-  // by the absence of nccl_clique_id_callback. For multiple-host, only enable
-  // when a debug flag is set for now, due to some divergent compilation issues.
-  return no_parallel_custom_call &&
-         (!params.nccl_clique_id_callback ||
-          debug_options->xla_gpu_enable_nccl_clique_optimization());
+
+// Only require extra NCCL rendezvous if there's a custom call running in
+// parallel (can call cuMalloc which can deadlock), there's a multi-host setup
+// (evident from clique_id_callback being present), or it was explicitly
+// requested
+bool RequireNcclRendezvous(const NcclExecuteParams& params,
+                           const DebugOptions* debug_options,
+                           bool parallel_custom_call) {
+  return parallel_custom_call || params.nccl_clique_id_callback ||
+         debug_options->xla_gpu_require_nccl_rendezvous();
 }
 
 absl::StatusOr<NcclComm::Lock> GetNcclComm(
     const NcclExecuteParams& params, int64_t group_mode, int64_t op_id,
     absl::Span<const int64_t> replica_group_offsets,
     absl::Span<const int64_t> replica_group_values, int64_t stream_id,
-    bool enable_clique_optimization) {
+    bool require_nccl_rendezvous) {
   // TODO(b/233930690): Pass the attribute below as a nested array.
   // Pass an array of arrays using two vectors; one specifying all the values
   // and another specifying the (ending) offsets of each array in the other
@@ -126,14 +126,13 @@ absl::StatusOr<NcclComm::Lock> GetNcclComm(
 
   return LockNcclComm(params, replica_groups,
                       static_cast<CollectiveOpGroupMode>(group_mode), op_id,
-                      stream_id, enable_clique_optimization);
+                      stream_id, require_nccl_rendezvous);
 }
 
 absl::StatusOr<NcclComm::Lock> GetMockNcclComm(
     const NcclExecuteParams& params, int64_t group_mode, int64_t op_id,
     absl::Span<const int64_t> replica_group_offsets,
     absl::Span<const int64_t> replica_group_values, int64_t stream_id,
-    bool enable_clique_optimization,
     GpuExecutableRunOptions::MockNcclTopoModel topo_model) {
   // TODO(b/233930690): Pass the attribute below as a nested array.
   // Pass an array of arrays using two vectors; one specifying all the values
@@ -151,7 +150,7 @@ absl::StatusOr<NcclComm::Lock> GetMockNcclComm(
 
   return LockMockNcclComm(params, replica_groups,
                           static_cast<CollectiveOpGroupMode>(group_mode), op_id,
-                          stream_id, enable_clique_optimization, topo_model);
+                          stream_id, topo_model);
 }
 #endif  // XLA_ENABLE_XCCL
 
@@ -224,7 +223,6 @@ absl::Status MockNcclImplCommon(
   auto comm =
       GetMockNcclComm(params, group_mode, op_id, replica_group_offsets,
                       replica_group_values, GetStreamId(is_async),
-                      debug_options->xla_gpu_enable_nccl_clique_optimization(),
                       topo_model);  //);
   if (absl::IsCancelled(comm.status())) return absl::OkStatus();
   if (!comm.ok()) return comm.status();
@@ -264,10 +262,8 @@ absl::Status MockNcclP2PImplCommon(
   const std::string device_string =
       NcclCollectiveThunk::GetDeviceString(params);
 
-  auto comm = GetMockNcclComm(
-      params, group_mode, op_id, replica_group_offsets, replica_group_values,
-      stream_id, debug_options->xla_gpu_enable_nccl_clique_optimization(),
-      topo_model);
+  auto comm = GetMockNcclComm(params, group_mode, op_id, replica_group_offsets,
+                              replica_group_values, stream_id, topo_model);
   if (absl::IsCancelled(comm.status())) return absl::OkStatus();
   if (!comm.ok()) return comm.status();
 
@@ -314,22 +310,23 @@ absl::Status P2PImplCommon(const ServiceExecutableRunOptions* run_options,
                            NcclP2PRunner runner,
                            DeviceBuffersGetter device_buffers_getter,
                            uint64_t stream_id) {
-  (void)no_parallel_custom_call;
   NcclExecuteParams params(*run_options, stream->parent());
-  bool enable_clique_opt = ShouldEnableCliqueOptimization(
-      params, debug_options, no_parallel_custom_call);
+  bool require_nccl_rendezvous =
+      RequireNcclRendezvous(params, debug_options, no_parallel_custom_call);
 
   const std::string device_string =
       NcclCollectiveThunk::GetDeviceString(params);
-  auto comm = GetNcclComm(params, group_mode, op_id, replica_group_offsets,
-                          replica_group_values, stream_id, enable_clique_opt);
-  if (!comm.ok()) return comm.status();
+  TF_ASSIGN_OR_RETURN(
+      NcclComm::Lock comm,
+      GetNcclComm(params, group_mode, op_id, replica_group_offsets,
+                  replica_group_values, stream_id, require_nccl_rendezvous));
 
-  auto device_buffers = device_buffers_getter(args);
-  if (!device_buffers.ok()) return device_buffers.status();
-  if (device_buffers->size() != 1) {
+  TF_ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
+                      device_buffers_getter(args));
+
+  if (device_buffers.size() != 1) {
     return absl::InternalError(absl::StrFormat(
-        "Expected device buffer size: 1, got %d", device_buffers->size()));
+        "Expected device buffer size: 1, got %d", device_buffers.size()));
   }
 
   TF_ASSIGN_OR_RETURN(GlobalDeviceId global_device_id,
@@ -353,9 +350,8 @@ absl::Status P2PImplCommon(const ServiceExecutableRunOptions* run_options,
 
   return RunRepeated(debug_options->xla_gpu_collective_inflation_factor(),
                      [&]() -> absl::Status {
-                       return runner(source_target, (*device_buffers)[0],
-                                     *stream,
-                                     reinterpret_cast<ncclComm_t>(**comm),
+                       return runner(source_target, device_buffers[0], *stream,
+                                     reinterpret_cast<ncclComm_t>(*comm),
                                      device_string, current_id);
                      });
 }
@@ -536,12 +532,12 @@ absl::Status AllGatherImplCommon(
     absl::Span<const int64_t> replica_group_values, bool is_async,
     bool no_parallel_custom_call) {
   NcclExecuteParams params(*run_options, stream->parent());
-  bool enable_clique_opt = ShouldEnableCliqueOptimization(
-      params, debug_options, no_parallel_custom_call);
+  bool require_nccl_rendezvous =
+      RequireNcclRendezvous(params, debug_options, no_parallel_custom_call);
   TF_ASSIGN_OR_RETURN(
       auto comm, GetNcclComm(params, group_mode, op_id, replica_group_offsets,
                              replica_group_values, GetStreamId(is_async),
-                             enable_clique_opt));
+                             require_nccl_rendezvous));
 
   TF_ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
 
@@ -613,13 +609,13 @@ absl::Status AllReduceImplCommon(
     absl::Span<const int64_t> replica_group_values, bool is_async,
     bool no_parallel_custom_call) {
   NcclExecuteParams params(*run_options, stream->parent());
-  bool enable_clique_opt = ShouldEnableCliqueOptimization(
-      params, debug_options, no_parallel_custom_call);
+  bool require_nccl_rendezvous =
+      RequireNcclRendezvous(params, debug_options, no_parallel_custom_call);
 
   TF_ASSIGN_OR_RETURN(
       auto comm, GetNcclComm(params, group_mode, op_id, replica_group_offsets,
                              replica_group_values, GetStreamId(is_async),
-                             enable_clique_opt));
+                             require_nccl_rendezvous));
 
   TF_ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
 
@@ -697,10 +693,9 @@ absl::Status MockAllToAllImplCommon(
     GpuExecutableRunOptions::MockNcclTopoModel topo_model) {
   NcclExecuteParams params(*run_options, stream->parent());
 
-  auto comm = GetMockNcclComm(
-      params, group_mode, op_id, replica_group_offsets, replica_group_values,
-      GetStreamId(is_async),
-      debug_options->xla_gpu_enable_nccl_clique_optimization(), topo_model);
+  auto comm =
+      GetMockNcclComm(params, group_mode, op_id, replica_group_offsets,
+                      replica_group_values, GetStreamId(is_async), topo_model);
   // Skip mock nccl calls for gpus with non-zero ranks. Only run the nccl mock
   // calls for the gpu with rank 0.
   // TODO: Remove the check, once the pjrt client supports running benchmark
@@ -724,15 +719,16 @@ absl::Status AllToAllImplCommon(const ServiceExecutableRunOptions* run_options,
                                 absl::Span<const int64_t> replica_group_values,
                                 bool is_async, bool no_parallel_custom_call) {
   NcclExecuteParams params(*run_options, stream->parent());
-  bool enable_clique_opt = ShouldEnableCliqueOptimization(
-      params, debug_options, no_parallel_custom_call);
+  bool require_nccl_rendezvous =
+      RequireNcclRendezvous(params, debug_options, no_parallel_custom_call);
 
   TF_ASSIGN_OR_RETURN(
-      auto comm, GetNcclComm(params, group_mode, op_id, replica_group_offsets,
-                             replica_group_values, GetStreamId(is_async),
-                             enable_clique_opt));
-
-  TF_ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
+      NcclComm::Lock comm,
+      GetNcclComm(params, group_mode, op_id, replica_group_offsets,
+                  replica_group_values, GetStreamId(is_async),
+                  require_nccl_rendezvous));
+  TF_ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
+                      GetDeviceBufferPairs(args));
 
   return RunRepeated(
       debug_options->xla_gpu_collective_inflation_factor(), [&]() {
@@ -805,13 +801,13 @@ absl::Status ReduceScatterImplCommon(
     absl::Span<const int64_t> replica_group_values, bool is_async,
     bool no_parallel_custom_call) {
   NcclExecuteParams params(*run_options, stream->parent());
-  bool enable_clique_opt = ShouldEnableCliqueOptimization(
-      params, debug_options, no_parallel_custom_call);
+  bool require_nccl_rendezvous =
+      RequireNcclRendezvous(params, debug_options, no_parallel_custom_call);
 
   TF_ASSIGN_OR_RETURN(
       auto comm, GetNcclComm(params, group_mode, op_id, replica_group_offsets,
                              replica_group_values, GetStreamId(is_async),
-                             enable_clique_opt));
+                             require_nccl_rendezvous));
 
   TF_ASSIGN_OR_RETURN(auto device_buffers, GetDeviceBufferPairs(args));
 

@@ -41,14 +41,12 @@ absl::StatusOr<NcclComm::Lock> LockMockNcclComm(
     const NcclExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, int64_t op_id, int64_t stream_id,
-    bool enable_clique_optimization,
     GpuExecutableRunOptions::MockNcclTopoModel topo_model);
 
 absl::StatusOr<NcclComm::Lock> AcquireMockNcclComm(
     RunId run_id, OpId op_id, std::vector<GlobalDeviceId> participants,
     std::vector<GlobalDeviceId> local_devices, size_t num_local_participants,
     const NcclCliqueIdCallback& clique_id_callback, int rank, int64_t stream_id,
-    bool enable_clique_optimization,
     GpuExecutableRunOptions::MockNcclTopoModel topo_model);
 
 // Mock a Nccl collective op including all-reduce, all-gather, and
