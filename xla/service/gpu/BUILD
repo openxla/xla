@@ -904,31 +904,6 @@ cc_library(
 # :nccl_api target and all other targets should use this header to launch collective operations.
 # This allows to minimize the spreading of #ifdef all over the XLA code base.
 
-# Empty library to implement nested dependency conditions.
-cc_library(
-    name = "empty",
-    compatible_with = get_compatible_with_portable(),
-)
-
-alias(
-    name = "nccl_clique",
-    actual = if_nccl(":_nccl_clique", ":empty"),
-)
-
-cc_library(
-    name = "nccl_clique_key",
-    srcs = ["nccl_clique_key.cc"],
-    hdrs = ["nccl_clique_key.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        "//xla/service:global_device_id",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-    ],
-)
-
 alias(
     name = "nccl_api",
     actual = if_nccl(":_nccl_api_impl", ":_nccl_api_stub"),
@@ -983,8 +958,22 @@ cc_library(
     ],
 )
 
-tsl_gpu_library(
-    name = "_nccl_clique",
+cc_library(
+    name = "nccl_clique_key",
+    srcs = ["nccl_clique_key.cc"],
+    hdrs = ["nccl_clique_key.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "//xla/service:global_device_id",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "nccl_clique",
     srcs = ["nccl_clique.cc"],
     hdrs = ["nccl_clique.h"],
     deps = [
@@ -1011,11 +1000,7 @@ tsl_gpu_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
-    ] + if_cuda_is_configured([
-        "@local_config_nccl//:nccl",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rccl",
-    ]),
+    ],
 )
 
 cuda_library(
@@ -1063,6 +1048,12 @@ xla_cc_test(
     ]) + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
     ]),
+)
+
+# Empty library to implement nested dependency conditions.
+cc_library(
+    name = "empty",
+    compatible_with = get_compatible_with_portable(),
 )
 
 alias(
