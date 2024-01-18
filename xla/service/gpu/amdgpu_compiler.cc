@@ -148,6 +148,14 @@ absl::Status AMDGPUCompiler::AddConvAndGemmAutotuningPasses(
   return absl::OkStatus();
 }
 
+absl::Status AMDGPUCompiler::AddCustomKernelReplacementPasses(
+    HloPassPipeline* pipeline, const DebugOptions& debug_options) {
+  if (debug_options.xla_gpu_enable_cub_radix_sort()) {
+    pipeline->AddPass<GpuSortRewriter>();
+  }
+  return absl::OkStatus();
+}
+
 AMDGPUCompiler::AMDGPUCompiler()
     : GpuCompiler(stream_executor::rocm::kROCmPlatformId,
                   amdgpu::TargetTriple(), amdgpu::DataLayout()) {}
