@@ -820,7 +820,7 @@ cc_library(
     ],
 )
 
-tsl_gpu_library(
+cc_library(
     name = "nccl_collective_thunks",
     srcs = [
         "nccl_all_gather_thunk.cc",
@@ -842,8 +842,6 @@ tsl_gpu_library(
         "nccl_recv_thunk.h",
         "nccl_send_thunk.h",
     ],
-    # Override tsl_gpu_library()'s internal default value of ["//buildenv/target:<something>"].
-    compatible_with = [],
     deps = [
         ":backend_configs_cc",
         ":buffer_allocations",
@@ -861,6 +859,7 @@ tsl_gpu_library(
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:lhlo",
         "//xla/mlir_hlo:lhlo_gpu",
+        "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
         "//xla/service:hlo_parser",
