@@ -145,9 +145,6 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
   AotCompilationOptions aot_options(gpu_compiler.PlatformId());
   aot_options.set_target_config(*options.target_config);
 
-  const int num_replicas = hlo_module->config().replica_count();
-  const int num_partitions = hlo_module->config().num_partitions();
-  const std::string name = hlo_module->name();
   auto unique_module_group =
       std::make_unique<HloModuleGroup>(std::move(hlo_module));
   TF_ASSIGN_OR_RETURN(
@@ -155,8 +152,7 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
       gpu_compiler.CompileAheadOfTime(std::move(unique_module_group),
                                       aot_options));
   return std::make_unique<StreamExecutorExecutable>(
-      std::move(input_options), std::move(aot_results), num_replicas,
-      num_partitions, name);
+      std::move(input_options), std::move(hlo_module), std::move(aot_results));
 #else
   return absl::InternalError(
       "GPU Compilation requires the target to be built with CUDA or "

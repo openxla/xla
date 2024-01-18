@@ -583,9 +583,11 @@ StatusOr<std::unique_ptr<StreamExecutorExecutable>> FromProto(
         gpu::GpuCompiler::LoadAotCompilationResultStatic(executable));
     deserialized_aot_executables.push_back(std::move(deserialized));
   }
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
+                      HloModule::CreateFromProtoWithConfig(proto.hlo_module()));
   return std::make_unique<StreamExecutorExecutable>(
-      compile_options, std::move(deserialized_aot_executables),
-      proto.num_replicas(), proto.num_partitions(), proto.name());
+      compile_options, std::move(hlo_module),
+      std::move(deserialized_aot_executables));
 }
 #endif
 }  // namespace

@@ -26,13 +26,14 @@ class StreamExecutorExecutable : public PjRtExecutable {
  public:
   StreamExecutorExecutable(
       const CompileOptions& compile_options,
-      std::vector<std::unique_ptr<xla::AotCompilationResult>> executables,
-      int num_replicas, int num_partitions, absl::string_view name)
+      std::unique_ptr<HloModule> hlo_module,
+      std::vector<std::unique_ptr<xla::AotCompilationResult>> executables)
       : compile_options_(compile_options),
+        hlo_module_(std::move(hlo_module)),
         aot_executables_(std::move(executables)),
-        num_replicas_(num_replicas),
-        num_partitions_(num_partitions),
-        name_(name) {}
+        num_replicas_(hlo_module_->config().replica_count()),
+        num_partitions_(hlo_module_->config().num_partitions()),
+        name_(hlo_module_->name()) {}
 
   StatusOr<std::string> SerializeExecutable() const override;
 
@@ -63,8 +64,13 @@ class StreamExecutorExecutable : public PjRtExecutable {
     return aot_executables_;
   }
 
+  StatusOr<std::string> FingerprintExecutable() const override {
+    return hlo_module_->GetFingerprint128();
+  };
+
  private:
   CompileOptions compile_options_;
+  std::unique_ptr<HloModule> hlo_module_;
   std::vector<std::unique_ptr<xla::AotCompilationResult>> aot_executables_;
   int num_replicas_;
   int num_partitions_;

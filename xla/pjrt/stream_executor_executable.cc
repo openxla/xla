@@ -28,6 +28,8 @@ StatusOr<std::string> StreamExecutorExecutable::SerializeExecutable() const {
   StreamExecutorExecutableProto proto;
   TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                       compile_options_.ToProto());
+  TF_ASSIGN_OR_RETURN(*proto.mutable_hlo_module(),
+                      hlo_module_->ToProtoWithConfig());
   for (const std::unique_ptr<xla::AotCompilationResult>& aot_executable :
        aot_executables_) {
     TF_ASSIGN_OR_RETURN(*proto.add_executables(),

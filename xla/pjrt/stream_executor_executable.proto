@@ -18,6 +18,7 @@ syntax = "proto3";
 package xla;
 
 import "xla/pjrt/compile_options.proto";
+import "xla/xla.proto";
 
 message StreamExecutorExecutableProto {
   CompileOptionsProto compile_options = 1;
@@ -25,4 +26,5 @@ message StreamExecutorExecutableProto {
   int32 num_replicas = 3;
   int32 num_partitions = 4;
   string name = 5;
+  HloModuleProtoWithConfig hlo_module = 6;
 }
