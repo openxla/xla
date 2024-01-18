@@ -296,8 +296,7 @@ using PjRtCrossHostRecvNotifier =
     std::function<void(StatusOr<PjRtCrossHostRecvState>)>;
 
 // A sized chunk of host data. The host data can be either in host layout or in
-// device layout, and it can be one part of the entire buffer. The PjRt
-// implementations can customize how the memory is allocated and deallocated.
+// device layout, and it can be one part of the entire buffer.
 class PjRtChunk {
  public:
   // Allocate a PjRtChunk using malloc.
@@ -426,12 +425,22 @@ class PjRtHostMemoryForDeviceManager {
                                              const Shape& host_shape,
                                              const Shape& device_shape) = 0;
 
+  // Version that consumes a `PjRtChunk`. `chunk.deleter_` may be
+  // moved to the output chunk.
+  virtual StatusOr<PjRtChunk> ToDeviceLayout(PjRtChunk src_chunk,
+                                             const Shape& host_shape,
+                                             const Shape& device_shape) = 0;
   // Transforms the host memory representations of a shape with the device
   // layout to the host memory representation of the same shape with the host
   // layout. `src_shape` and `dst_shape` may only differ in their layouts.
   virtual Status ToHostLayout(const void* src_data, size_t src_size,
                               const Shape& src_shape, void* dst_data,
                               size_t dst_size, const Shape& dst_shape) = 0;
+
+  // Allocates host memory owned by the chunk. If no alignment is specified,
+  // a suitable default is used.
+  virtual StatusOr<PjRtChunk> AllocateChunk(
+      size_t size, std::optional<size_t> alignment) = 0;
 };
 
 class PjRtLoadedExecutable;
@@ -754,6 +763,42 @@ class PjRtClient {
   CreateBuffersForAsyncHostToDevice(absl::Span<const Shape> shapes,
                                     PjRtMemorySpace* memory_space) = 0;
 
+  // Creates a shapeless buffer on the device that can be partitioned into
+  // multiple PjRtBuffer. This class is an Arena version of
+  // `AsyncHostToDeviceTransferManager`.
+  // As a low-level interface, the user must make sure that invocations of
+  // `Slice` match properly with the writes from `TransferRawDataToSubBuffer`.
+  //
+  // For the intended application to Arena allocation / transfer, the user can
+  // use `GetOnDeviceSizeInBytes` to calculate the offsets for the host buffers
+  // that need to be transferred.
+  class PjRtRawDeviceBuffer {
+   public:
+    virtual ~PjRtRawDeviceBuffer() = default;
+
+    // Transfers data to the device buffer. Data should already be in the
+    // device layout.
+    virtual Status TransferRawDataToSubBuffer(
+        const void* data, int64_t offset, int64_t transfer_size,
+        bool is_last_transfer, absl::AnyInvocable<void() &&> on_done) {
+      return Unimplemented("TransferRawDataToSubBuffer is not implemented.");
+    };
+    // The resulting buffer becomes ready when all transfers complete.
+    virtual StatusOr<std::unique_ptr<PjRtBuffer>> Slice(int64_t offset,
+                                                        const Shape& shape) {
+      return Unimplemented("Slice is not implemented.");
+    }
+  };
+  // Instantiates the underlying device buffer.
+  virtual StatusOr<std::unique_ptr<PjRtRawDeviceBuffer>> CreateRawDeviceBuffer(
+      int64_t size, PjRtDevice* device) {
+    return Unimplemented("CreateRawDeviceBuffer is not implemented.");
+  }
+
+  // On-device bytes required for a PjRt buffer of this shape.
+  virtual StatusOr<int64_t> GetOnDeviceSizeInBytes(const Shape& shape) {
+    return Unimplemented("GetOnDeviceSizeInBytes is not implemented.");
+  };
   // Describes the semantics the caller to BufferFromHostBuffer expects from the
   // runtime, in a total order from most restrictive to least restrictive.
   enum class HostBufferSemantics {

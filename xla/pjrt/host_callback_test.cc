@@ -15,12 +15,25 @@ limitations under the License.
 
 #include "xla/pjrt/host_callback.h"
 
+#include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/synchronization/notification.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_future.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/status.h"
+#include "xla/statusor.h"
 #include "xla/tests/literal_test_util.h"
 #include "tsl/lib/core/status_test_util.h"
 
@@ -39,13 +52,21 @@ class TestPjRtHostMemoryForDeviceManager
     std::memcpy(chunk.data(), src_data, src_size);
     return chunk;
   }
-
+  StatusOr<PjRtChunk> ToDeviceLayout(PjRtChunk src_chunk,
+                                     const Shape& host_shape,
+                                     const Shape& device_shape) override {
+    return absl::UnimplementedError("Not used in test");
+  }
   Status ToHostLayout(const void* src_data, size_t src_size,
                       const Shape& src_shape, void* dst_data, size_t dst_size,
                       const Shape& dst_shape) override {
     CHECK_EQ(src_size, dst_size);
     std::memcpy(dst_data, src_data, src_size);
     return OkStatus();
+  }
+  absl::StatusOr<PjRtChunk> AllocateChunk(
+      size_t size, std::optional<size_t> alignment) override {
+    return absl::UnimplementedError("Not used in test");
   }
 };
 
