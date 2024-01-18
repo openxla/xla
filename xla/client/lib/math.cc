@@ -1260,7 +1260,12 @@ XlaOp Asinh(XlaOp x) {
     // complex type, because we don't yet have exhaustive tests for complex trig
     // functions.
     if (primitive_util::IsComplexType(shape.element_type())) {
-      return Log(x + Sqrt(x * x + one));
+      // For complex arguments we'll use
+      //   asinh(x) = I * asin(-I * x)
+      // to avoid overflow issues wrt large abs(x).
+      auto I = Complex(Zero(b, primitive_util::ComplexComponentType(shape.element_type())),
+                       One(b, primitive_util::ComplexComponentType(shape.element_type())));
+      return I * Asin(-I * x);
     }
     // For small x, sqrt(x**2 + 1) will evaluate to 1 due to floating point
     // arithmetic. However, we would like to retain the low order term of this,
