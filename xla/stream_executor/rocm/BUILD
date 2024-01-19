@@ -16,7 +16,7 @@ load(
     "if_rocm_is_configured",
     "rocm_library",
 )
-load("@tsl//tsl:tsl.bzl", "set_external_visibility", "tsl_copts")
+load("@tsl//tsl:tsl.bzl", "set_external_visibility", "if_nccl", "tsl_copts")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -100,6 +100,7 @@ cc_library(
     deps = if_rocm_is_configured([
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "//xla/stream_executor/gpu:gpu_collectives_header",
         "//xla/stream_executor/gpu:gpu_driver_header",
     ]),
 )
