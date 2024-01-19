@@ -43,6 +43,7 @@ cc_library(
         ":gpu_helpers",
         ":gpu_metrics",
         ":gpu_topology",
+        ":nccl_id_store",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
@@ -223,6 +224,7 @@ cc_library(
     hdrs = ["se_gpu_pjrt_compiler.h"],
     defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
+        ":nccl_id_store",
         ":se_gpu_pjrt_client",
         "//xla:status_macros",
         "//xla/client:local_client",
