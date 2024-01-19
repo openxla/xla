@@ -140,6 +140,7 @@ class MultiDeviceAdapter : public DeviceMemoryAllocator {
       auto it = buffer_memory_spaces_.find({device_ordinal, mem.opaque()});
       CHECK(it != buffer_memory_spaces_.end());
       memory_space = it->second;
+      buffer_memory_spaces_.erase(it);
     }
 
     auto it = memory_space_to_per_device_allocators_.find(memory_space);
