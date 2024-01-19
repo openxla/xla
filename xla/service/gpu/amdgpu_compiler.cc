@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/dot_dimension_merger.h"
+#include "xla/service/float_normalization.h"
 #include "xla/service/gpu/conv_algorithm_picker.h"
 #include "xla/service/gpu/cublas_pad_for_gemms.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
@@ -53,6 +54,36 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+namespace {
+
+struct ConvBfloat16Support : public FloatSupport {
+
+  explicit ConvBfloat16Support(
+      const se::RocmComputeCapability& rocm)
+      : FloatSupport(BF16),
+      // TODO: MIOpen does not support bf16 convolutions yet
+        is_conv_bf16_supported_(rocm.has_bf16_dtype_support()) {}
+
+  bool SupportsLowPrecisionOperand(const HloInstruction& hlo,
+                                   int64_t operand_index) const override {
+    return (hlo.opcode() != HloOpcode::kConvolution) || is_conv_bf16_supported_;
+  }
+
+  bool SupportsLowPrecisionOutput(const HloInstruction& hlo) const override {
+    return (hlo.opcode() != HloOpcode::kConvolution) || is_conv_bf16_supported_;
+  }
+
+  bool SupportsMixedPrecisions(const HloInstruction& hlo) const override {
+    // Skip all HLOs other than convolutions.
+    return (hlo.opcode() != HloOpcode::kConvolution);
+  }
+
+ private:
+  bool is_conv_bf16_supported_;
+};
+
+}  // namespace
+
 absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
     HloModule* hlo_module, se::GpuComputeCapability gpu_version,
     se::dnn::VersionInfo dnn_version,
@@ -63,6 +94,12 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
   pipeline.AddInvariantCheckerDebug<HloVerifier>(
       /*layout_sensitive=*/false,
       /*allow_mixed_precision=*/false);
+
+  // Convert upsupported bf16 convolutions to f32.
+  ConvBfloat16Support conv_bf16_support(
+    std::get<se::RocmComputeCapability>(gpu_version));
+  pipeline.AddPass<FloatNormalization>(&conv_bf16_support);
+
   pipeline.AddPass<GpusolverRewriter>();
   pipeline.AddPass<GpuConvRewriter>();
   pipeline.AddPass<GpuConvPaddingLegalization>();
