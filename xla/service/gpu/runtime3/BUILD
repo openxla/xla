@@ -217,6 +217,7 @@ xla_test(
         "//xla/stream_executor/gpu:gpu_types_header",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -444,6 +445,7 @@ cc_library(
     hdrs = ["replica_id_thunk.h"],
     deps = [
         "//xla/service:buffer_assignment",
+        "//xla/service:global_device_id",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/status",
     ],
