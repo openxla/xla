@@ -10,6 +10,15 @@ def workspace():
     tsl_workspace3()
 
     http_archive(
+        name = "rules_python",
+        urls = [
+            "https://github.com/bazelbuild/rules_python/releases/download/0.28.0/rules_python-0.28.0.tar.gz",
+        ],
+        strip_prefix = "rules_python-0.28.0",
+        sha256 = "d70cd72a7a4880f0000a6346253414825c19cdd40a28289bdf67b8e6480edff8",
+    )
+
+    http_archive(
         name = "io_bazel_rules_closure",
         sha256 = "5b00383d08dd71f28503736db0500b6fb4dda47489ff5fc6bed42557c07c6ba9",
         strip_prefix = "rules_closure-308b05b2419edb5c8ee0471b67a40403df940149",

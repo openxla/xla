@@ -1,4 +1,4 @@
-# Placeholder: load py_proto_library
+load("@rules_python//python:defs.bzl", "py_binary")
 load("//xla:xla.bzl", "xla_cc_test")
 load(
     "@tsl//tsl/platform:build_config.bzl",
