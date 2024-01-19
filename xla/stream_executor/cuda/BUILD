@@ -180,7 +180,7 @@ cc_library(
 cc_library(
     name = "cuda_collectives",
     srcs = if_cuda_is_configured(["cuda_collectives.cc"]),
-    defines = if_nccl(["XLA_ENABLE_XCCL"]),
+    defines = if_nccl(["STREAM_EXECUTOR_GPU_ENABLE_XCCL"]),
     deps = [
         ":cuda_driver",
         "//xla/stream_executor/gpu:gpu_collectives_header",
