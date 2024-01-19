@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# The toolchain configuration rule file, "cc_toolchain_config.bzl", is a clone of https://github.com/bazelbuild/bazel/blob/6.1.0/tools/cpp/unix_cc_toolchain_config.bzl
+# The toolchain configuration rule file, "cc_toolchain_config.bzl", is a clone of
+# https://github.com/bazelbuild/bazel/blob/6.4.0/tools/cpp/unix_cc_toolchain_config.bzl
 # except for a few changes. We remove "-s" as a default archiver option because it is not supported
 # by llvm-libtool-darwin, see https://github.com/bazelbuild/bazel/pull/17489.
 # We remove "supports_dynamic_linker_feature" from the macOS toolchain config because otherwise
-# certain TensorFlow tests get stuck at linking phase. See https://github.com/bazelbuild/bazel/issues/4341
-# which has more details on why this option does not work on macOS.
+# certain TensorFlow tests get stuck at linking phase. See
+# https://github.com/bazelbuild/bazel/issues/4341 which has more details on why this option does not
+# work on macOS.
 #
 # Note to TF developers: Please make sure this file stays in sync with the Bazel version used
 # by TensorFlow. If TensorFlow's Bazel version is updated, replace this file with the contents of
-# `tools/cpp/unix_cc_toolchain_config.bzl` from the corresponding Bazel version tag in https://github.com/bazelbuild/bazel.
-# Please make sure to add in the additional changes listed above if needed. Contact srnitin@ for
-# any questions.
+# `tools/cpp/unix_cc_toolchain_config.bzl` from the corresponding Bazel version tag in
+# https://github.com/bazelbuild/bazel. Please make sure to add in the additional changes listed
+# above if needed. Contact srnitin@ for any questions.
 """A Starlark cc_toolchain configuration rule"""
 
 load("@bazel_tools//tools/build_defs/cc:action_names.bzl", "ACTION_NAMES")
@@ -68,6 +70,8 @@ def layering_check_features(compiler):
             ],
         ),
 
+        # Tell bazel we support module maps in general, so they will be generated
+        # for all c/c++ rules.
         # Note: not all C++ rules support module maps; thus, do not imply this
         # feature from other features - instead, require it.
         feature(name = "module_maps", enabled = True),
