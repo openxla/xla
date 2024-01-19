@@ -29,6 +29,13 @@ function is_linux_gpu_job() {
 
 clone_main_jax() {
   git clone https://github.com/google/jax.git
+  # DO NOT SUBMIT THIS:
+  # It's needed to make the tests pass but I will remove it before submitting
+  pushd jax
+  git fetch origin pull/18456/head:pr
+  git switch pr
+  git -c user.name=nobody -c user.email=nobody@google.com rebase main
+  popd
 }
 
 prelude() {
