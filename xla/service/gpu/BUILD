@@ -3545,6 +3545,7 @@ cc_library(
         ":runtime_intrinsics",
         ":scatter_slice_simplifier",
         ":softmax_rewriter_triton",
+        ":stream_attribute_annotator",
         ":topk_specializer",
         ":topk_splitter",
         ":tree_reduction_rewriter",
@@ -5732,6 +5733,24 @@ cc_library(
     ],
 )
 
+    name = "stream_attribute_annotator",
+    srcs = ["stream_attribute_annotator.cc"],
+    hdrs = ["stream_attribute_annotator.h"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/algorithm:container",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
 xla_cc_test(
     name = "collective_permute_cycle_decomposer_test",
     srcs = ["collective_permute_cycle_decomposer_test.cc"],
@@ -5744,5 +5763,25 @@ xla_cc_test(
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
+    ],
+)
+
+    name = "stream_attribute_annotator_test",
+    srcs = ["stream_attribute_annotator_test.cc"],
+    deps = [
+        ":backend_configs_cc",
+        ":stream_attribute_annotator",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:status_matchers",
     ],
 )

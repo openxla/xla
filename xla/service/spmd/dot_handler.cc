@@ -1414,10 +1414,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       auto dot_gpu_config = dot->backend_config<xla::gpu::GpuBackendConfig>();
       auto o_gpu_config = o->backend_config<xla::gpu::GpuBackendConfig>();
       dot_gpu_config->set_operation_queue_id(queue_id);
-      dot_gpu_config->mutable_wait_on_operation_queues()->Add(0);
 
       o_gpu_config->set_operation_queue_id(queue_id);
-      o_gpu_config->mutable_wait_on_operation_queues()->Add(0);
       o_gpu_config->mutable_wait_on_operation_queues()->Add(queue_id);
 
       TF_CHECK_OK(dot->set_backend_config(dot_gpu_config.value()));
@@ -1551,8 +1549,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                   &body_b, o, output_sd_pairs,
                   (*lhs.state().next_channel_id)++);
 
-      TF_ASSIGN_OR_RETURN(extra_inout,
-                          get_partial_unid_result(l, r, extra_inout, i));
+      TF_ASSIGN_OR_RETURN(
+          extra_inout, get_partial_unid_result(l, r, extra_inout, i, queue_id));
 
       extra_inout =
           lhs.state()
@@ -1570,8 +1568,7 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           body_b.AddInstruction(HloInstruction::CreateConstant(
               LiteralUtil::CreateR0<uint32_t>(1)))));
 
-      TF_ASSIGN_OR_RETURN(o,
-                          get_partial_unid_result(l, r, o, real_i, queue_id));
+      TF_ASSIGN_OR_RETURN(o, get_partial_unid_result(l, r, o, real_i));
       body_b.AddInstruction(
           HloInstruction::CreateTuple({l, r, o, extra_inout, i}));
     } else {
@@ -1596,7 +1593,7 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       } else {
         next_r = cp_output;
       }
-      TF_ASSIGN_OR_RETURN(o, get_partial_unid_result(l, r, o, i));
+      TF_ASSIGN_OR_RETURN(o, get_partial_unid_result(l, r, o, i, queue_id));
 
       // ++i
       i = body_b.AddInstruction(HloInstruction::CreateBinary(
@@ -1618,8 +1615,7 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       } else {
         second_next_r = cp_output;
       }
-      TF_ASSIGN_OR_RETURN(
-          o, get_partial_unid_result(next_l, next_r, o, i, queue_id));
+      TF_ASSIGN_OR_RETURN(o, get_partial_unid_result(next_l, next_r, o, i));
 
       // ++i
       i = body_b.AddInstruction(HloInstruction::CreateBinary(
@@ -1635,7 +1631,6 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       for (HloInstruction* user : o->users()) {
         auto user_backend_config =
             user->backend_config<xla::gpu::GpuBackendConfig>();
-        user_backend_config->mutable_wait_on_operation_queues()->Add(0);
         user_backend_config->mutable_wait_on_operation_queues()->Add(queue_id);
         TF_CHECK_OK(user->set_backend_config(user_backend_config.value()));
       }

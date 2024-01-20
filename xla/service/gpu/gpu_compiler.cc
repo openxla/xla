@@ -163,6 +163,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime_intrinsics.h"
 #include "xla/service/gpu/scatter_slice_simplifier.h"
 #include "xla/service/gpu/softmax_rewriter_triton.h"
+#include "xla/service/gpu/stream_attribute_annotator.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/gpu/topk_specializer.h"
 #include "xla/service/gpu/topk_splitter.h"
@@ -1194,6 +1195,11 @@ absl::Status GpuCompiler::OptimizeHloModule(
     pipeline.AddPass<HloComputationDeduplicator>(
         /*mark_fusion_duplications=*/true);
 
+    if (hlo_module->config()
+            .debug_options()
+            .xla_gpu_multi_streamed_windowed_einsum()) {
+      pipeline.AddPass<StreamAttributeAnnotator>();
+    }
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
 
