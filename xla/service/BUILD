@@ -6803,6 +6803,7 @@ cc_library(
     hdrs = ["lockable.h"],
     deps = [
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
     ],
