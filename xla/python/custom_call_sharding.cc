@@ -95,6 +95,11 @@ HloInstruction* InlineHloComputation(HloInstruction* instruction,
       }
       auto* new_inst = builder->AddInstruction(
           inst->CloneWithNewOperands(inst->shape(), new_operands, &context));
+      if (HloAllReduceInstructionBase::ClassOf(new_inst)) {
+        // The cloning duplicated the computation for the new module, let us
+        // make sure the computation is marked as collective-called.
+        new_inst->to_apply()->SetCollectiveCallInstruction(new_inst);
+      }
       HloChannelInstruction* channel_instr =
           DynCast<HloChannelInstruction>(new_inst);
       if (channel_instr && channel_instr->channel_id().has_value()) {
