@@ -196,7 +196,7 @@ class NcclApi {
                             PrimitiveType dtype, size_t count, int32_t peer,
                             NcclCommHandle comm, se::Stream* stream) = 0;
 
-  #ifdef XCCL_HAS_COMM_REGISTSER
+  #ifdef XCCL_HAS_COMM_REGISTER
   // Register `buffer` with communicator `comm` for zero-copy communication.
   // Returned handle can be used for future unregistration.
   //
