@@ -52,7 +52,7 @@ class NcclApi {
   struct NcclComm;
   struct NcclPersistentPlanAllocator;
 
-  #if (NCCL_VERSION_CODE < 201901)
+  #if (NCCL_VERSION_CODE < 21901)
   // fill in missing data type
   typedef void NcclRegisteredBuffer;
   #else

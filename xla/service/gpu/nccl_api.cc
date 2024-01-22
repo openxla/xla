@@ -509,7 +509,7 @@ DefaultNcclApi::RegisterBuffer(NcclCommHandle comm,
       "Register buffer for NCCL communicator; buffer=%p; size=%d; comm=%p",
       buffer.opaque(), buffer.size(), comm);
   void* handle = nullptr;
-  #if (NCCL_VERSION_CODE >= 201901)
+  #if (NCCL_VERSION_CODE >= 21901)
   XLA_NCCL_RETURN_IF_ERROR(
       ncclCommRegister(Cast(comm), buffer.opaque(), buffer.size(), &handle));
   #endif
@@ -523,7 +523,7 @@ DefaultNcclApi::DeregisterBuffer(NcclCommHandle comm,
   VLOG(3) << absl::StreamFormat(
       "Deregister buffer for NCCL communicator; handle=%p; comm=%p", handle,
       comm);
-  #if (NCCL_VERSION_CODE >= 201901)
+  #if (NCCL_VERSION_CODE >= 21901)
   return XLA_NCCL_STATUS(
       ncclCommDeregister(Cast(comm), reinterpret_cast<void*>(handle)));
   #endif
