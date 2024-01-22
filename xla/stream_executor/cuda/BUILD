@@ -51,6 +51,21 @@ config_setting(
     flag_values = {":enable_graph_conditional": "True"},
 )
 
+bool_flag(
+    name = "enable_libnvptxcompiler_support",
+    build_setting_default = if_google(
+        True,
+        oss_value = False,
+    ),
+)
+
+config_setting(
+    name = "libnvptxcompiler_support_enabled",
+    flag_values = {
+        ":enable_libnvptxcompiler_support": "True",
+    },
+)
+
 cc_library(
     name = "cuda_platform_id",
     srcs = ["cuda_platform_id.cc"],
@@ -521,19 +536,43 @@ cc_library(
     ]),
 )
 
+cc_library(name = "libnvptxcompiler_empty")
+
+# This intermediate target is needed because we can't nest `select` statements.
+alias(
+    name = "libnvptxcompiler_if_enabled",
+    actual = select({
+        ":libnvptxcompiler_support_enabled": "@local_config_cuda//cuda:nvptxcompiler",
+        "//conditions:default": ":libnvptxcompiler_empty",
+    }),
+    tags = ["manual"],
+)
+
 cc_library(
     name = "cuda_asm_compiler",
     srcs = if_cuda_is_configured(["cuda_asm_compiler.cc"]),
     copts = tf_additional_gpu_compilation_copts(),
+    local_defines = select({
+        ":libnvptxcompiler_support_enabled": [
+            "ENABLE_LIBNVPTXCOMPILER_SUPPORT=1",
+        ],
+        "//conditions:default": [],
+    }),
     deps = if_cuda_is_configured([
+        ":libnvptxcompiler_if_enabled",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/strings:str_format",
-        "//xla:status_macros",
-        "//xla/stream_executor/gpu:asm_compiler_header",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_cuda//cuda:cuda_headers",
+        "//xla:status_macros",
+        "//xla/stream_executor/gpu:asm_compiler_header",
+        "//xla/stream_executor/gpu:gpu_asm_opts",
         "//xla/stream_executor/gpu:gpu_diagnostics_header",
         "//xla/stream_executor/gpu:gpu_driver_header",
         "@tsl//tsl/platform:errors",
