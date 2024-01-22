@@ -32,9 +32,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/verified_hlo_module.h"
+#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -896,6 +898,97 @@ TEST_F(WhileLoopUnrollerTest, LoopWithCollective2) {
   // The total number of fusions in the unrolled version in the entry must be
   // equal to loop_trip_count * fusion_instr_count
   EXPECT_EQ(fusion_instr_count * 4, fusion_instr_count_after_unroll);
+}
+
+TEST_F(WhileLoopUnrollerTest, LoopWithCustomCall) {
+  std::string hlo_string = R"(
+  HloModule SimpleLoop, entry_computation_layout={()->(s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}))}
+
+  %fused_computation.update.slice (param_0.0: s32[4,3], p1: s32[], p2: s32[3]) -> s32[4,3] {
+    %param_0.0 = s32[4,3]{1,0} parameter(0)
+    %p2 = s32[3]{0} parameter(2)
+    %bitcast.0 = s32[1,3]{1,0} bitcast(s32[3]{0} %p2)
+    %p1 = s32[] parameter(1)
+    %zero.1 = s32[]{:T(128)} constant(0)
+    ROOT %output_dus = s32[4,3]{1,0} dynamic-update-slice(s32[4,3]{1,0} %param_0.0, s32[1,3]{1,0} %bitcast.0, s32[] %p1, s32[]{:T(128)} %zero.1)
+  }
+
+  %fused_computation.slice (fused_computation.slice.clone: s32[3]) -> s32[3] {
+    %fused_computation.slice.clone = s32[3]{0} parameter(0)
+    ROOT %bitcast.31250 = s32[3]{0} bitcast(s32[3]{0} %fused_computation.slice.clone)
+  }
+
+  %SimpleLoop.body (sliced.2: (s32[], (s32[3], s32[3], s32[3], s32[3]), (s32[3], s32[3], s32[3], s32[3]))) -> (s32[], (s32[3], s32[3], s32[3], s32[3]), (s32[3], s32[3], s32[3], s32[3])) {
+    %some_const = s32[3]{0} constant({0, 1, 2})
+    %sliced.2 = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) parameter(0)
+    %get-tuple-element.1 = s32[] get-tuple-element((s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) %sliced.2), index=0
+    %constant.1 = s32[] constant(1)
+    %idx = s32[] add(s32[] %get-tuple-element.1, s32[] %constant.1)
+    %get-tuple-element.2 = (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) get-tuple-element((s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) %sliced.2), index=1
+    %get-tuple-element.3 = (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) get-tuple-element((s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) %sliced.2), index=2
+    %custom-call.1 = s32[3]{0} custom-call((s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) %get-tuple-element.3, s32[] %get-tuple-element.1), custom_call_target="DynamicGte"
+    %ds.unstacked.fusion = s32[3]{0} fusion(s32[3]{0} %custom-call.1), kind=kLoop, calls=%fused_computation.slice
+    %update = s32[3]{0} add(s32[3]{0} %ds.unstacked.fusion, s32[3]{0} %ds.unstacked.fusion)
+    %zero.2 = s32[] constant(0)
+    %dus = s32[3]{0} dynamic-update-slice(s32[3]{0} %ds.unstacked.fusion, s32[3]{0} %update, s32[] %zero.2)
+    %custom-call = (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) custom-call((s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) %get-tuple-element.2, s32[3]{0} %dus, s32[] %get-tuple-element.1), custom_call_target="DynamicTuple"
+    ROOT %tuple = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) tuple(s32[] %idx, (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) %custom-call, (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) %get-tuple-element.3)
+  }
+
+  %SimpleLoop.condition (sliced.3: (s32[], (s32[3], s32[3], s32[3], s32[3]), (s32[3], s32[3], s32[3], s32[3]))) -> pred[] {
+    %sliced.3 = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) parameter(0)
+    %get-tuple-element.0 = s32[] get-tuple-element((s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) %sliced.3), index=0
+    %constant.2 = s32[] constant(4)
+    ROOT %less-than = pred[] compare(s32[] %get-tuple-element.0, s32[] %constant.2), direction=LT
+  }
+
+  ENTRY %SimpleLoop () -> (s32[], (s32[3], s32[3], s32[3], s32[3]), (s32[3], s32[3], s32[3], s32[3])) {
+    %one = s32[] constant(1)
+    %zero.3 = s32[] constant(0)
+    %constant = s32[3]{0} constant({0, 0, 0})
+    %constant.3 = s32[3]{0} constant({0, 0, 0})
+    %constant.4 = s32[3]{0} constant({0, 0, 0})
+    %constant.5 = s32[3]{0} constant({0, 0, 0})
+    %tuple.2 = (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) tuple(s32[3]{0} %constant, s32[3]{0} %constant.3, s32[3]{0} %constant.4, s32[3]{0} %constant.5)
+    %constant.6 = s32[3]{0} constant({1, 2, 3})
+    %constant.7 = s32[3]{0} constant({1, 2, 3})
+    %constant.8 = s32[3]{0} constant({1, 2, 3})
+    %constant.9 = s32[3]{0} constant({1, 2, 3})
+    %tuple.3 = (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) tuple(s32[3]{0} %constant.6, s32[3]{0} %constant.7, s32[3]{0} %constant.8, s32[3]{0} %constant.9)
+    %tuple.1 = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) tuple(s32[] %zero.3, (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) %tuple.2, (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}) %tuple.3)
+    ROOT %out = (s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) while((s32[], (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0}), (s32[3]{0}, s32[3]{0}, s32[3]{0}, s32[3]{0})) %tuple.1), condition=%SimpleLoop.condition, body=%SimpleLoop.body
+  }
+  )";
+
+  auto module = ParseAndReturnVerifiedModule(hlo_string).value();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool unrolled,
+      Unroll(module->entry_computation()->GetInstructionWithName("out")));
+
+  EXPECT_TRUE(unrolled);
+
+  // Remove the old body and condition computations.
+  TF_ASSERT_OK(module->RemoveUnusedComputations());
+
+  std::vector<HloInstruction*> custom_call_instrs;
+  for (auto* comp : module->MakeComputationPostOrder()) {
+    absl::c_copy_if(comp->instructions(),
+                    std::back_inserter(custom_call_instrs),
+                    HloPredicateIsOp<HloOpcode::kCustomCall>);
+  }
+  EXPECT_EQ(custom_call_instrs.size(), 0);
+
+  VLOG(2) << "after unrolling and rewriting custom-calls:\n"
+          << module->ToString();
+
+  Literal output_after_unroll = ExecuteAndTransfer(module->Clone(), {});
+  std::vector<Literal> outputs = output_after_unroll.DecomposeTuple();
+  Literal expected_element = LiteralUtil::CreateR1<int32_t>({2, 4, 6});
+  Literal expected_state =
+      LiteralUtil::MakeTuple({&expected_element, &expected_element,
+                              &expected_element, &expected_element});
+  EXPECT_EQ(outputs.at(1), expected_state);
 }
 
 }  // namespace
