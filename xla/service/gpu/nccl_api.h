@@ -51,13 +51,7 @@ class NcclApi {
   // types (also defined as opaque structs).
   struct NcclComm;
   struct NcclPersistentPlanAllocator;
-
-  #if (NCCL_VERSION_CODE < 21901)
-  // fill in missing data type
-  typedef void NcclRegisteredBuffer;
-  #else
   struct NcclRegisteredBuffer;
-  #endif
 
   // Convenience handles for defining API functions.
   using NcclCommHandle = NcclComm*;
