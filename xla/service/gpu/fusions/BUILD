@@ -1,3 +1,4 @@
+load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla:xla.bzl", "xla_cc_test")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
@@ -51,12 +52,21 @@ cc_library(
     hdrs = ["custom.h"],
     deps = [
         ":fusion_emitter",
+        "//xla:shape_util",
+        "//xla:status_macros",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:lhlo",
+        "//xla/service:buffer_assignment",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/service/gpu:gemm_thunk",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:hlo_traversal",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter_context",
         "//xla/service/gpu:kernel_arguments",
+        "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:thunk",
         "//xla/service/gpu/kernels:custom_fusion",
         "//xla/service/gpu/kernels:custom_kernel",
@@ -66,6 +76,21 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_test(
+    name = "address_computation_fusion_test",
+    srcs = ["address_computation_fusion_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        "//xla:array3d",
+        "//xla:error_spec",
+        "//xla:literal_util",
+        "//xla:types",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
