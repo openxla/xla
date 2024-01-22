@@ -448,6 +448,7 @@ cc_library(
         "//xla/service:global_device_id",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
