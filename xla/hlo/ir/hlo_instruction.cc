@@ -1214,6 +1214,11 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
   return std::move(instruction);
 }
 
+/*static*/ uint32_t HloInstruction::NextScratchSeq() {
+  static uint32_t seq = 0;
+  return ++seq;
+}
+
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateParameter(
     int64_t parameter_number, const Shape& shape, absl::string_view name) {
   return std::make_unique<HloParameterInstruction>(parameter_number, shape,

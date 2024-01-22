@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/ptrvec.h"
 #include "xla/iterator_util.h"
 #include "xla/printer.h"
 #include "xla/service/hlo.pb.h"
@@ -100,7 +101,7 @@ class HloComputation {
     StatusOr<HloInstruction*> AddParameter(
         std::unique_ptr<HloInstruction> parameter) {
       if (!parameter_numbers_.insert(parameter->parameter_number()).second) {
-        return Internal("Duplicate parameter number %d",
+        return InternalError("Duplicate parameter number %d",
                              parameter->parameter_number());
       }
       return AddInstruction(std::move(parameter));
@@ -843,7 +844,10 @@ class HloComputation {
   // stage clean up process is designed such that HloPass can have stable
   // internal pointers to HloInstructions while we create and remove
   // HloInstructions in a pass.
-  void Cleanup() { to_be_deleted_.clear(); }
+  void Cleanup() {
+    for (HloInstruction* it : to_be_deleted_) delete it;
+    to_be_deleted_.clear();
+  }
 
   // Returns true if a given instruction is marked dead in this computation.
   bool IsMarkedAsDead(const HloInstruction* inst);
@@ -886,15 +890,14 @@ class HloComputation {
   // Internal helper to collect unreachable roots.
   std::vector<HloInstruction*> CollectUnreachableRoots() const;
 
-  class VisitMap;
   void ComputeInstructionPostOrder(
       HloInstruction* root, const ChannelDependencies& channel_dependencies,
-      VisitMap& visited, std::vector<HloInstruction*>& post_order,
+      uint32_t scratch_seq, std::vector<HloInstruction*>& post_order,
       std::vector<HloInstruction*>* dfs_stack_scratch) const;
 
   void ForEachInstructionPostOrderImpl(
       absl::FunctionRef<void(HloInstruction*)> func, HloInstruction* root,
-      const ChannelDependencies& channel_dependencies, VisitMap& visited,
+      const ChannelDependencies& channel_dependencies, uint32_t scratch_seq,
       std::vector<HloInstruction*>* dfs_stack_scratch) const;
 
   Status RemoveUnusedParametersImpl(bool allow_non_fusion);
@@ -902,13 +905,11 @@ class HloComputation {
   Status RemoveInstructionImpl(HloInstruction* instruction,
                                bool ignore_safety_check);
 
-  std::string name_;
   int64_t unique_id_;
   HloInstruction* root_instruction_;
 
-  // If this computation is a fusion computation, this field points to the
-  // corresponding fusion instruction (if it is live). Otherwise, this is null.
-  HloInstruction* fusion_instruction_;
+  // Module containing this computation.
+  HloModule* parent_ = nullptr;
 
   // Determines whether this computation is a fusion computation. A fusion
   // computation ordinarily also has a non-null fusion_instruction_. However, if
@@ -916,36 +917,40 @@ class HloComputation {
   // becomes unreachable, and its fusion_instruction_ is set to null. We still
   // need to regard such computations as fusion computations for HLO scheduling
   // purposes.
-  bool is_fusion_computation_;
+  bool is_fusion_computation_ : 1;
+
+  // Determines whether this computation is a custom-call computation.
+  bool is_custom_call_computation_ : 1;
+
+  // Determines whether this computation is a collective sub-computation.
+  bool is_collective_called_computation_ : 1;
+
+  // Determines whether this computation is a while body computation.
+  bool is_while_call_body_computation_ : 1;
+
+  // Determines whether this computation is a conditional branch computation.
+  bool is_conditional_branch_computation_ : 1;
+
+  // If this computation is a fusion computation, this field points to the
+  // corresponding fusion instruction (if it is live). Otherwise, this is null.
+  HloInstruction* fusion_instruction_;
 
   // If this computation is a custom-call computation, this field points to the
   // corresponding custom-call instruction (if it is live). Otherwise, this is
   // null.
   HloInstruction* custom_call_instruction_;
 
-  // Determines whether this computation is a custom-call computation.
-  bool is_custom_call_computation_;
-
   // If this computation is a collective sub-computation, this field points to
   // the corresponding collective instruction. Otherwise, this is null.
   HloInstruction* collective_call_instruction_;
-
-  // Determines whether this computation is a collective sub-computation.
-  bool is_collective_called_computation_;
 
   // If this computation is a while body computation, this field points to
   // the corresponding while instruction. Otherwise, this is null.
   HloInstruction* while_call_instruction_;
 
-  // Determines whether this computation is a while body computation.
-  bool is_while_call_body_computation_;
-
   // If this computation is a conditional branch computation, this field points
   // to the corresponding conditional instruction. Otherwise, this is null.
   HloInstruction* conditional_call_instruction_;
-
-  // Determines whether this computation is a conditional branch computation.
-  bool is_conditional_branch_computation_;
 
   // If this computation is an async computation, this field points to the
   // first async instruction (async-start) in the asynchronous op chain that
@@ -953,11 +958,7 @@ class HloComputation {
   // Otherwise, this is empty.
   HloInstruction* async_start_ = nullptr;
 
-  // Execution thread of this computation. By default, it's main thread.
-  std::string execution_thread_ = HloInstruction::kMainExecutionThread;
-
-  // Module containing this computation.
-  HloModule* parent_ = nullptr;
+  HloInstruction::InstructionVector param_instructions_;
 
   // Store instructions in std::vector as they can be added and removed
   // arbitrarily and we want a stable iteration order. Keep a map from
@@ -965,11 +966,14 @@ class HloComputation {
   HloInstructionList instructions_;
   absl::flat_hash_map<const HloInstruction*, int> instruction_indices_;
 
+  // Execution thread of this computation. By default, it's main thread.
+  std::string execution_thread_ = HloInstruction::kMainExecutionThread;
+
   // Removed instructions are moved into to_be_deleted_ first and then
   // deallocated when Cleanup is called.
-  std::vector<std::unique_ptr<HloInstruction>> to_be_deleted_;
+  PtrVec<HloInstruction*> to_be_deleted_;
 
-  HloInstruction::InstructionVector param_instructions_;
+  std::string name_;
 
   HloComputation(const HloComputation&) = delete;
   HloComputation& operator=(const HloComputation&) = delete;

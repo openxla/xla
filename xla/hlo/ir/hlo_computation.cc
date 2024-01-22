@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/map_util.h"
 #include "xla/printer.h"
 #include "xla/service/mapped_ptr_container_sorter.h"
+#include "xla/service/name_uniquer.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
@@ -55,30 +56,6 @@ namespace xla {
 using absl::StrCat;
 
 enum VisitState { kVisiting, kVisited };
-
-// VisitMap is a HloInstruction visitation map that uses an inline array to
-// store up to a certain number of unique elements, but upgrades itself
-// automatically to be backed by a real map when it runs out of space.
-class HloComputation::VisitMap {
- public:
-  VisitMap() = default;
-  explicit VisitMap(int capacity);
-
-  // Inserts a given element into the map, provided an element with
-  // the same key hasn't already been inserted. It returns the boolean that
-  // indicates whether the element was inserted or not, along with a mutable
-  // reference to the element value inside the map.
-  std::pair<VisitState&, bool> insert(
-      std::pair<const HloInstruction*, VisitState>);
-
- private:
-  static const int kMaxInlined = 16;
-  static const int kUsingMap = -1;
-
-  int size_ = 0;
-  std::pair<const HloInstruction*, VisitState> array_[kMaxInlined];
-  absl::flat_hash_map<const HloInstruction*, VisitState> map_;
-};
 
 std::unique_ptr<HloComputation> HloComputation::Builder::Build(
     HloInstruction* root_instruction) {
@@ -100,19 +77,19 @@ HloComputation::HloComputation(
     const std::string& name, int parameter_count,
     std::vector<std::unique_ptr<HloInstruction>>* instructions,
     HloInstruction* root_instruction)
-    : name_(NameUniquer::GetSanitizedName(name)),
-      unique_id_(-1),
+    : unique_id_(-1),
       root_instruction_(root_instruction),
-      fusion_instruction_(nullptr),
       is_fusion_computation_(false),
-      custom_call_instruction_(nullptr),
       is_custom_call_computation_(false),
-      collective_call_instruction_(nullptr),
       is_collective_called_computation_(false),
-      while_call_instruction_(nullptr),
       is_while_call_body_computation_(false),
+      is_conditional_branch_computation_(false),
+      fusion_instruction_(nullptr),
+      custom_call_instruction_(nullptr),
+      collective_call_instruction_(nullptr),
+      while_call_instruction_(nullptr),
       conditional_call_instruction_(nullptr),
-      is_conditional_branch_computation_(false) {
+      name_(NameUniquer::GetSanitizedName(name)) {
   param_instructions_.resize(parameter_count, nullptr);
   bool root_found = false;
   for (auto& instruction : *instructions) {
@@ -146,6 +123,7 @@ HloComputation::~HloComputation() {
   for (const auto& i : instructions_) {
     delete i.inst();
   }
+  Cleanup();
 }
 
 HloInstruction* HloComputation::AddInstruction(
@@ -408,7 +386,7 @@ Status HloComputation::RemoveInstructionImpl(HloInstruction* instruction,
   TF_RET_CHECK(inst_it != instruction_indices_.end());
   HloInstructionInfo* info = &instructions_[inst_it->second];
   info->inst()->set_parent(nullptr);
-  to_be_deleted_.emplace_back(info->inst());  // Takes ownership
+  to_be_deleted_.push_back(info->inst());  // Takes ownership
   to_be_deleted_.back()->DetachFromOperandsAndUsers();
   // Clear all operands to avoid Null operands.
   to_be_deleted_.back()->RemoveAllOperands();
@@ -460,16 +438,16 @@ void HloComputation::set_root_instruction(HloInstruction* new_root_instruction,
 
 void HloComputation::ComputeInstructionPostOrder(
     HloInstruction* root, const ChannelDependencies& channel_dependencies,
-    VisitMap& visited, std::vector<HloInstruction*>& post_order,
+    uint32_t scratch_seq, std::vector<HloInstruction*>& post_order,
     std::vector<HloInstruction*>* dfs_stack_scratch) const {
   ForEachInstructionPostOrderImpl(
       [&post_order](HloInstruction* hlo) { post_order.push_back(hlo); }, root,
-      channel_dependencies, visited, dfs_stack_scratch);
+      channel_dependencies, scratch_seq, dfs_stack_scratch);
 }
 
 void HloComputation::ForEachInstructionPostOrderImpl(
     absl::FunctionRef<void(HloInstruction*)> func, HloInstruction* root,
-    const ChannelDependencies& channel_dependencies, VisitMap& visited,
+    const ChannelDependencies& channel_dependencies, uint32_t scratch_seq,
     std::vector<HloInstruction*>* dfs_stack_scratch) const {
   auto* dfs_stack = dfs_stack_scratch;
   dfs_stack->clear();
@@ -477,18 +455,21 @@ void HloComputation::ForEachInstructionPostOrderImpl(
   while (!dfs_stack->empty()) {
     HloInstruction& current = *dfs_stack->back();
 
-    auto [state, was_inserted] = visited.insert({&current, kVisiting});
-    if (!was_inserted) {  // We've already seen this instruction.
+    if (current.scratch_seq() == scratch_seq) {
+      // We've already seen this instruction.
       dfs_stack->pop_back();
-      if (state != kVisited) {
+      if (*current.scratch() != kVisited) {
         DCHECK_EQ(current.parent(), this)
             << "Instruction " << current.name()
             << " is not in the current computation (" << name() << ").";
         func(&current);
-        state = kVisited;
+        *current.scratch() = kVisited;
       }
       continue;
     }
+
+    current.set_scratch_seq(scratch_seq);
+    *current.scratch() = kVisiting;
 
     // Add channel dependencies.
     // Collectives with the same channel ID must be performed together, as these
@@ -559,10 +540,10 @@ HloComputation::ChannelDependencies HloComputation::ComputeChannelDependencies()
 std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrderFrom(
     HloInstruction& postorder_root) const {
   std::vector<HloInstruction*> post_order;
-  VisitMap visited;
   std::vector<HloInstruction*> dfs_stack_scratch;
   ComputeInstructionPostOrder(&postorder_root, ComputeChannelDependencies(),
-                              visited, post_order, &dfs_stack_scratch);
+                              HloInstruction::NextScratchSeq(), post_order,
+                              &dfs_stack_scratch);
   return post_order;
 }
 
@@ -574,13 +555,13 @@ std::vector<HloInstruction*> HloComputation::MakeInstructionPostOrder(
     const ChannelDependencies& channel_dependencies) const {
   std::vector<HloInstruction*> post_order;
   post_order.reserve(instruction_count());
-  VisitMap visited(instruction_count());
+  const uint32_t scratch_seq = HloInstruction::NextScratchSeq();
   std::vector<HloInstruction*> dfs_stack_scratch;
   dfs_stack_scratch.reserve(instruction_count());
   for (const auto& instruction : instructions()) {
     if (instruction->users().empty()) {
-      ComputeInstructionPostOrder(instruction, channel_dependencies, visited,
-                                  post_order, &dfs_stack_scratch);
+      ComputeInstructionPostOrder(instruction, channel_dependencies,
+                                  scratch_seq, post_order, &dfs_stack_scratch);
     }
   }
   CHECK_EQ(instruction_indices_.size(), post_order.size())
@@ -653,14 +634,15 @@ HloComputation::MakeInstructionPostOrderWithReshapeFirst() const {
 
 void HloComputation::ForEachInstructionPostOrder(
     absl::FunctionRef<void(HloInstruction*)> func) const {
-  VisitMap visited(instruction_count());
+  const uint32_t current_seq = HloInstruction::NextScratchSeq();
+
   std::vector<HloInstruction*> dfs_stack_scratch;
   dfs_stack_scratch.reserve(instruction_count());
   auto channel_dependencies = ComputeChannelDependencies();
   for (const auto& instruction : instructions()) {
     if (instruction->users().empty()) {
       ForEachInstructionPostOrderImpl(func, instruction, channel_dependencies,
-                                      visited, &dfs_stack_scratch);
+                                      current_seq, &dfs_stack_scratch);
     }
   }
 }
@@ -1617,44 +1599,6 @@ bool HloComputation::CanExpandIntoSingleInstruction() const {
       instructions(), [root = root_instruction()](const HloInstruction* instr) {
         return root == instr || instr->opcode() == HloOpcode::kParameter;
       });
-}
-
-HloComputation::HloComputation::VisitMap::VisitMap(int capacity) {
-  if (capacity <= kMaxInlined) return;  // already reserved
-  size_ = kUsingMap;
-  map_.reserve(capacity);
-}
-
-std::pair<VisitState&, bool> HloComputation::HloComputation::VisitMap::insert(
-    std::pair<const HloInstruction*, VisitState> x) {
-  if (size_ == kUsingMap) {
-    // Using map.
-    auto [it, was_inserted] = map_.insert(std::move(x));
-    return {it->second, was_inserted};
-  }
-
-  // Using array.
-  for (int i = 0; i < size_; ++i) {
-    if (array_[i].first == x.first) {  // already inserted
-      return {array_[i].second, false};
-    }
-  }
-
-  // See if there's space in array.
-  if (size_ < kMaxInlined) {
-    array_[size_] = std::move(x);
-    return {array_[size_++].second, true};
-  }
-
-  // Convert to a map.
-  for (int i = 0; i < kMaxInlined; ++i) {
-    map_.insert(std::move(array_[i]));
-  }
-  size_ = kUsingMap;
-
-  auto [it, inserted] = map_.insert(std::move(x));
-  DCHECK_EQ(inserted, true);
-  return {it->second, true};
 }
 
 }  // namespace xla

@@ -2447,6 +2447,20 @@ class HloInstruction {
   // of the operand.
   void AppendOperand(HloInstruction* operand);
 
+  // Scratch is a space used by external functionalities that process
+  // instructions.
+  //
+  // To avoid invalid scratch check `scratch_seq`.
+  uint32_t* scratch() { return &scratch_; }
+
+  // Sequence for scratch space.  Use `NextScratchSeq()` to generate a
+  // sequence value.
+  uint32_t scratch_seq() const { return scratch_seq_; }
+  void set_scratch_seq(uint32_t seq) { scratch_seq_ = seq; }
+
+  // Returns a sequence number that can be used as scratch sequenece.
+  static uint32_t NextScratchSeq();
+
   // Old methods kept for smooth subclassing transition END.
 
   HloInstruction(const HloInstruction&) = delete;
@@ -2720,6 +2734,13 @@ class HloInstruction {
 
   // Result shape of this instruction.
   Shape shape_;
+
+  // Scratch data used for storing temporary data owned by processing methods
+  // (e.g., post-order visitors).
+  uint32_t scratch_ = 0;
+  // Sequence is used to avoid detecting invalid scratch space without
+  // reinitializing the instruction.
+  uint32_t scratch_seq_ = 0;
 
   // The backend-specific configuration for how a backend should compile this
   // HLO. See the documentation on backend_config().
