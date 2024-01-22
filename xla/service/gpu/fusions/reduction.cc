@@ -595,37 +595,38 @@ ReductionFusion::ReductionEmitter::BuildKernelThunkForFusion(
                                     fusion_op));
 
   auto kernel_builder_status = absl::OkStatus();
-  auto [entry, cached] = ir_emitter_context_.kernel_cache().GetWithStatus(
-      fused_computation, kernel_arguments.args(), discriminator,
-      [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
-        llvm::Function* kernel;
-        std::vector<llvm_ir::IrArray> input_arrays;
-        std::vector<llvm_ir::IrArray> output_arrays;
-        TF_ASSIGN_OR_RETURN(
-            std::tie(kernel, input_arrays, output_arrays),
-            BuildKernelPrototype(ir_emitter_context_, suggested_kernel_name,
-                                 kernel_arguments.args(),
-                                 fusion_.operand_count(), launch_dimensions,
-                                 builder_));
-        TF_RETURN_IF_ERROR(kernel_builder_fn(input_arrays, output_arrays));
-        return {{kernel->getName().str(), launch_dimensions}};
-      });
-  TF_RETURN_IF_ERROR(entry.status());
+  auto [status_or_entry_ref, cached] =
+      ir_emitter_context_.kernel_cache().GetWithStatus(
+          fused_computation, kernel_arguments.args(), discriminator,
+          [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
+            llvm::Function* kernel;
+            std::vector<llvm_ir::IrArray> input_arrays;
+            std::vector<llvm_ir::IrArray> output_arrays;
+            TF_ASSIGN_OR_RETURN(
+                std::tie(kernel, input_arrays, output_arrays),
+                BuildKernelPrototype(ir_emitter_context_, suggested_kernel_name,
+                                     kernel_arguments.args(),
+                                     fusion_.operand_count(), launch_dimensions,
+                                     builder_));
+            TF_RETURN_IF_ERROR(kernel_builder_fn(input_arrays, output_arrays));
+            return {{kernel->getName().str(), launch_dimensions}};
+          });
+  TF_ASSIGN_OR_RETURN(const KernelReuseCache::Entry& entry,
+                      status_or_entry_ref);
   if (cached) {
     VLOG(3) << "Reuse: " << suggested_kernel_name << " -> "
-            << entry->kernel_name;
+            << entry.kernel_name;
   }
 
   if (ir_emitter_context_.emit_ir_from_hlo()) {
     return std::make_unique<KernelThunk>(
-        &fusion_, entry->kernel_name, kernel_arguments.args(),
-        launch_dimensions,
+        &fusion_, entry.kernel_name, kernel_arguments.args(), launch_dimensions,
         // Shared memory is allocated statically.
         /*shmem_bytes=*/0);
   }
 
   return std::make_unique<KernelThunk>(
-      fusion_op, entry->kernel_name, kernel_arguments.args(), launch_dimensions,
+      fusion_op, entry.kernel_name, kernel_arguments.args(), launch_dimensions,
       // Shared memory is allocated statically.
       /*shmem_bytes=*/0);
 }

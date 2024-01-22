@@ -474,6 +474,24 @@ cc_library(
 )
 
 cc_library(
+    name = "triton_tma_util",
+    srcs = ["triton_tma_util.cc"],
+    hdrs = ["triton_tma_util.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    deps = [
+        "//xla:status_macros",
+        "//xla/service/gpu/runtime3:tma_metadata",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@triton//:TritonTmaMetadata",
+        "@tsl//tsl/platform:statusor",
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]),
+)
+
+cc_library(
     name = "ir_emitter_triton",
     srcs = if_cuda_is_configured(["ir_emitter_triton.cc"]) + if_rocm_hipblaslt([
         "ir_emitter_triton.cc",
@@ -487,6 +505,7 @@ cc_library(
         ":target_util",
         ":triton_fusion_analysis",
         ":triton_tiling_propagation",
+        ":triton_tma_util",
         "//xla:autotuning_proto_cc",
         "//xla:comparison_util",
         "//xla:debug_options_flags",
@@ -503,6 +522,7 @@ cc_library(
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",
         "//xla/service:dump",
         "//xla/service/gpu/llvm_gpu_backend",
+        "//xla/service/gpu/runtime3:tma_metadata",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",
         "//xla/translate/hlo_to_mhlo:hlo_module_importer",
@@ -5288,7 +5308,11 @@ cc_library(
         ":launch_dimensions",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/service/gpu/runtime3:tma_metadata",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
     ],
 )

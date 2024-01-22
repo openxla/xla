@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/runtime3/tma_metadata.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status.h"
@@ -63,7 +64,8 @@ mlir::Value RemoveTransformingOperations(mlir::Value value) {
 KernelThunk::KernelThunk(
     std::variant<mlir::Operation*, const HloInstruction*> op,
     std::string kernel_name, absl::Span<const KernelArgument> kernel_arguments,
-    LaunchDimensions launch_dimensions, int64_t shmem_bytes)
+    LaunchDimensions launch_dimensions, int64_t shmem_bytes,
+    std::unique_ptr<TmaMetadata> tma_metadata)
     : Thunk(Kind::kKernel, std::holds_alternative<mlir::Operation*>(op)
                                ? Thunk::ThunkInfo::WithProfileAnnotation(
                                      std::get<mlir::Operation*>(op))
@@ -71,7 +73,8 @@ KernelThunk::KernelThunk(
                                      std::get<const HloInstruction*>(op))),
       kernel_name_(std::move(kernel_name)),
       launch_dimensions_(std::move(launch_dimensions)),
-      shmem_bytes_(shmem_bytes) {
+      shmem_bytes_(shmem_bytes),
+      tma_metadata_(std::move(tma_metadata)) {
   args_.reserve(kernel_arguments.size());
   written_.reserve(kernel_arguments.size());
   for (const auto& kernel_argument : kernel_arguments) {

@@ -14,14 +14,19 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/fusions/triton.h"
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Value.h"
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_computation.h"
@@ -36,10 +41,10 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/runtime3/kernel_thunk.h"
+#include "xla/service/gpu/runtime3/tma_metadata.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/statusor.h"
-#include "tsl/platform/errors.h"
+#include "xla/status_macros.h"
 #include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA
@@ -186,6 +191,10 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
       launch_dimensions =
           GetMatMulLaunchDimensions(analysis, analysis_.fusion(), config);
     }
+    // This is OK, because we are in an #if GOOGLE_CUDA block. It can be
+    // nullptr.
+    CudaTmaMetadata* tma_metadata = dynamic_cast<CudaTmaMetadata*>(
+        triton_wrapper_result.tma_metadata.get());
 
     llvm::Function* impl_fn =
         ir_emitter_context.llvm_module()->getFunction(impl_fn_name);
@@ -194,28 +203,57 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
     llvm::Function* kernel;
     std::vector<llvm_ir::IrArray> inputs;
     std::vector<llvm_ir::IrArray> outputs;
+    std::vector<llvm::Value*> tensor_map_args;
+    std::vector<int> new_arg_index;
+    int num_tensor_map_args = 0;
+    if (tma_metadata != nullptr) {
+      num_tensor_map_args = tma_metadata->tensor_map_infos.size();
+    }
+    // We pretend that all buffer args are input args - it doesn't really matter
+    // here.
     TF_ASSIGN_OR_RETURN(
         std::tie(kernel, inputs, outputs),
-        BuildKernelPrototype(ir_emitter_context, suggested_kernel_name,
-                             kernel_arguments.args(), impl_fn->arg_size(),
-                             launch_dimensions, &builder));
+        BuildKernelPrototype(
+            ir_emitter_context, suggested_kernel_name, kernel_arguments.args(),
+            /*num_inputs=*/impl_fn->arg_size(), launch_dimensions, &builder,
+            num_tensor_map_args, &tensor_map_args, &new_arg_index));
+    TF_RET_CHECK(impl_fn->arg_size() == inputs.size() + tensor_map_args.size());
+    TF_RET_CHECK(outputs.empty());
 
     // Move function body into kernel prototype.
     llvm::Function* prototype_func = builder.GetInsertBlock()->getParent();
     prototype_func->splice(prototype_func->begin(), impl_fn);
-    for (const auto& [arg, ir_array] : llvm::zip(impl_fn->args(), inputs)) {
-      arg.replaceAllUsesWith(ir_array.GetBasePointer());
+    for (int impl_fn_arg_index = 0; impl_fn_arg_index < impl_fn->arg_size();
+         ++impl_fn_arg_index) {
+      impl_fn->getArg(impl_fn_arg_index)
+          ->replaceAllUsesWith(
+              impl_fn_arg_index < inputs.size()
+                  ? inputs.at(impl_fn_arg_index).GetBasePointer()
+                  : tensor_map_args.at(impl_fn_arg_index - inputs.size()));
     }
     impl_fn->eraseFromParent();
 
+    // Update tma metadata to refer to the new arg indices after we deduplicated
+    // buffer arguments.
+    if (tma_metadata != nullptr) {
+      for (CudaTensorMapInfo& info : tma_metadata->tensor_map_infos) {
+        info.global_address_arg_index =
+            new_arg_index.at(info.global_address_arg_index);
+      }
+      VLOG(4) << "Updated TMA metadata:\n" << tma_metadata->ToString();
+    }
+
     return {{kernel->getName().str(), launch_dimensions,
-             triton_wrapper_result.shmem_bytes}};
+             triton_wrapper_result.shmem_bytes,
+             std::move(triton_wrapper_result.tma_metadata)}};
   };
 
-  auto [kernel, was_cached] = ir_emitter_context.kernel_cache().GetWithStatus(
-      hlo_computation, kernel_arguments.args(),
-      /*discriminator=*/"", generate);
-  TF_RETURN_IF_ERROR(kernel.status());
+  auto [status_or_entry_ref, was_cached] =
+      ir_emitter_context.kernel_cache().GetWithStatus(
+          hlo_computation, kernel_arguments.args(),
+          /*discriminator=*/"", generate);
+  TF_ASSIGN_OR_RETURN(const KernelReuseCache::Entry& entry,
+                      status_or_entry_ref);
 
   std::variant<mlir::Operation*, const HloInstruction*> fusion_op_or_hlo;
   if (ir_emitter_context.emit_ir_from_hlo()) {
@@ -226,8 +264,9 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
 
   FusionEmissionResult result;
   result.thunks.emplace_back(std::make_unique<KernelThunk>(
-      fusion_op_or_hlo, kernel->kernel_name, kernel_arguments.args(),
-      kernel->launch_dimensions, kernel->shmem_bytes));
+      fusion_op_or_hlo, entry.kernel_name, kernel_arguments.args(),
+      entry.launch_dimensions, entry.shmem_bytes,
+      entry.tma_metadata == nullptr ? nullptr : entry.tma_metadata->Clone()));
 
   return result;
 #else

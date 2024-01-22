@@ -193,7 +193,9 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
                      absl::Span<const KernelArgument> arguments,
                      size_t num_inputs,
                      const LaunchDimensions& launch_dimensions,
-                     llvm::IRBuilder<>* builder) {
+                     llvm::IRBuilder<>* builder, int num_tensor_map_args,
+                     std::vector<llvm::Value*>* out_tensor_map_args,
+                     std::vector<int>* out_new_arg_index) {
   // If some arguments have the same buffer, we will pass them only once.
   llvm::SmallVector<int> to_llvm_arg_no(arguments.size());
   llvm::SmallVector<int> to_arg_no;
@@ -208,7 +210,7 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
     to_llvm_arg_no[arg_no] = to_arg_no.size();
     to_arg_no.push_back(arg_no);
   }
-  const int kNumLlvmArgs = to_arg_no.size();
+  const int num_llvm_buffer_args = to_arg_no.size();
 
   // Compute the kernel name. The opcode string may contain "-" which cannot be
   // in a PTX function name, so sanitize the name before uniquifying it.
@@ -220,7 +222,8 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
   llvm::LLVMContext& context = llvm_module->getContext();
   llvm::FunctionType* kernel_type = llvm::FunctionType::get(
       /*Result=*/llvm::Type::getVoidTy(context),
-      std::vector<llvm::Type*>(kNumLlvmArgs, builder->getPtrTy()),
+      std::vector<llvm::Type*>(num_llvm_buffer_args + num_tensor_map_args,
+                               builder->getPtrTy()),
       /*isVarArg=*/false);
   llvm::Function* kernel =
       llvm::Function::Create(kernel_type, llvm::GlobalValue::ExternalLinkage,
@@ -242,7 +245,7 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
   // that return instruction.
   builder->SetInsertPoint(llvm::ReturnInst::Create(context, entry_bb));
 
-  for (size_t llvm_arg_no = 0; llvm_arg_no < kernel->arg_size();
+  for (size_t llvm_arg_no = 0; llvm_arg_no < num_llvm_buffer_args;
        ++llvm_arg_no) {
     const KernelArgument& kernel_argument = arguments[to_arg_no[llvm_arg_no]];
     llvm::Argument& llvm_arg = *kernel->getArg(llvm_arg_no);
@@ -280,6 +283,20 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
     (arg_no < num_inputs ? inputs : outputs).push_back(ir_array);
   }
 
+  if (out_tensor_map_args != nullptr) {
+    out_tensor_map_args->clear();
+    out_tensor_map_args->reserve(num_tensor_map_args);
+    for (size_t i = num_llvm_buffer_args; i < kernel->arg_size(); ++i) {
+      out_tensor_map_args->push_back(kernel->getArg(i));
+    }
+  }
+
+  if (out_new_arg_index != nullptr) {
+    out_new_arg_index->clear();
+    out_new_arg_index->insert(out_new_arg_index->begin(),
+                              to_llvm_arg_no.begin(), to_llvm_arg_no.end());
+  }
+
   return {{kernel, std::move(inputs), std::move(outputs)}};
 }
 
@@ -302,42 +319,46 @@ absl::StatusOr<FusionEmissionResult> KernelFusionEmitterBase::Emit(
                       EmitInitializers(ir_emitter_context, fusion_op, fusion));
   auto launch_dims = launch_dimensions();
   std::vector<llvm_ir::IrArray> inputs, outputs;
-  auto [entry, cached] = ir_emitter_context.kernel_cache().GetWithStatus(
-      fused_computation, kernel_arguments.args(), /*discriminator=*/"",
-      [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
-        llvm::Function* kernel;
-        TF_ASSIGN_OR_RETURN(std::tie(kernel, inputs, outputs),
-                            BuildKernelPrototype(
-                                ir_emitter_context, suggested_kernel_name,
-                                kernel_arguments.args(), fusion.operand_count(),
-                                launch_dims, &builder));
-        if (ir_emitter_context.emit_kernels()) {
-          TF_RETURN_IF_ERROR(EmitKernel(ir_emitter_context, fusion, launch_dims,
-                                        std::move(inputs), std::move(outputs),
-                                        &builder));
-        } else {
-          VLOG(3) << "Skipped kernel compilation: " << suggested_kernel_name;
-        }
-        // TODO(jreiffers): Return shmem_bytes from EmitKernel when
-        // converting the Triton emitters to this infrastructure.
-        return KernelReuseCache::Entry{kernel->getName().str(), launch_dims,
-                                       /*shmem_bytes=*/0};
-      });
-  TF_RETURN_IF_ERROR(entry.status());
+  auto [status_or_entry_ref, cached] =
+      ir_emitter_context.kernel_cache().GetWithStatus(
+          fused_computation, kernel_arguments.args(), /*discriminator=*/"",
+          [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
+            llvm::Function* kernel;
+            TF_ASSIGN_OR_RETURN(
+                std::tie(kernel, inputs, outputs),
+                BuildKernelPrototype(ir_emitter_context, suggested_kernel_name,
+                                     kernel_arguments.args(),
+                                     fusion.operand_count(), launch_dims,
+                                     &builder));
+            if (ir_emitter_context.emit_kernels()) {
+              TF_RETURN_IF_ERROR(EmitKernel(ir_emitter_context, fusion,
+                                            launch_dims, std::move(inputs),
+                                            std::move(outputs), &builder));
+            } else {
+              VLOG(3) << "Skipped kernel compilation: "
+                      << suggested_kernel_name;
+            }
+            // TODO(jreiffers): Return shmem_bytes from EmitKernel when
+            // converting the Triton emitters to this infrastructure.
+            return KernelReuseCache::Entry{kernel->getName().str(), launch_dims,
+                                           /*shmem_bytes=*/0};
+          });
+  TF_ASSIGN_OR_RETURN(const KernelReuseCache::Entry& entry,
+                      status_or_entry_ref);
 
   if (cached) {
     VLOG(3) << "Reuse: " << suggested_kernel_name << " -> "
-            << entry->kernel_name;
+            << entry.kernel_name;
   }
 
   if (ir_emitter_context.emit_ir_from_hlo()) {
     result.thunks.emplace_back(std::make_unique<KernelThunk>(
-        &fusion, entry->kernel_name, kernel_arguments.args(), launch_dims,
-        entry->shmem_bytes));
+        &fusion, entry.kernel_name, kernel_arguments.args(), launch_dims,
+        entry.shmem_bytes));
   } else {
     result.thunks.emplace_back(std::make_unique<KernelThunk>(
-        fusion_op, entry->kernel_name, kernel_arguments.args(), launch_dims,
-        entry->shmem_bytes));
+        fusion_op, entry.kernel_name, kernel_arguments.args(), launch_dims,
+        entry.shmem_bytes));
   }
 
   return result;

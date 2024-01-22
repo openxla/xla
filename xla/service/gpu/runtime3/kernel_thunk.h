@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/runtime3/tma_metadata.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -72,7 +73,8 @@ class KernelThunk : public Thunk {
   KernelThunk(std::variant<mlir::Operation*, const HloInstruction*> op,
               std::string kernel_name,
               absl::Span<const KernelArgument> kernel_arguments,
-              LaunchDimensions launch_dimensions, int64_t shmem_bytes);
+              LaunchDimensions launch_dimensions, int64_t shmem_bytes,
+              std::unique_ptr<TmaMetadata> tma_metadata = nullptr);
   KernelThunk(const KernelThunk&) = delete;
   KernelThunk& operator=(const KernelThunk&) = delete;
   ~KernelThunk() override = default;
@@ -116,6 +118,9 @@ class KernelThunk : public Thunk {
   const LaunchDimensions launch_dimensions_;
 
   int64_t shmem_bytes_;
+
+  // Optional TMA metadata
+  std::unique_ptr<TmaMetadata> tma_metadata_;
 
   // mlir::Value(s) corresponding to the buffer slice arguments.
   std::vector<mlir::Value> values_;
