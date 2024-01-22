@@ -272,7 +272,6 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 Status MaybeRegisterBuffers(NcclApi* nccl_api, int device_ordinal,
                             const std::vector<DeviceBufferPair>& buffers,
                             NcclApi::NcclCommHandle comm) {
-  #ifdef XCCL_HAS_COMM_REGISTER
   // Keep track of which communicators we have registered for already.
   // Each device has one NCCL buffer which only needs to be registered once per
   // each comm.
@@ -305,7 +304,6 @@ Status MaybeRegisterBuffers(NcclApi* nccl_api, int device_ordinal,
       }
     }
   }
-  #endif
 
   return OkStatus();
 }

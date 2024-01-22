@@ -325,13 +325,11 @@ class DefaultNcclApi final : public NcclApi {
                     size_t count, int32_t peer, NcclCommHandle comm,
                     se::Stream* stream) final;
 
-  #ifdef XCCL_HAS_COMM_REGISTER
   absl::StatusOr<NcclRegisteredBufferHandle> RegisterBuffer(
       NcclCommHandle comm, se::DeviceMemoryBase buffer) final;
 
   absl::StatusOr<NcclRegisteredBufferHandle> DeregisterBuffer(
       NcclCommHandle comm, NcclRegisteredBufferHandle handle) final;
-  #endif
 };
 
 NcclApi* NcclApi::Default() {
@@ -504,7 +502,6 @@ absl::Status DefaultNcclApi::Recv(se::DeviceMemoryBase recv_buffer,
                peer, Cast(comm), se::gpu::AsGpuStreamValue(stream)));
 }
 
-#ifdef XCCL_HAS_COMM_REGISTER
 absl::StatusOr<NcclApi::NcclRegisteredBufferHandle>
 DefaultNcclApi::RegisterBuffer(NcclCommHandle comm,
                                se::DeviceMemoryBase buffer) {
@@ -512,8 +509,10 @@ DefaultNcclApi::RegisterBuffer(NcclCommHandle comm,
       "Register buffer for NCCL communicator; buffer=%p; size=%d; comm=%p",
       buffer.opaque(), buffer.size(), comm);
   void* handle = nullptr;
+  #if (NCCL_VERSION_CODE >= 201901)
   XLA_NCCL_RETURN_IF_ERROR(
       ncclCommRegister(Cast(comm), buffer.opaque(), buffer.size(), &handle));
+  #endif
 
   return reinterpret_cast<NcclRegisteredBufferHandle>(handle);
 }
@@ -524,9 +523,10 @@ DefaultNcclApi::DeregisterBuffer(NcclCommHandle comm,
   VLOG(3) << absl::StreamFormat(
       "Deregister buffer for NCCL communicator; handle=%p; comm=%p", handle,
       comm);
+  #if (NCCL_VERSION_CODE >= 201901)
   return XLA_NCCL_STATUS(
       ncclCommDeregister(Cast(comm), reinterpret_cast<void*>(handle)));
+  #endif
 }
-#endif
 
 }  // namespace xla::gpu
