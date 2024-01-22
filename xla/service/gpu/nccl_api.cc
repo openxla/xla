@@ -26,7 +26,18 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+
+#if TENSORFLOW_USE_ROCM
+#include "rocm/rocm_config.h"
+#if (TF_ROCM_VERSION >= 50200)
+#include "rocm/include/rccl/rccl.h"
+#else
+#include "rocm/include/rccl.h"
+#endif
+#else
 #include "third_party/nccl/nccl.h"
+#endif
+
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/nccl_clique_key.h"
@@ -314,11 +325,13 @@ class DefaultNcclApi final : public NcclApi {
                     size_t count, int32_t peer, NcclCommHandle comm,
                     se::Stream* stream) final;
 
+  #ifdef XCCL_HAS_COMM_REGISTER
   absl::StatusOr<NcclRegisteredBufferHandle> RegisterBuffer(
       NcclCommHandle comm, se::DeviceMemoryBase buffer) final;
 
   absl::StatusOr<NcclRegisteredBufferHandle> DeregisterBuffer(
       NcclCommHandle comm, NcclRegisteredBufferHandle handle) final;
+  #endif
 };
 
 NcclApi* NcclApi::Default() {
@@ -491,6 +504,7 @@ absl::Status DefaultNcclApi::Recv(se::DeviceMemoryBase recv_buffer,
                peer, Cast(comm), se::gpu::AsGpuStreamValue(stream)));
 }
 
+#ifdef XCCL_HAS_COMM_REGISTER
 absl::StatusOr<NcclApi::NcclRegisteredBufferHandle>
 DefaultNcclApi::RegisterBuffer(NcclCommHandle comm,
                                se::DeviceMemoryBase buffer) {
@@ -513,5 +527,6 @@ DefaultNcclApi::DeregisterBuffer(NcclCommHandle comm,
   return XLA_NCCL_STATUS(
       ncclCommDeregister(Cast(comm), reinterpret_cast<void*>(handle)));
 }
+#endif
 
 }  // namespace xla::gpu

@@ -29,6 +29,11 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/concurrency/ref_count.h"
 
+#ifndef TENSORFLOW_USE_ROCM
+// This is only supported in NCCL >= 2.19.1 and not yet in RCCL
+#define XCCL_HAS_COMM_REGISTER
+#endif
+
 namespace xla::gpu {
 
 //===----------------------------------------------------------------------===//
@@ -191,6 +196,7 @@ class NcclApi {
                             PrimitiveType dtype, size_t count, int32_t peer,
                             NcclCommHandle comm, se::Stream* stream) = 0;
 
+  #ifdef XCCL_HAS_COMM_REGISTSER
   // Register `buffer` with communicator `comm` for zero-copy communication.
   // Returned handle can be used for future unregistration.
   //
@@ -203,6 +209,7 @@ class NcclApi {
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclcommderegister
   virtual absl::StatusOr<NcclRegisteredBufferHandle> DeregisterBuffer(
       NcclCommHandle comm, NcclRegisteredBufferHandle handle) = 0;
+  #endif
 };
 
 }  // namespace xla::gpu

@@ -130,6 +130,7 @@ class NcclApiStub final : public NcclApi {
     return UnimplementedError();
   }
 
+  #ifdef XCCL_HAS_COMM_REGISTER
   absl::StatusOr<NcclRegisteredBufferHandle> RegisterBuffer(
       NcclCommHandle, se::DeviceMemoryBase) final {
     return UnimplementedError();
@@ -139,6 +140,7 @@ class NcclApiStub final : public NcclApi {
       NcclCommHandle, NcclRegisteredBufferHandle) final {
     return UnimplementedError();
   }
+  #endif
 };
 
 NcclApi* NcclApi::Default() {

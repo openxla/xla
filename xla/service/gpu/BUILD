@@ -919,13 +919,12 @@ alias(
 
 cc_library(
     name = "_nccl_api_impl",
-    srcs = if_cuda_is_configured(
-        ["nccl_api.cc"],
-        ["nccl_api_stub.cc"],
+    srcs = if_gpu_is_configured(
+        ["nccl_api.cc",  "nccl_api_stub.cc"],
     ),
     hdrs = ["nccl_api.h"],
     compatible_with = get_compatible_with_portable(),
-    defines = if_cuda_is_configured(["XLA_ENABLE_XCCL"]),  # TODO(ezhulenev): Remove!
+    defines = if_gpu_is_configured(["XLA_ENABLE_XCCL"]),  # TODO(ezhulenev): Remove!
     deps = [
         ":nccl_clique_key",
         "//xla:shape_util",
@@ -945,6 +944,8 @@ cc_library(
         "@local_config_nccl//:nccl",
         "//xla/stream_executor/cuda:cuda_driver",
         "//xla/stream_executor/cuda:cuda_executor",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rccl",
     ]) + if_gpu_is_configured([
         "//xla/stream_executor/gpu:gpu_stream",
     ]),
@@ -1040,6 +1041,8 @@ cc_library(
         "@tsl//tsl/platform:regexp",
     ] + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rccl",
     ]),
 )
 
@@ -1057,6 +1060,8 @@ xla_cc_test(
         ":mock_nccl_xml_google",
     ]) + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rccl",
     ]),
 )
 
