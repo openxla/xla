@@ -17,8 +17,8 @@ def tf_additional_cudnn_plugin_copts():
     return ["-DNV_CUDNN_DISABLE_EXCEPTION", "-DTF_ENABLE_CUDNN_FRONTEND"]
 
 # Returns whether any GPU backend is configuered.
-def if_gpu_is_configured(x, no_gpu = []):
-    return if_cuda_is_configured(x, no_gpu) + if_rocm_is_configured(x, no_gpu)
+def if_gpu_is_configured(x):
+    return if_cuda_is_configured(x) + if_rocm_is_configured(x)
 
 def if_cuda_or_rocm(x):
     return if_gpu_is_configured(x)
