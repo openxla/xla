@@ -20,9 +20,6 @@ def tf_additional_cudnn_plugin_copts():
 def if_gpu_is_configured(x):
     return if_cuda_is_configured(x) + if_rocm_is_configured(x)
 
-def if_cuda_or_rocm(x):
-    return if_gpu_is_configured(x)
-
 # nvlink is not available via the pip wheels, disable it since it will create
 # unnecessary dependency
 def tf_additional_gpu_compilation_copts():

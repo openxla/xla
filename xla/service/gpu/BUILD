@@ -20,7 +20,7 @@ load(
     "if_rocm_is_configured",
     "rocm_copts",
 )
-load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
+load("@tsl//tsl:tsl.bzl", "if_google", "if_cuda_or_rocm", "if_nccl", "tsl_copts", "tsl_gpu_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/platform:build_config.bzl",
@@ -919,8 +919,9 @@ alias(
 
 cc_library(
     name = "_nccl_api_impl",
-    srcs = if_gpu_is_configured(
+    srcs = if_cuda_or_rocm(
         ["nccl_api.cc"],
+        ["nccl_api_stub.cc"],
     ),
     hdrs = ["nccl_api.h"],
     compatible_with = get_compatible_with_portable(),
