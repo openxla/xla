@@ -651,8 +651,68 @@ class MemorySpaceAssignment {
   // space and a fast and small alternate memory space.
   enum class MemorySpace { kDefault, kAlternate };
 
+  class BaseAllocation {
+   public:
+    virtual ~BaseAllocation() = default;
+
+    // True if the allocation is for a copy or a sliced-copy.
+    virtual bool is_copy_like_allocation() const = 0;
+    virtual bool is_copy_allocation() const = 0;
+    virtual bool is_sliced_copy_allocation() const = 0;
+    // Adds a use to this allocation.
+    virtual void AddUse(HloUse use) = 0;
+    // Extends the end time of this allocation.
+    virtual void Extend(int64_t end_time) = 0;
+    // After all of the time ranges for the allocations have been assigned,
+    // Process morphs the instructions affected to assign the memory spaces and
+    // insert asynchronous copy instructions if necessary.
+    virtual Status Process() = 0;
+    // An optional post-process step that will be called after all allocations
+    // have been processed.
+    virtual Status PostProcess() = 0;
+    // Marks (adds this allocation to needed_allocations) if this allocation is
+    // needed. PinnedAllocation and CopyAllocations are always needed and
+    // ParentAllocations are needed if they have any uses or if other
+    // CopyAllocation or ParentAllocations depend on them.
+    virtual void MarkIfNeeded(absl::flat_hash_set<const BaseAllocation*>&
+                                  needed_allocations) const = 0;
+    // Marks this allocation as needed.
+    virtual void MarkNeeded(absl::flat_hash_set<const BaseAllocation*>&
+                                needed_allocations) const = 0;
+    // Returns the defining position for this allocation.
+    virtual HloPosition defining_position() const = 0;
+    // Returns the time the buffer is first available to be used. For
+    // Allocation, this is start_time.
+    virtual int64_t earliest_available_time() const = 0;
+    virtual const std::vector<HloUse>& uses() const = 0;
+    virtual void clear_uses() = 0;
+    virtual MemorySpace memory_space() const = 0;
+    // Returns the associated chunk that may be a nullopt if the allocation is
+    // in the default memory space.
+    virtual std::optional<Chunk> maybe_chunk() const = 0;
+    // Returns the associated chunk. The caller should ensure that the chunk is
+    // defined (the allocation should be in the alternate memory space).
+    virtual Chunk chunk() const = 0;
+    virtual Chunk* mutable_chunk() = 0;
+    virtual void set_offset(int64_t offset) = 0;
+    virtual void set_start_time(int64_t start_time) = 0;
+    virtual void set_end_time(int64_t end_time) = 0;
+    virtual int64_t start_time() const = 0;
+    virtual int64_t end_time() const = 0;
+    virtual bool is_scoped_allocation() const = 0;
+    virtual std::optional<int64_t> cross_program_prefetch_index() const = 0;
+    virtual std::string ToString() const = 0;
+    virtual bool is_in_alternate_mem() const = 0;
+    virtual bool is_in_default_mem() const = 0;
+
+   protected:
+    // Recursively create kGetTupleElement instructions if the defining position
+    // shape is not an array. Returns the new instruction that has array shape.
+    virtual HloInstruction* AddGetTupleElements() const = 0;
+  };
+
   // Forward declaration for Allocation.
-  class Allocation;
+  class PinnedAllocation;
   class ParentAllocation;
 
   // This class represents an allocation that might either be in the default or
@@ -686,13 +746,13 @@ class MemorySpaceAssignment {
   //   - Allocation(memory_space=kAlternate, start_time=10, end_time=14)
   //   - CopyAllocation(memory_space=kDefault, start_time=12, end_time=25)
   //   - CopyAllocation(memory_space=kAlternate, start_time=22, end_time=25)
-  class Allocation {
+  class PinnedAllocation : public BaseAllocation {
     friend class ParentAllocation;
 
    public:
-    Allocation(HloPosition defining_position, MemorySpace memory_space,
-               std::optional<Chunk> chunk, int64_t start_time, int64_t end_time,
-               bool is_scoped_allocation)
+    PinnedAllocation(HloPosition defining_position, MemorySpace memory_space,
+                     std::optional<Chunk> chunk, int64_t start_time,
+                     int64_t end_time, bool is_scoped_allocation)
         : defining_position_(defining_position),
           memory_space_(memory_space),
           chunk_(chunk),
@@ -701,84 +761,90 @@ class MemorySpaceAssignment {
           is_scoped_allocation_(is_scoped_allocation) {
       CHECK(!is_scoped_allocation || defining_position.index == ShapeIndex({}));
     }
-    virtual ~Allocation() = default;
+    virtual ~PinnedAllocation() = default;
 
     // True if the allocation is for a copy or a sliced-copy.
-    bool is_copy_like_allocation() const;
+    bool is_copy_like_allocation() const override;
 
-    virtual bool is_copy_allocation() const { return false; }
-    virtual bool is_sliced_copy_allocation() const { return false; }
+    bool is_copy_allocation() const override { return false; }
+    bool is_sliced_copy_allocation() const override { return false; }
 
     // Adds a use to this allocation.
-    void AddUse(HloUse use);
+    void AddUse(HloUse use) override;
 
     // Extends the end time of this allocation.
-    void Extend(int64_t end_time) { end_time_ = std::max(end_time_, end_time); }
+    void Extend(int64_t end_time) override {
+      end_time_ = std::max(end_time_, end_time);
+    }
 
     // After all of the time ranges for the allocations have been assigned,
     // Process morphs the instructions affected to assign the memory spaces and
     // insert asynchronous copy instructions if necessary.
-    virtual Status Process();
+    Status Process() override;
 
     // An optional post-process step that will be called after all allocations
     // have been processed.
-    virtual Status PostProcess() { return OkStatus(); }
+    Status PostProcess() override { return OkStatus(); }
 
     // Marks (adds this allocation to needed_allocations) if this allocation is
-    // needed. Allocation and CopyAllocations are always needed and
+    // needed. PinnedAllocation and CopyAllocations are always needed and
     // ParentAllocations are needed if they have any uses or if other
     // CopyAllocation or ParentAllocations depend on them.
-    virtual void MarkIfNeeded(
-        absl::flat_hash_set<const Allocation*>& needed_allocations) const;
+    void MarkIfNeeded(absl::flat_hash_set<const BaseAllocation*>&
+                          needed_allocations) const override;
 
     // Marks this allocation as needed.
-    virtual void MarkNeeded(
-        absl::flat_hash_set<const Allocation*>& needed_allocations) const;
+    void MarkNeeded(absl::flat_hash_set<const BaseAllocation*>&
+                        needed_allocations) const override;
 
     // Returns the defining position for this allocation.
-    virtual HloPosition defining_position() const { return defining_position_; }
+    HloPosition defining_position() const override {
+      return defining_position_;
+    }
 
     // Returns the time the buffer is first available to be used. For
     // Allocation, this is start_time.
-    virtual int64_t earliest_available_time() const { return start_time_; }
+    int64_t earliest_available_time() const override { return start_time_; }
 
-    const std::vector<HloUse>& uses() const { return uses_; }
-    void clear_uses() { uses_.clear(); }
-    MemorySpace memory_space() const { return memory_space_; }
+    const std::vector<HloUse>& uses() const override { return uses_; }
+    void clear_uses() override { uses_.clear(); }
+    MemorySpace memory_space() const override { return memory_space_; }
     // Returns the associated chunk that may be a nullopt if the allocation is
     // in the default memory space.
-    std::optional<Chunk> maybe_chunk() const { return chunk_; }
+    std::optional<Chunk> maybe_chunk() const override { return chunk_; }
     // Returns the associated chunk. The caller should ensure that the chunk is
     // defined (the allocation should be in the alternate memory space).
-    Chunk chunk() const {
+    Chunk chunk() const override {
       CHECK(chunk_.has_value());
       return *chunk_;
     }
-    Chunk* mutable_chunk() { return &*chunk_; }
-    void set_offset(int64_t offset);
-    void set_start_time(int64_t start_time) { start_time_ = start_time; }
-    void set_end_time(int64_t end_time) { end_time_ = end_time; }
-    int64_t start_time() const { return start_time_; }
-    int64_t end_time() const { return end_time_; }
-    bool is_scoped_allocation() const { return is_scoped_allocation_; }
-    virtual std::optional<int64_t> cross_program_prefetch_index() const {
+    Chunk* mutable_chunk() override { return &*chunk_; }
+    void set_offset(int64_t offset) override;
+    void set_start_time(int64_t start_time) override {
+      start_time_ = start_time;
+    }
+    void set_end_time(int64_t end_time) override { end_time_ = end_time; }
+    int64_t start_time() const override { return start_time_; }
+    int64_t end_time() const override { return end_time_; }
+    bool is_scoped_allocation() const override { return is_scoped_allocation_; }
+    std::optional<int64_t> cross_program_prefetch_index() const override {
       return std::nullopt;
     }
 
-    bool operator==(const Allocation& other) const;
-    virtual std::string ToString() const;
+    bool operator==(const PinnedAllocation& other) const;
+    std::string ToString() const override;
 
-    bool is_in_alternate_mem() const {
+    bool is_in_alternate_mem() const override {
       return memory_space_ == MemorySpace::kAlternate;
     }
-    bool is_in_default_mem() const {
+    bool is_in_default_mem() const override {
       return memory_space_ == MemorySpace::kDefault;
     }
 
    protected:
     // Recursively create kGetTupleElement instructions if the defining position
     // shape is not an array. Returns the new instruction that has array shape.
-    HloInstruction* AddGetTupleElements() const;
+    HloInstruction* AddGetTupleElements() const override;
 
     HloPosition defining_position_;
     std::vector<HloUse> uses_;
@@ -793,12 +859,12 @@ class MemorySpaceAssignment {
   // Note: CopyStart instructions are inserted after
   // `copy_start_schedule_after`, while CopyDone instructions are inserted
   // before `copy_done_schedule_before_time`.
-  class CopyAllocation : public Allocation {
+  class CopyAllocation : public PinnedAllocation {
    public:
     // TODO(b/307342076): Reorder scheduling times to be
     // copy_start_schedule_after_time, copy_done_schedule_before_time, end_time
     CopyAllocation(
-        Allocation& prev_allocation, MemorySpace memory_space,
+        PinnedAllocation& prev_allocation, MemorySpace memory_space,
         std::optional<Chunk> chunk, int64_t copy_start_schedule_after_time,
         int64_t copy_done_schedule_before_time, int64_t end_time,
         std::optional<int64_t> cross_program_prefetch_index = std::nullopt);
@@ -807,8 +873,8 @@ class MemorySpaceAssignment {
 
     Status Process() override;
 
-    void MarkNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
-        const override;
+    void MarkNeeded(absl::flat_hash_set<const BaseAllocation*>&
+                        needed_allocations) const override;
 
     HloPosition defining_position() const override {
       // Unless explicitly set, the defining position of a copy allocation in
@@ -854,11 +920,11 @@ class MemorySpaceAssignment {
     bool operator==(const CopyAllocation& other) const;
     std::string ToString() const override;
 
-    const Allocation& prev_allocation() { return prev_allocation_; }
-    Allocation& mutable_prev_allocation() { return prev_allocation_; }
+    const PinnedAllocation& prev_allocation() { return prev_allocation_; }
+    PinnedAllocation& mutable_prev_allocation() { return prev_allocation_; }
 
    private:
-    Allocation& prev_allocation_;
+    PinnedAllocation& prev_allocation_;
     // These variables define the scheduling boundaries where CopyStart and
     // CopyDone can be scheduled. The earliest CopyStart can be scheduled is
     // after copy_start_schedule_after_ and the latest CopyDone can be scheduled
@@ -945,13 +1011,13 @@ class MemorySpaceAssignment {
   //    +---|---|---|---|---|----> time
   //        t0  t1  t2  t3  t4
   //
-  // The Allocation underlying the SlicedCopyAllocation will use the following
-  // dimensions:
+  // The PinnedAllocation underlying the SlicedCopyAllocation will use the
+  // following dimensions:
   // - chunk = [p0, p3)
   // - start time = t2
   // - earliest_available_time = t3
   // - end_time = t4
-  class SlicedCopyAllocation : public Allocation {
+  class SlicedCopyAllocation : public PinnedAllocation {
    public:
     // Full details about a slice in the sliced allocation.
     struct SliceDetail {
@@ -977,7 +1043,7 @@ class MemorySpaceAssignment {
     // - slice_decisions_sorted_by_start_time.size() >= 2, otherwise,
     //   CopyAllocation should be used.
     SlicedCopyAllocation(
-        const Allocation& prev_allocation, MemorySpace memory_space,
+        const PinnedAllocation& prev_allocation, MemorySpace memory_space,
         std::vector<SliceDecision> slice_decisions_sorted_by_start_time,
         int64_t copy_done_schedule_before_time, int64_t end_time);
 
@@ -988,8 +1054,8 @@ class MemorySpaceAssignment {
     Status Process() override;
 
     // Marks the allocation as needed.
-    void MarkNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
-        const override;
+    void MarkNeeded(absl::flat_hash_set<const BaseAllocation*>&
+                        needed_allocations) const override;
 
     // Returns the defining position for this allocation.
     HloPosition defining_position() const override;
@@ -1008,7 +1074,7 @@ class MemorySpaceAssignment {
     std::vector<SliceDetail>& mutable_slice_details_sorted_by_start_time();
     HloInstruction* concat() const { return concat_; }
 
-    std::tuple<const Allocation&, const std::vector<SliceDetail>&,
+    std::tuple<const PinnedAllocation&, const std::vector<SliceDetail>&,
                const HloInstruction*>
     ToTuple() const;
     bool operator==(const SlicedCopyAllocation& other) const;
@@ -1022,7 +1088,7 @@ class MemorySpaceAssignment {
                                absl::Span<HloInstruction* const> slices);
 
     Shape original_shape_to_slice_;
-    const Allocation& prev_allocation_;
+    const PinnedAllocation& prev_allocation_;
     // REQUIRES:
     // - sorted_segments_[i].copy_start_after_time <=
     //   sorted_segments_[i+j].copy.start_after_time
@@ -1036,56 +1102,59 @@ class MemorySpaceAssignment {
   // object. This is useful to model an eviction that happens before a while op
   // so that we don't need to redundantly evict the buffer after the while op as
   // well.
-  class MirroredAllocation : public Allocation {
+  class MirroredAllocation : public PinnedAllocation {
    public:
-    MirroredAllocation(const Allocation& original_allocation, int64_t time)
-        : Allocation(original_allocation.defining_position(),
-                     MemorySpace::kDefault, original_allocation.maybe_chunk(),
-                     /*start_time=*/time,
-                     /*end_time=*/time, /*is_scoped_allocation=*/false),
+    MirroredAllocation(const PinnedAllocation& original_allocation,
+                       int64_t time)
+        : PinnedAllocation(original_allocation.defining_position(),
+                           MemorySpace::kDefault,
+                           original_allocation.maybe_chunk(),
+                           /*start_time=*/time,
+                           /*end_time=*/time, /*is_scoped_allocation=*/false),
           original_allocation_(original_allocation) {}
 
     Status Process() override;
 
-    void MarkNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
-        const override;
+    void MarkNeeded(absl::flat_hash_set<const BaseAllocation*>&
+                        needed_allocations) const override;
 
     std::string ToString() const override;
 
    private:
-    const Allocation& original_allocation_;
+    const PinnedAllocation& original_allocation_;
   };
 
   // An allocation in default memory space that is defined in the parent
   // computation. If a value has a copy in the default memory space in the
   // parent computation, we don't need to evict this buffer in a while loop.
-  class ParentAllocation : public Allocation {
+  class ParentAllocation : public PinnedAllocation {
    public:
-    ParentAllocation(const Allocation& original_allocation,
+    ParentAllocation(const PinnedAllocation& original_allocation,
                      HloInstruction* calling_instruction, HloPosition position,
                      int64_t time)
-        : Allocation(position, MemorySpace::kDefault,
-                     original_allocation.maybe_chunk(), /*start_time=*/time,
-                     /*end_time=*/time, /*is_scoped_allocation=*/false),
+        : PinnedAllocation(position, MemorySpace::kDefault,
+                           original_allocation.maybe_chunk(),
+                           /*start_time=*/time,
+                           /*end_time=*/time, /*is_scoped_allocation=*/false),
           original_allocation_(original_allocation),
           calling_instruction_(calling_instruction) {}
 
     Status Process() override;
     Status PostProcess() override;
 
-    void MarkIfNeeded(absl::flat_hash_set<const Allocation*>&
+    void MarkIfNeeded(absl::flat_hash_set<const BaseAllocation*>&
                           needed_allocations) const override;
-    void MarkNeeded(absl::flat_hash_set<const Allocation*>& needed_allocations)
-        const override;
+    void MarkNeeded(absl::flat_hash_set<const BaseAllocation*>&
+                        needed_allocations) const override;
 
     std::string ToString() const override;
 
    private:
-    const Allocation& original_allocation_;
+    const PinnedAllocation& original_allocation_;
     HloInstruction* calling_instruction_;
   };
 
-  using AllocationSequence = std::vector<std::unique_ptr<Allocation>>;
+  using AllocationSequence = std::vector<std::unique_ptr<PinnedAllocation>>;
   // AllocationValue is used to break up HloValues for each non-trivial position
   // (trivial positions are considered Tuple, GetTupleElement, and Bitcast). An
   // HloValue may include positions and uses that alias with each other across
@@ -1937,8 +2006,8 @@ class MemoryBoundLoopOptimizer {
   // Sort LoopValues by savings_per_byte.
   void SortLoopValues();
 
-  // After allocation finishes, we fix up by creating Allocation objects to any
-  // LoopValues that didn't get alternate memory allocations.
+  // After allocation finishes, we fix up by creating PinnedAllocation objects
+  // to any LoopValues that didn't get alternate memory allocations.
   void PostProcess();
 
   // Allocate LoopValues by dispatching to the correct Allocate method.
@@ -2062,17 +2131,18 @@ class AlternateMemoryBestFitHeap
   const HloLiveRange& hlo_live_range() { return hlo_live_range_; }
 
  private:
-  // We inherit AllocationBlock struct to attach the Allocation information to
-  // make importing repacked offsets easier.
+  // We inherit AllocationBlock struct to attach the PinnedAllocation
+  // information to make importing repacked offsets easier.
   struct RepackAllocationBlock : AllocationBlock {
-    MemorySpaceAssignment::Allocation* allocation;
+    MemorySpaceAssignment::PinnedAllocation* allocation;
   };
 
-  // A data structure we use to associate Allocation objects that are aliased
-  // and must get the same offset.
+  // A data structure we use to associate PinnedAllocation objects that are
+  // aliased and must get the same offset.
   struct AliasedOffset {
     int64_t offset;
-    absl::flat_hash_set<const MemorySpaceAssignment::Allocation*> allocations;
+    absl::flat_hash_set<const MemorySpaceAssignment::PinnedAllocation*>
+        allocations;
   };
 
   // An allocation request for a use segment. A use segment is the time segment
@@ -2144,8 +2214,8 @@ class AlternateMemoryBestFitHeap
     // and loop_size to calculate when exactly to schedule a prefetch
     // instruction.
     int64_t loop_size;
-    // A pointer into an Allocation in loop_optimized_allocations_.
-    const MemorySpaceAssignment::Allocation* loop_optimized_allocation;
+    // A pointer into a PinnedAllocation in loop_optimized_allocations_.
+    const MemorySpaceAssignment::PinnedAllocation* loop_optimized_allocation;
   };
 
   // A context object that is used to share state amongst the methods that
@@ -2243,7 +2313,7 @@ class AlternateMemoryBestFitHeap
 
     // Parameters to Prefetch().
     const AllocationRequest* request;
-    MemorySpaceAssignment::Allocation* prev_allocation_in_default_mem;
+    MemorySpaceAssignment::PinnedAllocation* prev_allocation_in_default_mem;
 
     // Intermediate calculations common to both the sliced and unsliced
     // solutions.
@@ -2344,19 +2414,19 @@ class AlternateMemoryBestFitHeap
 
   // Returns the AliasedOffset object associated with the allocation.
   AliasedOffset* GetAliasedOffset(
-      const MemorySpaceAssignment::Allocation& allocation);
+      const MemorySpaceAssignment::PinnedAllocation& allocation);
 
   // If aliased_offset is non-null, this method adds the allocation to
   // aliased_offset. Otherwise, it creates a new AliasedOffset object and adds
   // the allocation to this new AliasedOffset.
   void CreateOrAddToAliasedOffset(
-      const MemorySpaceAssignment::Allocation& allocation,
+      const MemorySpaceAssignment::PinnedAllocation& allocation,
       AliasedOffset* aliased_offset);
 
   // Given an allocation sequence, returns the live allocation at time with a
   // preference towards allocations in alternate memory. Returns nullptr if no
   // allocation is alive at that time.
-  static MemorySpaceAssignment::Allocation* GetLiveAllocationAt(
+  static MemorySpaceAssignment::PinnedAllocation* GetLiveAllocationAt(
       const MemorySpaceAssignment::AllocationSequence& allocations,
       int64_t time);
 
@@ -2404,7 +2474,7 @@ class AlternateMemoryBestFitHeap
   // Try prefetching to alternate memory space.
   Result Prefetch(
       const AllocationRequest& request,
-      MemorySpaceAssignment::Allocation& prev_allocation_in_default_mem);
+      MemorySpaceAssignment::PinnedAllocation& prev_allocation_in_default_mem);
 
   // Helper methods used to implement Prefetch().
   //
@@ -2461,7 +2531,7 @@ class AlternateMemoryBestFitHeap
   // Propagates aliased required assignment for a given position.
   void AddAliasedRequiredAssignment(
       const HloInstruction* instruction, ShapeIndex index,
-      const MemorySpaceAssignment::Allocation* aliased_allocation);
+      const MemorySpaceAssignment::PinnedAllocation* aliased_allocation);
 
   // This sets a required assignment. CHECK fails if there is a conflicting
   // required assignment at the same time.
@@ -2489,7 +2559,7 @@ class AlternateMemoryBestFitHeap
   // allocations all share a common allocation site (a use or position) with
   // each other. This can be used to determine if a group of linked allocations
   // are considered efficient or not.
-  std::vector<std::vector<const MemorySpaceAssignment::Allocation*>>
+  std::vector<std::vector<const MemorySpaceAssignment::PinnedAllocation*>>
   GetLinkedAllocationsInAlternateMemory(
       absl::Span<const AllocationValue> allocation_values) const;
 
@@ -2552,7 +2622,7 @@ class AlternateMemoryBestFitHeap
 
   // Adds an asynchronous copy to allocations.
   void AddAsyncCopy(
-      MemorySpaceAssignment::Allocation& prev_allocation,
+      MemorySpaceAssignment::PinnedAllocation& prev_allocation,
       MemorySpace memory_space, std::optional<Chunk> chunk,
       int64_t exclusive_start_time, int64_t end_time,
       int64_t copy_done_schedule_before_time,
@@ -2564,7 +2634,7 @@ class AlternateMemoryBestFitHeap
   // asynchronous copy data structures, prefetch_interval_tree_, and aliasing
   // data structures
   void AddAsyncSlicesForPrefetch(
-      const MemorySpaceAssignment::Allocation& prev_allocation,
+      const MemorySpaceAssignment::PinnedAllocation& prev_allocation,
       MemorySpaceAssignment::AllocationSequence* allocations,
       AliasedOffset* aliased_offset,
       const std::vector<MemorySpaceAssignment::SliceDecision>&
@@ -2596,7 +2666,7 @@ class AlternateMemoryBestFitHeap
       const HloInstruction* instruction, int64_t time, int64_t size,
       std::string& debug_str) const;
   void AppendAllocationInfoDebugString(
-      const MemorySpaceAssignment::Allocation& allocation,
+      const MemorySpaceAssignment::PinnedAllocation& allocation,
       std::string& debug_str) const;
   void DumpDebugStringsIfEnabled() const;
 
@@ -2615,7 +2685,7 @@ class AlternateMemoryBestFitHeap
   static RepackAllocationBlock MakeRepackAllocationBlock(
       int64_t start_time, int64_t end_time, int64_t size,
       int64_t initial_offset, int64_t id,
-      MemorySpaceAssignment::Allocation* allocation) {
+      MemorySpaceAssignment::PinnedAllocation* allocation) {
     RepackAllocationBlock allocation_block;
     allocation_block.inclusive_start_time = start_time;
     allocation_block.end_time = end_time;
@@ -2667,7 +2737,8 @@ class AlternateMemoryBestFitHeap
   // The data structure that contains AliasedOffset objects and Allocation to
   // AliasedOffset map for efficient lookup.
   std::list<AliasedOffset> aliased_offsets_;
-  absl::flat_hash_map<const MemorySpaceAssignment::Allocation*, AliasedOffset*>
+  absl::flat_hash_map<const MemorySpaceAssignment::PinnedAllocation*,
+                      AliasedOffset*>
       aliased_offset_map_;
   // This map contains required memory assignments for HloValues (e.g., input
   // and outputs).

@@ -10115,7 +10115,7 @@ ENTRY Entry {
                               bool expect_unsupported_allocations = false) {
     // Create a map indexed by instruction number and operand number.
     absl::flat_hash_map<std::pair<int, int>,
-                        const MemorySpaceAssignment::Allocation*>
+                        const MemorySpaceAssignment::PinnedAllocation*>
         allocation_map;
     for (const MemoryBoundLoopOptimizer::LoopValue& value :
          optimizer_->loop_values()) {
@@ -10170,7 +10170,7 @@ ENTRY Entry {
             TF_RET_CHECK(expect_unsupported_allocations);
             continue;
           }
-          const MemorySpaceAssignment::Allocation* allocation =
+          const MemorySpaceAssignment::PinnedAllocation* allocation =
               allocation_map.at({inst_number, operand_number});
           if (!allocation->is_copy_allocation()) {
             // We don't expect a prefetch here.
