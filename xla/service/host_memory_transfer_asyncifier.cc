@@ -175,10 +175,20 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
         << "Copy \"" << copy->name()
         << "\" is between device and host memory space. Converting to async.";
     const Shape context_shape = ShapeUtil::MakeScalarShape(U32);
-    TF_ASSIGN_OR_RETURN(
-        HloInstruction * async_done,
-        copy->parent()->CreateAsyncInstructions(copy, {context_shape}));
-    (void)async_done;
+    // CreateAsyncInstructions does not work for `copy`.
+    Shape instruction_shape_host = copy->operand(0)->shape();
+    Shape instruction_shape_device = copy->shape();
+    HloInstruction* copy_start_to_device =
+        copy->parent()->AddInstruction(HloInstruction::CreateCopyStart(
+            ShapeUtil::MakeTupleShape({instruction_shape_device,
+                                       instruction_shape_host, context_shape}),
+            copy->mutable_operand(0)));
+    HloInstruction* copy_done_to_device =
+        copy->parent()->AddInstruction(HloInstruction::CreateUnary(
+            instruction_shape_device, HloOpcode::kCopyDone,
+            copy_start_to_device));
+    TF_RETURN_IF_ERROR(copy->ReplaceAllUsesWith(copy_done_to_device));
+
     MarkAsChanged();
     return OkStatus();
   }

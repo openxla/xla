@@ -1495,10 +1495,17 @@ Status AlgebraicSimplifierVisitor::HandleCopy(HloInstruction* copy) {
     return OkStatus();
   }
 
-  if (HloInstruction* bitcast_operand =
-          BitcastingOperandOfReshapeOrCopyChain(copy, options_)) {
-    ReplaceWithBitcast(copy, bitcast_operand);
-    return OkStatus();
+  const bool copy_is_to_different_memory_space =
+      options_.is_layout_sensitive() &&
+      copy->shape().layout().memory_space() !=
+          copy->operand(0)->shape().layout().memory_space();
+  if (!copy_is_to_different_memory_space) {
+    HloInstruction* bitcast_operand =
+        BitcastingOperandOfReshapeOrCopyChain(copy, options_);
+    if (bitcast_operand != nullptr) {
+      ReplaceWithBitcast(copy, bitcast_operand);
+      return OkStatus();
+    }
   }
 
   // Replace Copy(Reshape()) with Reshape() if the Reshape is a logical bitcast.
