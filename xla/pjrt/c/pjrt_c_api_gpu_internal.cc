@@ -39,6 +39,8 @@ limitations under the License.
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/pjrt_compiler.h"
+#include "xla/service/compiler.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "tsl/platform/errors.h"
 
@@ -137,8 +139,38 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
 
 PJRT_Error* PJRT_GpuDeviceTopology_Create(
     PJRT_TopologyDescription_Create_Args* args) {
-  return new PJRT_Error{tsl::errors::Unimplemented(
-      "Topology not supported for GPU compilation.")};
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_TopologyDescription_Create_Args",
+      PJRT_TopologyDescription_Create_Args_STRUCT_SIZE, args->struct_size));
+
+  absl::flat_hash_map<std::string, xla::PjRtValueType> create_options =
+      pjrt::ConvertFromPjRtNamedValueList(args->create_options,
+                                          args->num_options);
+  PJRT_ASSIGN_OR_RETURN(xla::LocalClient * xla_client,
+                        xla::GetGpuXlaClient(std::nullopt, std::nullopt));
+  std::map<int, std::unique_ptr<xla::LocalDeviceState>> local_device_states;
+  PJRT_ASSIGN_OR_RETURN(local_device_states,
+                        xla::BuildLocalDeviceStates(xla_client));
+  std::vector<int> device_ids;
+  device_ids.reserve(local_device_states.size());
+  for (const auto& [device_id, device_state] : local_device_states) {
+    device_ids.push_back(device_id);
+  }
+  if (device_ids.empty()) {
+    return new PJRT_Error{absl::InternalError("No devices found.")};
+  }
+  const stream_executor::DeviceDescription& description =
+      local_device_states[device_ids[0]]->executor()->GetDeviceDescription();
+  xla::Compiler::TargetConfig gpu_target_config = xla::Compiler::TargetConfig(
+      local_device_states[device_ids[0]]->executor());
+  auto pjrt_topology =
+      std::make_unique<xla::StreamExecutorGpuTopologyDescription>(
+          xla::CudaId(), xla::CudaName(), description.name(), device_ids,
+          absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute>{
+              {"target_config",
+               gpu_target_config.ToProto().SerializeAsString()}});
+  args->topology = CreateWrapperDeviceTopology(std::move(pjrt_topology));
+  return nullptr;
 }
 
 PLUGIN_Profiler_Api profiler_api{

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "xla/pjrt/stream_executor_executable.pb.h"
 #include "xla/service/compiler.h"
@@ -25,18 +26,17 @@ limitations under the License.
 
 namespace xla {
 StatusOr<std::string> StreamExecutorExecutable::SerializeExecutable() const {
-  StreamExecutorExecutableProto proto;
+  TF_ASSIGN_OR_RETURN(std::string serialized,
+                      aot_executables_[0]->SerializeAsString());
+  if (serialized.empty()) {
+    return Internal(
+        "StreamExecutorExecutable::SerializeExecutable proto serialization "
+        "failed");
+  }
+  ExecutableAndOptionsProto proto;
+  *proto.mutable_serialized_executable() = std::move(serialized);
   TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                       compile_options_.ToProto());
-  for (const std::unique_ptr<xla::AotCompilationResult>& aot_executable :
-       aot_executables_) {
-    TF_ASSIGN_OR_RETURN(*proto.add_executables(),
-                        aot_executable->SerializeAsString());
-  }
-  proto.set_num_replicas(num_replicas_);
-  proto.set_num_partitions(num_partitions_);
-  proto.set_name(name_);
-  proto.set_fingerprint(fingerprint_);
   return proto.SerializeAsString();
 }
 }  // namespace xla

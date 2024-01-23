@@ -18,6 +18,7 @@ syntax = "proto3";
 package xla.gpu;
 
 import "xla/service/hlo.proto";
+import "xla/xla.proto";
 
 message XlaRuntimeGpuExecutableProto {
   message ConstantInfoProto {
@@ -36,6 +37,8 @@ message XlaRuntimeGpuExecutableProto {
 
   // Constants required by the serialized executable.
   repeated ConstantInfoProto constants = 5;
+
+  HloModuleConfigProto config = 6;
 }
 
 message CompilationResultProto {
@@ -43,4 +46,5 @@ message CompilationResultProto {
   BufferAssignmentProto buffer_assignment = 2;
   string asm_text = 3;
   bytes binary = 4;
+  HloModuleConfigProto config = 5;
 }
