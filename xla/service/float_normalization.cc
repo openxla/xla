@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/tuple_simplifier.h"
 #include "xla/shape_util.h"
@@ -36,10 +37,13 @@ namespace {
 class FloatNormalizationVisitor : public DfsHloVisitorWithDefault {
  public:
   explicit FloatNormalizationVisitor(const FloatSupport* float_support,
-                                     FloatNormalization* float_normalization)
+                                     FloatNormalization* float_normalization,
+                                     const absl::flat_hash_set<HloComputation*>
+                                         computations_to_avoid_promotion)
       : computation_(nullptr),
         float_support_(float_support),
-        float_normalization_(float_normalization) {}
+        float_normalization_(float_normalization),
+        computations_to_avoid_promotion_(computations_to_avoid_promotion) {}
 
   bool changed() const { return changed_; }
   Status DefaultAction(HloInstruction* hlo) override;
@@ -97,6 +101,7 @@ class FloatNormalizationVisitor : public DfsHloVisitorWithDefault {
   HloComputation* computation_;
   const FloatSupport* float_support_;
   FloatNormalization* float_normalization_;
+  const absl::flat_hash_set<HloComputation*> computations_to_avoid_promotion_;
   bool changed_ = false;
 };
 
@@ -355,7 +360,7 @@ Status FloatNormalizationVisitor::HandleMultipleOutputs(HloInstruction* hlo) {
 
   std::vector<HloComputation*> low_precision_called_comps;
   for (auto* comp : hlo->called_computations()) {
-    if (comp->IsCollectiveCalledComputation()) {
+    if (computations_to_avoid_promotion_.contains(comp)) {
       continue;
     }
     bool comp_has_low_precision = false;
@@ -434,7 +439,7 @@ Status FloatNormalizationVisitor::HandleInstruction(HloInstruction* hlo) {
 
   std::vector<HloComputation*> low_precision_called_comps;
   for (auto* comp : hlo->called_computations()) {
-    if (comp->IsCollectiveCalledComputation()) {
+    if (computations_to_avoid_promotion_.contains(comp)) {
       continue;
     }
     bool comp_has_low_precision = false;
@@ -564,6 +569,19 @@ Status FloatNormalizationVisitor::Preprocess(HloInstruction* hlo) {
   return OkStatus();
 }
 
+absl::flat_hash_set<HloComputation*> CreateCollectiveComputationMapping(
+    const HloModule* module) {
+  absl::flat_hash_set<HloComputation*> collective_called_comps;
+  for (auto* comp : module->computations()) {
+    for (auto* instr : comp->MakeInstructionPostOrder()) {
+      if (IsCollective(instr) && instr->has_to_apply()) {
+        collective_called_comps.insert(instr->to_apply());
+      }
+    }
+  }
+  return collective_called_comps;
+}
+
 }  // namespace
 
 StatusOr<bool> FloatNormalization::Run(
@@ -573,9 +591,13 @@ StatusOr<bool> FloatNormalization::Run(
                         primitive_util::LowercasePrimitiveTypeName(
                             float_support_->LowPrecisionType()) +
                         ", before:\n" + module->ToString());
-  FloatNormalizationVisitor visitor(float_support_, this);
+  // Create a set of collective-called computations to avoid type promotions.
+  absl::flat_hash_set<HloComputation*> collective_called_comps =
+      CreateCollectiveComputationMapping(module);
+  FloatNormalizationVisitor visitor(float_support_, this,
+                                    collective_called_comps);
   for (auto* comp : module->MakeComputationPostOrder(execution_threads)) {
-    if (comp->IsCollectiveCalledComputation()) {
+    if (collective_called_comps.contains(comp)) {
       XLA_VLOG_LINES(2, "Skip processing collective called computation: " +
                             comp->ToString());
       continue;

@@ -576,7 +576,12 @@ bool ReplicaGroupsEqual(absl::Span<const ReplicaGroup> first,
 }
 
 bool IsCollective(const HloInstruction* instruction) {
-  switch (instruction->opcode()) {
+  HloOpcode opcode = instruction->opcode();
+  if (opcode == HloOpcode::kAsyncStart) {
+    opcode = instruction->async_wrapped_opcode();
+  }
+
+  switch (opcode) {
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:
@@ -587,6 +592,7 @@ bool IsCollective(const HloInstruction* instruction) {
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart:
     case HloOpcode::kCollectivePermuteDone:
+    case HloOpcode::kReduceScatter:
       return true;
     case HloOpcode::kFusion:
       if (instruction->IsCustomFusion()) {

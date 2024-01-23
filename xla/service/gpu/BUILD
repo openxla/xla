@@ -3600,6 +3600,7 @@ cc_library(
         "//xla/service:dump",
         "//xla/hlo/ir:hlo",
         "//xla/service:dot_dimension_merger",
+        "//xla/service:flatten_call_graph",
         "//xla/service:float_normalization",
         "//xla/service:float_support",
         "//xla/service:hlo_constant_folding",

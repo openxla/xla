@@ -1230,6 +1230,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   auto add_float_normalization = [&](HloPassPipeline& pipeline) {
     auto& sub_pipeline =
         pipeline.AddPass<HloPassPipeline>("float_normalization");
+    // Flatten call graph to have unique computation for each call.
+    // This is needed for FloatNormalization to avoid type-promoting
+    // certain computations.
+    sub_pipeline.AddPass<FlattenCallGraph>();
     sub_pipeline.AddPass<FloatNormalization>(&bf16_support);
     sub_pipeline.AddPass<FloatNormalization>(&f8e5m2_support);
     sub_pipeline.AddPass<FloatNormalization>(&f8e4m3fn_support);
