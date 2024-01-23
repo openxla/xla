@@ -24,7 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/time/time.h"
-#include "grpcpp/channel.h"
+#include "grpcpp/channel.h"  // from @com_github_grpc_grpc
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/statusor.h"
 #include "xla/types.h"

@@ -18,7 +18,7 @@
 
 #include <memory>
 
-#include "grpcpp/grpcpp.h"
+#include "grpcpp/grpcpp.h"  // from @com_github_grpc_grpc
 #include "xla/python/tpu_driver/tpu_driver.h"
 #include "xla/python/tpu_driver/tpu_driver.pb.h"
 

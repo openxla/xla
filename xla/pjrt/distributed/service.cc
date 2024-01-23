@@ -20,7 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/time/time.h"
-#include "grpcpp/server_builder.h"
+#include "grpcpp/server_builder.h"  // from @com_github_grpc_grpc
 #include "xla/util.h"
 #include "tsl/distributed_runtime/coordination/coordination_service.h"
 #include "tsl/distributed_runtime/rpc/async_service_interface.h"

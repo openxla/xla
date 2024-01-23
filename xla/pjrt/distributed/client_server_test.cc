@@ -25,8 +25,8 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "grpcpp/grpcpp.h"
-#include "grpcpp/server.h"
+#include "grpcpp/grpcpp.h"  // from @com_github_grpc_grpc
+#include "grpcpp/server.h"  // from @com_github_grpc_grpc
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/service.h"

@@ -26,7 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/time/time.h"
-#include "grpcpp/channel.h"
+#include "grpcpp/channel.h"  // from @com_github_grpc_grpc
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "tsl/distributed_runtime/coordination/coordination_client.h"
 #include "tsl/distributed_runtime/coordination/coordination_service_agent.h"

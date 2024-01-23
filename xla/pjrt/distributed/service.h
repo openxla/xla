@@ -23,9 +23,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
-#include "grpcpp/grpcpp.h"
-#include "grpcpp/security/server_credentials.h"
-#include "grpcpp/server_builder.h"
+#include "grpcpp/grpcpp.h"  // from @com_github_grpc_grpc
+#include "grpcpp/security/server_credentials.h"  // from @com_github_grpc_grpc
+#include "grpcpp/server_builder.h"  // from @com_github_grpc_grpc
 #include "xla/statusor.h"
 #include "xla/types.h"
 #include "tsl/distributed_runtime/coordination/coordination_service.h"
