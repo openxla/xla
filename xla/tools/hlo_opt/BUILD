@@ -118,6 +118,7 @@ cc_library(
         "//xla/tools:hlo_module_loader",
         "//xla/tools:run_hlo_module_lib",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -125,6 +126,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/util:command_line_flags",
     ] + if_gpu_is_configured([
