@@ -85,6 +85,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         "//xla:array3d",
+        "//xla:array4d",
         "//xla:error_spec",
         "//xla:literal_util",
         "//xla:types",
