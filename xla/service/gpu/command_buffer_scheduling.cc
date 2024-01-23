@@ -123,14 +123,7 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
   }
 
   if (config.contains(DebugOptions::CUSTOM_CALL)) {
-    if (hlo->custom_call_target() == "cu_threefry2x32") {
-      if (hlo->operand_count() == 4) {
-        return true;
-      }
-      // This version of cu_threefy2x32 requires synchronization, which is not
-      // supported by command buffers.
-      DCHECK_EQ(hlo->operand_count(), 5);
-    }
+    if (hlo->custom_call_target() == "cu_threefry2x32") return true;
   }
 
   return false;
