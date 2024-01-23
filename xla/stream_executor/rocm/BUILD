@@ -156,6 +156,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:fingerprint",
     ]),
     alwayslink = True,
 )
