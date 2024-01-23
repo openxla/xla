@@ -494,11 +494,6 @@ build:rbe_linux_cpu --host_platform="@sigbuild-r2.16-clang_config_platform//:pla
 build:rbe_linux_cpu --platforms="@sigbuild-r2.16-clang_config_platform//:platform"
 # This is needed for all Clang17 builds but must not be present in GCC builds.
 build:rbe_linux_cpu --copt=-Wno-error=unused-command-line-argument
-# This was added in clang-16 by https://reviews.llvm.org/D133574.
-# Can be removed once upb is updated, since a type definition is used within
-# offset of in the current version of ubp.
-# See https://github.com/protocolbuffers/upb/blob/9effcbcb27f0a665f9f345030188c0b291e32482/upb/upb.c#L183.
-build:rbe_linux_cpu --copt=-Wno-gnu-offsetof-extensions
 # Python config is the same across all containers because the binary is the same
 build:rbe_linux_cpu --repo_env=TF_PYTHON_CONFIG_REPO="@sigbuild-r2.16-clang_config_python"
 build:rbe_linux_cpu --python_path="/usr/bin/python3"
@@ -588,14 +583,6 @@ test:release_base --test_size_filters=small,medium
 # Target the AVX instruction set
 build:release_linux_base --config=avx_linux
 
-# Disable clang extension that rejects type definitions within offsetof.
-# This was added in clang-16 by https://reviews.llvm.org/D133574.
-# Can be removed once upb is updated, since a type definition is used within
-# offset of in the current version of ubp.
-# See https://github.com/protocolbuffers/upb/blob/9effcbcb27f0a665f9f345030188c0b291e32482/upb/upb.c#L183.
-build:release_linux_base --copt=-Wno-gnu-offsetof-extensions
-build:release_linux_base --copt=-Wno-error=array-parameter
-build:release_linux_base --copt=-Wno-error=unused-command-line-argument
 # Set lld as the linker.
 build:release_linux_base --linkopt="-fuse-ld=lld"
 build:release_linux_base --linkopt="-lm"
