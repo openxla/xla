@@ -81,6 +81,7 @@ limitations under the License.
 #include "tsl/platform/threadpool.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "tsl/util/env_var.h"
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
 #include "xla/pjrt/compile_options.pb.h"
@@ -779,13 +780,17 @@ GetStreamExecutorGpuDeviceAllocator(
 
   // Add any additional allocators for alternate memory spaces.
   if (allocator_config.collective_memory_size != 0) {
+    bool preallocate;
+    TF_RETURN_IF_ERROR(tsl::ReadBoolFromEnvVar(
+        "TF_COLLECTIVE_MEMORY_PREALLOCATE", false, &preallocate));
+
     for (const auto& ordinal_and_device : addressable_devices) {
       TF_ASSIGN_OR_RETURN(
           auto collective_bfc_allocator,
           CreateCollectiveBFCAllocator(
               ordinal_and_device.second->executor(),
               /*allocator_memory=*/allocator_config.collective_memory_size,
-              /*preallocate=*/true));
+              /*preallocate=*/preallocate));
       allocators.emplace_back(std::move(collective_bfc_allocator),
                               ordinal_and_device.second->compute_stream(),
                               /*memory_space=*/1);
