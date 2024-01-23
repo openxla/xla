@@ -920,7 +920,7 @@ alias(
 cc_library(
     name = "_nccl_api_impl",
     srcs = if_gpu_is_configured(
-        ["nccl_api.cc",  "nccl_api_stub.cc"],
+        ["nccl_api.cc"],
     ),
     hdrs = ["nccl_api.h"],
     compatible_with = get_compatible_with_portable(),
