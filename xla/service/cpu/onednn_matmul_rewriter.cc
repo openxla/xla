@@ -151,9 +151,9 @@ auto GELUActivation(HloInstruction* instr, HloInstruction** src) {
                    .WithOneUser());
 }
 
-// OneDNN matmul can fuse add operaton with automatic broadcasting along the
-// addend's dimensions that are 1s. When compatible Broadcast can be replaced by
-// Bitcast which is much cheaper. Computue new shape for the Bitcast.
+// OneDNN matmul can fuse add operation with automatic broadcasting along the
+// addend's dimensions that are 1s. When compatible, Broadcast can be replaced by
+// Bitcast, which is much cheaper. Compute new shape for the Bitcast.
 StatusOr<Shape> AdjustBiasShape(const HloInstruction* broadcast_instr,
                                 const Shape& dot_shape) {
   if (broadcast_instr->opcode() != HloOpcode::kBroadcast) {
@@ -162,8 +162,8 @@ StatusOr<Shape> AdjustBiasShape(const HloInstruction* broadcast_instr,
   }
   auto bcast = Cast<HloBroadcastInstruction>(broadcast_instr);
   Shape new_shape = bcast->shape();
-  // Broadcast instruction has "dimension" parameter along which its input's
-  // dim should not change. For exmaple,
+  // Broadcast instruction has "dimensions" parameter along which its input's
+  // dimensions should not change. For example,
   //      dot = f32[3,4,5,6] dot(...)
   //      arg = f32[3,6]{1,0} parameter(0)
   //      broad = f32[3,4,5,6]{3,2,1,0} broadcast(arg), dimensions={0,3}
@@ -191,8 +191,8 @@ StatusOr<Shape> AdjustBiasShape(const HloInstruction* broadcast_instr,
   }
   new_shape = ShapeUtil::DeleteDimensions(dims_to_delete, new_shape);
 
-  // New shape for bias should satisfy the condition: rank(new_shape) <=
-  // rank(dot).
+  // New shape for bias should satisfy the condition:
+  //   rank(new_shape) <= rank(dot).
   if (new_shape.rank() > dot_shape.rank()) {
     return absl::CancelledError(
         "Bias shape could not be adjusted for a fusion.");
@@ -202,25 +202,22 @@ StatusOr<Shape> AdjustBiasShape(const HloInstruction* broadcast_instr,
 };
 
 inline bool IsOperandFusible(HloInstruction* operand, HloInstruction* dot) {
-  // Check if one of binary operand shape is compatible with matmul for fusion.
+  // Check if the operand's shape is compatible with matmul for fusion.
   // An operand is fusable if
-  //    1. rank(oeprand) <= rank(dot) and
+  //    1. rank(operand) <= rank(dot) and
   //    2. Starting from the last dim in backward direction, the dimension
   //       size of operand is either 1 or same to dot.
   auto operand_dims = operand->shape().dimensions();
   auto dot_dims = dot->shape().dimensions();
-  if (operand_dims.size() <= dot_dims.size()) {
-    int operand_idx = operand_dims.size() - 1;
-    int dot_idx = dot_dims.size() - 1;
-    for (; operand_idx >= 0; --operand_idx, --dot_idx) {
-      if (operand_dims[operand_idx] != 1 &&
-          operand_dims[operand_idx] != dot_dims[dot_idx])
-        return false;
-    }
-    return true;
-  } else {
-    return false;
+  if (operand_dims.size() > dot_dims.size()) return false;
+  int operand_idx = operand_dims.size() - 1;
+  int dot_idx = dot_dims.size() - 1;
+  for (; operand_idx >= 0; --operand_idx, --dot_idx) {
+    if (operand_dims[operand_idx] != 1 &&
+        operand_dims[operand_idx] != dot_dims[dot_idx])
+      return false;
   }
+  return true;
 }
 
 inline bool IsRowMajor(const Shape& shape) {
@@ -262,18 +259,15 @@ inline auto BitcastWithReshapeSemantics(HloInstruction** bitcast,
   // the layouts are checked to be rowmajor since the current pass runs after
   // the layout assignment and oneDNN matmul is enabled for rowmajor layouts.
   auto is_reshape = [](const HloInstruction* instr) -> bool {
-    if (instr) {
-      auto input_shape = instr->operand(0)->shape();
-      auto output_shape = instr->shape();
-      bool is_same_type = ShapeUtil::SameElementType(input_shape, output_shape);
-      bool has_equal_num_elems = ShapeUtil::ElementsIn(input_shape) ==
-                                 ShapeUtil::ElementsIn(output_shape);
-      bool has_rowmajor_layout =
-          IsRowMajor(input_shape) && IsRowMajor(output_shape);
-      return is_same_type && has_equal_num_elems && has_rowmajor_layout;
-    } else {
-      false;
-    }
+    if (!instr) return false;
+    auto input_shape = instr->operand(0)->shape();
+    auto output_shape = instr->shape();
+    bool is_same_type = ShapeUtil::SameElementType(input_shape, output_shape);
+    bool has_equal_num_elems = ShapeUtil::ElementsIn(input_shape) ==
+                                ShapeUtil::ElementsIn(output_shape);
+    bool has_rowmajor_layout =
+        IsRowMajor(input_shape) && IsRowMajor(output_shape);
+    return is_same_type && has_equal_num_elems && has_rowmajor_layout;
   };
   return m::Bitcast(bitcast, pattern).WithPredicate(is_reshape);
 }
@@ -419,7 +413,7 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
   Status HandleAdd(HloInstruction* instr) override {
     // Try to do a fusion for Dot(onednn-matmul) + Add. However,
     // HLO Add instruction might receive the addends after additional
-    // processing like Broadcast, Bitcast, Convert etc. applied to the raw
+    // processing like Broadcast, Bitcast, Convert, etc. is applied to the raw
     // addends. Here, the following possible pattern is matched.
     //
     // clang-format off
