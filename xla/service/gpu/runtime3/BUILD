@@ -44,6 +44,7 @@ cc_library(
         "GOOGLE_CUDA=1",
     ]),
     deps = [
+        ":custom_call_thunk",
         "//xla:shape_util",
         "//xla:status",
         "//xla:types",
