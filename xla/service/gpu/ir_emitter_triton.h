@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_IR_EMITTER_TRITON_H_
 #define XLA_SERVICE_GPU_IR_EMITTER_TRITON_H_
 
+#include <cstdint>
 #include <functional>
+#include <memory>
 
 #include "absl/strings/string_view.h"
 #include "llvm/IR/Module.h"
@@ -29,8 +31,8 @@ limitations under the License.
 #include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/runtime3/tma_metadata.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
@@ -39,6 +41,8 @@ namespace gpu {
 
 struct TritonWrapperResult {
   int64_t shmem_bytes;
+  // Optional TMA metadata.
+  std::unique_ptr<TmaMetadata> tma_metadata;
 };
 
 // Compute the launch dimensions for the given Triton MatMul.

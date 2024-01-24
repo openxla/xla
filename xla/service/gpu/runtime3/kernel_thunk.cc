@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/log/log.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -31,6 +32,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/runtime3/tma_metadata.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status.h"
@@ -63,7 +65,8 @@ mlir::Value RemoveTransformingOperations(mlir::Value value) {
 KernelThunk::KernelThunk(
     std::variant<mlir::Operation*, const HloInstruction*> op,
     std::string kernel_name, absl::Span<const KernelArgument> kernel_arguments,
-    LaunchDimensions launch_dimensions, int64_t shmem_bytes)
+    LaunchDimensions launch_dimensions, int64_t shmem_bytes,
+    std::unique_ptr<TmaMetadata> tma_metadata)
     : Thunk(Kind::kKernel, std::holds_alternative<mlir::Operation*>(op)
                                ? Thunk::ThunkInfo::WithProfileAnnotation(
                                      std::get<mlir::Operation*>(op))
@@ -71,7 +74,8 @@ KernelThunk::KernelThunk(
                                      std::get<const HloInstruction*>(op))),
       kernel_name_(std::move(kernel_name)),
       launch_dimensions_(std::move(launch_dimensions)),
-      shmem_bytes_(shmem_bytes) {
+      shmem_bytes_(shmem_bytes),
+      tma_metadata_(std::move(tma_metadata)) {
   args_.reserve(kernel_arguments.size());
   written_.reserve(kernel_arguments.size());
   for (const auto& kernel_argument : kernel_arguments) {
@@ -108,11 +112,21 @@ absl::Status KernelThunk::Initialize(const InitializeParams& params) {
   // lets the time spent loading the kernel not count towards our execution
   // profiles.
   auto it = kernel_cache_.find(params.executor);
+
+  int num_tensor_map_args = 0;
+#if GOOGLE_CUDA
+  auto* tma_metadata = dynamic_cast<CudaTmaMetadata*>(tma_metadata_.get());
+  if (tma_metadata != nullptr) {
+    num_tensor_map_args = tma_metadata->tensor_map_infos.size();
+  }
+#endif
+
   if (kernel_cache_.end() == it) {
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<se::Kernel> kernel,
-        CreateKernel(kernel_name_, args_.size(), params.src.text,
-                     params.src.binary, params.executor, shmem_bytes_));
+        CreateKernel(kernel_name_, args_.size() + num_tensor_map_args,
+                     params.src.text, params.src.binary, params.executor,
+                     shmem_bytes_));
 
     kernel_cache_.emplace(params.executor, std::move(kernel));
   }
@@ -153,13 +167,34 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
 
   VLOG(3) << "Launching " << kernel->name();
-  absl::InlinedVector<se::DeviceMemoryBase, 4> buffer_args;
+  // The vector has an inlined size of 8, because we reserve space for 4 tensors
+  // and 4 tensor maps.
+  absl::InlinedVector<se::DeviceMemoryBase, 8> buffer_args;
   for (const BufferAllocation::Slice& arg : args_) {
     se::DeviceMemoryBase buf = params.buffer_allocations->GetDeviceAddress(arg);
     VLOG(3) << "  Arg: alloc #" << arg.index() << ", offset: " << arg.offset()
             << ": " << buf.opaque() << " (" << buf.size() << "B)";
     buffer_args.push_back(buf);
   }
+
+#if GOOGLE_CUDA
+  auto* tma_metadata = dynamic_cast<CudaTmaMetadata*>(tma_metadata_.get());
+  if (tma_metadata != nullptr) {
+    absl::InlinedVector<se::DeviceMemoryBase, 4> tensor_map_args;
+    for (const CudaTensorMapInfo& info : tma_metadata->tensor_map_infos) {
+      ConcreteCudaTensorMapInfo concrete_info(
+          info, buffer_args.at(info.global_address_arg_index).opaque());
+      TF_ASSIGN_OR_RETURN(
+          se::DeviceMemoryBase device_tensor_map,
+          CudaTensorMapManager::GetInstance().GetOrCreateDeviceTensorMap(
+              concrete_info, *params.stream));
+      tensor_map_args.push_back(device_tensor_map);
+    }
+    VLOG(3) << "Tensor map args: " << tensor_map_args.size();
+    buffer_args.insert(buffer_args.end(), tensor_map_args.begin(),
+                       tensor_map_args.end());
+  }
+#endif
 
   if (VLOG_IS_ON(100)) {
     PrintBufferContents(params.stream, buffer_args);

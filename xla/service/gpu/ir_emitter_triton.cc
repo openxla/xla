@@ -100,14 +100,15 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/runtime3/tma_metadata.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/gpu/triton_tiling_propagation.h"
+#include "xla/service/gpu/triton_tma_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/translate/hlo_to_mhlo/hlo_function_importer.h"
 #include "xla/util.h"
@@ -731,9 +732,10 @@ absl::StatusOr<Value> EmitScope(
   return values[instructions.back()];
 }
 
-absl::Status CreateTritonPipeline(mlir::OpPassManager& pm,
-                                  const se::CudaComputeCapability& cc,
-                                  const TritonGemmConfig& config) {
+absl::Status CreateTritonPipeline(
+    mlir::OpPassManager& pm, const se::CudaComputeCapability& cc,
+    const TritonGemmConfig& config,
+    mlir::triton::gpu::TMAMetadataTy* tma_metadata) {
   const int ccAsInt = cc.major * 10 + cc.minor;
   const int threadsPerWarp = 32;
   mlir::triton::nvidia_gpu::ClusterInfo clusterInfo;
@@ -815,11 +817,10 @@ absl::Status CreateTritonPipeline(mlir::OpPassManager& pm,
   // @triton//:python/triton/compiler/backends/cuda.py
   pm.addPass(mlir::createConvertSCFToCFPass());
   pm.addPass(mlir::createConvertIndexToLLVMPass());
-  // // TODO(b/316566238): Use TMA info collected here in XLA runtime.
-  mlir::triton::gpu::TMAMetadataTy tma_infos;
+  // TODO(b/316566238): Use TMA info collected here in XLA runtime.
   pm.addPass(mt::createConvertTritonGPUToLLVMPass(ccAsInt,
                                                   /*target=*/mlir::triton::NVVM,
-                                                  &tma_infos));
+                                                  tma_metadata));
   if (cc.IsAtLeastHopper() && config.enable_warp_specialization) {
     pm.addPass(mlir::createLoopInvariantCodeMotionPass());
     pm.addPass(mlir::createCSEPass());
@@ -2160,7 +2161,8 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
     }
   }
 
-  if (!CreateTritonPipeline(pm, cc, config).ok()) {
+  mlir::triton::gpu::TMAMetadataTy triton_tma_metadata;
+  if (!CreateTritonPipeline(pm, cc, config, &triton_tma_metadata).ok()) {
     return Internal("Failed to create Triton pipeline.");
   }
   if (log_stream.has_value()) {
@@ -2194,6 +2196,18 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
         shared_mem_bytes, device_info.shared_memory_per_block_optin()));
   }
 
+  std::unique_ptr<TmaMetadata> xla_tma_metadata;
+  // NOTE: We can only read triton_tma_metadata after pm.run().
+  if (!triton_tma_metadata.empty()) {
+    VLOG(4) << "Triton TMA metadata:\n"
+            << triton_tma_util::ToString(triton_tma_metadata);
+    TF_ASSIGN_OR_RETURN(xla_tma_metadata,
+                        triton_tma_util::ToTmaMetadata(triton_tma_metadata));
+    if (xla_tma_metadata != nullptr) {
+      VLOG(4) << "XLA TMA metadata:\n" << xla_tma_metadata->ToString();
+    }
+  }
+
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<llvm::Module> ll_triton_module,
       TranslateLLVMToLLVMIR(&llvm_module->getContext(), *triton_module,
@@ -2216,7 +2230,7 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
     VerifyModule(*llvm_module);
   }
 
-  return {{shared_mem_bytes}};
+  return {{shared_mem_bytes, std::move(xla_tma_metadata)}};
 }
 
 }  // namespace gpu

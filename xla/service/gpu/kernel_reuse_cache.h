@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -27,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/runtime3/tma_metadata.h"
 
 namespace xla {
 namespace gpu {
@@ -39,6 +41,8 @@ class KernelReuseCache {
     std::string kernel_name;
     LaunchDimensions launch_dimensions;
     int64_t shmem_bytes;
+    // Optional TMA metadata.
+    std::unique_ptr<TmaMetadata> tma_metadata;
   };
 
   // Retrieves the cache entry for the given computation, or generates it using

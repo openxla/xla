@@ -24,9 +24,11 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Value.h"
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -120,6 +122,27 @@ class KernelFusionEmitterBase : public KernelFusionInterface {
                                   llvm::IRBuilder<>* builder) const = 0;
 };
 
+// Builds a kernel prototype for the given arguments.
+//
+// Arguments:
+// - suggested_name: The suggested name of the kernel. It will be made unique
+// and sanitized.
+// - arguments: The proposed arguments of the kernel. The buffer arguments are
+//   deduplicated in this function (based on
+//   KernelArgument::first_with_same_slice()), so the kernel may have less
+//   arguments.
+// - num_inputs: How many of the arguments are considered input arguments?
+//   This matters if we want to return the IrArrays separately for the input and
+//   output parameters.
+// - launch_dimensions: The launch dimensions of the kernel.
+// - builder: The IRBuilder to use for the kernel.
+// - num_tensor_map_args: If we want the kernel to take tensor map arguments (as
+//   in TMA), then we must provide their number here.
+// - out_tensor_map_args: The llvm::Values corresponding to the tensor map
+//   arguments will be returned here if it's not nullptr.
+// - out_new_arg_index: The vector will contain a mapping from the "original"
+//   argument indices to the deduplicated argument indices if it's not nullptr.
+//   It may be needed by some users.
 absl::StatusOr<
     std::tuple<llvm::Function*, std::vector<llvm_ir::IrArray /*inputs*/>,
                std::vector<llvm_ir::IrArray> /*outputs*/>>
@@ -128,7 +151,9 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
                      absl::Span<const KernelArgument> arguments,
                      size_t num_inputs,
                      const LaunchDimensions& launch_dimensions,
-                     llvm::IRBuilder<>* builder);
+                     llvm::IRBuilder<>* builder, int num_tensor_map_args = 0,
+                     std::vector<llvm::Value*>* out_tensor_map_args = nullptr,
+                     std::vector<int>* out_new_arg_index = nullptr);
 
 }  // namespace gpu
 }  // namespace xla
