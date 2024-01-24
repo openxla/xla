@@ -147,6 +147,9 @@ cc_library(
     name = "gpu_command_buffer",
     srcs = if_gpu_is_configured(["gpu_command_buffer.cc"]),
     hdrs = if_gpu_is_configured(["gpu_command_buffer.h"]),
+    local_defines = if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
     deps = [
         ":gpu_driver_header",
         ":gpu_executor_header",
@@ -174,6 +177,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_conditional_kernels",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor/rocm:hip_conditional_kernels",
+        "//xla/stream_executor/rocm:hip_noop_kernel",
     ]),
 )
 
