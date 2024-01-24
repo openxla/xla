@@ -618,5 +618,35 @@ TEST_F(HloComputationDeduplicatorTest, DontDeduplicateReduceAllReduce) {
   auto computation_names = RunDeduplicatePass(text, /*expect_true=*/false);
   EXPECT_EQ(computation_names.size(), 3);
 }
+
+TEST_F(HloComputationDeduplicatorTest, RemoveDuplicateAllReduce) {
+  const std::string_view text = R"(
+  HloModule TestModule
+
+  add.1 {
+    Arg_0 = s32[] parameter(0)
+    Arg_1 = s32[] parameter(1)
+    ROOT add.2 = s32[] add(Arg_0, Arg_1)
+  }
+  add.2 {
+    Arg_0 = s32[] parameter(0)
+    Arg_1 = s32[] parameter(1)
+    ROOT add.2 = s32[] add(Arg_0, Arg_1)
+  }
+
+  ENTRY main {
+    Arg_0.1 = s32[] parameter(0)
+    rd1 = s32[] all-reduce(Arg_0.1), to_apply=add.1
+    Arg_1.1 = s32[] parameter(1)
+    rd2 = s32[] all-reduce(Arg_1.1), to_apply=add.2
+    ROOT multiply.14 = s32[] multiply(rd1, rd2)
+  }
+  )";
+  auto computation_names = RunDeduplicatePass(text, /*expect_true=*/true);
+  EXPECT_EQ(computation_names.size(), 2);
+  for (auto name : computation_names) {
+    EXPECT_NE(name, "add.2");
+  }
+}
 }  //  namespace
 }  //  namespace xla

@@ -78,20 +78,42 @@ StatusOr<bool> HloComputationDeduplicator::Run(
     }
     return false;
   };
-  for (HloComputation* comp :
-       module->MakeComputationPostOrder(execution_threads)) {
+  // Let us collect the opcode of the callers of each computation. We will only
+  // deduplicate computations with the same caller opcode.
+  std::vector<HloComputation*> computations =
+      module->MakeComputationPostOrder(execution_threads);
+  // Map computations to the caller's opcode. If the computation has callers
+  // with different opcodes, than it will map to `nullopt`.
+  absl::flat_hash_map<HloComputation*, std::optional<HloOpcode>>
+      to_unique_caller_opcode;
+  for (auto& computation : computations) {
+    for (auto* instruction : computation->instructions()) {
+      if (!instruction->has_called_computations()) continue;
+      for (HloComputation* called : instruction->called_computations()) {
+        auto to_insert = std::optional(instruction->opcode());
+        auto it = to_unique_caller_opcode.insert({called, to_insert}).first;
+        if (it->second != to_insert) it->second = {};
+      }
+    }
+  }
+  for (HloComputation* comp : computations) {
     // Ignore entry computation since it is called from outside and computations
     // with large number of instructions or large-size constants due to increase
-    // in time taken to stringify.
+    // in time taken to stringify. Also ignore computations with callers that
+    // have differing opcodes.
     if (comp->IsEntryComputation() || comp->instruction_count() > 128 ||
-        ContainsLargeConstants(comp) || comp->IsCollectiveCalledComputation()) {
+        ContainsLargeConstants(comp) || !to_unique_caller_opcode[comp]) {
       continue;
     }
     std::string comp_str = comp->ToString(options);
     auto poss_dup = unique_comps.find(comp_str);
+    // Replace the computation with the possible duplicate if it is equal
+    // and if its callers have the same opcode as the callers of |comp|.
     if (poss_dup != unique_comps.end() &&
         poss_dup->second->Equal(*comp, /* is_layout_sensitive = */ true,
-                                comp_eq)) {
+                                comp_eq) &&
+        to_unique_caller_opcode[poss_dup->second] ==
+            to_unique_caller_opcode[comp]) {
       VLOG(2) << "Replacing " << comp->name() << " with "
               << poss_dup->second->name();
       replacement[comp] = poss_dup->second;
