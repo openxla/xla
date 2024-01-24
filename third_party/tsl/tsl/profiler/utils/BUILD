@@ -192,7 +192,6 @@ cc_library(
     deps = [
         "//tsl/platform:types",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:optional",
     ],
 )
 
