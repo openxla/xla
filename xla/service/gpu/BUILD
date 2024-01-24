@@ -3152,9 +3152,9 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "custom_fusion_rewriter",
-    srcs = ["custom_fusion_rewriter.cc"],
-    hdrs = ["custom_fusion_rewriter.h"],
+    name = "custom_kernel_fusion_rewriter",
+    srcs = ["custom_kernel_fusion_rewriter.cc"],
+    hdrs = ["custom_kernel_fusion_rewriter.h"],
     deps = [
         "//xla:shape_util",
         "//xla:statusor",
@@ -3176,10 +3176,10 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "custom_fusion_rewriter_test",
-    srcs = ["custom_fusion_rewriter_test.cc"],
+    name = "custom_kernel_fusion_rewriter_test",
+    srcs = ["custom_kernel_fusion_rewriter_test.cc"],
     deps = [
-        ":custom_fusion_rewriter",
+        ":custom_kernel_fusion_rewriter",
         ":gpu_device_info_for_tests",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu/kernels:custom_kernel_fusion_pattern",
@@ -3258,7 +3258,7 @@ cc_library(
         ":compile_module_to_llvm_ir",
         ":conv_layout_normalization",
         ":copy_fusion",
-        ":custom_fusion_rewriter",
+        ":custom_kernel_fusion_rewriter",
         ":dot_dimension_sorter",
         ":dot_operand_converter",
         ":executable_proto_cc",
