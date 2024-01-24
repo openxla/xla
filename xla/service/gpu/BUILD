@@ -5300,7 +5300,10 @@ cc_library(
         ":launch_dimensions",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
     ],
 )
