@@ -36,9 +36,9 @@ cc_library(
 )
 
 cc_library(
-    name = "custom_fusion_pattern",
-    srcs = ["custom_fusion_pattern.cc"],
-    hdrs = ["custom_fusion_pattern.h"],
+    name = "custom_kernel_fusion_pattern",
+    srcs = ["custom_kernel_fusion_pattern.cc"],
+    hdrs = ["custom_kernel_fusion_pattern.h"],
     visibility = [":friends"],
     deps = [
         "//xla:statusor",
@@ -48,6 +48,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
@@ -77,9 +78,9 @@ cc_library(
     srcs = ["cutlass_gemm_fusion.cc"],
     hdrs = ["cutlass_gemm_fusion.h"],
     deps = [
-        ":custom_fusion_pattern",
         ":custom_kernel",
         ":custom_kernel_fusion",
+        ":custom_kernel_fusion_pattern",
         ":cutlass_gemm",
         ":cutlass_gemm_custom_kernel",
         "//xla:shape_util",
@@ -103,7 +104,7 @@ xla_test(
     backends = ["gpu"],
     tags = ["no_rocm"],
     deps = [
-        ":custom_fusion_pattern",
+        ":custom_kernel_fusion_pattern",
         ":cutlass_gemm_fusion",
         "//xla:array",
         "//xla:array2d",
