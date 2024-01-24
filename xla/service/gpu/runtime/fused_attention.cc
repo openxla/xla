@@ -130,6 +130,12 @@ static auto EncodeFusedAttentionBackwardDAGSignature(
     case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
         BackwardScaleBiasMaskSoftmaxDropout:
       return xla::gpu::CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout;
+    case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
+        BackwardScaleMaskSoftmax:
+      return xla::gpu::CudnnfMHAKind::kBackwardScaleMaskSoftmax;
+    case mlir::lmhlo_gpu::FusedMhaBackwardDagSignature::
+        BackwardScaleMaskSoftmaxDropout:
+      return xla::gpu::CudnnfMHAKind::kBackwardScaleMaskSoftmaxDropout;
   }
 }
 
