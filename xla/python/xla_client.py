@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import atexit
+from collections.abc import Mapping, Sequence
 import contextlib
 import enum  # pylint: disable=g-bad-import-order
 import gzip
@@ -24,7 +25,7 @@ import inspect
 import logging
 import os
 import threading
-from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any
 
 import ml_dtypes
 import numpy as np
@@ -60,7 +61,7 @@ xla_platform_names = {
 
 logger = logging.getLogger(__name__)
 
-_NameValueMapping = Mapping[str, Union[str, int, List[int], float, bool]]
+_NameValueMapping = Mapping[str, str | int | list[int] | float | bool]
 
 
 def make_cpu_client(
@@ -120,7 +121,7 @@ def make_gpu_client(
   )
 
 
-def make_tfrt_tpu_c_api_client(options: Optional[_NameValueMapping] = None):
+def make_tfrt_tpu_c_api_client(options: _NameValueMapping = None):
   assert pjrt_plugin_loaded('tpu')
   if not pjrt_plugin_initialized('tpu'):
     initialize_pjrt_plugin('tpu')
@@ -165,8 +166,8 @@ def initialize_pjrt_plugin(plugin_name: str) -> None:
 
 def make_c_api_client(
     plugin_name: str,
-    options: Optional[_NameValueMapping] = None,
-    distributed_client: Optional[_xla.DistributedRuntimeClient] = None,
+    options: _NameValueMapping = None,
+    distributed_client: _xla.DistributedRuntimeClient | None = None,
 ):
   """Creates a PJRT C API client for a PJRT plugin.
 
@@ -186,7 +187,7 @@ def make_c_api_client(
   return _xla.get_c_api_client(plugin_name, options, distributed_client)
 
 
-def make_tpu_client(library_path: Optional[str] = None):
+def make_tpu_client(library_path: str | None = None):
   """Returns a TPU client. Defaults to allowing 32 in-flight computations."""
   if not pjrt_plugin_loaded('tpu'):
     c_api = load_pjrt_plugin_dynamically('tpu', library_path or 'libtpu.so')
@@ -557,7 +558,7 @@ LoadedExecutable.execute_with_token = LoadedExecutable_execute_with_token
 
 _custom_callback_handler: dict[str, Any] = {}
 # Key is xla_platform_name, value is (function_name, function)
-_custom_callback: dict[str, list[Tuple[str, Any]]] = {}
+_custom_callback: dict[str, list[tuple[str, Any]]] = {}
 _custom_callback_lock = threading.Lock()
 
 
@@ -636,7 +637,7 @@ class PaddingConfig:
 
 
 def make_padding_config(
-    padding_config: Union[PaddingConfig, Sequence[Tuple[int, int, int]]]
+    padding_config: PaddingConfig | Sequence[tuple[int, int, int]]
 ) -> PaddingConfig:
   """Create PaddingConfig proto from list of triples of integers.
 
@@ -678,10 +679,10 @@ class DotDimensionNumbers:
 
 
 def make_dot_dimension_numbers(
-    dimension_numbers: Union[
-        DotDimensionNumbers,
-        Tuple[Tuple[List[int], List[int]], Tuple[List[int], List[int]]],
-    ]
+    dimension_numbers: (
+        DotDimensionNumbers
+        | tuple[tuple[list[int], list[int]], tuple[list[int], list[int]]]
+    )
 ) -> DotDimensionNumbers:
   """Builds a DotDimensionNumbers object from a specification.
 
@@ -734,9 +735,9 @@ class ConvolutionDimensionNumbers:
 
 
 def make_convolution_dimension_numbers(
-    dimension_numbers: Union[
-        None, ConvolutionDimensionNumbers, Tuple[str, str, str]
-    ],
+    dimension_numbers: (
+        ConvolutionDimensionNumbers | tuple[str, str, str] | None
+    ),
     num_spatial_dimensions: int,
 ) -> ConvolutionDimensionNumbers:
   """Builds a ConvolutionDimensionNumbers object from a specification.
