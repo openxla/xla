@@ -691,4 +691,42 @@ TEST_F(FloatNormalizationTest, ConvertBeforeTuple) {
       F32);
 }
 
+TEST_F(FloatNormalizationNoComputeSupportTest, NoNormalizationForClonedModule) {
+  auto module = CreateNewVerifiedModule();
+  HloComputation::Builder sum_builder("sum");
+  auto x = sum_builder.AddInstruction(HloInstruction::CreateParameter(
+      /*parameter_number=*/0, ShapeUtil::MakeShape(BF16, {}), "x"));
+  auto y = sum_builder.AddInstruction(HloInstruction::CreateParameter(
+      /*parameter_number=*/1, ShapeUtil::MakeShape(BF16, {}), "y"));
+  sum_builder.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(BF16, {}), HloOpcode::kAdd, x, y));
+  HloComputation* reduction =
+      module->AddEmbeddedComputation(sum_builder.Build());
+
+  auto builder = HloComputation::Builder(TestName());
+  Shape bf16_shape_a = ShapeUtil::MakeShape(BF16, {2, 4});
+
+  HloInstruction* a = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, bf16_shape_a, "a"));
+
+  HloInstruction* crs = builder.AddInstruction(
+      HloInstruction::CreateAllReduce(bf16_shape_a, {a}, reduction,
+                                      /*replica_groups=*/{},
+                                      /*constrain_layout=*/false,
+                                      /*channel_id=*/std::nullopt,
+                                      /*use_global_device_ids=*/false));
+
+  auto computation = module->AddEntryComputation(builder.Build());
+
+  auto cloned_module = module->Clone();
+  // Since we skip processing to_apply region, nothing should change in the
+  // cloned module HLO.
+  EXPECT_FALSE(Normalize(cloned_module.get()));
+  HloInstruction* cloned_root =
+      cloned_module->entry_computation()->root_instruction();
+  EXPECT_EQ(cloned_root->shape().element_type(), BF16);
+  EXPECT_EQ(cloned_root->to_apply()->root_instruction()->opcode(),
+            HloOpcode::kAdd);
+}
+
 }  // namespace xla

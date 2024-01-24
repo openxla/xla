@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/service/convert_mover.h"
 #include "xla/service/dot_dimension_merger.h"
 #include "xla/service/dump.h"
-#include "xla/service/flatten_call_graph.h"
 #include "xla/service/float_normalization.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/autotuner_util.h"
@@ -160,10 +159,6 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
 
   // Convert upsupported bf16 convolutions to f32.
   ConvBfloat16Support conv_bf16_support(dnn_version, cuda_compute_capability);
-  // Flatten call graph to have unique computation for each call.
-  // This is needed for FloatNormalization to avoid type-promoting
-  // certain computations.
-  pipeline.AddPass<FlattenCallGraph>();
   pipeline.AddPass<FloatNormalization>(&conv_bf16_support);
 
   pipeline.AddPass<GpusolverRewriter>();
