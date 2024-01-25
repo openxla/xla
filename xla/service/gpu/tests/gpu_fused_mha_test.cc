@@ -2830,8 +2830,7 @@ class FlashAttentionBMMScaleBiasMaskSoftmaxBMM : public MultiHeadedAttentionTest
         GetInput4DLiteral<T>({2, 6, 1024, 64}, {3, 2, 1, 0});
     auto mask_literal = GetMask4DLiteral({2, 6, 1024, 1024}, {3, 2, 1, 0});
     auto do_literal = GetInput4DLiteral<T>({2, 6, 1024, 64}, {3, 2, 1, 0});
-    std::string hlo_string = "";
-    hlo_string =
+    std::string hlo_string =
         GetModuleFlash_Attention_Training_BMM1_Bias_Mask_Softmax_BMM2_HloString_BF16();  // NOLINT
     ExecuteAndCompare(hlo_string,
                       {&lhs_bmm1_literal, &rhs_bmm1_literal, &rhs_bmm2_literal,
