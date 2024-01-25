@@ -154,7 +154,7 @@ StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
   //
   // Walk the graph from the bottom this time since our changes go up the graph.
   std::deque<HloInstruction*> work_queue;
-  std::vector<HloInstruction*> instrs = comp->MakeInstructionPostOrder();
+  auto instrs = comp->MakeInstructionPostOrder();
   work_queue.insert(work_queue.end(), instrs.rbegin(), instrs.rend());
   while (!work_queue.empty()) {
     HloInstruction* instr = work_queue.front();

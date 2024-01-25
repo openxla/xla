@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
 #define XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
 
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -28,6 +27,7 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -478,10 +478,11 @@ class HloScheduleGraph {
   // altered/deleted during the existence of the HloScheduleGraph.
   // Nullptr is not a valid value for 'post_order_instructions' and
   // 'alias_analysis'.
-  HloScheduleGraph(const std::vector<HloInstruction*>* post_order_instructions,
-                   HloAliasAnalysis* alias_analysis,
-                   const LatencyEstimator* latency_estimator,
-                   const AsyncTracker* async_tracker);
+  HloScheduleGraph(
+      absl::Span<const HloInstruction* const> post_order_instructions,
+      HloAliasAnalysis* alias_analysis,
+      const LatencyEstimator* latency_estimator,
+      const AsyncTracker* async_tracker);
 
   std::string ToString(const AsyncTracker* async_tracker = nullptr) const;
 
@@ -800,7 +801,7 @@ class DefaultSchedulerCore : public SchedulerCore {
                     const AsyncTracker* async_tracker,
                     MemoryPressureTracker* memory_pressure_tracker,
                     const SchedulerConfig& config)
-        : sched_graph(&instr_sequence->instructions(), alias_analysis,
+        : sched_graph(instr_sequence->instructions(), alias_analysis,
                       latency_estimator, async_tracker),
           latency_estimator(latency_estimator),
           async_tracker(async_tracker),

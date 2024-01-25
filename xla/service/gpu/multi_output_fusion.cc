@@ -412,8 +412,7 @@ absl::StatusOr<bool> GpuMultiOutputFusion::DoMultiOutputFusion() {
                                     /*count_multiple_input_accesses=*/true},
                                    &device_info_);
   TF_RETURN_IF_ERROR(computation_->Accept(&cost_analysis));
-  std::vector<HloInstruction*> defs_before_uses =
-      computation_->MakeInstructionPostOrder();
+  auto defs_before_uses = computation_->MakeInstructionPostOrder();
 
   FusionInfoCache fusion_info_cache;
   // Traverse the HLO in uses-before-defs order.

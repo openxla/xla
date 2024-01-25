@@ -105,7 +105,7 @@ absl::Status GpuHloCostAnalysis::FusionCalculateUtilizations(
   // the utilization of operands; store utilization of each node in
   // hlo_properties_. All consumers of an instruction are processed before the
   // instruction itself.
-  std::vector<HloInstruction*> instructions =
+  auto instructions =
       fusion->fused_instructions_computation()->MakeInstructionPostOrder();
   absl::c_reverse(instructions);
 

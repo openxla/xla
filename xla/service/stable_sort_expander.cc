@@ -128,8 +128,7 @@ StatusOr<HloInstruction*> StableSortExpander::ExpandInstruction(
 
   // Modify the computation to break ties using the iota operand.
   auto comparator = sort->to_apply();
-  std::vector<HloInstruction*> instructions_postorder =
-      comparator->MakeInstructionPostOrder();
+  auto instructions_postorder = comparator->MakeInstructionPostOrder();
   absl::flat_hash_map<HloInstruction*, HloInstruction*> replacements;
   // Look up instr in the replacements map, and return either the replacement,
   // or instr, if the replacement isn't present.

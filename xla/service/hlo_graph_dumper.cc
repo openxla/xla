@@ -2145,8 +2145,7 @@ StatusOr<std::string> RenderGraph(const HloComputation& computation,
 StatusOr<std::string> RenderAllComputationsToHtml(const HloModule& module) {
   FusionVisualizerProgress progress;
 
-  std::vector<HloInstruction*> instrs =
-      module.entry_computation()->MakeInstructionPostOrder();
+  auto instrs = module.entry_computation()->MakeInstructionPostOrder();
   absl::c_reverse(instrs);
   for (const HloInstruction* instr : instrs) {
     if (absl::c_linear_search(

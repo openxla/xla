@@ -3108,8 +3108,7 @@ StatusOr<bool> ShardingPropagation::Run(
       for (const HloComputation* computation :
            module->computations(execution_threads)) {
         VLOG(2) << "Consider computation: " << computation->name();
-        std::vector<HloInstruction*> instructions =
-            computation->MakeInstructionPostOrder();
+        auto instructions = computation->MakeInstructionPostOrder();
 
         instruction_counter += instructions.size();
         already_sharded_counter += absl::c_count_if(

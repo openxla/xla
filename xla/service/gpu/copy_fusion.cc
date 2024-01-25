@@ -61,8 +61,7 @@ bool OnlyElementwiseOpsReachableFromParams(HloComputation* fused_computation) {
 
 absl::StatusOr<bool> CopyFusion::DoCopyFusion(HloComputation* computation) {
   bool changed = false;
-  std::vector<HloInstruction*> defs_before_uses =
-      computation->MakeInstructionPostOrder();
+  auto defs_before_uses = computation->MakeInstructionPostOrder();
 
   for (HloInstruction* hlo : defs_before_uses) {
     if (hlo->opcode() != HloOpcode::kFusion) {

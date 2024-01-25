@@ -381,9 +381,8 @@ namespace {
 // "removed" from the vector by setting it's element to nullptr.
 class ReversePostOrderFusionQueue : public FusionQueue {
  public:
-  explicit ReversePostOrderFusionQueue(HloComputation* computation) {
-    post_order_ = computation->MakeInstructionPostOrder();
-
+  explicit ReversePostOrderFusionQueue(HloComputation* computation)
+      : post_order_(computation->MakeInstructionPostOrder()) {
     for (size_t i = 0; i < post_order_.size(); ++i) {
       InsertOrDie(&post_order_index_, post_order_[i], i);
     }
@@ -491,7 +490,7 @@ class ReversePostOrderFusionQueue : public FusionQueue {
   }
 
  private:
-  std::vector<HloInstruction*> post_order_;
+  HloComputation::InstructionVector post_order_;
   absl::flat_hash_map<HloInstruction*, int> post_order_index_;
   std::vector<bool> fusion_config_;
 };
