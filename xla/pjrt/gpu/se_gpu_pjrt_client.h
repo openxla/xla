@@ -60,14 +60,17 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
   }
   // `gpu_device_ids` is the list of logical device ids for the GPU devices and
   // will be used to initialize the GPU topology.
-  StreamExecutorGpuTopologyDescription(const PjRtPlatformId platform_id,
-                                       const absl::string_view platform_name,
-                                       const absl::string_view platform_version,
-                                       const std::vector<int>& gpu_device_ids)
+  StreamExecutorGpuTopologyDescription(
+      const PjRtPlatformId platform_id, const absl::string_view platform_name,
+      const absl::string_view platform_version,
+      const std::vector<int>& gpu_device_ids,
+      const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& attributes =
+          {})
       : platform_id_(platform_id),
         platform_name_(platform_name),
         platform_version_(platform_version),
-        gpu_topology_(gpu_device_ids) {}
+        gpu_topology_(gpu_device_ids),
+        attributes_(attributes) {}
 
   bool operator==(const StreamExecutorGpuTopologyDescription& other) const {
     return this->platform_id() == other.platform_id() &&
@@ -222,6 +225,10 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
  private:
   xla::StreamExecutorGpuTopologyDescription topology_;
 };
+
+// Builds a LocalDeviceState for each GPU present.
+StatusOr<std::map<int, std::unique_ptr<LocalDeviceState>>>
+BuildLocalDeviceStates(LocalClient* xla_client);
 
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,

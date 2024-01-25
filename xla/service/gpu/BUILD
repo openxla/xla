@@ -2955,6 +2955,7 @@ tf_proto_library(
     cc_api_version = 2,
     protodeps = [
         "//xla/service:hlo_proto",
+        "//xla:xla_proto",
     ],
 )
 
@@ -3381,6 +3382,7 @@ cc_library(
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_pass",
         "//xla/service:hlo_proto_cc",
+        "//xla:xla_proto_cc_impl",
         "//xla/service:hlo_rematerialization",
         "//xla/service:hlo_verifier",
         "//xla/service:layout_normalization",

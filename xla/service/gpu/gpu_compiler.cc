@@ -295,8 +295,11 @@ class GpuAotCompilationResult : public AotCompilationResult {
       HloModuleProto hlo, std::string_view obj_file,
       std::string_view mlir_module, std::string_view gpu_asm_text,
       absl::Span<const uint8_t> gpu_binary,
-      absl::Span<const GpuExecutable::ConstantInfo> constants = {}) {
+      absl::Span<const GpuExecutable::ConstantInfo> constants = {},
+      std::optional<HloModuleConfigProto> config = std::nullopt) {
     XlaRuntimeExecutableProto xla_runtime_executable;
+
+    *xla_runtime_executable.mutable_hlo_module_proto() = hlo;
     *xla_runtime_executable.mutable_hlo_module_proto() = hlo;
     xla_runtime_executable.set_obj_file(std::string(obj_file));
     xla_runtime_executable.set_mlir_module(std::string(mlir_module));
@@ -306,6 +309,9 @@ class GpuAotCompilationResult : public AotCompilationResult {
     xla_runtime_gpu_executable_.set_gpu_asm_text(std::string(gpu_asm_text));
     xla_runtime_gpu_executable_.set_gpu_binary(gpu_binary.data(),
                                                gpu_binary.size());
+    if (config.has_value()) {
+      *xla_runtime_gpu_executable_.mutable_config() = *config;
+    }
 
     for (const GpuExecutable::ConstantInfo& cst : constants) {
       auto* cst_proto = xla_runtime_gpu_executable_.add_constants();
@@ -342,14 +348,17 @@ class GpuAotCompilationResult : public AotCompilationResult {
 
 class GpuThunkAotCompilationResult : public AotCompilationResult {
  public:
-  GpuThunkAotCompilationResult(const HloModule* hlo_module,
-                               const BufferAssignment* buffer_assignment,
-                               std::string_view asm_text,
-                               absl::Span<const uint8_t> binary) {
+  GpuThunkAotCompilationResult(
+      const HloModule* hlo_module, const BufferAssignment* buffer_assignment,
+      std::string_view asm_text, absl::Span<const uint8_t> binary,
+      std::optional<HloModuleConfigProto> config = std::nullopt) {
     *proto_.mutable_hlo_module() = hlo_module->ToProto();
     *proto_.mutable_buffer_assignment() = buffer_assignment->ToProto();
     proto_.set_asm_text(std::string(asm_text));
     proto_.set_binary(binary.data(), binary.size());
+    if (config.has_value()) {
+      *proto_.mutable_config() = *config;
+    }
   }
 
   explicit GpuThunkAotCompilationResult(CompilationResultProto proto)
@@ -383,10 +392,19 @@ GpuAotCompilationResult::LoadExecutable(
     Compiler* compiler, const se::StreamExecutor* executor) const {
   XlaRuntimeExecutableProto xla_runtime_executable =
       xla_runtime_gpu_executable_.xla_runtime_executable();
-  TF_ASSIGN_OR_RETURN(HloModuleConfig hlo_module_config,
-                      HloModule::CreateModuleConfigFromProto(
-                          xla_runtime_executable.hlo_module_proto(),
-                          GetDebugOptionsFromFlags()));
+  HloModuleConfig hlo_module_config;
+  if (xla_runtime_gpu_executable_.has_config()) {
+    TF_ASSIGN_OR_RETURN(
+        auto hlo_module_config_ptr,
+        HloModuleConfig::CreateFromProto(xla_runtime_gpu_executable_.config()));
+    hlo_module_config = *hlo_module_config_ptr;
+  } else {
+    TF_ASSIGN_OR_RETURN(hlo_module_config,
+                        HloModule::CreateModuleConfigFromProto(
+                            xla_runtime_executable.hlo_module_proto(),
+                            GetDebugOptionsFromFlags()));
+  }
+
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<HloModule> hlo_module,
       HloModule::CreateFromProto(xla_runtime_executable.hlo_module_proto(),
@@ -412,10 +430,17 @@ GpuAotCompilationResult::LoadExecutable(
 absl::StatusOr<std::unique_ptr<Executable>>
 GpuThunkAotCompilationResult::LoadExecutable(
     Compiler* compiler, const se::StreamExecutor* stream_exec) const {
-  // Recreate HloModule from proto.
-  TF_ASSIGN_OR_RETURN(HloModuleConfig hlo_module_config,
-                      HloModule::CreateModuleConfigFromProto(
-                          proto_.hlo_module(), GetDebugOptionsFromFlags()));
+  HloModuleConfig hlo_module_config;
+  if (proto_.has_config()) {
+    TF_ASSIGN_OR_RETURN(auto hlo_module_config_ptr,
+                        HloModuleConfig::CreateFromProto(proto_.config()));
+    hlo_module_config = *hlo_module_config_ptr;
+  } else {
+    // Recreate HloModule from proto.
+    TF_ASSIGN_OR_RETURN(hlo_module_config,
+                        HloModule::CreateModuleConfigFromProto(
+                            proto_.hlo_module(), GetDebugOptionsFromFlags()));
+  }
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<HloModule> hlo_module,
       HloModule::CreateFromProto(proto_.hlo_module(), hlo_module_config));
@@ -1969,12 +1994,14 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
         CompileResultWithMetadata res,
         CompileToBackendResult(module.get(), &llvm_context, options.executor(),
                                {options.device_allocator()}, gpu_device_info));
-
+    TF_ASSIGN_OR_RETURN(auto module_with_config_proto,
+                        module->ToProtoWithConfig());
     if (!IsXlaRuntimeExecutableEnabled(module->config())) {
       // Create GpuThunkAotCompilationResult if thunk runtime is enabled.
       results.emplace_back(std::make_unique<GpuThunkAotCompilationResult>(
           module.get(), res.compile_module_results.buffer_assignment.get(),
-          res.backend_result.asm_text, res.backend_result.binary));
+          res.backend_result.asm_text, res.backend_result.binary,
+          module_with_config_proto.config()));
       continue;
     }
 
@@ -2033,7 +2060,8 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
     results.emplace_back(std::make_unique<GpuAotCompilationResult>(
         module->ToProto(), data, (*program)->module,
         res.backend_result.asm_text, res.backend_result.binary,
-        res.compile_module_results.constants));
+        res.compile_module_results.constants,
+        module_with_config_proto.config()));
   }
   return std::move(results);
 }
@@ -2051,16 +2079,22 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> GpuCompiler::Export(
   if (!gpu_executable) return Internal("GpuExecutable is null");
 
   if (gpu_executable->IsXlaRuntimeEnabled()) {
-    HloModuleProto module_proto = gpu_executable->module().ToProto();
+    TF_ASSIGN_OR_RETURN(auto module_with_config_proto,
+                        gpu_executable->module().ToProtoWithConfig());
+    HloModuleProto module_proto = module_with_config_proto.hlo_module();
     auto obj_file = gpu_executable->GetObjFile().value_or("");
     auto mlir_module = gpu_executable->GetMlirModule().value_or("");
     return std::make_unique<xla::gpu::GpuAotCompilationResult>(
         module_proto, obj_file, mlir_module, gpu_executable->text(),
-        gpu_executable->binary(), gpu_executable->constants());
+        gpu_executable->binary(), gpu_executable->constants(),
+        module_with_config_proto.config());
   } else {
+    TF_ASSIGN_OR_RETURN(auto module_with_config_proto,
+                        gpu_executable->module().ToProtoWithConfig());
     return std::make_unique<xla::gpu::GpuThunkAotCompilationResult>(
         &gpu_executable->module(), gpu_executable->buffer_assignment(),
-        gpu_executable->text(), gpu_executable->binary());
+        gpu_executable->text(), gpu_executable->binary(),
+        module_with_config_proto.config());
   }
 }
 

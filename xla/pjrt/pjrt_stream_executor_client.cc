@@ -3233,7 +3233,6 @@ PjRtStreamExecutorClient::DeserializeExecutable(
                         CompileOptions::FromProto(proto.compile_options()));
   }
   auto input_options = compile_options;
-
   tsl::profiler::TraceMe traceme(
       "PjRtStreamExecutorClient::DeserializeExecutable");
   VLOG(1) << "PjRtStreamExecutorClient::DeserializeExecutable";
@@ -3260,7 +3259,6 @@ PjRtStreamExecutorClient::DeserializeExecutable(
       std::move(device_assignment), std::move(input_options),
       std::move(addressable_device_logical_ids), std::move(addressable_devices),
       this);
-
   TF_RETURN_IF_ERROR(
       executable->SetUpDonation(compile_options.parameter_is_tupled_arguments));
   return std::unique_ptr<PjRtLoadedExecutable>(std::move(executable));

@@ -710,22 +710,6 @@ CreateCudaAsyncAllocator(
 
 #endif  // defined(GOOGLE_CUDA) && CUDA_VERSION >= 11020
 
-// Builds a LocalDeviceState for each GPU present.
-StatusOr<std::map<int, std::unique_ptr<LocalDeviceState>>>
-BuildLocalDeviceStates(LocalClient* xla_client) {
-  std::map<int, std::unique_ptr<LocalDeviceState>> addressable_devices;
-  for (se::StreamExecutor* executor :
-       xla_client->backend().stream_executors()) {
-    addressable_devices.emplace(
-        executor->device_ordinal(),
-        std::make_unique<LocalDeviceState>(
-            executor, xla_client, LocalDeviceState::kComputeSynchronized,
-            /*max_inflight_computations=*/32,
-            /*allow_event_reuse=*/true, /*use_callback_stream=*/true));
-  }
-  return std::move(addressable_devices);
-}
-
 // Constructs a GPU device memory allocator to use, according to the allocator
 // configuration the client requested.
 StatusOr<std::unique_ptr<se::DeviceMemoryAllocator>>
@@ -882,6 +866,22 @@ Status BuildDistributedDevices(
 }
 
 }  // namespace
+
+// Builds a LocalDeviceState for each GPU present.
+StatusOr<std::map<int, std::unique_ptr<LocalDeviceState>>>
+BuildLocalDeviceStates(LocalClient* xla_client) {
+  std::map<int, std::unique_ptr<LocalDeviceState>> addressable_devices;
+  for (se::StreamExecutor* executor :
+       xla_client->backend().stream_executors()) {
+    addressable_devices.emplace(
+        executor->device_ordinal(),
+        std::make_unique<LocalDeviceState>(
+            executor, xla_client, LocalDeviceState::kComputeSynchronized,
+            /*max_inflight_computations=*/32,
+            /*allow_event_reuse=*/true, /*use_callback_stream=*/true));
+  }
+  return std::move(addressable_devices);
+}
 
 StreamExecutorGpuDevice::StreamExecutorGpuDevice(
     int id, std::unique_ptr<LocalDeviceState> local_device_state,

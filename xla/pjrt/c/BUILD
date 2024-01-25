@@ -174,9 +174,12 @@ cc_library(
         "//xla/ffi/api:c_api",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
+        "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
+        "//xla/pjrt/gpu:se_gpu_pjrt_compiler",  # To register GPU AOT compiler
         "//xla/python:inspect_sharding",  # To register "InspectSharding" custom partitioning handler.
+        "//xla/service:compiler",
         "//xla/service:custom_call_target_registry",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
