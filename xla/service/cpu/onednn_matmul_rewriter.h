@@ -33,9 +33,9 @@ namespace cpu {
 // calls.
 class OneDnnMatMulRewriter : public HloModulePass {
  public:
-  OneDnnMatMulRewriter(int intraop_parallelism,
+  OneDnnMatMulRewriter(int intra_op_parallelism,
                        const tsl::thread::ThreadPool* compile_threadpool)
-      : intraop_parallelism_(intraop_parallelism),
+      : intra_op_parallelism_(intra_op_parallelism),
         compile_threadpool_(compile_threadpool) {}
 
   absl::string_view name() const override { return "onednn-matmul-rewriter"; }
@@ -48,7 +48,7 @@ class OneDnnMatMulRewriter : public HloModulePass {
   static bool ShouldRewrite(const HloInstruction* dot_instr);
 
  private:
-  int intraop_parallelism_;
+  int intra_op_parallelism_;
   const tsl::thread::ThreadPool* compile_threadpool_;
 };
 

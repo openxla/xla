@@ -600,8 +600,7 @@ void AddHloVerifier(HloPassPipeline* pipeline, bool allow_sparse_shapes,
 
 Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool is_aot_compile,
-    LLVMTargetMachineFeatures* target_machine_features,
-    const CompileOptions& compile_options, bool is_mlir_compile) {
+    LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
   const int64_t num_partitions = module->config().num_partitions();
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
@@ -961,8 +960,7 @@ Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
                                  bool is_mlir_compile) {
   LLVMTargetMachineFeatures target_machine_features(target_machine);
   TF_RETURN_IF_ERROR(RunHloPassesThroughLayoutAssn(
-      module, is_aot_compile, &target_machine_features, compile_options,
-      is_mlir_compile));
+      module, is_aot_compile, &target_machine_features, is_mlir_compile));
 
   return RunHloPassesAfterLayoutAssn(module, is_aot_compile,
                                      &target_machine_features, compile_options,

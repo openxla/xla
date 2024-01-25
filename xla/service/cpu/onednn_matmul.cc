@@ -128,6 +128,31 @@ Shape MemDescToXlaShape(const dnnl::memory::desc& md) {
   return ShapeUtil::MakeShape(ToXlaPrimitiveType(dtype), {elements_num});
 }
 
+std::unique_ptr<tsl::OneDnnThreadPool> CreateOneDnnThreadPool(
+    const xla::ExecutableRunOptions* run_options) {
+#ifndef ENABLE_ONEDNN_OPENMP
+  if (run_options != nullptr &&
+      run_options->intra_op_thread_pool() != nullptr) {
+    return std::make_unique<tsl::OneDnnThreadPool>(
+        run_options->intra_op_thread_pool()->getPool(), false);
+  } else {
+    return nullptr;
+  }
+#else
+  return nullptr;
+#endif  // ENABLE_ONEDNN_OPENMP
+}
+
+dnnl::stream MakeOneDnnStream(
+    const dnnl::engine& cpu_engine,
+    dnnl::threadpool_interop::threadpool_iface* thread_pool) {
+  if (thread_pool != nullptr) {
+    return dnnl::threadpool_interop::make_stream(cpu_engine, thread_pool);
+  } else {
+    return dnnl::stream(cpu_engine);
+  }
+}
+
 }  // namespace
 
 Shape OneDnnMatMulOptWeightsShape(const Shape& input_shape,
@@ -155,15 +180,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
       static_cast<const xla::ExecutableRunOptions*>(args[arg_indx++]);
   XLA_LIGHTWEIGHT_CHECK(run_options != nullptr);
   XLA_LIGHTWEIGHT_CHECK(run_options->intra_op_thread_pool() != nullptr);
-  tsl::OneDnnThreadPool thread_pool(
-      run_options->intra_op_thread_pool()->getPool(), false);
+
+  auto thread_pool = CreateOneDnnThreadPool(run_options);
   engine cpu_engine(engine::kind::cpu, 0);
-#ifndef ENABLE_ONEDNN_OPENMP
-  auto onednn_stream =
-      stream(dnnl::threadpool_interop::make_stream(cpu_engine, &thread_pool));
-#else
-  auto onednn_stream = stream(cpu_engine);
-#endif  // ENABLE_ONEDNN_OPENMP
+  auto onednn_stream = MakeOneDnnStream(cpu_engine, thread_pool.get());
 
   std::string config_str(static_cast<const char*>(args[arg_indx++]));
   OneDnnMatMulConfig matmul_config;
@@ -297,24 +317,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMulReorder(
   const xla::ExecutableRunOptions* run_options =
       static_cast<const xla::ExecutableRunOptions*>(args[arg_indx++]);
 
+  auto thread_pool = CreateOneDnnThreadPool(run_options);
   engine cpu_engine(engine::kind::cpu, 0);
-
-#ifndef ENABLE_ONEDNN_OPENMP
-  tsl::OneDnnThreadPool thread_pool;
-  auto onednn_stream = [&] {
-    if (run_options != nullptr &&
-        run_options->intra_op_thread_pool() != nullptr) {
-      thread_pool = tsl::OneDnnThreadPool(
-          run_options->intra_op_thread_pool()->getPool(), false);
-      return stream(
-          dnnl::threadpool_interop::make_stream(cpu_engine, &thread_pool));
-    } else {
-      return stream(cpu_engine);
-    }
-  }();
-#else
-  auto onednn_stream = stream(cpu_engine);
-#endif  // ENABLE_ONEDNN_OPENMP
+  auto onednn_stream = MakeOneDnnStream(cpu_engine, thread_pool.get());
 
   std::string config_str(static_cast<const char*>(args[arg_indx++]));
   OneDnnMatMulConfig matmul_config;

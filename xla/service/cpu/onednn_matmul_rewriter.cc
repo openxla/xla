@@ -663,11 +663,11 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
 
 class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
  public:
-  OneDnnMatMulReorderVisitor(int intraop_parallelism,
+  OneDnnMatMulReorderVisitor(int intra_op_parallelism,
                              const tsl::thread::ThreadPool* compile_threadpool)
-      : intraop_parallelism_(intraop_parallelism > 0
-                                 ? intraop_parallelism
-                                 : tsl::port::MaxParallelism()),
+      : intra_op_parallelism_(intra_op_parallelism > 0
+                                  ? intra_op_parallelism
+                                  : tsl::port::MaxParallelism()),
         evaluator_(/*max_loop_iterations=*/0) {
     if (compile_threadpool) {
       threadpool_device_.reset(
@@ -745,7 +745,7 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
 
 #ifndef ENABLE_ONEDNN_OPENMP
       // set oneDNN cuncurrency settings (which is thread-local)
-      tsl::OneDnnThreadPool::set_onednn_max_threads(intraop_parallelism_);
+      tsl::OneDnnThreadPool::set_onednn_max_threads(intra_op_parallelism_);
 #endif
       auto new_weight_shape = OneDnnMatMulOptWeightsShape(
           input_shape, weight_shape, bias_shape, output_shape, &matmul_config);
@@ -786,7 +786,7 @@ class OneDnnMatMulReorderVisitor : public DfsHloRewriteVisitor {
   }
 
  private:
-  int intraop_parallelism_;
+  int intra_op_parallelism_;
   HloEvaluator evaluator_;
   std::unique_ptr<tsl::thread::ThreadPool> threadpool_handle_;
   std::unique_ptr<Eigen::ThreadPoolDevice> threadpool_device_;
@@ -799,7 +799,7 @@ StatusOr<bool> OneDnnMatMulRewriter::Run(
   TF_ASSIGN_OR_RETURN(auto result,
                       visitor.RunOnModule(module, execution_threads));
 
-  OneDnnMatMulReorderVisitor reorder_visitor(intraop_parallelism_,
+  OneDnnMatMulReorderVisitor reorder_visitor(intra_op_parallelism_,
                                              compile_threadpool_);
   TF_ASSIGN_OR_RETURN(auto result2,
                       reorder_visitor.RunOnModule(module, execution_threads));
