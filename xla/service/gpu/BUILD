@@ -2957,6 +2957,7 @@ tf_proto_library(
     cc_api_version = 2,
     protodeps = [
         "//xla/service:hlo_proto",
+        "//xla:xla_proto",
     ],
 )
 
@@ -3672,9 +3673,6 @@ xla_cc_test(
     srcs = if_gpu_is_configured([
         "gpu_aot_compilation_test.cc",
     ]),
-    env = {
-        "XLA_FLAGS": "--xla_gpu_enable_xla_runtime_executable",
-    },
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
