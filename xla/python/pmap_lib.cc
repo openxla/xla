@@ -25,35 +25,46 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/hash/hash.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
-#include "absl/types/variant.h"
+#include "pybind11/attr.h"  // from @pybind11
 #include "pybind11/cast.h"  // from @pybind11
+#include "pybind11/gil.h"  // from @pybind11
+#include "pybind11/numpy.h"  // from @pybind11
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
 #include "pybind11_abseil/absl_casters.h"  // from @pybind11_abseil
 #include "xla/pjrt/exceptions.h"
+#include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
-#include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/memory.h"
+#include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/jax_jit.h"
 #include "xla/python/py_array.h"
-#include "xla/python/py_buffer.h"
+#include "xla/python/py_client.h"
 #include "xla/python/py_executable.h"
 #include "xla/python/py_values.h"
+#include "xla/python/python_ref_manager.h"
 #include "xla/python/python_utils.h"
 #include "xla/python/pytree.h"
 #include "xla/python/sharded_device_array.h"
 #include "xla/python/sharding.h"
+#include "xla/python/traceback.h"
 #include "xla/python/types.h"
-#include "xla/python/util.h"
+#include "xla/status.h"
+#include "xla/status_macros.h"
+#include "xla/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"

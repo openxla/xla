@@ -22,6 +22,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "pybind11/attr.h"  // from @pybind11
+#include "pybind11/cast.h"  // from @pybind11
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
 #include "xla/backends/profiler/plugin/plugin_tracer.h"
@@ -31,12 +33,13 @@ limitations under the License.
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/profiler/internal/traceme_wrapper.h"
-#include "xla/python/types.h"
 #include "xla/python/xplane_to_profile_instructions.h"
-#include "xla/status.h"
 #include "tsl/profiler/lib/profiler_factory.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "tsl/profiler/rpc/client/capture_profile.h"
 #include "tsl/profiler/rpc/profiler_server.h"
 

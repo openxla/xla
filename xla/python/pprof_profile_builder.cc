@@ -18,10 +18,12 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "xla/python/traceback.h"
+#include "absl/log/check.h"
+#include "third_party/protobuf/util/json_util.h"
+#include "pybind11/pytypes.h"  // from @pybind11
 #include "xla/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/protobuf/profile.pb.h"
 
 namespace xla {
 
