@@ -94,6 +94,7 @@ cc_library(
         ":conditional_thunk",
         ":copy_thunk",
         ":custom_call_thunk",
+        ":gemm_thunk",
         ":kernel_thunk",
         ":memset_thunk",
         ":sequential_thunk",
@@ -101,7 +102,6 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
-        "//xla/service/gpu:gemm_thunk",
         "//xla/service/gpu:nccl_collective_thunks",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/container:inlined_vector",
@@ -380,6 +380,21 @@ cc_library(
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+cc_library(
+    name = "gemm_thunk",
+    srcs = ["gemm_thunk.cc"],
+    hdrs = ["gemm_thunk.h"],
+    deps = [
+        "//xla:status",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu:thunk",
+        "//xla/stream_executor:device_memory",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
