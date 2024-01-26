@@ -164,6 +164,696 @@ diff --ruN a/stablehlo/stablehlo/api/PortableApi.h b/stablehlo/stablehlo/api/Por
  
  // Get the current StableHLO version.
  //
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
+@@ -30,11 +30,12 @@
+ /// Apply dilation and padding to the input of a convolution.
+ Value applyConvolutionPadding(Location loc, Value input,
+                               DenseIntElementsAttr padding,
+-                              Attribute lhsDilation,
++                              DenseI64ArrayAttr lhsDilation,
+                               llvm::ArrayRef<int64_t> dimMappings,
+                               OpBuilder &rewriter) {
+   SmallVector<int64_t> lhsDilationValues;
+-  if (lhsDilation) lhsDilationValues = hlo::getI64Array(lhsDilation);
++  if (lhsDilation)
++    lhsDilationValues = llvm::to_vector(lhsDilation.asArrayRef());
+   bool noPadding = !padding || isSplatValue(padding, 0);
+   bool noDilation = !lhsDilation || hlo::isSplatArray(lhsDilationValues, 1);
+   if (noPadding && noDilation) return input;
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgReduce.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgReduce.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgReduce.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgReduce.cpp
+@@ -129,7 +129,7 @@
+     }
+     auto srcRank = cast<ShapedType>(adaptor.getInputs()[0].getType()).getRank();
+ 
+-    SmallVector<int64_t> reductionDims = op.getDimensions();
++    SmallVector<int64_t> reductionDims = llvm::to_vector(op.getDimensions());
+ 
+     SmallVector<Type> resultTypes;
+     if (failed(typeConverter->convertTypes(op.getResultTypes(), resultTypes)))
+@@ -226,7 +226,7 @@
+                                          "unsupported reduce (noop or empty)");
+     }
+ 
+-    auto reductionDims = op.getDimensions();
++    auto reductionDims = llvm::to_vector(op.getDimensions());
+     // stablehlo.reduce doesn't specify the order of the reduction dimensions.
+     llvm::sort(reductionDims);
+ 
+@@ -346,17 +346,17 @@
+ 
+     llvm::SmallVector<int64_t> baseDilations;
+     if (op.getBaseDilations()) {
+-      baseDilations = *op.getBaseDilations();
++      baseDilations = llvm::to_vector(*op.getBaseDilations());
+     }
+ 
+     llvm::SmallVector<int64_t> windowStrides(windowDimensions.size(), 1);
+     if (op.getWindowStrides()) {
+-      windowStrides = *op.getWindowStrides();
++      windowStrides = llvm::to_vector(*op.getWindowStrides());
+     }
+ 
+     llvm::SmallVector<int64_t> windowDilations(windowDimensions.size(), 1);
+     if (op.getWindowDilations()) {
+-      windowDilations = *op.getWindowDilations();
++      windowDilations = llvm::to_vector(*op.getWindowDilations());
+     }
+ 
+     auto rank = static_cast<int64_t>(windowDimensions.size());
+diff --ruN a/stablehlo/stablehlo/dialect/AssemblyFormat.cpp b/stablehlo/stablehlo/dialect/AssemblyFormat.cpp
+--- stablehlo/stablehlo/dialect/AssemblyFormat.cpp
++++ stablehlo/stablehlo/dialect/AssemblyFormat.cpp
+@@ -255,46 +255,6 @@
+ //===----------------------------------------------------------------------===//
+ // Attribute Printers and Parsers
+ //===----------------------------------------------------------------------===//
+-
+-void printDenseI64Array(OpAsmPrinter& p, Operation* op,
+-                        DenseIntElementsAttr attr) {
+-  if (attr.getType().getRank() != 1)
+-    llvm::report_fatal_error("printDenseI64Array only supports rank-1 arrays");
+-  auto values = llvm::to_vector(attr.getValues<int64_t>());
+-  DenseI64ArrayAttr arrayAttr =
+-      DenseI64ArrayAttr::get(op->getContext(), values);
+-  arrayAttr.print(p);
+-}
+-
+-ParseResult parseDenseI64Array(OpAsmParser& parser,
+-                               DenseIntElementsAttr& attr) {
+-  DenseI64ArrayAttr arrayAttr = DenseI64ArrayAttr::parse(parser, Type{})
+-                                    .dyn_cast_or_null<DenseI64ArrayAttr>();
+-  if (!arrayAttr) return failure();
+-
+-  ArrayRef<int64_t> data = arrayAttr.asArrayRef();
+-  RankedTensorType type =
+-      RankedTensorType::get(data.size(), parser.getBuilder().getI64Type());
+-  attr = DenseIntElementsAttr::get(type, data);
+-  return success();
+-}
+-
+-void printI64DenseArrayOrElements1D(OpAsmPrinter& p, Operation* op,
+-                                    Attribute attr) {
+-  if (auto elems = dyn_cast<DenseIntElementsAttr>(attr)) {
+-    printDenseI64Array(p, op, elems);
+-    return;
+-  }
+-  dyn_cast<DenseI64ArrayAttr>(attr).print(p);
+-}
+-
+-ParseResult parseI64DenseArrayOrElements1D(OpAsmParser& parser,
+-                                           Attribute& attr) {
+-  if ((attr = DenseI64ArrayAttr::parse(parser, Type{}))) {
+-    return success();
+-  }
+-  return failure();
+-}
+ 
+ void printSliceRanges(OpAsmPrinter& p, Operation* op,
+                       ArrayRef<int64_t> startIndices,
+diff --ruN a/stablehlo/stablehlo/dialect/AssemblyFormat.h b/stablehlo/stablehlo/dialect/AssemblyFormat.h
+--- stablehlo/stablehlo/dialect/AssemblyFormat.h
++++ stablehlo/stablehlo/dialect/AssemblyFormat.h
+@@ -174,31 +174,6 @@
+ // Attribute Printers and Parsers
+ //===----------------------------------------------------------------------===//
+ 
+-// DenseI64Array - Used to print DenseIntElementsAttrs that are verified to have
+-// rank 1 as an i64 array without needing the dense specifier or type specifier.
+-//
+-//   Generic:
+-//     { dense<[1, 2]> : tensor<2xi64> }
+-//   Custom:
+-//     [1, 2]
+-void printDenseI64Array(OpAsmPrinter& p, Operation* op,
+-                        DenseIntElementsAttr attr);
+-
+-ParseResult parseDenseI64Array(OpAsmParser& parser, DenseIntElementsAttr& attr);
+-
+-// I64DenseArrayOrElements1D - Used to print an attr that can be either
+-// I64ElementsAttr (DenseIntElementsAttr) or DenseI64ArrayAttr.
+-//
+-//   Dense elements:
+-//     { dense<[1, 2]> : tensor<2xi64> }
+-//   Array:
+-//     { array<i64: 1, 2> }
+-void printI64DenseArrayOrElements1D(OpAsmPrinter& p, Operation* op,
+-                                    Attribute attr);
+-
+-ParseResult parseI64DenseArrayOrElements1D(OpAsmParser& parser,
+-                                           Attribute& attr);
+-
+ // SliceRanges - Used to print multi-dimensional ranges for slice.
+ void printSliceRanges(OpAsmPrinter& p, Operation* op,
+                       ArrayRef<int64_t> startIndices,
+diff --ruN a/stablehlo/stablehlo/dialect/Base.cpp b/stablehlo/stablehlo/dialect/Base.cpp
+--- stablehlo/stablehlo/dialect/Base.cpp
++++ stablehlo/stablehlo/dialect/Base.cpp
+@@ -605,30 +605,5 @@
+                      [val](int64_t x) { return x == val; });
+ }
+ 
+-SmallVector<int64_t> getI64Array(Attribute attr) {
+-  if (!attr) return {};
+-  if (auto elements = attr.dyn_cast<DenseIntElementsAttr>())
+-    return llvm::to_vector(elements.getValues<int64_t>());
+-  if (auto array = attr.dyn_cast<DenseI64ArrayAttr>())
+-    return llvm::to_vector(array.asArrayRef());
+-  llvm::report_fatal_error(
+-      "called getI64Array on Attribute that was neither a "
+-      "DenseIntElementsAttr or a DenseI64ArrayAttr",
+-      false);
+-}
+-
+-SmallVector<bool> getBoolArray(Attribute attr) {
+-  if (!attr) return {};
+-  if (auto elements = attr.dyn_cast<DenseIntOrFPElementsAttr>())
+-    return llvm::to_vector(elements.getValues<bool>());
+-  if (auto array = attr.dyn_cast<DenseBoolArrayAttr>()) {
+-    return SmallVector<bool>(array.asArrayRef());
+-  }
+-  llvm::report_fatal_error(
+-      "called getBoolArray on Attribute that was neither a "
+-      "DenseIntOrFPElementsAttr or a DenseBoolArrayAttr",
+-      false);
+-}
+-
+ }  // namespace hlo
+ }  // namespace mlir
+diff --ruN a/stablehlo/stablehlo/dialect/Base.h b/stablehlo/stablehlo/dialect/Base.h
+--- stablehlo/stablehlo/dialect/Base.h
++++ stablehlo/stablehlo/dialect/Base.h
+@@ -57,26 +57,7 @@
+ }
+ 
+ // Checks whether every position in the given array contains the given value.
+-// This is especially useful for dealing with instances of
+-// I64DenseArrayOrElements1DAttr, which returns a SmallVector<int64_t> as its
+-// value no matter what actual attribute is backing it.
+-// TODO(#1578): Remove this code once all uses of I64DenseArrayOrElements1DAttr
+-// have been removed.
+ bool isSplatArray(ArrayRef<int64_t> arr, int64_t val);
+-
+-// Returns a vector of the int64 values in a I64DenseArrayOrElements1DAttr.
+-// Such an Attr can be backed by either a 1-dimensional DenseIntElementsAttr or
+-// a DenseI64ArrayAttr.
+-// TODO(#1578): Remove this code once all uses of I64DenseArrayOrElements1DAttr
+-// have been removed.
+-SmallVector<int64_t> getI64Array(Attribute);
+-
+-// Returns a vector of the bool values in a BoolDenseArrayOrElementsAttr.
+-// Such an Attr can be backed by either a DenseIntOrFPElementsAttr or
+-// a DenseBoolArrayAttr.
+-// TODO(#1578): Remove this code once all uses of BoolDenseArrayOrElementsAttr
+-// have been removed.
+-SmallVector<bool> getBoolArray(Attribute);
+ 
+ //  Verifies that the two types have compatible shape with bounds but allows
+ //  different element types.
+diff --ruN a/stablehlo/stablehlo/dialect/Base.td b/stablehlo/stablehlo/dialect/Base.td
+--- stablehlo/stablehlo/dialect/Base.td
++++ stablehlo/stablehlo/dialect/Base.td
+@@ -230,17 +230,4 @@
+   >];
+ }
+ 
+-//===----------------------------------------------------------------------===//
+-// Common attrs.
+-//===----------------------------------------------------------------------===//
+-
+-def I64Elements1D : And<[I64ElementsAttr.predicate,  CPred<"$_self.cast<DenseIntElementsAttr>().getType().getRank() == 1">]>;
+-
+-// TODO(#1578) migrate uses to DenseI64ArrayAttr and delete this attr
+-def I64DenseArrayOrElements1DAttr : Attr<Or<[DenseI64ArrayAttr.predicate, I64Elements1D]>, "either a DenseI64ArrayAttr or a 1-dimensional I64ElementsAttr."> {
+-  let storageType = "mlir::Attribute";
+-  let returnType = "SmallVector<int64_t>";
+-  let convertFromStorage = "hlo::getI64Array($_self)";
+-}
+-
+ #endif // STABLEHLO_DIALECT_BASE
+diff --ruN a/stablehlo/stablehlo/dialect/BroadcastUtils.cpp b/stablehlo/stablehlo/dialect/BroadcastUtils.cpp
+--- stablehlo/stablehlo/dialect/BroadcastUtils.cpp
++++ stablehlo/stablehlo/dialect/BroadcastUtils.cpp
+@@ -28,7 +28,7 @@
+ namespace hlo {
+ 
+ bool isLegalNumpyRankedBroadcast(Value lhs, Value rhs,
+-                                 ArrayRef<int64_t> broadcastDimensions) {
++                                 llvm::ArrayRef<int64_t> broadcastDimensions) {
+   RankedTensorType lhsType = lhs.getType().dyn_cast<RankedTensorType>();
+   RankedTensorType rhsType = rhs.getType().dyn_cast<RankedTensorType>();
+   if (!lhsType || !rhsType) return false;
+diff --ruN a/stablehlo/stablehlo/dialect/BroadcastUtils.h b/stablehlo/stablehlo/dialect/BroadcastUtils.h
+--- stablehlo/stablehlo/dialect/BroadcastUtils.h
++++ stablehlo/stablehlo/dialect/BroadcastUtils.h
+@@ -34,7 +34,7 @@
+ // to the smaller ranked operand until it is of the same rank as the larger).
+ // See: https://docs.scipy.org/doc/numpy/reference/ufuncs.html
+ bool isLegalNumpyRankedBroadcast(Value lhs, Value rhs,
+-                                 ArrayRef<int64_t> broadcastDims);
++                                 llvm::ArrayRef<int64_t> broadcastDims);
+ 
+ // Emits shape dialect ops to compute the result shape for a broadcasting
+ // binary/n-ary elementwise op which broadcasts according to "numpy" semantics
+diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.cpp b/stablehlo/stablehlo/dialect/ChloOps.cpp
+--- stablehlo/stablehlo/dialect/ChloOps.cpp
++++ stablehlo/stablehlo/dialect/ChloOps.cpp
+@@ -23,6 +23,7 @@
+ #include "llvm/ADT/TypeSwitch.h"
+ #include "mlir/Dialect/Complex/IR/Complex.h"
+ #include "mlir/Dialect/Traits.h"
++#include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/Diagnostics.h"
+ #include "mlir/IR/PatternMatch.h"
+ #include "mlir/Transforms/InliningUtils.h"
+@@ -165,7 +166,7 @@
+   auto broadcastDimensionsAttr = op->getAttr("broadcast_dimensions");
+   if (broadcastDimensionsAttr &&
+       !hlo::isLegalNumpyRankedBroadcast(
+-          lhs, rhs, hlo::getI64Array(broadcastDimensionsAttr))) {
++          lhs, rhs, broadcastDimensionsAttr.cast<mlir::DenseI64ArrayAttr>())) {
+     // Note: It is unclear whether the general specification of explicit
+     // broadcast_dimensions on binary ops is a feature we want to carry
+     // forward. While it can technically be implemented for ranked-dynamic,
+@@ -212,7 +213,7 @@
+ 
+ void BroadcastCompareOp::build(OpBuilder& builder, OperationState& result,
+                                Value lhs, Value rhs,
+-                               Attribute broadcastDimensions,
++                               DenseI64ArrayAttr broadcastDimensions,
+                                chlo::ComparisonDirection comparisonDirection,
+                                chlo::ComparisonType compareType) {
+   build(builder, result, lhs, rhs, broadcastDimensions,
+diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialect/ChloOps.td
+--- stablehlo/stablehlo/dialect/ChloOps.td
++++ stablehlo/stablehlo/dialect/ChloOps.td
+@@ -101,7 +101,7 @@
+     HLO_Tensor:$rhs,
+     // Explicit rank-broadcast dimension mappings. Defaults to "numpy" prefix
+     // padded rank-broadcast semantics if omitted.
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$broadcast_dimensions
++    OptionalAttr<DenseI64ArrayAttr>:$broadcast_dimensions
+   );
+ 
+   let results = (outs HLO_Tensor);
+@@ -313,7 +313,7 @@
+     HLO_FpTensor:$rhs,
+     // Explicit rank-broadcast dimension mappings. Defaults to "numpy" prefix
+     // padded rank-broadcast semantics if omitted.
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$broadcast_dimensions
++    OptionalAttr<DenseI64ArrayAttr>:$broadcast_dimensions
+   );
+   let results = (outs HLO_FpTensor);
+ }
+@@ -331,7 +331,7 @@
+     HLO_PredOrIntTensor:$rhs,
+     // Explicit rank-broadcast dimension mappings. Defaults to "numpy" prefix
+     // padded rank-broadcast semantics if omitted.
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$broadcast_dimensions
++    OptionalAttr<DenseI64ArrayAttr>:$broadcast_dimensions
+   );
+ }
+ 
+@@ -448,7 +448,7 @@
+     HLO_FpTensor:$rhs,
+     // Explicit rank-broadcast dimension mappings. Defaults to "numpy" prefix
+     // padded rank-broadcast semantics if omitted.
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$broadcast_dimensions
++    OptionalAttr<DenseI64ArrayAttr>:$broadcast_dimensions
+   );
+   let results = (outs HLO_ComplexTensor);
+ }
+@@ -755,7 +755,7 @@
+   let arguments = (ins
+     HLO_Tensor:$lhs,
+     HLO_Tensor:$rhs,
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$broadcast_dimensions,
++    OptionalAttr<DenseI64ArrayAttr>:$broadcast_dimensions,
+     CHLO_ComparisonDirectionAttr:$comparison_direction,
+     OptionalAttr<CHLO_ComparisonTypeAttr>:$compare_type
+   );
+@@ -763,7 +763,7 @@
+ 
+   let builders = [
+     OpBuilder<(ins "Value":$lhs, "Value":$rhs,
+-      "Attribute":$broadcast_dimensions,
++      "DenseI64ArrayAttr":$broadcast_dimensions,
+       "::mlir::chlo::ComparisonDirection":$comparison_direction,
+       CArg<"::mlir::chlo::ComparisonType",
+       "::mlir::chlo::ComparisonType::NOTYPE">:$compare_type)>,
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloAttrs.td b/stablehlo/stablehlo/dialect/StablehloAttrs.td
+--- stablehlo/stablehlo/dialect/StablehloAttrs.td
++++ stablehlo/stablehlo/dialect/StablehloAttrs.td
+@@ -179,35 +179,18 @@
+   let hasCustomAssemblyFormat = 1;
+ }
+ 
+-def StableHLO_BoolElementsAttr :
+-    ElementsAttrBase<
+-      And<[CPred<"$_self.isa<::mlir::DenseIntOrFPElementsAttr>()">,
+-           CPred<"$_self.cast<::mlir::DenseIntOrFPElementsAttr>().getType().getElementType().isInteger(1)">]>,
+-      "constant boolean vector/tensor attribute"> {
+-  let storageType = [{ ::mlir::DenseElementsAttr }];
+-  let returnType = [{ ::mlir::DenseElementsAttr }];
+-
+-  let convertFromStorage = "$_self";
+-}
+-
+-def BoolDenseArrayOrElementsAttr : Attr<Or<[DenseBoolArrayAttr.predicate, StableHLO_BoolElementsAttr.predicate]>, "either a DenseBoolArrayAttr or a StableHLO_BoolElementsAttr"> {
+-  let storageType = "mlir::Attribute";
+-  let returnType = "SmallVector<bool>";
+-  let convertFromStorage = "hlo::getBoolArray($_self)";
+-}
+-
+ def StableHLO_ConvolutionAttributes {
+   dag attributes = (ins
+     // Default value: one for each of the spatial dimension.
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$window_strides,
++    OptionalAttr<DenseI64ArrayAttr>:$window_strides,
+     // Default value: two zeros for each of the spatial dimension.
+     OptionalAttr<I64ElementsAttr>:$padding,
+     // Default value: one for each of the spatial dimension.
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$lhs_dilation,
++    OptionalAttr<DenseI64ArrayAttr>:$lhs_dilation,
+     // Default value: one for each of the spatial dimension.
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$rhs_dilation,
++    OptionalAttr<DenseI64ArrayAttr>:$rhs_dilation,
+     // Default value: false for each of the spatial dimension.
+-    OptionalAttr<BoolDenseArrayOrElementsAttr>:$window_reversal,
++    OptionalAttr<DenseBoolArrayAttr>:$window_reversal,
+     StableHLO_ConvDimensionNumbers:$dimension_numbers,
+     I64Attr:$feature_group_count,
+     I64Attr:$batch_group_count,
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.cpp b/stablehlo/stablehlo/dialect/StablehloOps.cpp
+--- stablehlo/stablehlo/dialect/StablehloOps.cpp
++++ stablehlo/stablehlo/dialect/StablehloOps.cpp
+@@ -1401,10 +1401,10 @@
+ // Builder that takes a constructor for its region and infers result types
+ void ReduceWindowOp::build(
+     OpBuilder& odsBuilder, OperationState& odsState, ValueRange inputs,
+-    ValueRange init_values, DenseIntElementsAttr window_dimensions,
+-    /*optional*/ DenseIntElementsAttr window_strides,
+-    /*optional*/ DenseIntElementsAttr base_dilations,
+-    /*optional*/ DenseIntElementsAttr window_dilations,
++    ValueRange init_values, DenseI64ArrayAttr window_dimensions,
++    /*optional*/ DenseI64ArrayAttr window_strides,
++    /*optional*/ DenseI64ArrayAttr base_dilations,
++    /*optional*/ DenseI64ArrayAttr window_dilations,
+     /*optional*/ DenseIntElementsAttr padding,
+     function_ref<void(OpBuilder&, Location, ValueRange)> bodyBuilder) {
+   odsState.addOperands(inputs);
+@@ -1631,7 +1631,7 @@
+         parser.parseKeyword("reducer"))
+       return failure();
+     OpBuilder builder(parser.getBuilder().getContext());
+-    result.addAttribute("dimensions", builder.getI64TensorAttr(dimensions));
++    result.addAttribute("dimensions", builder.getDenseI64ArrayAttr(dimensions));
+ 
+     // Parse the "reducer" region now.
+     SmallVector<OpAsmParser::UnresolvedOperand, 2> reducerOperands;
+@@ -1769,7 +1769,7 @@
+   // dimension attribute.
+   result.addTypes(reduceOpFnType.getResults());
+   result.location = innerOp->getLoc();
+-  result.addAttribute("dimensions", builder.getI64TensorAttr(dimensions));
++  result.addAttribute("dimensions", builder.getDenseI64ArrayAttr(dimensions));
+   return success();
+ }
+ 
+@@ -2423,10 +2423,8 @@
+ 
+ using mlir::hlo::parseComplexOpType;
+ using mlir::hlo::parseCustomCallTarget;
+-using mlir::hlo::parseDenseI64Array;
+ using mlir::hlo::parseDotDimensionNumbers;
+ using mlir::hlo::parseExponentMantissa;
+-using mlir::hlo::parseI64DenseArrayOrElements1D;
+ using mlir::hlo::parsePairwiseOpType;
+ using mlir::hlo::parseSameOperandsAndResultType;
+ using mlir::hlo::parseSelectOpType;
+@@ -2436,10 +2434,8 @@
+ using mlir::hlo::parseVariadicSameOperandsAndResultType;
+ using mlir::hlo::printComplexOpType;
+ using mlir::hlo::printCustomCallTarget;
+-using mlir::hlo::printDenseI64Array;
+ using mlir::hlo::printDotDimensionNumbers;
+ using mlir::hlo::printExponentMantissa;
+-using mlir::hlo::printI64DenseArrayOrElements1D;
+ using mlir::hlo::printPairwiseOpType;
+ using mlir::hlo::printSameOperandsAndResultType;
+ using mlir::hlo::printSelectOpType;
+@@ -3109,11 +3105,11 @@
+ }  // namespace
+ 
+ void printWindowAttributes(OpAsmPrinter& p, Operation* /*op*/,
+-                           std::optional<Attribute> windowStrides,
++                           std::optional<DenseI64ArrayAttr> windowStrides,
+                            std::optional<DenseIntElementsAttr> padding,
+-                           std::optional<Attribute> lhsDilation,
+-                           std::optional<Attribute> rhsDilation,
+-                           std::optional<Attribute> windowReversal) {
++                           std::optional<DenseI64ArrayAttr> lhsDilation,
++                           std::optional<DenseI64ArrayAttr> rhsDilation,
++                           std::optional<DenseBoolArrayAttr> windowReversal) {
+   using pair_t = std::pair<Attribute, StringRef>;
+   std::array<pair_t, 5> printedAttributes = {{
+       {windowStrides ? *windowStrides : nullptr, "stride"},
+@@ -3134,20 +3130,23 @@
+     if (attr.second == "pad") {
+       printWindowPadding(p, attr.first.dyn_cast<DenseIntElementsAttr>());
+     } else if (attr.second == "reverse") {
+-      llvm::interleaveComma(hlo::getBoolArray(attr.first), p);
++      llvm::interleaveComma(attr.first.cast<DenseBoolArrayAttr>().asArrayRef(),
++                            p);
+     } else {
+-      llvm::interleaveComma(hlo::getI64Array(attr.first), p);
++      llvm::interleaveComma(attr.first.cast<DenseI64ArrayAttr>().asArrayRef(),
++                            p);
+     }
+ 
+     p << ']';
+   });
+ }
+ 
+-ParseResult parseWindowAttributes(OpAsmParser& parser, Attribute& windowStrides,
++ParseResult parseWindowAttributes(OpAsmParser& parser,
++                                  DenseI64ArrayAttr& windowStrides,
+                                   DenseIntElementsAttr& padding,
+-                                  Attribute& lhsDilation,
+-                                  Attribute& rhsDilation,
+-                                  Attribute& windowReversal) {
++                                  DenseI64ArrayAttr& lhsDilation,
++                                  DenseI64ArrayAttr& rhsDilation,
++                                  DenseBoolArrayAttr& windowReversal) {
+   StringRef attributeName;
+ 
+   llvm::StringSet<> allowedAttributeNames{
+@@ -3202,13 +3201,12 @@
+                                          int64Parser))
+         return failure();
+       if (attributeName == "reverse") {
+-        auto ty = RankedTensorType::get({static_cast<int64_t>(values.size())},
+-                                        parser.getBuilder().getIntegerType(1));
+         auto boolVector = llvm::to_vector<4>(
+             llvm::map_range(values, [](int64_t v) { return v != 0; }));
+-        windowReversal = DenseElementsAttr::get(ty, boolVector);
++        windowReversal =
++            DenseBoolArrayAttr::get(parser.getContext(), boolVector);
+       } else {
+-        auto attr = parser.getBuilder().getI64TensorAttr(values);
++        auto attr = parser.getBuilder().getDenseI64ArrayAttr(values);
+ 
+         if (attributeName == "stride") {
+           windowStrides = attr;
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.h b/stablehlo/stablehlo/dialect/StablehloOps.h
+--- stablehlo/stablehlo/dialect/StablehloOps.h
++++ stablehlo/stablehlo/dialect/StablehloOps.h
+@@ -88,17 +88,18 @@
+ 
+ // Custom formatting for convolution window attributes.
+ void printWindowAttributes(OpAsmPrinter &p, Operation *op,
+-                           std::optional<Attribute> windowStrides,
++                           std::optional<DenseI64ArrayAttr> windowStrides,
+                            std::optional<DenseIntElementsAttr> padding,
+-                           std::optional<Attribute> lhsDilation,
+-                           std::optional<Attribute> rhsDilation,
+-                           std::optional<Attribute> windowReversal);
++                           std::optional<DenseI64ArrayAttr> lhsDilation,
++                           std::optional<DenseI64ArrayAttr> rhsDilation,
++                           std::optional<DenseBoolArrayAttr> windowReversal);
+ 
+-ParseResult parseWindowAttributes(OpAsmParser &parser, Attribute &windowStrides,
++ParseResult parseWindowAttributes(OpAsmParser &parser,
++                                  DenseI64ArrayAttr &windowStrides,
+                                   DenseIntElementsAttr &padding,
+-                                  Attribute &lhsDilation,
+-                                  Attribute &rhsDilation,
+-                                  Attribute &windowReversal);
++                                  DenseI64ArrayAttr &lhsDilation,
++                                  DenseI64ArrayAttr &rhsDilation,
++                                  DenseBoolArrayAttr &windowReversal);
+ 
+ }  // end namespace stablehlo
+ }  // end namespace mlir
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.td b/stablehlo/stablehlo/dialect/StablehloOps.td
+--- stablehlo/stablehlo/dialect/StablehloOps.td
++++ stablehlo/stablehlo/dialect/StablehloOps.td
+@@ -1472,7 +1472,7 @@
+   let arguments = (ins
+     Variadic<HLO_Tensor>:$inputs, /*reduce_i1*/
+     Variadic<HLO_Tensor>:$init_values, /*reduce_i2*/
+-    I64DenseArrayOrElements1DAttr:$dimensions /*reduce_i3*/
++    DenseI64ArrayAttr:$dimensions /*reduce_i3*/
+   );
+   let regions = (region SizedRegion<1>:$body /*reduce_i4*/);
+ 
+@@ -1870,7 +1870,7 @@
+   }];
+   let arguments = (ins
+     HLO_Tensor:$operand /*broadcast_in_dim_i1*/,
+-    I64DenseArrayOrElements1DAttr:$broadcast_dimensions /*broadcast_in_dim_i2*/
++    DenseI64ArrayAttr:$broadcast_dimensions /*broadcast_in_dim_i2*/
+   );
+ 
+   let results = (outs HLO_StaticShapeTensor);
+@@ -1878,7 +1878,7 @@
+   let hasVerifier = 1;
+ 
+   let assemblyFormat = [{
+-    $operand `,` `dims` `=` custom<I64DenseArrayOrElements1D>($broadcast_dimensions)
++    $operand `,` `dims` `=` $broadcast_dimensions
+       attr-dict `:` functional-type(operands, results)
+   }];
+ }
+@@ -1903,9 +1903,9 @@
+   let arguments = (ins
+     HLO_Tensor:$operand,
+     HLO_DimensionTensor:$output_dimensions,
+-    I64DenseArrayOrElements1DAttr:$broadcast_dimensions,
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$known_expanding_dimensions,
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$known_nonexpanding_dimensions
++    DenseI64ArrayAttr:$broadcast_dimensions,
++    OptionalAttr<DenseI64ArrayAttr>:$known_expanding_dimensions,
++    OptionalAttr<DenseI64ArrayAttr>:$known_nonexpanding_dimensions
+   );
+ 
+   let results = (outs HLO_Tensor);
+@@ -1913,7 +1913,7 @@
+   let builders = [
+       OpBuilder<(ins
+         "Type":$result_type, "Value":$operand, "Value":$output_dimensions,
+-        "Attribute":$broadcast_dimensions), [{
++        "DenseI64ArrayAttr":$broadcast_dimensions), [{
+       build($_builder, $_state, result_type, operand, output_dimensions,
+           broadcast_dimensions, /*known_expanding_dimensions=*/{},
+           /*known_nonexpanding_dimensions=*/{});
+@@ -1923,7 +1923,7 @@
+   let hasVerifier = 1;
+ 
+   let assemblyFormat = [{
+-    $operand `,` $output_dimensions `,` `dims` `=` custom<I64DenseArrayOrElements1D>($broadcast_dimensions)
++    $operand `,` $output_dimensions `,` `dims` `=` $broadcast_dimensions
+       attr-dict `:` functional-type(operands, results)
+   }];
+ }
+@@ -2126,7 +2126,7 @@
+   let extraClassDeclaration = [{
+     bool hasWindowReversal() {
+       auto reversal = getWindowReversalAttr();
+-      return reversal && llvm::any_of(hlo::getBoolArray(reversal), [](bool v) { return v; });
++      return reversal && llvm::any_of(reversal.asArrayRef(), [](bool v) { return v; });
+     }
+   }];
+ 
+@@ -2396,7 +2396,7 @@
+     HLO_Tensor:$operand /*gather_i1*/,
+     HLO_IntTensor:$start_indices /*gather_i2*/,
+     StableHLO_GatherDimensionNumbers:$dimension_numbers /*gather_i3, gather_i4, gather_i5, gather_i6*/,
+-    I64DenseArrayOrElements1DAttr:$slice_sizes /*gather_i7*/,
++    DenseI64ArrayAttr:$slice_sizes /*gather_i7*/,
+     DefaultValuedOptionalAttr<BoolAttr, "false">:$indices_are_sorted /*gather_i8*/
+   );
+ 
+@@ -2455,7 +2455,7 @@
+   }];
+   let arguments = (ins
+     Variadic<HLO_Tensor>:$inputs /*map_i1*/,
+-    I64DenseArrayOrElements1DAttr:$dimensions /*map_i2*/
++    DenseI64ArrayAttr:$dimensions /*map_i2*/
+   );
+   let regions = (region SizedRegion<1>:$computation /*map_i3*/);
+   let results = (outs HLO_Tensor);
+@@ -2616,8 +2616,8 @@
+     HLO_Tensor:$operand, /*select_and_scatter_i1*/
+     HLO_Tensor:$source, /*select_and_scatter_i2*/
+     HLO_Tensor:$init_value, /*select_and_scatter_i3*/
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$window_dimensions, /*select_and_scatter_i4*/
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$window_strides, /*select_and_scatter_i5*/
++    OptionalAttr<DenseI64ArrayAttr>:$window_dimensions, /*select_and_scatter_i4*/
++    OptionalAttr<DenseI64ArrayAttr>:$window_strides, /*select_and_scatter_i5*/
+     OptionalAttr<I64ElementsAttr>:$padding /*select_and_scatter_i6*/
+   );
+ 
+@@ -2881,13 +2881,13 @@
+   let arguments = (ins
+     Variadic<HLO_Tensor>:$inputs /*reduce_window_i1*/,
+     Variadic<HLO_Tensor>:$init_values /*reduce_window_i2*/,
+-    I64DenseArrayOrElements1DAttr:$window_dimensions /*reduce_window_i3*/,
++    DenseI64ArrayAttr:$window_dimensions /*reduce_window_i3*/,
+     // If strides or dilations attributes are missing then the default value is
+     // one for each of the operand dimensions. Similarly, padding values are zero
+     // for both low and high in each of the dimensions, if not specified.
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$window_strides /*reduce_window_i4*/,
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$base_dilations /*reduce_window_i5*/,
+-    OptionalAttr<I64DenseArrayOrElements1DAttr>:$window_dilations /*reduce_window_i6*/,
++    OptionalAttr<DenseI64ArrayAttr>:$window_strides /*reduce_window_i4*/,
++    OptionalAttr<DenseI64ArrayAttr>:$base_dilations /*reduce_window_i5*/,
++    OptionalAttr<DenseI64ArrayAttr>:$window_dilations /*reduce_window_i6*/,
+     OptionalAttr<I64ElementsAttr>:$padding /*reduce_window_i7*/
+   );
+ 
+@@ -2902,10 +2902,10 @@
+   let builders = [
+     OpBuilder<(ins "Type":$result_type, "Value":$operand,
+       "Value":$init_value,
+-      "DenseIntElementsAttr":$window_dimensions,
+-      "DenseIntElementsAttr":$window_strides,
+-      "DenseIntElementsAttr":$base_dilations,
+-      "DenseIntElementsAttr":$window_dilations,
++      "DenseI64ArrayAttr":$window_dimensions,
++      "DenseI64ArrayAttr":$window_strides,
++      "DenseI64ArrayAttr":$base_dilations,
++      "DenseI64ArrayAttr":$window_dilations,
+       "DenseIntElementsAttr":$padding),
+     [{
+       build($_builder, $_state, TypeRange(result_type), ValueRange(operand),
+@@ -2914,10 +2914,10 @@
+     }]>,
+     OpBuilder<(ins "ValueRange":$operands,
+       "ValueRange":$init_values,
+-      "DenseIntElementsAttr":$window_dimensions,
+-      "DenseIntElementsAttr":$window_strides,
+-      "DenseIntElementsAttr":$base_dilations,
+-      "DenseIntElementsAttr":$window_dilations,
++      "DenseI64ArrayAttr":$window_dimensions,
++      "DenseI64ArrayAttr":$window_strides,
++      "DenseI64ArrayAttr":$base_dilations,
++      "DenseI64ArrayAttr":$window_dilations,
+       "DenseIntElementsAttr":$padding,
+       "function_ref<void(OpBuilder &, Location, ValueRange)>":$bodyBuilder
+     )>,
+@@ -3098,7 +3098,7 @@
+       HLO_QuantizedIntTensor> { /*uniform_quantize_c1*/
+   let summary = "UniformQuantize operation";
+   let description = [{
+-    Performs element-wise conversion of floating-point tensor or quantized
++    Performs element-wise conversion ofÂ floating-point tensor or quantized
+     tensor `operand` to a quantized tensor `result` according to the
+     quantization parameters defined by the `result` type.
+ 
 diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/experimental/BUILD.bazel
 --- stablehlo/stablehlo/experimental/BUILD.bazel
 +++ stablehlo/stablehlo/experimental/BUILD.bazel
@@ -2364,7 +3054,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.td b/stablehlo/s
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp b/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp
 --- stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp
 +++ stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,166 @@
 +/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 +   Copyright 2023 The StableHLO Authors.
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -2489,15 +3179,14 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDy
 +    // We rely on many of the properties checked by verification.
 +    auto valuesType = op.getValues().getType().cast<ShapedType>();
 +    auto valuesLastDimSize = valuesType.getShape()[valuesType.getRank() - 1];
-+    if (hlo::isDynamicDimSize(valuesLastDimSize) ||
-+        valuesLastDimSize != k[0])
++    if (hlo::isDynamicDimSize(valuesLastDimSize) || valuesLastDimSize != k[0])
 +      return rewriter.notifyMatchFailure(
 +          op,
 +          "expected value of k to match the values last dimension size of "
 +          "static values type (result #0)");
 +
-+    rewriter.replaceOpWithNewOp<chlo::TopKOp>(
-+        op, op->getResultTypes(), op.getOperand(), k[0]);
++    rewriter.replaceOpWithNewOp<chlo::TopKOp>(op, op->getResultTypes(),
++                                              op.getOperand(), k[0]);
 +    return success();
 +  }
 +};
