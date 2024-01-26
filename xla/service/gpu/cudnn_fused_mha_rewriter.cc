@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
+#include "xla/stream_executor/cuda/cuda_driver.h"
 
 namespace xla {
 namespace gpu {
@@ -1855,7 +1856,8 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
     if (!debug_options.xla_gpu_enable_cudnn_fmha() ||
         !IsComputeCapabilityAndCudnnSupported(
             compute_capability_, cudnn_version,
-            stream_executor::dnn::VersionInfo(8, 8, 0))) {
+            stream_executor::dnn::VersionInfo(8, 8, 0)) ||
+        CUDA_VERSION < 12000) {
       return false;
     }
     for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
