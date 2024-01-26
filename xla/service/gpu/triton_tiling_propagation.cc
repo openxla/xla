@@ -139,8 +139,10 @@ using FragmentOrders = DimensionOrder::FragmentOrders;
   dim_order.tensor_fragments_order_.reserve(hlo.shape().rank());
   dim_order.dim_fragments_orders_[kSoftmaxReductionDimension].push_back(
       dim_order.tensor_fragments_order_.size());
+  int64_t minormost_dim =
+      hlo.shape().dimensions_size() > 0 ? hlo.shape().dimensions_minor(0) : 1;
   dim_order.tensor_fragments_order_.push_back(
-      Fragment{kSoftmaxReductionDimension, hlo.shape().dimensions_minor(0)});
+      Fragment{kSoftmaxReductionDimension, minormost_dim});
   for (int i = 1; i < hlo.shape().rank(); ++i) {
     dim_order.dim_fragments_orders_[kSoftmaxBatchDimension].push_back(
         dim_order.tensor_fragments_order_.size());
