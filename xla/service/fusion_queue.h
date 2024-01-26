@@ -18,8 +18,10 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/status.h"
 
 namespace xla {
 
@@ -41,9 +43,11 @@ class FusionQueue {
 
   // A callback passed to the queue implementation right after the fusion is
   // created. Note that original_producer could have been destroyed.
-  virtual void OnFusingInstruction(HloInstruction* fusion,
-                                   HloInstruction* original_producer,
-                                   HloInstruction* original_consumer) {}
+  virtual absl::Status OnFusingInstruction(HloInstruction* fusion,
+                                           HloInstruction* original_producer,
+                                           HloInstruction* original_consumer) {
+    return OkStatus();
+  }
 
   // A callback passed to the queue implementation when a proposed fusion does
   // not happen.

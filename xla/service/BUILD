@@ -1890,7 +1890,9 @@ cc_library(
     name = "fusion_queue",
     hdrs = ["fusion_queue.h"],
     deps = [
+        "//xla:status",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -1906,6 +1908,7 @@ cc_library(
         ":hlo_pass",
         ":pattern_matcher",
         "//xla:debug_options_flags",
+        "//xla:status",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
@@ -4953,6 +4956,8 @@ cc_library(
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
     ],
 )

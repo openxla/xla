@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/pattern_matcher.h"
+#include "xla/status.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 
@@ -471,14 +472,15 @@ class ReversePostOrderFusionQueue : public FusionQueue {
     return std::make_pair(instruction, sorted_operand_numbers);
   }
 
-  void OnFusingInstruction(HloInstruction* fusion,
-                           HloInstruction* original_producer,
-                           HloInstruction* original_consumer) override {
+  absl::Status OnFusingInstruction(HloInstruction* fusion,
+                                   HloInstruction* original_producer,
+                                   HloInstruction* original_consumer) override {
     // Fusing an instruction into a fusion instruction can change the operand
     // set of the fusion instruction. For simplicity just re-enqueue the
     // instruction and reconsider it for further fusion in the next iteration.
     InsertOrDie(&post_order_index_, fusion, post_order_.size());
     post_order_.push_back(fusion);
+    return OkStatus();
   }
 
   void RemoveInstruction(HloInstruction* instruction) override {
@@ -638,8 +640,8 @@ StatusOr<bool> InstructionFusion::Run(
 
         // Saving name to use after the instruction is removed.
         std::string producer_name(operand->name());
-        fusion_queue->OnFusingInstruction(fusion_instruction, operand,
-                                          instruction);
+        TF_RETURN_IF_ERROR(fusion_queue->OnFusingInstruction(
+            fusion_instruction, operand, instruction));
         changed = true;
         ++fuse_count;
 

@@ -21,6 +21,8 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/hash/hash.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -215,11 +217,8 @@ struct CseKey {
 
 }  // namespace
 
-StatusOr<bool> HloCSE::Run(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  bool changed = false;
-
+StatusOr<bool> RunHloCSE(HloComputation* computation, bool is_layout_sensitive,
+                         bool ignore_control_dependencies) {
   const auto eq_instructions = [&](const HloInstruction* a,
                                    const HloInstruction* b) {
     if (a == b) {
@@ -229,7 +228,7 @@ StatusOr<bool> HloCSE::Run(
       return false;
     }
     return a->dimensions(0) == b->dimensions(0) &&
-           (is_layout_sensitive_
+           (is_layout_sensitive
                 ? ShapeUtil::Equal(a->shape(), b->shape())
                 : ShapeUtil::Compatible(a->shape(), b->shape()));
   };
@@ -240,69 +239,76 @@ StatusOr<bool> HloCSE::Run(
 
   auto cse_equal = [&](const CseKey& lhs, const CseKey& rhs) {
     return lhs.hlo->IdenticalIgnoringCommutativeOperandOrder(
-        *rhs.hlo, eq_instructions, eq_computations, is_layout_sensitive_,
+        *rhs.hlo, eq_instructions, eq_computations, is_layout_sensitive,
         /*sharding_sensitive=*/true);
   };
+  TF_ASSIGN_OR_RETURN(bool changed, is_layout_sensitive
+                                        ? CombineConstants<true>(computation)
+                                        : CombineConstants<false>(computation));
+
+  // HLO instructions are grouped into equivalency classes by using the
+  // cse_equal predicate defined above. This set holds a representative
+  // instruction for each class.
+  absl::flat_hash_set<CseKey, absl::Hash<CseKey>, decltype(cse_equal)>
+      representatives(/*N=*/computation->instruction_count() + 1,
+                      absl::Hash<CseKey>{}, cse_equal);
+  for (auto instruction : computation->MakeInstructionPostOrder()) {
+    // If the instruction has zero operands (constants, parameters, etc.) skip
+    // over it.
+    if (instruction->operand_count() == 0 &&
+        instruction->opcode() != HloOpcode::kPartitionId &&
+        instruction->opcode() != HloOpcode::kReplicaId) {
+      continue;
+    }
+    // Skip instructions which have side effects.
+    if (instruction->HasSideEffect()) {
+      continue;
+    }
+
+    auto pair = representatives.insert(CseKey{instruction});
+    if (!pair.second) {
+      HloInstruction* equivalent_instruction = pair.first->hlo;
+      TF_RETURN_IF_ERROR(
+          instruction->ReplaceAllUsesWith(equivalent_instruction));
+      TF_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(
+          instruction, /*cleanup=*/std::nullopt, ignore_control_dependencies));
+      changed = true;
+      continue;
+    }
+    for (int64_t i = 0; i < instruction->operand_count(); ++i) {
+      HloInstruction* a = instruction->mutable_operand(i);
+      if (a->opcode() != HloOpcode::kIota) {
+        continue;
+      }
+      for (int64_t j = i + 1; j < instruction->operand_count(); ++j) {
+        HloInstruction* b = instruction->mutable_operand(j);
+        if (a == b || !eq_instructions(a, b)) {
+          continue;
+        }
+        TF_RETURN_IF_ERROR(instruction->ReplaceOperandWith(j, a));
+        changed = true;
+        if (b->IsDead()) {
+          TF_RETURN_IF_ERROR(computation->RemoveInstruction(b));
+        }
+      }
+    }
+  }
+  return changed;
+}
+
+StatusOr<bool> HloCSE::Run(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  bool changed = false;
 
   for (auto* computation : module->computations(execution_threads)) {
     if (only_fusion_computations_ && !computation->IsFusionComputation()) {
       continue;
     }
-
-    TF_ASSIGN_OR_RETURN(bool combined,
-                        is_layout_sensitive_
-                            ? CombineConstants<true>(computation)
-                            : CombineConstants<false>(computation));
-    changed |= combined;
-
-    // HLO instructions are grouped into equivalency classes by using the
-    // cse_equal predicate defined above. This set holds a representative
-    // instruction for each class.
-    absl::flat_hash_set<CseKey, absl::Hash<CseKey>, decltype(cse_equal)>
-        representatives(/*N=*/computation->instruction_count() + 1,
-                        absl::Hash<CseKey>{}, cse_equal);
-    for (auto instruction : computation->MakeInstructionPostOrder()) {
-      // If the instruction has zero operands (constants, parameters, etc.) skip
-      // over it.
-      if (instruction->operand_count() == 0 &&
-          instruction->opcode() != HloOpcode::kPartitionId &&
-          instruction->opcode() != HloOpcode::kReplicaId) {
-        continue;
-      }
-      // Skip instructions which have side effects.
-      if (instruction->HasSideEffect()) {
-        continue;
-      }
-
-      auto pair = representatives.insert(CseKey{instruction});
-      if (!pair.second) {
-        HloInstruction* equivalent_instruction = pair.first->hlo;
-        TF_RETURN_IF_ERROR(
-            instruction->ReplaceAllUsesWith(equivalent_instruction));
-        TF_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(
-            instruction, /*cleanup=*/std::nullopt,
-            ignore_control_dependencies_));
-        changed = true;
-        continue;
-      }
-      for (int64_t i = 0; i < instruction->operand_count(); ++i) {
-        HloInstruction* a = instruction->mutable_operand(i);
-        if (a->opcode() != HloOpcode::kIota) {
-          continue;
-        }
-        for (int64_t j = i + 1; j < instruction->operand_count(); ++j) {
-          HloInstruction* b = instruction->mutable_operand(j);
-          if (a == b || !eq_instructions(a, b)) {
-            continue;
-          }
-          TF_RETURN_IF_ERROR(instruction->ReplaceOperandWith(j, a));
-          changed = true;
-          if (b->IsDead()) {
-            TF_RETURN_IF_ERROR(computation->RemoveInstruction(b));
-          }
-        }
-      }
-    }
+    TF_ASSIGN_OR_RETURN(bool computation_changed,
+                        RunHloCSE(computation, is_layout_sensitive_,
+                                  ignore_control_dependencies_));
+    changed |= computation_changed;
   }
   return changed;
 }

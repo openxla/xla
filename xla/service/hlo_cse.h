@@ -53,6 +53,11 @@ class HloCSE : public HloModulePass {
   const bool ignore_control_dependencies_;
 };
 
+// Run common-subexpression elimination on `computation`.
+StatusOr<bool> RunHloCSE(HloComputation* computation,
+                         bool is_layout_sensitive = true,
+                         bool ignore_control_dependencies = false);
+
 }  // namespace xla
 
 #endif  // XLA_SERVICE_HLO_CSE_H_

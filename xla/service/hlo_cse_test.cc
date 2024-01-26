@@ -442,6 +442,24 @@ TEST_F(HloCseTest, FusionInternalCSE) {
   EXPECT_THAT(root, op::Multiply(root->operand(0), root->operand(0)));
 }
 
+TEST_F(HloCseTest, CseSingleComputation) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  zero = f32[] constant(0.0)
+  zero2 = f32[] constant(0.0)
+  broadcast = f32[5]{0} broadcast(zero), dimensions={}
+  broadcast2 = f32[5]{0} broadcast(zero2), dimensions={}
+  ROOT add = f32[5]{0} add(broadcast, broadcast2)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  EXPECT_TRUE(RunHloCSE(m->entry_computation()).value());
+  auto root = m->entry_computation()->root_instruction();
+  // check that the broadcasts were cse-ed.
+  EXPECT_THAT(root, op::Add(root->operand(0), root->operand(0)));
+}
+
 TEST_F(HloCseTest, IdenticalExpressions) {
   // Test that two identical expressions are commoned. Build the following
   // computation:
