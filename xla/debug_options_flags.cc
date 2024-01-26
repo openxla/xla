@@ -210,7 +210,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cudnn_layer_norm(false);
   opts.set_xla_gpu_threshold_for_windowed_einsum_mib(100000);
 
-  opts.set_xla_gpu_enable_triton_hopper(false);
+  opts.set_xla_gpu_enable_triton_hopper(true);
 
   // We disable this until b/319271534 is fixed due to errors during linking.
   //
