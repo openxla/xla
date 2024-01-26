@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_activation.h"
+#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
@@ -299,39 +300,55 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
   return device_buffers;
 }
 
-Status MaybeRegisterBuffers(NcclApi* nccl_api, int device_ordinal,
-                            const std::vector<DeviceBufferPair>& buffers,
-                            NcclApi::NcclCommHandle comm) {
+Status RegisterBufferOnce(NcclApi* nccl_api, int device_ordinal,
+                          NcclApi::NcclCommHandle comm,
+                          se::DeviceMemoryBase buffer) {
   // Keep track of which communicators we have registered for already.
-  // Each device has one NCCL buffer which only needs to be registered once per
-  // each comm.
+  // Each ncclMemAlloc'd buffer needs to be registered once per comm.
   struct RegisteredBuffers {
     absl::Mutex mu;
-    absl::flat_hash_map<int, absl::flat_hash_set<NcclApi::NcclCommHandle>>
-        per_device_comms ABSL_GUARDED_BY(mu);
+    // Device ordinal, communicator, and base pointer address.
+    absl::flat_hash_set<
+        std::tuple<int, NcclApi::NcclCommHandle, se::gpu::GpuDevicePtr>>
+        records ABSL_GUARDED_BY(mu);
     // Buffers could be deregistered with ncclCommDeregister.
     std::vector<NcclApi::NcclRegisteredBufferHandle> handles
         ABSL_GUARDED_BY(mu);
   };
   static auto& all_registered = *new RegisteredBuffers;
 
+  // Since each XLA buffer is a slice into a larger BFCAllocator chunk, first
+  // get the base address of buffer. We will use the base address to keep track
+  // of which chunks we have registered.
+  se::gpu::GpuDevicePtr base_ptr;
+  size_t base_size;
+  TF_RETURN_IF_ERROR(se::gpu::GpuDriver::GetPointerAddressRange(
+      reinterpret_cast<se::gpu::GpuDevicePtr>(buffer.opaque()), &base_ptr,
+      &base_size));
+
   absl::MutexLock lock(&all_registered.mu);
+  if (!all_registered.records.contains({device_ordinal, comm, base_ptr})) {
+    // ncclCommRegister will internally get and use the base address/size of the
+    // address we provide.
+    TF_ASSIGN_OR_RETURN(NcclApi::NcclRegisteredBufferHandle handle,
+                        nccl_api->RegisterBuffer(comm, buffer));
+    all_registered.handles.push_back(handle);
+    all_registered.records.insert({device_ordinal, comm, base_ptr});
+  }
+  return OkStatus();
+}
+
+Status MaybeRegisterBuffers(NcclApi* nccl_api, int device_ordinal,
+                            const std::vector<DeviceBufferPair>& buffers,
+                            NcclApi::NcclCommHandle comm) {
   for (int i = 0; i < buffers.size(); ++i) {
-    if (!all_registered.per_device_comms[device_ordinal].contains(comm)) {
-      if (buffers[i].source_memory_space == kCollectiveMemorySpaceColor) {
-        TF_ASSIGN_OR_RETURN(
-            NcclApi::NcclRegisteredBufferHandle handle,
-            nccl_api->RegisterBuffer(comm, buffers[i].source_buffer));
-        all_registered.handles.push_back(handle);
-        all_registered.per_device_comms[device_ordinal].insert(comm);
-      }
-      if (buffers[i].destination_memory_space == kCollectiveMemorySpaceColor) {
-        TF_ASSIGN_OR_RETURN(
-            NcclApi::NcclRegisteredBufferHandle handle,
-            nccl_api->RegisterBuffer(comm, buffers[i].destination_buffer));
-        all_registered.handles.push_back(handle);
-        all_registered.per_device_comms[device_ordinal].insert(comm);
-      }
+    if (buffers[i].source_memory_space == kCollectiveMemorySpaceColor) {
+      TF_RETURN_IF_ERROR(RegisterBufferOnce(nccl_api, device_ordinal, comm,
+                                            buffers[i].source_buffer));
+    }
+    if (buffers[i].destination_memory_space == kCollectiveMemorySpaceColor) {
+      TF_RETURN_IF_ERROR(RegisterBufferOnce(nccl_api, device_ordinal, comm,
+                                            buffers[i].destination_buffer));
     }
   }
   return OkStatus();
