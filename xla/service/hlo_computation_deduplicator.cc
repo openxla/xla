@@ -78,8 +78,13 @@ StatusOr<bool> HloComputationDeduplicator::Run(
     }
     return false;
   };
+
   // Let us collect the opcode of the callers of each computation. We will only
-  // deduplicate computations with the same caller opcode.
+  // deduplicate computations with the same caller opcode so that we do not
+  // mix up computations that need to be treated differently based
+  // on the caller. Specifically, later in the pipeline, we want to allow reduce
+  // computations to have their float operations normalized to higher precision,
+  // but leave all-reduce computations at the current precision.
   std::vector<HloComputation*> computations =
       module->MakeComputationPostOrder(execution_threads);
   // Map computations to the caller's opcode. If the computation has callers
