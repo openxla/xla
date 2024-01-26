@@ -67,6 +67,7 @@ cc_library(
         "GOOGLE_CUDA=1",
     ]),
     deps = [
+        ":cudnn_thunk",
         ":custom_call_thunk",
         ":nccl_all_gather_thunk",
         ":nccl_all_reduce_thunk",
@@ -733,4 +734,20 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
+)
+
+cc_library(
+    name = "cudnn_thunk",
+    srcs = if_cuda_is_configured(["cudnn_thunk.cc"]),
+    hdrs = if_cuda_is_configured(["cudnn_thunk.h"]),
+    deps = if_cuda_is_configured([
+        "//xla:status",
+        "//xla/service/gpu:kernel_arguments",
+        "//xla/service/gpu:thunk",
+        "//xla/service:buffer_assignment",
+        "//xla/stream_executor",
+        "//xla/stream_executor:device_memory",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:logging",
+    ]),
 )
