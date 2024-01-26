@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
 #include "xla/primitive_util.h"
@@ -808,8 +809,21 @@ absl::StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
 
 }  // namespace gpublas_lt
 
-/*static*/ TritonGemmConfig TritonGemmConfig::FromProto(
+/*static*/ StatusOr<TritonGemmConfig> TritonGemmConfig::FromProto(
     const AutotuneResult::TritonGemmKey& proto) {
+  // Sanity check to avoid loading incomplete data.
+  TF_RET_CHECK(proto.block_m() > 0);
+  TF_RET_CHECK(proto.block_n() > 0);
+  TF_RET_CHECK(proto.block_k() > 0);
+  TF_RET_CHECK(proto.split_k() > 0);
+  TF_RET_CHECK(proto.num_stages() > 0);
+  TF_RET_CHECK(proto.num_warps() > 0);
+  TF_RET_CHECK(proto.num_ctas() > 0);
+  TF_RET_CHECK(proto.has_cluster_dims());
+  TF_RET_CHECK(proto.cluster_dims().x() > 0);
+  TF_RET_CHECK(proto.cluster_dims().y() > 0);
+  TF_RET_CHECK(proto.cluster_dims().z() > 0);
+
   TritonGemmConfig config;
   config.block_m = proto.block_m();
   config.block_n = proto.block_n();
@@ -817,6 +831,12 @@ absl::StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
   config.split_k = proto.split_k();
   config.num_stages = proto.num_stages();
   config.num_warps = proto.num_warps();
+  config.num_ctas = proto.num_ctas();
+  config.cluster_dims.x = proto.cluster_dims().x();
+  config.cluster_dims.y = proto.cluster_dims().y();
+  config.cluster_dims.z = proto.cluster_dims().z();
+  config.enable_warp_specialization = proto.enable_warp_specialization();
+  config.enable_tma = proto.enable_tma();
   return config;
 }
 
@@ -828,14 +848,26 @@ AutotuneResult::TritonGemmKey TritonGemmConfig::ToProto() const {
   key.set_split_k(split_k);
   key.set_num_stages(num_stages);
   key.set_num_warps(num_warps);
+  key.set_num_ctas(num_ctas);
+  AutotuneResult::TritonGemmKey::ClusterDims* cluster_dims_proto =
+      key.mutable_cluster_dims();
+  cluster_dims_proto->set_x(cluster_dims.x);
+  cluster_dims_proto->set_y(cluster_dims.y);
+  cluster_dims_proto->set_z(cluster_dims.z);
+  key.set_enable_warp_specialization(enable_warp_specialization);
+  key.set_enable_tma(enable_tma);
   return key;
 }
 
 std::string TritonGemmConfig::ToString() const {
-  return absl::StrCat("{block_m:", block_m, ",block_n:", block_n,
-                      ",block_k:", block_k, ",split_k:", split_k,
-                      ",num_stages:", num_stages, ",num_warps:", num_warps,
-                      "}");
+  return absl::StrCat(
+      "{block_m:", block_m, ",block_n:", block_n, ",block_k:", block_k,
+      ",split_k:", split_k, ",num_stages:", num_stages,
+      ",num_warps:", num_warps, ",num_ctas:", num_ctas,
+      ",cluster_dims:{x:", cluster_dims.x, ",y:", cluster_dims.y,
+      ",z:", cluster_dims.z,
+      "},enable_warp_specialization:", enable_warp_specialization,
+      ",enable_tma:", enable_tma, "}");
 }
 
 }  // namespace gpu

@@ -76,12 +76,22 @@ message AutotuneResult {
   // If you don't need a proto in your code, please use TritonGemmConfig instead
   // of using this proto directly.
   message TritonGemmKey {
+    message ClusterDims {
+      int64 x = 1;
+      int64 y = 2;
+      int64 z = 3;
+    }
+
     int64 block_m = 1;
     int64 block_n = 2;
     int64 block_k = 3;
     int64 split_k = 4;
     int64 num_stages = 5;
     int64 num_warps = 6;
+    int64 num_ctas = 7;
+    ClusterDims cluster_dims = 8;
+    bool enable_warp_specialization = 9;
+    bool enable_tma = 10;
   }
 
   int64 scratch_bytes = 8;

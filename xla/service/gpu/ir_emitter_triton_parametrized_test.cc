@@ -192,9 +192,17 @@ ENTRY e {
   ROOT triton_gemm__ = f32[15,68]{1,0} fusion(p0, p1), kind=kCustom,
     calls=triton_gemm___computation,
     backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
-                    "triton_gemm_config":{"block_m":"32","block_n":"32",
-                                          "block_k":"32","split_k":"1",
-                                          "num_stages":"1","num_warps":"4"}}}
+                    "triton_gemm_config":
+                      {"block_m":"32",
+                       "block_n":"32",
+                       "block_k":"32",
+                       "split_k":"1",
+                       "num_stages":"1",
+                       "num_warps":"4",
+                       "num_ctas":"1",
+                       "cluster_dims":{"x":"1","y":"1","z":"1"},
+                       "enable_warp_specialization":"false",
+                       "enable_tma":"false"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
@@ -303,9 +311,17 @@ ENTRY e {
   ROOT triton_gemm__ = f32[92,63]{1,0} fusion(p0, p1, p2), kind=kCustom,
     calls=triton_gemm___computation,
     backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
-                    "triton_gemm_config":{"block_m":"64","block_n":"32",
-                                          "block_k":"64","split_k":"1",
-                                          "num_stages":"2","num_warps":"2"}}}
+                    "triton_gemm_config":
+                      {"block_m":"64",
+                       "block_n":"32",
+                       "block_k":"64",
+                       "split_k":"1",
+                       "num_stages":"2",
+                       "num_warps":"2",
+                       "num_ctas":"1",
+                       "cluster_dims":{"x":"1","y":"1","z":"1"},
+                       "enable_warp_specialization":"false",
+                       "enable_tma":"false"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
@@ -430,9 +446,17 @@ ENTRY e {
   ROOT triton_gemm__ = f32[92,63]{1,0} fusion(p0, p1, p2), kind=kCustom,
     calls=triton_gemm___computation,
     backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
-                    "triton_gemm_config":{"block_m":"16","block_n":"64",
-                                          "block_k":"16","split_k":"1",
-                                          "num_stages":"3","num_warps":"2"}}}
+                    "triton_gemm_config":
+                      {"block_m":"16",
+                       "block_n":"64",
+                       "block_k":"16",
+                       "split_k":"1",
+                       "num_stages":"3",
+                       "num_warps":"2",
+                       "num_ctas":"1",
+                       "cluster_dims":{"x":"1","y":"1","z":"1"},
+                       "enable_warp_specialization":"false",
+                       "enable_tma":"false"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
@@ -535,9 +559,17 @@ ENTRY e {
   ROOT triton_gemm__ = $1[92,63]{1,0} fusion(p0, p1, p2, p3), kind=kCustom,
     calls=triton_gemm___computation,
     backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
-                    "triton_gemm_config":{"block_m":"16","block_n":"64",
-                                          "block_k":"16","split_k":"1",
-                                          "num_stages":"3","num_warps":"2"}}}
+                    "triton_gemm_config":
+                      {"block_m":"16",
+                       "block_n":"64",
+                       "block_k":"16",
+                       "split_k":"1",
+                       "num_stages":"3",
+                       "num_warps":"2",
+                       "num_ctas":"1",
+                       "cluster_dims":{"x":"1","y":"1","z":"1"},
+                       "enable_warp_specialization":"false",
+                       "enable_tma":"false"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type1),
@@ -628,9 +660,17 @@ ENTRY e {
   ROOT triton_gemm__ = f32[92,63]{1,0} fusion(p0, p1), kind=kCustom,
     calls=triton_gemm___computation,
     backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
-                    "triton_gemm_config":{"block_m":"16","block_n":"64",
-                                          "block_k":"16","split_k":"1",
-                                          "num_stages":"3","num_warps":"2"}}}
+                    "triton_gemm_config":
+                      {"block_m":"16",
+                       "block_n":"64",
+                       "block_k":"16",
+                       "split_k":"1",
+                       "num_stages":"3",
+                       "num_warps":"2",
+                       "num_ctas":"1",
+                       "cluster_dims":{"x":"1","y":"1","z":"1"},
+                       "enable_warp_specialization":"false",
+                       "enable_tma":"false"}}}
 })";
   const std::string hlo_test = absl::Substitute(
       kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type));
