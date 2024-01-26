@@ -691,7 +691,8 @@ TEST_F(FloatNormalizationTest, ConvertBeforeTuple) {
       F32);
 }
 
-TEST_F(FloatNormalizationNoComputeSupportTest, NoNormalizationForClonedModule) {
+TEST_F(FloatNormalizationNoComputeSupportTest,
+       NoNormalizationWithCollectiveCalledComputationSetToFalse) {
   auto module = CreateNewVerifiedModule();
   HloComputation::Builder sum_builder("sum");
   auto x = sum_builder.AddInstruction(HloInstruction::CreateParameter(
@@ -717,16 +718,31 @@ TEST_F(FloatNormalizationNoComputeSupportTest, NoNormalizationForClonedModule) {
                                       /*use_global_device_ids=*/false));
 
   auto computation = module->AddEntryComputation(builder.Build());
+  // Manually create a new computation which has the
+  // is_collective_called_computation flag set to false
+  // by default. It will replace the existing
+  // allreduce's to_apply region.
+  HloComputation::Builder sum2_builder("sum2");
+  auto x1 = sum2_builder.AddInstruction(HloInstruction::CreateParameter(
+      /*parameter_number=*/0, ShapeUtil::MakeShape(BF16, {}), "x1"));
+  auto y1 = sum2_builder.AddInstruction(HloInstruction::CreateParameter(
+      /*parameter_number=*/1, ShapeUtil::MakeShape(BF16, {}), "y1"));
+  sum2_builder.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(BF16, {}), HloOpcode::kAdd, x1, y1));
 
-  auto cloned_module = module->Clone();
-  // Since we skip processing to_apply region, nothing should change in the
-  // cloned module HLO.
-  EXPECT_FALSE(Normalize(cloned_module.get()));
-  HloInstruction* cloned_root =
-      cloned_module->entry_computation()->root_instruction();
-  EXPECT_EQ(cloned_root->shape().element_type(), BF16);
-  EXPECT_EQ(cloned_root->to_apply()->root_instruction()->opcode(),
-            HloOpcode::kAdd);
+  HloComputation* reduction2 =
+      module->AddEmbeddedComputation(sum2_builder.Build());
+
+  absl::flat_hash_map<HloComputation*, HloComputation*> replacement;
+  replacement[reduction] = reduction2;
+  module->ReplaceComputations(replacement);
+
+  EXPECT_FALSE(Normalize(module.get()));
+  // We don't rely on the flag to determine type-promotion anymore,
+  // allreduce's computation should not be promoted.
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->shape().element_type(), BF16);
+  EXPECT_EQ(root->to_apply()->root_instruction()->opcode(), HloOpcode::kAdd);
 }
 
 }  // namespace xla
