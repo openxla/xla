@@ -34,6 +34,9 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "mlir/include/mlir/IR/Block.h"
+#include "mlir/include/mlir/IR/Region.h"
+#include "mlir/include/mlir/IR/Value.h"
 
 #define DEBUG_TYPE "xla-prepare-for-export"
 
@@ -74,6 +77,28 @@ void prepareConstantOp(Operation *op, SplatElementsAttr attr) {
       b.create<BroadcastInDimOp>(returnType, cst, b.getI64TensorAttr({}));
   op->replaceAllUsesWith(broadcast);
   op->erase();
+}
+
+void prepareExplicitCapturedConstants(Operation *op) {
+  for (Region &region : op->getRegions()) {
+    llvm::SetVector<Value> implicitInputs;
+    getUsedValuesDefinedAbove(region, implicitInputs);
+    for (Block &block : region.getBlocks()) {
+      OpBuilder builder(&block.front());
+      for (Value input : implicitInputs) {
+        input.dump();
+        Operation *op = input.getDefiningOp();
+        mlir::DenseElementsAttr attr;
+        if (matchPattern(input, m_Constant(&attr))) {
+          Operation *clonedOp = builder.clone(*op);
+          input.replaceUsesWithIf(
+              clonedOp->getResult(0), [&block](OpOperand &use) {
+                return block.getParentOp()->isProperAncestor(use.getOwner());
+              });
+        }
+      }
+    }
+  }
 }
 
 // Ensure that there aren't any implicit capture before exporting.
@@ -161,6 +186,9 @@ void PrepareForExportPass::runOnOperation() {
     if (auto whileOp = dyn_cast<WhileOp>(op)) return prepareWhileOp(whileOp);
     if (auto bcastOp = dyn_cast<BroadcastInDimOp>(op))
       return prepareBroadcastInDim(bcastOp);
+
+    if (!mlir::isa<IfOp, CaseOp>(op))
+      return prepareExplicitCapturedConstants(op);
   });
 }
 

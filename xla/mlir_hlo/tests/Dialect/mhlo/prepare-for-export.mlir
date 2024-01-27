@@ -99,3 +99,75 @@ func.func @broadcast_in_dim_dimension_unsorted(%arg0: tensor<1x2xi32>) -> tensor
   %0 = "mhlo.broadcast_in_dim"(%arg0) {broadcast_dimensions = dense<[2, 1]> : tensor<2xi64>} : (tensor<1x2xi32>) -> tensor<1x2x3xi32>
   func.return %0 : tensor<1x2x3xi32>
 }
+
+// -----
+
+func.func @reduce(%arg0: tensor<2x2xf32>) -> tuple<tensor<i1>> {
+  %0 = mhlo.constant dense<1.000000e+00> : tensor<f32>
+  %1 = mhlo.constant dense<0.000000e+00> : tensor<f32>
+  %2 = mhlo.reduce(%arg0 init: %1) across dimensions = [0, 1] : (tensor<2x2xf32>, tensor<f32>) -> tensor<f32>
+   reducer(%arg1: tensor<f32>, %arg2: tensor<f32>)  {
+    %5 = mhlo.compare  NE, %arg1, %1 : (tensor<f32>, tensor<f32>) -> tensor<i1>
+    %6 = mhlo.compare  NE, %arg2, %1 : (tensor<f32>, tensor<f32>) -> tensor<i1>
+    %7 = mhlo.or %5, %6 : tensor<i1>
+    %8 = mhlo.select %7, %0, %1 : tensor<i1>, tensor<f32>
+    mhlo.return %8 : tensor<f32>
+  }
+  %3 = mhlo.compare  NE, %2, %1 : (tensor<f32>, tensor<f32>) -> tensor<i1>
+  %4 = mhlo.tuple %3 {xla_shape = "(pred[])"} : tuple<tensor<i1>>
+  return %4 : tuple<tensor<i1>>
+}
+
+// -----
+func.func @if(%pred : tensor<i1>, %branch_operand : tensor<2xf32>) -> tensor<2xf32> {
+  %c = mhlo.constant dense<1.0> : tensor<2xf32>
+
+  %0 = "mhlo.if"(%pred) ({
+      "mhlo.return"(%c) : (tensor<2xf32>) -> ()
+    }, {
+      "mhlo.return"(%branch_operand) : (tensor<2xf32>) -> ()
+    }) : (tensor<i1>) -> tensor<2xf32>
+  func.return %0 : tensor<2xf32>
+}
+
+// -----
+func.func @scatter(%arg0: tensor<3xi32>, %arg1: tensor<1x1xi32>,
+                            %arg2: tensor<1xi32>) -> tensor<3xi32> {
+ %c = mhlo.constant dense<0> : tensor<i32>
+  %0 = "mhlo.scatter"(%arg0, %arg1, %arg2) ({
+  ^bb0(%arg3: tensor<i32>, %arg4: tensor<i32>):
+    %x = mhlo.add %arg4, %c : tensor<i32>
+    "mhlo.return"(%x) : (tensor<i32>) -> ()
+  }) {
+    indices_are_sorted = false,
+    scatter_dimension_numbers = #mhlo.scatter<
+      update_window_dims = [],
+      inserted_window_dims = [0],
+      scatter_dims_to_operand_dims = [0],
+      index_vector_dim = 1,
+    >,
+    unique_indices = false
+  } : (tensor<3xi32>, tensor<1x1xi32>, tensor<1xi32>) -> tensor<3xi32>
+  func.return %0 : tensor<3xi32>
+}
+
+// -----
+
+func.func @while(%arg0 :  tensor<i1>, %arg1 : tensor<5xi32>) -> tuple<tensor<i1>, tensor<5xi32>> {
+  %0 = mhlo.constant dense<0> : tensor<5xi32>
+  %1 = mhlo.constant dense<false> : tensor<i1>
+  // Check that the iota implicit capture is made explicit
+  // CHECK: %[[IOTA:.*]] = "mhlo.iota
+  %2 = "mhlo.iota"() {iota_dimension = 0 : i64} : () -> tensor<5xi32>
+  // CHECK: mhlo.while{{.*}} %[[IOTA]])
+  %3:2 = "mhlo.while"(%arg0, %arg1) ({
+  ^bb0(%arg2: tensor<i1>, %arg3 : tensor<5xi32>):
+    "mhlo.return"(%1) : (tensor<i1>) -> ()
+  },  {
+  ^bb0(%arg2: tensor<i1>, %arg3 : tensor<5xi32>):
+    "mhlo.return"(%arg2, %0) : (tensor<i1>, tensor<5xi32>) -> ()
+  }) : (tensor<i1>, tensor<5xi32>) -> (tensor<i1>, tensor<5xi32>)
+  %4 = "mhlo.tuple"(%3#0, %3#1) : (tensor<i1>, tensor<5xi32>) -> tuple<tensor<i1>, tensor<5xi32>>
+  func.return %4 : tuple<tensor<i1>, tensor<5xi32>>
+}
+
