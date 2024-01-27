@@ -619,6 +619,54 @@ TEST_F(HloComputationDeduplicatorTest, DontDeduplicateReduceAllReduce) {
   EXPECT_EQ(computation_names.size(), 3);
 }
 
+TEST_F(HloComputationDeduplicatorTest,
+       DontDeduplicateReduceAllReduceWithClonedComputation) {
+  // Here we test that even if we clone the computation from the reduce
+  // instruction and attach it to the all-reduce instruction, it will
+  // not be deduplicated. This is a regression test that verifies that
+  // the deduplicator will not deduplicate even if the computation's
+  // IsCollectiveCalledComputation is not set correctly.
+  const std::string_view text = R"(
+  HloModule TestModule
+
+  add.1 {
+    Arg_0 = s32[] parameter(0)
+    Arg_1 = s32[] parameter(1)
+    ROOT add.2 = s32[] add(Arg_0, Arg_1)
+  }
+  dummy.1 {
+    Arg_0 = s32[] parameter(0)
+    Arg_1 = s32[] parameter(1)
+    ROOT add.2 = s32[] add(Arg_0, Arg_1)
+  }
+
+  ENTRY main {
+    Arg_0.1 = s32[10] parameter(0)
+    constant.3 = s32[] constant(0)
+    rd1 = s32[] reduce(Arg_0.1, constant.3), dimensions={0}, to_apply=add.1
+    Arg_1.1 = s32[] parameter(1)
+    ar1 = s32[] all-reduce(Arg_1.1), to_apply=dummy.1
+    ROOT multiply.14 = s32[] multiply(rd1, ar1)
+  }
+  )";
+
+  std::unique_ptr<HloModule> module =
+      ParseAndReturnVerifiedModule(text).value();
+
+  HloInstruction *reduce =
+      module->entry_computation()->GetInstructionWithName("rd1");
+  HloInstruction *all_reduce =
+      module->entry_computation()->GetInstructionWithName("ar1");
+  all_reduce->set_to_apply(
+      module->AddEmbeddedComputation(reduce->to_apply()->Clone("clone")));
+  EXPECT_FALSE(all_reduce->to_apply()->IsCollectiveCalledComputation());
+
+  bool changed = HloComputationDeduplicator().Run(module.get()).value();
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(reduce->to_apply()->name(), "add.1");
+  EXPECT_EQ(all_reduce->to_apply()->name(), "add.1.clone");
+}
+
 TEST_F(HloComputationDeduplicatorTest, RemoveDuplicateAllReduce) {
   const std::string_view text = R"(
   HloModule TestModule
