@@ -1000,6 +1000,18 @@ bool IsIntermediate(const HloInstruction* instr, int allowed_operand_count,
       instr->operand_count() > allowed_operand_count) {
     return false;
   }
+  // Intermediate `instr` can't have multiple users.
+  // If we have a boundary function, only consider users within the
+  // boundary.
+  // TODO(jreiffers, akuegel): Figure out the point of this check.
+  int64_t num_users =
+      fusion ? absl::c_count_if(
+                   HloInstructionAdaptor{*instr}.GetUsers(),
+                   [&](auto user) { return fusion->ContainsInstruction(user); })
+             : instr->user_count();
+  if (num_users > 1) {
+    return false;
+  }
 
   if (instr->IsElementwise()) {
     // All elementwise ops are considered intermediate, except for copies that
