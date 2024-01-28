@@ -11,31 +11,31 @@ p0 = f32[20] parameter(0)
 bc0 = f32[10, 20, 30] broadcast(p0), dimensions={1}
 ```
 
-the indexing map from the output to input is (i, j, k) \mapsto (j)$ for i ∈ [0, 10), j ∈ [0, 20) and k ∈ [0, 30). 
+the indexing map from the output to input is $(i, j, k) \mapsto (j)$ for $i \in [0, 10]$, $j \in [0, 20]$ and $k \in [0, 30]$.
 
 ## Motivation
 
-There are many parts of XLA, which would benefit from knowledge about indexing.
+XLA GPU uses several bespoke solutions to reason about coalescing, operand utilization, and tiling schemes (more details below). The goal of indexing analysis is providing a reusable component for such use cases. Indexing analysis is built on MLIR's Affine Map infrastructure and adds HLO semantics.
 
-### **Coalescing**
+### Coalescing
 
-Detecting coalesced memory access without knowing what elements/slices of the inputs are read to compute an element of the output becomes possible only in the simplest cases.
+Reasoning about memory coalescing becomes becomes feasible for non-trivial cases, when we know what elements/slices of the inputs are read to compute an element of the output.
 
-### **Utilization**
+### Operand Utilization
 
 Operand utilization in XLA indicates how much each input of the instruction is used assuming its output is fully used. Currently, utilization is also not computed for a generic case. Indexing analysis allows to compute utilization precisely.
 
-### **Tiling**
+### Tiling
 
-Tiles are parameterized by offsets, sizes and strides. Tile propagation is a way to compute tile parameters of the producer/consumer of the op using the tiling parameters of the op itself. There is already a [library](https://github.com/openxla/xla/blob/main/xla/service/gpu/triton_tiling_propagation.h) that does it for softmax and dot. Tile propagation can be made more generic and robust if it is expressed via indexing maps.
+A tile/slice is hyper-rectangular subset of a tensor parameterized by offsets, sizes and strides. Tile propagation is a way to compute tile parameters of the producer/consumer of the op using the tiling parameters of the op itself. There is already a [library](https://github.com/openxla/xla/blob/main/xla/service/gpu/triton_tiling_propagation.h) that does it for softmax and dot. Tile propagation can be made more generic and robust if it is expressed via indexing maps.
 
-## **Function and Domain**
+## Function and Domain
 
 The indexing map is a function $\boldsymbol{f}(\boldsymbol{d}, \boldsymbol{s})$ that maps a multi-index  $\boldsymbol{d}$ of a tensor $A$ to elements/ranges of tensor $B$. The parameter $\boldsymbol{s}$ refers to the ranges of indices of  the dimensions that are present in tensor $B$, but not in tensor $A$​.
 
-For example, if we have a reduction from `tensor<2x4x8x16xf32>` to `tensor<4x8xf32>`, then the indexing map from the 2D output to the 4D input is $(d_0, d_1) \mapsto (s_0, d_0, d_1, s_1)$, where $d_i$ are the dimension parameters that correspond to the indices of the output tensor. Parameters $s_j$ encode multiple values, i.e. to compute a $(d_0, d_1)$ element of the output, we need $(s_0, d_0, d_1, s_1)$ elements of the input, where $s_0 \in [0, 2)$ and $s_1 \in [0, 16)$. 
+For example, if we have a reduction from `tensor<2x4x8x16xf32>` to `tensor<4x8xf32>`, then the indexing map from the 2D output to the 4D input is $(d_0, d_1) \mapsto (s_0, d_0, d_1, s_1)$, where $d_i$ are the dimension parameters that correspond to the indices of the output tensor. Parameters $s_j$ encode multiple values, i.e. to compute a $(d_0, d_1)$ element of the output, we need $(s_0, d_0, d_1, s_1)$ elements of the input, where $s_0 \in [0, 2)$ and $s_1 \in [0, 16)$.
 
-This mapping can be constructed from the attributes of HLO instructions or the mappings of unfused instructions can be composed to get indexing for a fusion. The mapping also has a domain, which specifies for what elements of the tensor the mapping exists. 
+This mapping can be constructed from the attributes of HLO instructions or the mappings of unfused instructions can be composed to get indexing for a fusion. The mapping also has a domain, which specifies for what elements of the tensor the mapping exists.
 $$
 \begin{eqnarray}
 \boldsymbol{f}(\boldsymbol{d}, \boldsymbol{s})\; &s.t.& \\
@@ -46,7 +46,7 @@ $$
 $$
 Since we want to minimize recomputation, we need a library for symbolic computations. XLA already depends on MLIR, so we use [mlir::AffineMap](https://github.com/llvm/llvm-project/blob/main/mlir/include/mlir/IR/AffineMap.h) instead of writing a symbolic arithmetic library.
 
-A typical `AffineMap` looks like 
+A typical `AffineMap` looks like
 
 ```
 (d0)[s0, s1] -> (s0 + 5, d0 * 2, s1 * 3 + 50)
@@ -79,15 +79,15 @@ struct IndexingMap {
 
 Let's study-by-example to understand what's all of the above actually means.
 
-## Indexing Maps for Unfused Ops 
+## Indexing Maps for Unfused Ops
 
 ### Elementwise
 
 For an elementwise ops the indexing map is an identity.
 
   ``` c++
-  p0 = f32[10, 20] parameter(0)  
-  p1 = f32[10, 20] parameter(1)  
+  p0 = f32[10, 20] parameter(0)
+  p1 = f32[10, 20] parameter(1)
   add = f32[10, 20] add(p0, p1)
   ```
 
@@ -145,7 +145,7 @@ The input to output map:
 Indexing map for reverse changes the reverted dimensions to $upper\_bound(d_i) - d_i$:
 
 ```c+
-p0 = f32[1, 17, 9, 9] parameter(0) 
+p0 = f32[1, 17, 9, 9] parameter(0)
 reverse = f32[1, 17, 9, 9] reverse(p0), dimensions={1, 2}
 ```
 
@@ -182,13 +182,13 @@ The input to output maps:
 
 for $i, j = 0, \ldots, {\rm INPUT\_COUNT}$.
 
-### Slice 
+### Slice
 
 Indexing from output to input for slice results in a strided indexing map which is valid for every element of the output. Mapping from the input to output is restricted to a strided range of the elements in the input.
 
 ```c+
 p0 = f32[10, 20, 50] parameter(0)
-slice = f32[5, 3, 25] slice(f32[10, 20, 50] p0), 
+slice = f32[5, 3, 25] slice(f32[10, 20, 50] p0),
   slice={[5:10:1], [3:20:7], [0:50:2]}
 ```
 
@@ -208,7 +208,7 @@ Reshapes come in different flavors.
 
 #### Collapse shape
 
-This is a "linearizing" reshape from N-D to 1D. 
+This is a "linearizing" reshape from N-D to 1D.
 
 ```c+
 p0 = f32[4,8] parameter(0)
@@ -268,7 +268,7 @@ for $\boldsymbol{d} \in {\rm Dom}(input)$.
 ##### Example 2: Expanded and collapsed subshapes
 
 ```c+
-p0 = f32[4, 8, 12] parameter(0)  
+p0 = f32[4, 8, 12] parameter(0)
 reshape = f32[32, 3, 4] reshape(p0)
 ```
 
@@ -319,7 +319,7 @@ Indexing maps for dot are very similar to the ones of reduce.
 ```c+
 p0 = f32[4, 128, 256] parameter(0)
 p1 = f32[4, 256, 64] parameter(1)
-dot = f32[4, 128, 64] dot(p0, p1), 
+dot = f32[4, 128, 64] dot(p0, p1),
   lhs_batch_dims={0}, rhs_batch_dims={0},
   lhs_contracting_dims={2}, rhs_contracting_dims={1}
 ```
@@ -348,42 +348,37 @@ Indexing map for fusion op is a composition of indexing maps for every op in the
 Here is an example for $p_0 + p_0^T$
 
 ```c+
-f {  
+f {
   p0 = f32[1000, 1000] parameter(0)
-  transpose_p0 = f32[1000, 1000]{0, 1}
-  transpose(p0), dimensions={1, 0}
+  transpose_p0 = f32[1000, 1000]{0, 1} transpose(p0), dimensions={1, 0}
   ROOT a0 = f32[1000, 1000] add(p0, transpose_p0)
 }
 ```
 
-The output-to-input indexing maps for `p0` will be $(d_0, d_1) \mapsto (d_0, d_1)$ and $(d_0, d_1) \mapsto (d_1, d_0)$.
+The output-to-input indexing maps for `p0` will be $(d_0, d_1) \mapsto (d_0, d_1)$ and $(d_0, d_1) \mapsto (d_1, d_0)$. It means that to compute one element of the output we might need to read the input parameter twice.
 
 ### One input, deduplicated indexing map
 
 ![img](./images/indexing_analysis_transposes.svg)
 
-There are cases when the indexing maps are actually the same, even though it is not immediately obvious. 
+There are cases when the indexing maps are actually the same, even though it is not immediately obvious.
 
 ```c+
-f {   
+f {
   p0 = f32[20, 10, 50] parameter(0)
-  lhs_transpose_1 = f32[10, 20, 50] transpose(p0), 
-    dimensions={1, 0, 2}
+  lhs_transpose_1 = f32[10, 20, 50] transpose(p0), dimensions={1, 0, 2}
   lhs_e = f32[10, 20, 50] exponential(lhs_transpose_1)
-  lhs_transpose_2 = f32[10, 50, 20] transpose(lhs_e),
-    dimensions={0, 2, 1}   
-  rhs_transpose_1 = f32[50, 10, 20] transpose(p0),
-    dimensions={2, 1, 0}   
+  lhs_transpose_2 = f32[10, 50, 20] transpose(lhs_e), dimensions={0, 2, 1}
+  rhs_transpose_1 = f32[50, 10, 20] transpose(p0), dimensions={2, 1, 0}
   rhs_log = f32[50, 10, 20] exponential(rhs_transpose_1)
-  rhs_transpose_2 = f32[10, 50, 20] transpose(rhs_log),
-    dimensions={1, 0, 2}   
+  rhs_transpose_2 = f32[10, 50, 20] transpose(rhs_log), dimensions={1, 0, 2}
   ROOT add = f32[10, 50, 20] add(lhs_transpose_2, rhs_transpose_2)
 }
 ```
 
 The output-to-input indexing map for `p0` in this case is just $(d_0, d_1, d_2) \mapsto (d_2, d_0, d_1)$.
 
-​          
+​
 
 ### Softmax
 
@@ -391,10 +386,10 @@ The output-to-input indexing map for `p0` in this case is just $(d_0, d_1, d_2) 
 
 The output-to-input indexing maps for `parameter 0` for softmax:
 
-- $(d_0, d_1, d_2) \mapsto (d_0, d_1, d_2)$ 
-- $(d_0, d_1, d_2)[s_0] \mapsto (d_0, d_1, s_0)$ 
+- $(d_0, d_1, d_2) \mapsto (d_0, d_1, d_2)$
+- $(d_0, d_1, d_2)[s_0] \mapsto (d_0, d_1, s_0)$
 
-for $\boldsymbol{d} \in {\rm Dom}(output)$ and $\boldsymbol{s} \in [0, 124]$.
+for $\boldsymbol{d} \in {\rm Dom}(output)$ and $\boldsymbol{s} \in [0, 124]$ refers to the inner-most dimension of the input.
 
 ## Indexing Map Simplifier
 
@@ -417,6 +412,6 @@ reshape1 = f32[50, 20] reshape(p0)
 reshape2 = f32[10, 10, 10] reshape(reshape1)
 ```
 
-After the composition of indexing maps and their simplification we will get 
+After the composition of indexing maps and their simplification we will get
 
 $(d_0, d_1, d_2) \mapsto (d_0, d_1, d_2)$.
