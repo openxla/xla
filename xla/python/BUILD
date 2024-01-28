@@ -1183,11 +1183,3 @@ xla_cc_test(
         "@tsl//tsl/profiler/utils:xplane_schema",
     ],
 )
-
-cc_library(
-    name = "status_casters",
-    hdrs = ["status_casters.h"],
-    deps = [
-        "//xla/pjrt:status_casters",
-    ],
-)
