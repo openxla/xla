@@ -18,16 +18,18 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/tuple_simplifier.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -290,6 +292,10 @@ Status FloatNormalizationVisitor::ConvertCalledComputations(
   return OkStatus();
 }
 
+bool ShouldSkipCalledComputationsForInstruction(HloInstruction* hlo) {
+  return DynCast<HloAllReduceInstructionBase>(hlo) != nullptr;
+}
+
 Status FloatNormalizationVisitor::HandleMultipleOutputs(HloInstruction* hlo) {
   std::vector<PrimitiveType> operand_types(hlo->operand_count());
   std::vector<PrimitiveType> output_types(hlo->operand_count());
@@ -355,7 +361,7 @@ Status FloatNormalizationVisitor::HandleMultipleOutputs(HloInstruction* hlo) {
 
   std::vector<HloComputation*> low_precision_called_comps;
   for (auto* comp : hlo->called_computations()) {
-    if (comp->IsCollectiveCalledComputation()) {
+    if (ShouldSkipCalledComputationsForInstruction(hlo)) {
       continue;
     }
     bool comp_has_low_precision = false;
@@ -434,7 +440,7 @@ Status FloatNormalizationVisitor::HandleInstruction(HloInstruction* hlo) {
 
   std::vector<HloComputation*> low_precision_called_comps;
   for (auto* comp : hlo->called_computations()) {
-    if (comp->IsCollectiveCalledComputation()) {
+    if (ShouldSkipCalledComputationsForInstruction(hlo)) {
       continue;
     }
     bool comp_has_low_precision = false;
@@ -564,6 +570,58 @@ Status FloatNormalizationVisitor::Preprocess(HloInstruction* hlo) {
   return OkStatus();
 }
 
+// We must avoid normalizing computations that have non-normalizing users
+// (e.g., all-reduce's computations should not be normalized). If a
+// computation is shared between normalizing and non-normalizing users, we will
+// clone the computation for the non-normalizing users so that it can be left
+// unchanged. This function clones the shared computations and returns the set
+// of non-normalizing computations that must be skipped by the visitor.
+absl::flat_hash_set<HloComputation*>
+CloneComputationsForNonNormalizingInstructions(
+    HloModule* module, std::vector<HloComputation*>& computations_to_visit) {
+  absl::flat_hash_set<HloComputation*> computations_to_skip;
+  // Let us first figure out what users each computation has.
+  struct ComputationUsers {
+    bool user_to_normalize_exists = false;
+    std::vector<HloInstruction*> users_to_skip_normalization;
+  };
+  absl::flat_hash_map<HloComputation*, ComputationUsers> computation_users;
+  for (auto& computation : computations_to_visit) {
+    for (auto* instruction : computation->instructions()) {
+      if (!instruction->has_called_computations()) continue;
+      for (auto& called : instruction->called_computations()) {
+        if (ShouldSkipCalledComputationsForInstruction(instruction)) {
+          computation_users[called].users_to_skip_normalization.push_back(
+              instruction);
+        } else {
+          computation_users[called].user_to_normalize_exists = true;
+        }
+      }
+    }
+  }
+
+  // If a computation is shared, create a clone, and replace it its the users.
+  for (auto [comp, users] : computation_users) {
+    // If the computation is only used by normalizing users or only by
+    // non-normalizing users, then we do not clone.
+    if (users.users_to_skip_normalization.empty()) continue;
+    if (!users.user_to_normalize_exists) {
+      computations_to_skip.insert(comp);
+      continue;
+    }
+
+    // Otherwise, we create a clone and replace the normalizing instructions'
+    // computations with the clone.
+    HloComputation* clone = module->DeepCloneComputation(comp);
+    for (auto* hlo : users.users_to_skip_normalization) {
+      hlo->ReplaceCalledComputations([&](HloComputation* called) {
+        return called == comp ? clone : called;
+      });
+    }
+    computations_to_skip.insert(clone);
+  }
+  return computations_to_skip;
+}
 }  // namespace
 
 StatusOr<bool> FloatNormalization::Run(
@@ -573,13 +631,14 @@ StatusOr<bool> FloatNormalization::Run(
                         primitive_util::LowercasePrimitiveTypeName(
                             float_support_->LowPrecisionType()) +
                         ", before:\n" + module->ToString());
+  auto computations_to_visit =
+      module->MakeComputationPostOrder(execution_threads);
+  auto computations_to_skip = CloneComputationsForNonNormalizingInstructions(
+      module, computations_to_visit);
+
   FloatNormalizationVisitor visitor(float_support_, this);
-  for (auto* comp : module->MakeComputationPostOrder(execution_threads)) {
-    if (comp->IsCollectiveCalledComputation()) {
-      XLA_VLOG_LINES(2, "Skip processing collective called computation: " +
-                            comp->ToString());
-      continue;
-    }
+  for (auto* comp : computations_to_visit) {
+    if (computations_to_skip.contains(comp)) continue;
     TF_RETURN_IF_ERROR(comp->Accept(&visitor));
   }
   XLA_VLOG_LINES(2, "FloatNormalization::Run() for " +
