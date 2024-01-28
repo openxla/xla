@@ -217,7 +217,7 @@ reshape = f32[32] reshape(p0)
 
 The output to input map:
 
-- output -> input: $(d_0) \mapsto (d_0 / 8, d_0 \% 8)$ for $\boldsymbol{d} \in {\rm Dom}(output)$
+- output -> input: $(d_0) \mapsto (d_0 / 8, d_0 \mod 8)$ for $\boldsymbol{d} \in {\rm Dom}(output)$
 
 The input to output map:
 
@@ -238,7 +238,7 @@ The output to input map:
 
 The input to output map:
 
-- input -> output: $(d_0) \mapsto (d_0 / 8, d_0 \% 8)$ for $\boldsymbol{d} \in {\rm Dom}(input)$.
+- input -> output: $(d_0) \mapsto (d_0 / 8, d_0 \mod 8)$ for $\boldsymbol{d} \in {\rm Dom}(input)$.
 
 #### Generic reshape
 
@@ -255,13 +255,13 @@ This reshape can be represented as a composition of collapse shape of `tensor<4x
 
 The output to input map:
 
-- output -> input: $(d_0, d_1, d_2) \mapsto (2d_0 + (4d_1 + d_2) / 8, 4d_1 + d_2) \% 8)$
+- output -> input: $(d_0, d_1, d_2) \mapsto (2d_0 + (4d_1 + d_2) / 8, 4d_1 + d_2) \mod 8)$
 
 for $\boldsymbol{d} \in {\rm Dom}(output)$
 
 The input to output map:
 
-- input -> output: $(d_0, d_1) \mapsto ((8d_0 + d_1) / 16, ((8d_0 + d_1) \% 16) / 4, d_1 \% 4)$
+- input -> output: $(d_0, d_1) \mapsto ((8d_0 + d_1) / 16, ((8d_0 + d_1) \mod 16) / 4, d_1 \mod 4)$
 
 for $\boldsymbol{d} \in {\rm Dom}(input)$.
 
@@ -276,11 +276,11 @@ This reshape can be represented as a composition of two reshapes. The first one 
 
 The output to input map:
 
-- output -> input: $(d_0, d_1, d_2) \mapsto (d_0 / 8, d_0 \% 8, 4d_1 + d_2)$ for $\boldsymbol{d} \in {\rm Dom}(output)$
+- output -> input: $(d_0, d_1, d_2) \mapsto (d_0 / 8, d_0 \mod 8, 4d_1 + d_2)$ for $\boldsymbol{d} \in {\rm Dom}(output)$
 
 The input to output map:
 
-- input -> output: $(d_0, d_1, d_2) \mapsto (8d_0 + d_1, d_2 / 4, d_2 \% 4)$ for $\boldsymbol{d} \in {\rm Dom}(input)$.
+- input -> output: $(d_0, d_1, d_2) \mapsto (8d_0 + d_1, d_2 / 4, d_2 \mod 4)$ for $\boldsymbol{d} \in {\rm Dom}(input)$.
 
 ### Bitcast
 
@@ -399,9 +399,9 @@ We can leverage the knowledge about lower and upper bounds of the sub-expression
 
 The simplifier can rewrite the following expressions.
 
-1. $(d_0, d_1) \mapsto (d_0 + d1 / 16, d1 \% 16)$ for $\boldsymbol{d} \in [0, 6] \times [0, 14]$ becomes $(d_0, d_1) \mapsto (d_0, d_1)$
-2. $(d_0, d_1, d_2) \mapsto ((100d_0 + 10d_1 + d_2) /100, ((100d_0 + 10d_1 + d_2) \% 100) / 10, d_2 \% 10)$ for $d_i \in [0, 9]$ becomes $(d_0, d_1, d_2) \mapsto (d_0, d_1, d_2)$.
-3. $(d_0, d_1, d_2) \mapsto ((16d_0 + 4d_1 + d_2) /8, (16d_0 + 4d_1 + d_2) \% 8)$ for $d_i \in [0, 9]$ becomes $(d_0, d_1, d_2) \mapsto (2d_0 + (4d_1 + d_2) /8,(4d_1 + d_2) \% 8)$.
+1. $(d_0, d_1) \mapsto (d_0 + d1 / 16, d1 \mod 16)$ for $\boldsymbol{d} \in [0, 6] \times [0, 14]$ becomes $(d_0, d_1) \mapsto (d_0, d_1)$
+2. $(d_0, d_1, d_2) \mapsto ((100d_0 + 10d_1 + d_2) /100, ((100d_0 + 10d_1 + d_2) \mod 100) / 10, d_2 \mod 10)$ for $d_i \in [0, 9]$ becomes $(d_0, d_1, d_2) \mapsto (d_0, d_1, d_2)$.
+3. $(d_0, d_1, d_2) \mapsto ((16d_0 + 4d_1 + d_2) /8, (16d_0 + 4d_1 + d_2) \mod 8)$ for $d_i \in [0, 9]$ becomes $(d_0, d_1, d_2) \mapsto (2d_0 + (4d_1 + d_2) /8,(4d_1 + d_2) \mod 8)$.
 4. $(d_0, d_1) \mapsto (-(-11d_0 - d_1 + 109) / 11 + 9)$ for $\boldsymbol{d} \in [0, 9] \times [0, 10]$ becomes $(d_0, d_1) \mapsto (d_0)$.
 
 Indexing map simplifier allows us to understand that some of the chained reshapes in HLO cancel each other.
