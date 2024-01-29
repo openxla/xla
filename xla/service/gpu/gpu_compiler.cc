@@ -1416,7 +1416,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                          LayoutAssignment::InstructionCanChangeLayout)
                      .VerifyBroadcastDimensionsOrder()
                      .VerifyReshapeIsBitcast(),
-                 /*debug_only=*/true);
+                 /*debug_only=*/false);
 
   // Linearize collective schedule if online autotuning of convolutions is
   // enabled.
