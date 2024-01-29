@@ -971,6 +971,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/concurrency:ref_count",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
