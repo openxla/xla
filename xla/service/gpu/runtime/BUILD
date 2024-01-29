@@ -78,6 +78,7 @@ cc_library(
         "//xla/service:executable",
         "//xla/service:global_device_id",
         "//xla/service/gpu:gpu_executable_run_options",
+        "//xla/service/gpu:nccl_api",
         "//xla/service/gpu:nccl_collective_thunks",
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
@@ -87,6 +88,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
     ] + if_gpu_is_configured([
         "//xla/service/gpu:mock_nccl_utils",
     ]),
@@ -203,7 +205,7 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/status",
     ] + if_gpu_is_configured([
-        "//xla/service/gpu:cub_sort_thunk",
+        "//xla/service/gpu/runtime3:cub_sort_thunk",
     ]),
 )
 
@@ -281,6 +283,7 @@ cc_library(
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -380,6 +383,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",  # build_cleaner: keep
         "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor/gpu:gpu_init",
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_timer_header",
         "//xla/stream_executor/gpu:gpu_types_header",
@@ -589,8 +593,8 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:stream_executor_util",
-        "//xla/service/gpu/kernels:custom_fusion",
         "//xla/service/gpu/kernels:custom_kernel",
+        "//xla/service/gpu/kernels:custom_kernel_fusion",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_graph",
         "@com_google_absl//absl/container:flat_hash_map",

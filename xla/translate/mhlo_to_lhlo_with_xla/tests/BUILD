@@ -1,27 +1,24 @@
-load("//xla:glob_lit_test.bzl", "glob_lit_tests")
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
+load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     licenses = ["notice"],
 )
 
-glob_lit_tests(
+lit_test_suite(
     name = "all_tests",
-    data = [":test_utilities"],
-    driver = "@llvm-project//mlir:run_lit.sh",
-    test_file_exts = [
-        "mlir",
-        "hlo",
-        "hlotxt",
-    ],
-)
-
-# Bundle together all of the test utilities that are used by tests.
-filegroup(
-    name = "test_utilities",
-    testonly = True,
-    data = [
+    srcs = enforce_glob(
+        [
+            "hlo_text_to_lhlo_no_opt.hlotxt",
+            "non_identity_layouts.hlotxt",
+            "no_opt_ops.hlotxt",
+        ],
+        include = [
+            "*.hlotxt",
+        ],
+    ),
+    cfg = "//xla:lit.cfg.py",
+    tools = [
         "//xla/translate:xla-translate",
         "//xla/translate/mhlo_to_lhlo_with_xla:xla-translate-gpu-opt",
         "//xla/translate/mhlo_to_lhlo_with_xla:xla-translate-opt",

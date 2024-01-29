@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -132,8 +132,9 @@ ENTRY e {
 
   GpuPerformanceModel::RecordEstimatedRunTime(
       root, &analysis_, GpuPerformanceModelOptions::Default());
-  double recorded_cycles = root->backend_config<FusionBackendConfig>()
-                               ->reification_cost()
+  double recorded_cycles = root->backend_config<GpuBackendConfig>()
+                               ->fusion_backend_config()
+                               .reification_cost()
                                .end_to_end_cycles();
   EXPECT_NEAR(recorded_cycles, 257.7, 0.1);
 }
@@ -165,8 +166,9 @@ ENTRY e {
 
   GpuPerformanceModel::RecordEstimatedRunTime(
       root, &analysis_, GpuPerformanceModelOptions::Default());
-  double recorded_cycles = root->backend_config<FusionBackendConfig>()
-                               ->reification_cost()
+  double recorded_cycles = root->backend_config<GpuBackendConfig>()
+                               ->fusion_backend_config()
+                               .reification_cost()
                                .end_to_end_cycles();
   EXPECT_NEAR(recorded_cycles, 220284, 100);
 }
@@ -327,7 +329,7 @@ ENTRY fusion {
 )";
 
   auto run = [&](absl::string_view hlo_text)
-      -> StatusOr<GpuPerformanceModel::RunTimes> {
+      -> absl::StatusOr<GpuPerformanceModel::RunTimes> {
     TF_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_text));
     GpuHloCostAnalysis analysis(options_, &dev_info_);
     TF_RETURN_IF_ERROR(module->entry_computation()->Accept(&analysis));

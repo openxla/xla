@@ -1,4 +1,4 @@
-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2019 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -590,7 +590,9 @@ static void Init(py::module_& m) {
   alloc_config.def(py::init<>())
       .def_readwrite("kind", &GpuAllocatorConfig::kind)
       .def_readwrite("memory_fraction", &GpuAllocatorConfig::memory_fraction)
-      .def_readwrite("preallocate", &GpuAllocatorConfig::preallocate);
+      .def_readwrite("preallocate", &GpuAllocatorConfig::preallocate)
+      .def_readwrite("collective_memory_size",
+                     &GpuAllocatorConfig::collective_memory_size);
   py::enum_<GpuAllocatorConfig::Kind>(alloc_config, "Kind")
       .value("DEFAULT", GpuAllocatorConfig::Kind::kDefault)
       .value("PLATFORM", GpuAllocatorConfig::Kind::kPlatform)
@@ -1080,9 +1082,12 @@ static void Init(py::module_& m) {
            xla::ValueOrThrowWrapper(&PjRtExecutable::GetCompiledMemoryStats))
       .def("compile_options",
            xla::ValueOrThrowWrapper(&PjRtExecutable::GetCompileOptions))
-      .def("serialize", [](const PjRtExecutable& exec) -> py::bytes {
-        return ValueOrThrow(exec.SerializeExecutable());
-      });
+      .def("serialize",
+           [](const PjRtExecutable& exec) -> py::bytes {
+             return ValueOrThrow(exec.SerializeExecutable());
+           })
+      .def("cost_analysis",
+           xla::ValueOrThrowWrapper(&PjRtExecutable::GetCostAnalysis));
 
   m.def("is_asan", IsAsan);
   m.def("is_msan", IsMsan);

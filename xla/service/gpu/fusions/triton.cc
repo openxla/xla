@@ -1,4 +1,4 @@
-/* Copyright 2024 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -94,7 +94,7 @@ LaunchDimensions CalculateSoftMaxLaunchDimensions(
 
 }  // namespace
 
-StatusOr<FusionEmissionResult> TritonFusion::Emit(
+absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
     IrEmitterContext& ir_emitter_context, mlir::lmhlo::FusionOp fusion_op,
     const HloFusionInstruction& fusion) const {
   llvm::IRBuilder builder(ir_emitter_context.llvm_module()->getContext());
@@ -119,7 +119,7 @@ StatusOr<FusionEmissionResult> TritonFusion::Emit(
   const HloComputation* hlo_computation =
       fusion.fused_instructions_computation();
 
-  auto generate = [&]() -> StatusOr<KernelReuseCache::Entry> {
+  auto generate = [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
     VLOG(3) << "Generating: " << suggested_kernel_name;
 
     const std::string impl_fn_name =
@@ -212,10 +212,11 @@ StatusOr<FusionEmissionResult> TritonFusion::Emit(
              triton_wrapper_result.shmem_bytes}};
   };
 
-  auto [kernel, was_cached] = ir_emitter_context.kernel_cache().GetWithStatus(
-      hlo_computation, kernel_arguments.args(),
-      /*discriminator=*/"", generate);
-  TF_RETURN_IF_ERROR(kernel.status());
+  auto [status_or_entry, was_cached] =
+      ir_emitter_context.kernel_cache().GetWithStatus(
+          hlo_computation, kernel_arguments.args(),
+          /*discriminator=*/"", generate);
+  TF_ASSIGN_OR_RETURN(const KernelReuseCache::Entry* entry, status_or_entry);
 
   std::variant<mlir::Operation*, const HloInstruction*> fusion_op_or_hlo;
   if (ir_emitter_context.emit_ir_from_hlo()) {
@@ -226,8 +227,8 @@ StatusOr<FusionEmissionResult> TritonFusion::Emit(
 
   FusionEmissionResult result;
   result.thunks.emplace_back(std::make_unique<KernelThunk>(
-      fusion_op_or_hlo, kernel->kernel_name, kernel_arguments.args(),
-      kernel->launch_dimensions, kernel->shmem_bytes));
+      fusion_op_or_hlo, entry->kernel_name, kernel_arguments.args(),
+      entry->launch_dimensions, entry->shmem_bytes));
 
   return result;
 #else

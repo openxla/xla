@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2015 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -1340,10 +1340,6 @@ class Stream {
                     "without DNN support";
   }
 
-  // Runs the set of callbacks that are intended to run after
-  // BlockHostUntilDone.
-  void RunAfterBlockHostUntilDoneCallbacks();
-
   // The StreamExecutor that supports the operation of this stream.
   StreamExecutor *parent_;
 
@@ -1374,10 +1370,6 @@ class Stream {
   // notes when they can be reclaimed -- reclamation is attempted when
   // BlockHostUntilDone() is called.
   internal::TemporaryMemoryManager temporary_memory_manager_;
-
-  // Callbacks enqueued to be run after the next call to BlockHostUntilDone().
-  std::vector<absl::AnyInvocable<void() &&>>
-      after_block_host_until_done_callbacks_ ABSL_GUARDED_BY(mu_);
 
   // Non-extended BLAS interface requires alpha/beta to be floats when input
   // type is Eigen::half. However, for consistency purposes it is convenient

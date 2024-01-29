@@ -1,4 +1,4 @@
-# Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2017 The OpenXLA Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,10 +48,10 @@ profiler = _xla.profiler
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.xla_extension_version.
-_version = 229
+_version = 234
 
 # Version number for MLIR:Python components.
-mlir_api_version = 54
+mlir_api_version = 55
 
 xla_platform_names = {
     'cpu': 'Host',
@@ -103,6 +103,8 @@ def make_gpu_client(
     config.memory_fraction = options['memory_fraction']
   if 'preallocate' in options:
     config.preallocate = options['preallocate']
+  if 'collective_memory_size' in options:
+    config.collective_memory_size = options['collective_memory_size']
   register_custom_call_handler('CUDA', _xla.register_custom_call_target)
   register_custom_call_handler('ROCM', _xla.register_custom_call_target)
 

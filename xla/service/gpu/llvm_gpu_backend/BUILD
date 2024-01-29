@@ -39,6 +39,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Analysis",
@@ -61,6 +62,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:random",
+        "@tsl//tsl/platform:rocm_rocdl_path",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/util:env_var",
     ] + if_rocm_is_configured([

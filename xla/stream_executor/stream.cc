@@ -1,4 +1,4 @@
-/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2015 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -270,7 +270,6 @@ Stream::~Stream() {
                  << status;
   }
   temporary_memory_manager_.ForceDeallocateAll();
-  RunAfterBlockHostUntilDoneCallbacks();
 
   if (allocated_) {
     parent_->DeallocateStream(this);
@@ -1707,19 +1706,7 @@ absl::Status Stream::BlockHostUntilDone() {
   absl::Status error = parent_->BlockHostUntilDone(this);
   CheckError(error.ok());
 
-  RunAfterBlockHostUntilDoneCallbacks();
   return error;
-}
-
-void Stream::RunAfterBlockHostUntilDoneCallbacks() {
-  std::vector<absl::AnyInvocable<void() &&>> callbacks;
-  {
-    absl::MutexLock lock(&mu_);
-    std::swap(callbacks, after_block_host_until_done_callbacks_);
-  }
-  for (auto &fn : callbacks) {
-    std::move(fn)();
-  }
 }
 
 std::string Stream::DebugStreamPointers() const {

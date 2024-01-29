@@ -208,6 +208,7 @@ cc_library(
         ":ifrt",
         ":mock",
         ":test_util",
+        "//xla/pjrt:pjrt_common",
         "@tsl//tsl/platform:test",
     ],
 )

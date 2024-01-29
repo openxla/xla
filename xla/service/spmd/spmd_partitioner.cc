@@ -1,4 +1,4 @@
-/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2020 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -399,7 +399,7 @@ HloInstruction* SpmdBuilder::AddInstruction(
 }
 
 PartitionedHlo PartitionedHlo::Reshard(const HloSharding& target,
-                                       std::optional<Literal> pad_value) {
+                                       std::optional<Literal> pad_value) const {
   if (sharding() == target) {
     return *this;
   }
@@ -444,9 +444,9 @@ PartitionedHlo PartitionedHlo::Reshard(const HloSharding& target,
   return resharded;
 }
 
-PartitionedHlo PartitionedHlo::ReshardNoCache(const HloSharding& target,
-                                              std::optional<Literal> pad_value,
-                                              bool allow_full_replication) {
+PartitionedHlo PartitionedHlo::ReshardNoCache(
+    const HloSharding& target, std::optional<Literal> pad_value,
+    bool allow_full_replication) const {
   VLOG(2) << "Resharding " << hlo_->ToString() << " from "
           << hlo_->sharding().ToString() << " to " << target.ToString();
   const Shape& shape = hlo_->shape();
@@ -1215,7 +1215,7 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
       get_dynamic_slice_offset_on_output_if_needed()});
 }
 
-PartitionedHlo PartitionedHlo::Replicate() {
+PartitionedHlo PartitionedHlo::Replicate() const {
   auto& cache = state_.reshard_cache->per_hlo_cache[hlo()].reshard_cache;
   if (state_.partitioner->options().cache_all_gather) {
     for (auto& entry : cache) {
@@ -1263,7 +1263,7 @@ PartitionedHlo PartitionedHlo::Replicate() {
 }
 
 HloInstruction* PartitionedHlo::ReplicatePartial(
-    absl::Span<const int64_t> dims) {
+    absl::Span<const int64_t> dims) const {
   CHECK(!sharding().IsTileMaximal());
   const Shape& shard_shape = hlo()->shape();
   Shape target_shape = shard_shape;
@@ -1391,7 +1391,7 @@ HloInstruction* PartitionedHlo::ReplicatePartial(
 
 std::optional<PartitionedHlo>
 PartitionedHlo::ReshardToPartialReplicateWithAllGather(
-    const HloSharding& target) {
+    const HloSharding& target) const {
   if (!target.ReplicateOnLastTileDim()) {
     return std::nullopt;
   }
@@ -1457,7 +1457,7 @@ PartitionedHlo::ReshardToPartialReplicateWithAllGather(
 
 std::optional<PartitionedHlo>
 PartitionedHlo::ReshardFromPartialReplicateWithDynamicSlice(
-    const HloSharding& target) {
+    const HloSharding& target) const {
   if (!sharding().ReplicateOnLastTileDim()) {
     return std::nullopt;
   }
@@ -1993,7 +1993,7 @@ PartitionedHlo MergeReshapeHelper(const PartitionedHlo& to_reshape,
 }  // namespace
 
 std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
-    const HloSharding& target) {
+    const HloSharding& target) const {
   VLOG(5) << "Trying to split complicated reshard: " << sharding().ToString()
           << " to " << target.ToString();
   const bool is_source_partially_replicated =
@@ -2082,7 +2082,8 @@ std::optional<PartitionedHlo> PartitionedHlo::TryComplexReshardHandling(
 }
 
 std::optional<PartitionedHlo>
-PartitionedHlo::ReshardPartialReplicateWithAllToAll(const HloSharding& target) {
+PartitionedHlo::ReshardPartialReplicateWithAllToAll(
+    const HloSharding& target) const {
   bool source_is_partial_replicate = sharding().ReplicateOnLastTileDim();
   const auto& partial_replicate_sharding =
       source_is_partial_replicate ? sharding() : target;
@@ -2841,40 +2842,59 @@ Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
     if (picked_dim == -1) {
       picked_dim = first_nonsort_nonsharded_dim;
     }
-    VLOG(2)
-        << "Sort partitioning - picked target dimension to move the sharding: "
-        << picked_dim;
-    // The sharding cannot exist in the sort dimension if there are no free
-    // dimensions to move the sharding into. In other words, we propagated the
-    // operand sharding which is on the sort dimension only because we knew we
-    // could pick a free dimension to move it into now.
-    CHECK_NE(picked_dim, -1)
-        << "Sort partitioning - sharding cannot exist in the sort dimension if "
-           "there are no free dimensions to move it into";
-    // Move the sharding to the picked dimension
-    std::vector<int64_t> permutation(
-        cur_sharding.tile_assignment().dimensions().begin(),
-        cur_sharding.tile_assignment().dimensions().end());
-    absl::c_iota(permutation, 0);
-    std::swap(permutation[sort_dim], permutation[picked_dim]);
-    auto new_sharding =
-        hlo_sharding_util::TransposeSharding(cur_sharding, permutation);
-    VLOG(2) << "Sort partitioning - new sharding: " << new_sharding.ToString();
     std::vector<HloInstruction*> new_operands;
     std::vector<HloSharding> new_shardings;
-    for (auto& operand : hlo->operands()) {
-      new_operands.push_back(
-          GetPartitionedHlo(operand).Reshard(new_sharding).hlo());
-      new_shardings.push_back(new_sharding);
-    }
-    auto new_output_sharding = new_sharding;
-    if (sharding.IsTuple()) {
-      new_output_sharding = HloSharding::Tuple(sort->shape(), new_shardings);
+    std::optional<HloSharding> new_output_sharding;
+    if (picked_dim != -1) {
+      VLOG(2) << "Sort partitioning - picked target dimension to move the "
+                 "sharding: "
+              << picked_dim;
+      // The sharding cannot exist in the sort dimension if there are no free
+      // dimensions to move the sharding into. In other words, we propagated the
+      // operand sharding which is on the sort dimension only because we knew we
+      // could pick a free dimension to move it into now.
+      CHECK_NE(picked_dim, -1)
+          << "Sort partitioning - sharding cannot exist in the sort dimension "
+             "if "
+             "there are no free dimensions to move it into";
+      // Move the sharding to the picked dimension
+      std::vector<int64_t> permutation(
+          cur_sharding.tile_assignment().dimensions().begin(),
+          cur_sharding.tile_assignment().dimensions().end());
+      absl::c_iota(permutation, 0);
+      std::swap(permutation[sort_dim], permutation[picked_dim]);
+      auto new_sharding =
+          hlo_sharding_util::TransposeSharding(cur_sharding, permutation);
+      VLOG(2) << "Sort partitioning - new sharding: "
+              << new_sharding.ToString();
+      for (auto& operand : hlo->operands()) {
+        new_operands.push_back(
+            GetPartitionedHlo(operand).Reshard(new_sharding).hlo());
+        new_shardings.push_back(new_sharding);
+      }
+      new_output_sharding = new_sharding;
+      if (sharding.IsTuple()) {
+        new_output_sharding = HloSharding::Tuple(sort->shape(), new_shardings);
+      }
+    } else {
+      // AllGather the sort dim.
+      auto new_sharding =
+          hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(cur_sharding,
+                                                                   {sort_dim});
+      for (auto& operand : hlo->operands()) {
+        new_operands.push_back(
+            GetPartitionedHlo(operand).Reshard(new_sharding).hlo());
+        new_shardings.push_back(new_sharding);
+      }
+      new_output_sharding = new_sharding;
+      if (sharding.IsTuple()) {
+        new_output_sharding = HloSharding::Tuple(sort->shape(), new_shardings);
+      }
     }
     auto final_sort = b_.AddInstruction(hlo->CloneWithNewOperands(
-        MakePartitionedShape(sort->shape(), new_output_sharding),
+        MakePartitionedShape(sort->shape(), *new_output_sharding),
         new_operands));
-    final_sort->set_sharding(new_output_sharding);
+    final_sort->set_sharding(*new_output_sharding);
     PartitionedHlo psort(final_sort, sort->shape(), MakePartitioningState());
     SetPartitionedHlo(sort, psort.Reshard(sort->sharding()));
     return OkStatus();
@@ -3323,7 +3343,8 @@ Status SpmdPartitioningVisitor::HandleAllReduce(HloInstruction* hlo) {
     TF_RET_CHECK(ar->use_global_device_ids())
         << "Cross-partition allreduce in partial manual partitioning mode must "
            "use global device IDs.";
-    absl::flat_hash_map<int64_t, int64_t> partition_to_group_id;
+    std::vector<int64_t> partition_to_group_id(
+        hlo->sharding().tile_assignment().num_elements());
     hlo->sharding().tile_assignment().Each(
         [&](absl::Span<const int64_t> indices, int64_t partition) {
           int64_t group_id = 0;

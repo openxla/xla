@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -51,13 +51,13 @@ using xla::runtime::StridedMemrefView;
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
 // TODO(ezhulenev): Delete run time auto tuning from XLA.
-Status DoRuntimeAutotuning(se::Stream* stream, GemmConfig* config,
-                           se::DeviceMemoryBase lhs_buffer,
-                           se::DeviceMemoryBase rhs_buffer,
-                           se::DeviceMemoryBase output_buffer,
-                           const Shape& output_shape, double beta,
-                           const DebugOptions* debug_options,
-                           NonAtomicallyUpgradeableRWLock* gpu_lock) {
+absl::Status DoRuntimeAutotuning(se::Stream* stream, GemmConfig* config,
+                                 se::DeviceMemoryBase lhs_buffer,
+                                 se::DeviceMemoryBase rhs_buffer,
+                                 se::DeviceMemoryBase output_buffer,
+                                 const Shape& output_shape, double beta,
+                                 const DebugOptions* debug_options,
+                                 NonAtomicallyUpgradeableRWLock* gpu_lock) {
   VLOG(3) << "Running GEMM runtime autotuning";
   std::vector<se::blas::AlgorithmType> algorithms;
   stream->parent()->GetBlasGemmAlgorithms(stream, &algorithms);
@@ -91,7 +91,7 @@ Status DoRuntimeAutotuning(se::Stream* stream, GemmConfig* config,
           lhs_buffer, rhs_buffer, output_buffer, algorithms, output_shape,
           HloModuleConfig(), beta,
           [&](const se::blas::AlgorithmType& algorithm)
-              -> StatusOr<se::blas::ProfileResult> {
+              -> absl::StatusOr<se::blas::ProfileResult> {
             se::blas::ProfileResult profile_result;
             // We expect GemmWithAlgorithm to fail sometimes -- in fact, it will
             // fail for all algorithms if we're targeting < sm_50.  But because
@@ -107,9 +107,9 @@ Status DoRuntimeAutotuning(se::Stream* stream, GemmConfig* config,
 
   if (best_algorithm.has_gemm()) {
     config->algorithm = algorithms[best_algorithm.gemm().algorithm()];
-    return OkStatus();
+    return absl::OkStatus();
   } else {
-    return InternalError("Runtime autotuning failed to select an algorithm");
+    return Internal("Runtime autotuning failed to select an algorithm");
   }
 }
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -135,7 +135,7 @@ static absl::Status GemmImpl(const ServiceExecutableRunOptions* run_options,
 
   // Get the gemm config from the state.
   TF_ASSIGN_OR_RETURN(GemmConfig * gemm_config, state.GetOrCreate([&] {
-    StatusOr<GemmConfig> gemm_config =
+    absl::StatusOr<GemmConfig> gemm_config =
         GetGemmConfig(lhs, rhs, out, algorithm, alpha_real, alpha_imag, beta,
                       dot_dims.lhs_batch, dot_dims.lhs_contract,
                       dot_dims.rhs_batch, dot_dims.rhs_contract,

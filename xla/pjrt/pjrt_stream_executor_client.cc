@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -1066,7 +1066,21 @@ PjRtStreamExecutorClient::CreateErrorBuffer(Status error, const Shape& shape,
   auto definition_event =
       std::make_shared<BufferSequencingEvent>(this->thread_pool());
   definition_event->SetDefinedStatus(error);
-  return CreateUninitializedBuffer(shape, device, definition_event);
+
+  // Create an empty buffer.
+  auto* se_client = tensorflow::down_cast<PjRtStreamExecutorClient*>(this);
+  TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device,
+                      tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+                          ->GetLocalDeviceState());
+  absl::Span<se::DeviceMemoryBase> buffers;
+  auto dummy_device_buffer = std::make_shared<TrackedDeviceBuffer>(
+      se_client->allocator(), local_device->local_device_id().value(), buffers,
+      absl::MakeSpan(&definition_event, 1),
+      /*on_delete_callback=*/nullptr);
+
+  auto py_buffer = std::make_unique<PjRtStreamExecutorBuffer>(
+      shape, std::move(dummy_device_buffer), this, device);
+  return py_buffer;
 }
 
 StatusOr<std::unique_ptr<PjRtBuffer>>
@@ -2289,7 +2303,7 @@ static SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
     // the device memory long enough to complete the memcpy command.
     auto done_event = MakeConstructedAsyncValueRef<se::Event>(stream->parent());
     if (!done_event->Init())
-      return InternalError("Failed to initialize done event (channel_id=%d)",
+      return Internal("Failed to initialize done event (channel_id=%d)",
                            channel_id);
 
     thread_pool->Schedule([done_event, stream, src, channel_id, shape, send] {
@@ -2448,7 +2462,7 @@ static RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
     // `StreamExecutorCopyToDeviceStream` implementation above).
     auto done_event = MakeConstructedAsyncValueRef<se::Event>(stream->parent());
     if (!done_event->Init())
-      return InternalError("Failed to initialize done event (channel_id=%d)",
+      return Internal("Failed to initialize done event (channel_id=%d)",
                            channel_id);
 
     recv->callback({shape}, std::make_unique<StreamExecutorCopyToDeviceStream>(
@@ -3012,6 +3026,22 @@ PjRtStreamExecutorLoadedExecutable::GetOutputMemoryKinds() const {
   return Unimplemented("GetOutputMemoryKinds is not supported.");
 }
 
+StatusOr<std::string>
+PjRtStreamExecutorLoadedExecutable::FingerprintExecutable() const {
+  if (executables_.size() != 1) {
+    return absl::InternalError(
+        "Fingerprinting multiple executables within one "
+        "PjRtStreamExecutorLoadedExecutable is not supported.");
+  }
+
+  Executable* executable = executables_[0]->executable();
+  if (executable->has_module()) {
+    return executable->module().GetFingerprint128();
+  } else {
+    return absl::InternalError("Executable does not have HLO modules.");
+  }
+}
+
 StatusOr<PjRtStreamExecutorClient::ExecutableExtras>
 PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
   ExecutableExtras extras;
@@ -3154,7 +3184,7 @@ StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
   absl::Span<const std::shared_ptr<LocalExecutable>> local_executables =
       se_executable->executables();
   if (local_executables.empty()) {
-    return InternalError("No local executable");
+    return Internal("No local executable");
   }
   if (local_executables.size() != 1) {
     return Unimplemented(

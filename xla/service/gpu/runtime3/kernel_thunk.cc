@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -99,7 +99,7 @@ std::string KernelThunk::ToStringExtra(int indent) const {
                          launch_dimensions_.ToString());
 }
 
-Status KernelThunk::Initialize(const InitializeParams& params) {
+absl::Status KernelThunk::Initialize(const InitializeParams& params) {
   absl::MutexLock lock(&mutex_);
 
   // Load the kernel into the device if necessary.
@@ -117,7 +117,7 @@ Status KernelThunk::Initialize(const InitializeParams& params) {
     kernel_cache_.emplace(params.executor, std::move(kernel));
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 static void PrintBufferContents(
@@ -137,7 +137,7 @@ static void PrintBufferContents(
   }
 }
 
-Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
+absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   // Load the kernel.
   se::StreamExecutor* executor = params.stream->parent();
   LaunchDimensions launch_dimensions;
@@ -210,7 +210,7 @@ std::string CustomKernelThunk::ToStringExtra(int indent) const {
   return custom_kernel_.ToString();
 }
 
-Status CustomKernelThunk::Initialize(const InitializeParams& params) {
+absl::Status CustomKernelThunk::Initialize(const InitializeParams& params) {
   absl::MutexLock lock(&mutex_);
 
   auto it = kernel_cache_.find(params.executor);
@@ -221,10 +221,10 @@ Status CustomKernelThunk::Initialize(const InitializeParams& params) {
     kernel_cache_.emplace(params.executor, std::move(kernel));
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status CustomKernelThunk::ExecuteOnStream(const ExecuteParams& params) {
+absl::Status CustomKernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::StreamExecutor* executor = params.stream->parent();
 
   const se::Kernel* kernel = [&] {

@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ namespace xla::gpu {
 // is true we automatically insert barriers between all commands in a sequence.
 // Otherwise we use buffer usage aliasing to allow commands to run concurrently
 // and insert barriers only when needed for correctness.
-StatusOr<CommandBufferCmdSequence> ConvertToCommands(
+absl::StatusOr<CommandBufferCmdSequence> ConvertToCommands(
     const ThunkSequence& sequence, bool force_barriers);
 
 }  // namespace xla::gpu

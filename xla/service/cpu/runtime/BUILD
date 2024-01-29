@@ -136,6 +136,7 @@ cc_library(
         "//xla:executable_run_options",
         "//xla/runtime:memref_view",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
     ],
 )
 

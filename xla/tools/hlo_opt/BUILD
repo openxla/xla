@@ -1,4 +1,4 @@
-load("//xla:glob_lit_test.bzl", "glob_lit_tests")
+load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
@@ -57,14 +57,25 @@ cc_library(
         "//xla:debug_options_flags",
         "//xla:statusor",
         "//xla:types",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_value",
         "//xla/service:compiler",
         "//xla/service:dump",
         "//xla/service:executable",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:platform_util",
+        "//xla/service/gpu:buffer_sharing",
+        "//xla/service/gpu:compile_module_to_llvm_ir",
         "//xla/service/gpu:executable_proto_cc",
+        "//xla/service/gpu:gpu_compiler",
+        "//xla/service/gpu:gpu_hlo_schedule",
+        "//xla/service/llvm_ir:llvm_util",
+        "//xla/stream_executor",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:ir_headers",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ] + if_gpu_is_configured([
         "//xla/service:gpu_plugin",
@@ -107,6 +118,7 @@ cc_library(
         "//xla/tools:hlo_module_loader",
         "//xla/tools:run_hlo_module_lib",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -114,6 +126,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/util:command_line_flags",
     ] + if_gpu_is_configured([
@@ -125,21 +138,37 @@ cc_library(
     ]),
 )
 
-glob_lit_tests(
+lit_test_suite(
     name = "hlo_opt_tests",
-    data = [":test_utilities"],
-    default_tags = tf_cuda_tests_tags() + [
-    ],
-    driver = "//xla:run_lit.sh",
-    features = if_cuda_is_configured([
-        "--param=GPU=a100",
+    srcs = enforce_glob(
+        [
+            "cpu_hlo.hlo",
+            "gpu_hlo.hlo",
+            "gpu_hlo_backend.hlo",
+            "gpu_hlo_buffers.hlo",
+            "gpu_hlo_llvm.hlo",
+            "gpu_hlo_ptx.hlo",
+            "gpu_hlo_unoptimized_llvm.hlo",
+        ],
+        include = [
+            "*.hlo",
+        ],
+    ),
+    args = if_cuda_is_configured([
+        "--param=GPU=a100_80",
     ]) + if_rocm_is_configured([
         "--param=GPU=mi200",
     ]),
+    cfg = "//xla:lit.cfg.py",
+    data = [":test_utilities"],
+    default_tags = tf_cuda_tests_tags(),
     tags_override = {
         "gpu_hlo_ptx.hlo": ["no_rocm"],
     },
-    test_file_exts = ["hlo"],
+    tools = [
+        "//xla/tools:hlo-opt",
+        "@llvm-project//llvm:FileCheck",
+    ],
 )
 
 # Bundle together all of the test utilities that are used by tests.
@@ -147,12 +176,16 @@ filegroup(
     name = "test_utilities",
     testonly = True,
     data = [
-        "gpu_specs/a100.txtpb",
+        "gpu_specs/a100_80.txtpb",
         "gpu_specs/mi200.txtpb",
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",
-        "@llvm-project//mlir:run_lit.sh",
     ],
+)
+
+filegroup(
+    name = "all_gpu_specs",
+    data = glob(["gpu_specs/*.txtpb"]),
 )
 
 exports_files(glob([

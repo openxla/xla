@@ -1,4 +1,4 @@
-/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2018 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ class MemzeroThunk : public Thunk {
         dest_(dest),
         dest_value_(dest_value) {}
 
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   void ClearCompileTimeInfo() override {
     Thunk::ClearCompileTimeInfo();
@@ -63,7 +63,7 @@ class Memset32BitValueThunk : public Thunk {
         dest_(dest),
         dest_value_(dest_value) {}
 
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   void ClearCompileTimeInfo() override {
     Thunk::ClearCompileTimeInfo();

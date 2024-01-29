@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -2938,27 +2938,24 @@ ENTRY main {
 
   %call-start.1 = ((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)})
     call-start(s32[<=4096]{0:T(8)M(1024)} %get-tuple-element.1),
-      async_group_id=17, async_execution_thread="sparsecore", to_apply=%called_computation
+      async_execution_thread="sparsecore", to_apply=%called_computation
 
   %call-done.1 = s32[<=4096]{0:T(8)M(1024)}
-    call-done(((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)}) %call-start.1),
-      async_group_id=17, async_execution_thread="sparsecore", to_apply=%called_computation
+    call-done(((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)}) %call-start.1)
 
   %call-start.2 = ((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)})
     call-start(s32[<=4096]{0:T(8)M(1024)} %call-done.1),
-      async_group_id=27, async_execution_thread="sparsecore", to_apply=%called_computation
+      async_execution_thread="sparsecore", to_apply=%called_computation
 
   %call-done.2 = s32[<=4096]{0:T(8)M(1024)}
-    call-done(((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)}) %call-start.2),
-      async_group_id=27, async_execution_thread="sparsecore", to_apply=%called_computation
+    call-done(((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)}) %call-start.2)
 
   %call-start.3 = ((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)})
     call-start(s32[<=4096]{0:T(8)M(1024)} %get-tuple-element.0),
-      async_group_id=14, async_execution_thread="sparsecore", to_apply=%called_computation
+      async_execution_thread="sparsecore", to_apply=%called_computation
 
   %call-done.3 = s32[<=4096]{0:T(8)M(1024)}
-    call-done(((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)}) %call-start.3),
-      async_group_id=14, async_execution_thread="sparsecore", to_apply=%called_computation
+    call-done(((s32[<=4096]{0:T(8)M(1024)}), s32[<=4096]{0:T(8)M(1024)}, u32[]{:T(8)S(8)}) %call-start.3)
 
   ROOT %tuple.6 = (s32[<=4096]{0:T(8)M(1024)}, s32[<=4096]{0:T(8)M(1024)})
     tuple(s32[<=4096]{0:T(8)M(1024)} %call-done.2, s32[<=4096]{0:T(8)M(1024)} %call-done.3),

@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -697,11 +697,6 @@ class ReadySetLt {
             "kForceDelay")) {
       return *value;
     }
-    if (early_target_scheduling_rule_) {
-      if (auto value = early_target_scheduling_rule_(a, b)) {
-        return *value;
-      }
-    }
     // Prioritize instructions that are NOPs as they have no memory pressure
     // issue and unlock different operations for being scheduled.
     if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
@@ -760,6 +755,11 @@ class ReadySetLt {
                       sched_state_.memory_pressure_tracker->memory_usage() <=
                   sched_state_.config.memory_limit,
               b, "kMemoryPeakOverLimit")) {
+        return *value;
+      }
+    }
+    if (early_target_scheduling_rule_) {
+      if (auto value = early_target_scheduling_rule_(a, b)) {
         return *value;
       }
     }

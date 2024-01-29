@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 
+#include "absl/status/status.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
 
@@ -53,7 +54,7 @@ NormRunner& NormThunk::GetOrCreateRunner(
   return *it->second;
 }
 
-Status NormThunk::ExecuteOnStream(const ExecuteParams& params) {
+absl::Status NormThunk::ExecuteOnStream(const ExecuteParams& params) {
   const auto& buffer_allocations = *params.buffer_allocations;
 
   se::DeviceMemoryBase input_se_buffer =
@@ -88,9 +89,9 @@ Status NormThunk::ExecuteOnStream(const ExecuteParams& params) {
                                 scratch, params.stream, opts));
 
   if (!params.stream->ok()) {
-    return InternalError("NormThunk::ExecuteOnStream failed.");
+    return Internal("NormThunk::ExecuteOnStream failed.");
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace gpu

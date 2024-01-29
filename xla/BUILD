@@ -48,7 +48,9 @@ package_group(
     ],
 )
 
-exports_files(["run_lit.sh"])
+exports_files([
+    "lit.cfg.py",
+])
 
 # Filegroup used to collect source files for dependency checking.
 filegroup(
@@ -303,7 +305,9 @@ cc_library(
     hdrs = ["status.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "@tsl//tsl/platform:status",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -1211,17 +1215,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@tsl//tsl/platform:logging",
-    ],
-)
-
-filegroup(
-    name = "litfiles",
-    srcs = [
-        "runlit.cfg.py",
-        "runlit.site.cfg.py",
-    ],
-    visibility = [
-        "//xla:__subpackages__",  # Scheuklappen: keep
     ],
 )
 

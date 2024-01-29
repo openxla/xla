@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -98,6 +98,17 @@ class IrArray {
       with_offset.linear_ = nullptr;
       with_offset.multidim_[dim] =
           b->CreateAdd(with_offset.multidim_[dim], addend);
+      return with_offset;
+    }
+
+    Index AddOffset(absl::Span<llvm::Value* const> offsets,
+                    llvm::IRBuilder<>* b) const {
+      CHECK_EQ(multidim_.size(), offsets.size());
+      Index with_offset = *this;
+      with_offset.linear_ = nullptr;
+      for (auto&& [dim, offset] : llvm::zip(with_offset.multidim_, offsets)) {
+        dim = b->CreateAdd(dim, offset);
+      }
       return with_offset;
     }
 

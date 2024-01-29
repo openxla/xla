@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -58,9 +58,9 @@ namespace gpu {
 // modifies the output in place without touching the un-updated elements. The
 // update slice is assumed to be the exact same for all the
 // dynamic-update-slice ops.
-class InPlaceDynamicUpdateSliceEmitter : public KernelFusionEmitterBase {
+class InPlaceDynamicUpdateSliceFusion : public KernelFusionEmitterBase {
  public:
-  explicit InPlaceDynamicUpdateSliceEmitter(const HloFusionAnalysis& analysis)
+  explicit InPlaceDynamicUpdateSliceFusion(const HloFusionAnalysis& analysis)
       : analysis_(analysis),
         dus_ops_(
             GetOutputDefiningDynamicUpdateSlices(analysis.fusion_roots())) {}
@@ -74,12 +74,12 @@ class InPlaceDynamicUpdateSliceEmitter : public KernelFusionEmitterBase {
   }
 
  protected:
-  Status EmitKernel(IrEmitterContext& ir_emitter_context,
-                    const HloFusionInstruction& fusion,
-                    const LaunchDimensions& launch_dims,
-                    std::vector<llvm_ir::IrArray> inputs,
-                    std::vector<llvm_ir::IrArray> outputs,
-                    llvm::IRBuilder<>* builder) const override;
+  absl::Status EmitKernel(IrEmitterContext& ir_emitter_context,
+                          const HloFusionInstruction& fusion,
+                          const LaunchDimensions& launch_dims,
+                          std::vector<llvm_ir::IrArray> inputs,
+                          std::vector<llvm_ir::IrArray> outputs,
+                          llvm::IRBuilder<>* builder) const override;
 
   const HloFusionAnalysis& analysis_;
   std::vector<const HloInstruction*> dus_ops_;

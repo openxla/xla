@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/fusions/concatenate.h"
 #include "xla/service/gpu/fusions/copy.h"
 #include "xla/service/gpu/fusions/custom.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
@@ -73,7 +74,7 @@ bool IsDynamicUpdateSliceFusion(const HloFusionAnalysis& analysis) {
 
 }  // namespace
 
-std::optional<StatusOr<std::unique_ptr<FusionInterface>>>
+std::optional<absl::StatusOr<std::unique_ptr<FusionInterface>>>
 LmhloFusionInfo::GetCopyFusion() const {
   auto params = GetHloOperands(fusion_op_);
   auto outputs = GetHloOutputs(fusion_op_);
@@ -112,7 +113,7 @@ LmhloFusionInfo::GetCopyFusion() const {
                                         std::move(dsts));
 }
 
-std::optional<StatusOr<std::unique_ptr<FusionInterface>>>
+std::optional<absl::StatusOr<std::unique_ptr<FusionInterface>>>
 HloFusionInfo::GetCopyFusion() const {
   std::vector<BufferAllocation::Slice> src_buffers;
   for (auto* root : analysis().fusion_roots()) {
@@ -134,12 +135,12 @@ HloFusionInfo::GetCopyFusion() const {
   TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       instr_->shape(), [&](const Shape& subshape, const ShapeIndex& index) {
         if (!subshape.IsArray()) {
-          return OkStatus();
+          return absl::OkStatus();
         }
         TF_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
                             buffer_assignment_->GetUniqueSlice(instr_, index));
         dst_buffers.push_back(slice);
-        return OkStatus();
+        return absl::OkStatus();
       }));
 
   DCHECK(src_buffers.size() == dst_buffers.size());
@@ -161,19 +162,25 @@ bool HloFusionInfo::CanEmitDynamicUpdateSliceInPlace() const {
   return ret.ok() && *ret;
 }
 
-StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
+absl::StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
     const FusionInfo& fusion_info) {
   const auto& analysis = fusion_info.analysis();
+  const FusionBackendConfig& backend_config = analysis.fusion_backend_config();
+
   switch (analysis.GetEmitterFusionKind()) {
-    case HloFusionAnalysis::EmitterFusionKind::kCustomFusion:
-      return std::make_unique<CustomFusionEmitter>();
+    case HloFusionAnalysis::EmitterFusionKind::kCustomFusion: {
+      const auto& config = backend_config.custom_fusion_config();
+      if (config.name() == "address_computation") {
+        return std::make_unique<AddressComputationFusion>(analysis);
+      }
+      return std::make_unique<CustomFusion>();
+    }
     case HloFusionAnalysis::EmitterFusionKind::kInputSlices:
       return std::make_unique<InputSlicesFusion>(analysis);
     case HloFusionAnalysis::EmitterFusionKind::kLoop: {
       if (IsDynamicUpdateSliceFusion(analysis) &&
           fusion_info.CanEmitDynamicUpdateSliceInPlace()) {
-        return std::make_unique<InPlaceDynamicUpdateSliceEmitter>(
-            fusion_info.analysis());
+        return std::make_unique<InPlaceDynamicUpdateSliceFusion>(analysis);
       }
 
       if (auto copy_fusion = fusion_info.GetCopyFusion()) {
@@ -187,6 +194,8 @@ StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
       return std::make_unique<ScatterFusion>(analysis);
     case HloFusionAnalysis::EmitterFusionKind::kTranspose:
       return std::make_unique<TransposeFusion>(analysis);
+    case HloFusionAnalysis::EmitterFusionKind::kConcatenate:
+      return std::make_unique<ConcatenateFusion>(analysis);
     case HloFusionAnalysis::EmitterFusionKind::kTriton:
       return std::make_unique<TritonFusion>(analysis);
   }

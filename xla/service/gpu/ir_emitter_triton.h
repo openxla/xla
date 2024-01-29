@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -46,22 +46,24 @@ LaunchDimensions GetMatMulLaunchDimensions(const TritonFusionAnalysis& analysis,
                                            const HloFusionAdaptor& fusion,
                                            const TritonGemmConfig& config);
 // Use tiling and execution parameters from 'config'.
-Status EmitMatMul(mlir::OpBuilder b, absl::string_view libdevice_path,
-                  const se::DeviceDescription& device_info,
-                  const TritonFusionAnalysis& analysis,
-                  const HloComputation* computation, mlir::triton::FuncOp fn,
-                  const TritonGemmConfig& config);
+absl::Status EmitMatMul(mlir::OpBuilder b, absl::string_view libdevice_path,
+                        const se::DeviceDescription& device_info,
+                        const TritonFusionAnalysis& analysis,
+                        const HloComputation* computation,
+                        mlir::triton::FuncOp fn,
+                        const TritonGemmConfig& config);
 
 // Compute the launch dimensions for the given Triton SoftMax.
 LaunchDimensions GetSoftMaxLaunchDimensions(const HloFusionAdaptor& fusion,
                                             const TritonGemmConfig& config);
 // Generate Softmax in Triton IR inside 'fn'.
 // Use execution parameters from 'config'.
-Status EmitSoftMax(mlir::OpBuilder b, absl::string_view libdevice_path,
-                   const se::DeviceDescription& device_info,
-                   const TritonFusionAnalysis& analysis,
-                   const HloComputation* computation, mlir::triton::FuncOp fn,
-                   const TritonGemmConfig& config);
+absl::Status EmitSoftMax(mlir::OpBuilder b, absl::string_view libdevice_path,
+                         const se::DeviceDescription& device_info,
+                         const TritonFusionAnalysis& analysis,
+                         const HloComputation* computation,
+                         mlir::triton::FuncOp fn,
+                         const TritonGemmConfig& config);
 
 using TritonIrEmitter = std::function<Status(
     mlir::OpBuilder, absl::string_view, const se::DeviceDescription&,
@@ -71,7 +73,7 @@ using TritonIrEmitter = std::function<Status(
 // Generate Triton IR by running the provided generator and compile it into LLVM
 // IR.
 // MatMul and SoftMax above are some such IR generators.
-StatusOr<TritonWrapperResult> TritonWrapper(
+absl::StatusOr<TritonWrapperResult> TritonWrapper(
     const TritonFusionAnalysis& analysis, absl::string_view fn_name,
     const HloComputation* hlo_computation, absl::string_view fusion_kind,
     const se::CudaComputeCapability& cc,
@@ -81,7 +83,7 @@ StatusOr<TritonWrapperResult> TritonWrapper(
 
 // Creates the initial Triton module for the given fusion. Visible for testing,
 // use TritonWrapper instead.
-StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
+absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     const TritonFusionAnalysis& analysis, absl::string_view fn_name,
     const HloComputation* hlo_computation,
     const se::DeviceDescription& device_info, const TritonGemmConfig& config,

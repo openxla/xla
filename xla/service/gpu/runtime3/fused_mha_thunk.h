@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ class FusedMHAThunk : public Thunk {
   FusedMHAThunk(const FusedMHAThunk&) = delete;
   FusedMHAThunk& operator=(const FusedMHAThunk&) = delete;
 
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
  private:
   BufferAllocation::Slice lhs_bmm1_buffer_;
@@ -95,7 +95,7 @@ class FusedMHABackwardThunk : public Thunk {
   FusedMHABackwardThunk(const FusedMHABackwardThunk&) = delete;
   FusedMHABackwardThunk& operator=(const FusedMHABackwardThunk&) = delete;
 
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
  private:
   BufferAllocation::Slice bmm1_grad_gemm1_rhs_buffer_;

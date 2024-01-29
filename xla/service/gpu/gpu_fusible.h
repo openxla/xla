@@ -1,4 +1,4 @@
-/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2018 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -206,10 +206,6 @@ size_t GetOutputSizeOfFusible(const HloInstruction& instr);
 // Expected output: [R1]
 std::vector<const HloInstruction*> GetFusionRoots(
     const HloComputation& computation);
-
-// Whether the instruction is a reduction hero for the given root.
-bool IsRealReductionHero(const HloInstruction& root,
-                         const HloInstruction& hero);
 
 // Whether the instruction is a Triton Softmax fusion.
 bool IsTritonSoftmaxFusion(const HloInstruction& instr);

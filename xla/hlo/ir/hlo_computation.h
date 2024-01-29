@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -64,14 +66,12 @@ class HloModule;
 class HloComputation {
  public:
   // Used by instructions_.
-  using InstructionList = std::list<std::unique_ptr<HloInstruction>>;
+  using InstructionList = std::vector<HloInstructionInfo>;
 
   // Builder class for HloComputation.
   class Builder {
    public:
-    explicit Builder(absl::string_view name,
-                     HloInstruction* fusion_instruction = nullptr)
-        : name_(name), fusion_instruction_(fusion_instruction) {}
+    explicit Builder(absl::string_view name) : name_(name) {}
     Builder(Builder&& b) = default;
     virtual ~Builder() = default;
 
@@ -102,8 +102,8 @@ class HloComputation {
     StatusOr<HloInstruction*> AddParameter(
         std::unique_ptr<HloInstruction> parameter) {
       if (!parameter_numbers_.insert(parameter->parameter_number()).second) {
-        return InternalError("Duplicate parameter number %d",
-                             parameter->parameter_number());
+        return Internal("Duplicate parameter number %d",
+                        parameter->parameter_number());
       }
       return AddInstruction(std::move(parameter));
     }
@@ -122,7 +122,6 @@ class HloComputation {
 
    private:
     const std::string name_;
-    HloInstruction* fusion_instruction_;
     std::vector<std::unique_ptr<HloInstruction>> instructions_;
     absl::flat_hash_set<int> parameter_numbers_;
 
@@ -362,10 +361,10 @@ class HloComputation {
   }
 
   using InstructionSequence = tsl::gtl::iterator_range<
-      UnwrappingIterator<std::list<std::unique_ptr<HloInstruction>>::iterator>>;
+      UnwrappingIterator<HloInstructionList::iterator>>;
 
-  using ConstInstructionSequence = tsl::gtl::iterator_range<UnwrappingIterator<
-      std::list<std::unique_ptr<HloInstruction>>::const_iterator>>;
+  using ConstInstructionSequence = tsl::gtl::iterator_range<
+      UnwrappingIterator<HloInstructionList::const_iterator>>;
 
   // Gets the instructions in this computation.
   //
@@ -374,13 +373,33 @@ class HloComputation {
   //
   //   for (HloInstruction* instr : computation->instructions()) { ... }
   //
-  ConstInstructionSequence instructions() const {
-    return {MakeUnwrappingIterator(instructions_.begin()),
-            MakeUnwrappingIterator(instructions_.end())};
+
+  tsl::gtl::iterator_range<xla::HloInstructionUnwrappingConstIterator>
+  instructions() const {
+    const int end = instructions_.size();
+    return {HloInstructionUnwrappingConstIterator(
+                HloInstructionConstIterator(&instructions_, 0, end)),
+            HloInstructionUnwrappingConstIterator(
+                HloInstructionConstIterator(&instructions_, end, end))};
   }
-  InstructionSequence instructions() {
-    return {MakeUnwrappingIterator(instructions_.begin()),
-            MakeUnwrappingIterator(instructions_.end())};
+  tsl::gtl::iterator_range<xla::HloInstructionUnwrappingIterator>
+  instructions() {
+    const int end = instructions_.size();
+    return {HloInstructionUnwrappingIterator(
+                HloInstructionIterator(&instructions_, 0, end)),
+            HloInstructionUnwrappingIterator(
+                HloInstructionIterator(&instructions_, end, end))};
+  }
+  tsl::gtl::iterator_range<HloInstructionIterator> instructions_with_info() {
+    const int end = instructions_.size();
+    return {HloInstructionIterator(&instructions_, 0, end),
+            HloInstructionIterator(&instructions_, end, end)};
+  }
+  tsl::gtl::iterator_range<HloInstructionConstIterator> instructions_with_info()
+      const {
+    const int end = instructions_.size();
+    return {HloInstructionConstIterator(&instructions_, 0, end),
+            HloInstructionConstIterator(&instructions_, end, end)};
   }
 
   using ChannelDependencies =
@@ -405,7 +424,7 @@ class HloComputation {
   void ForEachInstructionPostOrder(
       absl::FunctionRef<void(HloInstruction*)> func) const;
 
-  int64_t instruction_count() const { return instruction_iterators_.size(); }
+  int64_t instruction_count() const { return instruction_indices_.size(); }
 
   // Creates and returns a list of the embedded computations called by this
   // computation. This includes all embedded computations called directly or
@@ -776,35 +795,19 @@ class HloComputation {
   }
 
   // Returns if this computation is an async computation.
-  bool IsAsyncComputation() const { return !async_instructions_.empty(); }
+  bool IsAsyncComputation() const { return async_start_ != nullptr; }
 
-  // Returns the owning async instruction. It's empty if this is not an async
+  // Returns the owning async instruction. It's nullptr if this is not an async
   // computation.
-  const std::vector<HloInstruction*>& AsyncInstructions() const {
-    return async_instructions_;
+  HloInstruction* AsyncStart() const { return async_start_; }
+
+  void AddAsyncStart(HloInstruction* async_instruction) {
+    CHECK(!IsCalledComputation());
+    CHECK(async_instruction->opcode() == HloOpcode::kAsyncStart);
+    async_start_ = async_instruction;
   }
 
-  std::vector<HloInstruction*>& AsyncInstructions() {
-    return async_instructions_;
-  }
-
-  void AddAsyncInstruction(HloInstruction& async_instruction) {
-    CHECK(!IsFusionComputation() && !IsCustomCallComputation());
-    CHECK(async_instruction.opcode() == HloOpcode::kAsyncStart ||
-          async_instruction.opcode() == HloOpcode::kAsyncUpdate ||
-          async_instruction.opcode() == HloOpcode::kAsyncDone);
-    async_instructions_.push_back(&async_instruction);
-  }
-
-  void RemoveAsyncInstruction(HloInstruction* async_instruction) {
-    if (async_instruction == nullptr) {
-      return;
-    }
-    async_instructions_.erase(
-        std::remove(async_instructions_.begin(), async_instructions_.end(),
-                    async_instruction),
-        async_instructions_.end());
-  }
+  void RemoveAsyncStart() { async_start_ = nullptr; }
 
   // Returns if this computation is invoked by an Hlo instruction.
   bool IsCalledComputation() const {
@@ -854,7 +857,7 @@ class HloComputation {
   explicit HloComputation(
       const std::string& name, int parameter_count,
       std::vector<std::unique_ptr<HloInstruction>>* instructions,
-      HloInstruction* root_instruction, HloInstruction* fusion_instruction);
+      HloInstruction* root_instruction);
 
   // Internal helper for adding instructions.
   HloInstruction* AddInstructionInternal(
@@ -947,9 +950,10 @@ class HloComputation {
   bool is_conditional_branch_computation_;
 
   // If this computation is an async computation, this field points to the
-  // corresponding async instructions (if live) that call this computation.
+  // first async instruction (async-start) in the asynchronous op chain that
+  // calls this computation.
   // Otherwise, this is empty.
-  std::vector<HloInstruction*> async_instructions_;
+  HloInstruction* async_start_ = nullptr;
 
   // Execution thread of this computation. By default, it's main thread.
   std::string execution_thread_ = HloInstruction::kMainExecutionThread;
@@ -957,12 +961,11 @@ class HloComputation {
   // Module containing this computation.
   HloModule* parent_ = nullptr;
 
-  // Store instructions in std::list as they can be added and removed
+  // Store instructions in std::vector as they can be added and removed
   // arbitrarily and we want a stable iteration order. Keep a map from
-  // instruction pointer to location in the list for fast lookup.
-  InstructionList instructions_;
-  absl::flat_hash_map<const HloInstruction*, InstructionList::iterator>
-      instruction_iterators_;
+  // instruction pointer to index in the vector for fast lookup.
+  HloInstructionList instructions_;
+  absl::flat_hash_map<const HloInstruction*, int> instruction_indices_;
 
   // Removed instructions are moved into to_be_deleted_ first and then
   // deallocated when Cleanup is called.
@@ -1005,7 +1008,7 @@ Status HloComputation::AcceptOrdered(
   absl::flat_hash_set<const HloInstruction*> visited;
   for (const HloInstruction* instruction : order) {
     VLOG(3) << "Visiting ordered: " << instruction->ToString();
-    TF_RET_CHECK(instruction_iterators_.contains(instruction))
+    TF_RET_CHECK(instruction_indices_.contains(instruction))
         << "Instruction " << instruction->name() << " is not in computation "
         << name();
     TF_RET_CHECK(!visited.contains(instruction))

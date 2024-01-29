@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ class DeviceToDeviceCopyThunk : public Thunk {
   DeviceToDeviceCopyThunk(const DeviceToDeviceCopyThunk&) = delete;
   DeviceToDeviceCopyThunk& operator=(const DeviceToDeviceCopyThunk&) = delete;
 
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   void ClearCompileTimeInfo() override {
     Thunk::ClearCompileTimeInfo();

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The OpenXLA Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -305,6 +305,7 @@ class DebugOptions:
   xla_gpu_enable_async_collective_permute: bool
   xla_gpu_enable_async_all_to_all: bool
   xla_gpu_enable_async_reduce_scatter: bool
+  xla_gpu_cuda_data_dir: str
   xla_detailed_logging: bool
   xla_enable_dumping: bool
 
@@ -453,6 +454,7 @@ class GpuAllocatorConfig:
       kind: Kind = ...,
       memory_fraction: float = ...,
       preallocate: bool = ...,
+      collective_memory_size: int = ...,
   ) -> None: ...
 
 class HostBufferSemantics(enum.IntEnum):
@@ -671,6 +673,7 @@ class Executable:
   def get_compiled_memory_stats(self) -> CompiledMemoryStats: ...
   def serialize(self) -> str: ...
   def compile_options(self) -> CompileOptions: ...
+  def cost_analysis(self) -> Dict[str, Any]: ...
 
 class DeviceTopology:
   platform: str
@@ -790,6 +793,7 @@ class DeviceList:
   def __getitem__(self, index: Any) -> Any: ...
   def __iter__(self) -> Iterator[Device]: ...
   def __str__(self) -> str: ...
+  def __repr__(self) -> str: ...
   def __getstate__(self) -> Any: ...
   def __setstate__(self, state: Any): ...
   @property
@@ -842,6 +846,7 @@ class GSPMDSharding(XLACompatibleSharding):
       op_sharding: Union[OpSharding, HloSharding],
       *,
       memory_kind: Optional[str] = None,
+      _device_list: Optional[DeviceList] = None,
   ): ...
   _devices: Tuple[Device, ...]
   _hlo_sharding: HloSharding

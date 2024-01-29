@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,13 +22,12 @@ limitations under the License.
 namespace xla {
 namespace spmd {
 
-using ::operations_research::MPConstraint;
 using ::operations_research::MPSolver;
 using ::operations_research::MPVariable;
 
 MPVariable* CreateMakespanVar(const AutoShardingSolverRequest& request,
                               const std::vector<std::vector<MPVariable*>>& e,
-                              MPSolver& solver, MPConstraint& cost_constraint) {
+                              MPSolver& solver) {
   return nullptr;  // TODO(moffitt): Implement this.
 }
 

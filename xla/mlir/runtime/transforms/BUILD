@@ -254,6 +254,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
         "@llvm-project//mlir:ToLLVMIRTranslation",
     ] + select({
         "@tsl//tsl:arm_any": [

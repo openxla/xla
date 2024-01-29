@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -1868,12 +1868,14 @@ AlgebraicSimplifierVisitor::TryRemoveUpcastAndDowncastSurroundingBinaryOp(
   const PrimitiveType bin_op_type = bin_op_instr->shape().element_type();
   if (!primitive_util::IsIntegralType(final_type) ||
       !primitive_util::IsIntegralType(bin_op_type) ||
+      primitive_util::Is4BitType(final_type) ||
+      primitive_util::Is4BitType(bin_op_type) ||
       (primitive_util::IsSignedIntegralType(final_type) !=
        primitive_util::IsSignedIntegralType(bin_op_type)) ||
       (primitive_util::IsUnsignedIntegralType(final_type) !=
        primitive_util::IsUnsignedIntegralType(bin_op_type))) {
     // So far, only the safety of this transformation with same signedness
-    // integer types has been verified.
+    // non-4-bit integer types has been verified.
     // TODO(b/277095299): Add support for floating point types.
     return OkStatus();
   }
@@ -4724,6 +4726,27 @@ Status AlgebraicSimplifierVisitor::HandleConvert(HloInstruction* convert) {
   return TryRemoveUpcastAndDowncastSurroundingBinaryOp(convert);
 }
 
+Status AlgebraicSimplifierVisitor::HandleCustomCall(
+    HloInstruction* custom_call) {
+  // Remove redundant slice to dynamic of pad to static
+  HloInstruction *pad_to_static0, *pad_to_static1, *pad_to_static_operand;
+  if (Match(
+          custom_call,
+          m::CustomCall(
+              {"SliceToDynamic"},
+              m::GetTupleElement(m::CustomCall(&pad_to_static0, {"PadToStatic"},
+                                               m::Op(&pad_to_static_operand)),
+                                 0),
+              m::GetTupleElement(
+                  m::CustomCall(&pad_to_static1, {"PadToStatic"}, m::Op()),
+                  1))) &&
+      pad_to_static0 == pad_to_static1 &&
+      SameShape(custom_call->shape(), pad_to_static_operand->shape())) {
+    return ReplaceInstruction(custom_call, pad_to_static_operand);
+  }
+  return OkStatus();
+}
+
 // Complex(Real(c), Imag(c)) -> c
 Status AlgebraicSimplifierVisitor::HandleComplex(HloInstruction* complex) {
   HloInstruction *c0, *c1;
@@ -6261,15 +6284,21 @@ Status AlgebraicSimplifierVisitor::HandleDynamicSlice(
                                         transpose->dimensions()));
   }
 
-  // Convert a dynamic slice into a slice if all offsets are constant and the
-  // operand is not constant.
+  // Convert a dynamic slice into a slice if all offsets are constant, the
+  // operand is not constant, and the input and output memory spaces are the
+  // same.
   if (operand->opcode() != HloOpcode::kConstant &&
       absl::c_all_of(absl::MakeSpan(dynamic_slice->operands().begin() + 1,
                                     dynamic_slice->operands().end()),
                      [](HloInstruction* operand) {
                        return operand->opcode() == HloOpcode::kConstant &&
                               ShapeUtil::ElementIsIntegral(operand->shape());
-                     })) {
+                     }) &&
+      (!options_.is_layout_sensitive() ||
+       (dynamic_slice->shape().has_layout() &&
+        dynamic_slice->operand(0)->shape().has_layout() &&
+        dynamic_slice->shape().layout().memory_space() ==
+            dynamic_slice->operand(0)->shape().layout().memory_space()))) {
     const int64_t rank = operand->shape().rank();
     std::vector<int64_t> slice_starts(rank);
     std::vector<int64_t> slice_limits(rank);

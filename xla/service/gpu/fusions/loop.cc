@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,13 +32,12 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/parallel_loop_emitter.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/shape.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -96,27 +95,27 @@ std::pair<bool /*enabled*/, int> RowVectorizationEnabled(
       roots, fusion,
       [&](auto node) -> TraversalResult {
         if (!row_vectorized) {
-          return TraversalResult::kAbortTraversal;
+          return TraversalResult::kInterrupt;
         }
 
         if (node.instruction().IsElementwise()) {
-          return TraversalResult::kVisitOperands;
+          return TraversalResult::kAdvance;
         }
 
         switch (node.opcode()) {
           case HloOpcode::kConstant:
-            return TraversalResult::kDoNotVisitOperands;
+            return TraversalResult::kSkip;
           case HloOpcode::kParameter:
-            return TraversalResult::kVisitOperands;
+            return TraversalResult::kAdvance;
           case HloOpcode::kBroadcast: {
             auto dims = node.instruction().dimensions();
             if (dims.empty()) {
-              return TraversalResult::kVisitOperands;
+              return TraversalResult::kAdvance;
             }
 
             if (dims.size() == 1 && dims.front() == node.shape().rank() - 1) {
               some_row_broadcasting = true;
-              return TraversalResult::kVisitOperands;
+              return TraversalResult::kAdvance;
             }
             TF_FALLTHROUGH_INTENDED;
           }
@@ -124,7 +123,7 @@ std::pair<bool /*enabled*/, int> RowVectorizationEnabled(
             VLOG(2) << "Row vectorization not enabled due to: "
                     << node.ToString();
             row_vectorized = false;
-            return TraversalResult::kAbortTraversal;
+            return TraversalResult::kInterrupt;
         }
       },
       [&](auto argument) {
@@ -215,12 +214,23 @@ LaunchDimensionsConfig ComputeLoopFusionConfig(
 LoopFusion::LoopFusion(const HloFusionAnalysis& analysis)
     : analysis_(analysis), config_(ComputeLoopFusionConfig(analysis)) {}
 
-Status LoopFusion::EmitKernel(IrEmitterContext& ir_emitter_context,
-                              const HloFusionInstruction& fusion,
-                              const LaunchDimensions& launch_dims,
-                              std::vector<llvm_ir::IrArray> inputs,
-                              std::vector<llvm_ir::IrArray> outputs,
-                              llvm::IRBuilder<>* builder) const {
+std::optional<IndexingMap> LoopFusion::ComputeThreadIdToOutputIndexing(
+    int64_t output_id, mlir::MLIRContext* ctx) const {
+  auto launch_dims = launch_dimensions();
+  const auto& shape = analysis_.fusion_roots()[output_id]->shape();
+  IndexingMap result{GetDefaultThreadIdToOutputIndexingMap(
+                         launch_dims, config_.unroll_factor, shape, ctx),
+                     GetThreadIdDomain(launch_dims, config_.unroll_factor)};
+  result.Simplify();
+  return result;
+}
+
+absl::Status LoopFusion::EmitKernel(IrEmitterContext& ir_emitter_context,
+                                    const HloFusionInstruction& fusion,
+                                    const LaunchDimensions& launch_dims,
+                                    std::vector<llvm_ir::IrArray> inputs,
+                                    std::vector<llvm_ir::IrArray> outputs,
+                                    llvm::IRBuilder<>* builder) const {
   GpuElementalIrEmitter elemental_emitter(ir_emitter_context, builder);
   FusedIrEmitter fused_emitter(elemental_emitter);
   for (int i = 0; i < fusion.fused_parameters().size(); i++) {

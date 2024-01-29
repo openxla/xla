@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -51,10 +51,11 @@ class CoalescingTest : public HloTestBase {
              "fusion.";
     }
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto grouped_indexing_maps,
-        ComputeGroupedOutputToInputIndexing(*fusion_adaptor, /*output_id=*/0,
-                                            &mlir_context_));
+
+    auto output_to_input_indexing =
+        ComputeOutputToInputIndexing(root, /*output_id=*/0, &mlir_context_);
+    auto grouped_indexing_maps =
+        GroupIndexingMapsByProducers(output_to_input_indexing, root);
 
     std::vector<bool> actual_results;
     actual_results.reserve(expected_results.size());

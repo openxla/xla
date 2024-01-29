@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -184,7 +184,7 @@ Type StorageType(mlir::OpBuilder b, Type t) {
 template <typename T>
 T ScalarConstantValue(const HloInstruction& instr, PrimitiveType dst_type) {
   CHECK(hlo_query::IsScalarConstant(&instr));
-  StatusOr<Literal> converted = instr.literal().Convert(dst_type);
+  absl::StatusOr<Literal> converted = instr.literal().Convert(dst_type);
   TF_CHECK_OK(converted.status());
   return converted.value().GetFirstElement<T>();
 }
@@ -564,7 +564,7 @@ Value EmitBroadcast(ImplicitLocOpBuilder& b,
   return Broadcast(b, expanded_input.cast<TensorValue>(), out_shape);
 }
 
-StatusOr<Value> EmitScope(
+absl::StatusOr<Value> EmitScope(
     ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const TritonFusionAnalysis* analysis, TritonFusionAnalysis::Scope scope,
@@ -572,10 +572,11 @@ StatusOr<Value> EmitScope(
     absl::Span<const HloInstruction* const> instructions,
     absl::flat_hash_map<const HloInstruction*, Value>& values);
 
-StatusOr<Value> EmitReduce(ImplicitLocOpBuilder& b,
-                           absl::string_view libdevice_path,
-                           const se::DeviceDescription& device_info,
-                           const HloInstruction& hlo_reduce, Value input) {
+absl::StatusOr<Value> EmitReduce(ImplicitLocOpBuilder& b,
+                                 absl::string_view libdevice_path,
+                                 const se::DeviceDescription& device_info,
+                                 const HloInstruction& hlo_reduce,
+                                 Value input) {
   llvm::ArrayRef<int64_t> input_shape =
       input.cast<TensorValue>().getType().getShape();
 
@@ -675,7 +676,7 @@ StatusOr<Value> EmitReduce(ImplicitLocOpBuilder& b,
 
 // Emit sequence of instructions using compatible tiling ordered producers
 // before consumers.
-StatusOr<Value> EmitScope(
+absl::StatusOr<Value> EmitScope(
     ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const TritonFusionAnalysis* analysis, TritonFusionAnalysis::Scope scope,
@@ -730,15 +731,16 @@ StatusOr<Value> EmitScope(
   return values[instructions.back()];
 }
 
-Status CreateTritonPipeline(mlir::OpPassManager& pm,
-                            const se::CudaComputeCapability& cc,
-                            const TritonGemmConfig& config) {
+absl::Status CreateTritonPipeline(mlir::OpPassManager& pm,
+                                  const se::CudaComputeCapability& cc,
+                                  const TritonGemmConfig& config) {
   const int ccAsInt = cc.major * 10 + cc.minor;
   const int threadsPerWarp = 32;
   mlir::triton::nvidia_gpu::ClusterInfo clusterInfo;
   clusterInfo.clusterDimX = config.cluster_dims.x;
   clusterInfo.clusterDimY = config.cluster_dims.y;
   clusterInfo.clusterDimZ = config.cluster_dims.z;
+
   // Based on make_ttir() in
   // @triton//:python/triton/compiler/backends/cuda.py
   pm.addPass(mt::createRewriteTensorPointerPass(ccAsInt));
@@ -749,6 +751,7 @@ Status CreateTritonPipeline(mlir::OpPassManager& pm,
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
   pm.addPass(mlir::createSymbolDCEPass());
+
   // Based on make_ttgir() in
   // @triton//:python/triton/compiler/backends/cuda.py
   pm.addPass(mt::createConvertTritonToTritonGPUPass(
@@ -807,16 +810,20 @@ Status CreateTritonPipeline(mlir::OpPassManager& pm,
   }
   pm.addPass(mlir::createTritonNvidiaGPUWSFixupMissingAttrs());
   pm.addPass(mlir::createCanonicalizerPass());
-  // Based on translateTritonGPUToLLVMIR() in
-  // @triton//:lib/Target/LLVMIR/LLVMIRTranslation.cpp
+
+  // Based on make_llir() in
+  // @triton//:python/triton/compiler/backends/cuda.py
   pm.addPass(mlir::createConvertSCFToCFPass());
   pm.addPass(mlir::createConvertIndexToLLVMPass());
-
-  // TODO(b/316566238): Use TMA info collected here in XLA runtime.
+  // // TODO(b/316566238): Use TMA info collected here in XLA runtime.
   mlir::triton::gpu::TMAMetadataTy tma_infos;
   pm.addPass(mt::createConvertTritonGPUToLLVMPass(ccAsInt,
-                                                  /*target=*/mt::Default,
+                                                  /*target=*/mlir::triton::NVVM,
                                                   &tma_infos));
+  if (cc.IsAtLeastHopper() && config.enable_warp_specialization) {
+    pm.addPass(mlir::createLoopInvariantCodeMotionPass());
+    pm.addPass(mlir::createCSEPass());
+  }
   pm.addPass(mt::createConvertNVGPUToLLVMPass());
   pm.addPass(mlir::createArithToLLVMConversionPass());
   pm.addPass(mlir::createCanonicalizerPass());
@@ -1149,8 +1156,8 @@ Value EmitMultiSelect(ImplicitLocOpBuilder b, Value index, ValueRange limits,
   return result;
 }
 
-Status UncompilableMatmul(absl::string_view explanation) {
-  Status s = absl::CancelledError(explanation);
+absl::Status UncompilableMatmul(absl::string_view explanation) {
+  absl::Status s = absl::CancelledError(explanation);
   s.SetPayload(kUncompilableFusion, absl::Cord(explanation));
   return s;
 }
@@ -1234,9 +1241,9 @@ class MatMulEmitterHelper {
         values);
   }
 
-  StatusOr<Value> EmitTensorPointer(const HloInstruction* hlo, const Side& side,
-                                    ValueRange bases, Value pid_k,
-                                    std::vector<int32_t>& boundary_checks) {
+  absl::StatusOr<Value> EmitTensorPointer(
+      const HloInstruction* hlo, const Side& side, ValueRange bases,
+      Value pid_k, std::vector<int32_t>& boundary_checks) {
     // Parameters of MakeTensorPtrOp to be generated by this function.
     Value base;
     std::vector<Value> bounds;
@@ -1540,11 +1547,13 @@ ConstHloInstructionSet ScopeInputs(const TritonFusionAnalysis& analysis,
 }
 
 // Variable naming: lhs [m, k] x rhs [k, n] -> out [m, n].
-Status EmitMatMul(mlir::OpBuilder builder, absl::string_view libdevice_path,
-                  const se::DeviceDescription& device_info,
-                  const TritonFusionAnalysis& analysis,
-                  const HloComputation* computation, mlir::triton::FuncOp fn,
-                  const TritonGemmConfig& config) {
+absl::Status EmitMatMul(mlir::OpBuilder builder,
+                        absl::string_view libdevice_path,
+                        const se::DeviceDescription& device_info,
+                        const TritonFusionAnalysis& analysis,
+                        const HloComputation* computation,
+                        mlir::triton::FuncOp fn,
+                        const TritonGemmConfig& config) {
   const HloDotInstruction* dot_instr = DynCast<HloDotInstruction>(
       hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot));
   // Use 32-bit indexing if addressing any of the inputs or the output (which
@@ -1805,14 +1814,16 @@ Status EmitMatMul(mlir::OpBuilder builder, absl::string_view libdevice_path,
     b.create<mt::StoreOp>(tensor_pointer, values_out[producer], boundary_checks,
                           mt::CacheModifier::NONE, mt::EvictionPolicy::NORMAL);
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status EmitSoftMax(mlir::OpBuilder builder, absl::string_view libdevice_path,
-                   const se::DeviceDescription& device_info,
-                   const TritonFusionAnalysis& analysis,
-                   const HloComputation* computation, mlir::triton::FuncOp fn,
-                   const TritonGemmConfig& config) {
+absl::Status EmitSoftMax(mlir::OpBuilder builder,
+                         absl::string_view libdevice_path,
+                         const se::DeviceDescription& device_info,
+                         const TritonFusionAnalysis& analysis,
+                         const HloComputation* computation,
+                         mlir::triton::FuncOp fn,
+                         const TritonGemmConfig& config) {
   const HloInstruction* root = computation->root_instruction();
   auto loc = mlir::NameLoc::get(builder.getStringAttr(root->name()));
   ImplicitLocOpBuilder b(loc, builder);
@@ -1907,6 +1918,7 @@ Status EmitSoftMax(mlir::OpBuilder builder, absl::string_view libdevice_path,
     Value base_offset = batch_iterspec ? row_offset : zero_offset;
 
     // We assume that the reduced axis of this parameter has length row_len.
+    // TODO(b/316637896): Relax assumption that param reduce_dim_len == row_len.
     CHECK_EQ(reduce_dim_len, row_len);
 
     // block_size must be a power of two.
@@ -1948,12 +1960,12 @@ Status EmitSoftMax(mlir::OpBuilder builder, absl::string_view libdevice_path,
 
   b.create<mt::StoreOp>(store_tensor, result, std::vector<int32_t>{0},
                         mt::CacheModifier::NONE, mt::EvictionPolicy::NORMAL);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Simplified copy of translateLLVMToLLVMIR which in addition takes
 // path to libdevice directly as an argument.
-StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
+absl::StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
     llvm::LLVMContext* llvmContext, mlir::ModuleOp module,
     absl::string_view libdevice_path) {
   mlir::DialectRegistry registry;
@@ -1965,7 +1977,7 @@ StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
   std::unique_ptr<llvm::Module> llvmModule =
       mlir::translateModuleToLLVMIR(module, *llvmContext);
   if (!llvmModule) {
-    return InternalError("Failed to emit LLVM IR.");
+    return Internal("Failed to emit LLVM IR.");
   }
 
   // Link external libraries before performing optimizations.
@@ -1978,7 +1990,7 @@ StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
 
   if (auto err = optPipeline(llvmModule.get())) {
     llvm::errs() << err;
-    return InternalError("Failed to optimize LLVM IR.");
+    return Internal("Failed to optimize LLVM IR.");
   }
 
   return llvmModule;
@@ -1995,7 +2007,7 @@ std::string GetLibdevicePath(const HloComputation* hlo_computation) {
 
 }  // namespace
 
-StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
+absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     const TritonFusionAnalysis& analysis, absl::string_view fn_name,
     const HloComputation* hlo_computation,
     const se::DeviceDescription& device_info, const TritonGemmConfig& config,
@@ -2046,7 +2058,7 @@ StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
   return std::move(triton_module);
 }
 
-StatusOr<TritonWrapperResult> TritonWrapper(
+absl::StatusOr<TritonWrapperResult> TritonWrapper(
     const TritonFusionAnalysis& analysis, absl::string_view fn_name,
     const HloComputation* hlo_computation, absl::string_view fusion_kind,
     const se::CudaComputeCapability& cc,
@@ -2150,7 +2162,7 @@ StatusOr<TritonWrapperResult> TritonWrapper(
   }
 
   if (!CreateTritonPipeline(pm, cc, config).ok()) {
-    return InternalError("Failed to create Triton pipeline.");
+    return Internal("Failed to create Triton pipeline.");
   }
   if (log_stream.has_value()) {
     pm.printAsTextualPipeline(log_stream.value());
@@ -2169,7 +2181,7 @@ StatusOr<TritonWrapperResult> TritonWrapper(
   }
 
   if (!succeeded) {
-    return InternalError("Failed to compile Triton kernel.");
+    return Internal("Failed to compile Triton kernel.");
   }
 
   const int shared_mem_bytes =

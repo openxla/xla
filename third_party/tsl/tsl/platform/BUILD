@@ -63,8 +63,10 @@ cc_library(
     hdrs = ["base64.h"],
     deps = [
         ":errors",
+        ":macros",
         ":status",
         ":stringpiece",
+        ":types",
     ],
 )
 

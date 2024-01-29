@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ class FusionInterface {
  public:
   virtual ~FusionInterface() = default;
 
-  virtual StatusOr<FusionEmissionResult> Emit(
+  virtual absl::StatusOr<FusionEmissionResult> Emit(
       IrEmitterContext& ir_emitter_context, mlir::lmhlo::FusionOp fusion_op,
       const HloFusionInstruction& fusion) const = 0;
 };
@@ -84,44 +84,45 @@ class KernelFusionInterface : public FusionInterface {
 
  protected:
   // Returns the default mapping for the given launch dimensions: linearizes
-  // the thread index and then reshapes it into the output layout. Assumes no
-  // unrolling.
+  // the thread index and then reshapes it into the output layout.
   static mlir::AffineMap GetDefaultThreadIdToOutputIndexingMap(
-      const LaunchDimensions& launch_dims, const Shape& output_shape,
-      mlir::MLIRContext* ctx);
+      const LaunchDimensions& launch_dims, int unroll_factor,
+      const Shape& output_shape, mlir::MLIRContext* ctx);
 
   // Populates the ranges for d0, d1, d2, d3, d4, d5 from the thread counts and
   // block sizes in the given launch dimensions.
-  static Domain GetThreadIdDomain(const LaunchDimensions& launch_dims);
+  static Domain GetThreadIdDomain(const LaunchDimensions& launch_dims,
+                                  int unroll_factor);
 };
 
 // Base class for fusions that are implemented using a single kernel, which is
 // generated using LLVM.
 class KernelFusionEmitterBase : public KernelFusionInterface {
  public:
-  StatusOr<FusionEmissionResult> Emit(
+  absl::StatusOr<FusionEmissionResult> Emit(
       IrEmitterContext& ir_emitter_context, mlir::lmhlo::FusionOp fusion_op,
       const HloFusionInstruction& fusion) const final;
 
  protected:
   // Creates initializer thunks that need to run before the main kernel.
-  virtual StatusOr<FusionEmissionResult> EmitInitializers(
+  virtual absl::StatusOr<FusionEmissionResult> EmitInitializers(
       IrEmitterContext& ir_emitter_context, mlir::lmhlo::FusionOp fusion_op,
       const HloFusionInstruction& fusion) const {
     // No initializers by default.
     return FusionEmissionResult{};
   }
 
-  virtual Status EmitKernel(IrEmitterContext& ir_emitter_context,
-                            const HloFusionInstruction& fusion,
-                            const LaunchDimensions& launch_dims,
-                            std::vector<llvm_ir::IrArray> inputs,
-                            std::vector<llvm_ir::IrArray> outputs,
-                            llvm::IRBuilder<>* builder) const = 0;
+  virtual absl::Status EmitKernel(IrEmitterContext& ir_emitter_context,
+                                  const HloFusionInstruction& fusion,
+                                  const LaunchDimensions& launch_dims,
+                                  std::vector<llvm_ir::IrArray> inputs,
+                                  std::vector<llvm_ir::IrArray> outputs,
+                                  llvm::IRBuilder<>* builder) const = 0;
 };
 
-StatusOr<std::tuple<llvm::Function*, std::vector<llvm_ir::IrArray /*inputs*/>,
-                    std::vector<llvm_ir::IrArray> /*outputs*/>>
+absl::StatusOr<
+    std::tuple<llvm::Function*, std::vector<llvm_ir::IrArray /*inputs*/>,
+               std::vector<llvm_ir::IrArray> /*outputs*/>>
 BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
                      const std::string& suggested_name,
                      absl::Span<const KernelArgument> arguments,

@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,33 +15,41 @@ limitations under the License.
 
 #include "xla/service/rendezvous.h"
 
-#include "absl/synchronization/mutex.h"
+#include <cstdlib>
+#include <string_view>
+
+#include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "tsl/platform/logging.h"
 
-namespace xla {
+namespace xla::internal {
 
-void AwaitAndLogIfStuck(absl::Mutex& mutex, const absl::Condition& condition,
-                        absl::Duration warn_stuck_timeout,
+void AwaitAndLogIfStuck(absl::Notification& ready, std::string_view name,
+                        size_t num_threads, absl::Duration warn_stuck_timeout,
                         absl::Duration terminate_timeout) {
-  if (mutex.AwaitWithTimeout(condition, warn_stuck_timeout)) {
+  if (ready.WaitForNotificationWithTimeout(warn_stuck_timeout)) {
     return;
   }
 
-  LOG(ERROR) << "This thread has been waiting for "
+  LOG(ERROR) << "This thread has been waiting for `" << name << "` for "
              << absl::ToInt64Seconds(warn_stuck_timeout)
-             << " seconds and may be stuck:";
+             << " seconds and may be stuck. Expected " << num_threads
+             << " threads to join the rendezvous, but not all of them arrived"
+             << " on time.";
 
-  if (mutex.AwaitWithTimeout(condition, terminate_timeout)) {
+  if (ready.WaitForNotificationWithTimeout(terminate_timeout)) {
     LOG(ERROR) << "Thread is unstuck! Warning above was a false-positive. "
                   "Perhaps the timeout is too short.";
     return;
   }
 
-  LOG(ERROR)
-      << "Termination timeout of " << absl::ToInt64Seconds(terminate_timeout)
-      << " seconds exceeded. Exiting to ensure a consistent program state.";
+  LOG(ERROR) << "Termination timeout for `" << name << "` of "
+             << absl::ToInt64Seconds(terminate_timeout)
+             << " seconds exceeded. Exiting to ensure a consistent program"
+             << " state. Expected " << num_threads
+             << " threads to join the rendezvous, but not all of them arrived"
+             << " on time.";
   std::exit(42);
 }
 
-}  // namespace xla
+}  // namespace xla::internal

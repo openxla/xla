@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/map_util.h"
 #include "xla/service/buffer_value_containers.h"
-#include "xla/service/heap_simulator.h"
+#include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
@@ -205,7 +205,7 @@ Status GatherComputationsByAllocationType(
                                               true));  // Thread local.
             break;
           default:
-            return InternalError("Unexpected calling opcode: %s",
+            return Internal("Unexpected calling opcode: %s",
                                  HloOpcodeString(instruction->opcode()));
         }
       }
