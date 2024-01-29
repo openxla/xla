@@ -6823,7 +6823,6 @@ cc_library(
 xla_cc_test(
     name = "lockable_test",
     srcs = ["lockable_test.cc"],
-    tags = ["no_arm64"],
     deps = [
         ":lockable",
         "@com_google_absl//absl/synchronization",
