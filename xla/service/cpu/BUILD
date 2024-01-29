@@ -1612,6 +1612,7 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
     ] + mkl_deps(),
 )
@@ -1681,6 +1682,8 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
     ] + mkl_deps(),
 )
 
@@ -1701,6 +1704,8 @@ cc_library(
         "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
+        "@com_google_absl//absl/algorithm:container",
+        "@tsl//tsl/platform:platform_port",
     ] + mkl_deps(),
 )
 
