@@ -61,6 +61,10 @@ limitations under the License.
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
+
+
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/service/custom_call_status.h"
@@ -72,6 +76,8 @@ limitations under the License.
 namespace xla::gpu {
 
 using MemoryAccess = CommandBufferCmd::MemoryAccess;
+using tsl::profiler::TraceMe;
+using tsl::profiler::TraceMeEncode;
 
 static std::string_view ReductionKindString(ReductionKind kind) {
   switch (kind) {
