@@ -84,6 +84,8 @@ class CommandBufferCmd {
   };
 
   using BufferUsageVector = absl::InlinedVector<BufferUsage, 4>;
+  using CommandsRecordAllocations =
+      std::vector<std::optional<std::vector<se::DeviceMemoryBase>>>;
 
   // See Thunk documentation for XLA execution stages (prepare, initialize,
   // execute). Commands mirror thunks as they are executed as CommandBufferThunk
@@ -180,9 +182,16 @@ class CommandBufferCmdSequence {
                           Thunk::ExecutableSource source);
 
   // Records all commands added to a sequence into the given command buffer.
-  absl::Status Record(const CommandBufferCmd::RecordParams& params,
-                      se::CommandBuffer* command_buffer,
-                      RecordMode mode = RecordMode::kExclusive);
+  absl::Status Record(
+      const CommandBufferCmd::RecordParams& params,
+      se::CommandBuffer* command_buffer,
+      RecordMode mode = RecordMode::kExclusive);
+
+  absl::Status Record(
+      const CommandBufferCmd::RecordParams& params,
+      CommandBufferCmd::CommandsRecordAllocations* commands_record_allocs,
+      se::CommandBuffer* command_buffer,
+      RecordMode mode = RecordMode::kExclusive);
 
   // Returns buffers referenced by commands in this sequence.
   const absl::flat_hash_set<CommandBufferCmd::BufferUsage>& buffers() const;
@@ -205,6 +214,10 @@ class CommandBufferCmdSequence {
     std::unique_ptr<CommandBufferCmd> cmd;
     bool requires_barrier;
   };
+
+  absl::StatusOr<std::vector<bool>> CommandsShouldRecord(
+      const CommandBufferCmd::RecordParams& params,
+      CommandBufferCmd::CommandsRecordAllocations* commands_record_allocs);
 
   // Functions for tracking buffer usage of recorded commands and figuring out
   // when the next command requires a barrier for correctness.
@@ -242,6 +255,7 @@ class ComputationIdCmd : public CommandBufferCmd {
                           Thunk::ExecutableSource source) override;
 
   absl::Status Record(const RecordParams& params,
+                      
                       se::CommandBuffer* command_buffer) override;
 
   BufferUsageVector buffers() override;

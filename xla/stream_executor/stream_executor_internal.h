@@ -225,6 +225,8 @@ class CommandBufferInterface {
   // Returns command buffer state.
   virtual CommandBuffer::State state() const = 0;
 
+  virtual absl::Status SwitchToSkipState() = 0;
+  virtual absl::Status SwitchToUpdateState() = 0;
  private:
   CommandBufferInterface(const CommandBufferInterface&) = delete;
   void operator=(const CommandBufferInterface&) = delete;

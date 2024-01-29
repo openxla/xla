@@ -57,12 +57,6 @@ class CommandBufferThunk : public Thunk {
   struct ExecutorCommandBuffer {
     explicit ExecutorCommandBuffer(se::CommandBuffer command_buffer);
 
-    // Returns true if `commands` cmd sequence has to be recorded into
-    // `command_buffer` to update it (see `recorded_allocs` below).
-    bool ShouldUpdateCommandBuffer(const CommandBufferCmdSequence& commands,
-                                   const CommandBufferCmd::RecordParams& params)
-        ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
-
     // se::CommandBuffer is not thread safe, and we guard it with a mutex to
     // guarantee that we do not mutate it concurrently.
     absl::Mutex mutex;
@@ -87,7 +81,8 @@ class CommandBufferThunk : public Thunk {
     // execution on a stream. All other pieces of information (like thread
     // and block sizes) captured by commands at construction time and do not
     // change.
-    std::vector<se::DeviceMemoryBase> recorded_allocs ABSL_GUARDED_BY(mutex);
+    CommandBufferCmd::CommandsRecordAllocations commands_record_allocs
+        ABSL_GUARDED_BY(mutex);
 
     // Number of command buffer executions since last update.
     int64_t num_executions ABSL_GUARDED_BY(mutex) = 0;

@@ -98,6 +98,9 @@ class GpuCommandBuffer : public internal::CommandBufferInterface {
   CommandBuffer::Mode mode() const override { return mode_; }
   CommandBuffer::State state() const override { return state_; }
 
+  absl::Status SwitchToSkipState() override;
+  absl::Status SwitchToUpdateState() override;
+
   // A helper template for launching typed kernels.
   template <typename... Params, typename... Args>
   absl::Status Launch(const TypedKernel<Params...>& kernel,

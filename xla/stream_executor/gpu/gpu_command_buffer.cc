@@ -62,6 +62,8 @@ std::string_view to_string(State state) {
       return "create";
     case State::kUpdate:
       return "update";
+    case State::kSkip:
+      return "skip";
     case State::kFinalized:
       return "finalized";
   }
@@ -244,7 +246,8 @@ absl::Status GpuCommandBuffer::CheckNumCommandBuffers(
 absl::Status GpuCommandBuffer::Barrier(StreamExecutor* executor) {
   // We don't support adding barriers as root nodes and simply skip them.
   if ((state_ == State::kCreate && nodes_.empty()) ||
-      (state_ == State::kUpdate && update_state_.node_idx == 0))
+      ((state_ == State::kUpdate || state_ == State::kSkip) &&
+       update_state_.node_idx == 0))
     return absl::OkStatus();
 
   if (state_ == State::kCreate) {
@@ -276,7 +279,7 @@ absl::Status GpuCommandBuffer::Barrier(StreamExecutor* executor) {
     return absl::OkStatus();
   }
 
-  if (state_ == State::kUpdate) {
+  if ((state_ == State::kUpdate) || (state_ == State::kSkip)) {
     // Increment update node index only if we added a no-op node earlier and it
     // means that we just updated a "real" barrier node, otherwise barrier is
     // the last updated node.
@@ -320,6 +323,11 @@ absl::Status GpuCommandBuffer::LaunchWithPackedArgs(
         exec_, node, kernel.name(), gpu_func, blocks.x, blocks.y, blocks.z,
         threads.x, threads.y, threads.z, packed_args.number_of_shared_bytes(),
         kernel_params, /*extra=*/nullptr);
+  }
+
+  if (state_ == State::kSkip) {
+    update_state_.node_idx++;
+    return absl::OkStatus();
   }
 
   return UnsupportedStateError(state_);
@@ -372,6 +380,11 @@ absl::Status GpuCommandBuffer::AddNestedCommandBuffer(
     return GpuDriver::GraphExecChildNodeSetParams(exec_, node, child_graph);
   }
 
+  if (state_ == State::kSkip) {
+    update_state_.node_idx++;
+    return absl::OkStatus();
+  }
+
   return UnsupportedStateError(state_);
 }
 
@@ -395,6 +408,11 @@ absl::Status GpuCommandBuffer::MemcpyDeviceToDevice(DeviceMemoryBase* dst,
         AsDevicePtr(src), size);
   }
 
+  if (state_ == State::kSkip) {
+    update_state_.node_idx++;
+    return absl::OkStatus();
+  }
+
   return UnsupportedStateError(state_);
 }
 
@@ -416,6 +434,11 @@ absl::Status GpuCommandBuffer::Memset(DeviceMemoryBase* dst,
     return GpuDriver::GraphExecMemsetNodeSetParams(
         parent_->gpu_context(), exec_, node, AsDevicePtr(*dst), bit_pattern,
         num_elements);
+  }
+
+  if (state_ == State::kSkip) {
+    update_state_.node_idx++;
+    return absl::OkStatus();
   }
 
   return UnsupportedStateError(state_);
@@ -444,7 +467,7 @@ absl::StatusOr<DeviceMemoryBase> GpuCommandBuffer::Allocate(size_t bytes) {
     return DeviceMemoryBase(reinterpret_cast<void*>(ptr), bytes);
   }
 
-  if (state_ == State::kUpdate) {
+  if (state_ == State::kUpdate || state_ == State::kSkip) {
     // Memory allocation node implemented through CUDA graph does not allocate
     // new memory region on update, just return the memory region allocated
     // during the create step.
@@ -471,7 +494,7 @@ absl::Status GpuCommandBuffer::Free(DeviceMemoryBase dst) {
     return absl::OkStatus();
   }
 
-  if (state_ == State::kUpdate) {
+  if (state_ == State::kUpdate || state_ == State::kSkip) {
     // memfree node implemented through CUDA graph only free buffers that is
     // allocated through memory alloc node, so buffer address will not change,
     // no update is required.
@@ -623,6 +646,11 @@ absl::Status GpuCommandBuffer::CreateConditionalCommand(
     return UpdateConditionalCommandBuffers(
         cond_cmd_buffers.handles,
         absl::MakeSpan(cond_cmd_buffers.command_buffers), builders);
+  }
+
+  if (state_ == State::kSkip) {
+    update_state_.conditional_idx++;
+    update_state_.node_idx += num_handles;
   }
 
   return UnsupportedStateError(state_);
@@ -859,7 +887,8 @@ absl::Status GpuCommandBuffer::Finalize() {
 
     TF_RETURN_IF_ERROR(DisableBarriersExecution(exec_));
 
-  } else if (mode_ == Mode::kPrimary && state_ == State::kUpdate) {
+  } else if (mode_ == Mode::kPrimary &&
+             (state_ == State::kUpdate || state_ == State::kSkip)) {
     // If this is a finalization after update, we don't have to do anything as
     // each individual command already updated executable graph.
     VLOG(5) << "Finalize executable graph " << exec_ << " update #"
@@ -893,6 +922,20 @@ absl::Status GpuCommandBuffer::Update() {
   state_ = State::kUpdate;
   barrier_ = nullptr;
   update_state_ = UpdateState();
+  return absl::OkStatus();
+}
+
+absl::Status GpuCommandBuffer::SwitchToSkipState() {
+  if (state_ != CommandBuffer::State::kUpdate) {
+    return absl::InternalError(absl::StrCat("Invalid command buffer state switch from ",
+                                 to_string(state_), " to Skip state"));
+  }
+  state_ = CommandBuffer::State::kSkip;
+  return absl::OkStatus();
+}
+
+absl::Status GpuCommandBuffer::SwitchToUpdateState() {
+  state_ = CommandBuffer::State::kUpdate;
   return absl::OkStatus();
 }
 

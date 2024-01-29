@@ -78,31 +78,6 @@ CommandBufferThunk::CommandBufferThunk(CommandBufferCmdSequence commands,
   TrackCommandBuffers(state_);
 }
 
-bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
-    const CommandBufferCmdSequence& commands,
-    const CommandBufferCmd::RecordParams& params) {
-  bool should_update = false;
-  const BufferAllocations* allocs = params.buffer_allocations;
-
-  // We check only allocations referenced by commands in a cmd sequence, and
-  // leave every other entry default initialized (nullptr device memory).
-  for (BufferAllocation::Index index : commands.allocs_indices()) {
-    se::DeviceMemoryBase alloc = allocs->GetDeviceAddress(index);
-
-    if (recorded_allocs.size() <= index) {
-      recorded_allocs.resize(index + 1);
-      should_update = true;
-    }
-
-    if (!recorded_allocs[index].IsSameAs(alloc)) {
-      recorded_allocs[index] = alloc;
-      should_update = true;
-    }
-  }
-
-  return should_update;
-}
-
 absl::Status CommandBufferThunk::Prepare(const PrepareParams& params,
                                          ResourceRequests& resource_requests) {
   // We might end up with empty command sequence if all of the captured fusions
@@ -155,8 +130,11 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // before execution, because command buffers when instantiated will allocate
   // memory on device and this might lead to deadlocks when we have concurrent
   // NCCL operations in flight.
-  if (cmd_buffer->command_buffer.state() == se::CommandBuffer::State::kCreate &&
-      cmd_buffer->ShouldUpdateCommandBuffer(commands_, record_params)) {
+  if (cmd_buffer->command_buffer.state() == se::CommandBuffer::State::kCreate) {
+    TF_RET_CHECK(cmd_buffer->commands_record_allocs.size() == 0)
+        << "Command buffer is in Create state, but recorded allocations is not "
+           "empty";
+    cmd_buffer->commands_record_allocs.resize(commands_.size(), std::nullopt);
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
             << " by recoding command buffer cmd sequence"
@@ -170,8 +148,9 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-    TF_RETURN_IF_ERROR(
-        commands_.Record(record_params, &cmd_buffer->command_buffer));
+    TF_RETURN_IF_ERROR(commands_.Record(record_params,
+                                        &cmd_buffer->commands_record_allocs,
+                                        &cmd_buffer->command_buffer));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
     VLOG(3) << "Initialized command buffer on device #"
@@ -215,12 +194,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
       params.collective_params,
       params.collective_cliques};
 
-  if (cmd_buffer->ShouldUpdateCommandBuffer(commands_, record_params)) {
-    VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
-            << " by recoding command buffer cmd sequence" << " after "
-            << cmd_buffer->num_executions << " executions since last update"
-            << "; num_commands=" << commands_.size();
-
+  {
     TraceMe trace([&] {
       cmd_buffer->mutex.AssertHeld();
       return TraceMeEncode("command_buffer::update",
@@ -231,13 +205,13 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-    TF_RETURN_IF_ERROR(
-        commands_.Record(record_params, &cmd_buffer->command_buffer));
+    TF_RETURN_IF_ERROR(commands_.Record(record_params,
+                                        &cmd_buffer->commands_record_allocs,
+                                        &cmd_buffer->command_buffer));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
     VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)
             << " μs; num_commands=" << commands_.size();
-    cmd_buffer->num_executions = 0;
   }
 
   ++cmd_buffer->num_executions;

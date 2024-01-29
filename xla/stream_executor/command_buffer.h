@@ -64,14 +64,16 @@ class CommandBuffer {
   //
   //   (1) kCreate:    a new command buffer under construction
   //   (2) kUpdate:    updating a previously finalized command buffer
-  //   (3) kFinalized: command buffer ready for execution
+  //   (3) kSkip:      Skip following command buffer nodes during updating
+  //   (4) kFinalized: command buffer ready for execution
   //
   // Supported state transitions:
   //
   //   (1) Finalize: (kCreate|kUpdate) -> kFinalized
-  //   (2) Update:   kFinalized -> kUpdate
+  //   (2) Update:   (kFinalized|kSkip) -> kUpdate
+  //   (3) Skip:     kUpdate -> kSkip
   //
-  enum class State { kCreate, kUpdate, kFinalized };
+  enum class State { kCreate, kUpdate, kSkip, kFinalized };
 
   // Command buffers have two modes of execution:
   //
@@ -222,6 +224,17 @@ class CommandBuffer {
 
   // Returns command buffer state.
   State state() const;
+
+  // Returns command buffer state.
+  void SetState(State new_state);
+
+  // Switch to Skip state to skip following update operations when detects
+  // addresses are not changed, return the original state.
+  absl::Status SwitchToSkipState();
+
+  // Switch back to Update state to indicate that following update operations
+  // need to be recorded.
+  absl::Status SwitchToUpdateState();
 
   //===--------------------------------------------------------------------===//
   // Semi-internal APIs

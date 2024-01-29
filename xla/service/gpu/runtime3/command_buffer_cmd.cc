@@ -206,8 +206,76 @@ static std::string_view RecordModeString(
   }
 }
 
+absl::StatusOr<std::vector<bool>> CommandBufferCmdSequence::CommandsShouldRecord(
+    const CommandBufferCmd::RecordParams& params,
+    CommandBufferCmd::CommandsRecordAllocations* commands_record_allocs) {
+
+  TraceMe trace([&] {
+    return TraceMeEncode(
+        "command_buffer_cmd::CommandBufferCmdSequence::CommandsShouldRecord",
+        {{"device", params.executor->device_ordinal()},
+         {"num_commands", commands_.size()}});
+  });
+  uint64_t start_micros = tsl::Env::Default()->NowMicros();
+
+  std::vector<bool> should_record_vec;
+  if (commands_record_allocs == nullptr) {
+    should_record_vec.resize(commands_.size(), true);
+    return should_record_vec;
+  }
+  should_record_vec.reserve(commands_.size());
+  const BufferAllocations* allocs = params.buffer_allocations;
+  for (int i = 0; i < commands_.size(); i++) {
+    Command& command = commands_.at(i);
+    auto cmd_buffer_usage_vec = command.cmd->buffers();
+    std::optional<std::vector<se::DeviceMemoryBase>>& command_record_allocs =
+        commands_record_allocs->at(i);
+    bool should_record_cmd = false;
+    if (command_record_allocs) {
+      if (cmd_buffer_usage_vec.size() != command_record_allocs.value().size()) {
+        return absl::InternalError(
+            absl::StrCat(" Command recorded allocations count ",
+                         command_record_allocs.value().size(),
+                         " is different with Command usage allocations count ",
+                         cmd_buffer_usage_vec.size()));
+      }
+      for (int i = 0; i < cmd_buffer_usage_vec.size(); i++) {
+        BufferAllocation::Index index = cmd_buffer_usage_vec[i].slice.index();
+        se::DeviceMemoryBase new_alloc_addr = allocs->GetDeviceAddress(index);
+        if (!command_record_allocs.value()[i].IsSameAs(new_alloc_addr)) {
+          should_record_cmd = true;
+          VLOG(3) << "Updating command due to pointer change for allocation "
+                  << index << ", original address: "
+                  << command_record_allocs.value()[i].opaque() << " with "
+                  << new_alloc_addr.opaque();
+          command_record_allocs.value()[i] = new_alloc_addr;
+        }
+      }
+    } else {
+      should_record_cmd = true;
+      command_record_allocs = std::vector<se::DeviceMemoryBase>();
+      command_record_allocs.value().reserve(cmd_buffer_usage_vec.size());
+      for (int i = 0; i < cmd_buffer_usage_vec.size(); i++) {
+        BufferAllocation::Index index = cmd_buffer_usage_vec[i].slice.index();
+        se::DeviceMemoryBase new_alloc_addr = allocs->GetDeviceAddress(index);
+        command_record_allocs.value().push_back(new_alloc_addr);
+        VLOG(3) << "Recording command initial buffer for allocation " << index
+                << ", address: " << new_alloc_addr.opaque();
+      }
+    }
+    should_record_vec.push_back(should_record_cmd);
+  }
+  uint64_t end_micros = tsl::Env::Default()->NowMicros();
+  VLOG(3) << "CommandBufferSequence::CommandsShouldREcord #"
+          << params.executor->device_ordinal() << " in "
+          << (end_micros - start_micros)
+          << " μs; num_commands=" << commands_.size();
+  return should_record_vec;
+}
+
 absl::Status CommandBufferCmdSequence::Record(
     const CommandBufferCmd::RecordParams& params,
+    CommandBufferCmd::CommandsRecordAllocations* commands_record_allocs,
     se::CommandBuffer* command_buffer, RecordMode mode) {
   VLOG(3) << "Record " << commands_.size() << " commands into command buffer"
           << "; mode=" << RecordModeString(mode);
@@ -222,7 +290,16 @@ absl::Status CommandBufferCmdSequence::Record(
   // Track the number of commands recorded between barriers.
   int64_t num_recorded_commands = 0;
 
-  for (auto& command : commands_) {
+  TF_ASSIGN_OR_RETURN(std::vector<bool> commands_should_record_vec,
+                      CommandsShouldRecord(params, commands_record_allocs));
+
+  for (int i = 0; i < commands_.size(); i++) {
+    Command& command = commands_.at(i);
+    TF_RET_CHECK(commands_should_record_vec.size() == commands_.size())
+        << "Commands should record vector size should match commands size";
+    if (!commands_should_record_vec[i]) {
+      TF_RETURN_IF_ERROR(command_buffer->SwitchToSkipState());
+    } 
     if (command.requires_barrier) {
       VLOG(3) << "Add command buffer barrier after " << num_recorded_commands
               << " recorded commands";
@@ -232,6 +309,9 @@ absl::Status CommandBufferCmdSequence::Record(
 
     TF_RETURN_IF_ERROR(command.cmd->Record(params, command_buffer));
     ++num_recorded_commands;
+    if (!commands_should_record_vec[i]) {
+      TF_RETURN_IF_ERROR(command_buffer->SwitchToUpdateState());
+    } 
   }
 
   if (mode == RecordMode::kExclusive) {
@@ -244,6 +324,13 @@ absl::Status CommandBufferCmdSequence::Record(
           << " μs; mode=" << RecordModeString(mode);
 
   return absl::OkStatus();
+}
+
+absl::Status CommandBufferCmdSequence::Record(
+    const CommandBufferCmd::RecordParams& params,
+    se::CommandBuffer* command_buffer,
+    RecordMode mode) {
+  return Record(params, nullptr, command_buffer, mode);
 }
 
 const absl::flat_hash_set<CommandBufferCmd::BufferUsage>&

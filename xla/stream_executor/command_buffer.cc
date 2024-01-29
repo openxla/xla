@@ -197,6 +197,14 @@ CommandBuffer::State CommandBuffer::state() const {
   return implementation_->state();
 }
 
+absl::Status CommandBuffer::SwitchToSkipState() {
+  return implementation_->SwitchToSkipState();
+}
+
+absl::Status CommandBuffer::SwitchToUpdateState() {
+  return implementation_->SwitchToUpdateState();
+}
+
 absl::Status CommandBuffer::Finalize() { return implementation_->Finalize(); }
 
 absl::Status CommandBuffer::Update() { return implementation_->Update(); }
