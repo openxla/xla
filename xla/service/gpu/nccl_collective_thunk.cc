@@ -51,11 +51,14 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_activation.h"
-#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
+
+#if GOOGLE_CUDA
+#include "xla/stream_executor/gpu/gpu_driver.h"
+#endif  // GOOGLE_CUDA
 
 namespace xla {
 namespace gpu {
@@ -264,10 +267,6 @@ absl::StatusOr<NcclComm::Lock> LockNcclComm(
       const NcclCliqueIdCallback* clique_id_callback,
       GetNcclCliqueIdCallback(params.nccl_clique_id_callback, is_local));
 
-#ifdef GOOGLE_CUDA
-  se::gpu::ScopedActivateExecutorContext scoped_context(params.stream_executor);
-#endif  // GOOGLE_CUDA
-
   return AcquireNcclComm(params.run_id, OpId(op_id), std::move(participants),
                          num_local_participants, *clique_id_callback, rank,
                          stream_id, enable_clique_optimization);
@@ -309,7 +308,7 @@ Status RegisterBufferOnce(NcclApi* nccl_api, int device_ordinal,
     absl::Mutex mu;
     // Device ordinal, communicator, and base pointer address.
     absl::flat_hash_set<
-        std::tuple<int, NcclApi::NcclCommHandle, se::gpu::GpuDevicePtr>>
+        std::tuple<int, NcclApi::NcclCommHandle, void*>>
         records ABSL_GUARDED_BY(mu);
     // Buffers could be deregistered with ncclCommDeregister.
     std::vector<NcclApi::NcclRegisteredBufferHandle> handles
@@ -320,11 +319,16 @@ Status RegisterBufferOnce(NcclApi* nccl_api, int device_ordinal,
   // Since each XLA buffer is a slice into a larger BFCAllocator chunk, first
   // get the base address of buffer. We will use the base address to keep track
   // of which chunks we have registered.
-  se::gpu::GpuDevicePtr base_ptr;
+  void* base_ptr;
   size_t base_size;
+#ifdef GOOGLE_CUDA
   TF_RETURN_IF_ERROR(se::gpu::GpuDriver::GetPointerAddressRange(
-      reinterpret_cast<se::gpu::GpuDevicePtr>(buffer.opaque()), &base_ptr,
-      &base_size));
+      reinterpret_cast<se::gpu::GpuDevicePtr>(buffer.opaque()),
+      reinterpret_cast<se::gpu::GpuDevicePtr*>(&base_ptr), &base_size));
+#else  // GOOGLE_CUDA
+  base_ptr = nullptr;
+  base_size = 0;
+#endif  // GOOGLE_CUDA
 
   absl::MutexLock lock(&all_registered.mu);
   if (!all_registered.records.contains({device_ordinal, comm, base_ptr})) {
