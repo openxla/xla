@@ -58,13 +58,12 @@ struct GpuAllocatorConfig {
   // allocator will allocate more memory as allocations are requested.
   bool preallocate = true;
 
-  // Maximum amount of collective memory (ncclMemAlloc) to reserve. Must be set
-  // when using `xla_gpu_enable_nccl_user_buffers=true`. If this value is 0,
-  // collective memory will not be allocated. Should be set to a multiple of
-  // 512MB to avoid wasting memory due to granularity requirements. If
-  // TF_COLLECTIVE_MEMORY_PREALLOCATE=1 is set, the allocator will immediately
-  // allocate the maximum amount.
-  size_t collective_memory_size = 4 * (1LL << 30);
+  // Amount of collective memory (ncclMemAlloc) to preallocate. If this value is
+  // 0, collective memory space will be grown as needed to fit the application's
+  // usage, with the drawback of potentially higher fragmentation. If set,
+  // should be set to a multiple of 512MB to avoid wasting memory due to
+  // granularity requirements.
+  size_t collective_memory_size = 0;
 };
 
 std::unique_ptr<tsl::BFCAllocator> GetGpuHostAllocator(
@@ -76,7 +75,7 @@ StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateBFCAllocator(
 
 // Builds a BFCAllocator for all local GPUs that uses collective memory.
 StatusOr<std::unique_ptr<tsl::BFCAllocator>> CreateCollectiveBFCAllocator(
-    se::StreamExecutor* executor, size_t allocator_memory, bool preallocate);
+    se::StreamExecutor* executor, double memory_fraction, size_t collective_memory_size);
 
 }  // namespace xla
 
