@@ -230,7 +230,7 @@ class Kernel {
       std::function<absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>(
           const Kernel &kernel, const KernelArgs &args)>;
 
-  Kernel(Kernel &&from);
+  Kernel(Kernel &&from) noexcept;
 
   // Constructs an "empty" (not-yet-loaded) kernel instance.
   //
