@@ -2132,6 +2132,9 @@ std::optional<absl::InlinedVector<int64_t, 4>> ShapeUtil::ByteStrides(
     num_of_elements = RoundUpTo(
         num_of_elements, shape.layout().tail_padding_alignment_in_elements());
   }
+
+  auto alignment = shape.layout().tail_padding_alignment_in_elements();
+  num_of_elements = RoundUpTo(num_of_elements, alignment);
   return num_of_elements * ByteSizeOfPrimitiveType(shape.element_type());
 }
 
