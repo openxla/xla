@@ -284,20 +284,14 @@ GSPMDSharding::GSPMDSharding(py::tuple devices, xla::HloSharding op_sharding,
 }
 
 void RegisterSharding(py::module& m) {
-  py::object abc_module = py::module::import("abc");
-  py::object abc_meta = abc_module.attr("ABCMeta");
-  py::object abc_init = abc_module.attr("_abc_init");
+  // NOLINTNEXTLINE(bugprone-unused-raii)
+  py::class_<Sharding>(m, "Sharding", py::metaclass((PyObject*)&PyType_Type))
+      .def(py::init<>());
 
   // NOLINTNEXTLINE(bugprone-unused-raii)
-  py::class_<Sharding>(m, "Sharding", py::metaclass(abc_meta))
+  py::class_<XLACompatibleSharding, Sharding>(
+      m, "XLACompatibleSharding", py::metaclass((PyObject*)&PyType_Type))
       .def(py::init<>());
-  abc_init(py::type::of<Sharding>());
-
-  // NOLINTNEXTLINE(bugprone-unused-raii)
-  py::class_<XLACompatibleSharding, Sharding>(m, "XLACompatibleSharding",
-                                              py::metaclass(abc_meta))
-      .def(py::init<>());
-  abc_init(py::type::of<XLACompatibleSharding>());
 
   py::class_<NamedSharding, XLACompatibleSharding>(m, "NamedSharding",
                                                    py::dynamic_attr())
