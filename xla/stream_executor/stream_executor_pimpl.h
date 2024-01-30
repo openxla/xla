@@ -599,14 +599,14 @@ class ScopedModuleHandle {
                               ModuleHandle module_handle)
       : executor_(executor), module_handle_(module_handle) {}
 
-  ScopedModuleHandle(ScopedModuleHandle&& other) {
+  ScopedModuleHandle(ScopedModuleHandle&& other) noexcept {
     executor_ = other.executor_;
     module_handle_ = other.module_handle_;
     other.executor_ = nullptr;
     other.module_handle_ = ModuleHandle();
   }
 
-  ScopedModuleHandle& operator=(ScopedModuleHandle&& other) {
+  ScopedModuleHandle& operator=(ScopedModuleHandle&& other) noexcept {
     executor_ = other.executor_;
     module_handle_ = other.module_handle_;
     other.executor_ = nullptr;

@@ -57,8 +57,8 @@ class CommandBuffer {
   using Builder = std::function<absl::Status(CommandBuffer*)>;
 
   ~CommandBuffer();
-  CommandBuffer(CommandBuffer&&);
-  CommandBuffer& operator=(CommandBuffer&&);
+  CommandBuffer(CommandBuffer&&) noexcept;
+  CommandBuffer& operator=(CommandBuffer&&) noexcept;
 
   // Command buffer state:
   //
