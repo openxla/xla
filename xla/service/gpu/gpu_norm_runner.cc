@@ -64,7 +64,7 @@ absl::Status RunGpuNorm(const gpu::GpuNormConfig& config,
   operands.emplace_back(scale_buffer);
   operands.emplace_back(y_or_dx_buffer);
 
-  // The optional operands are composed of inputs followed by outputs of the
+  // The remaining operands are composed of inputs followed by outputs of the
   // library call. The expectation and norm factor are outputs of the forward
   // training layer norm, and inputs of the backward layer norm.
   if (config.kind == CudnnNormKind::kLayerForwardInfer ||

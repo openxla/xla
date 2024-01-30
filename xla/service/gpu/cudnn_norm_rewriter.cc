@@ -57,6 +57,81 @@ namespace {
 
 namespace m = match;
 
+// Traverses the graph upward starting at instr and returns the
+// first instruction that is not a convert, bitcast or reshape.
+const HloInstruction* SkipUnaryOps(const HloInstruction* instr) {
+  while (instr->opcode() == HloOpcode::kConvert ||
+         instr->opcode() == HloOpcode::kBitcast ||
+         instr->opcode() == HloOpcode::kReshape) {
+    instr = instr->operand(0);
+  }
+  return instr;
+}
+
+// Recursively traverses the graph downward starting at instr and stores in
+// instrs the users that are not a convert, bitcast or reshape.
+void SkipUnaryOpsTopDownRecursive(HloInstruction* instr,
+                                  std::vector<HloInstruction*>& instrs) {
+  if (instr->opcode() == HloOpcode::kConvert ||
+      instr->opcode() == HloOpcode::kBitcast ||
+      instr->opcode() == HloOpcode::kReshape) {
+    for (HloInstruction* user : instr->users()) {
+      SkipUnaryOpsTopDownRecursive(user, instrs);
+    }
+  } else {
+    instrs.emplace_back(instr);
+  }
+}
+
+struct NormMetaData {
+  HloInstruction *x_transpose, *y_transpose;
+  std::vector<int64_t> norm_dims, non_norm_dims;
+};
+
+using NormMetaDataMap = absl::flat_hash_map<int, NormMetaData>;
+
+// Captures pointers to HloInstructions and verifies that their target is
+// identical.
+class UniqueHloInstruction {
+ public:
+  UniqueHloInstruction() : is_set_(false), instr_(nullptr) {}
+  HloInstruction* Instr() const { return instr_; }
+  void SetInstr(HloInstruction* instr) {
+    is_set_ = true;
+    instr_ = instr;
+  }
+
+  // Stores instr when invoked the first time. Otherwise, compares instr to the
+  // stored value and sets the stored value to nullptr if the comparison fails.
+  bool CaptureOrVerify(HloInstruction* instr) {
+    if (is_set_ && instr != instr_) {
+      instr_ = nullptr;
+    }
+    if (!is_set_) {
+      is_set_ = true;
+      instr_ = instr;
+    }
+    return instr_;
+  }
+
+  // Lambda for capturing or verifying an instruction using WithPredicate.
+  std::function<bool(const HloInstruction*)> capture_or_verify =
+      [this](const HloInstruction* instr) -> bool {
+    return CaptureOrVerify(const_cast<HloInstruction*>(instr));
+  };
+
+  // Lambda for comparing an instruction using WithPredicate.
+  std::function<bool(const HloInstruction*)> compare_only =
+      [this](const HloInstruction* instr) -> bool {
+    return is_set_ && instr == instr_;
+    ;
+  };
+
+ private:
+  bool is_set_;
+  HloInstruction* instr_;
+};
+
 // Returns an architecture-specific constant for the calculation of an upper
 // bound for the size of the scratch space for layer norm kernels.
 absl::StatusOr<int64_t> CConstant(
@@ -77,33 +152,23 @@ bool CompatibleElementType(const HloInstruction* instr) {
   return element_type == BF16 || element_type == F16 || element_type == F32;
 }
 
-// Traverses the graph upward or downward starting at instr and returns the
-// first instruction that is not a convert, bitcast or reshape. When traversing
-// the graph downward, returns nullptr if a convert, bitcast or reshape does not
-// have a single user.
-const HloInstruction* SkipUnaryOps(const HloInstruction* instr,
-                                   bool top_down = false) {
-  while (instr->opcode() == HloOpcode::kConvert ||
-         instr->opcode() == HloOpcode::kBitcast ||
-         instr->opcode() == HloOpcode::kReshape) {
-    if (top_down) {
-      if (instr->user_count() != 1) {
-        return nullptr;
-      }
-      instr = instr->users()[0];
-    } else {
-      instr = instr->operand(0);
-    }
-  }
-  return instr;
-}
-
 // Returns whether the HLO Computation applied by instr calculates the sum of
-// the elements.
-bool AppliesAddReduce(const HloInstruction* instr) {
+// the elements. When provided, compares reduce_dims to the dimensions of the
+// reduction.
+bool AppliesAddReduce(const HloInstruction* instr,
+                      const std::vector<int64_t>& reduce_dims = {}) {
   if (instr->opcode() != HloOpcode::kReduce) {
     return false;
   }
+  if (ShapeUtil::HasDegenerateDimensions(instr->operand(0)->shape())) {
+    VLOG(1) << "Reduction input must not have degenerate dimensions.";
+    return false;
+  }
+  // Verify the dimensions of the reduction.
+  if (!reduce_dims.empty() && instr->dimensions() != reduce_dims) {
+    return false;
+  }
+
   HloComputation* reduce_comp = instr->to_apply();
   HloInstruction* reduce_comp_root = reduce_comp->root_instruction();
   return instr->operand_count() == 2 &&
@@ -125,7 +190,6 @@ bool CalculatesExpectation(const HloInstruction* instr) {
   bool bcast_operand = instr->operand(0)->opcode() != HloOpcode::kBroadcast;
   const HloInstruction *broadcast = instr->operand(bcast_operand),
                        *reduce = SkipUnaryOps(instr->operand(!bcast_operand));
-  reduce = SkipUnaryOps(reduce);
   if (reduce->opcode() != HloOpcode::kReduce ||
       broadcast->opcode() != HloOpcode::kBroadcast ||
       broadcast->operand(0)->opcode() != HloOpcode::kConstant) {
@@ -146,59 +210,160 @@ bool CalculatesExpectation(const HloInstruction* instr) {
          ((actual_r_nelems + r_nelems) * numerical_epsilon);
 }
 
-// Recursively traverses the graph across converts, bitcasts, reshapes and
-// transposes, starting from instr, and returns the operand of custom_call with
-// index operand_idx. Returns nullptr if the prescribed operand of custom_call
-// is not found.
+// Recursively traverses the graph across converts, bitcasts and reshapes
+// starting from instr, and returns the operand of custom_call with index
+// operand_idx. Returns nullptr if the prescribed operand of custom_call cannot
+// be reached from instr.
 HloInstruction* FindOperandRecursive(HloInstruction* instr,
                                      HloInstruction* custom_call,
                                      absl::flat_hash_set<int>& visited_instrs,
-                                     int operand_idx) {
+                                     int operand_idx,
+                                     HloInstruction* transpose) {
   visited_instrs.emplace(instr->unique_id());
   const absl::flat_hash_set<HloOpcode> supported_ops = {
-      HloOpcode::kConvert, HloOpcode::kBitcast, HloOpcode::kReshape,
-      HloOpcode::kTranspose};
+      HloOpcode::kConvert, HloOpcode::kBitcast, HloOpcode::kReshape};
   // Look for the Custom Call among the users of instr.
   for (HloInstruction* user : instr->users()) {
-    if (user->unique_id() == custom_call->unique_id() &&
-        user->operand_index(instr) == operand_idx) {
+    if (user == custom_call && user->operand(operand_idx) == instr) {
       return instr;
     }
-    if (supported_ops.contains(user->opcode()) &&
+    if ((supported_ops.contains(user->opcode()) || user == transpose) &&
         !visited_instrs.contains(user->unique_id())) {
       return FindOperandRecursive(user, custom_call, visited_instrs,
-                                  operand_idx);
+                                  operand_idx, transpose);
     }
   }
   // Ascend the graph if the Custom Call is not found and instr is a
   // convert, reshape or transpose.
   if (supported_ops.contains(instr->opcode())) {
     return FindOperandRecursive(instr->mutable_operand(0), custom_call,
-                                visited_instrs, operand_idx);
+                                visited_instrs, operand_idx, transpose);
+  }
+  return nullptr;
+}
+HloInstruction* FindOperandRecursive(HloInstruction* instr,
+                                     HloInstruction* custom_call,
+                                     int operand_idx,
+                                     const NormMetaDataMap& norm_meta_data) {
+  absl::flat_hash_set<int> visited_instrs;
+  auto custom_call_meta_data = norm_meta_data.find(custom_call->unique_id());
+  if (custom_call_meta_data == norm_meta_data.end()) {
+    return nullptr;
+  }
+  return FindOperandRecursive(instr, custom_call, visited_instrs, operand_idx,
+                              custom_call_meta_data->second.x_transpose);
+}
+
+// Maps the dimensions of the reduction in the calculation of Dbias from the
+// potentially reshaped DY to the original DY, i.e. the input to the reduction,
+// assuming the transformation can be described by reshapes.
+std::vector<int64_t> MapReduceDims(HloInstruction* dy,
+                                   HloInstruction* dy_reshaped,
+                                   const std::vector<int64_t>& reduce_dims) {
+  // The original and reshaped DY must not have degenerate dimensions.
+  if (ShapeUtil::HasDegenerateDimensions(dy->shape()) ||
+      ShapeUtil::HasDegenerateDimensions(dy_reshaped->shape())) {
+    return {};
+  }
+
+  auto dim_product = [](const std::vector<int64_t>& sizes,
+                        const std::vector<int64_t>& indices) -> int64_t {
+    if (indices.empty()) {
+      return 0;
+    }
+    return std::accumulate(sizes.begin() + indices.front(),
+                           sizes.begin() + indices.back() + 1, 1,
+                           std::multiplies<int64_t>());
+  };
+  // Construct the dimension mapping.
+  absl::flat_hash_map<int64_t, std::vector<int64_t>> reduce_dims_map;
+  std::vector<int64_t> reshaped_indices, original_indices;
+  std::vector<int64_t> reshaped_dims({dy_reshaped->shape().dimensions().begin(),
+                                      dy_reshaped->shape().dimensions().end()});
+  std::vector<int64_t> original_dims(
+      {dy->shape().dimensions().begin(), dy->shape().dimensions().end()});
+  for (int64_t original_index = 0, reshaped_index = 0;
+       reshaped_index < dy_reshaped->shape().rank(); ++reshaped_index) {
+    reshaped_indices.emplace_back(reshaped_index);
+    while (dim_product(original_dims, original_indices) <
+               dim_product(reshaped_dims, reshaped_indices) &&
+           original_index < dy->shape().rank()) {
+      original_indices.emplace_back(original_index++);
+    }
+
+    // Many-to-many dimension mappings are not supported.
+    if (reshaped_indices.size() > 1 && original_indices.size() > 1) {
+      return {};
+    }
+
+    if (dim_product(reshaped_dims, reshaped_indices) ==
+        dim_product(original_dims, original_indices)) {
+      for (int64_t index : reshaped_indices) {
+        reduce_dims_map.insert({index, original_indices});
+      }
+      reshaped_indices.clear();
+      original_indices.clear();
+    }
+  }
+
+  // Map the reduction dimensions to the shape of the original DY.
+  std::vector<int64_t> mapped_reduce_dims;
+  for (int64_t reduce_dim : reduce_dims) {
+    auto mapped_reduce_dim = reduce_dims_map.find(reduce_dim);
+    if (mapped_reduce_dim == reduce_dims_map.end()) {
+      return {};
+    }
+    mapped_reduce_dims.insert(mapped_reduce_dims.end(),
+                              mapped_reduce_dim->second.begin(),
+                              mapped_reduce_dim->second.end());
+  }
+
+  // Eliminate duplicates in the mapped reduction dimensions.
+  mapped_reduce_dims.erase(
+      std::unique(mapped_reduce_dims.begin(), mapped_reduce_dims.end()),
+      mapped_reduce_dims.end());
+  return mapped_reduce_dims;
+}
+
+// Recursively traverses the graph downward across converts, bitcasts and
+// reshapes, starting from instr, and returns the first addition-reduction
+// identified. Returns nullptr if no addition-reduction is found.
+HloInstruction* FindAddReduceRecursive(
+    HloInstruction* instr, HloInstruction* dy_reshaped,
+    const std::vector<int64_t>& reduce_dims,
+    absl::flat_hash_set<int>& visited_instrs) {
+  visited_instrs.emplace(instr->unique_id());
+  const absl::flat_hash_set<HloOpcode> supported_ops = {
+      HloOpcode::kConvert, HloOpcode::kBitcast, HloOpcode::kReshape};
+  // Look for a reduction among the users of instr.
+  for (HloInstruction* user : instr->users()) {
+    if (user->opcode() == HloOpcode::kReduce) {
+      std::vector<int64_t> mapped_reduce_dims =
+          MapReduceDims(instr, dy_reshaped, reduce_dims);
+      if (!mapped_reduce_dims.empty() &&
+          AppliesAddReduce(user, mapped_reduce_dims)) {
+        return user;
+      }
+    }
+    if (supported_ops.contains(user->opcode()) &&
+        !visited_instrs.contains(user->unique_id())) {
+      return FindAddReduceRecursive(user, dy_reshaped, reduce_dims,
+                                    visited_instrs);
+    }
+  }
+  // Ascend the graph if the Custom Call is not found and instr is a
+  // conversion, bitcast or reshape.
+  if (supported_ops.contains(instr->opcode())) {
+    return FindAddReduceRecursive(instr->mutable_operand(0), dy_reshaped,
+                                  reduce_dims, visited_instrs);
   }
   return nullptr;
 }
 
-// Recursively traverses the graph downward across converts, bitcasts, reshapes
-// and transposes, starting from instr, and returns the first addition-reduction
-// identified. Returns nullptr if no addition-reduction is found.
 HloInstruction* FindAddReduceRecursive(
-    HloInstruction* instr, absl::flat_hash_set<int>& visited_instrs) {
-  visited_instrs.emplace(instr->unique_id());
-  const absl::flat_hash_set<HloOpcode> supported_ops = {
-      HloOpcode::kConvert, HloOpcode::kBitcast, HloOpcode::kReshape,
-      HloOpcode::kTranspose};
-  // Look for the reduction among the users of instr.
-  for (HloInstruction* user : instr->users()) {
-    if (AppliesAddReduce(user)) {
-      return user;
-    }
-    if (supported_ops.contains(user->opcode()) &&
-        !visited_instrs.contains(user->unique_id())) {
-      return FindAddReduceRecursive(user, visited_instrs);
-    }
-  }
-  return nullptr;
+    HloInstruction* instr, const std::vector<int64_t>& reduce_dims) {
+  absl::flat_hash_set<int> visited_instrs;
+  return FindAddReduceRecursive(instr, instr, reduce_dims, visited_instrs);
 }
 
 // Type conversion from and to any of BF16, FP16 and FP32.
@@ -315,8 +480,8 @@ auto Cube(Pattern pattern) {
   auto unique_cube = [](const HloInstruction* instr) -> bool {
     bool square_operand = instr->operand(0)->opcode() != HloOpcode::kMultiply;
     return instr->operand(!square_operand)->opcode() != HloOpcode::kMultiply &&
-           instr->operand(square_operand)->operand(0)->unique_id() ==
-               instr->operand(!square_operand)->unique_id();
+           instr->operand(square_operand)->operand(0) ==
+               instr->operand(!square_operand);
   };
   return MultiplyAnyOrder(Square(pattern), pattern).WithPredicate(unique_cube);
 }
@@ -346,9 +511,9 @@ auto AddReduce(HloInstruction** reduction, Pattern pattern) {
 
 // Negated addition-reduction.
 template <typename Pattern>
-auto NegateAddReduce(Pattern pattern) {
-  return m::AnyOf<HloInstruction>(AddReduce(m::Negate(pattern)),
-                                  m::Negate(AddReduce(pattern)));
+auto NegateAddReduce(HloInstruction** reduction, Pattern pattern) {
+  return m::AnyOf<HloInstruction>(AddReduce(reduction, m::Negate(pattern)),
+                                  m::Negate(AddReduce(reduction, pattern)));
 }
 
 // Expected value, or mean, with optional broadcast.
@@ -365,10 +530,10 @@ auto Expectation(Pattern pattern) {
 
 // Expected value, or mean, with optional broadcast.
 template <typename Pattern>
-auto Expectation(HloInstruction** expectation, Pattern pattern) {
+auto Expectation(UniqueHloInstruction* expectation, Pattern pattern) {
   auto shared_subpattern =
-      MultiplyAnyOrder(expectation, m::Broadcast(m::ConstantScalar()),
-                       AddReduce(pattern))
+      MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()), AddReduce(pattern))
+          .WithPredicate(expectation->capture_or_verify)
           .WithPredicate([](const HloInstruction* instr) {
             return CalculatesExpectation(instr);
           });
@@ -378,52 +543,45 @@ auto Expectation(HloInstruction** expectation, Pattern pattern) {
 
 // Expected value, or mean, with optional broadcast.
 template <typename Pattern>
-auto Expectation(HloInstruction** expectation, HloInstruction** reduce,
+auto Expectation(UniqueHloInstruction* expectation, HloInstruction** reduce,
                  Pattern pattern) {
-  auto shared_subpattern =
-      MultiplyAnyOrder(expectation, m::Broadcast(m::ConstantScalar()),
-                       AddReduce(reduce, pattern))
-          .WithPredicate([](const HloInstruction* instr) {
-            return CalculatesExpectation(instr);
-          });
+  auto shared_subpattern = MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()),
+                                            AddReduce(reduce, pattern))
+                               .WithPredicate(expectation->capture_or_verify)
+                               .WithPredicate([](const HloInstruction* instr) {
+                                 return CalculatesExpectation(instr);
+                               });
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
 
 // Variance, expressed as expectation(X^2) - expectation(X)^2 or
-// expectation((X - expectation(X))^2). The simultaneous capture of x0 and
-// x1 allows the caller to verify that they are identical.
-auto Variance(HloInstruction** expectation, HloInstruction** x0,
-              HloInstruction** x1) {
+// expectation((X - expectation(X))^2).
+auto Variance(UniqueHloInstruction* variance, UniqueHloInstruction* expectation,
+              UniqueHloInstruction* x) {
   return m::AnyOf<HloInstruction>(
-      Subtract(Expectation(Square(m::Op(x0))),
-               Square(Expectation(expectation, m::Op(x1)))),
+      Subtract(Expectation(Square(m::Op().WithPredicate(x->capture_or_verify))),
+               Square(Expectation(expectation,
+                                  m::Op().WithPredicate(x->capture_or_verify))))
+          .WithPredicate(variance->capture_or_verify),
       Expectation(
-          Square(Subtract(m::Op(x0), Expectation(expectation, m::Op(x1))))));
-}
-
-// Variance, expressed as expectation(X^2) - expectation(X)^2 or
-// expectation((X - expectation(X))^2). The simultaneous capture of x0 and
-// x1 allows the caller to verify that they are identical.
-auto Variance(HloInstruction** variance, HloInstruction** expectation,
-              HloInstruction** x0, HloInstruction** x1) {
-  return m::AnyOf<HloInstruction>(
-      Subtract(variance, Expectation(Square(m::Op(x0))),
-               Square(Expectation(expectation, m::Op(x1)))),
-      Expectation(
-          variance,
-          Square(Subtract(m::Op(x0), Expectation(expectation, m::Op(x1))))));
+          Square(Subtract(m::Op().WithPredicate(x->capture_or_verify),
+                          Expectation(expectation, m::Op().WithPredicate(
+                                                       x->capture_or_verify)))))
+          .WithPredicate(variance->capture_or_verify));
 }
 
 // Reciprocal of the square root of variance + epsilon with optional broadcast.
 // The simultaneous capture of x0 and x1 allows the caller to verify
 // that they are identical.
-auto NormFactor(HloInstruction** norm_factor, HloInstruction** x0,
-                HloInstruction** x1, HloInstruction** variance,
-                HloInstruction** expectation, HloInstruction** epsilon) {
+auto NormFactor(HloInstruction** norm_factor, UniqueHloInstruction* x,
+                UniqueHloInstruction* variance,
+                UniqueHloInstruction* expectation,
+                UniqueHloInstruction* epsilon) {
   auto shared_subpattern = m::SharedSubpattern(Rsqrt(
-      norm_factor, AddAnyOrder(Variance(variance, expectation, x0, x1),
-                               m::Broadcast(m::ConstantScalar(epsilon)))));
+      norm_factor, AddAnyOrder(Variance(variance, expectation, x),
+                               m::Broadcast(m::ConstantScalar().WithPredicate(
+                                   epsilon->capture_or_verify)))));
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
@@ -470,174 +628,122 @@ auto SubtractMultiplyAddAnyOrder(P0 p0, P1 p1, P2 p2, P3 p3, P4 p4) {
       AddAnyOrder(MultiplyMultiplyAnyOrder(Subtract(p0, p1), p2, p3), p4));
 }
 
-// Expectation fused into a layer norm Custom Call. Compares the Custom Call to
-// *custom_call.
-auto FusedExpectation(HloInstruction** custom_call) {
-  // Compare *custom_call to instr and set *custom_call to nullptr if the
-  // comparison is unsuccessful. Because of the separation of matching and
-  // capturing in the pattern matcher, the return value cannot convey the result
-  // of the comparison.
-  auto verify_cc = [custom_call](const HloInstruction* instr) -> bool {
-    if (*custom_call && (*custom_call)->unique_id() != instr->unique_id()) {
-      *custom_call = nullptr;
-    }
-    return true;
-  };
-  auto shared_subpattern = m::SharedSubpattern(m::GetTupleElement(
-      m::CustomCall({kCudnnNormCallTarget}).WithPredicate(verify_cc), 1));
-  return m::AnyOf<HloInstruction>(
-      shared_subpattern, BitcastOrReshape(shared_subpattern),
-      Transpose(BitcastOrReshape(shared_subpattern)));
+// Expectation fused into a layer norm Custom Call.
+auto FusedExpectation(UniqueHloInstruction* custom_call) {
+  auto shared_subpattern = m::SharedSubpattern(
+      m::GetTupleElement(m::CustomCall({kCudnnNormCallTarget})
+                             .WithPredicate(custom_call->capture_or_verify),
+                         1));
+  return m::AnyOf<HloInstruction>(shared_subpattern,
+                                  BitcastOrReshape(shared_subpattern));
 }
 
-// Expectation fused into a layer norm Custom Call. Captures the Custom Call in
-// *custom_call if cc_capture is true, and compares the Custom Call to
-// *custom_call otherwise.
-auto FusedExpectation(HloInstruction** fused_expectation,
-                      HloInstruction** custom_call, bool cc_capture) {
-  if (cc_capture) {
-    auto shared_subpattern = m::SharedSubpattern(m::GetTupleElement(
-        fused_expectation, m::CustomCall(custom_call, {kCudnnNormCallTarget}),
-        1));
-    return m::AnyOf<HloInstruction>(
-        shared_subpattern, BitcastOrReshape(shared_subpattern),
-        Transpose(BitcastOrReshape(shared_subpattern)));
-  } else {
-    // Compare *custom_call to instr and set *custom_call to nullptr if the
-    // comparison is unsuccessful.
-    auto verify_cc = [custom_call](const HloInstruction* instr) -> bool {
-      if (*custom_call && (*custom_call)->unique_id() != instr->unique_id()) {
-        *custom_call = nullptr;
-      }
-      return true;
-    };
-    auto shared_subpattern = m::SharedSubpattern(m::GetTupleElement(
-        fused_expectation,
-        m::CustomCall({kCudnnNormCallTarget}).WithPredicate(verify_cc), 1));
-    return m::AnyOf<HloInstruction>(
-        shared_subpattern, BitcastOrReshape(shared_subpattern),
-        Transpose(BitcastOrReshape(shared_subpattern)));
-  }
+// Expectation fused into a layer norm Custom Call.
+auto FusedExpectation(UniqueHloInstruction* fused_expectation,
+                      UniqueHloInstruction* custom_call) {
+  auto shared_subpattern = m::SharedSubpattern(
+      m::GetTupleElement(m::CustomCall({kCudnnNormCallTarget})
+                             .WithPredicate(custom_call->capture_or_verify),
+                         1)
+          .WithPredicate(fused_expectation->capture_or_verify));
+  return m::AnyOf<HloInstruction>(shared_subpattern,
+                                  BitcastOrReshape(shared_subpattern));
 }
 
-// Norm factor fused into a layer norm Custom Call. Compares the Custom Call to
-// *custom_call.
-auto FusedNormFactor(HloInstruction** custom_call) {
-  // Compare *custom_call to instr and set *custom_call to nullptr if the
-  // comparison is unsuccessful.
-  auto verify_cc = [custom_call](const HloInstruction* instr) -> bool {
-    if (*custom_call && (*custom_call)->unique_id() != instr->unique_id()) {
-      *custom_call = nullptr;
-    }
-    return true;
-  };
-  auto shared_subpattern = m::SharedSubpattern(m::GetTupleElement(
-      m::CustomCall({kCudnnNormCallTarget}).WithPredicate(verify_cc), 2));
-  return m::AnyOf<HloInstruction>(
-      shared_subpattern, BitcastOrReshape(shared_subpattern),
-      Transpose(BitcastOrReshape(shared_subpattern)));
+// Norm factor fused into a layer norm Custom Call.
+auto FusedNormFactor(UniqueHloInstruction* custom_call) {
+  auto shared_subpattern = m::SharedSubpattern(
+      m::GetTupleElement(m::CustomCall({kCudnnNormCallTarget})
+                             .WithPredicate(custom_call->capture_or_verify),
+                         2));
+  return m::AnyOf<HloInstruction>(shared_subpattern,
+                                  BitcastOrReshape(shared_subpattern));
 }
 
-// Norm factor fused into a layer norm Custom Call. Compares the Custom Call to
-// *custom_call.
-auto FusedNormFactor(HloInstruction** fused_norm_factor,
-                     HloInstruction** custom_call) {
-  // Compare *custom_call to instr and set *custom_call to nullptr if the
-  // comparison is unsuccessful.
-  auto verify_cc = [custom_call](const HloInstruction* instr) -> bool {
-    if (*custom_call && (*custom_call)->unique_id() != instr->unique_id()) {
-      *custom_call = nullptr;
-    }
-    return true;
-  };
-  auto shared_subpattern = m::SharedSubpattern(m::GetTupleElement(
-      fused_norm_factor,
-      m::CustomCall({kCudnnNormCallTarget}).WithPredicate(verify_cc), 2));
-  return m::AnyOf<HloInstruction>(
-      shared_subpattern, BitcastOrReshape(shared_subpattern),
-      Transpose(BitcastOrReshape(shared_subpattern)));
+// Norm factor fused into a layer norm Custom Call.
+auto FusedNormFactor(UniqueHloInstruction* fused_norm_factor,
+                     UniqueHloInstruction* custom_call) {
+  auto shared_subpattern = m::SharedSubpattern(
+      m::GetTupleElement(m::CustomCall({kCudnnNormCallTarget})
+                             .WithPredicate(custom_call->capture_or_verify),
+                         2)
+          .WithPredicate(fused_norm_factor->capture_or_verify));
+  return m::AnyOf<HloInstruction>(shared_subpattern,
+                                  BitcastOrReshape(shared_subpattern));
 }
 
 // Derivative of the norm factor w.r.t. variance + epsilon,
 // d(norm_factor)/d(variance + epsilon)
 // = d((variance + epsilon)^-1/2)/d(variance + epsilon)
 // = -1/2 * norm_factor^3.
-// Forwards custom_call to FusedNormFactor for comparison.
-auto DNormFactor(HloInstruction** custom_call) {
+// Forwards custom_call to FusedNormFactor for verification.
+auto DNormFactor(UniqueHloInstruction* custom_call) {
   return MultiplyAnyOrder(m::Broadcast(m::ConstantScalar(-0.5)),
                           Cube(FusedNormFactor(custom_call)));
 }
 
 //  Zero-centered input of the layer norm, X - expectation(X). Verifies that
-//  *custom_call is a forward layer norm fusing X. Forwards custom_call to
-//  FusedExpectation for comparison.
-auto XCenter(HloInstruction** custom_call) {
-  // Set *custom_call to nullptr if *custom_call is not a forward layer norm
-  // operating on X, i.e. the first operand of instr.
-  auto verify_x = [custom_call](const HloInstruction* instr) -> bool {
-    if (*custom_call) {
-      absl::flat_hash_set<int> visited_instrs;
-      if (!FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
-                                *custom_call, visited_instrs, 0)) {
-        *custom_call = nullptr;
-      };
-    }
-    return true;
+//  custom_call is a forward layer norm fusing X. Forwards custom_call to
+//  FusedExpectation for verification.
+auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* custom_call,
+             const NormMetaDataMap& norm_meta_data) {
+  auto capture_or_verify_x =
+      [x, custom_call, &norm_meta_data](const HloInstruction* instr) -> bool {
+    return x->CaptureOrVerify(
+        FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
+                             custom_call->Instr(), 0, norm_meta_data));
   };
   return Subtract(m::Op(), m::Broadcast(FusedExpectation(custom_call)))
-      .WithPredicate(verify_x);
+      .WithPredicate(capture_or_verify_x);
 }
 
-// Zero-centered input of the layer norm, X - expectation(X). Captures X in *x
-// *custom_call is a forward layer norm fusing X. Forwards custom_call to
-// FusedExpectation for capture or comparison.
-auto XCenter(HloInstruction** x, HloInstruction** x_center,
-             HloInstruction** fused_expectation, HloInstruction** custom_call,
-             bool cc_capture) {
-  // Capture X if *custom_call is a forward layer norm operating on X, i.e. the
-  // first operand of instr.
-  auto capture_x = [x, custom_call](const HloInstruction* instr) -> bool {
-    absl::flat_hash_set<int> visited_instrs;
-    if (*custom_call) {
-      *x = FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
-                                *custom_call, visited_instrs, 0);
-    }
-    return true;
+// Zero-centered input of the layer norm, X - expectation(X). Captures X in x if
+// custom_call is a forward layer norm fusing X. Forwards custom_call to
+// FusedExpectation for comparison.
+auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
+             UniqueHloInstruction* fused_expectation,
+             UniqueHloInstruction* custom_call,
+             const NormMetaDataMap& norm_meta_data) {
+  auto capture_or_verify_x = [x, x_center, custom_call, &norm_meta_data](
+                                 const HloInstruction* instr) -> bool {
+    return x->CaptureOrVerify(
+        FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
+                             custom_call->Instr(), 0, norm_meta_data));
   };
-  return Subtract(x_center, m::Op(),
-                  m::Broadcast(FusedExpectation(fused_expectation, custom_call,
-                                                cc_capture)))
-      .WithPredicate(capture_x);
+  return Subtract(m::Op(), m::Broadcast(FusedExpectation(fused_expectation,
+                                                         custom_call)))
+      .WithPredicate(x_center->capture_or_verify)
+      .WithPredicate(capture_or_verify_x);
 }
 
-// Addition-reduction of the product of XCenter, the broadcasted scale and DY.
-// Captures the scale in *scale if *custom_call is a forward layer norm fusing
-// the scale. Forwards custom_call to XCenter for comparison.
-auto F0(HloInstruction** custom_call, HloInstruction** scale,
-        HloInstruction** dy) {
-  // Capture the scale if *custom_call is a forward layer norm operating on the
-  // scale, i.e. the first operand of instr.
-  auto capture_scale = [scale,
-                        custom_call](const HloInstruction* instr) -> bool {
-    absl::flat_hash_set<int> visited_instrs;
-    if (*custom_call) {
-      *scale =
-          FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
-                               *custom_call, visited_instrs, 1);
-    }
-    return true;
+// Addition-reduction of the product of XCenter, the broadcasted scale and DY,
+// XCenter * scale * DY. Captures the scale in scale if custom_call is a forward
+// layer norm fusing the scale. Forwards custom_call to XCenter for comparison.
+auto F0(UniqueHloInstruction* custom_call, UniqueHloInstruction* scale,
+        UniqueHloInstruction* dy, UniqueHloInstruction* x,
+        HloInstruction** reduce, const NormMetaDataMap& norm_meta_data) {
+  auto capture_or_verify_scale = [scale, custom_call, &norm_meta_data](
+                                     const HloInstruction* instr) -> bool {
+    return scale->CaptureOrVerify(
+        FindOperandRecursive(const_cast<HloInstruction*>(instr),
+                             custom_call->Instr(), 1, norm_meta_data));
   };
-  return AddReduce(MultiplyMultiplyAnyOrder(
-      XCenter(custom_call), m::Broadcast().WithPredicate(capture_scale),
-      m::Op(dy)));
+  return AddReduce(
+      reduce, MultiplyMultiplyAnyOrder(
+                  XCenter(x, custom_call, norm_meta_data),
+                  m::Broadcast(m::Op().WithPredicate(capture_or_verify_scale)),
+                  m::Op().WithPredicate(dy->capture_or_verify)));
 }
 
 // Product of XCenter and the scaled and broadcasted product of F0 and
-// d(norm_factor)/d(variance + epsilon). Forwards custom_call to XCenter, F0 and
-// DNormFactor for capture or comparison.
-auto F1(HloInstruction** x, HloInstruction** x_center,
-        HloInstruction** fused_expectation, HloInstruction** custom_call,
-        HloInstruction** scale, HloInstruction** dy, bool cc_capture) {
+// d(norm_factor)/d(variance + epsilon), XCenter * F0 * DNormFactor * 2 /
+// nelems. Forwards custom_call to XCenter, F0 and DNormFactor for capture or
+// verification.
+auto F1(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
+        UniqueHloInstruction* fused_expectation,
+        UniqueHloInstruction* custom_call, UniqueHloInstruction* scale,
+        UniqueHloInstruction* dy, HloInstruction** reduce,
+        const NormMetaDataMap& norm_meta_data) {
   auto broadcasts_two_over_nelems = [](const HloInstruction* instr) -> bool {
     const HloInstruction* multiply = SkipUnaryOps(instr->operand(0));
     bool bcast_operand =
@@ -663,38 +769,34 @@ auto F1(HloInstruction** x, HloInstruction** x_center,
     return abs(actual_two_over_nelems - two_over_nelems) <
            ((actual_two_over_nelems + two_over_nelems) * numerical_epsilon);
   };
-  auto shared_subpattern = m::SharedSubpattern(MultiplyAnyOrder(
-      XCenter(x, x_center, fused_expectation, custom_call, cc_capture),
+
+  return MultiplyAnyOrder(
+      XCenter(x, x_center, fused_expectation, custom_call, norm_meta_data),
       m::Broadcast(
           MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()),
                            MultiplyAnyOrder(DNormFactor(custom_call),
-                                            F0(custom_call, scale, dy))))
-          .WithPredicate(broadcasts_two_over_nelems)));
-  return m::AnyOf<HloInstruction>(AddAnyOrder(shared_subpattern, m::Constant()),
-                                  shared_subpattern);
+                                            F0(custom_call, scale, dy, x,
+                                               reduce, norm_meta_data))))
+          .WithPredicate(broadcasts_two_over_nelems));
 }
 
-// Product of the norm factor, scale and DY. Captures the scale in *scale if
-// *custom_call is a forward layer norm fusing the scale. Forwards custom_call
-// to FusedNormFactor for comparison.
-auto F2(HloInstruction** fused_norm_factor, HloInstruction** scale,
-        HloInstruction** dy, HloInstruction** custom_call) {
-  // Capture the scale if *custom_call is a forward layer norm operating on the
-  // scale, i.e. the first operand of instr.
-  auto capture_scale = [scale,
-                        custom_call](const HloInstruction* instr) -> bool {
-    absl::flat_hash_set<int> visited_instrs;
-    if (*custom_call) {
-      *scale =
-          FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
-                               *custom_call, visited_instrs, 1);
-    }
-    return true;
+// Product of the norm factor, scale and DY, NormFactor * scale * DY. Captures
+// the scale in scale if custom_call is a forward layer norm fusing the scale.
+// Forwards custom_call to FusedNormFactor for comparison.
+auto F2(UniqueHloInstruction* fused_norm_factor, UniqueHloInstruction* scale,
+        UniqueHloInstruction* dy, UniqueHloInstruction* custom_call,
+        const NormMetaDataMap& norm_meta_data) {
+  auto capture_or_verify_scale = [scale, custom_call, &norm_meta_data](
+                                     const HloInstruction* instr) -> bool {
+    return scale->CaptureOrVerify(
+        FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
+                             custom_call->Instr(), 1, norm_meta_data));
   };
   return MultiplyAnyOrder(
       m::Broadcast(
           BitcastOrReshape(FusedNormFactor(fused_norm_factor, custom_call))),
-      MultiplyAnyOrder(m::Broadcast().WithPredicate(capture_scale), m::Op(dy)));
+      MultiplyAnyOrder(m::Broadcast().WithPredicate(capture_or_verify_scale),
+                       m::Op().WithPredicate(dy->capture_or_verify)));
 }
 
 class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
@@ -705,8 +807,8 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleAdd(HloInstruction* instr) override {
     TF_RETURN_IF_ERROR(MatchLayerNorm(instr));
-    TF_RETURN_IF_ERROR(MatchLayerNormBackward(instr));
-    return OkStatus();
+    TF_RETURN_IF_ERROR(MatchLayerNormGradient(instr));
+    return absl::OkStatus();
   }
 
   absl::Status HandleSubtract(HloInstruction* instr) override {
@@ -714,19 +816,21 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   // Matches and rewrites layer norm patterns,
-  // Y = (X - expectation(X))/(variance(X) + epsilon)^1/2 * scale + bias,
+  // Y = (X - expectation(X))/sqrt(variance(X) + epsilon) * scale + bias,
   // into Custom Calls to cuDNN.
   absl::Status MatchLayerNorm(HloInstruction* instr) {
-    HloInstruction *x, *x0, *x1, *x2, *scale, *bias, *epsilon, *expectation,
-        *expectation0, *reduce, *norm_factor, *variance, *broadcast_scale,
+    UniqueHloInstruction x, expectation, variance, epsilon;
+    HloInstruction *scale, *bias, *reduce, *norm_factor, *broadcast_scale,
         *broadcast_bias;
-    if (Match(instr,
-              SubtractMultiplyAddAnyOrder(
-                  m::Op(&x), Expectation(&expectation, &reduce, m::Op(&x0)),
-                  NormFactor(&norm_factor, &x1, &x2, &variance, &expectation0,
-                             &epsilon),
-                  m::Broadcast(&broadcast_scale, m::Op(&scale)),
-                  m::Broadcast(&broadcast_bias, m::Op(&bias))))) {
+    if (Match(
+            instr,
+            SubtractMultiplyAddAnyOrder(
+                m::Op().WithPredicate(x.capture_or_verify),
+                Expectation(&expectation, &reduce,
+                            m::Op().WithPredicate(x.capture_or_verify)),
+                NormFactor(&norm_factor, &x, &variance, &expectation, &epsilon),
+                m::Broadcast(&broadcast_scale, m::Op(&scale)),
+                m::Broadcast(&broadcast_bias, m::Op(&bias))))) {
 #if CUDNN_VERSION < 8905
       // Layer norm kernels are available with cuDNN 8.9.5 and above.
       VLOG(1) << "Layer norm Custom Calls require cuDNN 8.9.5.";
@@ -750,25 +854,20 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       }
 
       // Verify the uniqueness of the inputs.
-      auto is_x = [x](HloInstruction* xk) -> bool {
-        return xk->unique_id() == x->unique_id() ||
-               (xk->opcode() == HloOpcode::kConvert &&
-                xk->operand(0)->unique_id() == x->unique_id());
-      };
-      if (!is_x(x0) || !is_x(x1) || !is_x(x2) ||
-          expectation->unique_id() != expectation0->unique_id()) {
+      if (!x.Instr() || !expectation.Instr() || !variance.Instr() ||
+          !epsilon.Instr()) {
         VLOG(1) << "Layer norm operands not unique.";
         return absl::OkStatus();
       }
 
       // Skip initial convert, if present.
-      if (x->opcode() == HloOpcode::kConvert) {
-        x = x->mutable_operand(0);
+      if (x.Instr()->opcode() == HloOpcode::kConvert) {
+        x.SetInstr(x.Instr()->mutable_operand(0));
       }
 
       // Verify the input and output layouts.
       // TODO(philipphack): Consider supporting more general cases.
-      if (!LayoutUtil::IsMonotonicWithDim0Major(x->shape().layout()) ||
+      if (!LayoutUtil::IsMonotonicWithDim0Major(x.Instr()->shape().layout()) ||
           !LayoutUtil::IsMonotonicWithDim0Major(scale->shape().layout()) ||
           !LayoutUtil::IsMonotonicWithDim0Major(bias->shape().layout()) ||
           !LayoutUtil::IsMonotonicWithDim0Major(instr->shape().layout())) {
@@ -778,7 +877,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
       // Verify the element types. The types and shapes of the scale and bias
       // must match.
-      if (!CompatibleElementType(x) || !CompatibleElementType(instr) ||
+      if (!CompatibleElementType(x.Instr()) || !CompatibleElementType(instr) ||
           !CompatibleElementType(scale) || !CompatibleElementType(bias) ||
           !ShapeUtil::Equal(scale->shape(), bias->shape())) {
         VLOG(1) << "Layer norm input types or shapes not supported.";
@@ -794,7 +893,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         return absl::OkStatus();
       }
       for (int i = 0; i < norm_dims.size(); ++i) {
-        if (x->shape().dimensions(norm_dims[i]) !=
+        if (x.Instr()->shape().dimensions(norm_dims[i]) !=
             scale->shape().dimensions(i)) {
           VLOG(1) << "Layer norm input dimensions not supported.";
           return absl::OkStatus();
@@ -815,7 +914,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // If necessary, transpose the input so that the dimensions not being
       // normalized are the leading dimensions.
       std::vector<int64_t> non_norm_dims;
-      for (int64_t x_dim = 0; x_dim < x->shape().rank(); ++x_dim) {
+      for (int64_t x_dim = 0; x_dim < x.Instr()->shape().rank(); ++x_dim) {
         if (std::find(norm_dims.begin(), norm_dims.end(), x_dim) ==
             norm_dims.end()) {
           non_norm_dims.emplace_back(x_dim);
@@ -833,34 +932,37 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         }
       }
 
-      std::optional<HloInstruction*> transpose;
+      std::optional<HloInstruction*> x_transpose;
+      // The transpose applied to the output is the inverse of the transpose
+      // applied to the input.
       std::vector<int64_t> y_transpose_order(x_transpose_order.size());
       if (apply_transpose) {
         for (int k = 0; k < x_transpose_order.size(); ++k) {
           y_transpose_order[x_transpose_order[k]] = k;
         }
-        TF_ASSIGN_OR_RETURN(transpose, MakeTransposeHlo(x, x_transpose_order));
+        TF_ASSIGN_OR_RETURN(x_transpose,
+                            MakeTransposeHlo(x.Instr(), x_transpose_order));
       }
 
       // Combine the dimensions not normalized into the first dimension of the
       // input as required by cuDNN.
       std::vector<int64_t> reshaped_dims = {1};
       for (auto non_norm_dim : non_norm_dims) {
-        reshaped_dims[0] *= x->shape().dimensions(non_norm_dim);
+        reshaped_dims[0] *= x.Instr()->shape().dimensions(non_norm_dim);
       }
       for (auto norm_dim : norm_dims) {
-        reshaped_dims.emplace_back(x->shape().dimensions(norm_dim));
+        reshaped_dims.emplace_back(x.Instr()->shape().dimensions(norm_dim));
       }
       // cuDNN requires tensors to have at least four dimensions.
       while (reshaped_dims.size() < 4) {
         reshaped_dims.emplace_back(1);
       }
 
-      Shape reshaped_shape =
-          ShapeUtil::MakeShape(x->shape().element_type(), reshaped_dims);
+      Shape reshaped_shape = ShapeUtil::MakeShape(
+          x.Instr()->shape().element_type(), reshaped_dims);
       TF_ASSIGN_OR_RETURN(
           HloInstruction * x_reshape,
-          MakeReshapeHlo(reshaped_shape, transpose.value_or(x)));
+          MakeReshapeHlo(reshaped_shape, x_transpose.value_or(x.Instr())));
 
       // Reshape the scale and bias.
       std::vector<int64_t> reshaped_scale_dims(reshaped_dims.begin() + 1,
@@ -878,7 +980,8 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       GpuBackendConfig gpu_backend_config;
       CudnnNormBackendConfig& backend_config =
           *gpu_backend_config.mutable_cudnn_norm_backend_config();
-      backend_config.set_epsilon(epsilon->literal().GetAsDouble({}).value());
+      backend_config.set_epsilon(
+          epsilon.Instr()->literal().GetAsDouble({}).value());
       backend_config.set_kind(CudnnNormBackendConfig::LAYER_FWD_INFER);
       auto* algorithm = backend_config.mutable_algorithm();
       algorithm->set_algo_id(0);
@@ -908,23 +1011,21 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
                           MakeGetTupleElementHlo(custom_call, 0));
       TF_ASSIGN_OR_RETURN(
           HloInstruction * y_reshape,
-          MakeReshapeHlo(transpose.value_or(instr)->shape(), gte));
+          MakeReshapeHlo(x_transpose.value_or(instr)->shape(), gte));
 
-      if (!apply_transpose) {
-        TF_RETURN_IF_ERROR(ReplaceInstruction(instr, y_reshape));
-      } else {
-        TF_ASSIGN_OR_RETURN(HloInstruction * y_transpose,
+      std::optional<HloInstruction*> y_transpose;
+      if (apply_transpose) {
+        TF_ASSIGN_OR_RETURN(y_transpose,
                             MakeTransposeHlo(y_reshape, y_transpose_order));
-        TF_RETURN_IF_ERROR(ReplaceInstruction(instr, y_transpose));
       }
+      TF_RETURN_IF_ERROR(
+          ReplaceInstruction(instr, y_transpose.value_or(y_reshape)));
 
-      // Store the transpose orders applied to X and Y for potential use in the
-      // backward graph.
-      transpose_orders_.insert(
-          {custom_call->unique_id(),
-           apply_transpose
-               ? TransposeOrders({x_transpose_order, y_transpose_order})
-               : TransposeOrders({{}, {}})});
+      // Store meta data for potential use in the backward graph.
+      norm_meta_data_.insert({custom_call->unique_id(),
+                              NormMetaData({x_transpose.value_or(nullptr),
+                                            y_transpose.value_or(nullptr),
+                                            norm_dims, non_norm_dims})});
 
       VLOG(1) << "Layer norm rewritten into Custom Call.";
 
@@ -948,35 +1049,34 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
   // into the layer norm Custom Call.
   absl::Status MatchNormFactor(HloInstruction* instr,
                                HloInstruction* custom_call,
-                               HloInstruction* variance,
-                               HloInstruction* expectation,
-                               HloInstruction* epsilon) {
-    HloInstruction *variance0, *epsilon0, *gte = custom_call->users()[0];
+                               UniqueHloInstruction& variance,
+                               UniqueHloInstruction& expectation,
+                               UniqueHloInstruction& epsilon) {
+    HloInstruction* gte = custom_call->users()[0];
     if (Match(instr,
-              m::Divide(m::Op(), AddAnyOrder(m::Op(&variance0),
-                                             m::Broadcast(m::ConstantScalar(
-                                                 &epsilon0)))))) {
+              m::Divide(
+                  m::Op(),
+                  AddAnyOrder(m::Op().WithPredicate(variance.capture_or_verify),
+                              m::Broadcast(m::ConstantScalar().WithPredicate(
+                                  epsilon.capture_or_verify)))))) {
       // Verify the uniqueness of the operands.
-      if (variance->unique_id() != variance0->unique_id() ||
-          epsilon->unique_id() != epsilon0->unique_id()) {
+      if (!variance.Instr() || !epsilon.Instr()) {
         VLOG(1) << "Layer norm operands not unique.";
         return absl::OkStatus();
       }
 
       // Verify the element types.
       if (!CompatibleElementType(instr) ||
-          !CompatibleElementType(expectation)) {
+          !CompatibleElementType(expectation.Instr())) {
         VLOG(1) << "Layer norm input types not compatible.";
         return absl::OkStatus();
       }
 
-      // Retrieve the transpose orders applied in the forward layer norm.
-      auto transpose_orders =
-          transpose_orders_.extract(custom_call->unique_id());
-      if (!transpose_orders) {
-        VLOG(1)
-            << "Unable to retrieve transpose orders for forward Custom Call.";
-        return OkStatus();
+      // Retrieve meta data of the forward layer norm.
+      auto norm_meta_data = norm_meta_data_.extract(custom_call->unique_id());
+      if (!norm_meta_data) {
+        VLOG(1) << "Unable to retrieve norm meta data of forward Custom Call.";
+        return absl::OkStatus();
       }
 
       // The shape of the expectation and norm factor return values of the
@@ -987,7 +1087,8 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
                                     {ShapeUtil::ElementsIn(shape), 1, 1, 1});
       };
 
-      Shape expectation_shape = make_compatible_shape(expectation->shape());
+      Shape expectation_shape =
+          make_compatible_shape(expectation.Instr()->shape());
       Shape norm_factor_shape = make_compatible_shape(instr->shape());
 
       // The augmented Custom Call additionally returns the expectation and the
@@ -1052,43 +1153,55 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Replace the result of the original Custom Call as well as the
       // expectation and the norm factor with the augmented Custom Call.
       TF_RETURN_IF_ERROR(replace_with_new_cc(gte, 0));
-      TF_RETURN_IF_ERROR(replace_with_new_cc(expectation, 1));
+      TF_RETURN_IF_ERROR(replace_with_new_cc(expectation.Instr(), 1));
       TF_RETURN_IF_ERROR(replace_with_new_cc(instr, 2));
 
-      // Update the Custom Call associated with the input transpose orders.
-      transpose_orders.key() = new_custom_call->unique_id();
-      transpose_orders_.insert(std::move(transpose_orders));
+      // Update the Custom Call associated with the meta data of the forward
+      // norm.
+      norm_meta_data.key() = new_custom_call->unique_id();
+      norm_meta_data_.insert(std::move(norm_meta_data));
 
       VLOG(1)
           << "Expectation and norm factor fused into layer norm Custom Call.";
     }
+
     return absl::OkStatus();
   }
 
   // Matches and rewrites the backward graph of layer norm patterns into Custom
   // Calls to cuDNN when the associated forward graph has been rewritten into a
-  // cuDNN Custom Call.
-  Status MatchLayerNormBackward(HloInstruction* instr) {
-    HloInstruction *custom_call = nullptr, *x = nullptr, *x0 = nullptr,
-                   *dy = nullptr, *scale = nullptr, *fused_expectation,
-                   *fused_expectation0, *fused_norm_factor, *fused_norm_factor0,
-                   *broadcast, *scalar, *x_center, *x_center0, *dscale, *dbias;
-    std::array<HloInstruction*, 3> dyk, scalek;
-    if (Match(instr,
-              AddAddAnyOrder(
-                  m::Broadcast(
-                      &broadcast,
-                      MultiplyAddAnyOrder(
-                          m::Broadcast(m::ConstantScalar(&scalar)),
-                          NegateAddReduce(F1(&x, &x_center, &fused_expectation,
-                                             &custom_call, &scale, &dy,
-                                             /*cc_capture=*/true)),
-                          NegateAddReduce(F2(&fused_norm_factor, &scalek[0],
-                                             &dyk[0], &custom_call)))),
-                  F2(&fused_norm_factor0, &scalek[1], &dyk[1], &custom_call),
-                  F1(&x0, &x_center0, &fused_expectation0, &custom_call,
-                     &scalek[2], &dyk[2],
-                     /*cc_capture=*/false)))) {
+  // cuDNN Custom Call. The gradients are
+  // DX = F1 + F2 - AddReduce(F1 + F2) / nelems,
+  // Dscale = AddReduce(DY * XCenter * NormFactor),
+  // Dbias = AddReduce(DY),
+  // with F1 =  XCenter * F0 * DNormFactor * 2 / nelems,
+  // F2 = NormFactor * scale * DY,
+  // XCenter = X - expectation(X),
+  // NormFactor = (variance(X) + epsilon)^-1/2 and
+  // DNormFactor = -1/2 * NormFactor^3.
+  absl::Status MatchLayerNormGradient(HloInstruction* instr) {
+    UniqueHloInstruction fwd_custom_call, x, x_center, scale, dy,
+        fused_expectation, fused_norm_factor;
+    HloInstruction *broadcast, *scalar, *dscale, *dbias, *reduce0, *reduce1,
+        *reduce2, *reduce3;
+    if (Match(
+            instr,
+            AddAddAnyOrder(
+                m::Broadcast(
+                    &broadcast,
+                    MultiplyAddAnyOrder(
+                        m::Broadcast(m::ConstantScalar(&scalar)),
+                        NegateAddReduce(&reduce0,
+                                        F1(&x, &x_center, &fused_expectation,
+                                           &fwd_custom_call, &scale, &dy,
+                                           &reduce2, norm_meta_data_)),
+                        NegateAddReduce(
+                            &reduce1, F2(&fused_norm_factor, &scale, &dy,
+                                         &fwd_custom_call, norm_meta_data_)))),
+                F2(&fused_norm_factor, &scale, &dy, &fwd_custom_call,
+                   norm_meta_data_),
+                F1(&x, &x_center, &fused_expectation, &fwd_custom_call, &scale,
+                   &dy, &reduce3, norm_meta_data_)))) {
       // Skip initial convert, if present.
       if (instr->user_count() == 1 &&
           instr->users()[0]->opcode() == HloOpcode::kConvert &&
@@ -1097,15 +1210,28 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       }
 
       // Verify the uniqueness of the captured Custom Call and inputs.
-      if (!custom_call || !x || !x0 || !dy || !scale ||
-          std::count(dyk.begin(), dyk.end(), dy) != dyk.size() ||
-          std::count(scalek.begin(), scalek.end(), scale) != scalek.size() ||
-          fused_expectation->unique_id() != fused_expectation0->unique_id() ||
-          fused_norm_factor->unique_id() != fused_norm_factor0->unique_id() ||
-          x->unique_id() != x0->unique_id() ||
-          x_center->unique_id() != x_center0->unique_id()) {
-        VLOG(1) << "Layer norm backward inputs not unique.";
-        return OkStatus();
+      if (!fwd_custom_call.Instr() || !x.Instr() || !dy.Instr() ||
+          !scale.Instr() || !fused_expectation.Instr() ||
+          !fused_norm_factor.Instr()) {
+        VLOG(1) << "Layer norm gradient inputs not unique.";
+        return absl::OkStatus();
+      }
+
+      // Retrieve meta data of the forward layer norm.
+      auto norm_meta_data =
+          norm_meta_data_.find(fwd_custom_call.Instr()->unique_id());
+      if (norm_meta_data == norm_meta_data_.end()) {
+        VLOG(1) << "Unable to retrieve norm meta data of forward Custom Call.";
+        return absl::OkStatus();
+      }
+
+      // Verify the dimensions of reductions in the backward graph.
+      if (reduce0->dimensions() != norm_meta_data->second.norm_dims ||
+          reduce1->dimensions() != norm_meta_data->second.norm_dims ||
+          reduce2->dimensions() != norm_meta_data->second.norm_dims ||
+          reduce3->dimensions() != norm_meta_data->second.norm_dims) {
+        VLOG(1) << "Unexpected reductions dimensions in layer norm gradient.";
+        return absl::OkStatus();
       }
 
       // The captured scalar must be one over the number of elements in the
@@ -1125,129 +1251,119 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
             ((actual_r_nelems + r_nelems) * numerical_epsilon))) {
         VLOG(1)
             << "Layer norm backward broadcast operand outside expected range.";
-        return OkStatus();
+        return absl::OkStatus();
       }
 
-      // Identify Dscale = AddReduce(XCenter * NormFactor * DY)
-      // through a top-down search starting from XCenter.
-      auto find_dscale = [x_center, fused_norm_factor,
-                          dy]() -> HloInstruction* {
-        for (const HloInstruction* multiply_norm_factor : x_center->users()) {
-          multiply_norm_factor =
-              SkipUnaryOps(multiply_norm_factor, /*top-down=*/true);
-          // Verify that the user of XCenter is a multiply with a single user.
-          if (!multiply_norm_factor ||
-              multiply_norm_factor->opcode() != HloOpcode::kMultiply ||
-              multiply_norm_factor->user_count() != 1) {
-            continue;
-          }
-          // Verify that one of the factors is a broadcast operating on the
-          // fused norm factor.
-          bool bcast_operand = multiply_norm_factor->operand(0)->opcode() !=
-                               HloOpcode::kBroadcast;
-          if (multiply_norm_factor->operand(bcast_operand)->opcode() !=
-                  HloOpcode::kBroadcast ||
-              SkipUnaryOps(
-                  SkipUnaryOps(multiply_norm_factor->operand(bcast_operand))
-                      ->operand(0))
-                      ->unique_id() != fused_norm_factor->unique_id()) {
-            continue;
-          }
-          const HloInstruction* multiply_dy =
-              SkipUnaryOps(multiply_norm_factor->users()[0], /*top-down=*/true);
-          // Verify that the user of the multiply is another multiply that is
-          // also a user of DY.
-          if (!multiply_dy || multiply_dy->opcode() != HloOpcode::kMultiply ||
-              !multiply_dy->IsUserOf(dy)) {
-            continue;
-          }
-          // Dscale applies an addition-reduction to multiply_dy.
-          for (HloInstruction* multiply_dy_user : multiply_dy->users()) {
-            if (AppliesAddReduce(multiply_dy_user)) {
-              return multiply_dy_user;
+      // Identify Dscale = AddReduce(DY * XCenter * norm factor) assuming the
+      // form MultiplyAnyOrder((factor1 or norm factor),
+      // MultiplyAnyOrder(factor0 * (factor 1 or norm factor))).
+      auto find_dscale =
+          [&fused_norm_factor, &norm_meta_data](
+              const UniqueHloInstruction& factor0,
+              const UniqueHloInstruction& factor1) -> HloInstruction* {
+        for (const HloInstruction* factor0_user : factor0.Instr()->users()) {
+          std::vector<HloInstruction*> users;
+          SkipUnaryOpsTopDownRecursive(
+              const_cast<HloInstruction*>(factor0_user), users);
+          // One of the users of factor0 must be a chained multiplication by the
+          // fused norm factor and factor1.
+          for (HloInstruction* user : users) {
+            if (Match(user,
+                      MultiplyMultiplyAnyOrder(
+                          m::Broadcast(BitcastOrReshape(m::Op().WithPredicate(
+                              fused_norm_factor.compare_only))),
+                          m::Op().WithPredicate(factor1.compare_only),
+                          m::Op()))) {
+              // Dscale is an addition-reduction of the product.
+              for (HloInstruction* multiply_user : user->users()) {
+                if (AppliesAddReduce(multiply_user,
+                                     norm_meta_data->second.non_norm_dims)) {
+                  return multiply_user;
+                }
+              }
             }
           }
         }
         return nullptr;
       };
-      if (!(dscale = find_dscale())) {
+      if (!(dscale = find_dscale(x_center, dy)) &&
+          !(dscale = find_dscale(dy, x_center))) {
         VLOG(1) << "Unable to identify Dscale in graph.";
-        return OkStatus();
+        return absl::OkStatus();
       }
 
       // Find Dbias, i.e. an addition-reduction of DY, starting from DY.
       // Rewriting proceeds without fusing Dbias if unsuccessful.
-      absl::flat_hash_set<int> visited_instrs;
-      dbias = FindAddReduceRecursive(dy, visited_instrs);
+      dbias = FindAddReduceRecursive(dy.Instr(),
+                                     norm_meta_data->second.non_norm_dims);
 
       // Verify the input and output layouts.
       // TODO(philipphack): Consider supporting more general cases.
-      if (!LayoutUtil::IsMonotonicWithDim0Major(dy->shape().layout()) ||
+      if (!LayoutUtil::IsMonotonicWithDim0Major(dy.Instr()->shape().layout()) ||
           !LayoutUtil::IsMonotonicWithDim0Major(instr->shape().layout()) ||
           !LayoutUtil::IsMonotonicWithDim0Major(dscale->shape().layout()) ||
           (dbias &&
            !LayoutUtil::IsMonotonicWithDim0Major(dbias->shape().layout()))) {
         VLOG(1) << "Layer norm input and/or output layouts nor supported.";
-        return OkStatus();
+        return absl::OkStatus();
       }
 
       // The types of X and DX must match.
-      if (x->shape().element_type() != instr->shape().element_type()) {
+      if (x.Instr()->shape().element_type() != instr->shape().element_type()) {
         VLOG(1) << "The types of X and DX must match.";
-        return OkStatus();
+        return absl::OkStatus();
       }
 
       // The types and shapes of scale, Dscale and Dbias (if present) must
       // match.
       if (!ShapeUtil::Equal(
-              ShapeUtil::DropDegenerateDimensions(scale->shape()),
+              ShapeUtil::DropDegenerateDimensions(scale.Instr()->shape()),
               ShapeUtil::DropDegenerateDimensions(dscale->shape())) ||
-          (dbias && !ShapeUtil::Equal(
-                        ShapeUtil::DropDegenerateDimensions(scale->shape()),
-                        ShapeUtil::DropDegenerateDimensions(dbias->shape())))) {
+          (dbias &&
+           !ShapeUtil::Equal(
+               ShapeUtil::DropDegenerateDimensions(scale.Instr()->shape()),
+               ShapeUtil::DropDegenerateDimensions(dbias->shape())))) {
         VLOG(1) << "Backward layer norm types not supported.";
-        return OkStatus();
+        return absl::OkStatus();
       }
 
       // Verify the element types.
-      if (!CompatibleElementType(dy)) {
+      if (!CompatibleElementType(dy.Instr())) {
         VLOG(1) << "Backward layer norm types not supported.";
-        return OkStatus();
+        return absl::OkStatus();
       }
 
-      // The byte size of the element type of X must be at least that of DY and
-      // scale.
-      if (ShapeUtil::ByteSizeOfPrimitiveType(x->shape().element_type()) <
-              ShapeUtil::ByteSizeOfPrimitiveType(dy->shape().element_type()) ||
-          ShapeUtil::ByteSizeOfPrimitiveType(x->shape().element_type()) <
+      // cuDNN requires the byte size of the element type of X to be at least
+      // that of DY and scale.
+      if (ShapeUtil::ByteSizeOfPrimitiveType(
+              x.Instr()->shape().element_type()) <
               ShapeUtil::ByteSizeOfPrimitiveType(
-                  scale->shape().element_type())) {
+                  dy.Instr()->shape().element_type()) ||
+          ShapeUtil::ByteSizeOfPrimitiveType(
+              x.Instr()->shape().element_type()) <
+              ShapeUtil::ByteSizeOfPrimitiveType(
+                  scale.Instr()->shape().element_type())) {
         VLOG(1) << "Backward layer norm types not supported.";
-        return OkStatus();
+        return absl::OkStatus();
       }
 
       // Transpose DY applying the stored transpose order of X from the forward
       // graph.
-      auto transpose_orders = transpose_orders_.find(custom_call->unique_id());
-      if (transpose_orders == transpose_orders_.end()) {
-        VLOG(1)
-            << "Unable to retrieve transpose orders for forward Custom Call.";
-        return OkStatus();
-      }
-      HloInstruction* transposed_dy = dy;
-      if (!transpose_orders->second.x_transpose.empty()) {
+      HloInstruction* transposed_dy = dy.Instr();
+      if (norm_meta_data->second.x_transpose) {
         TF_ASSIGN_OR_RETURN(
             transposed_dy,
-            MakeTransposeHlo(dy, transpose_orders->second.x_transpose));
+            MakeTransposeHlo(dy.Instr(),
+                             norm_meta_data->second.x_transpose->dimensions()));
       }
       TF_ASSIGN_OR_RETURN(HloInstruction * reshaped_dy,
-                          MakeReshapeHlo(x->shape(), transposed_dy));
+                          MakeReshapeHlo(x.Instr()->shape(), transposed_dy));
 
       Shape dx_shape = ShapeUtil::MakeShape(instr->shape().element_type(),
-                                            x->shape().dimensions());
+                                            x.Instr()->shape().dimensions());
 
       Shape dscale_dbias_shape = ShapeUtil::MakeShape(
-          dscale->shape().element_type(), scale->shape().dimensions());
+          dscale->shape().element_type(), scale.Instr()->shape().dimensions());
 
       GpuBackendConfig gpu_backend_config;
       CudnnNormBackendConfig& backend_config =
@@ -1262,8 +1378,9 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // TODO(philipphack): Consider autotuning the norm kernels.
       TF_ASSIGN_OR_RETURN(const int64_t c_constant,
                           CConstant(cuda_compute_capability_));
-      const int64_t workspace_size = (2 * c_constant * (4 + 256)) +
-                                     (2 * x->shape().dimensions(0) * 4) + 64;
+      const int64_t workspace_size =
+          (2 * c_constant * (4 + 256)) +
+          (2 * x.Instr()->shape().dimensions(0) * 4) + 64;
       algorithm->mutable_workspace_size()->set_value(workspace_size);
 
       // The output of the Custom Call is a tuple. The output shape of Dscale
@@ -1275,30 +1392,32 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       HloInstruction* custom_call =
           instr->AddInstruction(HloInstruction::CreateCustomCall(
               custom_call_shape,
-              {x, scale, reshaped_dy, fused_expectation, fused_norm_factor},
+              {x.Instr(), scale.Instr(), reshaped_dy, fused_expectation.Instr(),
+               fused_norm_factor.Instr()},
               kCudnnNormCallTarget));
       TF_RETURN_IF_ERROR(custom_call->set_backend_config(gpu_backend_config));
 
-      auto replace_with_cc = [custom_call, transpose_orders, transposed_dy,
-                              this](HloInstruction* old_instr,
-                                    int tuple_index) -> Status {
+      auto replace_with_cc = [custom_call, norm_meta_data, transposed_dy, this](
+                                 HloInstruction* old_instr,
+                                 int tuple_index) -> absl::Status {
         TF_ASSIGN_OR_RETURN(HloInstruction * gte,
                             MakeGetTupleElementHlo(custom_call, tuple_index));
         HloInstruction* new_instr;
         // Transpose DX applying the stored transpose order of Y from the
         // forward graph.
-        if (tuple_index == 0 && !transpose_orders->second.y_transpose.empty()) {
+        if (tuple_index == 0 && norm_meta_data->second.y_transpose) {
           TF_ASSIGN_OR_RETURN(new_instr,
                               MakeReshapeHlo(transposed_dy->shape(), gte));
           TF_ASSIGN_OR_RETURN(
-              new_instr, MakeTransposeHlo(
-                             new_instr, transpose_orders->second.y_transpose));
+              new_instr,
+              MakeTransposeHlo(
+                  new_instr, norm_meta_data->second.y_transpose->dimensions()));
         } else {
           TF_ASSIGN_OR_RETURN(new_instr,
                               MakeReshapeHlo(old_instr->shape(), gte));
         }
         TF_RETURN_IF_ERROR(ReplaceInstruction(old_instr, new_instr));
-        return OkStatus();
+        return absl::OkStatus();
       };
 
       TF_RETURN_IF_ERROR(replace_with_cc(instr, 0));
@@ -1311,15 +1430,12 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
               << " rewritten into layer norm backward Custom Call.";
     }
 
-    return OkStatus();
+    return absl::OkStatus();
   }
 
  private:
   se::CudaComputeCapability cuda_compute_capability_;
-  struct TransposeOrders {
-    std::vector<int64_t> x_transpose, y_transpose;
-  };
-  absl::flat_hash_map<int, TransposeOrders> transpose_orders_;
+  NormMetaDataMap norm_meta_data_;
 };
 
 absl::StatusOr<bool> RunOnComputation(
