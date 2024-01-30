@@ -3499,6 +3499,7 @@ cc_library(
         ":address_computation_fusion_rewriter",
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
+        ":async_stream_attribute_wrapper",
         ":autotuner_util",
         ":buffer_sharing",
         ":compile_module_to_llvm_ir",
@@ -5771,6 +5772,47 @@ xla_cc_test(
     deps = [
         ":backend_configs_cc",
         ":stream_attribute_annotator",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:status_matchers",
+    ],
+)
+
+cc_library(
+    name = "async_stream_attribute_wrapper",
+    srcs = ["async_stream_attribute_wrapper.cc"],
+    hdrs = ["async_stream_attribute_wrapper.h"],
+    deps = [
+        ":backend_configs_cc",
+        ":stream_attribute_annotator",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/algorithm:container",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+xla_cc_test(
+    name = "async_stream_attribute_wrapper_test",
+    srcs = ["async_stream_attribute_wrapper_test.cc"],
+    deps = [
+        ":async_stream_attribute_wrapper",
+        ":backend_configs_cc",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",

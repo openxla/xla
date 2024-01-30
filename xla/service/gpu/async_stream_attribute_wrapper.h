@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_STREAM_ATTRIBUTE_ANNOTATOR_H_
-#define XLA_SERVICE_GPU_STREAM_ATTRIBUTE_ANNOTATOR_H_
+#ifndef XLA_SERVICE_GPU_ASYNC_STREAM_ATTRIBUTE_WRAPPER_H_
+#define XLA_SERVICE_GPU_ASYNC_STREAM_ATTRIBUTE_WRAPPER_H_
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -26,18 +26,14 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// This pass checks to see if there's any instruction, that
-// consumes data from other computes streams, is missing
-// wait_on_operation_queues attribute. It will annotate
-// the corresponding instruction with the correct attribute
-// in GpuBackendConfig.
-
-class StreamAttributeAnnotator : public HloModulePass {
+// This pass will find the instructions that
+// are annotated with non-default stream id in backend configs
+// and wrap them using AsyncStartDone pairs to achieve
+// asynchronous executions.
+class AsyncStreamAttributeWrapper : public HloModulePass {
  public:
-  static constexpr int64_t kDefaultComputeStreamId = 0;
-
   absl::string_view name() const override {
-    return "stream-attribute-annotator";
+    return "async-stream-attribute-wrapper";
   }
 
   using HloPassInterface::Run;
@@ -49,4 +45,4 @@ class StreamAttributeAnnotator : public HloModulePass {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_STREAM_ATTRIBUTE_ANNOTATOR_H_
+#endif  // XLA_SERVICE_GPU_ASYNC_STREAM_ATTRIBUTE_WRAPPER_H_

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/stream_attribute_annotator.h"
+#include "xla/service/gpu/async_stream_attribute_wrapper.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/stream_attribute_annotator.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -42,56 +43,40 @@ namespace xla {
 namespace gpu {
 
 namespace {
-absl::StatusOr<bool> AnnotateStreamAttributesForUsers(HloInstruction* instr) {
+absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
-  if (!instr_gpu_config.ok()) {
+  if (!instr_gpu_config.ok() ||
+      instr_gpu_config->operation_queue_id() ==
+          StreamAttributeAnnotator::kDefaultComputeStreamId) {
     return false;
   }
-  bool changed = false;
-  int64_t stream_id = instr_gpu_config->operation_queue_id();
-  if (stream_id == StreamAttributeAnnotator::kDefaultComputeStreamId) {
-    return changed;
-  }
-  std::vector<HloInstruction*> all_consumers;
-  for (auto user : instr->users()) {
-    if (user->opcode() == HloOpcode::kGetTupleElement) {
-      user = user->users()[0];
-    }
-    all_consumers.push_back(user);
-  }
-
-  for (auto user : all_consumers) {
-    TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                        user->backend_config<GpuBackendConfig>());
-    auto it = absl::c_find(gpu_config.wait_on_operation_queues(), stream_id);
-    if (it == gpu_config.wait_on_operation_queues().end()) {
-      gpu_config.mutable_wait_on_operation_queues()->Add(stream_id);
-      TF_RETURN_IF_ERROR(user->set_backend_config(gpu_config));
-      changed = true;
-    }
-  }
-
-  return changed;
+  HloComputation* computation = instr->parent();
+  TF_ASSIGN_OR_RETURN(HloInstruction * done,
+                      computation->CreateAsyncInstructions(
+                          instr, {}, HloInstruction::kMainExecutionThread,
+                          /*replace=*/true));
+  return true;
 }
 }  // namespace
 
-absl::StatusOr<bool> StreamAttributeAnnotator::Run(
+absl::StatusOr<bool> AsyncStreamAttributeWrapper::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   XLA_VLOG_LINES(
-      2, "StreamAttributeAnnotator::Run(), before:\n" + module->ToString());
+      2, "AsyncStreamAttributeWrapper::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (const HloComputation* comp : module->computations(execution_threads)) {
     for (HloInstruction* instr : comp->instructions()) {
       if (!instr->has_backend_config()) {
         continue;
       }
-      TF_ASSIGN_OR_RETURN(bool result, AnnotateStreamAttributesForUsers(instr));
+
+      TF_ASSIGN_OR_RETURN(bool result, AsynchronizeInstruction(instr));
       changed |= result;
     }
   }
   XLA_VLOG_LINES(
-      2, "StreamAttributeAnnotator::Run(), after:\n" + module->ToString());
+      2, "AsyncStreamAttributeWrapper::Run(), after:\n" + module->ToString());
   return changed;
 }
 
