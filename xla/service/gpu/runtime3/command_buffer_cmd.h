@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_RUNTIME3_COMMAND_BUFFER_CMD_H_
 #define XLA_SERVICE_GPU_RUNTIME3_COMMAND_BUFFER_CMD_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -24,6 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -227,6 +229,83 @@ class CommandBufferCmdSequence {
   absl::flat_hash_set<BufferAllocation::Slice> read_set_;
   absl::flat_hash_set<BufferAllocation::Slice> write_set_;
 };
+
+//===----------------------------------------------------------------------===//
+// CommandBufferCmdResourceSet
+//===----------------------------------------------------------------------===//
+
+// CommandBufferCmdResourceSet is an optimized most-recently-used cache for
+// resources that can be attached by commands to command buffers.
+//
+// Each command can be recorded into unbounded number of different command
+// buffers (command buffers evicted an reconstructed all the time), however at
+// any given time the number of alive command buffers is bounded by the number
+// of local devices (up to 16 in practice). We rely on this property to maintain
+// a most-recently-used cache in a simple container and lazily evict resources
+// once they stop being used. This resource set can be used by individual
+// commands to attach expensive to reconstruct state and to track it between
+// different calls to record.
+//
+// Thread safe.
+template <typename T, size_t capacity = 16>
+class CommandBufferCmdResourceSet {
+ public:
+  CommandBufferCmdResourceSet() : resources_(capacity) {}
+
+  // Returns a resource for the given command buffer or creates a new one and
+  // moves it to the front of most-recently-used list.
+  std::shared_ptr<T> GetOrCreateResource(
+      const se::CommandBuffer* command_buffer);
+
+  size_t capasity() const { return capacity; }
+
+ private:
+  struct Resource {
+    const se::CommandBuffer* command_buffer = nullptr;
+    std::shared_ptr<T> resource;
+  };
+
+  absl::Mutex mu_;
+  std::vector<Resource> resources_ ABSL_GUARDED_BY(mu_);
+};
+
+template <typename T, size_t capacity>
+std::shared_ptr<T>
+CommandBufferCmdResourceSet<T, capacity>::GetOrCreateResource(
+    const se::CommandBuffer* command_buffer) {
+  absl::MutexLock lock(&mu_);
+
+  // Resource at `i` position moved to front, and resources in `[0, i)` range
+  // moved one element to the right. Returns copy of the resource at front.
+  auto shift_right = [&](size_t i) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    Resource res = std::move(resources_[i]);
+    do {
+      resources_[i] = std::move(resources_[i - 1]);
+    } while (--i > 0);
+    return (resources_[0] = std::move(res)).resource;
+  };
+
+  for (size_t i = 0; i < capacity; ++i) {
+    // Found resource for a given key, move it to front and return a copy.
+    if (ABSL_PREDICT_TRUE(resources_[i].command_buffer == command_buffer)) {
+      return ABSL_PREDICT_TRUE(i == 0) ? resources_[i].resource
+                                       : shift_right(i);
+    }
+
+    // Create a new resource, move it to front and return a copy.
+    if (resources_[i].command_buffer == nullptr) {
+      resources_[i].command_buffer = command_buffer;
+      resources_[i].resource = std::make_shared<T>();
+      return i == 0 ? resources_[i].resource : shift_right(i);
+    }
+  }
+
+  // Create a new resource, replace the last one with it, move it to front and
+  // return a copy.
+  resources_[capacity - 1].command_buffer = command_buffer;
+  resources_[capacity - 1].resource = std::make_shared<T>();
+  return shift_right(capacity - 1);
+}
 
 //===----------------------------------------------------------------------===//
 // ComputationIdCmd (ReplicaId and PartitionId)

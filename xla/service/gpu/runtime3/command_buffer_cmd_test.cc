@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/runtime3/command_buffer_cmd.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/types.h"  // IWYU pragma: keep
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla::gpu {
 
@@ -247,5 +249,58 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
 
   ASSERT_EQ(dst, std::vector<int32_t>(4, 42 + 42));
 }
+
+TEST(CommandBufferCmdResourceSetTest, GetOrCreateResources) {
+  CommandBufferCmdResourceSet<int32_t> resources;
+
+  // We need a fake command buffer pointer to use as a key.
+  auto* ptr = reinterpret_cast<se::CommandBuffer*>(0x01234567);
+
+  // Check that we get the same resource back.
+  *resources.GetOrCreateResource(ptr) += 10;
+  EXPECT_EQ(*resources.GetOrCreateResource(ptr), 10);
+  EXPECT_EQ(*resources.GetOrCreateResource(ptr), 10);
+
+  // Check that we get a new resource for a new key.
+  *resources.GetOrCreateResource(ptr + 1) += 20;
+  EXPECT_EQ(*resources.GetOrCreateResource(ptr + 1), 20);
+
+  // Check that we still can get the first resource.
+  EXPECT_EQ(*resources.GetOrCreateResource(ptr), 10);
+
+  // And again get the second one.
+  EXPECT_EQ(*resources.GetOrCreateResource(ptr + 1), 20);
+
+  // Push resource set over the capacity.
+  for (size_t i = 0; i < resources.capasity(); ++i) {
+    resources.GetOrCreateResource(ptr + 10 + i);
+  }
+
+  // Check that resource will be re-created.
+  *resources.GetOrCreateResource(ptr) += 10;
+  EXPECT_EQ(*resources.GetOrCreateResource(ptr), 10);
+}
+
+//===----------------------------------------------------------------------===//
+// Performance benchmarks below
+//===----------------------------------------------------------------------===//
+
+static void BM_GetOrCreateResource(benchmark::State& state) {
+  CommandBufferCmdResourceSet<int32_t> resources;
+  auto* ptr = reinterpret_cast<se::CommandBuffer*>(0x01234567);
+
+  size_t n = state.range(0);
+  size_t m = resources.capasity() / n;
+
+  for (auto s : state) {
+    for (int i = 0; i < m; ++i) {
+      for (int j = 0; j < n; ++j) {
+        benchmark::DoNotOptimize(resources.GetOrCreateResource(ptr + j));
+      }
+    }
+  }
+}
+
+BENCHMARK(BM_GetOrCreateResource)->Arg(1)->Arg(2)->Arg(4)->Arg(8)->Arg(16);
 
 }  // namespace xla::gpu
