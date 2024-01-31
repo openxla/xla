@@ -287,11 +287,30 @@ class GpuPriorityFusionQueue : public FusionQueue {
   void OnFusingInstruction(HloInstruction* fusion,
                            HloInstruction* original_producer,
                            HloInstruction* original_consumer) override {
+    FusionStep::Fusion* fusion_step = nullptr;
+    // In case when `original_consumer` and `fusion` are the same instruction,
+    // `consumer_name` should be the name before fusion, and `fusion_name` is
+    // the new name. Store `consumer_name` to the debug proto before the fusion
+    // is renamed according to the fusion kind.
+    if (fusion_process_dump_) {
+      fusion_step = fusion_process_dump_->add_fusion_steps()->mutable_fusion();
+
+      // Explicit std::string is needed for OSS proto implementation.
+      fusion_step->set_consumer_name(std::string(original_consumer->name()));
+    }
+
     absl::string_view emitter_fusion_kind =
         HloFusionAnalysis::GetEmitterFusionKindString(
             fusion_analysis_cache_.Get(*fusion).GetEmitterFusionKind());
-    fusion->SetAndSanitizeName(absl::StrCat(emitter_fusion_kind, "_fusion"));
-    fusion->UniquifyName(&fusion->GetModule()->instruction_name_uniquer());
+
+    // This is a name prefix according to the fusion kind. For example,
+    // `loop_fusion`.
+    std::string new_fusion_name = absl::StrCat(emitter_fusion_kind, "_fusion");
+
+    // After uniquifying, fusion will have the name with a number suffix. For
+    // example, `loop_fusion.42`. Even if fusion's kind didn't change, the
+    // fusion will get a new name with increased suffix number.
+    fusion->GetModule()->SetAndUniquifyInstrName(fusion, new_fusion_name);
 
     if (fusion_process_dump_) {
       auto* fusion_step =
@@ -300,7 +319,6 @@ class GpuPriorityFusionQueue : public FusionQueue {
       // Explicit std::string is needed for OSS proto implementation.
       fusion_step->set_fusion_name(std::string(fusion->name()));
       fusion_step->set_producer_name(std::string(original_producer->name()));
-      fusion_step->set_consumer_name(std::string(original_consumer->name()));
     }
 
     // The original consumer was replaced with the fusion, but it's pointer can
