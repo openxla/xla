@@ -105,6 +105,7 @@ cc_library(
         ":nccl_all_reduce_thunk",
         ":replica_id_thunk",
         ":sequential_thunk",
+        ":wait_for_streams_thunk",
         ":while_thunk",
         "//xla:status",
         "//xla:statusor",
@@ -643,5 +644,17 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "wait_for_streams_thunk",
+    srcs = ["wait_for_streams_thunk.cc"],
+    hdrs = ["wait_for_streams_thunk.h"],
+    deps = [
+        "//xla/service:global_device_id",
+        "//xla/service/gpu:thunk",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:statusor",
     ],
 )

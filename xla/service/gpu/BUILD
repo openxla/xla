@@ -371,6 +371,7 @@ cc_library(
         "//xla/service/gpu/runtime3:replica_id_thunk",
         "//xla/service/gpu/runtime3:send_recv_thunk",
         "//xla/service/gpu/runtime3:sequential_thunk",
+        "//xla/service/gpu/runtime3:wait_for_streams_thunk",
         "//xla/service/gpu/runtime3:while_thunk",
         "//xla/service/llvm_ir:buffer_assignment_util",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
