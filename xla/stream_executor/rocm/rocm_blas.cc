@@ -1371,7 +1371,7 @@ absl::Status ROCMBlas::DoBlasGemmStridedBatched(
 }
 
 absl::Status ROCMBlas::GetVersion(string *version) {
-#if TF_ROCM_VERSION > 60000
+#if TF_ROCM_VERSION >= 60300 // Not yet available in ROCM-6.1
   absl::MutexLock lock{&mu_};
   size_t len = 0;
   if(auto res = rocblas_get_version_string_size(&len); 
