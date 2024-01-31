@@ -7,6 +7,10 @@ load(
     "tf_proto_library",
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load(
+    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -1099,6 +1103,7 @@ cc_library(
     ],
     hdrs = ["debug_options_flags.h"],
     copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     visibility = [":friends"],
     deps =
         [
@@ -1112,7 +1117,9 @@ cc_library(
             "@tsl//tsl/platform:logging",
             "@tsl//tsl/platform:protobuf",
             "@tsl//tsl/util:command_line_flags",
-        ],
+        ] + if_cuda_is_configured([
+            "@local_config_cuda//cuda:cuda_headers",
+        ]),
 )
 
 cc_library(
