@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
+#include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
 #include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -120,7 +121,7 @@ static xla::Status PopulateExecutableCostAnalysis(PJRT_Executable* executable) {
     std::string& property_name = cost_analysis_names[i];
 
     cost_analysis_property.struct_size = PJRT_NamedValue_STRUCT_SIZE;
-    cost_analysis_property.priv = nullptr;
+    cost_analysis_property.extension_start = nullptr;
 
     property_name = property.first;
     cost_analysis_property.name = property_name.c_str();
@@ -645,28 +646,13 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     byte_strides =
         absl::Span<const int64_t>(args->byte_strides, args->num_byte_strides);
   }
-  std::optional<xla::Layout> layout = std::nullopt;
-  if (args->device_layout != nullptr) {
-    switch (args->device_layout->type) {
-      case PJRT_Buffer_MemoryLayout_Type::PJRT_Buffer_MemoryLayout_Type_Tiled: {
-        PJRT_ASSIGN_OR_RETURN(layout,
-                              ConvertToLayout(args->device_layout->tiled));
-        break;
-      }
-      case PJRT_Buffer_MemoryLayout_Type::
-          PJRT_Buffer_MemoryLayout_Type_Strides: {
-        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(absl::StrCat(
-            "PJRT_Buffer_MemoryLayout_Type_Strides in device_layout is not "
-            "supported in  PJRT_Client_BufferFromHostBuffer for platform ",
-            args->client->client->platform_name())));
-        break;
-      }
-      default: {
-        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(
-            absl::StrCat("Unexpected PJRT_Buffer_MemoryLayout_Type type: ",
-                         args->device_layout->type)));
-      }
-    }
+
+  xla::Layout* device_layout = nullptr;
+  PJRT_Layouts_PJRT_Client_BufferFromHostBuffer_Args* args_layout_ext =
+      FindExtension<PJRT_Layouts_PJRT_Client_BufferFromHostBuffer_Args>(
+          args, PJRT_Extension_Type_Layouts);
+  if (args_layout_ext != nullptr && args_layout_ext->device_layout != nullptr) {
+    device_layout = args_layout_ext->device_layout->layout;
   }
 
   xla::PjRtFuture<xla::Status>::Promise promise =
@@ -677,10 +663,9 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
   };
 
   std::unique_ptr<xla::PjRtBuffer> buffer;
-  bool has_layout_and_memory = layout.has_value() && args->memory != nullptr;
-  bool has_layout_and_no_memory = layout.has_value() && args->memory == nullptr;
-  bool has_memory_and_no_layout =
-      !layout.has_value() && args->memory != nullptr;
+  bool has_layout_and_memory = device_layout && args->memory != nullptr;
+  bool has_layout_and_no_memory = device_layout && args->memory == nullptr;
+  bool has_memory_and_no_layout = !device_layout && args->memory != nullptr;
   if (has_layout_and_memory) {
     PJRT_ASSIGN_OR_RETURN(
         buffer, args->client->client->BufferFromHostBuffer(
@@ -689,7 +674,7 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
                     ::pjrt::ConvertFromPjRtHostBufferSemantics(
                         args->host_buffer_semantics),
                     std::move(on_done_with_host_buffer),
-                    args->memory->memory_space, &layout.value()));
+                    args->memory->memory_space, device_layout));
   } else if (has_layout_and_no_memory) {
     PJRT_ASSIGN_OR_RETURN(
         buffer, args->client->client->BufferFromHostBuffer(
@@ -698,7 +683,7 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
                     ::pjrt::ConvertFromPjRtHostBufferSemantics(
                         args->host_buffer_semantics),
                     std::move(on_done_with_host_buffer), args->device->device,
-                    &layout.value()));
+                    device_layout));
   } else if (has_memory_and_no_layout) {
     PJRT_ASSIGN_OR_RETURN(
         buffer,
@@ -1936,7 +1921,7 @@ PJRT_Error* PJRT_Event_Error(PJRT_Event_Error_Args* args) {
   if (!event->status.has_value()) {
     PJRT_Event_Await_Args await_args;
     await_args.struct_size = PJRT_Event_Await_Args_STRUCT_SIZE;
-    await_args.priv = nullptr;
+    await_args.extension_start = nullptr;
     await_args.event = event;
     return PJRT_Event_Await(&await_args);
   }
@@ -2077,7 +2062,7 @@ static std::vector<PJRT_NamedValue> PopulatePjrtAttributes(
   for (auto const& [name, value] : attributes) {
     PJRT_NamedValue& cur_attribute = c_attributes[ind];
     cur_attribute.struct_size = PJRT_NamedValue_STRUCT_SIZE;
-    cur_attribute.priv = nullptr;
+    cur_attribute.extension_start = nullptr;
     cur_attribute.name = name.c_str();
     cur_attribute.name_size = name.size();
     if (const std::string* string_val = std::get_if<std::string>(&value)) {
@@ -2236,3 +2221,178 @@ PJRT_LoadedExecutable::PJRT_LoadedExecutable(
     : executable(std::move(executable)), client(client) {
   pjrt::PopulatePjrtExecutableAddressableDevices(this);
 }
+
+namespace pjrt {
+
+PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
+                       PJRT_TopologyDescription_Create* topology_create_fn,
+                       PJRT_Plugin_Initialize* plugin_initialize_fn,
+                       PJRT_Extension_Base* extension_start) {
+  return PJRT_Api{
+      /*struct_size=*/PJRT_Api_STRUCT_SIZE,
+      /*extension_start=*/extension_start,
+
+      /*pjrt_api_version=*/
+      PJRT_Api_Version{/*struct_size=*/PJRT_Api_Version_STRUCT_SIZE,
+                       /*priv=*/nullptr,
+                       /*major_version=*/PJRT_API_MAJOR,
+                       /*minor_version=*/PJRT_API_MINOR},
+
+      /*PJRT_Error_Destroy=*/pjrt::PJRT_Error_Destroy,
+      /*PJRT_Error_Message=*/pjrt::PJRT_Error_Message,
+      /*PJRT_Error_GetCode=*/pjrt::PJRT_Error_GetCode,
+
+      /*PJRT_Plugin_Initialize=*/plugin_initialize_fn,
+      /*PJRT_Plugin_Attributes=*/pjrt::PJRT_Plugin_Attributes,
+
+      /*PJRT_Event_Destroy=*/pjrt::PJRT_Event_Destroy,
+      /*PJRT_Event_IsReady=*/pjrt::PJRT_Event_IsReady,
+      /*PJRT_Event_Error=*/pjrt::PJRT_Event_Error,
+      /*PJRT_Event_Await=*/pjrt::PJRT_Event_Await,
+      /*PJRT_Event_OnReady=*/pjrt::PJRT_Event_OnReady,
+
+      /*PJRT_Client_Create=*/create_fn,
+      /*PJRT_Client_Destroy=*/pjrt::PJRT_Client_Destroy,
+      /*PJRT_Client_PlatformName=*/pjrt::PJRT_Client_PlatformName,
+      /*PJRT_Client_ProcessIndex=*/pjrt::PJRT_Client_ProcessIndex,
+      /*PJRT_Client_PlatformVersion= */ pjrt::PJRT_Client_PlatformVersion,
+      /*PJRT_Client_Devices= */ pjrt::PJRT_Client_Devices,
+      /*PJRT_Client_AddressableDevices=*/
+      pjrt::PJRT_Client_AddressableDevices,
+      /*PJRT_Client_LookupDevice=*/pjrt::PJRT_Client_LookupDevice,
+      /*PJRT_Client_LookupAddressableDevice=*/
+      pjrt::PJRT_Client_LookupAddressableDevice,
+      /*PJRT_Client_AddressableMemories=*/pjrt::PJRT_Client_AddressableMemories,
+      /*PJRT_Client_Compile=*/pjrt::PJRT_Client_Compile,
+      /*PJRT_Client_DefaultDeviceAssignment=*/
+      pjrt::PJRT_Client_DefaultDeviceAssignment,
+      /*PJRT_Client_BufferFromHostBuffer=*/
+      pjrt::PJRT_Client_BufferFromHostBuffer,
+
+      /*PJRT_DeviceDescription_Id=*/pjrt::PJRT_DeviceDescription_Id,
+      /*PJRT_DeviceDescription_ProcessIndex=*/
+      pjrt::PJRT_DeviceDescription_ProcessIndex,
+      /*PJRT_DeviceDescription_Attributes=*/
+      pjrt::PJRT_DeviceDescription_Attributes,
+      /*PJRT_DeviceDescription_Kind=*/pjrt::PJRT_DeviceDescription_Kind,
+      /*PJRT_DeviceDescription_DebugString=*/
+      pjrt::PJRT_DeviceDescription_DebugString,
+      /*PJRT_DeviceDescription_ToString=*/
+      pjrt::PJRT_DeviceDescription_ToString,
+
+      /*PJRT_Device_GetDescription=*/pjrt::PJRT_Device_GetDescription,
+      /*PJRT_Device_IsAddressable=*/pjrt::PJRT_Device_IsAddressable,
+      /*PJRT_Device_LocalHardwareId=*/pjrt::PJRT_Device_LocalHardwareId,
+      /*PJRT_Device_AddressableMemories=*/pjrt::PJRT_Device_AddressableMemories,
+      /*PJRT_Device_DefaultMemory=*/pjrt::PJRT_Device_DefaultMemory,
+      /*PJRT_Device_MemoryStats=*/pjrt::PJRT_Device_MemoryStats,
+
+      /*PJRT_Memory_Id=*/pjrt::PJRT_Memory_Id,
+      /*PJRT_Memory_Kind=*/pjrt::PJRT_Memory_Kind,
+      /*PJRT_Memory_DebugString=*/pjrt::PJRT_Memory_DebugString,
+      /*PJRT_Memory_ToString=*/pjrt::PJRT_Memory_ToString,
+      /*PJRT_Memory_AddressableByDevices=*/
+      pjrt::PJRT_Memory_AddressableByDevices,
+
+      /*PJRT_Executable_Destroy=*/pjrt::PJRT_Executable_Destroy,
+      /*PJRT_Executable_Name=*/pjrt::PJRT_Executable_Name,
+      /*PJRT_Executable_NumReplicas=*/pjrt::PJRT_Executable_NumReplicas,
+      /*PJRT_Executable_NumPartitions=*/
+      pjrt::PJRT_Executable_NumPartitions,
+      /*PJRT_Executable_NumOutputs=*/pjrt::PJRT_Executable_NumOutputs,
+      /*PJRT_Executable_SizeOfGeneratedCodeInBytes=*/
+      pjrt::PJRT_Executable_SizeOfGeneratedCodeInBytes,
+      /*PJRT_Executable_GetCostAnalysis=*/pjrt::PJRT_Executable_GetCostAnalysis,
+      /*PJRT_Executable_OutputMemoryKinds=*/
+      pjrt::PJRT_Executable_OutputMemoryKinds,
+      /*PJRT_Executable_OptimizedProgram=*/
+      pjrt::PJRT_Executable_OptimizedProgram,
+      /*PJRT_Executable_Serialize=*/pjrt::PJRT_Executable_Serialize,
+
+      /*PJRT_LoadedExecutable_Destroy=*/pjrt::PJRT_LoadedExecutable_Destroy,
+      /*PJRT_LoadedExecutable_GetExecutable=*/
+      pjrt::PJRT_LoadedExecutable_GetExecutable,
+      /*PJRT_LoadedExecutable_AddressableDevices=*/
+      pjrt::PJRT_LoadedExecutable_AddressableDevices,
+      /*PJRT_LoadedExecutable_Delete=*/pjrt::PJRT_LoadedExecutable_Delete,
+      /*PJRT_LoadedExecutable_IsDeleted=*/
+      pjrt::PJRT_LoadedExecutable_IsDeleted,
+      /*PJRT_LoadedExecutable_Execute=*/pjrt::PJRT_LoadedExecutable_Execute,
+      /*PJRT_Executable_DeserializeAndLoad=*/
+      pjrt::PJRT_Executable_DeserializeAndLoad,
+      /*PJRT_LoadedExecutable_Fingerprint=*/
+      pjrt::PJRT_LoadedExecutable_Fingerprint,
+
+      /*PJRT_Buffer_Destroy=*/pjrt::PJRT_Buffer_Destroy,
+      /*PJRT_Buffer_ElementType=*/pjrt::PJRT_Buffer_ElementType,
+      /*PJRT_Buffer_Dimensions=*/pjrt::PJRT_Buffer_Dimensions,
+      /*PJRT_Buffer_UnpaddedDimensions=*/
+      pjrt::PJRT_Buffer_UnpaddedDimensions,
+      /*PJRT_Buffer_DynamicDimensionIndices=*/
+      pjrt::PJRT_Buffer_DynamicDimensionIndices,
+      /*PJRT_Buffer_GetMemoryLayout=*/
+      pjrt::PJRT_Buffer_GetMemoryLayout,
+      /*PJRT_Buffer_OnDeviceSizeInBytes=*/
+      pjrt::PJRT_Buffer_OnDeviceSizeInBytes,
+      /*PJRT_Buffer_Device=*/pjrt::PJRT_Buffer_Device,
+      /*PJRT_Buffer_Memory=*/pjrt::PJRT_Buffer_Memory,
+      /*PJRT_Buffer_Delete=*/pjrt::PJRT_Buffer_Delete,
+      /*PJRT_Buffer_IsDeleted=*/pjrt::PJRT_Buffer_IsDeleted,
+      /*PJRT_Buffer_CopyToDevice=*/pjrt::PJRT_Buffer_CopyToDevice,
+      /*PJRT_Buffer_ToHostBuffer=*/pjrt::PJRT_Buffer_ToHostBuffer,
+      /*PJRT_Buffer_IsOnCpu=*/pjrt::PJRT_Buffer_IsOnCpu,
+      /*PJRT_Buffer_ReadyEvent=*/pjrt::PJRT_Buffer_ReadyEvent,
+      /*PJRT_Buffer_UnsafePointer=*/pjrt::PJRT_Buffer_UnsafePointer,
+      /*PJRT_Buffer_IncreaseExternalReferenceCount=*/
+      pjrt::PJRT_Buffer_IncreaseExternalReferenceCount,
+      /*PJRT_Buffer_DecreaseExternalReferenceCount=*/
+      pjrt::PJRT_Buffer_DecreaseExternalReferenceCount,
+      /*PJRT_Buffer_OpaqueDeviceMemoryDataPointer=*/
+      pjrt::PJRT_Buffer_OpaqueDeviceMemoryDataPointer,
+
+      /*PJRT_CopyToDeviceStream_Destroy=*/
+      pjrt::PJRT_CopyToDeviceStream_Destroy,
+      /*PJRT_CopyToDeviceStream_AddChunk=*/
+      pjrt::PJRT_CopyToDeviceStream_AddChunk,
+      /*PJRT_CopyToDeviceStream_TotalBytes=*/
+      pjrt::PJRT_CopyToDeviceStream_TotalBytes,
+      /*PJRT_CopyToDeviceStream_GranuleSize=*/
+      pjrt::PJRT_CopyToDeviceStream_GranuleSize,
+      /*PJRT_CopyToDeviceStream_CurrentBytes=*/
+      pjrt::PJRT_CopyToDeviceStream_CurrentBytes,
+
+      /*PJRT_TopologyDescription_Create=*/topology_create_fn,
+      /*PJRT_TopologyDescription_Destroy=*/
+      pjrt::PJRT_TopologyDescription_Destroy,
+      /*PJRT_TopologyDescription_PlatformName=*/
+      pjrt::PJRT_TopologyDescription_PlatformName,
+      /*PJRT_TopologyDescription_PlatformVersion=*/
+      pjrt::PJRT_TopologyDescription_PlatformVersion,
+      /*PJRT_TopologyDescription_GetDeviceDescriptions=*/
+      pjrt::PJRT_TopologyDescription_GetDeviceDescriptions,
+      /*PJRT_TopologyDescription_Serialize=*/
+      pjrt::PJRT_TopologyDescription_Serialize,
+      /*PJRT_TopologyDescription_Attributes=*/
+      pjrt::PJRT_TopologyDescription_Attributes,
+
+      /*PJRT_Compile=*/pjrt::PJRT_Compile,
+
+      // Always add new fields to the end of the struct. Move fields below to
+      // their corresponding places after each major version bump.
+      /*PJRT_Executable_OutputElementTypes=*/
+      pjrt::PJRT_Executable_OutputElementTypes,
+      /*PJRT_Executable_OutputDimensions=*/
+      pjrt::PJRT_Executable_OutputDimensions,
+      /*PJRT_Buffer_CopyToMemory=*/
+      pjrt::PJRT_Buffer_CopyToMemory,
+      /*PJRT_Client_CreateViewOfDeviceBuffer=*/
+      pjrt::PJRT_Client_CreateViewOfDeviceBuffer,
+      /*PJRT_Executable_Fingerprint=*/pjrt::PJRT_Executable_Fingerprint,
+      /*PJRT_Client_TopologyDescription= */
+      pjrt::PJRT_Client_TopologyDescription,
+      /*PJRT_Executable_GetCompiledMemoryStats= */
+      pjrt::PJRT_Executable_GetCompiledMemoryStats,
+  };
+}
+
+}  // namespace pjrt

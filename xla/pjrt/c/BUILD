@@ -54,6 +54,15 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_c_api_layouts_extension_hdrs",
+    hdrs = ["pjrt_c_api_layouts_extension.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+    ],
+)
+
+cc_library(
     name = "pjrt_c_api_wrapper_impl",
     srcs = ["pjrt_c_api_wrapper_impl.cc"],
     hdrs = ["pjrt_c_api_wrapper_impl.h"],
@@ -61,6 +70,7 @@ cc_library(
     deps = [
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
+        ":pjrt_c_api_layouts_extension_hdrs",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
