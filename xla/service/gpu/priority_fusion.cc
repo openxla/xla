@@ -405,8 +405,21 @@ class GpuPriorityFusionQueue : public FusionQueue {
   }
 
   FusionDecision CanFuse(HloInstruction* producer, HloInstruction* consumer) {
-    if (!IsFusible(*producer)) {
+    if (!IsFusible(*producer) || producer->opcode() == HloOpcode::kPad) {
       return "the producer is not fusible";
+    }
+    if (producer->opcode() == HloOpcode::kFusion) {
+      auto root = producer->fused_expression_root();
+      if (root->opcode() == HloOpcode::kPad) {
+        return "the producer is a pad fusion";
+      }
+      if (root->opcode() == HloOpcode::kTuple) {
+        for (auto operand : root->operands()) {
+          if (operand->opcode() == HloOpcode::kPad) {
+            return "the producer contains a pad output";
+          }
+        }
+      }
     }
 
     if (!IsFusible(*consumer)) {
