@@ -265,7 +265,6 @@ cc_library(
     visibility = ["//xla/service/gpu:__subpackages__"],
     deps = [
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:util",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:target_util",
@@ -274,6 +273,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_loop",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
@@ -458,6 +458,7 @@ cc_library(
         "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
