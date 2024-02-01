@@ -809,6 +809,68 @@ TEST_F(AddressComputationFusionTest, SlicedOperandAliasingOutput) {
                                       /*run_hlo_passes=*/false));
 }
 
+// TEST_F(AddressComputationFusionTest, TritonKernelCustomCall) {
+//   ErrorSpec error_spec{/*aabs=*/1e-3, /*arel=*/1e-3};
+//
+//   const char* hlo_ref = R"(
+//   HloModule jit_slice
+//
+//   ENTRY main {
+//     p0 = bf16[4,1,7168,4,256]{4,3,2,1,0} parameter(0)
+//     p1 = bf16[1,7168,1,256]{3,2,1,0} parameter(1)
+//     p2 = bf16[1,7168,1,256]{3,2,1,0} parameter(2)
+//     slice.13 = bf16[1,1,7168,4,256]{4,3,2,1,0} slice(p0), slice={[1:2],
+//     [0:1], [0:7168], [0:4], [0:256]} bitcast.41 = bf16[1,7168,4,256]{3,2,1,0}
+//     bitcast(slice.13) constant_0 = bf16[0]{0} constant({}) constant_1 =
+//     pred[0]{0} constant({})
+//
+//     ROOT custom-call.7552 = (f32[1,4,7168]{2,1,0}, f32[0]{0},
+//     bf16[1,7168,4,256]{3,2,1,0}) custom-call(bitcast.41, p1, p2, constant_0,
+//     constant_1, constant_1),
+//       custom_call_target="triton_kernel_call",
+//       operand_layout_constraints={bf16[1,7168,4,256]{3,2,1,0},
+//       bf16[1,7168,1,256]{3,2,1,0}, bf16[1,7168,1,256]{3,2,1,0}, bf16[0]{0},
+//       pred[0]{0}, pred[0]{0}}, api_version=API_VERSION_STATUS_RETURNING
+//   })";
+//
+//   const char* hlo_opt = R"(
+//   HloModule jit_slice
+//
+//   %fused_computation {
+//     p0 = bf16[4,1,7168,4,256]{4,3,2,1,0} parameter(0)
+//     p1 = bf16[1,7168,1,256]{3,2,1,0} parameter(1)
+//     p2 = bf16[1,7168,1,256]{3,2,1,0} parameter(2)
+//     p3 = bf16[0]{0} parameter(3)
+//     p4 = pred[0]{0} parameter(4)
+//     p5 = pred[0]{0} parameter(5)
+//     slice.13 = bf16[1,1,7168,4,256]{4,3,2,1,0} slice(p0), slice={[1:2],
+//     [0:1], [0:7168], [0:4], [0:256]} bitcast.41 = bf16[1,7168,4,256]{3,2,1,0}
+//     bitcast(slice.13)
+//
+//     ROOT custom-call.7552 = (f32[1,4,7168]{2,1,0}, f32[0]{0},
+//     bf16[1,7168,4,256]{3,2,1,0}) custom-call(bitcast.41, p1, p2, p3, p4, p5),
+//       custom_call_target="triton_kernel_call",
+//       operand_layout_constraints={bf16[1,7168,4,256]{3,2,1,0},
+//       bf16[1,7168,1,256]{3,2,1,0}, bf16[1,7168,1,256]{3,2,1,0}, bf16[0]{0},
+//       pred[0]{0}, pred[0]{0}}, api_version=API_VERSION_STATUS_RETURNING
+//   }
+//
+//   ENTRY %main.9 {
+//     p0 = bf16[4,1,7168,4,256]{4,3,2,1,0} parameter(0)
+//     p1 = bf16[1,7168,1,256]{3,2,1,0} parameter(1)
+//     p2 = bf16[1,7168,1,256]{3,2,1,0} parameter(2)
+//     constant_0 = bf16[0]{0} constant({})
+//     constant_1 = pred[0]{0} constant({})
+//     ROOT fusion.2 = (f32[1,4,7168]{2,1,0}, f32[0]{0},
+//     bf16[1,7168,4,256]{3,2,1,0}) fusion(p0, p1, p2, constant_0, constant_1,
+//     constant_1), kind=kCustom, calls=%fused_computation,
+//         backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"address_computation"}}}
+//   })";
+//
+//   EXPECT_TRUE(RunAndCompareTwoModules(hlo_ref, hlo_opt, error_spec,
+//                                       /*run_hlo_passes=*/false));
+// }
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

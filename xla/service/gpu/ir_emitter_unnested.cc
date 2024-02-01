@@ -2182,6 +2182,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
         std::move(opaque));
   };
 
+  abort();
   AddThunkToThunkSequence(found_ffi_handler ? ffi_thunk() : legacy_thunk());
 
   return absl::OkStatus();
