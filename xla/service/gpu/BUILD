@@ -2429,7 +2429,9 @@ tf_proto_library(
     name = "fusion_process_dump_proto",
     srcs = ["fusion_process_dump.proto"],
     cc_api_version = 2,
-    protodeps = [],
+    protodeps = [
+        "//xla/stream_executor:device_description_proto",
+    ],
 )
 
 cc_library(
