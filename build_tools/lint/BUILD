@@ -45,7 +45,6 @@ py_test(
         "testdata/bad_cc.diff",
         "testdata/important_cc.diff",
     ],
-    tags = ["no_oss"],
     deps = [
         ":check_contents",
         "//build_tools:test_utils",
