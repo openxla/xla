@@ -103,6 +103,7 @@ cc_library(
 cc_library(
     name = "gpu_driver_header",
     hdrs = if_gpu_is_configured(["gpu_driver.h"]),
+    defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     visibility = set_external_visibility([
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
