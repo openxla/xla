@@ -31,6 +31,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/array4d.h"
@@ -60,10 +64,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
-#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {
@@ -4603,6 +4603,30 @@ TEST_F(HloEvaluatorTest, EvaluateCustomCall_ManyInputs) {
   auto arg1_data = args[1].data<uint32_t>();
   std::vector<uint32_t> expected_data = {arg0_data[0] + arg1_data[0]};
   EXPECT_TRUE(absl::c_equal(expected_data, actual_literal.data<uint32_t>()));
+}
+
+TEST_F(HloEvaluatorTest, EvaluateCustomCallInFusion) {
+  const absl::string_view hlo_text = R"(
+fusion1 {
+  p = f32[] parameter(0)
+  ROOT c = f32[] custom-call(p), custom_call_target="__cchandler1"
+}
+
+ENTRY e {
+  p = f32[] parameter(0)
+  ROOT f = f32[] fusion(p), kind=kCustom, calls=fusion1
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  auto input = LiteralUtil::CreateR0<float>(0);
+  HloEvaluator evaluator;
+  evaluator.set_custom_call_handler([](const HloInstruction* custom_call,
+                                       absl::Span<const Literal*> operands) {
+    return LiteralUtil::CreateR0<float>(1 -
+                                        operands[0]->GetFirstElement<float>());
+  });
+  TF_ASSERT_OK_AND_ASSIGN(auto output, evaluator.Evaluate(*m_, {&input}));
+  EXPECT_EQ(output, LiteralUtil::CreateR0<float>(1));
 }
 
 TEST_F(HloEvaluatorTest, IsFiniteF16) {
