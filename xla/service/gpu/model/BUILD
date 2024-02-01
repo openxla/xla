@@ -139,10 +139,7 @@ xla_cc_test(
 cc_library(
     name = "gpu_hlo_cost_analysis",
     srcs = ["gpu_hlo_cost_analysis.cc"],
-    hdrs = [
-        "gpu_hlo_cost_analysis.h",
-        "hlo_op_profiles_data.h",
-    ],
+    hdrs = ["gpu_hlo_cost_analysis.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":hlo_op_profile_proto_cc",
@@ -441,7 +438,10 @@ tf_proto_library(
 cc_library(
     name = "hlo_op_profiles",
     srcs = ["hlo_op_profiles.cc"],
-    hdrs = ["hlo_op_profiles.h"],
+    hdrs = [
+        "hlo_op_profiles.h",
+        "hlo_op_profiles_data.h",
+    ],
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":hlo_op_profile_proto_cc",
