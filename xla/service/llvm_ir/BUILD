@@ -81,6 +81,7 @@ cc_library(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:byte_order",
         "@tsl//tsl/platform:env",

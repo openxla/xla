@@ -50,6 +50,7 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/Location.h"  // from @llvm-project
@@ -539,7 +540,12 @@ void SetDereferenceableMetadataForLoad(llvm::LoadInst* load,
 }
 
 llvm::Instruction* AddRangeMetadata(int32_t lower, int32_t upper,
-                                    llvm::Instruction* inst) {
+                                    llvm::Instruction* inst,
+                                    llvm::IRBuilder<>* b) {
+  llvm::Module* module = b->GetInsertBlock()->getModule();
+  if (llvm::Triple(module->getTargetTriple()).isSPIR()) {
+    return inst;
+  }
   llvm::LLVMContext& context = inst->getParent()->getContext();
   llvm::IntegerType* i32 = llvm::Type::getInt32Ty(context);
   inst->setMetadata(
