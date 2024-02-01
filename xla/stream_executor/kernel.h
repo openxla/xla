@@ -743,7 +743,8 @@ inline absl::StatusOr<TypedKernel<Args...>> TypedKernel<Args...>::Create(
 
   if (!cubin_data.empty()) {
     loader_spec.AddCudaCubinInMemory(
-        reinterpret_cast<const char *>(cubin_data.data()), kernel_name);
+        reinterpret_cast<const char *>(cubin_data.data()), cubin_data.size(),
+        kernel_name);
   }
 
   return TypedKernel<Args...>::Create(executor, loader_spec);

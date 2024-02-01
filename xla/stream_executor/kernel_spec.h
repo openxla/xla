@@ -161,12 +161,14 @@ class CudaPtxInMemory : public KernelLoaderSpec {
 // Kernel loader specification for a CUBIN blob that resides in memory.
 class CudaCubinInMemory : public KernelLoaderSpec {
  public:
-  CudaCubinInMemory(const char *bytes, absl::string_view kernel_name);
+  CudaCubinInMemory(const char *bytes, int size, absl::string_view kernel_name);
 
   const char *bytes() const { return bytes_; }
+  const int size() const { return size_; }
 
  private:
   const char *bytes_;
+  int size_;
 
   CudaCubinInMemory(const CudaCubinInMemory &) = delete;
   void operator=(const CudaCubinInMemory &) = delete;
@@ -220,7 +222,7 @@ class MultiKernelLoaderSpec {
   // mangled by the compiler if it is not declared in an extern "C" scope.
   MultiKernelLoaderSpec *AddInProcessSymbol(void *symbol,
                                             absl::string_view kernel_name);
-  MultiKernelLoaderSpec *AddCudaCubinInMemory(const char *cubin_bytes,
+  MultiKernelLoaderSpec *AddCudaCubinInMemory(const char *cubin_bytes, int size,
                                               absl::string_view kernel_name);
   MultiKernelLoaderSpec *AddCudaPtxInMemory(absl::string_view ptx,
                                             absl::string_view kernel_name);
