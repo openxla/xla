@@ -5720,6 +5720,7 @@ cc_library(
         ":hlo_buffer",
         ":hlo_pass",
         ":hlo_value",
+        ":pattern_matcher",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
