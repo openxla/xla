@@ -20,7 +20,8 @@ load(
     "if_rocm_is_configured",
     "rocm_copts",
 )
-load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
+load("@tsl//tsl:tsl.bzl", "if_google", "if_cuda_or_rocm", 
+    "if_nccl", "tsl_copts", "tsl_gpu_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/platform:build_config.bzl",
@@ -930,13 +931,13 @@ alias(
 
 cc_library(
     name = "_nccl_api_impl",
-    srcs = if_cuda_is_configured(
+    srcs = if_cuda_or_rocm(
         ["nccl_api.cc"],
         ["nccl_api_stub.cc"],
     ),
     hdrs = ["nccl_api.h"],
     compatible_with = get_compatible_with_portable(),
-    defines = if_cuda_is_configured(["XLA_ENABLE_XCCL"]),  # TODO(ezhulenev): Remove!
+    defines = if_gpu_is_configured(["XLA_ENABLE_XCCL"]),  # TODO(ezhulenev): Remove!
     deps = [
         ":nccl_clique_key",
         "//xla:shape_util",
@@ -956,6 +957,10 @@ cc_library(
         "@local_config_nccl//:nccl",
         "//xla/stream_executor/cuda:cuda_driver",
         "//xla/stream_executor/cuda:cuda_executor",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rccl",
+        "//xla/stream_executor/rocm:rocm_driver",
+        "//xla/stream_executor/rocm:rocm_executor",        
     ]) + if_gpu_is_configured([
         "//xla/stream_executor/gpu:gpu_stream",
     ]),
@@ -1039,7 +1044,8 @@ cc_library(
     name = "mock_nccl_xml_google",
     srcs = ["mock_nccl_xml.cc"],
     hdrs = ["mock_nccl_xml.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     tags = ["manual"],
     visibility = ["//visibility:private"],
     deps = [
@@ -1055,6 +1061,8 @@ cc_library(
         "@tsl//tsl/platform:regexp",
     ] + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rccl",
     ]),
 )
 
