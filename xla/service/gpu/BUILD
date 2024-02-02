@@ -3337,6 +3337,7 @@ cc_library(
         "TENSORFLOW_USE_ROCM=1",
     ]),
     deps = if_gpu_is_configured([
+        ":address_computation_fusion_rewriter",
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
         ":autotuner_util",
