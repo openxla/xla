@@ -299,6 +299,7 @@ cc_library(
     hdrs = ["float_normalization.h"],
     deps = [
         ":float_support",
+        ":call_graph",
         ":hlo_dce",
         ":hlo_pass",
         ":tuple_simplifier",

@@ -18,18 +18,17 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/call_graph.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/tuple_simplifier.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -292,8 +291,12 @@ Status FloatNormalizationVisitor::ConvertCalledComputations(
   return OkStatus();
 }
 
-bool ShouldSkipCalledComputationsForInstruction(HloInstruction* hlo) {
-  return DynCast<HloAllReduceInstructionBase>(hlo) != nullptr;
+// Returns true if the called computations of the instruction should not
+// be touched by float normalization. In particular, we must not introduce
+// float conversions into collective reductions.
+bool ShouldAvoidNormalizingComputationsForInstruction(HloInstruction* hlo) {
+  return hlo->opcode() == HloOpcode::kAllReduce ||
+         hlo->opcode() == HloOpcode::kReduceScatter;
 }
 
 Status FloatNormalizationVisitor::HandleMultipleOutputs(HloInstruction* hlo) {
@@ -361,7 +364,7 @@ Status FloatNormalizationVisitor::HandleMultipleOutputs(HloInstruction* hlo) {
 
   std::vector<HloComputation*> low_precision_called_comps;
   for (auto* comp : hlo->called_computations()) {
-    if (ShouldSkipCalledComputationsForInstruction(hlo)) {
+    if (ShouldAvoidNormalizingComputationsForInstruction(hlo)) {
       continue;
     }
     bool comp_has_low_precision = false;
@@ -440,7 +443,7 @@ Status FloatNormalizationVisitor::HandleInstruction(HloInstruction* hlo) {
 
   std::vector<HloComputation*> low_precision_called_comps;
   for (auto* comp : hlo->called_computations()) {
-    if (ShouldSkipCalledComputationsForInstruction(hlo)) {
+    if (ShouldAvoidNormalizingComputationsForInstruction(hlo)) {
       continue;
     }
     bool comp_has_low_precision = false;
@@ -578,45 +581,43 @@ Status FloatNormalizationVisitor::Preprocess(HloInstruction* hlo) {
 // of non-normalizing computations that must be skipped by the visitor.
 absl::flat_hash_set<HloComputation*>
 CloneComputationsForNonNormalizingInstructions(
-    HloModule* module, std::vector<HloComputation*>& computations_to_visit) {
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  std::unique_ptr<CallGraph> call_graph =
+      CallGraph::Build(module, execution_threads);
+
   absl::flat_hash_set<HloComputation*> computations_to_skip;
-  // Let us first figure out what users each computation has.
-  struct ComputationUsers {
-    bool user_to_normalize_exists = false;
-    std::vector<HloInstruction*> users_to_skip_normalization;
-  };
-  absl::flat_hash_map<HloComputation*, ComputationUsers> computation_users;
-  for (auto& computation : computations_to_visit) {
-    for (auto* instruction : computation->instructions()) {
-      if (!instruction->has_called_computations()) continue;
-      for (auto& called : instruction->called_computations()) {
-        if (ShouldSkipCalledComputationsForInstruction(instruction)) {
-          computation_users[called].users_to_skip_normalization.push_back(
-              instruction);
-        } else {
-          computation_users[called].user_to_normalize_exists = true;
-        }
+  for (const CallGraphNode& node : call_graph->nodes()) {
+    bool has_normalizing_users = false;
+    bool has_users_to_skip_normalization = false;
+    for (const CallSite& site : node.caller_callsites()) {
+      if (ShouldAvoidNormalizingComputationsForInstruction(
+              site.instruction())) {
+        has_users_to_skip_normalization = true;
+      } else {
+        has_normalizing_users = true;
       }
     }
-  }
-
-  // If a computation is shared, create a clone, and replace it its the users.
-  for (auto [comp, users] : computation_users) {
     // If the computation is only used by normalizing users or only by
     // non-normalizing users, then we do not clone.
-    if (users.users_to_skip_normalization.empty()) continue;
-    if (!users.user_to_normalize_exists) {
-      computations_to_skip.insert(comp);
+    if (!has_users_to_skip_normalization) {
       continue;
     }
-
+    if (!has_normalizing_users) {
+      computations_to_skip.insert(node.computation());
+      continue;
+    }
     // Otherwise, we create a clone and replace the normalizing instructions'
     // computations with the clone.
-    HloComputation* clone = module->DeepCloneComputation(comp);
-    for (auto* hlo : users.users_to_skip_normalization) {
-      hlo->ReplaceCalledComputations([&](HloComputation* called) {
-        return called == comp ? clone : called;
-      });
+    HloComputation* clone = module->DeepCloneComputation(node.computation());
+    for (const CallSite& site : node.caller_callsites()) {
+      if (ShouldAvoidNormalizingComputationsForInstruction(
+              site.instruction())) {
+        site.instruction()->ReplaceCalledComputations(
+            [&](HloComputation* called) {
+              return called == node.computation() ? clone : called;
+            });
+      }
     }
     computations_to_skip.insert(clone);
   }
@@ -633,8 +634,8 @@ StatusOr<bool> FloatNormalization::Run(
                         ", before:\n" + module->ToString());
   auto computations_to_visit =
       module->MakeComputationPostOrder(execution_threads);
-  auto computations_to_skip = CloneComputationsForNonNormalizingInstructions(
-      module, computations_to_visit);
+  auto computations_to_skip =
+      CloneComputationsForNonNormalizingInstructions(module, execution_threads);
 
   FloatNormalizationVisitor visitor(float_support_, this);
   for (auto* comp : computations_to_visit) {
