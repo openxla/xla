@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -202,6 +203,64 @@ float GpuHloCostAnalysis::CommonElementwiseUtilization(
   return ret;
 }
 
+namespace {
+// Estimate the maximum number of direct users inside 'consumer' of any cache
+// invalidating op from the producer fusion (or the producer itself if it is not
+// a fusion). If 'consumer' is not a fusion, returns 1. This is an estimate
+// because we need to guess which ops will be deduplicated with HloCSE.
+int64_t EstimateMaxDirectUsers(const HloInstruction& producer,
+                               const HloInstruction& consumer) {
+  if (consumer.opcode() != HloOpcode::kFusion) {
+    return 1;
+  }
+
+  // Each cache invalidating op in 'producer' can have direct users in
+  // 'consumer'. In addition to that, we can also have cache invalidating ops in
+  // 'producer' that are duplicates of cache invalidating ops in 'consumer'. In
+  // that case, the number of users of the duplicate needs to be added.
+  int64_t max_direct_users = 1;
+  // We gather the name prefixes of all cache invalidating ops in 'producer'. A
+  // name prefix is considered the first two elements of
+  // absl::StrSplit(name, '.')
+  std::vector<std::pair<absl::string_view, absl::string_view>>
+      cache_invalidation_ops_name_prefixes;
+  if (producer.opcode() == HloOpcode::kFusion) {
+    const HloInstruction* producer_operand = producer.fused_expression_root();
+    if (ElementalIrEmitter::OpInvalidatesCache(producer_operand)) {
+      int64_t operand_index = consumer.operand_index(&producer);
+      max_direct_users = consumer.fused_instructions_computation()
+                             ->parameter_instruction(operand_index)
+                             ->user_count();
+    }
+    for (HloInstruction* hlo :
+         producer.fused_instructions_computation()->instructions()) {
+      if (!ElementalIrEmitter::OpInvalidatesCache(hlo)) {
+        continue;
+      }
+      std::pair<absl::string_view, absl::string_view> name_prefix =
+          absl::StrSplit(hlo->name(), '.');
+      cache_invalidation_ops_name_prefixes.push_back(name_prefix);
+    }
+    absl::c_sort(cache_invalidation_ops_name_prefixes);
+  } else {
+    std::pair<absl::string_view, absl::string_view> producer_name_prefix =
+        absl::StrSplit(producer.name(), '.');
+    cache_invalidation_ops_name_prefixes.push_back(producer_name_prefix);
+  }
+  // Also check if there are other users from an equivalent op.
+  for (HloInstruction* hlo :
+       consumer.fused_instructions_computation()->instructions()) {
+    std::pair<absl::string_view, absl::string_view> name_prefix =
+        absl::StrSplit(hlo->name(), '.');
+    if (absl::c_binary_search(cache_invalidation_ops_name_prefixes,
+                              name_prefix)) {
+      max_direct_users = std::max(max_direct_users, 1 + hlo->user_count());
+    }
+  }
+  return max_direct_users;
+}
+}  // namespace
+
 bool GpuHloCostAnalysis::ProducerConsumerMergedTooLarge(
     const HloInstruction& producer, const HloInstruction& consumer) {
   int64_t producer_replication = 1;
@@ -209,21 +268,26 @@ bool GpuHloCostAnalysis::ProducerConsumerMergedTooLarge(
   // its IR the number of times the consumer replicates the access
   // to the parameter corresponding to the producer.
   if (consumer.opcode() == HloOpcode::kFusion) {
-    producer_replication =
-        IrSize(*consumer.fused_parameter(consumer.operand_index(&producer)));
+    int64_t operand_index = consumer.operand_index(&producer);
+    producer_replication = IrSize(*consumer.fused_parameter(operand_index));
   }
   VLOG(5) << producer.name() << " would be emitted by " << consumer.name()
           << " x" << producer_replication;
-  int64_t n_splits = producer_replication * IrBasicBlockSplitCount(producer) +
-                     IrBasicBlockSplitCount(consumer);
-  VLOG(5) << "Basic block split counts: " << IrBasicBlockSplitCount(producer)
-          << ", " << IrBasicBlockSplitCount(consumer) << " -> " << n_splits;
-  if (n_splits > kMaxBasicBlockSplitsPerFusion) {
+  // If 'producer' contains a cache invalidating op, and it would be emitted at
+  // least twice, the cache will be invalidated each time, which means that even
+  // if an op is accessed with the same IrArray::Index, we will have to emit it
+  // again. The first cache invalidation is not a problem though, as we will not
+  // have added any of the (direct or indirect) users of 'producer' to the cache
+  // yet. It is hard to estimate the exact IrSize correctly in such cases, so
+  // just never allow cases where a cache invalidating op is emitted at least
+  // twice.
+  if (IrBasicBlockSplitCount(producer) >= 1 &&
+      (producer_replication > 1 ||
+       EstimateMaxDirectUsers(producer, consumer) > 1)) {
     return true;
   }
   int64_t merged_ir_size =
-      (IrSize(producer) * producer_replication + IrSize(consumer)) *
-      (1 << n_splits);
+      (IrSize(producer) * producer_replication + IrSize(consumer));
   VLOG(5) << "IR sizes: " << IrSize(producer) << ", " << IrSize(consumer)
           << " -> " << merged_ir_size;
   return merged_ir_size > kMaxIRSize;

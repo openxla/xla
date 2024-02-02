@@ -537,5 +537,138 @@ TEST_F(GpuHloCostAnalysisTest, CommonElementwiseUseParameterAndRoot) {
             0.f);
 }
 
+TEST_F(GpuHloCostAnalysisTest, ProducerConsumerMergedTooLarge) {
+  const char* hlo_fusion_module_str = R"(
+  HloModule m
+
+  f {
+    p0 = f32[10] parameter(0)
+    p1 = f32[11] parameter(1)
+    concat = f32[21] concatenate(p0, p1), dimensions={0}
+    ROOT neg = f32[21] negate(concat)
+  }
+
+  f2 {
+    p0 = f32[21] parameter(0)
+    s1 = f32[20] slice(p0), slice={[0:20]}
+    s2 = f32[20] slice(p0), slice={[1:21]}
+    ROOT add = f32[20] add(s1, s2)
+  }
+
+  ENTRY _ {
+    p0 = f32[10] parameter(0)
+    p1 = f32[11] parameter(1)
+    f1 = f32[21] fusion(p0, p1), kind=kLoop, calls=f
+    ROOT f2 = f32[20] fusion(f1), kind=kLoop, calls=f2
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_fusion_module_str));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+  HloInstruction* consumer = module->entry_computation()->root_instruction();
+  const HloInstruction* producer = consumer->operand(0);
+  EXPECT_TRUE(analysis_.ProducerConsumerMergedTooLarge(*producer, *consumer));
+}
+
+TEST_F(GpuHloCostAnalysisTest, ProducerConsumerMergedTooLargeTwoDirectUsers) {
+  const char* hlo_fusion_module_str = R"(
+  HloModule m
+
+  f {
+    p0 = f32[10] parameter(0)
+    p1 = f32[11] parameter(1)
+    ROOT concat = f32[21] concatenate(p0, p1), dimensions={0}
+  }
+
+  f2 {
+    p0 = f32[21] parameter(0)
+    neg = f32[21] negate(p0)
+    exp = f32[21] exponential(p0)
+    ROOT add = f32[21] add(neg, exp)
+  }
+
+  ENTRY _ {
+    p0 = f32[10] parameter(0)
+    p1 = f32[11] parameter(1)
+    f1 = f32[21] fusion(p0, p1), kind=kLoop, calls=f
+    ROOT f2 = f32[21] fusion(f1), kind=kLoop, calls=f2
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_fusion_module_str));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+  HloInstruction* consumer = module->entry_computation()->root_instruction();
+  const HloInstruction* producer = consumer->operand(0);
+  EXPECT_TRUE(analysis_.ProducerConsumerMergedTooLarge(*producer, *consumer));
+}
+
+TEST_F(GpuHloCostAnalysisTest,
+       ProducerConsumerMergedTooLargeTwoDirectUsersIfDeduplicated) {
+  const char* hlo_fusion_module_str = R"(
+  HloModule m
+
+  f {
+    p0 = f32[10] parameter(0)
+    p1 = f32[11] parameter(1)
+    ROOT concat.1.0 = f32[21] concatenate(p0, p1), dimensions={0}
+  }
+
+  f2 {
+    p0 = f32[21] parameter(0)
+    p1 = f32[10] parameter(1)
+    p2 = f32[11] parameter(2)
+    concat.1.1 = f32[21] concatenate(p1, p2), dimensions={0}
+    neg = f32[21] negate(concat.1.1)
+    exp = f32[21] exponential(p0)
+    ROOT add = f32[21] add(neg, exp)
+  }
+
+  ENTRY _ {
+    p0 = f32[10] parameter(0)
+    p1 = f32[11] parameter(1)
+    f1 = f32[21] fusion(p0, p1), kind=kLoop, calls=f
+    ROOT f2 = f32[21] fusion(f1, p0, p1), kind=kLoop, calls=f2
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_fusion_module_str));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+  HloInstruction* consumer = module->entry_computation()->root_instruction();
+  const HloInstruction* producer = consumer->operand(0);
+  EXPECT_TRUE(analysis_.ProducerConsumerMergedTooLarge(*producer, *consumer));
+}
+
+TEST_F(GpuHloCostAnalysisTest, ProducerConsumerMergedNotTooLarge) {
+  const char* hlo_fusion_module_str = R"(
+  HloModule m
+
+  f {
+    p0 = f32[10] parameter(0)
+    p1 = f32[11] parameter(1)
+    ROOT concat = f32[21] concatenate(p0, p1), dimensions={0}
+  }
+
+  f2 {
+    p0 = f32[21] parameter(0)
+    neg = f32[21] negate(p0)
+    exp = f32[21] exponential(neg)
+    ROOT add = f32[21] add(neg, exp)
+  }
+
+  ENTRY _ {
+    p0 = f32[10] parameter(0)
+    p1 = f32[11] parameter(1)
+    f1 = f32[21] fusion(p0, p1), kind=kLoop, calls=f
+    ROOT f2 = f32[21] fusion(f1), kind=kLoop, calls=f2
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_fusion_module_str));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+  HloInstruction* consumer = module->entry_computation()->root_instruction();
+  const HloInstruction* producer = consumer->operand(0);
+  EXPECT_FALSE(analysis_.ProducerConsumerMergedTooLarge(*producer, *consumer));
+}
+
 }  // namespace gpu
 }  // namespace xla

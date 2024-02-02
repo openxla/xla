@@ -28,9 +28,6 @@ namespace gpu {
 
 // Cost analysis for GPUs.
 class GpuHloCostAnalysis : public HloCostAnalysis {
-  // Each instruction creating a new basic block roughly doubles the total
-  // number of basic blocks and the IR code size accordingly.
-  static constexpr int64_t kMaxBasicBlockSplitsPerFusion = 10;
   static constexpr int64_t kMaxIRSize = 10000;
 
  public:
