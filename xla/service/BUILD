@@ -299,6 +299,7 @@ cc_library(
     srcs = ["float_normalization.cc"],
     hdrs = ["float_normalization.h"],
     deps = [
+        ":call_graph",
         ":float_support",
         ":hlo_dce",
         ":hlo_pass",
