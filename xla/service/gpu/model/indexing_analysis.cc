@@ -684,7 +684,7 @@ std::vector<int64_t> ToTransposeDimensions(const Layout& l) {
   return out;
 }
 
-llvm::SmallVector<AffineExpr, 4> DelinearizeInBoundsIndex(
+llvm::SmallVector<AffineExpr> DelinearizeInBoundsIndex(
     mlir::AffineExpr linear, absl::Span<const int64_t> sizes,
     absl::Span<const int64_t> strides) {
   llvm::SmallVector<AffineExpr> result;
