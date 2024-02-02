@@ -448,6 +448,10 @@ llvm::Value* IrArray::Index::Linearize(absl::Span<const int64_t> dimensions,
   // Each dimension is multiplied by the product of the sizes of all
   // earlier dimensions and added to the accumulator logical_linear_index.
   CHECK_EQ(size(), dimensions.size());
+  // If there is just a single dimension, nothing to linearize.
+  if (size() == 1) {
+    return multidim_[0];
+  }
   llvm::Value* logical_linear_index = GetConstantWithIndexType(0);
   int64_t multiplier = 1;
   for (ssize_t i = 0; i < size(); ++i) {

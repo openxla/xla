@@ -211,10 +211,6 @@ ENTRY reduce.1 {
 // CHECK:         %[[VAL_153:.*]] = mul nuw nsw i32 %[[VAL_149]], 2
 // CHECK:         %[[VAL_154:.*]] = add nuw nsw i32 %[[VAL_152]], %[[VAL_153]]
 // CHECK:         %[[VAL_155:.*]] = udiv i32 %[[VAL_154]], 10000
-// CHECK:         %[[VAL_156:.*]] = mul nuw nsw i32 %[[VAL_148]], 1
-// CHECK:         %[[VAL_157:.*]] = add nuw nsw i32 0, %[[VAL_156]]
-// CHECK:         %[[VAL_158:.*]] = mul nuw nsw i32 %[[VAL_147]], 1
-// CHECK:         %[[VAL_159:.*]] = add nuw nsw i32 0, %[[VAL_158]]
 // CHECK:         %[[VAL_160:.*]] = getelementptr inbounds [10000 x %[[VAL_1]]], ptr %[[VAL_161:.*]], i32 0, i32 %[[VAL_154]]
 // CHECK:         %[[VAL_162:.*]] = load %[[VAL_1]], ptr %[[VAL_160]], align 1, !invariant.load !3
 // CHECK:         store %[[VAL_1]] %[[VAL_162]], ptr %[[VAL_29]], align 1
@@ -264,10 +260,6 @@ ENTRY reduce.1 {
 // CHECK:         %[[VAL_187:.*]] = mul nuw nsw i32 %[[VAL_183]], 2
 // CHECK:         %[[VAL_188:.*]] = add nuw nsw i32 %[[VAL_186]], %[[VAL_187]]
 // CHECK:         %[[VAL_189:.*]] = udiv i32 %[[VAL_188]], 10000
-// CHECK:         %[[VAL_190:.*]] = mul nuw nsw i32 %[[VAL_182]], 1
-// CHECK:         %[[VAL_191:.*]] = add nuw nsw i32 0, %[[VAL_190]]
-// CHECK:         %[[VAL_192:.*]] = mul nuw nsw i32 %[[VAL_181]], 1
-// CHECK:         %[[VAL_193:.*]] = add nuw nsw i32 0, %[[VAL_192]]
 // CHECK:         %[[VAL_194:.*]] = getelementptr inbounds [10000 x %[[VAL_1]]], ptr %[[VAL_161]], i32 0, i32 %[[VAL_188]]
 // CHECK:         %[[VAL_195:.*]] = load %[[VAL_1]], ptr %[[VAL_194]], align 1, !invariant.load !3
 // CHECK:         store %[[VAL_1]] %[[VAL_195]], ptr %[[VAL_29]], align 1
