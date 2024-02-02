@@ -27,30 +27,40 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 
-#if TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
-#if (TF_ROCM_VERSION >= 50200)
-#include "rocm/include/rccl/rccl.h"
-#else
-#include "rocm/include/rccl.h"
-#endif
-#else // GOOGLE_CUDA
-#include "third_party/nccl/nccl.h"
-#endif // TENSORFLOW_USE_ROCM || GOOGLE_CUDA
-
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
+#if XLA_ENABLE_XCCL
+#include "xla/stream_executor/gpu/gpu_stream.h"
+#if TENSORFLOW_USE_ROCM
+#include "rocm/rocm_config.h"
+#if (TF_ROCM_VERSION >= 50200)
+#include "rocm/include/rccl/rccl.h"
+#else
+#include "rocm/include/rccl.h"
+#endif  // TF_ROCM_VERSION >= 50200
+#else   // GOOGLE_CUDA
+#include "third_party/nccl/nccl.h"
+#endif  // TENSORFLOW_USE_ROCM || GOOGLE_CUDA
+#endif  // XLA_ENABLE_XCCL
+
 namespace xla::gpu {
 
+//==-----------------------------------------------------------------------===//
+// NcclApi::PersistentPlanAllocator
+//==-----------------------------------------------------------------------===//
+
+using PersistentPlanAllocator = NcclApi::PersistentPlanAllocator;
+using ScopedPersistentPlanAllocator = NcclApi::ScopedPersistentPlanAllocator;
+
+#if XLA_ENABLE_XCCL
 //==-----------------------------------------------------------------------===//
 // Macros to return or warn on NCCL errors.
 //==-----------------------------------------------------------------------===//
@@ -194,13 +204,6 @@ static NcclApi::NcclPersistentPlanAllocatorHandle Cast(
   return reinterpret_cast<NcclApi::NcclPersistentPlanAllocatorHandle>(ptr);
 }
 #endif  // PLATFORM_GOOGLE
-
-//==-----------------------------------------------------------------------===//
-// NcclApi::PersistentPlanAllocator
-//==-----------------------------------------------------------------------===//
-
-using PersistentPlanAllocator = NcclApi::PersistentPlanAllocator;
-using ScopedPersistentPlanAllocator = NcclApi::ScopedPersistentPlanAllocator;
 
 PersistentPlanAllocator::PersistentPlanAllocator(
     int64_t device_ordinal, se::DeviceMemoryAllocator* allocator,
@@ -521,10 +524,10 @@ DefaultNcclApi::RegisterBuffer(NcclCommHandle comm,
       "Register buffer for NCCL communicator; buffer=%p; size=%d; comm=%p",
       buffer.opaque(), buffer.size(), comm);
   void* handle = nullptr;
-  #if (NCCL_VERSION_CODE >= 21901)
+#if (NCCL_VERSION_CODE >= 21901)
   XLA_NCCL_RETURN_IF_ERROR(
       ncclCommRegister(Cast(comm), buffer.opaque(), buffer.size(), &handle));
-  #endif
+#endif  // NCCL_VERSION_CODE >= 21901
   return reinterpret_cast<NcclRegisteredBufferHandle>(handle);
 }
 
@@ -534,10 +537,135 @@ DefaultNcclApi::DeregisterBuffer(NcclCommHandle comm,
   VLOG(3) << absl::StreamFormat(
       "Deregister buffer for NCCL communicator; handle=%p; comm=%p", handle,
       comm);
-  #if (NCCL_VERSION_CODE >= 21901)    
+#if (NCCL_VERSION_CODE >= 21901)    
   return XLA_NCCL_STATUS(
       ncclCommDeregister(Cast(comm), reinterpret_cast<void*>(handle)));
-  #endif    
+#endif // NCCL_VERSION_CODE >= 21901
 }
+
+#else // XLA_ENABLE_XCCL
+
+// This is a NCCL API stub that is linked into the process when XLA compiled
+// without NCCL or CUDA support. It returns errors from all API calls. This stub
+// makes it always safe to include NCCL API headers everywhere in XLA without
+// #ifdefs or complex build rules magic. All magic handled by `:nccl_api`.
+
+//==-----------------------------------------------------------------------===//
+// NcclApi::PersistentPlanAllocator
+//==-----------------------------------------------------------------------===//
+
+PersistentPlanAllocator::PersistentPlanAllocator(int64_t,
+                                                 se::DeviceMemoryAllocator*,
+                                                 se::Stream*) {
+  // Suppress clang unused private field warnings.
+  (void)device_ordinal_;
+  (void)allocator_;
+  (void)stream_;
+}
+
+PersistentPlanAllocator::~PersistentPlanAllocator() = default;
+
+absl::StatusOr<se::DeviceMemoryBase>
+PersistentPlanAllocator::AllocateAndInitialize(void*, size_t) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+absl::Status PersistentPlanAllocator::Deallocate(se::DeviceMemoryBase mem) {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+ScopedPersistentPlanAllocator::ScopedPersistentPlanAllocator(
+    NcclCommHandle, tsl::RCReference<PersistentPlanAllocator>) {
+  // Suppress clang unused private field warnings.
+  (void)comm_;
+  (void)recover_;
+  (void)allocator_;
+}
+
+ScopedPersistentPlanAllocator::~ScopedPersistentPlanAllocator() = default;
+
+//===----------------------------------------------------------------------===//
+// NcclApiStub
+//===----------------------------------------------------------------------===//
+static absl::Status UnimplementedError() {
+  return absl::UnimplementedError("XLA compiled without NCCL support");
+}
+
+class NcclApiStub final : public NcclApi {
+ public:
+  absl::StatusOr<NcclCliqueId> GetUniqueId() final {
+    return UnimplementedError();
+  }
+
+  absl::StatusOr<OwnedNcclComm> CommInitRank(int32_t, const NcclCliqueId&,
+                                             int32_t) final {
+    return UnimplementedError();
+  }
+
+  absl::Status CommAbort(NcclCommHandle) final { return UnimplementedError(); }
+
+  absl::Status CommFinalize(NcclCommHandle) final {
+    return UnimplementedError();
+  }
+
+  absl::Status CommDestroy(NcclCommHandle) final {
+    return UnimplementedError();
+  }
+
+  absl::StatusOr<int32_t> CommCount(NcclCommHandle) final {
+    return UnimplementedError();
+  }
+
+  absl::Status CommGetAsyncError(NcclCommHandle) final {
+    return UnimplementedError();
+  }
+
+  absl::Status GroupStart() final { return UnimplementedError(); }
+  absl::Status GroupEnd() final { return UnimplementedError(); }
+
+  absl::Status AllReduce(se::DeviceMemoryBase, se::DeviceMemoryBase,
+                         PrimitiveType, size_t, ReductionKind, NcclCommHandle,
+                         se::Stream*) final {
+    return UnimplementedError();
+  }
+
+  absl::Status ReduceScatter(se::DeviceMemoryBase, se::DeviceMemoryBase,
+                             PrimitiveType, size_t, ReductionKind,
+                             NcclCommHandle, se::Stream*) final {
+    return UnimplementedError();
+  }
+
+  absl::Status AllGather(se::DeviceMemoryBase, se::DeviceMemoryBase,
+                         PrimitiveType, size_t, NcclCommHandle,
+                         se::Stream*) final {
+    return UnimplementedError();
+  }
+
+  absl::Status Send(se::DeviceMemoryBase, PrimitiveType, size_t, int32_t,
+                    NcclCommHandle, se::Stream*) final {
+    return UnimplementedError();
+  }
+
+  absl::Status Recv(se::DeviceMemoryBase, PrimitiveType, size_t, int32_t,
+                    NcclCommHandle, se::Stream*) final {
+    return UnimplementedError();
+  }
+
+  absl::StatusOr<NcclRegisteredBufferHandle> RegisterBuffer(
+      NcclCommHandle, se::DeviceMemoryBase) final {
+    return UnimplementedError();
+  }
+
+  absl::StatusOr<NcclRegisteredBufferHandle> DeregisterBuffer(
+      NcclCommHandle, NcclRegisteredBufferHandle) final {
+    return UnimplementedError();
+  }
+};
+
+NcclApi* NcclApi::Default() {
+  static auto* nccl_api = new NcclApiStub();
+  return nccl_api;
+}
+#endif // XLA_ENABLE_XCCL
 
 }  // namespace xla::gpu

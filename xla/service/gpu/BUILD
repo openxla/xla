@@ -20,8 +20,7 @@ load(
     "if_rocm_is_configured",
     "rocm_copts",
 )
-load("@tsl//tsl:tsl.bzl", "if_google", "if_cuda_or_rocm", 
-    "if_nccl", "tsl_copts", "tsl_gpu_library")
+load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/platform:build_config.bzl",
@@ -924,20 +923,13 @@ cc_library(
 # :nccl_api target and all other targets should use this header to launch collective operations.
 # This allows to minimize the spreading of #ifdef all over the XLA code base.
 
-alias(
-    name = "nccl_api",
-    actual = if_nccl(":_nccl_api_impl", ":_nccl_api_stub"),
-)
-
 cc_library(
-    name = "_nccl_api_impl",
-    srcs = if_cuda_or_rocm(
-        ["nccl_api.cc"],
-        ["nccl_api_stub.cc"],
-    ),
+    name = "nccl_api",
+    srcs = ["nccl_api.cc"],
     hdrs = ["nccl_api.h"],
     compatible_with = get_compatible_with_portable(),
-    defines = if_gpu_is_configured(["XLA_ENABLE_XCCL"]),  # TODO(ezhulenev): Remove!
+    defines = if_gpu_is_configured(["XLA_ENABLE_XCCL"]),
+    tags = ["manual"],
     deps = [
         ":nccl_clique_key",
         "//xla:shape_util",
@@ -964,24 +956,6 @@ cc_library(
     ]) + if_gpu_is_configured([
         "//xla/stream_executor/gpu:gpu_stream",
     ]),
-)
-
-cc_library(
-    name = "_nccl_api_stub",
-    srcs = ["nccl_api_stub.cc"],
-    hdrs = ["nccl_api.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        ":nccl_clique_key",
-        "//xla:shape_util",
-        "//xla:xla_data_proto_cc",
-        "//xla/service:collective_ops_utils",
-        "//xla/stream_executor",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/concurrency:ref_count",
-        "@tsl//tsl/platform:logging",
-    ],
 )
 
 cc_library(
@@ -1180,6 +1154,8 @@ cc_library(
         "//xla/stream_executor",
     ]) + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rccl",
     ]),
 )
 
@@ -1197,9 +1173,8 @@ cc_library(
     hdrs = [
         "gpu_executable.h",
     ],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":buffer_allocations",
         ":gpu_constants",
