@@ -810,6 +810,7 @@ cc_library(
     srcs = ["thunk.cc"],
     hdrs = ["thunk.h"],
     deps = [
+        ":backend_configs_cc",
         ":buffer_allocations",
         ":gpu_executable_run_options",
         ":nccl_clique",
@@ -832,6 +833,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:statusor",
     ],
 )

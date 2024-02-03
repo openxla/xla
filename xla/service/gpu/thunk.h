@@ -303,9 +303,6 @@ class Thunk {
     // avoid accidental tracing of unrelated activities on a main stream.
     se::Stream* command_buffer_trace_stream;
 
-    // Additional compute streams on which thunks launch operations.
-    ExecutionStreamIdMap additional_compute_streams;
-
     // Streams for asynchronous collective communications.
     // TODO(ezhulenev): Move this into `CollectiveExecuteParams`.
     absl::InlinedVector<se::Stream*, 4> async_comms_streams;
@@ -323,6 +320,9 @@ class Thunk {
     // Send/Recv callbacks passed to XLA from PjRt.
     SendDeviceMemoryFunction* send_device_memory_function;
     RecvDeviceMemoryFunction* recv_device_memory_function;
+
+    // Additional compute streams on which thunks launch operations.
+    ExecutionStreamIdMap additional_compute_streams;
 
    private:
     ExecuteParams(const BufferAllocations* buffer_allocations,

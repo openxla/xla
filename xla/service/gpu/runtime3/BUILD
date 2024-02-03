@@ -655,6 +655,8 @@ cc_library(
         "//xla/service:global_device_id",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
 )

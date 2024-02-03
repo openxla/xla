@@ -3799,7 +3799,6 @@ absl::Status IrEmitterUnnested::EmitNcclAsyncDone(Thunk::Kind kind,
 absl::Status IrEmitterUnnested::EmitWaitForStreamsThunk(
     const HloInstruction* inst, GpuBackendConfig& gpu_config,
     bool is_async_done) {
-  const HloInstruction* wrapped = inst->async_wrapped_instruction();
   std::vector<ExecutionStreamId> wait_on_streams;
   ExecutionStreamId source_stream_id = Thunk::GetMainComputeStreamId();
   // If it's for an async done, then we need to sychronize on the execution
