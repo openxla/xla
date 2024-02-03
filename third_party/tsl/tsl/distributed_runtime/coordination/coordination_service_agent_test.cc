@@ -179,7 +179,7 @@ class CoordinationServiceAgentTest : public ::testing::Test {
     TF_ASSERT_OK(agent_->Initialize(
         Env::Default(), /*job_name=*/"test_job",
         /*task_id=*/0, config, std::move(client_),
-        /*error_fn=*/[](Status s) {
+        /*error_fn=*/[](absl::Status s) {
           LOG(ERROR) << "Coordination agent is set to error: " << s;
         }));
   }
@@ -336,7 +336,7 @@ TEST_F(CoordinationServiceAgentTest, CancelGetKeyValue_Success) {
           }));
   InitializeAgent();
 
-  Status status;
+  absl::Status status;
   std::shared_ptr<CallOptions> get_kv_call_opts = agent_->GetKeyValueAsync(
       test_key, [&status](const StatusOr<std::string>& result) {
         status = result.status();
@@ -396,7 +396,7 @@ TEST_F(CoordinationServiceAgentTest, ShutdownInErrorShouldReturnError) {
   TF_ASSERT_OK(agent_->ReportError(absl::InternalError("Test Error.")));
 
   // Shutdown should return error.
-  Status s = agent_->Shutdown();
+  absl::Status s = agent_->Shutdown();
 
   EXPECT_TRUE(absl::IsFailedPrecondition(s));
 }
@@ -435,7 +435,7 @@ TEST_F(CoordinationServiceAgentTest, ResetCanBeRetried) {
   TF_ASSERT_OK(agent_->ReportError(absl::InternalError("Test Error.")));
 
   // Reset error fails for the first time.
-  Status reset_status = agent_->Reset();
+  absl::Status reset_status = agent_->Reset();
   EXPECT_TRUE(absl::IsInternal(reset_status));
 
   // Agent should be able to attempt resetting again.
@@ -515,7 +515,7 @@ TEST_F(CoordinationServiceAgentTest, Connect_AbortedErrorShouldFailEventually) {
       absl::ToInt64Milliseconds(absl::Seconds(3)));
   InitializeAgent(config);
 
-  Status s = agent_->Connect();
+  absl::Status s = agent_->Connect();
 
   EXPECT_TRUE(absl::IsAborted(s));
 }
