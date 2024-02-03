@@ -83,15 +83,33 @@ void SkipUnaryOpsTopDownRecursive(HloInstruction* instr,
   }
 }
 
-struct NormMetaData {
+// Holds auxiliary information about individual layer norm patterns rewritten
+// into a cuDNN Custom Call.
+struct NormMetadata {
+  // Transposes applied to the input and output of the forward layer norm as
+  // required by cuDNN. Nullptr if no transposes were inserted.
   HloInstruction *x_transpose, *y_transpose;
+  // The reduction and non-reduction dimensions of the input into the forward
+  // layer norm before the potential application of transposes.
   std::vector<int64_t> norm_dims, non_norm_dims;
 };
 
-using NormMetaDataMap = absl::flat_hash_map<int, NormMetaData>;
+// Map from the instruction pointer of a layer norm Custom Call to its metadata.
+using NormMetadataMap = absl::flat_hash_map<HloInstruction*, NormMetadata>;
 
-// Captures pointers to HloInstructions and verifies that their target is
-// identical.
+// Captures multiple HloInstruction pointers and verifies that their target
+// is identical.
+//
+// Example:
+// Pattern cos(x) / sin(x) with cos and sin intended to operate on the same
+// HloInstruction:
+//  UniqueHloInstruction x;
+//  bool m = Match(
+//      instr, m::Divide(m::Cos(m::Op().WithPredicate(x.capture_and_verify)),
+//                       m::Sin(m::Op().WithPredicate(x.capture_and_verify))));
+// m is true and x.Instr() returns an HloInstruction pointer to the operand of
+// cosine and sine iff HloInstruction *instr points to a division of a cosine by
+// a sine that operate on the same instruction.
 class UniqueHloInstruction {
  public:
   UniqueHloInstruction() : is_set_(false), instr_(nullptr) {}
@@ -115,16 +133,9 @@ class UniqueHloInstruction {
   }
 
   // Lambda for capturing or verifying an instruction using WithPredicate.
-  std::function<bool(const HloInstruction*)> capture_or_verify =
+  const std::function<bool(const HloInstruction*)> capture_or_verify =
       [this](const HloInstruction* instr) -> bool {
     return CaptureOrVerify(const_cast<HloInstruction*>(instr));
-  };
-
-  // Lambda for comparing an instruction using WithPredicate.
-  std::function<bool(const HloInstruction*)> compare_only =
-      [this](const HloInstruction* instr) -> bool {
-    return is_set_ && instr == instr_;
-    ;
   };
 
  private:
@@ -156,7 +167,7 @@ bool CompatibleElementType(const HloInstruction* instr) {
 // the elements. When provided, compares reduce_dims to the dimensions of the
 // reduction.
 bool AppliesAddReduce(const HloInstruction* instr,
-                      const std::vector<int64_t>& reduce_dims = {}) {
+                      absl::Span<const int64_t> reduce_dims = {}) {
   if (instr->opcode() != HloOpcode::kReduce) {
     return false;
   }
@@ -210,160 +221,151 @@ bool CalculatesExpectation(const HloInstruction* instr) {
          ((actual_r_nelems + r_nelems) * numerical_epsilon);
 }
 
-// Recursively traverses the graph across converts, bitcasts and reshapes
-// starting from instr, and returns the operand of custom_call with index
-// operand_idx. Returns nullptr if the prescribed operand of custom_call cannot
-// be reached from instr.
-HloInstruction* FindOperandRecursive(HloInstruction* instr,
-                                     HloInstruction* custom_call,
-                                     absl::flat_hash_set<int>& visited_instrs,
-                                     int operand_idx,
-                                     HloInstruction* transpose) {
-  visited_instrs.emplace(instr->unique_id());
+// Returns whether target can be reached from instr by recursively traversing
+// the graph across converts, bitcasts and reshapes.
+bool FindTargetRecursive(
+    const HloInstruction* instr, const HloInstruction* target,
+    absl::flat_hash_set<const HloInstruction*>& visited_instrs,
+    const HloInstruction* transpose) {
+  visited_instrs.emplace(instr);
   const absl::flat_hash_set<HloOpcode> supported_ops = {
       HloOpcode::kConvert, HloOpcode::kBitcast, HloOpcode::kReshape};
-  // Look for the Custom Call among the users of instr.
+  if (instr == target) {
+    return true;
+  }
+  // Look for target among the users of instr.
   for (HloInstruction* user : instr->users()) {
-    if (user == custom_call && user->operand(operand_idx) == instr) {
-      return instr;
-    }
     if ((supported_ops.contains(user->opcode()) || user == transpose) &&
-        !visited_instrs.contains(user->unique_id())) {
-      return FindOperandRecursive(user, custom_call, visited_instrs,
-                                  operand_idx, transpose);
+        !visited_instrs.contains(user)) {
+      return FindTargetRecursive(user, target, visited_instrs, transpose);
     }
   }
-  // Ascend the graph if the Custom Call is not found and instr is a
-  // convert, reshape or transpose.
+  // Ascend the graph if target is not found and instr is a convert, bitcast
+  // or reshape.
   if (supported_ops.contains(instr->opcode())) {
-    return FindOperandRecursive(instr->mutable_operand(0), custom_call,
-                                visited_instrs, operand_idx, transpose);
+    return FindTargetRecursive(instr->operand(0), target, visited_instrs,
+                               transpose);
   }
-  return nullptr;
-}
-HloInstruction* FindOperandRecursive(HloInstruction* instr,
-                                     HloInstruction* custom_call,
-                                     int operand_idx,
-                                     const NormMetaDataMap& norm_meta_data) {
-  absl::flat_hash_set<int> visited_instrs;
-  auto custom_call_meta_data = norm_meta_data.find(custom_call->unique_id());
-  if (custom_call_meta_data == norm_meta_data.end()) {
-    return nullptr;
-  }
-  return FindOperandRecursive(instr, custom_call, visited_instrs, operand_idx,
-                              custom_call_meta_data->second.x_transpose);
+  return false;
 }
 
-// Maps the dimensions of the reduction in the calculation of Dbias from the
-// potentially reshaped DY to the original DY, i.e. the input to the reduction,
-// assuming the transformation can be described by reshapes.
-std::vector<int64_t> MapReduceDims(HloInstruction* dy,
-                                   HloInstruction* dy_reshaped,
-                                   const std::vector<int64_t>& reduce_dims) {
-  // The original and reshaped DY must not have degenerate dimensions.
-  if (ShapeUtil::HasDegenerateDimensions(dy->shape()) ||
-      ShapeUtil::HasDegenerateDimensions(dy_reshaped->shape())) {
+bool FindTargetRecursive(const HloInstruction* custom_call,
+                         const HloInstruction* instr,
+                         const HloInstruction* target) {
+  absl::flat_hash_set<const HloInstruction*> visited_instrs;
+  return FindTargetRecursive(instr, target, visited_instrs,
+                             custom_call->operand(0)->operand(0));
+}
+
+// Maps the dimension numbers in dimensions from shape original_shape to shape
+// reshaped_shape, assuming that the shapes are related through a strict
+// reshape. Returns an empty vector if a dimension mapping is not found.
+std::vector<int64_t> MapDimensions(const Shape& original_shape,
+                                   const Shape& reshaped_shape,
+                                   const absl::Span<const int64_t> dimensions) {
+  // The original and reshaped shape must not have degenerate dimensions.
+  if (ShapeUtil::HasDegenerateDimensions(original_shape) ||
+      ShapeUtil::HasDegenerateDimensions(reshaped_shape)) {
     return {};
   }
 
-  auto dim_product = [](const std::vector<int64_t>& sizes,
-                        const std::vector<int64_t>& indices) -> int64_t {
-    if (indices.empty()) {
+  auto dimension_product =
+      [](const Shape& shape,
+         absl::Span<const int64_t> prod_dimensions) -> int64_t {
+    if (prod_dimensions.empty()) {
       return 0;
     }
-    return std::accumulate(sizes.begin() + indices.front(),
-                           sizes.begin() + indices.back() + 1, 1,
-                           std::multiplies<int64_t>());
+    return std::accumulate(
+        shape.dimensions().begin() + prod_dimensions.front(),
+        shape.dimensions().begin() + prod_dimensions.back() + 1, 1,
+        std::multiplies<int64_t>());
   };
   // Construct the dimension mapping.
-  absl::flat_hash_map<int64_t, std::vector<int64_t>> reduce_dims_map;
-  std::vector<int64_t> reshaped_indices, original_indices;
-  std::vector<int64_t> reshaped_dims({dy_reshaped->shape().dimensions().begin(),
-                                      dy_reshaped->shape().dimensions().end()});
-  std::vector<int64_t> original_dims(
-      {dy->shape().dimensions().begin(), dy->shape().dimensions().end()});
-  for (int64_t original_index = 0, reshaped_index = 0;
-       reshaped_index < dy_reshaped->shape().rank(); ++reshaped_index) {
-    reshaped_indices.emplace_back(reshaped_index);
-    while (dim_product(original_dims, original_indices) <
-               dim_product(reshaped_dims, reshaped_indices) &&
-           original_index < dy->shape().rank()) {
-      original_indices.emplace_back(original_index++);
+  absl::flat_hash_map<int64_t, std::vector<int64_t>> dimensions_map;
+  std::vector<int64_t> original_dimensions, reshaped_dimensions;
+  for (int64_t original_dimension = 0, reshaped_dimension = 0;
+       original_dimension < original_shape.rank(); ++original_dimension) {
+    original_dimensions.emplace_back(original_dimension);
+    while (dimension_product(reshaped_shape, reshaped_dimensions) <
+               dimension_product(original_shape, original_dimensions) &&
+           reshaped_dimension < reshaped_shape.rank()) {
+      reshaped_dimensions.emplace_back(reshaped_dimension++);
     }
 
     // Many-to-many dimension mappings are not supported.
-    if (reshaped_indices.size() > 1 && original_indices.size() > 1) {
+    if (original_dimensions.size() > 1 && reshaped_dimensions.size() > 1) {
       return {};
     }
 
-    if (dim_product(reshaped_dims, reshaped_indices) ==
-        dim_product(original_dims, original_indices)) {
-      for (int64_t index : reshaped_indices) {
-        reduce_dims_map.insert({index, original_indices});
+    if (dimension_product(original_shape, original_dimensions) ==
+        dimension_product(reshaped_shape, reshaped_dimensions)) {
+      for (int64_t dimension : original_dimensions) {
+        dimensions_map.insert({dimension, reshaped_dimensions});
       }
-      reshaped_indices.clear();
-      original_indices.clear();
+      original_dimensions.clear();
+      reshaped_dimensions.clear();
     }
   }
 
-  // Map the reduction dimensions to the shape of the original DY.
-  std::vector<int64_t> mapped_reduce_dims;
-  for (int64_t reduce_dim : reduce_dims) {
-    auto mapped_reduce_dim = reduce_dims_map.find(reduce_dim);
-    if (mapped_reduce_dim == reduce_dims_map.end()) {
+  // Map the dimensions numbers to the reshaped shape.
+  std::vector<int64_t> mapped_dimensions;
+  for (int64_t dimension : dimensions) {
+    auto mapped_dimension = dimensions_map.find(dimension);
+    if (mapped_dimension == dimensions_map.end()) {
       return {};
     }
-    mapped_reduce_dims.insert(mapped_reduce_dims.end(),
-                              mapped_reduce_dim->second.begin(),
-                              mapped_reduce_dim->second.end());
+    mapped_dimensions.insert(mapped_dimensions.end(),
+                             mapped_dimension->second.begin(),
+                             mapped_dimension->second.end());
   }
 
-  // Eliminate duplicates in the mapped reduction dimensions.
-  mapped_reduce_dims.erase(
-      std::unique(mapped_reduce_dims.begin(), mapped_reduce_dims.end()),
-      mapped_reduce_dims.end());
-  return mapped_reduce_dims;
+  // Eliminate duplicates in the mapped dimension numbers.
+  mapped_dimensions.erase(
+      std::unique(mapped_dimensions.begin(), mapped_dimensions.end()),
+      mapped_dimensions.end());
+  return mapped_dimensions;
 }
 
-// Recursively traverses the graph downward across converts, bitcasts and
-// reshapes, starting from instr, and returns the first addition-reduction
-// identified. Returns nullptr if no addition-reduction is found.
+// Recursively traverses the graph across converts, bitcasts and reshapes,
+// starting from instr, and returns the first addition-reduction identified.
+// Returns nullptr if no addition-reduction is found.
 HloInstruction* FindAddReduceRecursive(
-    HloInstruction* instr, HloInstruction* dy_reshaped,
-    const std::vector<int64_t>& reduce_dims,
-    absl::flat_hash_set<int>& visited_instrs) {
-  visited_instrs.emplace(instr->unique_id());
+    HloInstruction* instr, const Shape& instr_shape,
+    const absl::Span<const int64_t> reduce_dims,
+    absl::flat_hash_set<HloInstruction*>& visited_instrs) {
+  visited_instrs.emplace(instr);
   const absl::flat_hash_set<HloOpcode> supported_ops = {
       HloOpcode::kConvert, HloOpcode::kBitcast, HloOpcode::kReshape};
   // Look for a reduction among the users of instr.
   for (HloInstruction* user : instr->users()) {
     if (user->opcode() == HloOpcode::kReduce) {
       std::vector<int64_t> mapped_reduce_dims =
-          MapReduceDims(instr, dy_reshaped, reduce_dims);
+          MapDimensions(instr_shape, instr->shape(), reduce_dims);
       if (!mapped_reduce_dims.empty() &&
           AppliesAddReduce(user, mapped_reduce_dims)) {
         return user;
       }
     }
     if (supported_ops.contains(user->opcode()) &&
-        !visited_instrs.contains(user->unique_id())) {
-      return FindAddReduceRecursive(user, dy_reshaped, reduce_dims,
+        !visited_instrs.contains(user)) {
+      return FindAddReduceRecursive(user, instr_shape, reduce_dims,
                                     visited_instrs);
     }
   }
-  // Ascend the graph if the Custom Call is not found and instr is a
+  // Ascend the graph if the addition-reduction is not found and instr is a
   // conversion, bitcast or reshape.
   if (supported_ops.contains(instr->opcode())) {
-    return FindAddReduceRecursive(instr->mutable_operand(0), dy_reshaped,
+    return FindAddReduceRecursive(instr->mutable_operand(0), instr_shape,
                                   reduce_dims, visited_instrs);
   }
   return nullptr;
 }
 
 HloInstruction* FindAddReduceRecursive(
-    HloInstruction* instr, const std::vector<int64_t>& reduce_dims) {
-  absl::flat_hash_set<int> visited_instrs;
-  return FindAddReduceRecursive(instr, instr, reduce_dims, visited_instrs);
+    HloInstruction* instr, const absl::Span<const int64_t> reduce_dims) {
+  absl::flat_hash_set<HloInstruction*> visited_instrs;
+  return FindAddReduceRecursive(instr, instr->shape(), reduce_dims,
+                                visited_instrs);
 }
 
 // Type conversion from and to any of BF16, FP16 and FP32.
@@ -487,7 +489,7 @@ auto Cube(Pattern pattern) {
 }
 
 // Addition-reduction of pattern with optional supported type conversion and/or
-// addition or removal of degenerate dimensions and constant 0 scalar.
+// addition or removal of degenerate dimensions.
 template <typename Pattern>
 auto AddReduce(Pattern pattern) {
   return OptionalSupportedTransform(
@@ -498,8 +500,7 @@ auto AddReduce(Pattern pattern) {
 }
 
 // Capturing addition-reduction of pattern with optional supported type
-// conversion and/or addition or removal of degenerate dimensions and constant 0
-// scalar.
+// conversion and/or addition or removal of degenerate dimensions.
 template <typename Pattern>
 auto AddReduce(HloInstruction** reduction, Pattern pattern) {
   return OptionalSupportedTransform(
@@ -533,10 +534,10 @@ template <typename Pattern>
 auto Expectation(UniqueHloInstruction* expectation, Pattern pattern) {
   auto shared_subpattern =
       MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()), AddReduce(pattern))
-          .WithPredicate(expectation->capture_or_verify)
           .WithPredicate([](const HloInstruction* instr) {
             return CalculatesExpectation(instr);
-          });
+          })
+          .WithPredicate(expectation->capture_or_verify);
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
@@ -547,10 +548,10 @@ auto Expectation(UniqueHloInstruction* expectation, HloInstruction** reduce,
                  Pattern pattern) {
   auto shared_subpattern = MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()),
                                             AddReduce(reduce, pattern))
-                               .WithPredicate(expectation->capture_or_verify)
                                .WithPredicate([](const HloInstruction* instr) {
                                  return CalculatesExpectation(instr);
-                               });
+                               })
+                               .WithPredicate(expectation->capture_or_verify);
   return m::AnyOf<HloInstruction>(m::Broadcast(shared_subpattern),
                                   shared_subpattern);
 }
@@ -572,8 +573,6 @@ auto Variance(UniqueHloInstruction* variance, UniqueHloInstruction* expectation,
 }
 
 // Reciprocal of the square root of variance + epsilon with optional broadcast.
-// The simultaneous capture of x0 and x1 allows the caller to verify
-// that they are identical.
 auto NormFactor(HloInstruction** norm_factor, UniqueHloInstruction* x,
                 UniqueHloInstruction* variance,
                 UniqueHloInstruction* expectation,
@@ -685,13 +684,14 @@ auto DNormFactor(UniqueHloInstruction* custom_call) {
 //  Zero-centered input of the layer norm, X - expectation(X). Verifies that
 //  custom_call is a forward layer norm fusing X. Forwards custom_call to
 //  FusedExpectation for verification.
-auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* custom_call,
-             const NormMetaDataMap& norm_meta_data) {
+auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* custom_call) {
   auto capture_or_verify_x =
-      [x, custom_call, &norm_meta_data](const HloInstruction* instr) -> bool {
+      [x, custom_call](const HloInstruction* instr) -> bool {
     return x->CaptureOrVerify(
-        FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
-                             custom_call->Instr(), 0, norm_meta_data));
+        FindTargetRecursive(custom_call->Instr(), instr->operand(0),
+                            custom_call->Instr()->operand(0))
+            ? custom_call->Instr()->mutable_operand(0)
+            : nullptr);
   };
   return Subtract(m::Op(), m::Broadcast(FusedExpectation(custom_call)))
       .WithPredicate(capture_or_verify_x);
@@ -700,15 +700,16 @@ auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* custom_call,
 // Zero-centered input of the layer norm, X - expectation(X). Captures X in x if
 // custom_call is a forward layer norm fusing X. Forwards custom_call to
 // FusedExpectation for comparison.
-auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
+auto XCenter(UniqueHloInstruction* x_center, UniqueHloInstruction* x,
              UniqueHloInstruction* fused_expectation,
-             UniqueHloInstruction* custom_call,
-             const NormMetaDataMap& norm_meta_data) {
-  auto capture_or_verify_x = [x, x_center, custom_call, &norm_meta_data](
-                                 const HloInstruction* instr) -> bool {
+             UniqueHloInstruction* custom_call) {
+  auto capture_or_verify_x =
+      [x, x_center, custom_call](const HloInstruction* instr) -> bool {
     return x->CaptureOrVerify(
-        FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
-                             custom_call->Instr(), 0, norm_meta_data));
+        FindTargetRecursive(custom_call->Instr(), instr->operand(0),
+                            custom_call->Instr()->operand(0))
+            ? custom_call->Instr()->mutable_operand(0)
+            : nullptr);
   };
   return Subtract(m::Op(), m::Broadcast(FusedExpectation(fused_expectation,
                                                          custom_call)))
@@ -721,16 +722,18 @@ auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
 // layer norm fusing the scale. Forwards custom_call to XCenter for comparison.
 auto F0(UniqueHloInstruction* custom_call, UniqueHloInstruction* scale,
         UniqueHloInstruction* dy, UniqueHloInstruction* x,
-        HloInstruction** reduce, const NormMetaDataMap& norm_meta_data) {
-  auto capture_or_verify_scale = [scale, custom_call, &norm_meta_data](
-                                     const HloInstruction* instr) -> bool {
+        HloInstruction** reduce) {
+  auto capture_or_verify_scale =
+      [scale, custom_call](const HloInstruction* instr) -> bool {
     return scale->CaptureOrVerify(
-        FindOperandRecursive(const_cast<HloInstruction*>(instr),
-                             custom_call->Instr(), 1, norm_meta_data));
+        FindTargetRecursive(custom_call->Instr(), instr,
+                            custom_call->Instr()->operand(1))
+            ? custom_call->Instr()->mutable_operand(1)
+            : nullptr);
   };
   return AddReduce(
       reduce, MultiplyMultiplyAnyOrder(
-                  XCenter(x, custom_call, norm_meta_data),
+                  XCenter(x, custom_call),
                   m::Broadcast(m::Op().WithPredicate(capture_or_verify_scale)),
                   m::Op().WithPredicate(dy->capture_or_verify)));
 }
@@ -742,8 +745,7 @@ auto F0(UniqueHloInstruction* custom_call, UniqueHloInstruction* scale,
 auto F1(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
         UniqueHloInstruction* fused_expectation,
         UniqueHloInstruction* custom_call, UniqueHloInstruction* scale,
-        UniqueHloInstruction* dy, HloInstruction** reduce,
-        const NormMetaDataMap& norm_meta_data) {
+        UniqueHloInstruction* dy, HloInstruction** reduce) {
   auto broadcasts_two_over_nelems = [](const HloInstruction* instr) -> bool {
     const HloInstruction* multiply = SkipUnaryOps(instr->operand(0));
     bool bcast_operand =
@@ -771,12 +773,11 @@ auto F1(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
   };
 
   return MultiplyAnyOrder(
-      XCenter(x, x_center, fused_expectation, custom_call, norm_meta_data),
-      m::Broadcast(
-          MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()),
-                           MultiplyAnyOrder(DNormFactor(custom_call),
-                                            F0(custom_call, scale, dy, x,
-                                               reduce, norm_meta_data))))
+      XCenter(x_center, x, fused_expectation, custom_call),
+      m::Broadcast(MultiplyAnyOrder(
+                       m::Broadcast(m::ConstantScalar()),
+                       MultiplyAnyOrder(DNormFactor(custom_call),
+                                        F0(custom_call, scale, dy, x, reduce))))
           .WithPredicate(broadcasts_two_over_nelems));
 }
 
@@ -784,13 +785,14 @@ auto F1(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
 // the scale in scale if custom_call is a forward layer norm fusing the scale.
 // Forwards custom_call to FusedNormFactor for comparison.
 auto F2(UniqueHloInstruction* fused_norm_factor, UniqueHloInstruction* scale,
-        UniqueHloInstruction* dy, UniqueHloInstruction* custom_call,
-        const NormMetaDataMap& norm_meta_data) {
-  auto capture_or_verify_scale = [scale, custom_call, &norm_meta_data](
-                                     const HloInstruction* instr) -> bool {
+        UniqueHloInstruction* dy, UniqueHloInstruction* custom_call) {
+  auto capture_or_verify_scale =
+      [scale, custom_call](const HloInstruction* instr) -> bool {
     return scale->CaptureOrVerify(
-        FindOperandRecursive(const_cast<HloInstruction*>(instr->operand(0)),
-                             custom_call->Instr(), 1, norm_meta_data));
+        FindTargetRecursive(custom_call->Instr(), instr->operand(0),
+                            custom_call->Instr()->operand(1))
+            ? custom_call->Instr()->mutable_operand(1)
+            : nullptr);
   };
   return MultiplyAnyOrder(
       m::Broadcast(
@@ -1021,11 +1023,11 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       TF_RETURN_IF_ERROR(
           ReplaceInstruction(instr, y_transpose.value_or(y_reshape)));
 
-      // Store meta data for potential use in the backward graph.
-      norm_meta_data_.insert({custom_call->unique_id(),
-                              NormMetaData({x_transpose.value_or(nullptr),
-                                            y_transpose.value_or(nullptr),
-                                            norm_dims, non_norm_dims})});
+      // Store metadata for potential use in the backward graph.
+      norm_metadata_.insert(
+          {custom_call, NormMetadata({x_transpose.value_or(nullptr),
+                                      y_transpose.value_or(nullptr), norm_dims,
+                                      non_norm_dims})});
 
       VLOG(1) << "Layer norm rewritten into Custom Call.";
 
@@ -1072,10 +1074,10 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         return absl::OkStatus();
       }
 
-      // Retrieve meta data of the forward layer norm.
-      auto norm_meta_data = norm_meta_data_.extract(custom_call->unique_id());
-      if (!norm_meta_data) {
-        VLOG(1) << "Unable to retrieve norm meta data of forward Custom Call.";
+      // Retrieve metadata of the forward layer norm.
+      auto norm_metadata = norm_metadata_.extract(custom_call);
+      if (!norm_metadata) {
+        VLOG(1) << "Unable to retrieve norm metadata of forward Custom Call.";
         return absl::OkStatus();
       }
 
@@ -1156,10 +1158,10 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       TF_RETURN_IF_ERROR(replace_with_new_cc(expectation.Instr(), 1));
       TF_RETURN_IF_ERROR(replace_with_new_cc(instr, 2));
 
-      // Update the Custom Call associated with the meta data of the forward
+      // Update the Custom Call associated with the metadata of the forward
       // norm.
-      norm_meta_data.key() = new_custom_call->unique_id();
-      norm_meta_data_.insert(std::move(norm_meta_data));
+      norm_metadata.key() = new_custom_call;
+      norm_metadata_.insert(std::move(norm_metadata));
 
       VLOG(1)
           << "Expectation and norm factor fused into layer norm Custom Call.";
@@ -1171,14 +1173,16 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
   // Matches and rewrites the backward graph of layer norm patterns into Custom
   // Calls to cuDNN when the associated forward graph has been rewritten into a
   // cuDNN Custom Call. The gradients are
-  // DX = F1 + F2 - AddReduce(F1 + F2) / nelems,
-  // Dscale = AddReduce(DY * XCenter * NormFactor),
-  // Dbias = AddReduce(DY),
-  // with F1 =  XCenter * F0 * DNormFactor * 2 / nelems,
-  // F2 = NormFactor * scale * DY,
-  // XCenter = X - expectation(X),
-  // NormFactor = (variance(X) + epsilon)^-1/2 and
-  // DNormFactor = -1/2 * NormFactor^3.
+  //   DX = F1 + F2 - AddReduce(F1 + F2) / nelems,
+  //   Dscale = AddReduce(DY * XCenter * NormFactor),
+  //   Dbias = AddReduce(DY),
+  // with
+  //   F0 = XCenter * scale * DY,
+  //   F1 =  XCenter * F0 * DNormFactor * 2 / nelems,
+  //   F2 = NormFactor * scale * DY,
+  //   XCenter = X - expectation(X),
+  //   NormFactor = (variance(X) + epsilon)^-1/2 and
+  //   DNormFactor = -1/2 * NormFactor^3.
   absl::Status MatchLayerNormGradient(HloInstruction* instr) {
     UniqueHloInstruction fwd_custom_call, x, x_center, scale, dy,
         fused_expectation, fused_norm_factor;
@@ -1191,17 +1195,15 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
                     &broadcast,
                     MultiplyAddAnyOrder(
                         m::Broadcast(m::ConstantScalar(&scalar)),
-                        NegateAddReduce(&reduce0,
-                                        F1(&x, &x_center, &fused_expectation,
-                                           &fwd_custom_call, &scale, &dy,
-                                           &reduce2, norm_meta_data_)),
                         NegateAddReduce(
-                            &reduce1, F2(&fused_norm_factor, &scale, &dy,
-                                         &fwd_custom_call, norm_meta_data_)))),
-                F2(&fused_norm_factor, &scale, &dy, &fwd_custom_call,
-                   norm_meta_data_),
+                            &reduce0,
+                            F1(&x, &x_center, &fused_expectation,
+                               &fwd_custom_call, &scale, &dy, &reduce2)),
+                        NegateAddReduce(&reduce1, F2(&fused_norm_factor, &scale,
+                                                     &dy, &fwd_custom_call)))),
+                F2(&fused_norm_factor, &scale, &dy, &fwd_custom_call),
                 F1(&x, &x_center, &fused_expectation, &fwd_custom_call, &scale,
-                   &dy, &reduce3, norm_meta_data_)))) {
+                   &dy, &reduce3)))) {
       // Skip initial convert, if present.
       if (instr->user_count() == 1 &&
           instr->users()[0]->opcode() == HloOpcode::kConvert &&
@@ -1211,25 +1213,24 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
       // Verify the uniqueness of the captured Custom Call and inputs.
       if (!fwd_custom_call.Instr() || !x.Instr() || !dy.Instr() ||
-          !scale.Instr() || !fused_expectation.Instr() ||
+          !x_center.Instr() || !scale.Instr() || !fused_expectation.Instr() ||
           !fused_norm_factor.Instr()) {
         VLOG(1) << "Layer norm gradient inputs not unique.";
         return absl::OkStatus();
       }
 
-      // Retrieve meta data of the forward layer norm.
-      auto norm_meta_data =
-          norm_meta_data_.find(fwd_custom_call.Instr()->unique_id());
-      if (norm_meta_data == norm_meta_data_.end()) {
-        VLOG(1) << "Unable to retrieve norm meta data of forward Custom Call.";
+      // Retrieve metadata of the forward layer norm.
+      auto norm_metadata = norm_metadata_.find(fwd_custom_call.Instr());
+      if (norm_metadata == norm_metadata_.end()) {
+        VLOG(1) << "Unable to retrieve norm metadata of forward Custom Call.";
         return absl::OkStatus();
       }
 
       // Verify the dimensions of reductions in the backward graph.
-      if (reduce0->dimensions() != norm_meta_data->second.norm_dims ||
-          reduce1->dimensions() != norm_meta_data->second.norm_dims ||
-          reduce2->dimensions() != norm_meta_data->second.norm_dims ||
-          reduce3->dimensions() != norm_meta_data->second.norm_dims) {
+      if (reduce0->dimensions() != norm_metadata->second.norm_dims ||
+          reduce1->dimensions() != norm_metadata->second.norm_dims ||
+          reduce2->dimensions() != norm_metadata->second.norm_dims ||
+          reduce3->dimensions() != norm_metadata->second.norm_dims) {
         VLOG(1) << "Unexpected reductions dimensions in layer norm gradient.";
         return absl::OkStatus();
       }
@@ -1254,30 +1255,28 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         return absl::OkStatus();
       }
 
-      // Identify Dscale = AddReduce(DY * XCenter * norm factor) assuming the
-      // form MultiplyAnyOrder((factor1 or norm factor),
-      // MultiplyAnyOrder(factor0 * (factor 1 or norm factor))).
+      // Identify Dscale = AddReduce(DY * XCenter * norm factor) with factor0
+      // and factor1 intended to be XCenter and DY or DY and XCenter.
       auto find_dscale =
-          [&fused_norm_factor, &norm_meta_data](
+          [&fused_norm_factor, &norm_metadata](
               const UniqueHloInstruction& factor0,
               const UniqueHloInstruction& factor1) -> HloInstruction* {
-        for (const HloInstruction* factor0_user : factor0.Instr()->users()) {
+        for (HloInstruction* factor0_user : factor0.Instr()->users()) {
           std::vector<HloInstruction*> users;
-          SkipUnaryOpsTopDownRecursive(
-              const_cast<HloInstruction*>(factor0_user), users);
+          SkipUnaryOpsTopDownRecursive(factor0_user, users);
           // One of the users of factor0 must be a chained multiplication by the
           // fused norm factor and factor1.
           for (HloInstruction* user : users) {
             if (Match(user,
-                      MultiplyMultiplyAnyOrder(
-                          m::Broadcast(BitcastOrReshape(m::Op().WithPredicate(
-                              fused_norm_factor.compare_only))),
-                          m::Op().WithPredicate(factor1.compare_only),
-                          m::Op()))) {
+                      MultiplyAnyOrder(
+                          m::Op(), MultiplyAnyOrder(
+                                       m::Broadcast(BitcastOrReshape(m::Op().Is(
+                                           fused_norm_factor.Instr()))),
+                                       m::Op().Is(factor1.Instr()))))) {
               // Dscale is an addition-reduction of the product.
               for (HloInstruction* multiply_user : user->users()) {
                 if (AppliesAddReduce(multiply_user,
-                                     norm_meta_data->second.non_norm_dims)) {
+                                     norm_metadata->second.non_norm_dims)) {
                   return multiply_user;
                 }
               }
@@ -1295,7 +1294,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Find Dbias, i.e. an addition-reduction of DY, starting from DY.
       // Rewriting proceeds without fusing Dbias if unsuccessful.
       dbias = FindAddReduceRecursive(dy.Instr(),
-                                     norm_meta_data->second.non_norm_dims);
+                                     norm_metadata->second.non_norm_dims);
 
       // Verify the input and output layouts.
       // TODO(philipphack): Consider supporting more general cases.
@@ -1350,11 +1349,11 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Transpose DY applying the stored transpose order of X from the forward
       // graph.
       HloInstruction* transposed_dy = dy.Instr();
-      if (norm_meta_data->second.x_transpose) {
+      if (norm_metadata->second.x_transpose) {
         TF_ASSIGN_OR_RETURN(
             transposed_dy,
             MakeTransposeHlo(dy.Instr(),
-                             norm_meta_data->second.x_transpose->dimensions()));
+                             norm_metadata->second.x_transpose->dimensions()));
       }
       TF_ASSIGN_OR_RETURN(HloInstruction * reshaped_dy,
                           MakeReshapeHlo(x.Instr()->shape(), transposed_dy));
@@ -1397,7 +1396,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
               kCudnnNormCallTarget));
       TF_RETURN_IF_ERROR(custom_call->set_backend_config(gpu_backend_config));
 
-      auto replace_with_cc = [custom_call, norm_meta_data, transposed_dy, this](
+      auto replace_with_cc = [custom_call, norm_metadata, transposed_dy, this](
                                  HloInstruction* old_instr,
                                  int tuple_index) -> absl::Status {
         TF_ASSIGN_OR_RETURN(HloInstruction * gte,
@@ -1405,13 +1404,13 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         HloInstruction* new_instr;
         // Transpose DX applying the stored transpose order of Y from the
         // forward graph.
-        if (tuple_index == 0 && norm_meta_data->second.y_transpose) {
+        if (tuple_index == 0 && norm_metadata->second.y_transpose) {
           TF_ASSIGN_OR_RETURN(new_instr,
                               MakeReshapeHlo(transposed_dy->shape(), gte));
           TF_ASSIGN_OR_RETURN(
               new_instr,
               MakeTransposeHlo(
-                  new_instr, norm_meta_data->second.y_transpose->dimensions()));
+                  new_instr, norm_metadata->second.y_transpose->dimensions()));
         } else {
           TF_ASSIGN_OR_RETURN(new_instr,
                               MakeReshapeHlo(old_instr->shape(), gte));
@@ -1435,7 +1434,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
  private:
   se::CudaComputeCapability cuda_compute_capability_;
-  NormMetaDataMap norm_meta_data_;
+  NormMetadataMap norm_metadata_;
 };
 
 absl::StatusOr<bool> RunOnComputation(
