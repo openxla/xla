@@ -388,7 +388,7 @@ class Collector {
       mutex_lock l(mu_);
       return collected_metrics_->point_set_map
           .insert(std::make_pair(std::string(metric_def->name()),
-                                 std::unique_ptr<PointSet>(new PointSet())))
+                                 std::make_unique<PointSet>()))
           .first->second.get();
     }();
     return MetricCollector<metric_kind, Value, NumLabels>(
