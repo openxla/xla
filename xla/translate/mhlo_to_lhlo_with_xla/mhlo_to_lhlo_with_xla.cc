@@ -123,8 +123,8 @@ bool NoParallelCustomCallCollective(const HloInstruction* instr) {
 
 // Convert the MLIR `module` from HLO dialect to LHLO dialect using XLA for the
 // given platform.
-tsl::Status ConvertHloToLmhlo(std::unique_ptr<HloModule> hlo_module,
-                              ModuleOp module, StringRef platform_name) {
+absl::Status ConvertHloToLmhlo(std::unique_ptr<HloModule> hlo_module,
+                               ModuleOp module, StringRef platform_name) {
   auto platform = xla::se::MultiPlatformManager::PlatformWithName(
       StringRefToView(platform_name));
   if (!platform.ok()) {
@@ -174,7 +174,7 @@ tsl::Status ConvertHloToLmhlo(std::unique_ptr<HloModule> hlo_module,
 // Creates MLIR operands corresponding to operands and results of the XLA HLO
 // instruction. If `num_operands` is valid, then only the first `num_operands`
 // operands of the HLO instruction will be considered.
-tsl::Status LhloDialectEmitter::CreateOperands(
+absl::Status LhloDialectEmitter::CreateOperands(
     const HloInstruction* instr, std::optional<int64_t> num_operands,
     TokenLoweringMode token_mode, llvm::SmallVectorImpl<Value>& operands,
     size_t& num_arguments, size_t& num_results) {
@@ -295,7 +295,7 @@ tsl::StatusOr<mlir::Operation*> LhloDialectEmitter::EmitOp(
   }
 }
 
-tsl::Status LhloDialectEmitter::DefaultAction(const HloInstruction* instr) {
+absl::Status LhloDialectEmitter::DefaultAction(const HloInstruction* instr) {
   TF_ASSIGN_OR_RETURN(auto* op, EmitOp(instr));
   if (op) {
     lhlo_to_hlo_[op] = instr;
@@ -317,8 +317,8 @@ tsl::StatusOr<lmhlo::SortOp> LhloDialectEmitter::EmitSortOp(
 }
 
 // Walks MHLO::TupleOp recursively.
-tsl::Status WalkTuplePostOrder(
-    Value v, const std::function<tsl::Status(Value)>& visitor) {
+absl::Status WalkTuplePostOrder(
+    Value v, const std::function<absl::Status(Value)>& visitor) {
   if (auto* op = v.getDefiningOp()) {
     if (auto tuple = dyn_cast<mhlo::TupleOp>(op)) {
       for (Value sub_v : tuple.getVal()) {
@@ -1083,7 +1083,7 @@ tsl::StatusOr<Operation*> LhloDialectEmitter::EmitDnnConvolution(
     return op.getOperation();
   };
 
-  auto set_activation = [&, this](auto op) -> tsl::Status {
+  auto set_activation = [&, this](auto op) -> absl::Status {
     auto se_activation = static_cast<stream_executor::dnn::ActivationMode>(
         backend_config.activation_mode());
     TF_ASSIGN_OR_RETURN(mlir::lmhlo_gpu::Activation activation,
@@ -1686,9 +1686,9 @@ void SetupChannelIdAttribute(OpT op, const xla::HloChannelInstruction* instr,
 }
 
 template <typename OpT>
-tsl::Status SetupCommonCollectiveOpAttributes(OpT op,
-                                              const HloInstruction* instr,
-                                              mlir::OpBuilder& builder) {
+absl::Status SetupCommonCollectiveOpAttributes(OpT op,
+                                               const HloInstruction* instr,
+                                               mlir::OpBuilder& builder) {
   auto* collective = xla::Cast<xla::HloCollectiveInstruction>(instr);
   auto replica_groups_attr = xla::HloFunctionImporter::ConvertReplicaGroups(
       collective->replica_groups(), &builder);
@@ -2030,7 +2030,7 @@ mlir::DenseIntElementsAttr LhloDialectEmitter::GetLayoutAttribute(
   return builder->getIndexTensorAttr(minor_to_major);
 }
 
-tsl::Status LhloDialectEmitter::ImportAsLmhloRegion(
+absl::Status LhloDialectEmitter::ImportAsLmhloRegion(
     xla::HloComputation* computation, mlir::Region* region) {
   auto after = builder_.saveInsertionPoint();
   auto reverter = absl::MakeCleanup(
@@ -2317,7 +2317,7 @@ tsl::StatusOr<Value> LhloDialectEmitter::GetOrCreateArrayView(
   return instr_slice = allocation_slice = result;
 }
 
-tsl::Status LhloDialectEmitter::GetOrCreateViewImpl(
+absl::Status LhloDialectEmitter::GetOrCreateViewImpl(
     const HloInstruction* instr, const Shape& current_shape,
     xla::ShapeIndex* current_shape_index, SmallVectorImpl<Value>* values,
     TokenLoweringMode token_mode) {
@@ -2357,7 +2357,7 @@ tsl::Status LhloDialectEmitter::GetOrCreateViewImpl(
 // Returns a view for the result of an instruction.
 // We first get a view for the slice in the allocation, and then may need to
 // create another view to adjust the slice for the shape of the instruction.
-tsl::Status LhloDialectEmitter::GetOrCreateView(
+absl::Status LhloDialectEmitter::GetOrCreateView(
     const HloInstruction* instr, SmallVectorImpl<Value>* values,
     const xla::ShapeIndex& result_subset, TokenLoweringMode token_mode) {
   xla::ShapeIndex shape_index = result_subset;
@@ -2367,7 +2367,7 @@ tsl::Status LhloDialectEmitter::GetOrCreateView(
                              token_mode);
 }
 
-tsl::Status LhloDialectEmitter::Initialize(
+absl::Status LhloDialectEmitter::Initialize(
     std::vector<const BufferAllocation*>* ordered_allocations) {
   TF_RET_CHECK(computation_.IsEntryComputation());
 
@@ -2435,7 +2435,7 @@ tsl::Status LhloDialectEmitter::Initialize(
       allocation_to_output_info;
   TF_RETURN_IF_ERROR(xla::ShapeUtil::ForEachSubshapeWithStatus(
       computation_.root_instruction()->shape(),
-      [&](const Shape& sub_shape, xla::ShapeIndex index) -> tsl::Status {
+      [&](const Shape& sub_shape, xla::ShapeIndex index) -> absl::Status {
         TF_ASSIGN_OR_RETURN(
             auto slice,
             assignment_.GetUniqueSlice(computation_.root_instruction(), index));
@@ -2531,7 +2531,7 @@ tsl::Status LhloDialectEmitter::Initialize(
   return ::tsl::OkStatus();
 }
 
-tsl::Status HloToLhloModule(
+absl::Status HloToLhloModule(
     const BufferAssignment& assignment, const HloModule& hlo_module,
     ModuleOp module, std::vector<const BufferAllocation*>* ordered_allocations,
     absl::flat_hash_map<const mlir::Operation*, const xla::HloInstruction*>*
