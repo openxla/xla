@@ -595,13 +595,18 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // approx_gelu(x) = x * cdf(x)
     // cdf(x) = 0.5 * (1 + tanh(sqrt(2 / pi) * (x + 0.044715 * x**3))
     HloInstruction *cdf, *slice_or_bitcast = nullptr;
+    auto possible_cublaslt_matmul = instr->GetModule()->config()
+                                        .debug_options()
+                                        .xla_gpu_enable_fp8_gelu_fusion()
+                                    ? CublasLtMatmulMaybeF8(&existing_gemm)
+                                    : CublasLtMatmul(&existing_gemm);
     if (Match(instr, m::MultiplyAnyOrder(
                          m::AnyOf<HloInstruction>(
                              m::Slice(&slice_or_bitcast,
-                                      CublasLtMatmulMaybeF8(&existing_gemm)),
+                                      possible_cublaslt_matmul),
                              m::Bitcast(&slice_or_bitcast,
-                                        CublasLtMatmulMaybeF8(&existing_gemm)),
-                             CublasLtMatmulMaybeF8(&existing_gemm)),
+                                        possible_cublaslt_matmul),
+                             possible_cublaslt_matmul),
                          m::Op(&cdf).WithOneUser())) &&
         Match(cdf,
               m::MultiplyAnyOrder(

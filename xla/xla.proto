@@ -677,7 +677,8 @@ message DebugOptions {
 
   bool xla_gpu_enable_dot_strength_reduction = 270;
 
-  // Next id: 271
+  // Next id: 272
+  bool xla_gpu_enable_fp8_gelu_fusion = 271;
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
