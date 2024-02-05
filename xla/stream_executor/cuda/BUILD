@@ -138,6 +138,7 @@ cc_library(
     name = "cuda_driver",
     srcs = if_cuda_is_configured(["cuda_driver.cc"]),
     hdrs = if_cuda_is_configured(["cuda_driver.h"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = if_cuda_is_configured([
         ":cuda_diagnostics",
         "@com_google_absl//absl/base",
