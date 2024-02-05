@@ -17,11 +17,11 @@ def tf_additional_cudnn_plugin_copts():
     return ["-DNV_CUDNN_DISABLE_EXCEPTION", "-DTF_ENABLE_CUDNN_FRONTEND"]
 
 # Returns whether any GPU backend is configuered.
-def if_gpu_is_configured(x):
-    return if_cuda_is_configured(x) + if_rocm_is_configured(x)
+def if_gpu_is_configured(if_true, if_false = []):
+    return if_cuda_is_configured(if_true, if_rocm_is_configured(if_true, if_false))
 
-def if_cuda_or_rocm(x):
-    return if_gpu_is_configured(x)
+def if_cuda_or_rocm(if_true, if_false = []):
+    return if_gpu_is_configured(if_true, if_false)
 
 # nvlink is not available via the pip wheels, disable it since it will create
 # unnecessary dependency

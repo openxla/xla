@@ -38,15 +38,15 @@ def rocm_version_number():
     """Returns a list of supported GPU architectures."""
     return %{rocm_version_number}
 
-def if_rocm_is_configured(x):
+def if_rocm_is_configured(if_true, if_false = []):
     """Tests if the ROCm was enabled during the configure process.
 
     Unlike if_rocm(), this does not require that we are building with
     --config=rocm. Used to allow non-ROCm code to depend on ROCm libraries.
     """
     if %{rocm_is_configured}:
-      return select({"//conditions:default": x})
-    return select({"//conditions:default": []})
+      return if_true
+    return if_false
 
 def rocm_hipblaslt():
     return %{rocm_is_configured} and %{rocm_hipblaslt}
