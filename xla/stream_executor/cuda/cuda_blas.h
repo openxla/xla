@@ -82,10 +82,16 @@ class CUDABlas : public blas::BlasSupport {
   // stream:             Stream to enqueue the BLAS operation onto.
   // pointer_mode_host:  Indicate if the pointer to a scalar value is from host
   //                     (true) or device (false).
+  // capture_logs:       Indicates whether to capture cuBLAS logs. In case of an
+  //                     error, the logs are attached to error messages in an
+  //                     effort to provide more context on the potential cause
+  //                     of the error. Capturing logs approximately doubles the
+  //                     CPU runtime of GemmThunk, as measured on a DGX H100 at
+  //                     the time of writing.
   // args:               Arguments of cuBLAS function.
   template <typename FuncT, typename... Args>
   absl::Status DoBlasInternalImpl(FuncT cublas_func, Stream *stream,
-                                  bool pointer_mode_host,
+                                  bool pointer_mode_host, bool capture_logs,
                                   cublasMath_t math_type, Args... args);
 
   // Convenience functions that call DoBlasInternalImpl with err_on_failure=true
@@ -94,7 +100,8 @@ class CUDABlas : public blas::BlasSupport {
   bool DoBlasInternal(FuncT cublas_func, Stream *stream, bool pointer_mode_host,
                       Args... args) {
     return DoBlasInternalImpl(cublas_func, stream, pointer_mode_host,
-                              CUBLAS_DEFAULT_MATH, args...)
+                              /*capture_logs=*/false, CUBLAS_DEFAULT_MATH,
+                              args...)
         .ok();
   }
 
