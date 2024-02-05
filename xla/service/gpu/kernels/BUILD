@@ -227,6 +227,7 @@ cc_binary(
         "//xla/stream_executor:platform",
         "//xla/stream_executor/cuda:cuda_platform",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",

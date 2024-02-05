@@ -495,6 +495,7 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":device_memory",
+        ":kernel_spec",
         ":platform",
         ":stream_executor_headers",
         ":stream_executor_internal",
@@ -504,6 +505,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
     ],
