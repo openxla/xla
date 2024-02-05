@@ -1,5 +1,5 @@
 diff --git a/bazel/grpc_extra_deps.bzl b/bazel/grpc_extra_deps.bzl
-index 4c1dfad2e8..d3d9ce15ba 100644
+index c2cf0027a4..df32ef54e5 100644
 --- a/bazel/grpc_extra_deps.bzl
 +++ b/bazel/grpc_extra_deps.bzl
 @@ -33,7 +33,7 @@ def grpc_extra_deps():
@@ -9,5 +9,5 @@ index 4c1dfad2e8..d3d9ce15ba 100644
 -    go_register_toolchains()
 +    go_register_toolchains(version = "1.18.4")
 
-     apple_rules_dependencies()
+     apple_rules_dependencies(ignore_version_differences = ignore_version_differences)
 
