@@ -521,6 +521,29 @@ cc_library(
 )
 
 cc_library(
+    name = "nccl_all_to_all_thunk",
+    srcs = ["nccl_all_to_all_thunk.cc"],
+    hdrs = ["nccl_all_to_all_thunk.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:collective_ops_utils",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu:nccl_api",
+        "//xla/service/gpu:nccl_collective_thunks",
+        "//xla/service/gpu:thunk",
+        "//xla/stream_executor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "norm_thunk",
     srcs = ["norm_thunk.cc"],
     hdrs = ["norm_thunk.h"],
