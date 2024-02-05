@@ -91,8 +91,8 @@ def if_cuda_is_configured(x, no_cuda = []):
     --config=cuda. Used to allow non-CUDA code to depend on CUDA libraries.
     """
     if %{cuda_is_configured}:
-      return select({"//conditions:default": x})
-    return select({"//conditions:default": no_cuda})
+      return x
+    return no_cuda
 
 def if_cuda_newer_than(wanted_ver, if_true, if_false = []):
     """Tests if CUDA was enabled during the configured process and if the
