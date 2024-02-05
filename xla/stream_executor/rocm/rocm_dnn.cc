@@ -4264,10 +4264,10 @@ absl::Status MIOpenSupport::DoPoolForward(
                                miopenFloat, pdesc);
       if (cache_hit) {
         // reusing the same buffer
-        workspace = reinterpret_cast<uint8*>(pdesc->workspace->ptr()->opaque());
+        workspace = reinterpret_cast<uint8*>(pdesc->workspace.ptr()->opaque());
       } else {
-        wsp_mem = stream->AllocateOwnedArray<uint8>(workspace_size).value();
-        workspace = reinterpret_cast<uint8*>(wsp_mem->ptr()->opaque());
+        wsp_mem = stream->parent()->AllocateOwnedArray<uint8>(workspace_size);
+        workspace = reinterpret_cast<uint8*>(wsp_mem.ptr()->opaque());
         m_pooling_cache.insert(input_data.opaque(), input_dimensions,
                                output_dimensions, pooling_dimensions,
                                miopenFloat, wsp_mem, workspace_size,
@@ -4422,7 +4422,7 @@ absl::Status MIOpenSupport::DoPoolBackward(
     if (cache_hit) {
       assert(pdesc != 0);
       workspace_ptr =
-          reinterpret_cast<uint8*>(pdesc->workspace->ptr()->opaque());
+          reinterpret_cast<uint8*>(pdesc->workspace.ptr()->opaque());
       VLOG(1) << "Pooling cache hit";
     } else {
       VLOG(1) << "Pooling cache miss";
