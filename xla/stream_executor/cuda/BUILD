@@ -24,6 +24,7 @@ load(
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+    "if_cuda_newer_than",
 )
 
 package(
@@ -557,28 +558,69 @@ cc_library(
             "ENABLE_LIBNVPTXCOMPILER_SUPPORT=1",
         ],
         "//conditions:default": [],
-    }),
+    }) + if_google(if_cuda_newer_than(
+        "12_0",
+        [
+            "ENABLE_LIBNVJITLINK_SUPPORT=1",
+        ],
+        [],
+    )),
     deps = if_cuda_is_configured([
         ":libnvptxcompiler_if_enabled",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/debugging:leak_check",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
         "@local_config_cuda//cuda:cuda_headers",
         "//xla:status_macros",
         "//xla/stream_executor/gpu:asm_compiler_header",
         "//xla/stream_executor/gpu:gpu_asm_opts",
-        "//xla/stream_executor/gpu:gpu_diagnostics_header",
         "//xla/stream_executor/gpu:gpu_driver_header",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:subprocess",
+        "@tsl//tsl/platform:stacktrace",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ]),
+        "@tsl//tsl/platform:subprocess",
+    ]) + if_google(if_cuda_newer_than(
+        "12_0",
+        [
+            "@local_config_cuda//cuda:nvjitlink",
+        ],
+        [],
+    )),
+)
+
+xla_cc_test(
+    name = "cuda_asm_compiler_test",
+    srcs = ["cuda_asm_compiler_test.cc"],
+    local_defines = if_google(if_cuda_newer_than(
+        "12_0",
+        [
+            "ENABLE_LIBNVJITLINK_SUPPORT=1",
+        ],
+        [],
+    )),
+    deps = [
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/gpu:asm_compiler_header",
+        "//xla/stream_executor/gpu:gpu_asm_opts",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
 )
 
 cc_library(

@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -100,6 +101,19 @@ absl::StatusOr<std::vector<uint8_t>> LinkGpuAsm(
 absl::StatusOr<std::vector<uint8_t>> LinkUsingNvlink(
     absl::string_view preferred_cuda_dir, gpu::GpuContext* context,
     std::vector<CubinOrPTXImage> images);
+
+using NvJitLinkVersion = std::tuple<unsigned, unsigned>;
+absl::StatusOr<NvJitLinkVersion> GetNvJitLinkVersion();
+
+struct NvJitLinkInput {
+  enum class Type { kPtx, kCubin };
+  Type type;
+  absl::Span<const uint8_t> bytes;
+};
+
+absl::StatusOr<std::vector<uint8_t>> CompileAndLinkUsingLibNvJitLink(
+    int cc_major, int cc_minor, absl::Span<const NvJitLinkInput> inputs,
+    GpuAsmOpts options, bool cancel_if_reg_spill);
 
 absl::StatusOr<std::string> FindCudaExecutable(
     const std::string& binary_name, const std::string& preferred_cuda_dir);
