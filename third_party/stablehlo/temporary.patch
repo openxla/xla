@@ -174,6 +174,114 @@ diff --ruN a/stablehlo/stablehlo/CMakeLists.txt b/stablehlo/stablehlo/CMakeLists
  add_subdirectory(integrations)
  add_subdirectory(reference)
  add_subdirectory(tests)
+diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.cpp b/stablehlo/stablehlo/dialect/TypeInference.cpp
+--- stablehlo/stablehlo/dialect/TypeInference.cpp
++++ stablehlo/stablehlo/dialect/TypeInference.cpp
+@@ -1943,6 +1943,7 @@
+     ArrayRef<int64_t> lhsContractingDimensions,
+     ArrayRef<int64_t> rhsContractingDimensions,
+     std::optional<ArrayAttr> precisionConfig,
++    std::optional<std::pair<int, int>> sparsityNM,
+     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   // dot_general_c11
+   if (failed(verifyPrecisionConfig(location, precisionConfig)))
+@@ -2036,13 +2037,25 @@
+                                  "match for lhs/rhs");
+     }
+ 
++    bool allow_divergent = sparsityNM.has_value();
+     for (auto [lhs, rhs] :
+          llvm::zip(lhsContractingDimensions, rhsContractingDimensions)) {
+       // dot_general_c10
+-      if (!verifyCompatibleDims(lhsShape[lhs], rhsShape[rhs]))
+-        return emitOptionalError(location,
+-                                 "contracting dimension sizes must "
+-                                 "match for lhs/rhs");
++      if (!verifyCompatibleDims(lhsShape[lhs], rhsShape[rhs])) {
++        if (allow_divergent && sparsityNM->second * lhsShape[lhs] ==
++                                   sparsityNM->first * rhsShape[rhs]) {
++          allow_divergent = false;  // Only allow one dimension to diverge.
++        } else {
++          return emitOptionalError(location,
++                                   "contracting dimension sizes must "
++                                   "match for lhs/rhs");
++        }
++      }
++    }
++    if (allow_divergent) {
++      return emitOptionalError(
++          location, "contracting dimension sizes must have ", sparsityNM->first,
++          ":", sparsityNM->second, " ratio");
+     }
+   }
+ 
+@@ -3437,19 +3450,20 @@
+   return success();
+ }
+ 
+-LogicalResult verifyDotGeneralOp(std::optional<Location> location, Value lhs,
+-                                 Value rhs,
+-                                 ArrayRef<int64_t> lhsBatchingDimensions,
+-                                 ArrayRef<int64_t> rhsBatchingDimensions,
+-                                 ArrayRef<int64_t> lhsContractingDimensions,
+-                                 ArrayRef<int64_t> rhsContractingDimensions,
+-                                 std::optional<ArrayAttr> precisionConfig,
+-                                 Value result) {
++LogicalResult verifyDotGeneralOp(
++    std::optional<Location> location, Value lhs, Value rhs,
++    ArrayRef<int64_t> lhsBatchingDimensions,
++    ArrayRef<int64_t> rhsBatchingDimensions,
++    ArrayRef<int64_t> lhsContractingDimensions,
++    ArrayRef<int64_t> rhsContractingDimensions,
++    std::optional<ArrayAttr> precisionConfig, Value result,
++    std::optional<std::pair<int, int>> sparsityNM) {
+   SmallVector<ShapedTypeComponents> inferredReturnShapes;
+-  if (failed(inferDotGeneralOp(
+-          location, lhs.getType(), rhs.getType(), lhsBatchingDimensions,
+-          rhsBatchingDimensions, lhsContractingDimensions,
+-          rhsContractingDimensions, precisionConfig, inferredReturnShapes)))
++  if (failed(inferDotGeneralOp(location, lhs.getType(), rhs.getType(),
++                               lhsBatchingDimensions, rhsBatchingDimensions,
++                               lhsContractingDimensions,
++                               rhsContractingDimensions, precisionConfig,
++                               sparsityNM, inferredReturnShapes)))
+     return failure();
+ 
+   auto inferredShape = inferredReturnShapes[0];
+diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.h b/stablehlo/stablehlo/dialect/TypeInference.h
+--- stablehlo/stablehlo/dialect/TypeInference.h
++++ stablehlo/stablehlo/dialect/TypeInference.h
+@@ -205,6 +205,7 @@
+     ArrayRef<int64_t> lhsContractingDimensions,
+     ArrayRef<int64_t> rhsContractingDimensions,
+     std::optional<ArrayAttr> precisionConfig,
++    std::optional<std::pair<int, int>> sparsityNM,
+     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes);
+ 
+ LogicalResult inferDynamicGatherOp(
+@@ -416,14 +417,14 @@
+                           Value rhs, std::optional<ArrayAttr> precisionConfig,
+                           Value result);
+ 
+-LogicalResult verifyDotGeneralOp(std::optional<Location> location, Value lhs,
+-                                 Value rhs,
+-                                 ArrayRef<int64_t> lhsBatchingDimensions,
+-                                 ArrayRef<int64_t> rhsBatchingDimensions,
+-                                 ArrayRef<int64_t> lhsContractingDimensions,
+-                                 ArrayRef<int64_t> rhsContractingDimensions,
+-                                 std::optional<ArrayAttr> precisionConfig,
+-                                 Value result);
++LogicalResult verifyDotGeneralOp(
++    std::optional<Location> location, Value lhs, Value rhs,
++    ArrayRef<int64_t> lhsBatchingDimensions,
++    ArrayRef<int64_t> rhsBatchingDimensions,
++    ArrayRef<int64_t> lhsContractingDimensions,
++    ArrayRef<int64_t> rhsContractingDimensions,
++    std::optional<ArrayAttr> precisionConfig, Value result,
++    std::optional<std::pair<int, int>> sparsityNM = std::nullopt);
+ 
+ LogicalResult verifyDynamicBroadcastInDimOp(
+     std::optional<Location> location, Value operand, Value outputDimensions,
 diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/experimental/BUILD.bazel
 --- stablehlo/stablehlo/experimental/BUILD.bazel
 +++ stablehlo/stablehlo/experimental/BUILD.bazel
@@ -2548,4 +2656,27 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+--- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
++++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+@@ -15,8 +15,7 @@
+ #include "stablehlo/transforms/StablehloRefineShapes.h"
+ 
+ #include <cstdint>
+-#include <memory>
+-#include <string>
++#include <optional>
+ #include <utility>
+ 
+ #include "llvm/ADT/APInt.h"
+@@ -721,7 +720,8 @@
+             op.getDotDimensionNumbersAttr().getRhsBatchingDimensions(),
+             op.getDotDimensionNumbersAttr().getLhsContractingDimensions(),
+             op.getDotDimensionNumbersAttr().getRhsContractingDimensions(),
+-            op.getPrecisionConfig(), inferredReturnShapes)))
++            op.getPrecisionConfig(), /*sparsityNM=*/std::nullopt,
++            inferredReturnShapes)))
+       return rewriter.notifyMatchFailure(op, "inferDotGeneralOp failed");
+     return refineReturnTypes(rewriter, op, inferredReturnShapes);
+   }
 
