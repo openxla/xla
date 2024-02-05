@@ -692,6 +692,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
+        "//xla/service/llvm_ir:math_ops",
         "//xla/service/llvm_ir:tuple_ops",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -1612,6 +1613,7 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
     ] + mkl_deps(),
 )
@@ -1681,6 +1683,8 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
     ] + mkl_deps(),
 )
 
@@ -1701,6 +1705,8 @@ cc_library(
         "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
+        "@com_google_absl//absl/algorithm:container",
+        "@tsl//tsl/platform:platform_port",
     ] + mkl_deps(),
 )
 

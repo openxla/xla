@@ -114,6 +114,7 @@ cc_library(
         ":hlo_pass",
         ":shape_inference",
         "//xla:frontend_attributes",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
         "@tsl//tsl/platform:errors",
@@ -298,6 +299,7 @@ cc_library(
     srcs = ["float_normalization.cc"],
     hdrs = ["float_normalization.h"],
     deps = [
+        ":call_graph",
         ":float_support",
         ":hlo_dce",
         ":hlo_pass",
@@ -846,6 +848,7 @@ xla_cc_test(
 xla_cc_test(
     name = "hlo_instruction_test",
     srcs = ["hlo_instruction_test.cc"],
+    tags = ["no_aarch64"],
     deps = [
         "//xla:literal",
         "//xla:protobuf_util",
@@ -5207,6 +5210,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_loop",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
+        "//xla/service/llvm_ir:math_ops",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
@@ -5718,6 +5722,7 @@ cc_library(
         ":hlo_buffer",
         ":hlo_pass",
         ":hlo_value",
+        ":pattern_matcher",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
@@ -6822,7 +6827,6 @@ cc_library(
 xla_cc_test(
     name = "lockable_test",
     srcs = ["lockable_test.cc"],
-    tags = ["no_aarch64"],
     deps = [
         ":lockable",
         "@com_google_absl//absl/synchronization",
@@ -6857,6 +6861,7 @@ xla_cc_test(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",

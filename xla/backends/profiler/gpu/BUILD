@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library", "if_cuda")
 load(
     "//xla:xla.bzl",
@@ -17,7 +18,6 @@ load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
 )
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -138,9 +138,30 @@ cuda_library(
     visibility = ["//visibility:public"],
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_cuda//cuda:cudart",
+        "@local_config_cuda//cuda:cudart_static",
         "@tsl//tsl/platform:test",
     ],
+)
+
+# A flag to link a CUPTI stub instead of a real wrapper to disable all
+# potential calls to CUPTI APIs that lead to crashes (b/320591084).
+bool_flag(
+    name = "use_cupti_stub_flag",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "use_cupti_stub",
+    flag_values = {":use_cupti_stub_flag": "True"},
+)
+
+# We need an indirection because we can't compose multiple selects.
+alias(
+    name = "cupti_wrapper",
+    actual = select({
+        ":use_cupti_stub": ":_cupti_wrapper_stub",
+        "//conditions:default": ":_cupti_wrapper_impl",
+    }),
 )
 
 # Rationale for linkstatic: The symbols in libcupti_static.a have hidden
@@ -150,7 +171,7 @@ cuda_library(
 # to patch libcupti_static, but it's not worth the trouble considering
 # that the wrapper is about the only direct user.
 tsl_gpu_library(
-    name = "cupti_wrapper",
+    name = "_cupti_wrapper_impl",
     srcs = if_cuda(["cupti_wrapper.cc"]),
     hdrs = if_cuda(["cupti_wrapper.h"]),
     copts = tf_profiler_copts() + tsl_copts(),
@@ -159,6 +180,17 @@ tsl_gpu_library(
     deps = [
         ":cupti_interface",
     ] + if_cuda(["@tsl//tsl/cuda:cupti"]),
+)
+
+# A CUPTI stub that implements CUPTI interface as no-op.
+tsl_gpu_library(
+    name = "_cupti_wrapper_stub",
+    srcs = if_cuda(["cupti_wrapper_stub.cc"]),
+    hdrs = if_cuda(["cupti_wrapper.h"]),
+    copts = tf_profiler_copts() + tsl_copts(),
+    linkstatic = 1,
+    visibility = ["//visibility:public"],
+    deps = [":cupti_interface"],
 )
 
 tsl_gpu_library(
@@ -177,13 +209,13 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:optional",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/backends/cpu:annotation_stack",
         "@tsl//tsl/profiler/lib:scoped_annotation",
@@ -204,13 +236,12 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
-        "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/backends/cpu:annotation_stack",
         "@tsl//tsl/profiler/lib:scoped_annotation",
@@ -230,7 +261,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
-        "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -256,7 +287,7 @@ tsl_gpu_library(
 tsl_gpu_library(
     name = "cupti_collector",
     srcs = if_cuda(["cupti_collector.cc"]),
-    hdrs = if_cuda(["cupti_collector.h"]),
+    hdrs = ["cupti_collector.h"],
     copts = tf_profiler_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
@@ -265,12 +296,12 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:abi",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
         "@tsl//tsl/profiler/utils:parse_annotation",
@@ -279,22 +310,6 @@ tsl_gpu_library(
         "@tsl//tsl/profiler/utils:xplane_schema",
         "@tsl//tsl/profiler/utils:xplane_utils",
     ] + if_cuda(["@tsl//tsl/cuda:cupti"]),
-)
-
-cc_library(
-    name = "cupti_collector_header",
-    hdrs = ["cupti_collector.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/container:fixed_array",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:node_hash_set",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:types",
-        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-    ],
 )
 
 tsl_gpu_library(

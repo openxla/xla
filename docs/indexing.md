@@ -65,13 +65,20 @@ $s_1 \in [0, 16)$.
 This mapping can be constructed from the attributes of HLO instructions or the
 mappings of unfused instructions can be composed to get indexing for a fusion.
 The mapping also has a domain, which specifies for what elements of the tensor
-the mapping exists. $$ \begin{eqnarray} \boldsymbol{f}(\boldsymbol{d},
-\boldsymbol{s})\; &s.t.& \\ \boldsymbol{lb}_d &\leq& \boldsymbol{d} \leq
-\boldsymbol{ub}_d \\ \boldsymbol{lb}_s &\leq& \boldsymbol{s} \leq
-\boldsymbol{ub}_s \\ \boldsymbol{lb}_g &\leq& \boldsymbol{g}(\boldsymbol{d},
-\boldsymbol{s}) \leq \boldsymbol{ub}_g \end{eqnarray} $$ Since we want to
-minimize recomputation, we need a library for symbolic computations. XLA already
-depends on MLIR, so we use
+the mapping exists.
+
+$$
+\begin{eqnarray}
+\boldsymbol{f}(\boldsymbol{d}, \boldsymbol{s})\; &s.t.& \\
+\boldsymbol{lb}_d &\leq& \boldsymbol{d} \leq \boldsymbol{ub}_d \\
+\boldsymbol{lb}_s &\leq& \boldsymbol{s} \leq \boldsymbol{ub}_s \\
+\boldsymbol{lb}_g &\leq& \boldsymbol{g}(\boldsymbol{d},
+  \boldsymbol{s}) \leq \boldsymbol{ub}_g
+\end{eqnarray}
+$$
+
+Since we want to minimize recomputation, we need a library for symbolic
+computations. XLA already depends on MLIR, so we use
 [mlir::AffineMap](https://github.com/llvm/llvm-project/blob/main/mlir/include/mlir/IR/AffineMap.h)
 instead of writing a symbolic arithmetic library.
 
@@ -92,15 +99,11 @@ struct Range {
  int64_t upper_bound;
 };
 
-struct Domain {
+struct IndexingMap {
+ mlir::AffineMap affine_map;
  std::vector<Range> dimension_ranges;
  std::vector<Range> symbol_ranges;
  llvm::DenseMap<mlir::AffineExpr, Range> expr_ranges;
-};
-
-struct IndexingMap {
- mlir::AffineMap affine_map;
- Domain domain;
 };
 
 ```
@@ -519,3 +522,13 @@ reshape2 = f32[10, 10, 10] reshape(reshape1)
 After the composition of indexing maps and their simplification we will get
 
 $(d_0, d_1, d_2) \mapsto (d_0, d_1, d_2)$.
+
+Indexing map simplification also simplifies the constraints.
+
+1. Constraints of type
+`lower_bound <= affine_expr (floordiv, +, -, *) constant <= upper_bound` are
+rewritten as `updated_lower_bound <= affine_expr <= updated_upped_bound`.
+2. Constraints that are always satisfied, e.g. $d_0 + s_0 in [0, 20]$
+for $d_0 \in [0, 5]$ and $s_0 \in [1, 3]$ are eliminated.
+3. Affine expressions in the constraints are optimized as the indexing affine
+map above.

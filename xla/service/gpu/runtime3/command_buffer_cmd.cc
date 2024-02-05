@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -42,12 +43,12 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/nccl_all_gather_thunk.h"
-#include "xla/service/gpu/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_clique.h"
 #include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/service/gpu/runtime3/nccl_all_gather_thunk.h"
+#include "xla/service/gpu/runtime3/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -56,7 +57,6 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"  // IWYU pragma: keep
-#include "xla/util.h"
 #include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
@@ -108,6 +108,27 @@ static std::vector<se::CommandBuffer::Builder> ConditionBuilders(
 }
 
 //===----------------------------------------------------------------------===//
+// CommandBufferCmd
+//===----------------------------------------------------------------------===//
+
+CommandBufferCmd::State* CommandBufferCmd::StateManager::GetOrNull(
+    const CommandBufferCmd* cmd) {
+  if (auto it = state_.find(cmd); it != state_.end()) {
+    return it->second.get();
+  }
+  return nullptr;
+}
+
+CommandBufferCmd::State* CommandBufferCmd::StateManager::GetOrCreate(
+    const CommandBufferCmd* cmd,
+    absl::FunctionRef<std::unique_ptr<State>()> create) {
+  if (auto it = state_.find(cmd); it != state_.end()) {
+    return it->second.get();
+  }
+  return state_.try_emplace(cmd, create()).first->second.get();
+}
+
+//===----------------------------------------------------------------------===//
 // CommandBufferCmdSequence
 //===----------------------------------------------------------------------===//
 
@@ -151,9 +172,9 @@ absl::Status CommandBufferCmdSequence::Prepare(
 }
 
 absl::Status CommandBufferCmdSequence::Initialize(
-    se::StreamExecutor* executor, Thunk::Thunk::ExecutableSource source) {
+    const Thunk::InitializeParams& params) {
   for (auto& command : commands_) {
-    TF_RETURN_IF_ERROR(command.cmd->Initialize(executor, source));
+    TF_RETURN_IF_ERROR(command.cmd->Initialize(params));
   }
   return absl::OkStatus();
 }
@@ -328,20 +349,20 @@ CommandBufferCmd::BufferUsageVector ComputationIdCmd::buffers() {
   return {{dest_, MemoryAccess::kWrite}};
 }
 
-absl::Status ComputationIdCmd::Initialize(se::StreamExecutor* executor,
-                                          Thunk::ExecutableSource source) {
+absl::Status ComputationIdCmd::Initialize(
+    const Thunk::InitializeParams& params) {
   {
     absl::MutexLock lock(&mutex_);
-    if (memset_kernels_.contains(executor)) return absl::OkStatus();
+    if (memset_kernels_.contains(params.executor)) return absl::OkStatus();
   }
 
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<se::Kernel> kernel,
-      CreateKernel("memset32", 3, kMemset32Kernel, /*cubin_data=*/{}, executor,
-                   /*shared_mem_bytes=*/0));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
+                      CreateKernel("memset32", 3, kMemset32Kernel,
+                                   /*cubin_data=*/{}, params.executor,
+                                   /*shared_mem_bytes=*/0));
 
   absl::MutexLock lock(&mutex_);
-  memset_kernels_.emplace(executor, std::move(kernel));
+  memset_kernels_.emplace(params.executor, std::move(kernel));
   return absl::OkStatus();
 }
 
@@ -395,19 +416,19 @@ LaunchCmd::LaunchCmd(std::string kernel_name,
       dims_(dims),
       shmem_bytes_(shmem_bytes) {}
 
-absl::Status LaunchCmd::Initialize(se::StreamExecutor* executor,
-                                   Thunk::ExecutableSource source) {
+absl::Status LaunchCmd::Initialize(const Thunk::InitializeParams& params) {
   {
     absl::MutexLock lock(&mutex_);
-    if (kernels_.contains(executor)) return absl::OkStatus();
+    if (kernels_.contains(params.executor)) return absl::OkStatus();
   }
 
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                      CreateKernel(kernel_name_, args_.size(), source.text,
-                                   source.binary, executor, shmem_bytes_));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<se::Kernel> kernel,
+      CreateKernel(kernel_name_, args_.size(), params.src.text,
+                   params.src.binary, params.executor, shmem_bytes_));
 
   absl::MutexLock lock(&mutex_);
-  kernels_.emplace(executor, std::move(kernel));
+  kernels_.emplace(params.executor, std::move(kernel));
   return absl::OkStatus();
 }
 
@@ -459,19 +480,19 @@ CustomKernelLaunchCmd::CustomKernelLaunchCmd(
       args_access_(args_access.begin(), args_access.end()),
       custom_kernel_(std::move(custom_kernel)) {}
 
-absl::Status CustomKernelLaunchCmd::Initialize(se::StreamExecutor* executor,
-                                               Thunk::ExecutableSource source) {
+absl::Status CustomKernelLaunchCmd::Initialize(
+    const Thunk::InitializeParams& params) {
   {
     absl::MutexLock lock(&mutex_);
-    if (kernels_.contains(executor)) return absl::OkStatus();
+    if (kernels_.contains(params.executor)) return absl::OkStatus();
   }
 
-  auto kernel = std::make_unique<se::Kernel>(executor);
+  auto kernel = std::make_unique<se::Kernel>(params.executor);
   TF_RETURN_IF_ERROR(
-      executor->GetKernel(custom_kernel_.kernel_spec(), kernel.get()));
+      params.executor->GetKernel(custom_kernel_.kernel_spec(), kernel.get()));
 
   absl::MutexLock lock(&mutex_);
-  kernels_.emplace(executor, std::move(kernel));
+  kernels_.emplace(params.executor, std::move(kernel));
   return absl::OkStatus();
 }
 
@@ -603,9 +624,8 @@ IfCmd::IfCmd(BufferAllocation::Slice pred,
              CommandBufferCmdSequence then_commands)
     : pred_(pred), then_commands_(std::move(then_commands)) {}
 
-absl::Status IfCmd::Initialize(se::StreamExecutor* executor,
-                               Thunk::ExecutableSource source) {
-  return then_commands_.Initialize(executor, source);
+absl::Status IfCmd::Initialize(const Thunk::InitializeParams& params) {
+  return then_commands_.Initialize(params);
 }
 
 absl::Status IfCmd::Record(const RecordParams& params,
@@ -636,10 +656,9 @@ IfElseCmd::IfElseCmd(BufferAllocation::Slice pred,
       then_commands_(std::move(then_commands)),
       else_commands_(std::move(else_commands)) {}
 
-absl::Status IfElseCmd::Initialize(se::StreamExecutor* executor,
-                                   Thunk::ExecutableSource source) {
-  TF_RETURN_IF_ERROR(then_commands_.Initialize(executor, source));
-  TF_RETURN_IF_ERROR(else_commands_.Initialize(executor, source));
+absl::Status IfElseCmd::Initialize(const Thunk::InitializeParams& params) {
+  TF_RETURN_IF_ERROR(then_commands_.Initialize(params));
+  TF_RETURN_IF_ERROR(else_commands_.Initialize(params));
   return absl::OkStatus();
 }
 
@@ -671,10 +690,9 @@ CaseCmd::CaseCmd(BufferAllocation::Slice index,
                  std::vector<CommandBufferCmdSequence> branches_commands)
     : index_(index), branches_commands_(std::move(branches_commands)) {}
 
-absl::Status CaseCmd::Initialize(se::StreamExecutor* executor,
-                                 Thunk::ExecutableSource source) {
+absl::Status CaseCmd::Initialize(const Thunk::InitializeParams& params) {
   for (auto& branch : branches_commands_) {
-    TF_RETURN_IF_ERROR(branch.Initialize(executor, source));
+    TF_RETURN_IF_ERROR(branch.Initialize(params));
   }
   return absl::OkStatus();
 }
@@ -708,9 +726,8 @@ ForCmd::ForCmd(int32_t num_iterations, BufferAllocation::Slice loop_counter,
       loop_counter_(loop_counter),
       body_commands_(std::move(body_commands)) {}
 
-absl::Status ForCmd::Initialize(se::StreamExecutor* executor,
-                                Thunk::ExecutableSource source) {
-  return body_commands_.Initialize(executor, source);
+absl::Status ForCmd::Initialize(const Thunk::InitializeParams& params) {
+  return body_commands_.Initialize(params);
 }
 
 absl::Status ForCmd::Record(const RecordParams& params,
@@ -747,10 +764,9 @@ WhileCmd::WhileCmd(BufferAllocation::Slice pred,
       cond_commands_(std::move(cond_commands)),
       body_commands_(std::move(body_commands)) {}
 
-absl::Status WhileCmd::Initialize(se::StreamExecutor* executor,
-                                  Thunk::ExecutableSource source) {
-  TF_RETURN_IF_ERROR(cond_commands_.Initialize(executor, source));
-  return body_commands_.Initialize(executor, source);
+absl::Status WhileCmd::Initialize(const Thunk::InitializeParams& params) {
+  TF_RETURN_IF_ERROR(cond_commands_.Initialize(params));
+  return body_commands_.Initialize(params);
 }
 
 absl::Status WhileCmd::Record(const RecordParams& params,
@@ -836,9 +852,8 @@ GemmCmd::GemmCmd(GemmConfig config, const BufferAllocation::Slice& lhs_buffer,
       workspace_(workspace),
       deterministic_(deterministic) {}
 
-absl::Status GemmCmd::Initialize(se::StreamExecutor* executor,
-                                 Thunk::ExecutableSource source) {
-  if (!executor->AsBlas()) {
+absl::Status GemmCmd::Initialize(const Thunk::InitializeParams& params) {
+  if (!params.executor->AsBlas()) {
     return absl::InternalError("Failed to initialize BLAS support for GemmCmd");
   }
   return absl::OkStatus();
@@ -862,14 +877,14 @@ absl::Status GemmCmd::Record(const RecordParams& params,
   VLOG(5) << "  Workspace: " << workspace_ << " (" << workspace.opaque() << ")";
 
   TF_ASSIGN_OR_RETURN(
-      auto nested_buffer,
+      auto nested_cmd,
       se::CommandBuffer::Trace(
           params.executor, params.trace_stream, [&](se::Stream* stream) {
             return RunGemm(config_, lhs, rhs, out, workspace, deterministic_,
                            stream);
           }));
 
-  return command_buffer->AddNestedCommandBuffer(nested_buffer);
+  return command_buffer->AddNestedCommandBuffer(*nested_cmd);
 }
 
 CommandBufferCmd::BufferUsageVector GemmCmd::buffers() {
@@ -883,8 +898,8 @@ CommandBufferCmd::BufferUsageVector GemmCmd::buffers() {
 // CustomCallCmd
 //===----------------------------------------------------------------------===//
 
-Status CustomCallCmd::Record(const RecordParams& params,
-                             se::CommandBuffer* command_buffer) {
+absl::Status CustomCallCmd::Record(const RecordParams& params,
+                                   se::CommandBuffer* command_buffer) {
   std::vector<void*> buffers;
   buffers.reserve(operands_.size() + results_.size());
   for (auto& slices : {operands_, results_}) {
@@ -926,7 +941,7 @@ Status CustomCallCmd::Record(const RecordParams& params,
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   TF_ASSIGN_OR_RETURN(
-      auto nested_buffer,
+      auto nested_cmd,
       se::CommandBuffer::Trace(
           params.executor, params.trace_stream, [&](se::Stream* stream) {
             se::gpu::GpuStreamHandle gpu_stream =
@@ -941,7 +956,7 @@ Status CustomCallCmd::Record(const RecordParams& params,
             }
             return absl::OkStatus();
           }));
-  return command_buffer->AddNestedCommandBuffer(nested_buffer);
+  return command_buffer->AddNestedCommandBuffer(*nested_cmd);
 #else   //  GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   return Unavailable(
       "Custom calls on GPU are not supported in this configuration. Please "
@@ -1043,14 +1058,14 @@ absl::Status AllReduceCmd::Record(const RecordParams& params,
                  params.buffer_allocations->memory_allocator(), params.stream));
 
   TF_ASSIGN_OR_RETURN(
-      auto nested_buffer,
+      auto nested_cmd,
       se::CommandBuffer::Trace(
           params.executor, params.trace_stream, [&](se::Stream* stream) {
             return RunAllReduce(nccl_api(), reduction_kind_, device_buffers,
                                 *stream, *comm);
           }));
 
-  return command_buffer->AddNestedCommandBuffer(nested_buffer);
+  return command_buffer->AddNestedCommandBuffer(*nested_cmd);
 }
 
 CommandBufferCmd::BufferUsageVector AllReduceCmd::buffers() {
@@ -1111,14 +1126,14 @@ absl::Status ReduceScatterCmd::Record(const RecordParams& params,
                  params.buffer_allocations->memory_allocator(), params.stream));
 
   TF_ASSIGN_OR_RETURN(
-      auto nested_buffer,
+      auto nested_cmd,
       se::CommandBuffer::Trace(
           params.executor, params.trace_stream, [&](se::Stream* stream) {
             return RunReduceScatter(nccl_api(), reduction_kind_, device_buffers,
                                     *stream, *comm);
           }));
 
-  return command_buffer->AddNestedCommandBuffer(nested_buffer);
+  return command_buffer->AddNestedCommandBuffer(*nested_cmd);
 }
 
 CommandBufferCmd::BufferUsageVector ReduceScatterCmd::buffers() {
@@ -1176,13 +1191,13 @@ absl::Status AllGatherCmd::Record(const RecordParams& params,
                  params.buffer_allocations->memory_allocator(), params.stream));
 
   TF_ASSIGN_OR_RETURN(
-      auto nested_buffer,
+      auto nested_cmd,
       se::CommandBuffer::Trace(
           params.executor, params.trace_stream, [&](se::Stream* stream) {
             return RunAllGather(nccl_api(), device_buffers, *stream, *comm);
           }));
 
-  return command_buffer->AddNestedCommandBuffer(nested_buffer);
+  return command_buffer->AddNestedCommandBuffer(*nested_cmd);
 }
 
 CommandBufferCmd::BufferUsageVector AllGatherCmd::buffers() {

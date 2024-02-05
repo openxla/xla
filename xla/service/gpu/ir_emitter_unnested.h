@@ -156,12 +156,16 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitCublasLtMatmulThunkF8(mlir::Operation* op);
   absl::Status EmitCublasLtMatmulThunkF8(const HloCustomCallInstruction* instr);
   absl::Status EmitConvolutionReorderThunk(mlir::Operation* op);
+  absl::Status EmitConvolutionReorderThunk(
+      const HloCustomCallInstruction* instr);
   absl::Status EmitNormThunk(mlir::Operation* op);
+  absl::Status EmitNormThunk(const HloCustomCallInstruction* instr);
   absl::Status EmitFusedMHAThunk(mlir::Operation* op);
   absl::Status EmitFusedMHABackwardThunk(mlir::Operation* op);
 #endif  // GOOGLE_CUDA
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   absl::Status EmitCubDeviceRadixSort(mlir::Operation* op);
+  absl::Status EmitCubDeviceRadixSort(const HloCustomCallInstruction* instr);
   absl::Status EmitCholeskyThunk(mlir::Operation* op);
   absl::Status EmitCholeskyThunk(const HloInstruction* instr);
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -223,6 +227,9 @@ class IrEmitterUnnested : public IrEmitter {
 
   absl::Status EmitNcclAsyncDone(Thunk::Kind kind, const HloInstruction* instr);
 
+  absl::Status EmitWaitForStreamsThunk(const HloInstruction* inst,
+                                       GpuBackendConfig& gpu_config,
+                                       bool is_async_done);
   template <typename ThunkType, typename OpT>
   absl::Status EmitReplicaOrPartitionId(mlir::Operation* op);
   template <typename ThunkType>
@@ -327,7 +334,7 @@ class IrEmitterUnnested : public IrEmitter {
   //   return;
   // }
   //   ```
-  absl::Status EmitPadToStatic(mlir::Operation* op);
+  absl::Status EmitPadToStatic(const HloCustomCallInstruction* instr);
 
   // Input = {dynamic array(with dynamic dimension meta data at the end)}
   // Output = {static array, dynamic_dim0, dynamic_dim1}

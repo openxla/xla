@@ -354,20 +354,6 @@ se::Platform::Id CpuAotCompilationOptions::PlatformId() const {
   return se::host::kHostPlatformId;
 }
 
-CpuXlaRuntimeAotCompilationResult::CpuXlaRuntimeAotCompilationResult(
-    HloModuleProto hlo, std::string_view obj_file, std::string_view mlir_module,
-    const XlaFrameworkMapping& xla_framework_mapping) {
-  XlaRuntimeExecutableProto xla_runtime_executable;
-  *xla_runtime_executable.mutable_hlo_module_proto() = hlo;
-  xla_runtime_executable.set_obj_file(std::string(obj_file));
-  xla_runtime_executable.set_mlir_module(std::string(mlir_module));
-
-  *xla_runtime_cpu_executable_.mutable_xla_runtime_executable() =
-      xla_runtime_executable;
-  *xla_runtime_cpu_executable_.mutable_xla_framework_mapping() =
-      xla_framework_mapping.ToProto();
-}
-
 namespace {
 
 namespace runtime = ::xla::runtime;
@@ -460,38 +446,6 @@ runtime::JitExecutable::Options GetXlaRuntimeJitExecutableOptions(
 }
 
 }  // namespace
-
-StatusOr<std::unique_ptr<Executable>>
-CpuXlaRuntimeAotCompilationResult::LoadExecutable(
-    Compiler* compiler, const se::StreamExecutor* executor) const {
-  XlaRuntimeExecutableProto xla_runtime_executable =
-      xla_runtime_cpu_executable_.xla_runtime_executable();
-  TF_ASSIGN_OR_RETURN(HloModuleConfig hlo_module_config,
-                      HloModule::CreateModuleConfigFromProto(
-                          xla_runtime_executable.hlo_module_proto(),
-                          GetDebugOptionsFromFlags()));
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<HloModule> hlo_module,
-      HloModule::CreateFromProto(xla_runtime_executable.hlo_module_proto(),
-                                 hlo_module_config));
-
-  XlaFrameworkMapping xla_framework_mapping;
-  xla_framework_mapping.FromProto(
-      xla_runtime_cpu_executable_.xla_framework_mapping());
-
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> buffer_assignment,
-                      compiler->AssignBuffers(hlo_module.get(), executor));
-
-  // TODO(b/232263665): JitOptions should be used only for JIT case because it
-  // has details irrelevant to AOT.
-  runtime::JitExecutable::Options opts =
-      GetXlaRuntimeJitExecutableOptions(*hlo_module);
-
-  return CpuExecutable::LoadFromObjFile(
-      std::move(hlo_module), xla_runtime_executable.obj_file(),
-      xla_runtime_executable.mlir_module(), std::move(buffer_assignment),
-      xla_framework_mapping, opts);
-}
 
 CpuAotCompilationResult::CpuAotCompilationResult(
     ObjectFileData object_file_data, std::vector<BufferInfo> buffer_infos,
@@ -708,6 +662,12 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<ConditionalToSelect>();
   pipeline.AddPass<MapInliner>();
 
+  // The TopkDecomposer generates a compare op with type=TOTALORDER and must
+  // run before the ComparisonExpander which rewrites such comparisons.
+  pipeline.AddPass<TopkDecomposer>([&](const HloInstruction* instr) {
+    return instr->opcode() == HloOpcode::kTopK;
+  });
+
   pipeline.AddPass<ComparisonExpander>();
   pipeline.AddPass<CholeskyExpander>();
   pipeline.AddPass<QrExpander>();
@@ -854,9 +814,6 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     pipeline.AddPass<ConditionalSimplifier>();
   }();
   pipeline.AddPass<BitcastDtypesExpander>();
-  pipeline.AddPass<TopkDecomposer>([&](const HloInstruction* instr) {
-    return instr->opcode() == HloOpcode::kTopK;
-  });
 
   // XLA lowers topk to a libcall while the MLIR based pipeline does not yet
   // support libcalls. Disable this for now.
@@ -1395,8 +1352,7 @@ CpuCompiler::CompileLegacyCpuExecutable(std::unique_ptr<HloModule> module) {
       post_optimization_ir_hook,
       CreateOrcJITPostCompilationHook(module.get(), &obj_files));
   if (!jit) {
-    return Internal("Creating JIT failed: %s",
-                         llvm::toString(jit.takeError()));
+    return Internal("Creating JIT failed: %s", llvm::toString(jit.takeError()));
   }
   llvm_module->setDataLayout((*jit)->data_layout());
   llvm_module->setTargetTriple((*jit)->target_triple().getTriple());
@@ -1540,7 +1496,7 @@ StatusOr<std::unique_ptr<XlaRuntimeCpuExecutable>> GetXlaRuntimeCpuExecutable(
       runtime::JitExecutable::Instantiate(serialized_mlir, entry_point, opts);
   if (!jit_executable.ok()) {
     return Internal("Failed to compile XLA Runtime program: %s",
-                         jit_executable.status().message());
+                    jit_executable.status().message());
   }
 
   return std::make_unique<XlaRuntimeCpuExecutable>(
@@ -2000,8 +1956,7 @@ CpuExecutableAotCompilationResult::LoadExecutable(
       /*pre_optimization_hook=*/nullptr, /*post_optimization_hook=*/nullptr,
       /*post_codegen_hook=*/nullptr);
   if (!jit) {
-    return Internal("Creating JIT failed: %s",
-                         llvm::toString(jit.takeError()));
+    return Internal("Creating JIT failed: %s", llvm::toString(jit.takeError()));
   }
 
   // Create a named buffer from compiled object file.

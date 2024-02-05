@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -57,9 +58,12 @@ namespace xla::gpu {
 // CommandBufferCmd is an abstract command that creates or updates command
 // buffer by recording commands into it.
 //
-// Command initialization and recording must be thread safe as commands can be
-// recorded concurrently for multiple command buffers on different stream
-// executors.
+// Commands have the same execution stages as thunks as they are executed by a
+// command buffer thunk: Prepare, Initialize and Record (Execute). See Thunk
+// documentation for details.
+//
+// Commands must be thread safe as they can be recorded into multiple command
+// buffers concurrently on different stream executors.
 class CommandBufferCmd {
  public:
   enum class MemoryAccess { kRead, kWrite };
@@ -85,6 +89,58 @@ class CommandBufferCmd {
 
   using BufferUsageVector = absl::InlinedVector<BufferUsage, 4>;
 
+  // A base class for externally managed command state.
+  //
+  // Commands can be executed concurrently for many stream executors (underlying
+  // devices) and command buffers. Managing per-executor state can become
+  // expensive as it requires synchronization. Furthermore the number of command
+  // buffers command is recorded into is unbounded as they come and go (command
+  // buffers evicted and reconstructed) which makes it hard to manage the
+  // lifetime of resources attached to command buffers.
+  //
+  // Externally managed state (owned and synchronized by CommandBufferThunk)
+  // allows commands to attach a piece of information to command buffer in a
+  // safe and performant way.
+  class State {
+   public:
+    virtual ~State() = default;
+  };
+
+  // An external manager for a state attached by commands to command buffers.
+  class StateManager {
+   public:
+    virtual ~StateManager() = default;
+
+    template <typename ConcreteState>
+    ConcreteState* GetOrNull(const CommandBufferCmd* cmd) {
+      static_assert(std::is_base_of_v<State, ConcreteState>);
+      return static_cast<ConcreteState*>(GetOrNull(cmd));
+    }
+
+    template <typename ConcreteState>
+    ConcreteState* GetOrCreate(
+        const CommandBufferCmd* cmd,
+        absl::FunctionRef<std::unique_ptr<ConcreteState>()> create) {
+      static_assert(std::is_base_of_v<State, ConcreteState>);
+      return static_cast<ConcreteState*>(GetOrCreate(cmd, create));
+    }
+
+    template <typename ConcreteState>
+    ConcreteState* GetOrCreate(const CommandBufferCmd* cmd) {
+      static_assert(std::is_base_of_v<State, ConcreteState>);
+      return static_cast<ConcreteState*>(
+          GetOrCreate(cmd, [] { return std::make_unique<ConcreteState>(); }));
+    }
+
+   private:
+    State* GetOrNull(const CommandBufferCmd* cmd);
+
+    State* GetOrCreate(const CommandBufferCmd* cmd,
+                       absl::FunctionRef<std::unique_ptr<State>()> create);
+
+    absl::flat_hash_map<const CommandBufferCmd*, std::unique_ptr<State>> state_;
+  };
+
   // See Thunk documentation for XLA execution stages (prepare, initialize,
   // execute). Commands mirror thunks as they are executed as CommandBufferThunk
   // that is plugged into the Thunk execution cycle.
@@ -93,6 +149,13 @@ class CommandBufferCmd {
   // required for recording (i.e. collective commands request cliques).
   virtual absl::Status Prepare(const Thunk::PrepareParams& params,
                                Thunk::ResourceRequests& resource_requests) {
+    return absl::OkStatus();
+  }
+
+  // Initialize a command for recording on a given executor. We split it into a
+  // separate function to allow expensive initialization (e.g. device kernel
+  // loading) to happen before a command buffer thunk execution.
+  virtual absl::Status Initialize(const Thunk::InitializeParams& params) {
     return absl::OkStatus();
   }
 
@@ -114,15 +177,8 @@ class CommandBufferCmd {
     const BufferAllocations* buffer_allocations = nullptr;
     const Thunk::CollectiveExecuteParams* collective_params = nullptr;
     const Thunk::CollectiveCliques* collective_cliques = nullptr;
+    StateManager* state = nullptr;
   };
-
-  // Prepares a command for recording on a given executor. We split it into a
-  // separate function to allow expensive initialization (e.g. device kernel
-  // loading) to happen before a command buffer thunk execution.
-  virtual absl::Status Initialize(se::StreamExecutor* executor,
-                                  Thunk::ExecutableSource source) {
-    return absl::OkStatus();
-  }
 
   // Records command into the command buffer.
   virtual absl::Status Record(const RecordParams& params,
@@ -176,8 +232,7 @@ class CommandBufferCmdSequence {
                        Thunk::ResourceRequests& resource_requests);
 
   // Initializes all commands added to a sequence.
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source);
+  absl::Status Initialize(const Thunk::InitializeParams& params);
 
   // Records all commands added to a sequence into the given command buffer.
   absl::Status Record(const CommandBufferCmd::RecordParams& params,
@@ -238,8 +293,7 @@ class ComputationIdCmd : public CommandBufferCmd {
 
   ComputationIdCmd(BufferAllocation::Slice dest, Kind kind);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;
@@ -274,8 +328,7 @@ class LaunchCmd : public CommandBufferCmd {
             absl::Span<const MemoryAccess> args_access, LaunchDimensions dims,
             int64_t shmem_bytes);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;
@@ -306,8 +359,7 @@ class CustomKernelLaunchCmd : public CommandBufferCmd {
                         absl::Span<const MemoryAccess> args_access,
                         CustomKernel custom_kernel);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;
@@ -389,8 +441,7 @@ class IfCmd : public CommandBufferCmd {
  public:
   IfCmd(BufferAllocation::Slice pred, CommandBufferCmdSequence then_commands);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;
@@ -412,8 +463,7 @@ class IfElseCmd : public CommandBufferCmd {
             CommandBufferCmdSequence then_commands,
             CommandBufferCmdSequence else_commands);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;
@@ -435,8 +485,7 @@ class CaseCmd : public CommandBufferCmd {
   CaseCmd(BufferAllocation::Slice index,
           std::vector<CommandBufferCmdSequence> branches_commands);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;
@@ -457,8 +506,7 @@ class ForCmd : public CommandBufferCmd {
   ForCmd(int32_t num_iterations, BufferAllocation::Slice loop_counter,
          CommandBufferCmdSequence body_commands);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;
@@ -480,8 +528,7 @@ class WhileCmd : public CommandBufferCmd {
   WhileCmd(BufferAllocation::Slice pred, CommandBufferCmdSequence cond_commands,
            CommandBufferCmdSequence body_commands);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;
@@ -543,8 +590,7 @@ class GemmCmd : public CommandBufferCmd {
           const BufferAllocation::Slice& output_buffer,
           const BufferAllocation::Slice& workspace, bool deterministic);
 
-  absl::Status Initialize(se::StreamExecutor* executor,
-                          Thunk::ExecutableSource source) override;
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
   absl::Status Record(const RecordParams& params,
                       se::CommandBuffer* command_buffer) override;

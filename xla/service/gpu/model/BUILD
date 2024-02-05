@@ -139,10 +139,7 @@ xla_cc_test(
 cc_library(
     name = "gpu_hlo_cost_analysis",
     srcs = ["gpu_hlo_cost_analysis.cc"],
-    hdrs = [
-        "gpu_hlo_cost_analysis.h",
-        "hlo_op_profiles_data.h",
-    ],
+    hdrs = ["gpu_hlo_cost_analysis.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":hlo_op_profile_proto_cc",
@@ -245,6 +242,7 @@ cc_library(
     hdrs = ["affine_map_printer.h"],
     deps = [
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
@@ -329,9 +327,11 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:hlo_traversal",
         "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu/fusions:tiling_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -344,9 +344,7 @@ xla_cc_test(
     srcs = ["indexing_analysis_test.cc"],
     deps = [
         ":indexing_analysis",
-        ":indexing_map",
         ":indexing_test_utils",
-        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:hlo_traversal",
         "//xla/tests:hlo_test_base",
@@ -440,7 +438,10 @@ tf_proto_library(
 cc_library(
     name = "hlo_op_profiles",
     srcs = ["hlo_op_profiles.cc"],
-    hdrs = ["hlo_op_profiles.h"],
+    hdrs = [
+        "hlo_op_profiles.h",
+        "hlo_op_profiles_data.h",
+    ],
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":hlo_op_profile_proto_cc",
