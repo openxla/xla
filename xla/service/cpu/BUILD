@@ -1573,6 +1573,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:statusor",
@@ -1669,15 +1670,20 @@ cc_library(
     name = "onednn_matmul_rewriter",
     srcs = ["onednn_matmul_rewriter.cc"],
     hdrs = [
+        "onednn_matmul.h",
         "onednn_matmul_rewriter.h",
         "onednn_util.h",
+        "@tsl//tsl/util:onednn_util_hdrs",
     ],
     copts = tsl_copts(),
     deps = [
         ":backend_config_proto_cc",
+        ":onednn_matmul",
         ":onednn_memory_util",
+        "//xla:executable_run_options",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
