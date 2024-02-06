@@ -116,7 +116,6 @@ limitations under the License.
 #include "xla/service/gpu/address_computation_fusion_rewriter.h"
 #include "xla/service/gpu/alias_passthrough_params.h"
 #include "xla/service/gpu/all_reduce_blueconnect.h"
-#include "xla/service/gpu/async_stream_attribute_wrapper.h"
 #include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/command_buffer_scheduling.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
@@ -165,6 +164,7 @@ limitations under the License.
 #include "xla/service/gpu/scatter_slice_simplifier.h"
 #include "xla/service/gpu/softmax_rewriter_triton.h"
 #include "xla/service/gpu/stream_attribute_annotator.h"
+#include "xla/service/gpu/stream_attribute_async_wrapper.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/gpu/topk_specializer.h"
 #include "xla/service/gpu/topk_splitter.h"
@@ -1200,7 +1200,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
             .debug_options()
             .xla_gpu_multi_streamed_windowed_einsum()) {
       pipeline.AddPass<StreamAttributeAnnotator>();
-      pipeline.AddPass<AsyncStreamAttributeWrapper>();
+      pipeline.AddPass<StreamAttributeAsyncWrapper>();
     }
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }

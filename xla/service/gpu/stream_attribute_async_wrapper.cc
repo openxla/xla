@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/async_stream_attribute_wrapper.h"
+#include "xla/service/gpu/stream_attribute_async_wrapper.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -39,11 +39,10 @@ limitations under the License.
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
 namespace {
-absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
+static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
   if (!instr_gpu_config.ok() ||
       instr_gpu_config->operation_queue_id() ==
@@ -54,18 +53,18 @@ absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   TF_ASSIGN_OR_RETURN(HloInstruction * done,
                       computation->CreateAsyncInstructions(
                         instr, {},
-                        AsyncStreamAttributeWrapper::kParallelExecutionThread,
+                        StreamAttributeAsyncWrapper::kParallelExecutionThread,
                         /*replace=*/true));
   VLOG(5) << "Created async instruction: " << done->ToString();
   return true;
 }
 }  // namespace
 
-absl::StatusOr<bool> AsyncStreamAttributeWrapper::Run(
+absl::StatusOr<bool> StreamAttributeAsyncWrapper::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   XLA_VLOG_LINES(
-      2, "AsyncStreamAttributeWrapper::Run(), before:\n" + module->ToString());
+      2, "StreamAttributeAsyncWrapper::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (const HloComputation* comp :
       module->MakeNonfusionComputations(execution_threads)) {
@@ -75,9 +74,8 @@ absl::StatusOr<bool> AsyncStreamAttributeWrapper::Run(
     }
   }
   XLA_VLOG_LINES(
-      2, "AsyncStreamAttributeWrapper::Run(), after:\n" + module->ToString());
+      2, "StreamAttributeAsyncWrapper::Run(), after:\n" + module->ToString());
   return changed;
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

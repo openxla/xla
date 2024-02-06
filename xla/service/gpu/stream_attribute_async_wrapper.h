@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_ASYNC_STREAM_ATTRIBUTE_WRAPPER_H_
-#define XLA_SERVICE_GPU_ASYNC_STREAM_ATTRIBUTE_WRAPPER_H_
+#ifndef XLA_SERVICE_GPU_STREAM_ATTRIBUTE_ASYNC_WRAPPER_H_
+#define XLA_SERVICE_GPU_STREAM_ATTRIBUTE_ASYNC_WRAPPER_H_
 
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -23,14 +23,14 @@ limitations under the License.
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/statusor.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 
 // This pass will find the instructions that
 // are annotated with non-default stream id in backend configs
+// by the StreamAttributeAnnotator pass
 // and wrap them using AsyncStartDone pairs to achieve
 // asynchronous executions.
-class AsyncStreamAttributeWrapper : public HloModulePass {
+class StreamAttributeAsyncWrapper : public HloModulePass {
  public:
   inline static constexpr char kParallelExecutionThread[] = "parallel";
 
@@ -44,7 +44,6 @@ class AsyncStreamAttributeWrapper : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 };
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu
 
-#endif  // XLA_SERVICE_GPU_ASYNC_STREAM_ATTRIBUTE_WRAPPER_H_
+#endif  // XLA_SERVICE_GPU_STREAM_ATTRIBUTE_ASYNC_WRAPPER_H_

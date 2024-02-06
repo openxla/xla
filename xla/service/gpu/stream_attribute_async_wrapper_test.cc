@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/async_stream_attribute_wrapper.h"
+#include "xla/service/gpu/stream_attribute_async_wrapper.h"
 
 #include <gtest/gtest.h>
 
@@ -30,13 +30,12 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/tests/hlo_test_base.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 namespace {
 
-using AsyncStreamAttributeWrapperTest = HloTestBase;
+using StreamAttributeAsyncWrapperTest = HloTestBase;
 
-TEST_F(AsyncStreamAttributeWrapperTest, NonDefaultOpIsWrapped) {
+TEST_F(StreamAttributeAsyncWrapperTest, NonDefaultOpIsWrapped) {
   constexpr absl::string_view kHloString = R"(
   HloModule ModuleWithAsync
 
@@ -51,7 +50,7 @@ TEST_F(AsyncStreamAttributeWrapperTest, NonDefaultOpIsWrapped) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHloString));
 
-  AsyncStreamAttributeWrapper async_wrapper;
+  StreamAttributeAsyncWrapper async_wrapper;
   bool changed;
   TF_ASSERT_OK_AND_ASSIGN(changed, async_wrapper.Run(module.get()));
   EXPECT_TRUE(changed);
@@ -71,5 +70,4 @@ TEST_F(AsyncStreamAttributeWrapperTest, NonDefaultOpIsWrapped) {
   EXPECT_EQ(async->async_execution_thread(), "parallel");
 }
 }  // namespace
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

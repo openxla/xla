@@ -3499,7 +3499,7 @@ cc_library(
         ":address_computation_fusion_rewriter",
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
-        ":async_stream_attribute_wrapper",
+        ":stream_attribute_async_wrapper",
         ":autotuner_util",
         ":buffer_sharing",
         ":compile_module_to_llvm_ir",
@@ -5789,9 +5789,9 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "async_stream_attribute_wrapper",
-    srcs = ["async_stream_attribute_wrapper.cc"],
-    hdrs = ["async_stream_attribute_wrapper.h"],
+    name = "stream_attribute_async_wrapper",
+    srcs = ["stream_attribute_async_wrapper.cc"],
+    hdrs = ["stream_attribute_async_wrapper.h"],
     deps = [
         ":backend_configs_cc",
         ":thunk",
@@ -5809,11 +5809,11 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "async_stream_attribute_wrapper_test",
-    srcs = ["async_stream_attribute_wrapper_test.cc"],
+    name = "stream_attribute_async_wrapper_test",
+    srcs = ["stream_attribute_async_wrapper_test.cc"],
     deps = [
-        ":async_stream_attribute_wrapper",
         ":backend_configs_cc",
+        ":stream_attribute_async_wrapper",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",

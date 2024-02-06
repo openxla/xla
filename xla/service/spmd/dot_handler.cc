@@ -1600,12 +1600,6 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       // Odd number iteration.
       auto second_next_l = next_l;
       auto second_next_r = next_r;
-      cp_input = windowed_op_is_lhs ? next_l : next_r;
-      cp_output =
-          lhs.state()
-              .collective_ops_creator.create_cross_partition_collective_permute(
-                  &body_b, cp_input, sd_pairs,
-                  (*lhs.state().next_channel_id)++);
       if (windowed_op_is_lhs) {
         second_next_l = cp_output;
       } else {

@@ -310,7 +310,7 @@ class GpuAsyncTrackerBase : public AsyncTracker {
       GetCanonicalAsyncOpFunc func = GpuGetCanonicalAsyncOp)
       : AsyncTracker(config, func) {}
 
-  bool IsAsynComputeOp(const HloInstruction& hlo) const {
+  bool IsAsyncComputeOp(const HloInstruction& hlo) const {
     return (hlo.opcode() == HloOpcode::kAsyncStart ||
             hlo.opcode() == HloOpcode::kAsyncDone) &&
       !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
@@ -319,15 +319,17 @@ class GpuAsyncTrackerBase : public AsyncTracker {
 
   bool IsSupportedAsyncDone(const HloInstruction& hlo) const override {
     return (hlo_query::IsAsyncCollectiveDoneOp(&hlo,
-                                              /*include_send_recv=*/true) &&
-           !IsSyncCollective(hlo.operand(0))) || IsAsynComputeOp(hlo);
+                                               /*include_send_recv=*/true) &&
+            !IsSyncCollective(hlo.operand(0))) ||
+           IsAsyncComputeOp(hlo);
   }
 
   // Returns if this is an Async op start that the scheduler supports.
   bool IsSupportedAsyncStart(const HloInstruction& hlo) const override {
     return (hlo_query::IsAsyncCollectiveStartOp(&hlo,
-                                               /*include_send_recv=*/true) &&
-           !IsSyncCollective(&hlo)) || IsAsynComputeOp(hlo);
+                                                /*include_send_recv=*/true) &&
+            !IsSyncCollective(&hlo)) ||
+           IsAsyncComputeOp(hlo);
   }
 };
 

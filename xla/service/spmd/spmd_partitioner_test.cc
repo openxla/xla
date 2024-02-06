@@ -5814,11 +5814,11 @@ ENTRY entry {
           op::Constant(), op::Constant(), op::Reshape()),
       op::Shape("f32[32,12,39296]"));
 
-  EXPECT_THAT(while_loop->while_body()->root_instruction(),
-              op::Tuple(op::GetTupleElement(op::Parameter(0)),
-                        op::CollectivePermute(op::CollectivePermute(
-                            op::GetTupleElement(op::Parameter(0)))),
-                        output, op::GetTupleElement(op::Parameter(0)), next_i));
+  EXPECT_THAT(
+      while_loop->while_body()->root_instruction(),
+      op::Tuple(op::GetTupleElement(op::Parameter(0)),
+                op::CollectivePermute(op::GetTupleElement(op::Parameter(0))),
+                output, op::GetTupleElement(op::Parameter(0)), next_i));
 }
 
 TEST_P(SpmdPartitioningTest,
@@ -6033,11 +6033,11 @@ ENTRY entry {
           op::Constant(), op::Constant(), op::Reshape()),
       op::Shape("f32[32,12,39296]"));
 
-  EXPECT_THAT(while_loop->while_body()->root_instruction(),
-              op::Tuple(op::GetTupleElement(op::Parameter(0)),
-                        op::CollectivePermute(op::CollectivePermute(
-                            op::GetTupleElement(op::Parameter(0)))),
-                        output, op::GetTupleElement(op::Parameter(0)), next_i));
+  EXPECT_THAT(
+      while_loop->while_body()->root_instruction(),
+      op::Tuple(op::GetTupleElement(op::Parameter(0)),
+                op::CollectivePermute(op::GetTupleElement(op::Parameter(0))),
+                output, op::GetTupleElement(op::Parameter(0)), next_i));
 }
 
 TEST_P(SpmdPartitioningTest, BidirectionalEinsumRHSWindowedNonContracting) {
@@ -6259,11 +6259,11 @@ ENTRY entry {
               op::CollectivePermute(op::GetTupleElement(op::Parameter(0))))),
       op::Shape("f32[32,12,39296]"));
 
-  EXPECT_THAT(while_loop->while_body()->root_instruction(),
-              op::Tuple(op::GetTupleElement(op::Parameter(0)),
-                        op::CollectivePermute(op::CollectivePermute(
-                            op::GetTupleElement(op::Parameter(0)))),
-                        output, op::GetTupleElement(op::Parameter(0)), next_i));
+  EXPECT_THAT(
+      while_loop->while_body()->root_instruction(),
+      op::Tuple(op::GetTupleElement(op::Parameter(0)),
+                op::CollectivePermute(op::GetTupleElement(op::Parameter(0))),
+                output, op::GetTupleElement(op::Parameter(0)), next_i));
 }
 
 TEST_P(SpmdPartitioningTest, BidirectionalEinsumRHSWindowedContracting) {
@@ -6609,8 +6609,7 @@ ENTRY entry {
   EXPECT_THAT(
       while_loop->while_body()->root_instruction(),
       op::Tuple(op::GetTupleElement(op::Parameter(0)),
-                op::CollectivePermute(op::CollectivePermute(
-                    op::GetTupleElement(op::Parameter(0)))),
+                op::CollectivePermute(op::GetTupleElement(op::Parameter(0))),
                 output_tuple, op::GetTupleElement(op::Parameter(0)), next_i));
 }
 
@@ -6852,8 +6851,7 @@ ENTRY entry {
   EXPECT_THAT(
       while_loop->while_body()->root_instruction(),
       op::Tuple(op::GetTupleElement(op::Parameter(0)),
-                op::CollectivePermute(op::CollectivePermute(
-                    op::GetTupleElement(op::Parameter(0)))),
+                op::CollectivePermute(op::GetTupleElement(op::Parameter(0))),
                 output_tuple, op::GetTupleElement(op::Parameter(0)), next_i));
 }
 
@@ -7059,11 +7057,11 @@ ENTRY entry {
               op::CollectivePermute(op::GetTupleElement(op::Parameter(0))))),
       op::Shape("f32[32,12,39296]"));
 
-  EXPECT_THAT(while_loop->while_body()->root_instruction(),
-              op::Tuple(op::GetTupleElement(op::Parameter(0)),
-                        op::CollectivePermute(op::CollectivePermute(
-                            op::GetTupleElement(op::Parameter(0)))),
-                        output, op::GetTupleElement(op::Parameter(0)), next_i));
+  EXPECT_THAT(
+      while_loop->while_body()->root_instruction(),
+      op::Tuple(op::GetTupleElement(op::Parameter(0)),
+                op::CollectivePermute(op::GetTupleElement(op::Parameter(0))),
+                output, op::GetTupleElement(op::Parameter(0)), next_i));
 }
 
 TEST_P(SpmdPartitioningTest,

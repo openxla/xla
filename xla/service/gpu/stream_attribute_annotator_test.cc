@@ -30,8 +30,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/tests/hlo_test_base.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::gpu {
 namespace {
 
 using StreamAttributeAnnotatorTest = HloTestBase;
@@ -65,7 +64,7 @@ TEST_F(StreamAttributeAnnotatorTest, AllUsersAreAnnotated) {
     EXPECT_TRUE(user->has_backend_config());
     TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
                             user->backend_config<GpuBackendConfig>());
-    EXPECT_TRUE(gpu_config.wait_on_operation_queues()[0] == 1);
+    EXPECT_EQ(gpu_config.wait_on_operation_queues()[0], 1);
   }
 }
 
@@ -99,7 +98,7 @@ TEST_F(StreamAttributeAnnotatorTest, MultipleStreamsAreCombined) {
   std::vector<int64_t> expected_stream_ids = {1, 2};
   for (auto id : expected_stream_ids) {
     auto it = absl::c_find(gpu_config.wait_on_operation_queues(), id);
-    EXPECT_TRUE(it != gpu_config.wait_on_operation_queues().end());
+    EXPECT_NE(it, gpu_config.wait_on_operation_queues().end());
   }
 }
 
@@ -132,7 +131,7 @@ TEST_F(StreamAttributeAnnotatorTest, GTEUserIsAnnotated) {
   EXPECT_TRUE(exp->has_backend_config());
   TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
                           exp->backend_config<GpuBackendConfig>());
-  EXPECT_TRUE(gpu_config.wait_on_operation_queues()[0] == 1);
+  EXPECT_EQ(gpu_config.wait_on_operation_queues()[0], 1);
 }
 
 TEST_F(StreamAttributeAnnotatorTest, FusionIsAnnotated) {
@@ -164,9 +163,8 @@ TEST_F(StreamAttributeAnnotatorTest, FusionIsAnnotated) {
   EXPECT_TRUE(fusion->has_backend_config());
   TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
                           fusion->backend_config<GpuBackendConfig>());
-  EXPECT_TRUE(gpu_config.operation_queue_id() == 1);
+  EXPECT_EQ(gpu_config.operation_queue_id(), 1);
 }
 
 }  // namespace
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

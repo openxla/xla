@@ -39,9 +39,7 @@ limitations under the License.
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
-namespace xla {
-namespace gpu {
-
+namespace xla::gpu {
 namespace {
 
 bool IsOnlyRootNonDefaultStream(HloComputation* computation) {
@@ -70,6 +68,7 @@ bool IsOnlyRootNonDefaultStream(HloComputation* computation) {
   }
   return true;
 }
+
 absl::StatusOr<bool> AnnotateStreamAttributesForInstruction(
     HloInstruction* instr, GpuBackendConfig& instr_gpu_config) {
   if (instr->called_computations().size() != 1) {
@@ -158,5 +157,4 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
   return changed;
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::gpu

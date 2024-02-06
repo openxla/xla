@@ -1549,8 +1549,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_threshold_for_windowed_einsum_mib(),
       "Threshold to enable windowed einsum (collective matmul) in MB."
       "Einsums that have partitioned operand(can be either LHS or RHS) that's "
-      "larger "
-      "than this threshold will be transformed to use windowed einsums."
+      "larger than this threshold will be transformed to use windowed einsums."
       "Default is 100000"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_triton_hopper",
