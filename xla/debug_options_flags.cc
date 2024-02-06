@@ -149,6 +149,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_latency_hiding_scheduler(false);
   opts.set_xla_gpu_lhs_enable_gpu_async_tracker(true);
   opts.set_xla_gpu_enable_analytical_latency_estimator(false);
+  opts.set_xla_gpu_enable_linear_program_scheduler(false);
+  
   opts.set_xla_gpu_pgle_profile_file_or_directory_path("");
   opts.set_xla_gpu_enable_highest_priority_async_stream(true);
 
@@ -1119,6 +1121,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_enable_analytical_latency_estimator),
       debug_options->xla_gpu_enable_analytical_latency_estimator(),
       "Enable analytical latency estimator for latency-hiding scheduler for "
+      "XLA:GPU"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_linear_program_scheduler",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_linear_program_scheduler),
+      debug_options->xla_gpu_enable_linear_program_scheduler(),
+      "Enable linear program sheduler for better performance"
       "XLA:GPU"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_pgle_profile_file_or_directory_path",

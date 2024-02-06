@@ -4,6 +4,7 @@
 load(
     "//xla:xla.bzl",
     "xla_cc_test",
+    "clean_dep"
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -139,4 +140,15 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
     ],
+)
+cc_library(
+    name = "common_ortools_deps",
+    srcs = ["common_ortools_deps.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        clean_dep("@com_google_ortools//ortools/linear_solver"),
+        clean_dep("@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto"),
+        clean_dep("@com_google_ortools//ortools/sat:cp_model"),
+        clean_dep("@com_google_absl//absl/strings"),
+    ]
 )

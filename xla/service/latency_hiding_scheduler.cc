@@ -1455,6 +1455,8 @@ HloScheduleGraph::HloScheduleGraph(
       HloGraphNode* ctrl_succ_node = ctrl_succ_node_it->second.get();
       add_dependency_helper(instr_node, ctrl_succ_node);
     }
+    //TODO: HloBuffer outdegree have no decrese, remove it
+    continue;
     // To make sure an instruction that aliases with the buffer produced
     // by the async-done operation is not scheduled in between the start and the
     // done instruction as that buffer is in flux when the start happens.

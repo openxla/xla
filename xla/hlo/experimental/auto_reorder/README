@@ -1,0 +1,6 @@
+# Auto Reorder
+
+run tests
+```
+TF_CPP_MAX_VLOG_LEVEL=2 bazel run --compilation_mode=dbg xla/hlo/experimental/auto_reorder:auto_reorder_test --incompatible_strict_action_env --action_env=USE_CUDA --action_env=XLA_CUDA
+```

@@ -195,10 +195,10 @@ class HloSchedule {
   bool empty() const { return sequences_.empty(); }
 
   const HloModule* module() const { return module_; }
-
- private:
   // Updates the instruction sequence for the given computation.
   Status UpdateComputationSchedule(const HloComputation* computation);
+ private:
+  
 
   const HloModule* module_;
 

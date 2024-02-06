@@ -3093,6 +3093,7 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
+        "//xla/hlo/experimental/auto_reorder:auto_reorder",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_memory_scheduler",
