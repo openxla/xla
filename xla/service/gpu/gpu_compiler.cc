@@ -1470,8 +1470,15 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                            /*only_fusion_computations=*/false,
                            /*ignore_control_dependencies=*/true);
 
-  pipeline.AddPass<HloVerifier>(/*layout_sensitive=*/true,
-                                /*allow_mixed_precision=*/false);
+  pipeline.AddPass<HloVerifier>(
+      std::make_unique<DefaultVerifierMetadata>(
+          HloVerifierOpts{}
+              .MakeLayoutSensitive()
+              .WithInstructionCanChangeLayout(
+                  LayoutAssignment::InstructionCanChangeLayout)
+              .VerifyBroadcastDimensionsOrder()
+              .VerifyReshapeIsBitcast()),
+      "end-of-post-layout_assignment");
 
   TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
 
