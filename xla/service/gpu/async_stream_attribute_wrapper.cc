@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/stream_attribute_annotator.h"
+#include "xla/service/gpu/thunk.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -47,14 +47,16 @@ absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
   if (!instr_gpu_config.ok() ||
       instr_gpu_config->operation_queue_id() ==
-          StreamAttributeAnnotator::kDefaultComputeStreamId) {
+          Thunk::GetMainComputeStreamId().value()) {
     return false;
   }
   HloComputation* computation = instr->parent();
   TF_ASSIGN_OR_RETURN(HloInstruction * done,
                       computation->CreateAsyncInstructions(
-                          instr, {}, HloInstruction::kMainExecutionThread,
-                          /*replace=*/true));
+                        instr, {},
+                        AsyncStreamAttributeWrapper::kParallelExecutionThread,
+                        /*replace=*/true));
+  VLOG(5) << "Created async instruction: " << done->ToString();
   return true;
 }
 }  // namespace
@@ -65,12 +67,9 @@ absl::StatusOr<bool> AsyncStreamAttributeWrapper::Run(
   XLA_VLOG_LINES(
       2, "AsyncStreamAttributeWrapper::Run(), before:\n" + module->ToString());
   bool changed = false;
-  for (const HloComputation* comp : module->computations(execution_threads)) {
+  for (const HloComputation* comp :
+      module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instr : comp->instructions()) {
-      if (!instr->has_backend_config()) {
-        continue;
-      }
-
       TF_ASSIGN_OR_RETURN(bool result, AsynchronizeInstruction(instr));
       changed |= result;
     }

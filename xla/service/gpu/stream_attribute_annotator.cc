@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -31,10 +32,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/thunk.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
@@ -42,14 +43,62 @@ namespace xla {
 namespace gpu {
 
 namespace {
-absl::StatusOr<bool> AnnotateStreamAttributesForUsers(HloInstruction* instr) {
-  auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
-  if (!instr_gpu_config.ok()) {
+
+bool IsOnlyRootNonDefaultStream(HloComputation* computation) {
+  HloInstruction* root = computation->root_instruction();
+  auto root_gpu_config = root->backend_config<GpuBackendConfig>();
+  if (!root_gpu_config.ok() || root->opcode() == HloOpcode::kTuple) {
     return false;
   }
+  int64_t root_stream_id = root_gpu_config->operation_queue_id();
+  VLOG(2) << "Found fusion computation's root stream id to be "
+          << root_stream_id;
+
+  if (root_stream_id == Thunk::GetMainComputeStreamId().value()) {
+    return false;
+  }
+  for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
+    if (instr == root) {
+      continue;
+    }
+    int64_t instr_stream_id =
+        instr->backend_config<GpuBackendConfig>()->operation_queue_id();
+    if (instr_stream_id != Thunk::GetMainComputeStreamId().value() &&
+        instr_stream_id != root_stream_id) {
+      return false;
+    }
+  }
+  return true;
+}
+absl::StatusOr<bool> AnnotateStreamAttributesForInstruction(
+    HloInstruction* instr, GpuBackendConfig& instr_gpu_config) {
+  if (instr->called_computations().size() != 1) {
+    return false;
+  }
+  HloComputation* called_comp = instr->called_computations()[0];
+  int64_t stream_id = instr_gpu_config.operation_queue_id();
+
+  if (!IsOnlyRootNonDefaultStream(called_comp) ||
+      stream_id != Thunk::GetMainComputeStreamId().value()) {
+    return false;
+  }
+
+  auto comp_root_gpu_config =
+      called_comp->root_instruction()->backend_config<GpuBackendConfig>();
+
+  instr_gpu_config.set_operation_queue_id(
+      comp_root_gpu_config->operation_queue_id());
+  *instr_gpu_config.mutable_wait_on_operation_queues() =
+      comp_root_gpu_config->wait_on_operation_queues();
+  TF_RETURN_IF_ERROR(instr->set_backend_config(instr_gpu_config));
+  return true;
+}
+
+absl::StatusOr<bool> AnnotateStreamAttributesForUsers(
+    HloInstruction* instr, GpuBackendConfig& instr_gpu_config) {
   bool changed = false;
-  int64_t stream_id = instr_gpu_config->operation_queue_id();
-  if (stream_id == StreamAttributeAnnotator::kDefaultComputeStreamId) {
+  int64_t stream_id = instr_gpu_config.operation_queue_id();
+  if (stream_id == Thunk::GetMainComputeStreamId().value()) {
     return changed;
   }
   std::vector<HloInstruction*> all_consumers;
@@ -64,7 +113,8 @@ absl::StatusOr<bool> AnnotateStreamAttributesForUsers(HloInstruction* instr) {
     TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                         user->backend_config<GpuBackendConfig>());
     auto it = absl::c_find(gpu_config.wait_on_operation_queues(), stream_id);
-    if (it == gpu_config.wait_on_operation_queues().end()) {
+    if (it == gpu_config.wait_on_operation_queues().end() &&
+        gpu_config.operation_queue_id() != stream_id) {
       gpu_config.mutable_wait_on_operation_queues()->Add(stream_id);
       TF_RETURN_IF_ERROR(user->set_backend_config(gpu_config));
       changed = true;
@@ -79,19 +129,32 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   XLA_VLOG_LINES(
-      2, "StreamAttributeAnnotator::Run(), before:\n" + module->ToString());
+      5, "StreamAttributeAnnotator::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (const HloComputation* comp : module->computations(execution_threads)) {
-    for (HloInstruction* instr : comp->instructions()) {
-      if (!instr->has_backend_config()) {
+    for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
+      auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
+      if (!instr_gpu_config.ok()) {
         continue;
       }
-      TF_ASSIGN_OR_RETURN(bool result, AnnotateStreamAttributesForUsers(instr));
-      changed |= result;
+      // For fusion instruction, only annotate
+      // when the root of fusion is a single instruction
+      // running on non-default stream.
+      if (instr->opcode() == HloOpcode::kFusion) {
+        TF_ASSIGN_OR_RETURN(bool comp_result,
+                            AnnotateStreamAttributesForInstruction(
+                                instr, instr_gpu_config.value()));
+        changed |= comp_result;
+      }
+
+      TF_ASSIGN_OR_RETURN(
+          bool user_result,
+          AnnotateStreamAttributesForUsers(instr, instr_gpu_config.value()));
+      changed |= user_result;
     }
   }
   XLA_VLOG_LINES(
-      2, "StreamAttributeAnnotator::Run(), after:\n" + module->ToString());
+      5, "StreamAttributeAnnotator::Run(), after:\n" + module->ToString());
   return changed;
 }
 

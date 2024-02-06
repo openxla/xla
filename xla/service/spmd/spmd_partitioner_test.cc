@@ -4589,6 +4589,7 @@ ENTRY entry {
                 ->operation_queue_id());
   auto wait_on_queues = while_loop->while_body()
                             ->root_instruction()
+                            ->operand(3)
                             ->backend_config<xla::gpu::GpuBackendConfig>()
                             ->wait_on_operation_queues();
   EXPECT_TRUE(wait_on_queues.size() == 1 && wait_on_queues[0] == 1);
@@ -4615,6 +4616,7 @@ ENTRY entry {
                            /*threshold_for_windowed_einsum_mib=*/0,
                            /*use_multiple_streams_for_windowed_einsum=*/true));
   VLOG(1) << module->ToString();
+  LOG(ERROR) << module->ToString();
 
   // Check while op.
   const auto arg0 = AllOf(op::Parameter(0), op::Shape("f32[4096,4,816]"));
@@ -4645,6 +4647,8 @@ ENTRY entry {
                 ->operation_queue_id());
   auto wait_on_queues = while_loop->while_body()
                             ->root_instruction()
+                            ->operand(3)
+                            ->operand(0)
                             ->backend_config<xla::gpu::GpuBackendConfig>()
                             ->wait_on_operation_queues();
   EXPECT_TRUE(wait_on_queues.size() == 1 && wait_on_queues[0] == 1);
@@ -4699,6 +4703,7 @@ ENTRY entry {
                 ->operation_queue_id());
   auto wait_on_queues = while_loop->while_body()
                             ->root_instruction()
+                            ->operand(3)
                             ->backend_config<xla::gpu::GpuBackendConfig>()
                             ->wait_on_operation_queues();
   EXPECT_TRUE(wait_on_queues.size() == 1 && wait_on_queues[0] == 1);
@@ -4753,6 +4758,8 @@ ENTRY entry {
                 ->operation_queue_id());
   auto wait_on_queues = while_loop->while_body()
                             ->root_instruction()
+                            ->operand(3)
+                            ->operand(0)
                             ->backend_config<xla::gpu::GpuBackendConfig>()
                             ->wait_on_operation_queues();
   EXPECT_TRUE(wait_on_queues.size() == 1 && wait_on_queues[0] == 1);

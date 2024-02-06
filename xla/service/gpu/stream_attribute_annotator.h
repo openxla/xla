@@ -26,16 +26,17 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// This pass checks to see if there's any instruction, that
-// consumes data from other computes streams, is missing
-// wait_on_operation_queues attribute. It will annotate
-// the corresponding instruction with the correct attribute
-// in GpuBackendConfig.
+// This pass checks to see if:
+//  1.  there's any instruction, that
+//      consumes data from other computes streams,
+//      is missing wait_on_operation_queues attribute.
+//  2.  there's any fusion instruction with non-default
+//      stream fusion root.
+// It will annotate the corresponding instruction with
+// the correct attribute in GpuBackendConfig.
 
 class StreamAttributeAnnotator : public HloModulePass {
  public:
-  static constexpr int64_t kDefaultComputeStreamId = 0;
-
   absl::string_view name() const override {
     return "stream-attribute-annotator";
   }

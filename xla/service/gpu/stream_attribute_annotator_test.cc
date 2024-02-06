@@ -135,6 +135,38 @@ TEST_F(StreamAttributeAnnotatorTest, GTEUserIsAnnotated) {
   EXPECT_TRUE(gpu_config.wait_on_operation_queues()[0] == 1);
 }
 
+TEST_F(StreamAttributeAnnotatorTest, FusionIsAnnotated) {
+  constexpr absl::string_view kHloString = R"(
+  HloModule ModuleWithFusion
+
+  fused_computation.1 {
+    fusion_p0_32 = f32[16,16] parameter(0)
+    fusion_p2_32 = f32[16,16] parameter(1)
+    ROOT add = f32[16,16] add(fusion_p0_32, fusion_p2_32), backend_config={"operation_queue_id":"1","wait_on_operation_queues":[]}
+  }
+
+  ENTRY entry {
+    p1_32 = f32[16,16] parameter(0)
+    p2_32 = f32[16,16] parameter(1)
+    ROOT fusion.1 = f32[16,16] fusion(p1_32, p2_32), kind=kLoop, calls=fused_computation.1
+  }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+
+  StreamAttributeAnnotator attr_annotator;
+  bool changed;
+  TF_ASSERT_OK_AND_ASSIGN(changed, attr_annotator.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  const HloInstruction* fusion = FindInstruction(module.get(), "fusion.1");
+  EXPECT_TRUE(fusion->has_backend_config());
+  TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                          fusion->backend_config<GpuBackendConfig>());
+  EXPECT_TRUE(gpu_config.operation_queue_id() == 1);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

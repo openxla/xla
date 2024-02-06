@@ -1409,15 +1409,11 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           o->shape(), o, dot, offsets));
     }
     if (queue_id > 0) {
-      // both the dot and its consumer are dispatched to additional stream
-      // so we don't block main stream.
+      // Dispatch the dot to additional compute stream.
       auto dot_gpu_config = dot->backend_config<xla::gpu::GpuBackendConfig>();
       auto o_gpu_config = o->backend_config<xla::gpu::GpuBackendConfig>();
       dot_gpu_config->set_operation_queue_id(queue_id);
-
-      o_gpu_config->set_operation_queue_id(queue_id);
       o_gpu_config->mutable_wait_on_operation_queues()->Add(queue_id);
-
       TF_CHECK_OK(dot->set_backend_config(dot_gpu_config.value()));
       TF_CHECK_OK(o->set_backend_config(o_gpu_config.value()));
     }
@@ -1625,15 +1621,6 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
 
       body_b.AddInstruction(HloInstruction::CreateTuple(
           {second_next_l, second_next_r, o, extra_inout, i}));
-    }
-    if (queue_id > 0) {
-      // Tell all users of o to wait on this queue if using multiple queues.
-      for (HloInstruction* user : o->users()) {
-        auto user_backend_config =
-            user->backend_config<xla::gpu::GpuBackendConfig>();
-        user_backend_config->mutable_wait_on_operation_queues()->Add(queue_id);
-        TF_CHECK_OK(user->set_backend_config(user_backend_config.value()));
-      }
     }
   } else {
     auto real_i = i;

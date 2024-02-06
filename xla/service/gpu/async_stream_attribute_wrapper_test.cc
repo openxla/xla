@@ -68,6 +68,7 @@ TEST_F(AsyncStreamAttributeWrapperTest, NonDefaultOpIsWrapped) {
   TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
                           async->backend_config<GpuBackendConfig>());
   EXPECT_EQ(gpu_config.operation_queue_id(), 1);
+  EXPECT_EQ(async->async_execution_thread(), "parallel");
 }
 }  // namespace
 }  // namespace gpu
