@@ -4134,6 +4134,7 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/util:env_var",
         "@tsl//tsl/util/proto:proto_utils",
     ],
