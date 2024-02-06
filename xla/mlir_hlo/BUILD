@@ -1127,7 +1127,6 @@ cc_library(
 cc_library(
     name = "transforms_passes",
     srcs = [
-        "mhlo/analysis/test_shape_component_analysis.cc",
         "transforms/alloc_to_arg_pass.cc",
         "transforms/bufferize.cc",
         "transforms/bufferize_pass.cc",
@@ -1136,11 +1135,9 @@ cc_library(
         "transforms/generic_host_to_llvm.cc",
         "transforms/lower_index_cast_pass.cc",
         "transforms/naive_copy_removal.cc",
-        "transforms/propagate_static_shapes_to_kernel.cc",
         "transforms/test_hlo_transform_dialect_interpreter.cc",
         "transforms/tile_loops_pass.cc",
         "transforms/unbufferize_pass.cc",
-        "transforms/unroll_loops.cc",
         "transforms/vectorize_copy.cc",
     ],
     hdrs = [
