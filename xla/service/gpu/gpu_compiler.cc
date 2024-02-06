@@ -1416,7 +1416,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                          LayoutAssignment::InstructionCanChangeLayout)
                      .VerifyBroadcastDimensionsOrder()
                      .VerifyReshapeIsBitcast(),
-                 /*debug_only=*/false);
+                 /*debug_only=*/true);
 
   // Linearize collective schedule if online autotuning of convolutions is
   // enabled.
@@ -1469,6 +1469,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true,
                            /*only_fusion_computations=*/false,
                            /*ignore_control_dependencies=*/true);
+
+  pipeline.AddPass<HloVerifier>(/*layout_sensitive=*/true,
+                                /*allow_mixed_precision=*/false);
+
   TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
 
   return absl::OkStatus();
