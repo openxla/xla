@@ -656,7 +656,8 @@ XLA_TEST_F(ConvertTest, ConvertBF16F32) {
         all_bfloats[i] < std::numeric_limits<float>::min()) {
       // Subnormals may not be preserved, zero will do.
       const float same_signed_zero =
-          Eigen::numext::signbit(all_bfloats[i]) ? -0.0f : 0.0f;
+          (Eigen::numext::signbit(all_bfloats[i]) != bfloat16(0)) ? -0.0f
+                                                                  : 0.0f;
       if (result != correct) {
         EXPECT_EQ(result, absl::bit_cast<uint32_t>(same_signed_zero));
       }
