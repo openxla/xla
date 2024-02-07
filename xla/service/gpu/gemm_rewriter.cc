@@ -482,6 +482,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (!IsMatrixMultiplication(*instr)) {
       return absl::OkStatus();
     }
+    TF_ASSIGN_OR_RETURN(bool is_matmul_tiny,
+                        IsMatrixMultiplicationTooSmallForRewriting(*instr));
+    if (is_matmul_tiny) {
+      return absl::OkStatus();
+    }
 
     CHECK(!instr->IsRank2Transpose());
     CHECK(!instr->mutable_operand(0)->IsRank2Transpose());
