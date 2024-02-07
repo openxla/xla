@@ -23,10 +23,7 @@ cc_library(
     srcs = ["plugin_tracer.cc"],
     hdrs = ["plugin_tracer.h"],
     copts = tf_profiler_copts(),
-    visibility = [
-        "//third_party/xprof/plugin/tensorboard_plugin_profile/integration_tests/tpu/tensorflow:__pkg__",
-        "//xla:internal",
-    ],
+    visibility = ["//xla:internal"],
     deps = [
         ":profiler_c_api_hdrs",
         "//xla:status",
