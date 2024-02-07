@@ -1470,6 +1470,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                            /*only_fusion_computations=*/false,
                            /*ignore_control_dependencies=*/true);
 
+#ifdef NDEBUG
+  // Verify the module in non-debug builds. For debug builds, the verifier
+  // already runs after every pass.
   pipeline.AddPass<HloVerifier>(
       std::make_unique<DefaultVerifierMetadata>(
           HloVerifierOpts{}
@@ -1479,6 +1482,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
               .VerifyBroadcastDimensionsOrder()
               .VerifyReshapeIsBitcast()),
       "end-of-post-layout_assignment");
+#endif  // NDEBUG
 
   TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
 
