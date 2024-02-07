@@ -372,13 +372,13 @@ void PreloadCudnnSubLibs(PreloadCudnnType type) {
       [[clang::fallthrough]];
     }
     case PreloadCudnnType::ConvFwd: {
-#if CUDNN >= 9000
+#if CUDNN_VERSION >= 9000
       cudnnGraphVersionCheck();
       cudnnOpsVersionCheck();
 #elif CUDNN_VERSION >= 8004
       cudnnOpsInferVersionCheck();
       cudnnCnnInferVersionCheck();
-#endif  // CUDNN >= 9000
+#endif  // CUDNN_VERSION >= 9000
       break;
     }
     case PreloadCudnnType::Rnn: {
