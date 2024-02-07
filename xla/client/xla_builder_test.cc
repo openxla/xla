@@ -1193,6 +1193,33 @@ TEST(XlaBuilderTest, DotWithPreferredElementType) {
       ShapeUtil::Equal(ShapeUtil::MakeShape(U32, {2, 2}), result_shape));
 }
 
+TEST(XlaBuilderTest, SparseDot) {
+  XlaBuilder b(TestName());
+  auto lhs = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {10, 16}), "lhs");
+  auto rhs = Parameter(&b, 1, ShapeUtil::MakeShape(F32, {32, 20}), "rhs");
+  auto meta = Parameter(&b, 2, ShapeUtil::MakeShape(U16, {10, 2}), "meta");
+
+  DotDimensionNumbers dnums;
+  dnums.add_lhs_contracting_dimensions(1);
+  dnums.add_rhs_contracting_dimensions(0);
+  SparsityDescriptor sparsity_descriptor;
+  sparsity_descriptor.set_type(SparsityType::SPARSITY_STRUCTURED_N_M);
+  sparsity_descriptor.set_n(2);
+  sparsity_descriptor.set_m(4);
+  sparsity_descriptor.set_index(0);
+  sparsity_descriptor.set_dimension(1);
+  std::vector<SparsityDescriptor> sparsity = {sparsity_descriptor};
+  std::vector<XlaOp> sparse_meta = {meta};
+
+  SparseDot(lhs, rhs, absl::MakeSpan(sparse_meta), absl::MakeSpan(sparsity),
+            dnums);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  const Shape& result_shape =
+      module->entry_computation()->root_instruction()->shape();
+  ASSERT_TRUE(
+      ShapeUtil::Equal(ShapeUtil::MakeShape(F32, {10, 20}), result_shape));
+}
+
 TEST(XlaBuilderTest, ConvolutionWithPreferredElementType) {
   XlaBuilder b(TestName());
   Shape p0_shape = ShapeUtil::MakeShape(S16, {1, 2, 2, 128});
