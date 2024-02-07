@@ -1638,6 +1638,20 @@ std::unique_ptr<HloComputation> HloComputation::CloneInContext(
 
   context.MapComputation(this, result.get());
   result->SetExecutionThread(execution_thread());
+
+  // Copy the instruction and instruction_type information to the clone
+  if (IsFusionComputation()) {
+    result->SetFusionInstruction(FusionInstruction());
+  } else if (IsWhileBodyComputation()) {
+    result->SetWhileCallInstruction(WhileCallInstruction());
+  } else if (IsCustomCallComputation()) {
+    result->SetCustomCallInstruction(CustomCallInstruction());
+  } else if (IsCollectiveCalledComputation()) {
+    result->SetCollectiveCallInstruction(CollectiveCallInstruction());
+  } else if (IsConditionalBranchComputation()) {
+    result->SetConditionalCallInstruction(ConditionalCallInstruction());
+  }
+
   return result;
 }
 
