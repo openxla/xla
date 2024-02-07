@@ -86,11 +86,8 @@ xla_test(
     srcs = ["address_computation_fusion_test.cc"],
     backends = ["gpu"],
     deps = [
-        "//xla:array3d",
-        "//xla:array4d",
         "//xla:error_spec",
-        "//xla:literal_util",
-        "//xla:types",
+        "//xla/service:hlo_module_config",
         "//xla/tests:hlo_test_base",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
