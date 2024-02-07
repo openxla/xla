@@ -16,6 +16,29 @@ package_group(
 )
 
 #===-------------------------------------------------------------------------------------------===//
+# Runtime tracing libraries
+#===-------------------------------------------------------------------------------------------===//
+
+cc_library(
+    name = "annotation",
+    srcs = ["annotation.cc"],
+    hdrs = ["annotation.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/profiler/lib:nvtx_utils",
+        "@tsl//tsl/profiler/lib:scoped_annotation_stack",
+    ],
+)
+
+#===-------------------------------------------------------------------------------------------===//
 # Command Buffer Integration
 #===-------------------------------------------------------------------------------------------===//
 
