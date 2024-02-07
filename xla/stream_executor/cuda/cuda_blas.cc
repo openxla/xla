@@ -180,6 +180,9 @@ class ScopedCublasMathMode {
 // them into an error message. The hope is to provide the user with useful
 // information when an error occurs.
 //
+// Once CublasLogCollector is initialized, ScopedCublasLogCollection can be used
+// as a RAII interface to the On() and Off() methods.
+//
 // The class is not intended to be instantiated explicitly. State (thread local)
 // is managed implicitly by the static methods.
 //
@@ -265,6 +268,12 @@ class CublasLogCollector {
 
   unsigned counter_ = 0;
   std::stringstream log_stream_;
+};
+
+// RAII interface to CublasLogCollector::On() and Off()
+struct ScopedCublasLogCollection {
+  ScopedCublasLogCollection() { CublasLogCollector::On(); }
+  ~ScopedCublasLogCollection() { CublasLogCollector::Off(); }
 };
 
 static const char *const kCublasNotInitializedExplanation =
@@ -490,17 +499,22 @@ absl::Status CUDABlas::DoBlasInternalImpl(FuncT cublas_func, Stream *stream,
     return absl::InternalError("Failed setting error mode");
   }
 
-  if (capture_logs) CublasLogCollector::On();
-  cublasStatus_t ret = cublas_func(blas_, args...);
-  if (capture_logs) CublasLogCollector::Off();
+  cublasStatus_t status;
+  if (capture_logs) {
+    // Enables cuBLAS log capture on scope enter, disable on scope exit
+    ScopedCublasLogCollection log_collector;
+    status = cublas_func(blas_, args...);
+  } else {
+    status = cublas_func(blas_, args...);
+  }
 
-  if (ret == CUBLAS_STATUS_SUCCESS) {
+  if (status == CUBLAS_STATUS_SUCCESS) {
     return absl::OkStatus();
   }
 
   std::string error_message =
-      capture_logs ? CublasLogCollector::GetCublasErrorMessage(ret)
-                   : ToString(ret);
+      capture_logs ? CublasLogCollector::GetCublasErrorMessage(status)
+                   : ToString(status);
   return absl::InternalError(error_message);
 }
 
