@@ -817,7 +817,7 @@ absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
                             dot_dims.lhs_contracting_dimensions()));
   const int64_t rhs_non_contracting_size = absl::c_accumulate(
       rhs_non_contracting_dims, 1, [&](int64_t size, int64_t dim) {
-        return size * lhs_shape.dimensions(dim);
+        return size * rhs_shape.dimensions(dim);
       });
 
   return (rhs_non_contracting_size + lhs_non_contracting_size) *
