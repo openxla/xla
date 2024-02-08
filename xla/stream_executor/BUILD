@@ -529,6 +529,7 @@ cc_library(
 
 transitive_hdrs(
     name = "stream_executor_install_hdrs",
+    tags = ["avoid_dep"],
     deps = [":stream_executor_headers"],
 )
 
@@ -542,6 +543,7 @@ cc_library(
         "stream_executor_pimpl.cc",
     ],
     hdrs = ["stream_executor_pimpl.h"],
+    tags = ["avoid_dep"],
     visibility = ["//visibility:private"],
     deps = [
         ":blas",  # build_cleaner: keep
