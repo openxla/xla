@@ -854,7 +854,8 @@ cc_library(
         "nccl_recv_thunk.h",
         "nccl_send_thunk.h",
     ],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW=1"]),
     deps = [
         ":backend_configs_cc",
         ":buffer_allocations",
@@ -922,14 +923,20 @@ cc_library(
 # have `if_nccl` and `if_gpu_configured` that do not compose. NCCL header included directly in
 # :nccl_api target and all other targets should use this header to launch collective operations.
 # This allows to minimize the spreading of #ifdef all over the XLA code base.
+alias(
+    name = "nccl_api",
+    actual = if_nccl(":_nccl_api_impl", ":_nccl_api_stub"),
+)
 
 cc_library(
-    name = "nccl_api",
-    srcs = ["nccl_api.cc"],
+    name = "_nccl_api_impl",
+    srcs = if_gpu_is_configured(
+        ["nccl_api.cc"],
+        ["nccl_api_stub.cc"],
+    ),
     hdrs = ["nccl_api.h"],
     compatible_with = get_compatible_with_portable(),
-    defines = if_gpu_is_configured(["XLA_ENABLE_XCCL"]),
-    tags = ["manual"],
+    defines = if_gpu_is_configured(["XLA_ENABLE_XCCL"]), # TODO(ezhulenev): Remove!
     deps = [
         ":nccl_clique_key",
         "//xla:shape_util",
@@ -956,6 +963,24 @@ cc_library(
     ]) + if_gpu_is_configured([
         "//xla/stream_executor/gpu:gpu_stream",
     ]),
+)
+
+cc_library(
+    name = "_nccl_api_stub",
+    srcs = ["nccl_api_stub.cc"],
+    hdrs = ["nccl_api.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":nccl_clique_key",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:collective_ops_utils",
+        "//xla/stream_executor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/concurrency:ref_count",
+        "@tsl//tsl/platform:logging",
+    ],
 )
 
 cc_library(
@@ -1044,7 +1069,8 @@ xla_cc_test(
     name = "mock_nccl_xml_test",
     size = "small",
     srcs = if_google(["mock_nccl_xml_test.cc"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     tags = tf_cuda_tests_tags(),
     deps = [
         "//xla:status",
@@ -1054,6 +1080,8 @@ xla_cc_test(
         ":mock_nccl_xml_google",
     ]) + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rccl",
     ]),
 )
 
