@@ -56,6 +56,10 @@ mlir::ArrayAttr ConvertOutputOperandAliasing(
                                 std::pair<int64_t, xla::ShapeIndex>>>& aliaInfo,
     mlir::Builder* builder);
 
+// Converts the sparsity descriptor to attributes.
+StatusOr<mlir::mhlo::SparsityDescriptorAttr> ConvertSparsityDescriptor(
+    xla::SparsityDescriptor sparsity_descriptor, mlir::Builder* builder);
+
 StatusOr<mlir::mhlo::FftType> ConvertFftType(FftType type);
 StatusOr<mlir::mhlo::Transpose> ConvertTranspose(
     TriangularSolveOptions_Transpose transpose);

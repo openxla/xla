@@ -1662,22 +1662,46 @@ XlaOp XlaBuilder::DotGeneral(
         Shape shape,
         ShapeInference::InferDotOpShape(
             *lhs_shape, *rhs_shape, dimension_numbers, preferred_element_type));
-    return DotGeneralInternal(shape, lhs, rhs, dimension_numbers,
-                              precision_config);
+    return DotGeneralInternal(shape, {lhs, rhs}, dimension_numbers,
+                              precision_config, /*sparsity=*/{});
   });
 }
 
 StatusOr<XlaOp> XlaBuilder::DotGeneralInternal(
-    const Shape& shape, XlaOp lhs, XlaOp rhs,
+    const Shape& shape, absl::Span<const XlaOp> operands,
     const DotDimensionNumbers& dimension_numbers,
-    const PrecisionConfig* precision_config) {
+    const PrecisionConfig* precision_config,
+    absl::Span<const SparsityDescriptor> sparsity) {
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   *instr.mutable_dot_dimension_numbers() = dimension_numbers;
   if (precision_config != nullptr) {
     *instr.mutable_precision_config() = *precision_config;
   }
-  return AddInstruction(std::move(instr), HloOpcode::kDot, {lhs, rhs});
+  for (const SparsityDescriptor& descriptor : sparsity) {
+    *instr.add_dot_sparsity() = descriptor;
+  }
+  return AddInstruction(std::move(instr), HloOpcode::kDot, operands);
+}
+
+XlaOp XlaBuilder::SparseDot(
+    XlaOp lhs, XlaOp rhs, absl::Span<XlaOp> sparse_meta,
+    absl::Span<const SparsityDescriptor> sparsity,
+    const DotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig* precision_config,
+    std::optional<PrimitiveType> preferred_element_type) {
+  return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
+    TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
+    TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
+    TF_ASSIGN_OR_RETURN(Shape shape,
+                        ShapeInference::InferDotOpShape(
+                            *lhs_shape, *rhs_shape, dimension_numbers,
+                            preferred_element_type, sparsity));
+    std::vector<XlaOp> operands{lhs, rhs};
+    operands.insert(operands.end(), sparse_meta.begin(), sparse_meta.end());
+    return DotGeneralInternal(shape, operands, dimension_numbers,
+                              precision_config, sparsity);
+  });
 }
 
 Status XlaBuilder::VerifyConvolution(
@@ -4620,6 +4644,16 @@ XlaOp DotGeneral(const XlaOp lhs, const XlaOp rhs,
                  std::optional<PrimitiveType> preferred_element_type) {
   return lhs.builder()->DotGeneral(lhs, rhs, dimension_numbers,
                                    precision_config, preferred_element_type);
+}
+
+XlaOp SparseDot(const XlaOp lhs, const XlaOp rhs, absl::Span<XlaOp> sparse_meta,
+                absl::Span<const SparsityDescriptor> sparsity,
+                const DotDimensionNumbers& dimension_numbers,
+                const PrecisionConfig* precision_config,
+                std::optional<PrimitiveType> preferred_element_type) {
+  return lhs.builder()->SparseDot(lhs, rhs, sparse_meta, sparsity,
+                                  dimension_numbers, precision_config,
+                                  preferred_element_type);
 }
 
 XlaOp Conv(const XlaOp lhs, const XlaOp rhs,
