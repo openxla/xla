@@ -584,6 +584,13 @@ class XlaBuilder {
       const PrecisionConfig* precision_config = nullptr,
       std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
+  XlaOp SparseDot(
+      XlaOp lhs, XlaOp rhs, absl::Span<XlaOp> sparse_meta,
+      absl::Span<const SparsityDescriptor> sparsity,
+      const DotDimensionNumbers& dimension_numbers,
+      const PrecisionConfig* precision_config = nullptr,
+      std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
   XlaOp Conv(
       XlaOp lhs, XlaOp rhs, absl::Span<const int64_t> window_strides,
       Padding padding, int64_t feature_group_count = 1,
@@ -1237,9 +1244,15 @@ class XlaBuilder {
                           const PrecisionConfig* precision_config,
                           std::optional<PrimitiveType> preferred_element_type);
   virtual StatusOr<XlaOp> DotGeneralInternal(
-      const Shape& shape, XlaOp lhs, XlaOp rhs,
+      const Shape& shape, absl::Span<const XlaOp> operands,
       const DotDimensionNumbers& dimension_number,
-      const PrecisionConfig* precision_config);
+      const PrecisionConfig* precision_config,
+      absl::Span<const SparsityDescriptor> sparsity);
+  friend XlaOp SparseDot(XlaOp lhs, XlaOp rhs, absl::Span<XlaOp> sparse_meta,
+                         absl::Span<const SparsityDescriptor> sparsity,
+                         const DotDimensionNumbers& dimension_number,
+                         const PrecisionConfig* precision_config,
+                         std::optional<PrimitiveType> preferred_element_type);
   friend XlaOp Conv(XlaOp lhs, XlaOp rhs,
                     absl::Span<const int64_t> window_strides, Padding padding,
                     int64_t feature_group_count, int64_t batch_group_count,
@@ -2066,6 +2079,14 @@ XlaOp Dot(XlaOp lhs, XlaOp rhs,
 // Enqueues a general dot instruction onto the computation.
 XlaOp DotGeneral(
     XlaOp lhs, XlaOp rhs, const DotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig* precision_config = nullptr,
+    std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
+// Enqueues a general dot instruction onto the computation.
+XlaOp SparseDot(
+    XlaOp lhs, XlaOp rhs, absl::Span<XlaOp> sparse_meta,
+    absl::Span<const SparsityDescriptor> sparsity,
+    const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig* precision_config = nullptr,
     std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 

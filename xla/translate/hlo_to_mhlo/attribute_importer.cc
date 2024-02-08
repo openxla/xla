@@ -22,7 +22,9 @@ limitations under the License.
 #include <vector>
 
 #include "xla/layout_util.h"
+#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/shape_util.h"
+#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -125,6 +127,19 @@ mlir::ArrayAttr ConvertOutputOperandAliasing(
     attrs.push_back(attr);
   }
   return builder->getArrayAttr(attrs);
+}
+
+StatusOr<mlir::mhlo::SparsityDescriptorAttr> ConvertSparsityDescriptor(
+    xla::SparsityDescriptor sparsity_descriptor, mlir::Builder* builder) {
+  switch (sparsity_descriptor.type()) {
+    case SPARSITY_STRUCTURED_N_M:
+      return mlir::mhlo::SparsityDescriptorAttr::get(
+          builder->getContext(), sparsity_descriptor.index(),
+          sparsity_descriptor.dimension(), sparsity_descriptor.n(),
+          sparsity_descriptor.m());
+    default:
+      return InvalidArgument("Unknown sparsity descriptor type");
+  }
 }
 
 StatusOr<mlir::mhlo::FftType> ConvertFftType(FftType type) {
