@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/util.h"
@@ -448,7 +449,7 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
 
  private:
   // Removes degenerate dimension from dot.
-  StatusOr<bool> RemoveDegenerateDimensionFromDot(HloInstruction* dot);
+  StatusOr<bool> RemoveDegenerateDimensionFromDot(HloDotInstruction* dot);
 
   // Moves the transpose to the broadcast if possible. Can also be called with a
   // bitcast transpose.
@@ -482,7 +483,7 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   //
   //   LHS [batch dims..., non-contracting dim, contracting dim]
   //   RHS [batch dims..., contracting dim, non-contracting dim].
-  StatusOr<bool> RemoveTransposesFromDotOperands(HloInstruction* dot);
+  StatusOr<bool> RemoveTransposesFromDotOperands(HloDotInstruction* dot);
 
   // Helper method to perform and add reduction on a list of dimensions.
   HloInstruction* AddReduce(HloInstruction* hlo, absl::Span<const int64_t> dims,
@@ -539,7 +540,8 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   StatusOr<HloInstruction*> OptimizeDotOfReorderContractingDims(
       HloInstruction* dot);
 
-  StatusOr<HloInstruction*> AssociativeReorderDotOperator(HloInstruction* dot);
+  StatusOr<HloInstruction*> AssociativeReorderDotOperator(
+      HloDotInstruction* dot);
 
   HloComputation* GetOrCreateScalarAddComputation(PrimitiveType type) {
     HloComputation*& scalar_add_computation = scalar_add_computations_[type];

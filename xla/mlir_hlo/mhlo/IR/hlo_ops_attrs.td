@@ -256,6 +256,18 @@ def MHLO_FlatSymbolRefArrayAttr :
   let constBuilderCall = "::mlir::ArrayAttr::get($_builder.getContext(), $0)";
 }
 
+// Sparsity descriptor attribute
+def MHLO_SparsityDescriptor : AttrDef<MHLO_Dialect, "SparsityDescriptor"> {
+  let mnemonic = "sparsity";
+  let summary = "Describes structured (N:M) sparsity configuration";
+  let parameters = (ins
+    "int64_t":$index,
+    "int64_t":$dimension,
+    "int64_t":$n,
+    "int64_t":$m);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 //===----------------------------------------------------------------------===//
 // Common convolution attributes
 //===----------------------------------------------------------------------===//
