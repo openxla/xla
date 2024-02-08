@@ -429,6 +429,7 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/service:buffer_assignment",
@@ -452,6 +453,7 @@ tf_proto_library(
     protodeps = [
         ":xla_framework_proto",
         "//xla/service:hlo_proto",
+        "//xla:xla_proto",
     ],
 )
 
