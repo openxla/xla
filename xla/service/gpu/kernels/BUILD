@@ -145,7 +145,6 @@ cc_library(
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
@@ -167,8 +166,8 @@ cuda_library(
     compatible_with = [],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
+        "//xla:types",
         "//xla/service/gpu/runtime:gpu_kernel_helper",
-        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -184,7 +183,6 @@ rocm_library(
     local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         "//xla/service/gpu/runtime:gpu_kernel_helper",
-        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -194,6 +192,7 @@ xla_cc_test(
     tags = tf_gpu_tests_tags(),
     deps = [
         ":topk_kernel",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/service/gpu/runtime:gpu_kernel_helper",
         "//xla/stream_executor",  # build_cleaner: keep
@@ -207,7 +206,6 @@ xla_cc_test(
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
@@ -248,6 +246,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":topk_custom_kernel",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/service:platform_util",
         "//xla/stream_executor",
@@ -257,7 +256,6 @@ xla_test(
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
-        "@eigen_archive//:eigen3",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
