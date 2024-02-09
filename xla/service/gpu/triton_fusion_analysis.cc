@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/triton_fusion_analysis.h"
 
-#include <cstdint>
 #include <queue>
 #include <string>
 #include <utility>
@@ -34,10 +33,8 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/triton_tiling_propagation.h"
 #include "xla/service/instruction_fusion.h"
-#include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
@@ -114,22 +111,6 @@ namespace triton_fusion {
   context.dim_orders_[&root] = DimensionOrder::FromSoftmaxRoot(root);
   return context;
 }
-
-namespace {
-
-// Tells how many new parameters does a fusion gain by fusing the operation as
-// an input.
-int64_t NumAddedParameters(const HloInstruction& hlo) {
-  // Non-scalar constant is equivalent to a parameter: one input, one output.
-  if (hlo.opcode() == HloOpcode::kConstant &&
-      !ShapeUtil::IsScalar(hlo.shape())) {
-    return 0;
-  }
-  // All other instructions add all own inputs and remove own single output.
-  return hlo.operand_count() - 1;
-}
-
-}  // namespace
 
 bool FusionContext::CombineDimOrdersAndReqs(const DimOrdersAndReqs& update) {
   // First check that all updates to insert are compatible to avoid

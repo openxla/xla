@@ -14,7 +14,6 @@ limitations under the license, the license you must see.
 #ifndef XLA_SERVICE_GPU_GPU_PRIM_ROCM_H_
 #define XLA_SERVICE_GPU_GPU_PRIM_ROCM_H_
 
-#include "tsl/platform/bfloat16.h"
 
 #if TENSORFLOW_USE_ROCM
 

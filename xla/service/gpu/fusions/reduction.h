@@ -15,6 +15,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_FUSIONS_REDUCTION_H_
 #define XLA_SERVICE_GPU_FUSIONS_REDUCTION_H_
 
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "llvm/IR/IRBuilder.h"
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
@@ -30,6 +32,7 @@ limitations under the License.
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/shape.h"
 

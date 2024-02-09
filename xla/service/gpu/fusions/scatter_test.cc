@@ -14,9 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/fusions/scatter.h"
 
-#include <optional>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"

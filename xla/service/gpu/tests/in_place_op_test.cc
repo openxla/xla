@@ -13,7 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <optional>
+
+#include "xla/debug_options_flags.h"
 #include "xla/tests/hlo_test_base.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {

@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/service/tuple_simplifier.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/util.h"
 #include "tsl/lib/core/status_test_util.h"

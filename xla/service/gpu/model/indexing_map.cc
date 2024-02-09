@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <numeric>
 #include <optional>
 #include <ostream>

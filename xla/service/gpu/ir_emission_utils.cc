@@ -17,9 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <climits>
-#include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <functional>
 #include <optional>
 #include <queue>
@@ -37,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/FPEnv.h"
 #include "llvm/IR/IRBuilder.h"
@@ -86,11 +85,9 @@ limitations under the License.
 #include "xla/statusor.h"
 #include "xla/translate/mhlo_to_hlo/location_exporter.h"
 #include "xla/translate/mhlo_to_hlo/type_to_shape.h"
-#include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/ml_dtypes.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {

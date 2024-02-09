@@ -30,7 +30,6 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/permutation_util.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"

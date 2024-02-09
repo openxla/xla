@@ -34,13 +34,11 @@ limitations under the License.
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/shape.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -61,8 +59,6 @@ class FusionInterface {
 // Interface for fusions that are implemented using cuda kernels.
 class KernelFusionInterface : public FusionInterface {
  public:
-  virtual ~KernelFusionInterface() = default;
-
   // Returns the fusion's launch dimensions.
   virtual LaunchDimensions launch_dimensions() const = 0;
 

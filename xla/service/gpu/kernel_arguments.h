@@ -15,17 +15,20 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_KERNEL_ARGUMENTS_H_
 #define XLA_SERVICE_GPU_KERNEL_ARGUMENTS_H_
 
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
 
+#include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/ValueRange.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
-#include "xla/statusor.h"
 
 namespace xla {
 namespace gpu {

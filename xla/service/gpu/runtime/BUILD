@@ -130,10 +130,7 @@ cc_library(
         ":sequential_thunk",
         ":wait_for_streams_thunk",
         ":while_thunk",
-        "//xla:status",
-        "//xla:statusor",
         "//xla:util",
-        "//xla/service/gpu:nccl_collective_thunks",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
@@ -183,6 +180,7 @@ cc_library(
     srcs = if_gpu_is_configured(["cholesky_thunk.cc"]),
     hdrs = if_gpu_is_configured(["cholesky_thunk.h"]),
     deps = if_gpu_is_configured([
+        "@com_google_absl//absl/status",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:cusolver_context",
         "//xla/service/gpu:make_batch_pointers",
@@ -192,11 +190,12 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/hlo/ir:hlo",
-        "@tsl//tsl/platform:logging",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor/gpu:gpu_asm_opts",
-    ]) + ["@tsl//tsl/platform:status"],
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+    ]),
 )
 
 cc_library(
@@ -306,9 +305,12 @@ cc_library(
         "//xla/service/gpu:gpu_conv_runner",
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -321,6 +323,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
+        "@com_google_absl//absl/status",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -336,6 +339,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:buffer_allocations",
@@ -372,7 +376,6 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_types_header",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
@@ -384,21 +387,22 @@ cc_library(
     srcs = ["fft_thunk.cc"],
     hdrs = ["fft_thunk.h"],
     deps = [
+        "//xla:shape_util",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
-        "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -413,7 +417,10 @@ cc_library(
         "//xla/service/gpu:gpu_fused_mha_runner",
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -440,10 +447,14 @@ cc_library(
         "TENSORFLOW_USE_ROCM=1",
     ]),
     deps = if_gpu_is_configured([
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/synchronization",
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:thunk",
         "//xla:status",
+        "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor",
         "@tsl//tsl/platform:logging",
@@ -505,6 +516,7 @@ cc_library(
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -515,6 +527,7 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "//xla/mlir_hlo:lhlo_gpu",
         "//xla/service:collective_ops_utils",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:nccl_api",
@@ -565,11 +578,11 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla/hlo/ir:hlo",
+        "//xla/mlir_hlo:lhlo_gpu",
         "//xla/service:collective_ops_utils",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:nccl_api",
         "//xla/service/gpu:nccl_collective_thunks",
-        "//xla/service/gpu:thunk",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -591,8 +604,10 @@ cc_library(
         "//xla/service/gpu:gpu_norm_runner",
         "//xla/service/gpu:thunk",
         "//xla/stream_executor",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -719,11 +734,9 @@ cc_library(
     srcs = ["wait_for_streams_thunk.cc"],
     hdrs = ["wait_for_streams_thunk.h"],
     deps = [
-        "//xla/service:global_device_id",
         "//xla/service/gpu:thunk",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
     ],
 )

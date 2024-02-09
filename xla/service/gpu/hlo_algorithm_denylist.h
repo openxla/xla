@@ -16,8 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_HLO_ALGORITHM_DENYLIST_H_
 #define XLA_SERVICE_GPU_HLO_ALGORITHM_DENYLIST_H_
 
-#include <vector>
+#include <string>
 
+#include "absl/types/span.h"
 #include "xla/autotuning.pb.h"
 #include "xla/stream_executor/stream_executor.h"
 

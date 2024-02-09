@@ -16,7 +16,6 @@ limitations under the License.
 
 #include <optional>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"

@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -26,7 +27,6 @@ limitations under the License.
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -45,7 +45,8 @@ class HloOpProfiles {
 
   // Returns profile name for the gived device.
   // For CUDA, the format is "sm_XX".
-  static std::string GetProfileName(const se::DeviceDescription* device_info);
+  static std::string GetProfileName(
+      const stream_executor::DeviceDescription* device_info);
 
   // Loads profiles from the given text proto data.
   static std::unique_ptr<HloOpProfiles> Load(
@@ -53,7 +54,7 @@ class HloOpProfiles {
       std::string_view default_profile_name);
 
   const HloOpProfile& GetProfile(
-      const se::DeviceDescription* device_info) const;
+      const stream_executor::DeviceDescription* device_info) const;
 
  private:
   HloOpProfiles(ProfilesNestedMap profiles,

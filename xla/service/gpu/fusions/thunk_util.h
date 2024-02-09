@@ -18,12 +18,12 @@ limitations under the License.
 #include <memory>
 #include <optional>
 
+#include "absl/status/statusor.h"
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/thunk.h"
-#include "xla/statusor.h"
 
 namespace xla {
 namespace gpu {

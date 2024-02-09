@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_RUNTIME_COMMAND_BUFFER_CMD_EMITTER_H_
 #define XLA_SERVICE_GPU_RUNTIME_COMMAND_BUFFER_CMD_EMITTER_H_
 
+#include "absl/status/statusor.h"
 #include "xla/service/gpu/runtime/command_buffer_cmd.h"
 #include "xla/service/gpu/thunk.h"
-#include "xla/statusor.h"
 
 namespace xla::gpu {
 

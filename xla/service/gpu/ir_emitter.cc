@@ -15,18 +15,23 @@ limitations under the License.
 
 #include "xla/service/gpu/ir_emitter.h"
 
-#include <utility>
+#include <cstdint>
+#include <vector>
 
 // IWYU pragma: no_include "llvm/IR/Intrinsics.gen.inc"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
-#include "xla/hlo/ir/hlo_computation.h"
-#include "xla/primitive_util.h"
+#include "llvm/Support/AtomicOrdering.h"
+#include "llvm/TargetParser/Triple.h"
 #include "xla/service/elemental_ir_emitter.h"
 #include "xla/service/gpu/elemental_ir_emitter.h"
+#include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/ir_emitter_nested.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
@@ -35,7 +40,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/tuple_ops.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -124,32 +129,6 @@ bool IrEmitter::IsEmittingForAMDGPU() const {
   llvm::Triple target_triple = llvm::Triple(module_->getTargetTriple());
   return target_triple.isAMDGPU();
 }
-
-namespace {
-llvm::Value* Real(llvm::Value* x, llvm::IRBuilder<>* b) {
-  return b->CreateExtractValue(x, {0});
-}
-
-llvm::Value* Imag(llvm::Value* x, llvm::IRBuilder<>* b) {
-  return b->CreateExtractValue(x, {1});
-}
-
-std::pair<llvm::Value*, llvm::Value*> MultiplyComplex(llvm::Value* lhs_value,
-                                                      llvm::Value* rhs_value,
-                                                      llvm::IRBuilder<>* b) {
-  llvm::Value* lhs_real = Real(lhs_value, b);
-  llvm::Value* lhs_imag = Imag(lhs_value, b);
-  llvm::Value* rhs_real = Real(rhs_value, b);
-  llvm::Value* rhs_imag = Imag(rhs_value, b);
-  llvm::Value* real_result1 = b->CreateFMul(lhs_real, rhs_real);
-  llvm::Value* real_result2 = b->CreateFMul(lhs_imag, rhs_imag);
-  llvm::Value* real_result = b->CreateFSub(real_result1, real_result2);
-  llvm::Value* imag_result1 = b->CreateFMul(lhs_real, rhs_imag);
-  llvm::Value* imag_result2 = b->CreateFMul(lhs_imag, rhs_real);
-  llvm::Value* imag_result = b->CreateFAdd(imag_result1, imag_result2);
-  return {real_result, imag_result};
-}
-}  // namespace
 
 absl::Status IrEmitter::HandleConvolution(HloInstruction* convolution) {
   if (ShapeUtil::IsZeroElementArray(convolution->shape())) {

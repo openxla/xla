@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/algorithm/container.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/Operation.h"  // from @llvm-project
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/service/gpu/thunk.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/statusor.h"
 
 namespace xla {
 namespace gpu {
