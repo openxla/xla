@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace hlo_sharding_util {
