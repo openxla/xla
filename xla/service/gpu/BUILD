@@ -575,6 +575,7 @@ xla_test(
         ":ir_emission_utils",
         ":ir_emitter_triton",
         ":matmul_utils",
+        ":triton_fusion_analysis",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
         "//xla:status_macros",
