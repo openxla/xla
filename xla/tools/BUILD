@@ -497,6 +497,20 @@ xla_py_proto_library(
 )
 
 cc_library(
+    name = "hlo_decomposer_lib",
+    srcs = ["hlo_decomposer.cc"],
+    hdrs = ["hlo_decomposer.h"],
+    deps = [
+        "//xla:status",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:call_graph",
+        "//xla/service:compilation_environments",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "run_hlo_module_lib",
     srcs = ["run_hlo_module.cc"],
     hdrs = ["run_hlo_module.h"],
@@ -705,5 +719,20 @@ xla_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
+    ],
+)
+
+xla_test(
+    name = "hlo_decomposer_test",
+    srcs = ["hlo_decomposer_test.cc"],
+    deps = [
+        ":hlo_decomposer_lib",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:filecheck",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
     ],
 )
