@@ -47,10 +47,6 @@ inline BufferAssigner::Colorer CollectiveColorer() {
         HloOpcode::kCollectivePermuteStart,
         HloOpcode::kCollectivePermuteDone,
         HloOpcode::kAllToAll,
-        HloOpcode::kSend,
-        HloOpcode::kSendDone,
-        HloOpcode::kRecv,
-        HloOpcode::kRecvDone,
     };
     for (HloValue* value : alias_analysis->dataflow_analysis().values()) {
       auto& buffer = alias_analysis->GetBufferContainingValue(*value);

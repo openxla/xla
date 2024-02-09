@@ -94,7 +94,7 @@ absl::Status NcclSendThunk::RunNcclCollective(const ExecuteParams& params,
   VLOG(3) << "Performing collective permute from device ordinal: "
           << device_ordinal << "current_id " << current_id;
   TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(nccl_api, device_ordinal, {buffer}, comm));
+      MaybeRegisterBuffers(nccl_api(), device_ordinal, {buffer}, comm));
 
   const std::optional<int64_t> target_id = source_target.target;
   se::DeviceMemoryBase src_addr = buffer.source_buffer;

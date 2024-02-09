@@ -94,7 +94,7 @@ absl::Status NcclRecvThunk::RunNcclCollective(const ExecuteParams& params,
   VLOG(3) << "Performing Recv from device ordinal: " << device_ordinal
           << "current_id " << current_id;
   TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(nccl_api, device_ordinal, {buffer}, comm));
+      MaybeRegisterBuffers(nccl_api(), device_ordinal, {buffer}, comm));
 
   const std::optional<int64_t> source_id = source_target.source;
   se::DeviceMemoryBase dest_addr = buffer.destination_buffer;

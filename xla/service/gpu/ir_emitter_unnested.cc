@@ -2206,8 +2206,8 @@ Status IrEmitterUnnested::EmitCollectivePermute(
         /*element_count=*/ShapeUtil::ElementsIn(shape),
         /*source_buffer=*/source_slice,
         /*destination_buffer=*/result_slice,
-        /*source_memory_space=*/memory_space,
-        /*destination_memory_space=*/memory_space};
+        /*source_memory_space=*/src_memory_space,
+        /*destination_memory_space=*/dst_memory_space};
     auto thunk = std::make_unique<NcclCollectivePermuteStartThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), NcclApi::Default(),
         instr, replica_count, partition_count, buffer);
