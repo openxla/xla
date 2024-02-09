@@ -1113,7 +1113,6 @@ cc_library(
         ":stablehlo_legalize_to_hlo",
         ":transforms_passes",
         ":transforms_passes_inc_gen",
-        ":userange_analysis",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
@@ -1126,7 +1125,6 @@ cc_library(
 cc_library(
     name = "transforms_passes",
     srcs = [
-        "analysis/test_userange_analysis.cc",
         "mhlo/analysis/test_shape_component_analysis.cc",
         "transforms/alloc_to_arg_pass.cc",
         "transforms/bufferize.cc",
@@ -1157,7 +1155,6 @@ cc_library(
         ":shape_component_analysis",
         ":transforms_passes_inc_gen",
         ":type_conversion",
-        ":userange_analysis",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:AffineToStandard",
@@ -1309,20 +1306,6 @@ gentbl_cc_library(
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/gpu_passes.td",
     deps = ["@llvm-project//mlir:PassBaseTdFiles"],
-)
-
-cc_library(
-    name = "userange_analysis",
-    srcs = ["analysis/userange_analysis.cc"],
-    hdrs = ["analysis/userange_analysis.h"],
-    strip_include_prefix = ".",
-    deps = [
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:Analysis",
-        "@llvm-project//mlir:BufferizationTransforms",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:LoopLikeInterface",
-    ],
 )
 
 cc_library(
