@@ -86,8 +86,9 @@ void SkipUnaryOpsTopDownRecursive(HloInstruction* instr,
 // Holds auxiliary information about individual layer norm patterns rewritten
 // into a cuDNN Custom Call.
 struct NormMetadata {
-  // Transposes applied to the input and output of the forward layer norm as
-  // required by cuDNN. Nullptr if no transposes were inserted.
+  // Transposes applied to the input and output of the forward layer norm to
+  // order the normalization and non-normalization dimensions as required by
+  // cuDNN. Nullptr if no transposes were inserted.
   HloInstruction *x_transpose, *y_transpose;
   // The reduction and non-reduction dimensions of the input into the forward
   // layer norm before the potential application of transposes.
@@ -249,12 +250,16 @@ bool FindTargetRecursive(
   return false;
 }
 
-bool FindTargetRecursive(const HloInstruction* custom_call,
-                         const HloInstruction* instr,
-                         const HloInstruction* target) {
+bool FindTarget(const HloInstruction* custom_call, const HloInstruction* instr,
+                const HloInstruction* target,
+                const NormMetadataMap& norm_metadata) {
   absl::flat_hash_set<const HloInstruction*> visited_instrs;
+  auto custom_call_metadata = norm_metadata.find(custom_call);
+  if (custom_call_metadata == norm_metadata.end()) {
+    return false;
+  }
   return FindTargetRecursive(instr, target, visited_instrs,
-                             custom_call->operand(0)->operand(0));
+                             custom_call_metadata->second.x_transpose);
 }
 
 // Maps the dimension numbers in dimensions from shape original_shape to shape
@@ -271,14 +276,12 @@ std::vector<int64_t> MapDimensions(const Shape& original_shape,
 
   auto dimension_product =
       [](const Shape& shape,
-         absl::Span<const int64_t> prod_dimensions) -> int64_t {
-    if (prod_dimensions.empty()) {
-      return 0;
+         absl::Span<const int64_t> product_dimensions) -> int64_t {
+    int64_t product = 1;
+    for (int64_t product_dimension : product_dimensions) {
+      product *= shape.dimensions(product_dimension);
     }
-    return std::accumulate(
-        shape.dimensions().begin() + prod_dimensions.front(),
-        shape.dimensions().begin() + prod_dimensions.back() + 1, 1,
-        std::multiplies<int64_t>());
+    return product;
   };
   // Construct the dimension mapping.
   absl::flat_hash_map<int64_t, std::vector<int64_t>> dimensions_map;
@@ -299,6 +302,18 @@ std::vector<int64_t> MapDimensions(const Shape& original_shape,
 
     if (dimension_product(original_shape, original_dimensions) ==
         dimension_product(reshaped_shape, reshaped_dimensions)) {
+      std::vector<int64_t> original_dimensions_in_dimensions;
+      std::set_intersection(
+          original_dimensions.begin(), original_dimensions.end(),
+          dimensions.begin(), dimensions.end(),
+          std::back_inserter(original_dimensions_in_dimensions));
+      // The unique mapping of dimensions requires either all or none of the
+      // entries of original_dimensions to be an element of dimensions.
+      if (original_dimensions_in_dimensions.size() != 0 &&
+          original_dimensions_in_dimensions.size() !=
+              original_dimensions.size()) {
+        return {};
+      }
       for (int64_t dimension : original_dimensions) {
         dimensions_map.insert({dimension, reshaped_dimensions});
       }
@@ -330,7 +345,7 @@ std::vector<int64_t> MapDimensions(const Shape& original_shape,
 // starting from instr, and returns the first addition-reduction identified.
 // Returns nullptr if no addition-reduction is found.
 HloInstruction* FindAddReduceRecursive(
-    HloInstruction* instr, const Shape& instr_shape,
+    HloInstruction* instr, const Shape& orig_instr_shape,
     const absl::Span<const int64_t> reduce_dims,
     absl::flat_hash_set<HloInstruction*>& visited_instrs) {
   visited_instrs.emplace(instr);
@@ -340,7 +355,7 @@ HloInstruction* FindAddReduceRecursive(
   for (HloInstruction* user : instr->users()) {
     if (user->opcode() == HloOpcode::kReduce) {
       std::vector<int64_t> mapped_reduce_dims =
-          MapDimensions(instr_shape, instr->shape(), reduce_dims);
+          MapDimensions(orig_instr_shape, instr->shape(), reduce_dims);
       if (!mapped_reduce_dims.empty() &&
           AppliesAddReduce(user, mapped_reduce_dims)) {
         return user;
@@ -348,21 +363,21 @@ HloInstruction* FindAddReduceRecursive(
     }
     if (supported_ops.contains(user->opcode()) &&
         !visited_instrs.contains(user)) {
-      return FindAddReduceRecursive(user, instr_shape, reduce_dims,
+      return FindAddReduceRecursive(user, orig_instr_shape, reduce_dims,
                                     visited_instrs);
     }
   }
   // Ascend the graph if the addition-reduction is not found and instr is a
-  // conversion, bitcast or reshape.
+  // convert, bitcast or reshape.
   if (supported_ops.contains(instr->opcode())) {
-    return FindAddReduceRecursive(instr->mutable_operand(0), instr_shape,
+    return FindAddReduceRecursive(instr->mutable_operand(0), orig_instr_shape,
                                   reduce_dims, visited_instrs);
   }
   return nullptr;
 }
 
-HloInstruction* FindAddReduceRecursive(
-    HloInstruction* instr, const absl::Span<const int64_t> reduce_dims) {
+HloInstruction* FindAddReduce(HloInstruction* instr,
+                              const absl::Span<const int64_t> reduce_dims) {
   absl::flat_hash_set<HloInstruction*> visited_instrs;
   return FindAddReduceRecursive(instr, instr->shape(), reduce_dims,
                                 visited_instrs);
@@ -684,12 +699,13 @@ auto DNormFactor(UniqueHloInstruction* custom_call) {
 //  Zero-centered input of the layer norm, X - expectation(X). Verifies that
 //  custom_call is a forward layer norm fusing X. Forwards custom_call to
 //  FusedExpectation for verification.
-auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* custom_call) {
+auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* custom_call,
+             const NormMetadataMap& norm_metadata) {
   auto capture_or_verify_x =
-      [x, custom_call](const HloInstruction* instr) -> bool {
+      [x, custom_call, &norm_metadata](const HloInstruction* instr) -> bool {
     return x->CaptureOrVerify(
-        FindTargetRecursive(custom_call->Instr(), instr->operand(0),
-                            custom_call->Instr()->operand(0))
+        FindTarget(custom_call->Instr(), instr->operand(0),
+                   custom_call->Instr()->operand(0), norm_metadata)
             ? custom_call->Instr()->mutable_operand(0)
             : nullptr);
   };
@@ -702,12 +718,13 @@ auto XCenter(UniqueHloInstruction* x, UniqueHloInstruction* custom_call) {
 // FusedExpectation for comparison.
 auto XCenter(UniqueHloInstruction* x_center, UniqueHloInstruction* x,
              UniqueHloInstruction* fused_expectation,
-             UniqueHloInstruction* custom_call) {
-  auto capture_or_verify_x =
-      [x, x_center, custom_call](const HloInstruction* instr) -> bool {
+             UniqueHloInstruction* custom_call,
+             const NormMetadataMap& norm_metadata) {
+  auto capture_or_verify_x = [x, x_center, custom_call, &norm_metadata](
+                                 const HloInstruction* instr) -> bool {
     return x->CaptureOrVerify(
-        FindTargetRecursive(custom_call->Instr(), instr->operand(0),
-                            custom_call->Instr()->operand(0))
+        FindTarget(custom_call->Instr(), instr->operand(0),
+                   custom_call->Instr()->operand(0), norm_metadata)
             ? custom_call->Instr()->mutable_operand(0)
             : nullptr);
   };
@@ -722,18 +739,18 @@ auto XCenter(UniqueHloInstruction* x_center, UniqueHloInstruction* x,
 // layer norm fusing the scale. Forwards custom_call to XCenter for comparison.
 auto F0(UniqueHloInstruction* custom_call, UniqueHloInstruction* scale,
         UniqueHloInstruction* dy, UniqueHloInstruction* x,
-        HloInstruction** reduce) {
-  auto capture_or_verify_scale =
-      [scale, custom_call](const HloInstruction* instr) -> bool {
-    return scale->CaptureOrVerify(
-        FindTargetRecursive(custom_call->Instr(), instr,
-                            custom_call->Instr()->operand(1))
-            ? custom_call->Instr()->mutable_operand(1)
-            : nullptr);
+        HloInstruction** reduce, const NormMetadataMap& norm_metadata) {
+  auto capture_or_verify_scale = [scale, custom_call, &norm_metadata](
+                                     const HloInstruction* instr) -> bool {
+    return scale->CaptureOrVerify(FindTarget(custom_call->Instr(), instr,
+                                             custom_call->Instr()->operand(1),
+                                             norm_metadata)
+                                      ? custom_call->Instr()->mutable_operand(1)
+                                      : nullptr);
   };
   return AddReduce(
       reduce, MultiplyMultiplyAnyOrder(
-                  XCenter(x, custom_call),
+                  XCenter(x, custom_call, norm_metadata),
                   m::Broadcast(m::Op().WithPredicate(capture_or_verify_scale)),
                   m::Op().WithPredicate(dy->capture_or_verify)));
 }
@@ -745,7 +762,8 @@ auto F0(UniqueHloInstruction* custom_call, UniqueHloInstruction* scale,
 auto F1(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
         UniqueHloInstruction* fused_expectation,
         UniqueHloInstruction* custom_call, UniqueHloInstruction* scale,
-        UniqueHloInstruction* dy, HloInstruction** reduce) {
+        UniqueHloInstruction* dy, HloInstruction** reduce,
+        const NormMetadataMap& norm_metadata) {
   auto broadcasts_two_over_nelems = [](const HloInstruction* instr) -> bool {
     const HloInstruction* multiply = SkipUnaryOps(instr->operand(0));
     bool bcast_operand =
@@ -773,11 +791,12 @@ auto F1(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
   };
 
   return MultiplyAnyOrder(
-      XCenter(x_center, x, fused_expectation, custom_call),
-      m::Broadcast(MultiplyAnyOrder(
-                       m::Broadcast(m::ConstantScalar()),
-                       MultiplyAnyOrder(DNormFactor(custom_call),
-                                        F0(custom_call, scale, dy, x, reduce))))
+      XCenter(x_center, x, fused_expectation, custom_call, norm_metadata),
+      m::Broadcast(
+          MultiplyAnyOrder(m::Broadcast(m::ConstantScalar()),
+                           MultiplyAnyOrder(DNormFactor(custom_call),
+                                            F0(custom_call, scale, dy, x,
+                                               reduce, norm_metadata))))
           .WithPredicate(broadcasts_two_over_nelems));
 }
 
@@ -785,12 +804,13 @@ auto F1(UniqueHloInstruction* x, UniqueHloInstruction* x_center,
 // the scale in scale if custom_call is a forward layer norm fusing the scale.
 // Forwards custom_call to FusedNormFactor for comparison.
 auto F2(UniqueHloInstruction* fused_norm_factor, UniqueHloInstruction* scale,
-        UniqueHloInstruction* dy, UniqueHloInstruction* custom_call) {
-  auto capture_or_verify_scale =
-      [scale, custom_call](const HloInstruction* instr) -> bool {
+        UniqueHloInstruction* dy, UniqueHloInstruction* custom_call,
+        const NormMetadataMap& norm_metadata) {
+  auto capture_or_verify_scale = [scale, custom_call, &norm_metadata](
+                                     const HloInstruction* instr) -> bool {
     return scale->CaptureOrVerify(
-        FindTargetRecursive(custom_call->Instr(), instr->operand(0),
-                            custom_call->Instr()->operand(1))
+        FindTarget(custom_call->Instr(), instr->operand(0),
+                   custom_call->Instr()->operand(1), norm_metadata)
             ? custom_call->Instr()->mutable_operand(1)
             : nullptr);
   };
@@ -1188,22 +1208,23 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         fused_expectation, fused_norm_factor;
     HloInstruction *broadcast, *scalar, *dscale, *dbias, *reduce0, *reduce1,
         *reduce2, *reduce3;
-    if (Match(
-            instr,
-            AddAddAnyOrder(
-                m::Broadcast(
-                    &broadcast,
-                    MultiplyAddAnyOrder(
-                        m::Broadcast(m::ConstantScalar(&scalar)),
-                        NegateAddReduce(
-                            &reduce0,
-                            F1(&x, &x_center, &fused_expectation,
-                               &fwd_custom_call, &scale, &dy, &reduce2)),
-                        NegateAddReduce(&reduce1, F2(&fused_norm_factor, &scale,
-                                                     &dy, &fwd_custom_call)))),
-                F2(&fused_norm_factor, &scale, &dy, &fwd_custom_call),
-                F1(&x, &x_center, &fused_expectation, &fwd_custom_call, &scale,
-                   &dy, &reduce3)))) {
+    if (Match(instr,
+              AddAddAnyOrder(
+                  m::Broadcast(
+                      &broadcast,
+                      MultiplyAddAnyOrder(
+                          m::Broadcast(m::ConstantScalar(&scalar)),
+                          NegateAddReduce(&reduce0,
+                                          F1(&x, &x_center, &fused_expectation,
+                                             &fwd_custom_call, &scale, &dy,
+                                             &reduce2, norm_metadata_)),
+                          NegateAddReduce(
+                              &reduce1, F2(&fused_norm_factor, &scale, &dy,
+                                           &fwd_custom_call, norm_metadata_)))),
+                  F2(&fused_norm_factor, &scale, &dy, &fwd_custom_call,
+                     norm_metadata_),
+                  F1(&x, &x_center, &fused_expectation, &fwd_custom_call,
+                     &scale, &dy, &reduce3, norm_metadata_)))) {
       // Skip initial convert, if present.
       if (instr->user_count() == 1 &&
           instr->users()[0]->opcode() == HloOpcode::kConvert &&
@@ -1293,8 +1314,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
       // Find Dbias, i.e. an addition-reduction of DY, starting from DY.
       // Rewriting proceeds without fusing Dbias if unsuccessful.
-      dbias = FindAddReduceRecursive(dy.Instr(),
-                                     norm_metadata->second.non_norm_dims);
+      dbias = FindAddReduce(dy.Instr(), norm_metadata->second.non_norm_dims);
 
       // Verify the input and output layouts.
       // TODO(philipphack): Consider supporting more general cases.
