@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <string>
 
-#include "grpcpp/grpcpp.h"
+#include "grpcpp/grpcpp.h"  // from @com_github_grpc_grpc
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/service.h"
 

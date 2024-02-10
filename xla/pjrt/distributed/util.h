@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_DISTRIBUTED_UTIL_H_
 #define XLA_PJRT_DISTRIBUTED_UTIL_H_
 
-#include "grpcpp/support/status.h"
+#include "grpcpp/support/status.h"  // from @com_github_grpc_grpc
 #include "xla/status.h"
 
 namespace xla {

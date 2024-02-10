@@ -31,7 +31,7 @@
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "grpcpp/grpcpp.h"
+#include "grpcpp/grpcpp.h"  // from @com_github_grpc_grpc
 #include "xla/python/tpu_driver/event_id.h"
 #include "xla/python/tpu_driver/platform/external/compat.h"
 #include "xla/python/tpu_driver/tpu_driver.h"

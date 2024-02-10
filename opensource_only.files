@@ -1,4 +1,5 @@
 compiler/xla/mlir_hlo/WORKSPACE:
+compiler/xla/python/ifrt_proxy/common/grpc_credentials.cc:
 compiler/xla/stream_executor/build_defs.bzl:
 third_party/BUILD:
 third_party/__init__:.py
