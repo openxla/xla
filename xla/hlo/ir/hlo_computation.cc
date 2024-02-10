@@ -1068,7 +1068,7 @@ StatusOr<HloInstruction*> HloComputation::CreateAsyncInstructions(
   async_start->CopyBackendConfigFrom(instruction);
   async_done->set_metadata(instruction->metadata());
   async_done->CopyBackendConfigFrom(instruction);
-  TF_RETURN_IF_ERROR(async_done->CopyAllControlDepsFrom(instruction));
+  TF_RETURN_IF_ERROR(async_start->CopyAllControlDepsFrom(instruction));
   if (replace) {
     TF_RETURN_IF_ERROR(instruction->DropAllControlDeps());
     TF_RETURN_IF_ERROR(ReplaceInstruction(instruction, async_done));
