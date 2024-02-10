@@ -257,6 +257,7 @@ xla_cc_test(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:multi_platform_manager",
         "@com_google_absl//absl/memory",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],

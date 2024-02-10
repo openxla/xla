@@ -284,6 +284,7 @@ cc_library(
         "//xla/service/gpu:thunk",
         "//xla/service/gpu:variant_visitor",
         "//xla/stream_executor",
+        "//xla/stream_executor:memory_allocation",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
@@ -291,6 +292,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -708,6 +710,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
