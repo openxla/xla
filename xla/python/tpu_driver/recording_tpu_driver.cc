@@ -98,7 +98,6 @@ class RecordingCompiledProgramHandle : public CompiledProgramHandle {
         id_(id_counter++),
         event_(std::make_shared<RecordingEvent>(handle_->OnReady(), id_)) {}
   std::shared_ptr<Event> OnReady() override { return event_; }
-  int64_t size_in_bytes() override { return handle_->size_in_bytes(); }
   xla::Status program_shape(xla::ProgramShapeProto* program_shape) override {
     return handle_->program_shape(program_shape);
   }
@@ -118,7 +117,6 @@ class RecordingLoadedProgramHandle : public LoadedProgramHandle {
         id_(id_counter++),
         event_(std::make_shared<RecordingEvent>(handle_->OnReady(), id_)) {}
   std::shared_ptr<Event> OnReady() override { return event_; }
-  int64_t size_in_bytes() override { return handle_->size_in_bytes(); }
 
  private:
   std::unique_ptr<LoadedProgramHandle> handle_;
