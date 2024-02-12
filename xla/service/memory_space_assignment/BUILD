@@ -36,6 +36,7 @@ cc_library(
     srcs = ["memory_space_assignment.cc"],
     hdrs = ["memory_space_assignment.h"],
     deps = [
+        ":cost_analysis",
         ":memory_space_assignment_proto_cc",
         ":repacking",
         ":tuning_utils",
@@ -84,6 +85,7 @@ xla_cc_test(
     name = "memory_space_assignment_test",
     srcs = ["memory_space_assignment_test.cc"],
     deps = [
+        ":cost_analysis",
         ":memory_space_assignment",
         ":memory_space_assignment_proto_cc",
         ":repacking",
@@ -172,6 +174,50 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service/heap_simulator",
+    ],
+)
+
+cc_library(
+    name = "cost_analysis",
+    srcs = ["cost_analysis.cc"],
+    hdrs = ["cost_analysis.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_live_range",
+        "//xla/service:call_graph",
+        "//xla/service:hlo_alias_analysis",
+        "//xla/service:hlo_buffer",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service:hlo_value",
+        "//xla/service/heap_simulator",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_test(
+    name = "cost_analysis_test",
+    srcs = ["cost_analysis_test.cc"],
+    deps = [
+        ":cost_analysis",
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
