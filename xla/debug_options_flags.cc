@@ -37,6 +37,10 @@ limitations under the License.
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "tsl/util/command_line_flags.h"
 
+#if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
+#endif
+
 namespace xla {
 
 DebugOptions DefaultDebugOptionsIgnoringFlags() {
@@ -135,7 +139,13 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_detailed_logging(true);
   opts.set_xla_enable_dumping(true);
 
+#if (!GOOGLE_CUDA) || CUDA_VERSION >= 12000
   opts.set_xla_gpu_enable_xla_runtime_executable(false);
+#else
+  // The new GPU runtime causes occasional hangs on cuda 11, possibly due to the
+  // use of cuda graphs. Keep using the old runtime for now.
+  opts.set_xla_gpu_enable_xla_runtime_executable(true);
+#endif
   opts.set_xla_gpu_enable_custom_fusions(false);
   opts.set_xla_gpu_enable_address_computation_fusion(true);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
