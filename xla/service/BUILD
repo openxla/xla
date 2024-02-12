@@ -2095,12 +2095,17 @@ cc_library(
     srcs = ["comparison_expander.cc"],
     hdrs = ["comparison_expander.h"],
     deps = [
-        ":hlo_creation_utils",
-        ":hlo_pass",
         ":op_expander_pass",
+        "//xla:comparison_util",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:statusor",
         "//xla:util",
-        "//xla/client/lib:comparators",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -6661,6 +6666,7 @@ cc_library(
         ":hlo_pass",
         ":pattern_matcher",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/client:xla_builder",
         "//xla/client/lib:comparators",
         "//xla/hlo/ir:hlo",
