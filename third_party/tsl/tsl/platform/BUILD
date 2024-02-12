@@ -190,14 +190,6 @@ cc_library(
 )
 
 cc_library(
-    name = "gif",
-    hdrs = ["gif.h"],
-    deps = [
-        "@gif",
-    ],
-)
-
-cc_library(
     name = "mutex",
     compatible_with = get_compatible_with_portable(),
     textual_hdrs = ["mutex.h"],
@@ -602,7 +594,6 @@ filegroup(
         "error_logging.h",
         "fingerprint.h",
         "notification.h",
-        "png.h",
         "random.cc",
         "random.h",
         "test_benchmark.h",
@@ -624,18 +615,6 @@ filegroup(
 )
 
 filegroup(
-    name = "gif_hdrs",
-    srcs = [
-        "gif.h",
-    ],
-    compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
-        "//tensorflow/core/lib/gif:__pkg__",
-        "//tensorflow/core/platform:__pkg__",
-    ]),
-)
-
-filegroup(
     name = "legacy_lib_internal_headers",
     srcs = glob(
         [
@@ -643,9 +622,6 @@ filegroup(
         ],
         exclude = [
             "dynamic_annotations.h",
-            "gif.h",
-            "png.h",
-            "jpeg.h",
         ],
     ) + [
         "//tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
@@ -744,26 +720,6 @@ filegroup(
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/platform:__pkg__",
     ]),
-)
-
-filegroup(
-    name = "jpeg_hdrs",
-    srcs = [
-        "jpeg.h",
-    ],
-    compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/jpeg:__pkg__",
-    ]),
-)
-
-cc_library(
-    name = "jpeg",
-    hdrs = ["jpeg.h"],
-    deps = [
-        "@libjpeg_turbo//:jpeg",
-    ],
 )
 
 filegroup(
@@ -1040,8 +996,6 @@ cc_library(
     deps = [
         ":byte_order",
         ":fingerprint",
-        ":gif",
-        ":jpeg",
         ":macros",
         ":net",
         ":platform",
@@ -1411,16 +1365,6 @@ cc_library(
     deps = [
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-    ],
-)
-
-cc_library(
-    name = "png",
-    hdrs = ["png.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        ":platform",
-        "@png",
     ],
 )
 
