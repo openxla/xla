@@ -700,7 +700,9 @@ message DebugOptions {
 
   bool xla_gpu_enable_mlir_emitters = 275;
 
-  // Next id: 277
+  int64 xla_gpu_gemm_rewrite_size_threshold = 277;
+
+  // Next id: 278
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

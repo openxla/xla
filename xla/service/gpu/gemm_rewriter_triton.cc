@@ -674,8 +674,14 @@ class GemmRewriterTritonVisitor : public DfsHloRewriteVisitor {
   absl::Status HandleDot(HloInstruction* dot) override {
     CHECK_EQ(dot->opcode(), HloOpcode::kDot);
 
+    int64_t gemm_rewrite_size_threshold =
+        dot->GetModule()
+            ->config()
+            .debug_options()
+            .xla_gpu_gemm_rewrite_size_threshold();
     TF_ASSIGN_OR_RETURN(bool is_matmul_tiny,
-                        IsMatrixMultiplicationTooSmallForRewriting(*dot));
+                        IsMatrixMultiplicationTooSmallForRewriting(
+                            *dot, gemm_rewrite_size_threshold));
     if (is_matmul_tiny) {
       return absl::OkStatus();
     }

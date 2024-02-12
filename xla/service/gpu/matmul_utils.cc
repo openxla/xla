@@ -788,41 +788,39 @@ std::string TritonGemmConfig::ToString() const {
 }
 
 absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
-    const HloInstruction& dot) {
+    const HloInstruction& dot, int64_t threshold) {
   CHECK_EQ(dot.opcode(), HloOpcode::kDot);
 
   const Shape& lhs_shape = dot.operand(0)->shape();
   const Shape& rhs_shape = dot.operand(1)->shape();
   const DotDimensionNumbers& dot_dims = dot.dot_dimension_numbers();
 
-  absl::Span<const int64_t> lhs_contracting_dims =
-      dot_dims.lhs_contracting_dimensions();
-  const int64_t contracting_size = absl::c_accumulate(
-      lhs_contracting_dims, 1, [&](int64_t size, int64_t dim) {
-        return size * lhs_shape.dimensions(dim);
-      });
+  int64_t contracting_size = 1;
+  for (int64_t dim : dot_dims.lhs_contracting_dimensions()) {
+    contracting_size *= lhs_shape.dimensions(dim);
+  }
 
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> lhs_non_contracting_dims,
       GetNonContractingDims(lhs_shape, dot_dims.lhs_batch_dimensions(),
                             dot_dims.lhs_contracting_dimensions()));
-  const int64_t lhs_non_contracting_size = absl::c_accumulate(
-      lhs_non_contracting_dims, 1, [&](int64_t size, int64_t dim) {
-        return size * lhs_shape.dimensions(dim);
-      });
+  int64_t lhs_non_contracting_size = 1;
+  for (int64_t dim : lhs_non_contracting_dims) {
+    lhs_non_contracting_size *= lhs_shape.dimensions(dim);
+  }
 
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> rhs_non_contracting_dims,
       GetNonContractingDims(rhs_shape, dot_dims.rhs_batch_dimensions(),
-                            dot_dims.lhs_contracting_dimensions()));
-  const int64_t rhs_non_contracting_size = absl::c_accumulate(
-      rhs_non_contracting_dims, 1, [&](int64_t size, int64_t dim) {
-        return size * rhs_shape.dimensions(dim);
-      });
+                            dot_dims.rhs_contracting_dimensions()));
+  int64_t rhs_non_contracting_size = 1;
+  for (int64_t dim : rhs_non_contracting_dims) {
+    rhs_non_contracting_size *= rhs_shape.dimensions(dim);
+  }
 
   return (rhs_non_contracting_size + lhs_non_contracting_size) *
              contracting_size <
-         kMinMatrixSizeForGemmRewriting;
+         threshold;
 }
 
 }  // namespace gpu

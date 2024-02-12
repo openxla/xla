@@ -70,11 +70,9 @@ absl::StatusOr<Shape> GetBatchRowColumnShape(
 absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                                                     int64_t operand_idx);
 
-inline constexpr int64_t kMinMatrixSizeForGemmRewriting = 100;
-
 // Returns true if the matrices are too small to benefit from cublas/triton.
 absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
-    const HloInstruction& dot);
+    const HloInstruction& dot, int64_t threshold);
 
 // extending plain MatrixLayout struct with creator functions
 struct MatrixLayout : public se::gpu::MatrixLayout {

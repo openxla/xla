@@ -231,6 +231,12 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
 
   opts.set_xla_gpu_enable_mlir_emitters(false);
+
+  // Minimum combined size of matrices in matrix multiplication to
+  // be rewritten to cuBLAS or Triton kernel call.
+  const int64_t kDefaultMinGemmRewriteSize = 100;
+  opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
+
   return opts;
 }
 
@@ -1568,6 +1574,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_mlir_emitters),
       debug_options->xla_gpu_enable_mlir_emitters(),
       "Enable new MLIR-based emitters."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_gemm_rewrite_size_threshold",
+      int64_setter_for(&DebugOptions::set_xla_gpu_gemm_rewrite_size_threshold),
+      debug_options->xla_gpu_gemm_rewrite_size_threshold(),
+      "Threshold to rewrite matmul to cuBLAS or Triton "
+      "(total number of elements)."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
