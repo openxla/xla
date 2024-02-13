@@ -875,7 +875,13 @@ TEST_F(HloInstructionTest, AsyncOpWithDeps) {
   auto add = builder.AddInstruction(HloInstruction::CreateBinary(
       r0f32_, HloOpcode::kAdd, constant1, constant2));
 
+  auto add2 = builder.AddInstruction(HloInstruction::CreateBinary(
+      r0f32_, HloOpcode::kAdd, constant1, constant2));
+
+  // control chain is add1 <- add <- add2
   TF_ASSERT_OK(add1->AddControlDependencyTo(add));
+
+  TF_ASSERT_OK(add->AddControlDependencyTo(add2));
 
   auto module = CreateNewVerifiedModule();
   auto* computation = module->AddEntryComputation(builder.Build());
@@ -884,9 +890,13 @@ TEST_F(HloInstructionTest, AsyncOpWithDeps) {
       computation->CreateAsyncInstructions(
           add, {ShapeUtil::MakeScalarShape(U32)}, "parallel_thread"));
   auto* async_start = async_done->operand(0);
-
+  // Verify that control chain is not broken.
+  // New chain should be add1 <- asyncStart <- asyncDone <- add2
   EXPECT_EQ(async_start->control_predecessors().size(), 1);
   EXPECT_EQ(async_start->control_predecessors()[0], add1);
+
+  EXPECT_EQ(async_done->control_successors().size(), 1);
+  EXPECT_EQ(async_done->control_successors()[0], add2);
 
   EXPECT_EQ(async_start->shape().tuple_shapes_size(), 3);
   EXPECT_EQ(async_start->async_execution_thread(), "parallel_thread");
@@ -898,9 +908,6 @@ TEST_F(HloInstructionTest, AsyncOpWithDeps) {
   EXPECT_EQ(async_done->async_wrapped_computation()->execution_thread(),
             "parallel_thread");
   EXPECT_THAT(async_start->operands(), ElementsAre(constant1, constant2));
-  EXPECT_THAT(constant1->users(), ElementsAre(async_start));
-  EXPECT_THAT(constant2->users(), ElementsAre(async_start));
-  EXPECT_EQ(computation->root_instruction(), async_done);
 }
 
 TEST_F(HloInstructionTest, PreserveOutfeedShapeThroughClone) {
