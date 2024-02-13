@@ -25,27 +25,23 @@ namespace cpu {
 
 inline bool IsSupportedType(xla::PrimitiveType dtype) {
   using tsl::port::CPUFeature;
-  bool is_supported = false;
   // TODO(intel-tf): Enable more types.
   switch (dtype) {
     case F32:
-      is_supported = true;
-      break;
+      return true;
     case BF16:
-      is_supported = TestCPUFeature(CPUFeature::AVX512F) ||
-                     TestCPUFeature(CPUFeature::AVX_NE_CONVERT) ||
-                     TestCPUFeature(CPUFeature::AMX_BF16);
-      break;
+      return TestCPUFeature(CPUFeature::AVX512F) ||
+             TestCPUFeature(CPUFeature::AVX_NE_CONVERT) ||
+             TestCPUFeature(CPUFeature::AMX_BF16);
     case F16:
-      is_supported = (TestCPUFeature(CPUFeature::AVX512BW) &&
-                      (TestCPUFeature(CPUFeature::AVX512_FP16) ||
-                       TestCPUFeature(CPUFeature::AMX_FP16) ||
-                       TestCPUFeature(CPUFeature::AVX_NE_CONVERT)));
-      break;
+      return TestCPUFeature(CPUFeature::AVX512BW) &&
+             (TestCPUFeature(CPUFeature::AVX512_FP16) ||
+              TestCPUFeature(CPUFeature::AMX_FP16) ||
+              TestCPUFeature(CPUFeature::AVX_NE_CONVERT));
     default:
-      break;
+      return false;
   }
-  return is_supported;
+  return false;
 }
 
 }  // namespace cpu
