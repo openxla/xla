@@ -299,7 +299,7 @@ class DefaultNcclApi final : public NcclApi {
 
   absl::StatusOr<std::vector<OwnedNcclComm>> CommSplit(
       absl::Span<const NcclCommHandle> comms, int32_t color,
-      absl::Span<const int32_t> keys) final;
+      absl::Span<const int32_t> keys, const Config& config) final;
 
   absl::Status CommAbort(NcclCommHandle comm) final;
   absl::Status CommFinalize(NcclCommHandle comm) final;
@@ -373,6 +373,12 @@ DefaultNcclApi::CommInitRanks(int32_t nranks, const NcclCliqueId& clique_id,
 
   ncclConfig_t comm_config = NCCL_CONFIG_INITIALIZER;
   comm_config.splitShare = config.split_share;
+  if (config.max_nchannels > 0) {
+    comm_config.maxCTAs = config.max_nchannels;
+    VLOG(1) << "Maximum number of channels for hash(id)="
+            << absl::HashOf(clique_id)
+            << " is set to: " << comm_config.maxCTAs;
+  }
 
   std::vector<OwnedNcclComm> comms;
   comms.reserve(ranks.size());
@@ -398,7 +404,7 @@ DefaultNcclApi::CommInitRanks(int32_t nranks, const NcclCliqueId& clique_id,
 
 absl::StatusOr<std::vector<NcclApi::OwnedNcclComm>> DefaultNcclApi::CommSplit(
     absl::Span<const NcclCommHandle> comms, int32_t color,
-    absl::Span<const int32_t> keys) {
+    absl::Span<const int32_t> keys, const Config& config) {
   VLOG(1) << absl::StreamFormat(
       "Split %d NCCL communicators using color %d and keys: [%s]", comms.size(),
       color, absl::StrJoin(keys, ","));
@@ -408,6 +414,16 @@ absl::StatusOr<std::vector<NcclApi::OwnedNcclComm>> DefaultNcclApi::CommSplit(
     return absl::InvalidArgumentError(
         absl::StrFormat("Comms and keys must have the same size, but %d != %d",
                         comms.size(), keys.size()));
+  }
+
+  ncclConfig_t comm_config = NCCL_CONFIG_INITIALIZER;
+  comm_config.splitShare = config.split_share;
+  // If max_nchannels is set, then we don't want to
+  // inherit from parent comm.
+  if (config.max_nchannels > 0) {
+    comm_config.maxCTAs = config.max_nchannels;
+    VLOG(1) << "CommSplit maximum number of channels "
+            << " is set to: " << comm_config.maxCTAs;
   }
 
   // In contrast to grouped initialization communicator splitting initializes
@@ -422,7 +438,7 @@ absl::StatusOr<std::vector<NcclApi::OwnedNcclComm>> DefaultNcclApi::CommSplit(
             << " and key " << keys[i];
     XLA_NCCL_RETURN_IF_ERROR(ncclCommSplit(Cast(comms[i]), color, keys[i],
                                            &split_comms_handles[i],
-                                           /*config=*/nullptr));
+                                           /*config=*/&comm_config));
   }
   TF_RETURN_IF_ERROR(GroupEnd());
 
@@ -607,5 +623,4 @@ DefaultNcclApi::DeregisterBuffer(NcclCommHandle comm,
       ncclCommDeregister(Cast(comm), reinterpret_cast<void*>(handle)));
 #endif  // NCCL_VERSION_CODE >= 21901
 }
-
 }  // namespace xla::gpu
