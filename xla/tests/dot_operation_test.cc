@@ -385,8 +385,6 @@ void ParametricDotTest::TestImpl() {
   auto prim_type = primitive_util::NativeToPrimitiveType<NativeT>();
     
   if(propagate_grad_xy_ != 0) {
-
-    VLOG(0) << "setting " << (propagate_grad_xy_ == 1 ? "grad_x" : "grad_y");
     FrontendAttributes attributes;
     if(propagate_grad_xy_ == 1)
       (*attributes.mutable_map())["grad_x"] = "true";
