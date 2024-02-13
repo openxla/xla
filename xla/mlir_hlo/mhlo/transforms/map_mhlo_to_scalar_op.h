@@ -474,10 +474,9 @@ inline Value mapMhloOpToStdScalarOp<mhlo::ReducePrecisionOp>(
   mlir::ImplicitLocOpBuilder b(loc, *builder);
 
   // Integer and float types for casting and constant generation.
-  auto floatType =
-      argTypes.front().cast<TensorType>().getElementType().cast<FloatType>();
+  auto floatType = getElementTypeOrSelf(argTypes.front()).cast<FloatType>();
   int64_t nbits = floatType.getWidth();
-  auto intType = mlir::IntegerType::get(loc.getContext(), floatType.getWidth());
+  auto intType = mlir::IntegerType::get(loc.getContext(), nbits);
 
   Value xAsInt = b.create<arith::BitcastOp>(intType, adaptor.getOperand());
 
@@ -1076,7 +1075,7 @@ template <>
 inline Value mapMhloOpToStdScalarOp<mhlo::LogisticOp>(
     Location loc, ArrayRef<Type> resultTypes, ArrayRef<Type> /*argTypes*/,
     mhlo::LogisticOp::Adaptor adaptor, OpBuilder* b) {
-  // 1.0 / (1.0 - exp(-x))
+  // 1.0 / (1.0 + exp(-x))
   Value negX = mapMhloOpToStdScalarOp<mhlo::NegOp>(
       loc, resultTypes, resultTypes, {adaptor.getOperand()}, b);
   Value expNegX = mapMhloOpToStdScalarOp<mhlo::ExpOp>(loc, resultTypes,

@@ -64,9 +64,11 @@ filegroup(
         "device_options.h",
         "event.h",
         "executor_cache.h",
+        "host_memory_allocation.h",
         "kernel.h",
         "kernel_spec.h",
         "launch_dim.h",
+        "memory_allocation.h",
         "module_spec.h",
         "multi_platform_manager.h",
         "numeric_options.h",
@@ -212,6 +214,16 @@ cc_library(
 )
 
 cc_library(
+    name = "host_memory_allocation",
+    srcs = ["host_memory_allocation.cc"],
+    hdrs = ["host_memory_allocation.h"],
+    deps = [
+        ":memory_allocation",
+        ":stream_executor_internal",  # TODO(b/323534971): Remove dependency on Interface.
+    ],
+)
+
+cc_library(
     name = "host_or_device_scalar",
     hdrs = ["host_or_device_scalar.h"],
     deps = [":device_memory"],
@@ -221,6 +233,11 @@ cc_library(
     name = "launch_dim",
     hdrs = ["launch_dim.h"],
     deps = ["@com_google_absl//absl/strings"],
+)
+
+cc_library(
+    name = "memory_allocation",
+    hdrs = ["memory_allocation.h"],
 )
 
 cc_library(
@@ -280,6 +297,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
@@ -552,6 +570,7 @@ cc_library(
         ":command_buffer",  # build_cleaner: keep
         ":dnn",  # build_cleaner: keep
         ":fft",
+        ":host_memory_allocation",
         ":kernel_spec",
         ":platform",
         ":stream_executor_headers",
@@ -615,6 +634,18 @@ xla_cc_test(
         "//xla/stream_executor/host:host_platform",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_cc_test(
+    name = "stream_executor_test",
+    srcs = ["stream_executor_test.cc"],
+    deps = [
+        ":stream_executor",
+        "//xla/stream_executor/host:host_platform",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )

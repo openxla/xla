@@ -88,6 +88,10 @@ class AffineExprSimplifier {
   // - Rewrites a / 100 to 0 when a is known to be less than 100.
   mlir::AffineExpr RewriteFloorDiv(mlir::AffineBinaryOpExpr div);
 
+  mlir::AffineExpr RewriteSum(
+      mlir::AffineExpr expr,
+      const std::function<mlir::AffineExpr(mlir::AffineExpr)>& map);
+
   mlir::AffineExpr RewriteSumIf(
       mlir::AffineExpr expr, const std::function<bool(mlir::AffineExpr)>& pred);
 
@@ -162,8 +166,23 @@ AffineExpr AffineExprSimplifier::RewriteFloorDiv(AffineBinaryOpExpr div) {
     return getAffineConstantExpr(a, mlir_context);
   }
 
+  // Rewrite `(a / b) / c` to `a / (b * c)` if `a >= 0` and `b` and `c` are
+  // constants.
+  if (lhs_simplified.getKind() == AffineExprKind::FloorDiv) {
+    auto lhs_div = mlir::cast<AffineBinaryOpExpr>(lhs_simplified);
+    auto lhs_lhs = range_evaluator_->ComputeExpressionRange(lhs_div.getLHS());
+    if (lhs_lhs.lower_bound >= 0) {
+      auto lhs_rhs = range_evaluator_->ComputeExpressionRange(lhs_div.getRHS());
+      if (lhs_rhs.IsPoint()) {
+        return lhs_div.getLHS().floorDiv(lhs_rhs.lower_bound * d);
+      }
+    }
+  }
+
   Range no_multiplier_range{0, 0};
   int64_t multiplier_gcd = -1;
+  // The maximum GCD of any remaining multiplier inside the div and the divisor.
+  int64_t max_remaining_multiplier_gcd = -1;
   AffineExpr extracted = getAffineConstantExpr(0, mlir_context);
   auto new_dividend = RewriteSumIf(lhs_simplified, [&](AffineExpr expr) {
     if (auto multiplier = GetConstantRhsMultiplier(expr)) {
@@ -175,6 +194,8 @@ AffineExpr AffineExprSimplifier::RewriteFloorDiv(AffineBinaryOpExpr div) {
         } else {
           multiplier_gcd = std::gcd(multiplier_gcd, *multiplier);
         }
+        max_remaining_multiplier_gcd =
+            std::max(max_remaining_multiplier_gcd, std::gcd(*multiplier, d));
         return true;
       }
       int64_t factor = *multiplier / d;
@@ -182,12 +203,10 @@ AffineExpr AffineExprSimplifier::RewriteFloorDiv(AffineBinaryOpExpr div) {
           extracted + mlir::cast<AffineBinaryOpExpr>(expr).getLHS() * factor;
       // Remove from dividend.
       return false;
-    } else {
-      auto range = range_evaluator_->ComputeExpressionRange(expr);
-      no_multiplier_range.lower_bound += range.lower_bound;
-      no_multiplier_range.upper_bound += range.upper_bound;
     }
-
+    auto range = range_evaluator_->ComputeExpressionRange(expr);
+    no_multiplier_range.lower_bound += range.lower_bound;
+    no_multiplier_range.upper_bound += range.upper_bound;
     // Not a constant multiplier, keep in dividend.
     return true;
   });
@@ -206,6 +225,39 @@ AffineExpr AffineExprSimplifier::RewriteFloorDiv(AffineBinaryOpExpr div) {
         return mult.has_value();
       });
     }
+  }
+
+  // If we have a gcd > 1, we can split the div into two:
+  // (x * 128 + y) // 192 -> (x * 2 + y // 64) // 3
+  // This rule primarily exists because MLIR's upstream simplifier tends to
+  // generate expressions like this from %:
+  //
+  // s0 * 512
+  // - ((s0 * 2 + s1 floordiv 64) floordiv 3) * 768
+  // + ((s0 * 128 + s1) floordiv 192) * 768
+  //
+  // This rule lets us eliminate the subtraction and the addition.
+  // TODO(pifon): Remove this once the remaining simplification is fixed.
+  if (max_remaining_multiplier_gcd > 1) {
+    AffineExpr partially_extracted = getAffineConstantExpr(0, mlir_context);
+    new_dividend = RewriteSumIf(new_dividend, [&](AffineExpr expr) {
+      if (auto multiplier = GetConstantRhsMultiplier(expr);
+          multiplier && ((*multiplier % max_remaining_multiplier_gcd) == 0)) {
+        auto expr_lhs = mlir::cast<AffineBinaryOpExpr>(expr).getLHS();
+        partially_extracted =
+            partially_extracted +
+            expr_lhs * (*multiplier / max_remaining_multiplier_gcd);
+        // Remove from dividend.
+        return false;
+      }
+      return true;
+    });
+    if (!new_dividend) {
+      new_dividend = getAffineConstantExpr(0, mlir_context);
+    }
+    return extracted + (partially_extracted +
+                        new_dividend.floorDiv(max_remaining_multiplier_gcd))
+                           .floorDiv(d / max_remaining_multiplier_gcd);
   }
 
   // If we removed nothing, return the original division.
@@ -228,6 +280,15 @@ std::optional<int64_t> AffineExprSimplifier::GetConstantRhsMultiplier(
     return std::nullopt;
   }
   return bound.lower_bound;
+}
+
+AffineExpr AffineExprSimplifier::RewriteSum(
+    AffineExpr expr, const std::function<AffineExpr(AffineExpr)>& map) {
+  if (expr.getKind() == AffineExprKind::Add) {
+    auto add = mlir::dyn_cast<AffineBinaryOpExpr>(expr);
+    return RewriteSum(add.getLHS(), map) + RewriteSum(add.getRHS(), map);
+  }
+  return map(expr);
 }
 
 AffineExpr AffineExprSimplifier::RewriteSumIf(

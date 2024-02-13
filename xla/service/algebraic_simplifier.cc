@@ -1122,6 +1122,15 @@ StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyTautologicalCompare(
   return false;
 }
 
+Status AlgebraicSimplifierVisitor::HandleAllToAll(HloInstruction* all_to_all) {
+  if (all_to_all->shape().IsArray() &&
+      Match(all_to_all->mutable_operand(0),
+            m::Broadcast(m::ConstantScalar()))) {
+    return ReplaceInstruction(all_to_all, all_to_all->mutable_operand(0));
+  }
+  return OkStatus();
+}
+
 Status AlgebraicSimplifierVisitor::HandleAnd(HloInstruction* logical_and) {
   HloInstruction *lhs, *rhs;
   CHECK(Match(logical_and, m::And(m::Op(&lhs), m::Op(&rhs))));
@@ -4631,32 +4640,6 @@ Status AlgebraicSimplifierVisitor::HandleCompare(HloInstruction* compare) {
   HloInstruction* rhs;
   CHECK(Match(compare, m::Compare(m::Op(&lhs), m::Op(&rhs))));
 
-  // Gt(Max(a,b), a) -> Gt(b,a)
-  // Gt(Max(a,b), b) -> Gt(a,b)
-  // Gt(a, Min(a,b)) -> Gt(a,b)
-  // Gt(b, Min(a,b)) -> Gt(b,a)
-  if (compare->comparison_direction() == ComparisonDirection::kGt) {
-    HloInstruction* a;
-    HloInstruction* b;
-    if (Match(lhs, m::Maximum(m::Op(&a), m::Op(&b)))) {
-      if (rhs == a) {  // Gt(Max(a,b), a) -> Gt(b,a)
-        TF_RETURN_IF_ERROR(compare->ReplaceOperandWith(0, b));
-        MarkAsChanged();
-      } else if (rhs == b) {  // Gt(Max(a,b), b) -> Gt(a,b)
-        TF_RETURN_IF_ERROR(compare->ReplaceOperandWith(0, a));
-        MarkAsChanged();
-      }
-    } else if (Match(rhs, m::Minimum(m::Op(&a), m::Op(&b)))) {
-      if (lhs == a) {  // Gt(a, Min(a,b)) -> Gt(a,b)
-        TF_RETURN_IF_ERROR(compare->ReplaceOperandWith(1, b));
-        MarkAsChanged();
-      } else if (lhs == b) {  // Gt(b, Min(a,b)) -> Gt(b,a)
-        TF_RETURN_IF_ERROR(compare->ReplaceOperandWith(1, a));
-        MarkAsChanged();
-      }
-    }
-  }
-
   if (Cast<HloCompareInstruction>(compare)->type() ==
       Comparison::Type::kUnsigned) {
     // X u<  0 -> false
@@ -4729,6 +4712,37 @@ Status AlgebraicSimplifierVisitor::HandleCompare(HloInstruction* compare) {
       }
     }
   }
+
+  // Gt(Max(a,b), a) -> Gt(b,a)
+  // Gt(Max(a,b), b) -> Gt(a,b)
+  // Gt(a, Min(a,b)) -> Gt(a,b)
+  // Gt(b, Min(a,b)) -> Gt(b,a)
+  if (compare->comparison_direction() == ComparisonDirection::kGt) {
+    HloInstruction* a;
+    HloInstruction* b;
+    if (Match(lhs, m::Maximum(m::Op(&a), m::Op(&b)))) {
+      if (rhs == a) {  // Gt(Max(a,b), a) -> Gt(b,a)
+        TF_RETURN_IF_ERROR(compare->ReplaceOperandWith(0, b));
+        MarkAsChanged();
+        return OkStatus();
+      } else if (rhs == b) {  // Gt(Max(a,b), b) -> Gt(a,b)
+        TF_RETURN_IF_ERROR(compare->ReplaceOperandWith(0, a));
+        MarkAsChanged();
+        return OkStatus();
+      }
+    } else if (Match(rhs, m::Minimum(m::Op(&a), m::Op(&b)))) {
+      if (lhs == a) {  // Gt(a, Min(a,b)) -> Gt(a,b)
+        TF_RETURN_IF_ERROR(compare->ReplaceOperandWith(1, b));
+        MarkAsChanged();
+        return OkStatus();
+      } else if (lhs == b) {  // Gt(b, Min(a,b)) -> Gt(b,a)
+        TF_RETURN_IF_ERROR(compare->ReplaceOperandWith(1, a));
+        MarkAsChanged();
+        return OkStatus();
+      }
+    }
+  }
+
   return OkStatus();
 }
 

@@ -23,10 +23,12 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/coalescing_analysis.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/gpu/model/indexing_analysis.h"
@@ -78,7 +80,7 @@ int64_t GetIterationSpaceSize(const IndexingMap& indexing_map,
 
 EstimateRunTimeData
 GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
-    const HloFusionAnalysis& fusion_analysis) {
+    const HloFusionAnalysis& fusion_analysis, bool is_coalesced) {
   auto& fusion_adaptor = fusion_analysis.fusion();
   auto roots = fusion_adaptor.GetRoots();
   CHECK_EQ(roots.size(), 1)
@@ -125,9 +127,9 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
       int64_t n_bytes_net = shape_size_(instr->shape());
       auto element_type = instr->shape().element_type();
 
-      read_time += ReadTimeWithDRAMHeuristic(*device_info_, num_blocks,
-                                             n_bytes_net, n_bytes_total,
-                                             element_type, /*coalesced=*/true);
+      read_time +=
+          ReadTimeWithDRAMHeuristic(*device_info_, num_blocks, n_bytes_net,
+                                    n_bytes_total, element_type, is_coalesced);
     }
   }
 
@@ -147,9 +149,15 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
 EstimateRunTimeData
 GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForInstruction(
     const HloInstruction* producer) {
+  // Stand-alone bitcast is always no-op during runtime.
+  if (producer->opcode() == HloOpcode::kBitcast) {
+    return {0, 0, 0, absl::ZeroDuration(), absl::ZeroDuration()};
+  }
+
   auto fusion_analysis = AnalyzeFusion(*producer, *device_info_);
 
-  return EstimateRunTimeForFusion(fusion_analysis);
+  bool is_coalesced = IsReadCoalescedHeuristic(fusion_analysis, producer);
+  return EstimateRunTimeForFusion(fusion_analysis, is_coalesced);
 }
 
 EstimateRunTimeData
@@ -158,7 +166,9 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForProducerConsumer(
   auto fusion_analysis =
       AnalyzeProducerConsumerFusion(*producer, *consumer, *device_info_);
 
-  return EstimateRunTimeForFusion(fusion_analysis);
+  bool is_coalesced =
+      IsReadCoalescedHeuristic(fusion_analysis, producer, consumer);
+  return EstimateRunTimeForFusion(fusion_analysis, is_coalesced);
 }
 
 /*static*/

@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/autotuning.pb.h"
@@ -558,21 +559,25 @@ absl::Status DoGemmWithAlgorithm(const se::gpu::MatrixDescriptor& lhs,
   se::DeviceMemory<Output> output_data(output.data);
 
   // Set a workspace for all Blas operations launched below.
-  se::blas::BlasSupport::ScopedWorkspace scoped_workspace(
-      stream->parent()->AsBlas(), &workspace);
+  auto* blas = stream->parent()->AsBlas();
+  if (blas == nullptr) {
+    return absl::InternalError("No Blas support for stream");
+  }
+
+  se::blas::BlasSupport::ScopedWorkspace scoped_workspace(blas, &workspace);
 
   if (output.batch_size != 1) {
-    return stream->ThenBlasGemmStridedBatchedWithAlgorithm(
-        lhs.transpose, rhs.transpose, output.m, output.n, output.k, alpha,
-        lhs.cast<Input>(), lhs.leading_dim_stride, lhs.batch_stride,
+    return blas->BlasGemmStridedBatchedWithAlgorithm(
+        stream, lhs.transpose, rhs.transpose, output.m, output.n, output.k,
+        alpha, lhs.cast<Input>(), lhs.leading_dim_stride, lhs.batch_stride,
         rhs.cast<Input>(), rhs.leading_dim_stride, rhs.batch_stride, beta,
         &output_data, output.leading_dim_stride, output.batch_stride,
         output.batch_size, computation_type, algorithm, numeric_options,
         profile_result, context);
   } else {
-    return stream->ThenBlasGemmWithAlgorithm(
-        lhs.transpose, rhs.transpose, output.m, output.n, output.k, alpha,
-        lhs.cast<Input>(), lhs.leading_dim_stride, rhs.cast<Input>(),
+    return blas->BlasGemmWithAlgorithm(
+        stream, lhs.transpose, rhs.transpose, output.m, output.n, output.k,
+        alpha, lhs.cast<Input>(), lhs.leading_dim_stride, rhs.cast<Input>(),
         rhs.leading_dim_stride, beta, &output_data, output.leading_dim_stride,
         computation_type, algorithm, numeric_options, profile_result, context);
   }
@@ -591,10 +596,13 @@ absl::Status DoGemm(const se::gpu::MatrixDescriptor& lhs,
                     se::blas::CallContext context) {
   CHECK(output.transpose == se::blas::Transpose::kNoTranspose);
   se::DeviceMemory<Output> output_data(output.data);
+  auto* blas = stream->parent()->AsBlas();
+  if (blas == nullptr) {
+    return absl::InternalError("No Blas support for stream");
+  }
 
   // Set a workspace for all Blas operations launched below.
-  se::blas::BlasSupport::ScopedWorkspace scoped_workspace(
-      stream->parent()->AsBlas(), &workspace);
+  se::blas::BlasSupport::ScopedWorkspace scoped_workspace(blas, &workspace);
 
   if (algorithm) {
     return DoGemmWithAlgorithm<Scale, Input, Output>(
@@ -603,19 +611,19 @@ absl::Status DoGemm(const se::gpu::MatrixDescriptor& lhs,
   }
 
   if (output.batch_size != 1) {
-    return stream->ThenBlasGemmStridedBatched(
-        lhs.transpose, rhs.transpose, output.m, output.n, output.k, alpha,
-        lhs.cast<Input>(), lhs.leading_dim_stride, lhs.batch_stride,
+    return blas->BlasGemmStridedBatched(
+        stream, lhs.transpose, rhs.transpose, output.m, output.n, output.k,
+        alpha, lhs.cast<Input>(), lhs.leading_dim_stride, lhs.batch_stride,
         rhs.cast<Input>(), rhs.leading_dim_stride, rhs.batch_stride, beta,
         &output_data, output.leading_dim_stride, output.batch_stride,
         output.batch_size, numeric_options, context);
   }
 
-  return stream->ThenBlasGemm(
-      lhs.transpose, rhs.transpose, output.m, output.n, output.k, alpha,
-      lhs.cast<Input>(), lhs.leading_dim_stride, rhs.cast<Input>(),
-      rhs.leading_dim_stride, beta, &output_data, output.leading_dim_stride,
-      numeric_options, context);
+  return blas->BlasGemm(stream, lhs.transpose, rhs.transpose, output.m,
+                        output.n, output.k, alpha, lhs.cast<Input>(),
+                        lhs.leading_dim_stride, rhs.cast<Input>(),
+                        rhs.leading_dim_stride, beta, &output_data,
+                        output.leading_dim_stride, numeric_options, context);
 }
 
 }  // namespace

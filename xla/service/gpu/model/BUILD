@@ -317,6 +317,7 @@ cc_library(
     srcs = ["gpu_indexing_performance_model.cc"],
     hdrs = ["gpu_indexing_performance_model.h"],
     deps = [
+        ":coalescing_analysis",
         ":gpu_hlo_cost_analysis",
         ":gpu_performance_model_base",
         ":hlo_op_profiles",
