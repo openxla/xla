@@ -143,27 +143,6 @@ cuda_library(
     ],
 )
 
-# A flag to link a CUPTI stub instead of a real wrapper to disable all
-# potential calls to CUPTI APIs that lead to crashes (b/320591084).
-bool_flag(
-    name = "use_cupti_stub_flag",
-    build_setting_default = False,
-)
-
-config_setting(
-    name = "use_cupti_stub",
-    flag_values = {":use_cupti_stub_flag": "True"},
-)
-
-# We need an indirection because we can't compose multiple selects.
-alias(
-    name = "cupti_wrapper",
-    actual = select({
-        ":use_cupti_stub": ":_cupti_wrapper_stub",
-        "//conditions:default": ":_cupti_wrapper_impl",
-    }),
-)
-
 # Rationale for linkstatic: The symbols in libcupti_static.a have hidden
 # visibility. The wrapper will fail to find them if it's ever built as a
 # shared library. This is the same issue as b/11094727. Always linking
@@ -171,8 +150,11 @@ alias(
 # to patch libcupti_static, but it's not worth the trouble considering
 # that the wrapper is about the only direct user.
 tsl_gpu_library(
-    name = "_cupti_wrapper_impl",
-    srcs = if_cuda(["cupti_wrapper.cc"]),
+    name = "cupti_wrapper",
+    srcs = if_cuda([
+        "cupti_wrapper.cc",
+        "cupti_wrapper_stub.cc",
+    ]),
     hdrs = if_cuda(["cupti_wrapper.h"]),
     copts = tf_profiler_copts() + tsl_copts(),
     linkstatic = 1,
@@ -180,17 +162,6 @@ tsl_gpu_library(
     deps = [
         ":cupti_interface",
     ] + if_cuda(["@tsl//tsl/cuda:cupti"]),
-)
-
-# A CUPTI stub that implements CUPTI interface as no-op.
-tsl_gpu_library(
-    name = "_cupti_wrapper_stub",
-    srcs = if_cuda(["cupti_wrapper_stub.cc"]),
-    hdrs = if_cuda(["cupti_wrapper.h"]),
-    copts = tf_profiler_copts() + tsl_copts(),
-    linkstatic = 1,
-    visibility = ["//visibility:public"],
-    deps = [":cupti_interface"],
 )
 
 tsl_gpu_library(
