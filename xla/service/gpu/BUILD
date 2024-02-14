@@ -3192,6 +3192,7 @@ xla_cc_test(
         ":command_buffer_scheduling",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_parser",
+        "//xla/stream_executor:device_description",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
