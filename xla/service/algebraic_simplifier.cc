@@ -5359,7 +5359,13 @@ Status AlgebraicSimplifierVisitor::HandleReshape(HloInstruction* reshape) {
   }
 
   // Delete no-op reshapes, i.e. where shape = operand shape.
-  if (SameShape(reshape, operand)) {
+  // Note: Some upstream passes (such as auto-sharding) can insert reshape ops
+  // to facilitate resharding of tensors. We do not want to remove such reshape
+  // ops, as that can lead to large tensors being fully materialized causing HBM
+  // OOMs.
+  if (SameShape(reshape, operand) &&
+      (!reshape->has_sharding() || !operand->has_sharding() ||
+       reshape->sharding() == operand->sharding())) {
     VLOG(3) << "deleting no-op reshape";
     return ReplaceInstruction(reshape, operand);
   }

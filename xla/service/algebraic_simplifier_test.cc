@@ -10530,5 +10530,22 @@ GetUpcastDowncastTestCases() {
 INSTANTIATE_TEST_SUITE_P(AllTypes, AlgebraicSimplifierUpcastDowncastTest,
                          ::testing::ValuesIn(GetUpcastDowncastTestCases()));
 
+// Make sure that the algebraic simplifier does not remove reshape ops inserted
+// to facilitate resharding of tensors.
+TEST_F(AlgebraicSimplifierTest, ReshardingReshapePreservation) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      copy.35 = bf16[64,8192,98304]{2,1,0} parameter(0), sharding={devices=[8,1,64]<=[64,8]T(1,0)}
+      multiply.1614 = bf16[64,8192,12288]{2,1,0} parameter(1), sharding={devices=[64,1,8]<=[512]}
+      reshape.62 = bf16[64,8192,12288]{2,1,0} reshape(multiply.1614), sharding={devices=[8,1,1,64]<=[64,8]T(1,0) last_tile_dim_replicate}
+      ROOT dot.182 = bf16[12288,98304]{0,1} dot(reshape.62, copy.35), lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}, sharding={devices=[1,64,8]<=[512] last_tile_dim_replicate}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  VLOG(2) << "Module after simplification:\n" << m->ToString();
+  ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
 }  // namespace
 }  // namespace xla
