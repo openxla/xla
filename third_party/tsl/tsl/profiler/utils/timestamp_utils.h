@@ -1,4 +1,4 @@
-/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2024 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,20 +12,22 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef TENSORFLOW_TSL_PROFILER_CONVERT_POST_PROCESS_SINGLE_HOST_XPLANE_H_
-#define TENSORFLOW_TSL_PROFILER_CONVERT_POST_PROCESS_SINGLE_HOST_XPLANE_H_
 
-#include "tsl/platform/types.h"
+#ifndef TENSORFLOW_TSL_PROFILER_UTILS_TIMESTAMP_UTILS_H_
+#define TENSORFLOW_TSL_PROFILER_UTILS_TIMESTAMP_UTILS_H_
+
+#include <cstdint>
+
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
 
-// Post process XSpaces collected locally from multiple profilers.
-void PostProcessSingleHostXSpace(tensorflow::profiler::XSpace* space,
-                                 uint64 start_time_ns, uint64 stop_time_ns);
-
+// Add metadata regarding profile start_time and stop_time to xspace.
+// This function won't have an effect if either of the timestamps is zero.
+void SetSessionTimestamps(uint64_t start_walltime_ns, uint64_t stop_walltime_ns,
+                          tensorflow::profiler::XSpace& space);
 }  // namespace profiler
 }  // namespace tsl
 
-#endif  // TENSORFLOW_TSL_PROFILER_CONVERT_POST_PROCESS_SINGLE_HOST_XPLANE_H_
+#endif  // TENSORFLOW_TSL_PROFILER_UTILS_TIMESTAMP_UTILS_H_
