@@ -2523,6 +2523,7 @@ xla_cc_test(
     name = "logistic_expander_test",
     srcs = ["logistic_expander_test.cc"],
     deps = [
+        ":dynamic_padder",
         ":hlo_creation_utils",
         ":hlo_parser",
         ":hlo_pass",
@@ -2533,6 +2534,7 @@ xla_cc_test(
         ":shape_inference",
         "//xla:literal",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla:test",
         "//xla:types",
         "//xla:window_util",
