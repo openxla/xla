@@ -3143,9 +3143,13 @@ cc_library(
         ":flatten_call_graph",
         ":hlo_cse",
         ":hlo_pass",
+        ":hlo_verifier",
+        ":pattern_matcher",
         ":tuple_simplifier",
+        ":tuple_util",
         ":while_loop_analysis",
         ":while_loop_constant_sinking",
+        ":while_loop_simplifier",
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:literal_util",
@@ -3165,7 +3169,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -3175,6 +3178,7 @@ xla_cc_test(
     deps = [
         ":while_loop_unroller",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
@@ -3185,6 +3189,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
     ],
 )

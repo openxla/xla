@@ -19,6 +19,7 @@ limitations under the License.
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -47,16 +48,19 @@ limitations under the License.
 #include "xla/service/flatten_call_graph.h"
 #include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_pass_fix.h"
+#include "xla/service/hlo_verifier.h"
+#include "xla/service/pattern_matcher.h"
 #include "xla/service/tuple_simplifier.h"
+#include "xla/service/tuple_util.h"
 #include "xla/service/while_loop_analysis.h"
 #include "xla/service/while_loop_constant_sinking.h"
+#include "xla/service/while_loop_simplifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -197,31 +201,85 @@ std::optional<WhileLoopConfig> IsLoopUnrollable(HloInstruction* while_op) {
   return config;
 }
 
-std::unique_ptr<HloInstruction> GetConstantWithPrimitiveType(PrimitiveType type,
-                                                             int64_t value) {
+std::unique_ptr<HloInstruction> GetConstantWithShape(const Shape& shape,
+                                                     int64_t value) {
   return primitive_util::PrimitiveTypeSwitch<std::unique_ptr<HloInstruction>>(
       [&](auto literal_constant) -> std::unique_ptr<HloInstruction> {
         if constexpr (primitive_util::IsIntegralType(literal_constant)) {
           using NativeT = primitive_util::NativeTypeOf<literal_constant>;
-          return HloInstruction::CreateConstant(
+          auto constant = HloInstruction::CreateConstant(
               LiteralUtil::CreateR0(static_cast<NativeT>(value)));
+          *constant->mutable_shape() = shape;
+          return std::move(constant);
         }
         LOG(FATAL) << "literal is of non-integral type";
       },
-      type);
+      shape.element_type());
+}
+
+// Handle DynamicGte and DynamicTuple custom-calls created during unstacking
+// pass.
+absl::Status HandleDynamicGteOrTuple(HloInstruction* instr, int64_t iter_num) {
+  if (instr->IsCustomCall("DynamicGte")) {
+    return instr->parent()->ReplaceInstruction(
+        instr, instr->AddInstruction(HloInstruction::CreateGetTupleElement(
+                   instr->mutable_operand(0), iter_num)));
+  } else if (instr->IsCustomCall("DynamicTuple")) {
+    std::vector<HloInstruction*> tuple_operands;
+    for (int64_t i = 0; i < instr->operand(0)->shape().tuple_shapes_size();
+         i++) {
+      if (i == iter_num) {
+        tuple_operands.push_back(instr->mutable_operand(1));
+      } else {
+        HloInstruction* slice =
+            instr->AddInstruction(HloInstruction::CreateGetTupleElement(
+                instr->mutable_operand(0), i));
+        tuple_operands.push_back(slice);
+      }
+    }
+    return instr->parent()->ReplaceInstruction(
+        instr,
+        instr->AddInstruction(HloInstruction::CreateTuple(tuple_operands)));
+  }
+  return absl::OkStatus();
+}
+
+// Helper function to create a condition for a single iteration while loop in
+// the form of 'i <= init_value' where i is the induction variable.
+std::unique_ptr<HloComputation> MakeSingleIterWhileCond(
+    HloInstruction* while_op, std::string_view name, int64_t induction_idx,
+    int64_t init_value) {
+  auto condition_builder = HloComputation::Builder(name);
+
+  auto param_instruction = condition_builder.AddParameter(
+      while_op->while_condition()->parameter_instruction(0)->Clone());
+
+  CHECK_OK(param_instruction);
+
+  HloInstruction* indvar_instruction = condition_builder.AddInstruction(
+      HloInstruction::CreateGetTupleElement(*param_instruction, induction_idx));
+
+  auto init_value_constant = condition_builder.AddInstruction(
+      GetConstantWithShape(indvar_instruction->shape(), init_value));
+
+  return condition_builder.Build(
+      condition_builder.AddInstruction(HloInstruction::CreateCompare(
+          ShapeUtil::MakeShape(PrimitiveType::PRED, {}), indvar_instruction,
+          init_value_constant, ComparisonDirection::kLe)));
 }
 
 // Helper function that replaces a single iteration of a while loop with
 // induction variable equal to induction_value.
 StatusOr<std::unique_ptr<HloComputation>> UnrollSingleIterationOfTrivialLoop(
-    HloInstruction* while_op, const int64_t indvar_idx,
+    HloInstruction* while_op, WhileLoopConfig config,
     const int64_t induction_value) {
   // We clone the body since we are changing the computation.
   std::unique_ptr<HloComputation> while_body_clone =
-      while_op->while_body()->Clone(absl::StrCat(induction_value));
+      while_op->while_body()->Clone(
+          absl::StrCat(while_op->name(), induction_value));
 
   HloInstruction* induction_var_hlo =
-      while_op->mutable_operand(0)->mutable_operand(indvar_idx);
+      while_op->mutable_operand(0)->mutable_operand(config.induction_var_idx);
 
   // We record the next channel id to utilize when unrolling loops with
   // collective communication instructions. During unrolling a single iteration
@@ -242,67 +300,49 @@ StatusOr<std::unique_ptr<HloComputation>> UnrollSingleIterationOfTrivialLoop(
       body_inst->set_channel_id(unique_channel_id++);
     }
 
-    if (body_inst->opcode() != HloOpcode::kGetTupleElement) {
+    // We only consider induction variable instructions of the following form.
+    if (!Match(body_inst,
+               match::GetTupleElement(match::Parameter().WithParameterNum(0))
+                   .WithTupleIndex(config.induction_var_idx))) {
       continue;
     }
-    if (body_inst->operand(0) != while_body_clone->parameter_instruction(0)) {
-      continue;
-    }
-    const int64_t idx = body_inst->tuple_index();
 
-    std::vector<HloInstruction*> body_uses;
-    body_uses.reserve(body_inst->users().size());
+    std::vector<HloInstruction*> indvar_uses;
+    indvar_uses.reserve(body_inst->users().size());
     for (HloInstruction* indvar_use : body_inst->users()) {
-      body_uses.push_back(indvar_use);
+      indvar_uses.push_back(indvar_use);
     }
 
-    // We found our instruction
-    if (idx == indvar_idx) {
-      // Finds all the uses of induction var within the while body
-      for (HloInstruction* indvar_use : body_uses) {
-        for (int64_t i = 0; i < indvar_use->operand_count(); ++i) {
-          const HloInstruction* indvar_use_operand = indvar_use->operand(i);
-          // Found the induction var as an operand of body instruction.
-          if (indvar_use_operand == body_inst) {
-            std::unique_ptr<HloInstruction> constant =
-                GetConstantWithPrimitiveType(
-                    induction_var_hlo->shape().element_type(), induction_value);
-            // Assign the same shape of the old instruction to the new
-            // instruction.
-            *constant->mutable_shape() = body_inst->shape();
-            CHECK_OK(indvar_use->ReplaceOperandWith(
-                i, while_body_clone->AddInstruction(std::move(constant))));
-          }
+    HloInstruction* induction_value_constant = while_body_clone->AddInstruction(
+        GetConstantWithShape(induction_var_hlo->shape(), induction_value));
+
+    // Assign the same shape of the old instruction to the new
+    // instruction.
+    *induction_value_constant->mutable_shape() = body_inst->shape();
+    // Finds all the uses of induction var within the while body
+    for (HloInstruction* indvar_use : indvar_uses) {
+      // Skip the induction variable increment instruction. We need this
+      // instruction to remain in the loop if we are doing wrapped unrolling.
+      // WhileLoopSimplifier relies on this instruction to find the trivial
+      // loops.
+      if (Match(indvar_use, match::Add(match::GetTupleElement().WithTupleIndex(
+                                           config.induction_var_idx),
+                                       match::Constant()))) {
+        continue;
+      }
+
+      CHECK_OK(HandleDynamicGteOrTuple(indvar_use, induction_value));
+
+      for (int64_t i = 0; i < indvar_use->operand_count(); ++i) {
+        const HloInstruction* indvar_use_operand = indvar_use->operand(i);
+        // Found the induction var as an operand of body_instr.
+        if (indvar_use_operand == body_inst) {
+          CHECK_OK(indvar_use->ReplaceOperandWith(i, induction_value_constant));
         }
       }
     }
   }
   return while_body_clone;
-}
-
-// Helper function to create a condition for a single iteration while loop in
-// the form of 'i <= init_value' where i is the induction variable.
-std::unique_ptr<HloComputation> MakeSingleIterWhileCond(
-    HloInstruction* while_op, int64_t induction_idx, int64_t init_value) {
-  auto condition_builder =
-      HloComputation::Builder(absl::StrCat("unrolled-cond-", while_op->name()));
-
-  auto param_instruction = condition_builder.AddParameter(
-      while_op->while_condition()->parameter_instruction(0)->Clone());
-
-  CHECK_OK(param_instruction);
-
-  HloInstruction* indvar_instruction = condition_builder.AddInstruction(
-      HloInstruction::CreateGetTupleElement(*param_instruction, induction_idx));
-
-  auto init_value_constant =
-      condition_builder.AddInstruction(GetConstantWithPrimitiveType(
-          indvar_instruction->shape().element_type(), init_value));
-
-  return condition_builder.Build(
-      condition_builder.AddInstruction(HloInstruction::CreateCompare(
-          ShapeUtil::MakeShape(PrimitiveType::PRED, {}), indvar_instruction,
-          init_value_constant, ComparisonDirection::kLe)));
 }
 
 absl::Status InitialFeasibilityCheck(HloInstruction* while_op,
@@ -383,9 +423,7 @@ StatusOr<bool> UnrollInternal(HloInstruction* while_op, WhileLoopConfig config,
     CHECK(OverflowSafeAdd(i, (int64_t)1).has_value());
 
     HloComputation* unrolled_body = module->AddEmbeddedComputation(
-        UnrollSingleIterationOfTrivialLoop(while_op, config.induction_var_idx,
-                                           i)
-            .value());
+        UnrollSingleIterationOfTrivialLoop(while_op, config, i).value());
     unrolled_body_call_op =
         computation->AddInstruction(HloInstruction::CreateCall(
             while_op->shape(), call_operands, unrolled_body));
@@ -412,35 +450,71 @@ StatusOr<bool> UnrollInternalWrapped(HloInstruction* while_op,
 
   HloModule* module = while_op->GetModule();
   HloComputation* computation = while_op->parent();
-  HloInstruction* unrolled_body_call_op;
+  // HloInstruction* unrolled_body_call_op;
 
-  auto body_builder =
-      HloComputation::Builder(absl::StrCat("unrolled-body-", while_op->name()));
-  StatusOr<HloInstruction*> p = body_builder.AddParameter(
+  auto outer_body_builder = HloComputation::Builder(
+      absl::StrCat("unrolled-", while_op->name(), "-body"));
+  StatusOr<HloInstruction*> p = outer_body_builder.AddParameter(
       while_op->while_body()->parameter_instruction(0)->Clone());
 
-  std::vector<HloInstruction*> call_operands = {p.value()};
+  // Create outer wrapper body (and condition) that holds all the unrolled
+  // iterations.
+  HloComputation* outer_body =
+      module->AddEmbeddedComputation(outer_body_builder.Build());
+  HloComputation* outer_cond =
+      module->AddEmbeddedComputation(MakeSingleIterWhileCond(
+          while_op, absl::StrCat("unrolled-", while_op->name(), "-cond"),
+          config.induction_var_idx, config.init));
+
+  std::vector<HloInstruction*> call_operands;
+  for (int64_t i = 0; i < while_op->while_init()->operands().size(); ++i) {
+    call_operands.push_back(
+        outer_body->AddInstruction(HloInstruction::CreateGetTupleElement(
+            outer_body->parameter_instruction(0), i)));
+  }
+
+  HloInstruction* tuple_input =
+      outer_body->AddInstruction(HloInstruction::CreateTuple(call_operands));
+  HloInstruction* input = tuple_input;
+
   for (int64_t i = config.init; i < config.trip_count + config.init; ++i) {
     CHECK(OverflowSafeAdd(i, (int64_t)1).has_value());
 
-    HloComputation* unrolled_body = module->AddEmbeddedComputation(
-        UnrollSingleIterationOfTrivialLoop(while_op, config.induction_var_idx,
-                                           i)
-            .value());
-    unrolled_body_call_op =
-        body_builder.AddInstruction(HloInstruction::CreateCall(
-            while_op->shape(), call_operands, unrolled_body));
-    call_operands.clear();
-    call_operands.emplace_back(unrolled_body_call_op);
-  }
-  HloComputation* new_body =
-      module->AddEmbeddedComputation(body_builder.Build(unrolled_body_call_op));
-  HloComputation* new_cond = module->AddEmbeddedComputation(
-      MakeSingleIterWhileCond(while_op, config.induction_var_idx, config.init));
+    // Constant hlo representing the induction variable at the current iteration
+    // i. This is used as the initial value for the current unrolled wrapped
+    // iteration.
+    HloInstruction* init = outer_body->AddInstruction(GetConstantWithShape(
+        while_op->while_init()->operand(config.induction_var_idx)->shape(), i));
 
-  HloInstruction* new_while_op =
-      computation->AddInstruction(HloInstruction::CreateWhile(
-          while_op->shape(), new_cond, new_body, while_op->mutable_operand(0)));
+    TF_ASSIGN_OR_RETURN(
+        auto while_body_clone,
+        UnrollSingleIterationOfTrivialLoop(while_op, config, i));
+    while_body_clone->SetAndSanitizeName(
+        absl::StrCat(while_op->name(), "-iter-", i, "-body"));
+    HloComputation* new_cond =
+        while_op->GetModule()->AddEmbeddedComputation(MakeSingleIterWhileCond(
+            while_op, absl::StrCat(while_op->name(), "-iter-", i, "-cond"),
+            config.induction_var_idx, i));
+
+    // TODO(b/325354542) Check if the induction var has other users in the loop.
+    TF_ASSIGN_OR_RETURN(
+        input, TupleUtil::ReplaceTupleWith(init, input,
+                                           {config.induction_var_idx}, false));
+
+    input = outer_body->AddInstruction(
+        HloInstruction::CreateWhile(
+            while_op->shape(), new_cond,
+            while_op->GetModule()->AddEmbeddedComputation(
+                std::move(while_body_clone)),
+            input),
+        absl::StrCat(while_op->name(), "-iter-", i));
+  }
+  outer_body->set_root_instruction(input);
+
+  HloInstruction* new_while_op = computation->AddInstruction(
+      HloInstruction::CreateWhile(while_op->shape(), outer_cond, outer_body,
+                                  while_op->mutable_operand(0)),
+      while_op->name());
 
   CHECK_OK(computation->ReplaceInstruction(while_op, new_while_op));
 
@@ -514,7 +588,8 @@ StatusOr<bool> WhileLoopUnroller::Run(
   if (unroll_factor_ != -1) {
     return false;
   }
-  XLA_VLOG_LINES(3, "WhileLoopUnroller::Run(), before:\n" + module->ToString());
+  // XLA_VLOG_LINES(3, "WhileLoopUnroller::Run(), before:\n" +
+  // module->ToString());
   bool changed = false;
 
   // Make sure all the necessary passes are executed before unrolling in order
@@ -557,7 +632,15 @@ StatusOr<bool> WhileLoopUnroller::Run(
     TF_RETURN_IF_ERROR(CallInliner().Run(module, execution_threads).status());
   }
 
-  XLA_VLOG_LINES(3, "WhileLoopUnroller::Run(), after:\n" + module->ToString());
+  // HloVerifier verifier(/*layout_sensitive=*/false,
+  //                      /*allow_mixed_precision*/ true);
+  // CHECK_OK(verifier.Run(module).status());
+
+  // XLA_VLOG_LINES(3, "WhileLoopUnroller::Run(), after:\n" +
+  // module->ToString());
+  // std::cout << "WhileLoopUnroller::Run(), after:\n"
+  //           << module->ToString() << std::endl;
+  // CHECK_OK(WhileLoopSimplifier{}.Run(module, execution_threads));
   return changed;
 }
 
