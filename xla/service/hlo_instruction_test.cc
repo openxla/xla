@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_instruction.h"
 
+#include <cstdint>
 #include <optional>
 #include <set>
 #include <string>
@@ -1725,6 +1726,30 @@ TEST_F(HloInstructionTest, StringifyWhile) {
   EXPECT_EQ(loop->ToString(options),
             "%while = f32[5,20]{1,0} while(f32[5,10]{1,0} %x), "
             "condition=%TransposeDot, body=%TransposeDot");
+}
+
+TEST_F(HloInstructionTest, SerializedBackendConfigPrintingRespectsFlags) {
+  auto module = CreateNewVerifiedModule();
+  HloComputation::Builder builder("");
+  HloInstruction* constant = builder.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<int8_t>(33)));
+  auto* computation = module->AddEntryComputation(builder.Build());
+  HloInstruction* fusion = computation->CreateFusionInstruction(
+      {constant}, HloInstruction::FusionKind::kCustom);
+  gpu::GpuBackendConfig gpu_config;
+  gpu::FusionBackendConfig& backend_config =
+      *gpu_config.mutable_fusion_backend_config();
+  backend_config.set_kind(std::string("some$kind"));
+  backend_config.mutable_cudnn_fusion_config()->set_plan_id(22);
+  backend_config.mutable_cudnn_fusion_config()->set_serialized_graph(
+      "serialized graph content");
+  TF_ASSERT_OK(fusion->set_backend_config(gpu_config));
+  EXPECT_EQ(
+      fusion->ToString(),
+      R"(%fusion = s8[] fusion(), kind=kCustom, calls=%fused_computation, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"some$kind","cudnn_fusion_config":{"plan_id":"22"}}})");
+  EXPECT_EQ(
+      fusion->ToString(HloPrintOptions().set_print_large_constants(true)),
+      R"(%fusion = s8[] fusion(), kind=kCustom, calls=%fused_computation, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"some$kind","cudnn_fusion_config":{"plan_id":"22","serialized_graph":"serialized graph content"}}})");
 }
 
 TEST_F(HloInstructionTest, GetSetStatisticsViz) {

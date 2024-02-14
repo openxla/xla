@@ -2515,6 +2515,10 @@ class HloInstruction {
 
     const std::string& GetRawString() const;
 
+    // Returns string-formatted proto with a large GPU-specific field removed
+    // if the field is not empty.
+    std::optional<std::string> GetFilteredRawString() const;
+
     BackendConfigRep Clone() const;
 
     bool operator==(const BackendConfigRep& other) const;

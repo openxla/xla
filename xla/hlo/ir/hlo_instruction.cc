@@ -3429,6 +3429,42 @@ bool HloInstruction::IsCrossReplicaAllReduce() const {
   return false;
 }
 
+std::optional<std::string>
+HloInstruction::BackendConfigRep::GetFilteredRawString() const {
+  const tsl::protobuf::Message* msg = GetProtoPtr();
+  if (msg != nullptr &&
+      msg->GetDescriptor()->full_name() == "xla.gpu.GpuBackendConfig") {
+    const tsl::protobuf::FieldDescriptor* fusion_descriptor =
+        msg->GetDescriptor()->FindFieldByName("fusion_backend_config");
+    if (fusion_descriptor != nullptr &&
+        msg->GetReflection()->HasField(*msg, fusion_descriptor)) {
+      const tsl::protobuf::Message& fusion_backend_config =
+          msg->GetReflection()->GetMessage(*msg, fusion_descriptor);
+      const tsl::protobuf::FieldDescriptor* cudnn_descriptor =
+          fusion_descriptor->message_type()->FindFieldByName(
+              "cudnn_fusion_config");
+      if (cudnn_descriptor != nullptr &&
+          fusion_backend_config.GetReflection()->HasField(fusion_backend_config,
+                                                          cudnn_descriptor)) {
+        std::unique_ptr<tsl::protobuf::Message> msg_copy(msg->New());
+        msg_copy->CopyFrom(*msg);
+        tsl::protobuf::Message* fusion_backend_config =
+            msg_copy->GetReflection()->MutableMessage(&*msg_copy,
+                                                      fusion_descriptor);
+        tsl::protobuf::Message* cudnn_fusion_config =
+            fusion_backend_config->GetReflection()->MutableMessage(
+                fusion_backend_config, cudnn_descriptor);
+        cudnn_fusion_config->GetReflection()->ClearField(
+            cudnn_fusion_config,
+            cudnn_descriptor->message_type()->FindFieldByName(
+                "serialized_graph"));
+        return BackendConfigToRawString(*msg_copy).value();
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 void HloInstruction::PrintWithCanonicalNameMap(
     Printer* printer, const HloPrintOptions& options,
     CanonicalNameMap* canonical_name_map) const {
@@ -3499,6 +3535,13 @@ void HloInstruction::PrintWithCanonicalNameMap(
   }
   if (options.print_backend_config() && !backend_config_.empty()) {
     absl::string_view config = backend_config_.GetRawString();
+    std::optional<std::string> filtered_config;
+    if (!options.print_large_constants()) {
+      filtered_config = backend_config_.GetFilteredRawString();
+      if (filtered_config.has_value()) {
+        config = *filtered_config;
+      }
+    }
     printer->Append(", backend_config=");
     // In the common case that the backend-config is valid-ish JSON, the parser
     // doesn't need it delimited by quotes, so we can print it without
