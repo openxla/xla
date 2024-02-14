@@ -54,6 +54,26 @@ class DeviceToDeviceCopyThunk : public Thunk {
   const uint64_t mem_size_;
 };
 
+class DeviceToHostCopyThunk : public DeviceToDeviceCopyThunk {
+  public:
+   DeviceToHostCopyThunk(ThunkInfo thunk_info,
+                         const BufferAllocation::Slice& source_buffer,
+                         const BufferAllocation::Slice& destination_buffer,
+                         uint64_t mem_size, mlir::Value source_value,
+                         mlir::Value destination_value);
+   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+};
+
+class HostToDeviceCopyThunk : public DeviceToDeviceCopyThunk {
+  public:
+   HostToDeviceCopyThunk(ThunkInfo thunk_info,
+                         const BufferAllocation::Slice& source_buffer,
+                         const BufferAllocation::Slice& destination_buffer,
+                         uint64_t mem_size, mlir::Value source_value,
+                         mlir::Value destination_value);
+   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+};
+
 }  // namespace gpu
 }  // namespace xla
 

@@ -387,6 +387,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor/gpu:gpu_blas_lt",
+        "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/translate/hlo_to_mhlo:hlo_utils",
         "//xla/translate/mhlo_to_hlo:attribute_exporter",
         "//xla/translate/mhlo_to_hlo:location_exporter",
