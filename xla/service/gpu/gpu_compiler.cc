@@ -16,13 +16,12 @@ limitations under the License.
 #include "xla/service/gpu/gpu_compiler.h"
 
 #include <algorithm>
-#include <cstddef>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -62,7 +61,7 @@ limitations under the License.
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
 #include "mlir/IR/OwningOpRef.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "xla/debug_options_flags.h"
+#include "xla/hlo/experimental/auto_sharding/auto_sharding_option.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -114,13 +113,11 @@ limitations under the License.
 #include "xla/service/gather_expander.h"
 #include "xla/service/gather_simplifier.h"
 #include "xla/service/gpu/address_computation_fusion_rewriter.h"
-#include "xla/service/gpu/alias_passthrough_params.h"
 #include "xla/service/gpu/all_reduce_blueconnect.h"
 #include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/command_buffer_scheduling.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
-#include "xla/service/gpu/copy_fusion.h"
 #include "xla/service/gpu/custom_kernel_fusion_rewriter.h"
 #include "xla/service/gpu/dot_dimension_sorter.h"
 #include "xla/service/gpu/dot_operand_converter.h"
@@ -140,10 +137,8 @@ limitations under the License.
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_layout_assignment.h"
 #include "xla/service/gpu/gpu_reduce_scatter_creator.h"
-#include "xla/service/gpu/gpu_sanitize_constant_names.h"
 #include "xla/service/gpu/gpu_scatter_expander.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
-#include "xla/service/gpu/horizontal_loop_fusion.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/ir_emitter_unnested.h"
@@ -185,7 +180,6 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/logistic_expander.h"
-#include "xla/service/loop_schedule_linearizer.h"
 #include "xla/service/operand_upcaster.h"
 #include "xla/service/optimization_barrier_expander.h"
 #include "xla/service/optimize_input_output_buffer_alias.h"
@@ -229,6 +223,8 @@ limitations under the License.
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
+#include "xla/stream_executor/multi_platform_manager.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/translate/mhlo_to_lhlo_with_xla/mhlo_to_lhlo_with_xla.h"
 #include "xla/util.h"
@@ -241,7 +237,6 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
-#include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"

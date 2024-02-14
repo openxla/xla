@@ -18,13 +18,20 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/statusor.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/shape.h"
+#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {

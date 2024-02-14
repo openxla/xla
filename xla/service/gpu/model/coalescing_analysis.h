@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_MODEL_COALESCING_ANALYSIS_H_
 #define XLA_SERVICE_GPU_MODEL_COALESCING_ANALYSIS_H_
 
-#include <optional>
 
 #include "absl/container/flat_hash_map.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project

@@ -15,29 +15,41 @@ limitations under the License.
 
 #include "xla/service/gpu/cudnn_fused_conv_rewriter.h"
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/statusor.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 #include "tsl/platform/ml_dtypes.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cudnn/cudnn.h"
+#include "third_party/gpus/cudnn/cudnn_version.h"
 #endif
 
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -46,7 +58,7 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"

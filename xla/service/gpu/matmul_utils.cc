@@ -16,24 +16,28 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "mhlo/IR/hlo_ops.h"
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/mlir_hlo/lhlo_gpu/IR/lhlo_gpu_ops.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
@@ -47,11 +51,11 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA
-#include "xla/stream_executor/host_or_device_scalar.h"
 #endif  // GOOGLE_CUDA
 
 namespace xla {
@@ -293,14 +297,14 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
     absl::Span<const int64_t> lhs_contracting_dims, const Shape& rhs_shape,
     absl::Span<const int64_t> rhs_batch_dims,
     absl::Span<const int64_t> rhs_contracting_dims, const Shape& output_shape,
-    double alpha_real, double alpha_imag, double beta,
-    std::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-    bool grad_y) {
+    double alpha_real, double alpha_imag, double beta_,
+    std::optional<int64_t> algorithm_, int64_t compute_precision_, bool grad_x_,
+    bool grad_y_) {
   return GemmConfig::For(lhs_shape, lhs_batch_dims, lhs_contracting_dims,
                          rhs_shape, rhs_batch_dims, rhs_contracting_dims,
                          /*c_shape=*/output_shape, /*bias_shape_ptr=*/nullptr,
-                         output_shape, alpha_real, alpha_imag, beta, algorithm,
-                         compute_precision, grad_x, grad_y);
+                         output_shape, alpha_real, alpha_imag, beta_,
+                         algorithm_, compute_precision_, grad_x_, grad_y_);
 }
 
 /*static*/ absl::StatusOr<GemmConfig> GemmConfig::For(
@@ -309,8 +313,8 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
     absl::Span<const int64_t> rhs_batch_dims,
     absl::Span<const int64_t> rhs_contracting_dims, const Shape& c_shape,
     const Shape* bias_shape_ptr, const Shape& output_shape, double alpha_real,
-    double alpha_imag, double beta, std::optional<int64_t> algorithm,
-    int64_t compute_precision, bool grad_x, bool grad_y) {
+    double alpha_imag, double beta_, std::optional<int64_t> algorithm_,
+    int64_t compute_precision_, bool grad_x_, bool grad_y_) {
   absl::Span<const int64_t> lhs_col_dims = lhs_contracting_dims;
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> lhs_row_dims,
@@ -350,7 +354,7 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                                         output_row_dims, output_col_dims));
   Shape c_matrix_shape = c_shape;
   if (primitive_util::IsF8Type(lhs_shape.element_type()) &&
-      primitive_util::IsF8Type(output_shape.element_type()) && beta == 0.0) {
+      primitive_util::IsF8Type(output_shape.element_type()) && beta_ == 0.0) {
     // By default, if c is not present (i.e., beta is 0), c_shape will be the
     // output shape. cublasLT requires a valid c_shape to be passed, even if c
     // is not present, and normally setting it to the output shape is fine. But
@@ -416,11 +420,11 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                     c_layout,
                     output_layout,
                     {alpha_real, alpha_imag},
-                    beta,
-                    compute_precision,
-                    algorithm,
-                    grad_x,
-                    grad_y};
+                    beta_,
+                    compute_precision_,
+                    algorithm_,
+                    grad_x_,
+                    grad_y_};
 }
 
 /*static*/ absl::StatusOr<GemmConfig> GemmConfig::For(

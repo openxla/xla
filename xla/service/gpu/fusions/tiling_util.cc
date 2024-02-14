@@ -17,9 +17,9 @@ limitations under the License.
 
 #include <cstdint>
 #include <limits>
-#include <string>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"

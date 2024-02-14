@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
+#include "absl/synchronization/mutex.h"
 #include "llvm/IR/DataLayout.h"
 #include "xla/literal.h"
 #include "xla/service/compiler.h"

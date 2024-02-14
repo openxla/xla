@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/fusions/custom.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>

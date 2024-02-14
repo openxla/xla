@@ -23,18 +23,24 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "mhlo/IR/hlo_ops.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/literal.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/hlo_traversal.h"
-#include "xla/statusor.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {

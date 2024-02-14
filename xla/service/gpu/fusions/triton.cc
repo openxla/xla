@@ -14,13 +14,19 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/fusions/triton.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <variant>
+#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "mlir/IR/Operation.h"  // from @llvm-project
@@ -28,8 +34,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
+#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/kernel_arguments.h"
@@ -38,9 +46,10 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
+#include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/statusor.h"
-#include "tsl/platform/errors.h"
+#include "xla/shape.h"
+#include "xla/status_macros.h"
 #include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA

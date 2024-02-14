@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
 #include "xla/service/gpu/kernels/topk_kernel_common.h"
@@ -138,9 +137,10 @@ absl::StatusOr<CustomKernel> GetTopKKernel(std::string name,
 #else
 
 // Fallback implementation of creating a CustomKernel for TopK operation.
-StatusOr<CustomKernel> GetTopKKernel(std::string name, PrimitiveType dtype,
-                                     size_t num_elements, size_t k,
-                                     size_t batch_size) {
+absl::StatusOr<CustomKernel> GetTopKKernel(std::string name,
+                                           PrimitiveType dtype,
+                                           size_t num_elements, size_t k,
+                                           size_t batch_size) {
   return absl::InternalError("XLA compiled without CUDA support");
 }
 

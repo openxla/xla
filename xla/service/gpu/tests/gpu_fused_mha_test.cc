@@ -13,42 +13,38 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
-#include <limits>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
+#include "absl/strings/match.h"
 #include "xla/array4d.h"
-#include "xla/client/local_client.h"
 #include "xla/client/xla_builder.h"
 #include "xla/client/xla_computation.h"
+#include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
-#include "xla/reference_util.h"
-#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/literal_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
-#include "xla/shape_util.h"
-#include "xla/statusor.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/test_helpers.h"
-#include "xla/tests/client_library_test_base.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_macros.h"
-#include "xla/tests/test_utils.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
 namespace xla {

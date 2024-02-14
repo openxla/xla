@@ -16,12 +16,10 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <vector>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
@@ -29,16 +27,13 @@ limitations under the License.
 #include "mlir/IR/Operation.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 

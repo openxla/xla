@@ -15,9 +15,13 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_FUSIONS_COPY_H_
 #define XLA_SERVICE_GPU_FUSIONS_COPY_H_
 
+#include <utility>
 #include <vector>
 
+#include "absl/status/statusor.h"
 #include "mlir/IR/Value.h"  // from @llvm-project
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/ir_emitter_context.h"

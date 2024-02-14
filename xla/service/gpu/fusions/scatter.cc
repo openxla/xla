@@ -16,7 +16,6 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +42,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {

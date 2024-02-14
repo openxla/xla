@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/model/coalescing_analysis.h"
 
-#include <optional>
 
 #include "absl/container/flat_hash_map.h"
 #include "mlir/IR/AffineMap.h"  // from @llvm-project

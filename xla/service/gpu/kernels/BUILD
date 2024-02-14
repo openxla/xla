@@ -25,7 +25,6 @@ cc_library(
     deps = [
         ":custom_kernel",
         "//xla:status",
-        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/base:core_headers",
@@ -43,7 +42,6 @@ cc_library(
     hdrs = ["custom_kernel_fusion_pattern.h"],
     visibility = [":friends"],
     deps = [
-        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/stream_executor:device_description",
@@ -87,7 +85,6 @@ cc_library(
         ":cutlass_gemm_custom_kernel",
         "//xla:shape_util",
         "//xla:status",
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:pattern_matcher",
@@ -221,7 +218,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":custom_kernel",
-        "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
@@ -229,7 +225,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:statusor",
     ] + if_cuda_is_configured([
         ":topk_kernel_cuda",
     ]) + if_rocm_is_configured([
@@ -252,7 +247,6 @@ xla_test(
         "//xla/stream_executor/cuda:cuda_platform",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
@@ -281,6 +275,7 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
 )

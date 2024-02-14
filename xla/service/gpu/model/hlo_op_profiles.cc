@@ -41,7 +41,7 @@ namespace gpu {
 }
 
 /*static*/ std::string HloOpProfiles::GetProfileName(
-    const se::DeviceDescription* device_info) {
+    const stream_executor::DeviceDescription* device_info) {
   if (device_info != nullptr) {
     if (auto* ptr = std::get_if<stream_executor::CudaComputeCapability>(
             &device_info->gpu_compute_capability()))
@@ -71,7 +71,7 @@ namespace gpu {
 }
 
 const HloOpProfiles::HloOpProfile& HloOpProfiles::GetProfile(
-    const se::DeviceDescription* device_info) const {
+    const stream_executor::DeviceDescription* device_info) const {
   auto it = profiles_.find(GetProfileName(device_info));
   if (it != profiles_.end()) return it->second;
   return default_profile_;

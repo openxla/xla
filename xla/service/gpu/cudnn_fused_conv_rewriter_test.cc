@@ -28,16 +28,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "xla/comparison_util.h"
+#include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/hlo_module_config.h"
-#include "xla/stream_executor/device_description.h"
-#include "tsl/platform/statusor.h"
-
-#if GOOGLE_CUDA
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cudnn/cudnn.h"
-#endif
-
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/algebraic_simplifier.h"
 #include "xla/service/convert_mover.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -45,14 +39,23 @@ limitations under the License.
 #include "xla/service/gpu/gpu_conv_rewriter.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_constant_folding.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_pass_fix.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/service/reshape_mover.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tests/verified_hlo_module.h"
 #include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/statusor.h"
+
+#if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cudnn/cudnn_version.h"
+#endif
 
 namespace xla {
 namespace gpu {

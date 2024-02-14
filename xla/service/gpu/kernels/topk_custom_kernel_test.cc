@@ -22,7 +22,6 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/random/random.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/substitute.h"

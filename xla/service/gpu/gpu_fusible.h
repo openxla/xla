@@ -16,8 +16,12 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_GPU_FUSIBLE_H_
 #define XLA_SERVICE_GPU_GPU_FUSIBLE_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/hlo_traversal.h"
