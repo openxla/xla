@@ -53,11 +53,7 @@ bool IsNoOp(const HloInstruction* hlo) {
 }
 
 bool IsCustomCall(const HloInstruction* hlo) {
-  auto* custom_call = DynCast<HloCustomCallInstruction>(hlo);
-  if (custom_call == nullptr) return false;
-
-  return custom_call->api_version() ==
-         CustomCallApiVersion::API_VERSION_TYPED_FFI;
+  return (hlo->opcode() == HloOpcode::kCustomCall);
 }
 
 absl::InlinedVector<HloInstruction*, 8> GetSlicedOperandChains(
