@@ -866,8 +866,8 @@ TEST_F(AddressComputationFusionTest, CustomCallSimple) {
   XlaBuilder b(TestName());
   CustomCall(&b, "__xla_test$$memcpy",
              /*operands=*/
-             {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {0},
-                    {128}, {1})},
+             {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {128},
+                    {256}, {1})},
              ShapeUtil::MakeShape(F32, {128}), /*opaque=*/"",
              /*has_side_effect=*/false,
              /*output_operand_aliasing=*/{}, /*literal=*/nullptr,
@@ -1013,8 +1013,8 @@ TEST_F(AddressComputationFusionTest, NilTuple) {
   XlaBuilder b(TestName());
   CustomCall(&b, "__xla_test$$noop",
              /*operands=*/
-             {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {0},
-                    {128}, {1})},
+             {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {128},
+                    {256}, {1})},
              ShapeUtil::MakeNil(),
              /*opaque=*/"",
              /*has_side_effect=*/false,
@@ -1058,8 +1058,8 @@ TEST_F(AddressComputationFusionTest, CustomCallLegacyAPI) {
   XlaBuilder b(TestName());
   CustomCall(&b, "Callback_Memcpy",
              /*operands=*/
-             {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {0},
-                    {128}, {1})},
+             {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {128},
+                    {256}, {1})},
              ShapeUtil::MakeShape(F32, {128}), /*opaque=*/"");
   ErrorSpec error_spec{/*aabs=*/1e-3, /*arel=*/1e-3};
 
@@ -1091,8 +1091,8 @@ XLA_REGISTER_CUSTOM_CALL_TARGET(Callback_Void, PLATFORM);
 TEST_F(AddressComputationFusionTest, NilTupleLegacyAPI) {
   XlaBuilder b(TestName());
   CustomCall(&b, "Callback_Void", /*operands=*/
-             {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {0},
-                    {128}, {1})},
+             {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {128},
+                    {256}, {1})},
              ShapeUtil::MakeNil(),
              /*opaque=*/"");
   ErrorSpec error_spec{/*aabs=*/1e-3, /*arel=*/1e-3};

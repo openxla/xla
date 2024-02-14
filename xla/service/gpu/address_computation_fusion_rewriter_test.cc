@@ -941,4 +941,62 @@ TEST_F(AddressComputationFusionRewriterTest, SimpleCustomCall) {
                             });
 }
 
+TEST_F(AddressComputationFusionRewriterTest, SimpleCustomCallLegacy) {
+  XlaBuilder b(TestName());
+  CustomCall(
+      &b, "some_custom_call",
+      /*operands=*/
+      {Slice(Broadcast(ConstantR0WithType(&b, F32, 42.0), {256}), {128}, {256},
+             {1})},
+      ShapeUtil::MakeShape(F32, {128}), /*opaque=*/"",
+      /*has_side_effect=*/false,
+      /*output_operand_aliasing=*/{}, /*literal=*/nullptr,
+      /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,
+      /*api_version=*/CustomCallApiVersion::API_VERSION_STATUS_RETURNING);
+  TF_ASSERT_OK_AND_ASSIGN(auto computation, b.Build());
+  xla::HloModuleConfig hlo_config(
+      xla::ProgramShape(computation.proto().host_program_shape()),
+      /*ignore_layouts=*/false);
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_enable_address_computation_fusion(false);
+  hlo_config.set_debug_options(debug_options);
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo, xla::HloModule::CreateFromProto(
+                                        computation.proto(), hlo_config));
+  TF_ASSERT_OK_AND_ASSIGN(
+      HloSchedule schedule,
+      ScheduleModule(hlo.get(), [](const BufferValue& buffer) {
+        return ShapeUtil::ByteSizeOf(buffer.shape(), /*pointer_size=*/8);
+      }));
+  TF_CHECK_OK(hlo->set_schedule(std::move(schedule)));
+
+  const char* expected = R"(
+    ; CHECK:     %address-computation {{.*}} {
+    ; CHECK:       [[P0:%[^ ]+]] = f32[256]{0} parameter(0)
+    ; CHECK:       [[S0:%[^ ]+]] = f32[128]{0} slice([[P0]]), slice={[128:256]}
+    ; CHECK:       ROOT [[CC:%[^ ]+]] = f32[128]{0} custom-call([[S0]]),
+    ; CHECK:              custom_call_target="some_custom_call",
+    ; CHECK:              api_version=API_VERSION_STATUS_RETURNING
+    ; CHECK:     }
+
+    ; CHECK:     ENTRY %{{.*}} {
+    ; CHECK:       [[C0:%[^ ]+]] = f32[] constant(42)
+    ; CHECK:       [[BC:%[^ ]+]] = f32[256]{0} broadcast([[C0]])
+    ; CHECK:       ROOT [[FUSION:%[^ ]+]] = f32[128]{0} fusion([[BC]])
+    ; CHECK:         kind=kCustom, calls=%address-computation,
+    ; CHECK:         backend_config={
+    ; CHECK:           "kind":"__custom_fusion",
+    ; CHECK:           "custom_fusion_config":{"name":"address_computation"}
+    ; CHECK:         }
+    ; CHECK:     }
+  )";
+
+  auto device = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  RunAndFilecheckHloRewrite(hlo->ToString(),
+                            AddressComputationFusionRewriter(PLATFORM),
+                            expected, [](HloModule* module) {
+                              EXPECT_TRUE(module->has_schedule());
+                              TF_CHECK_OK(module->schedule().Verify());
+                            });
+}
+
 }  // namespace xla::gpu
