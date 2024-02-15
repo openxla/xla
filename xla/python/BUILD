@@ -11,6 +11,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load(
     "@tsl//tsl:tsl.bzl",
     "if_cuda_or_rocm",
+    "internal_visibility",
 )
 load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
@@ -22,7 +23,9 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([
+        ":friends",
+    ]),
     licenses = ["notice"],
 )
 

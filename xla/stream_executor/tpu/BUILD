@@ -1,12 +1,12 @@
 # Description: StreamExecutor Interface for TPUs
 
 load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl:tsl.bzl", "set_external_visibility")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//learning/brain/experimental/dtensor:__subpackages__",
         "//learning/brain/google/xla/kernels:__subpackages__",
         "//learning/brain/research/pjrt:__subpackages__",

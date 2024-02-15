@@ -1,4 +1,4 @@
-load("//tsl:tsl.bzl", "if_not_android", "nvtx_headers", "set_external_visibility")
+load("//tsl:tsl.bzl", "if_not_android", "internal_visibility", "nvtx_headers")
 load("//tsl:tsl.default.bzl", "filegroup")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:build_config_root.bzl", "if_static")
@@ -53,7 +53,7 @@ cc_library(
     name = "profiler_controller",
     srcs = ["profiler_controller.cc"],
     hdrs = ["profiler_controller.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl/profiler:internal",
     ]),
     deps = [
@@ -68,7 +68,7 @@ cc_library(
 cc_library(
     name = "profiler_factory",
     hdrs = ["profiler_factory.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_profiler_backends",
         "//tensorflow/compiler/xla/python:__pkg__",
@@ -89,7 +89,7 @@ cc_library(
         "profiler_factory.h",
     ],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl/profiler:internal",
         "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),
@@ -123,7 +123,7 @@ cc_library(
     name = "profiler_interface",
     hdrs = ["profiler_interface.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl:internal",
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_profiler_backends",
@@ -139,7 +139,7 @@ cc_library(
     srcs = ["profiler_lock.cc"],
     hdrs = ["profiler_lock.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_internal",
     ]),
@@ -164,7 +164,7 @@ tsl_cc_test(
 cc_library(
     name = "profiler_session",
     hdrs = ["profiler_session.h"],
-    visibility = set_external_visibility(["//tsl:internal"]),
+    visibility = internal_visibility(["//tsl:internal"]),
     deps = [
         "//tsl/platform",
         "//tsl/platform:errors",
@@ -189,7 +189,7 @@ cc_library(
         "profiler_session.h",
     ],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/python:__pkg__",
         "//tsl/profiler:internal",
     ]),
@@ -245,7 +245,7 @@ tsl_cc_test(
 tf_profiler_pybind_cc_library_wrapper(
     name = "traceme_for_pybind",
     actual = ":traceme",
-    visibility = set_external_visibility(["//tsl/profiler:xla_internal"]),
+    visibility = internal_visibility(["//tsl/profiler:xla_internal"]),
 )
 
 cc_library(
@@ -323,7 +323,7 @@ cc_library(
     name = "profiler_collection",
     srcs = ["profiler_collection.cc"],
     hdrs = ["profiler_collection.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler/xla/backends/profiler/plugin:__pkg__",
         "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),

@@ -1,6 +1,6 @@
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends", "stream_executor_internal")
-load("@tsl//tsl:tsl.bzl", "set_external_visibility", "transitive_hdrs")
+load("@tsl//tsl:tsl.bzl", "internal_visibility", "transitive_hdrs")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
@@ -8,7 +8,7 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([":friends"]),
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -375,7 +375,7 @@ exports_files(["lazy_op_runner.h"])
 cc_library(
     name = "stream_executor_internal",
     hdrs = ["stream_executor_internal.h"],
-    visibility = [":internal"],
+    visibility = internal_visibility([":internal"]),
     deps = [
         ":stream_executor_headers",
         "//xla/stream_executor/platform",

@@ -7,6 +7,7 @@ load(
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load(
     "@tsl//tsl:tsl.bzl",
+    "internal_visibility",
     "tsl_copts",
     "tsl_gpu_library",
 )
@@ -26,7 +27,7 @@ load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = internal_visibility(["//xla:internal"]),
 )
 
 tsl_gpu_library(

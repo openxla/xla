@@ -1,13 +1,13 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured", "stream_executor_friends")
-load("@tsl//tsl:tsl.bzl", "if_google", "set_external_visibility")
+load("@tsl//tsl:tsl.bzl", "if_google", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([":friends"]),
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -30,7 +30,7 @@ filegroup(
         "device_host_allocator.h",
         "device_mem_allocator.h",
     ],
-    visibility = ["//tensorflow/core:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 #===--------------------------------------------------------------------------------------------===#

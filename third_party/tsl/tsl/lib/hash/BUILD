@@ -1,7 +1,7 @@
 load(
     "//tsl:tsl.bzl",
     "if_linux_x86_64",
-    "set_external_visibility",
+    "internal_visibility",
     "tsl_copts",
 )
 load("//tsl:tsl.default.bzl", "filegroup")
@@ -16,7 +16,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         # tensorflow/tsl/lib/io/table_builder.cc uses crc functionality
         "//tsl/lib/io:__pkg__",
         # tensorflow/core/lib/hash aliases hash for now
@@ -49,7 +49,7 @@ filegroup(
         "crc32c.cc",
         "crc32c.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core/lib/hash:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core/lib/hash:__pkg__"]),
 )
 
 filegroup(
@@ -57,7 +57,7 @@ filegroup(
     srcs = [
         "crc32c.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core/lib/hash:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core/lib/hash:__pkg__"]),
 )
 
 tsl_cc_test(

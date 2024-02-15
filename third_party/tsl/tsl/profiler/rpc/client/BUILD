@@ -1,6 +1,6 @@
-load("//tsl/platform:rules_cc.bzl", "cc_library")
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//tsl/platform:build_config.bzl",
     "tf_protos_profiler_service",
@@ -14,7 +14,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//tsl/profiler:internal",
     ]),
     licenses = ["notice"],
@@ -25,7 +25,7 @@ cc_library(
     srcs = ["capture_profile.cc"],
     hdrs = ["capture_profile.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler/xla/python:__pkg__",
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/python/profiler/internal:__pkg__",
@@ -56,7 +56,7 @@ cc_library(
     srcs = ["save_profile.cc"],
     hdrs = ["save_profile.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/compiler/xla/python:__pkg__",
         "//tsl/profiler:internal",
@@ -81,7 +81,7 @@ cc_library(
 tf_profiler_pybind_cc_library_wrapper(
     name = "profiler_client_for_pybind",
     actual = ":profiler_client",
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/python/profiler/internal:__pkg__",
     ]),
@@ -90,7 +90,7 @@ tf_profiler_pybind_cc_library_wrapper(
 cc_library(
     name = "profiler_client",
     hdrs = ["profiler_client.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler/xla:__subpackages__",
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/python/profiler/internal:__pkg__",
@@ -113,7 +113,7 @@ cc_library(
         "profiler_client.h",
     ],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler/xla/python:__pkg__",
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/python:__pkg__",

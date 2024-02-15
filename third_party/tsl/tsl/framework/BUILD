@@ -4,7 +4,7 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config_root.bzl",
@@ -82,7 +82,7 @@ filegroup(
         "tracking_allocator.h",
         "type_traits.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core:__subpackages__"]),
+    visibility = internal_visibility(["//tensorflow/core:__subpackages__"]),
 )
 
 # Files needed for tf2xla build.
@@ -154,7 +154,7 @@ cc_library(
         "cpu_allocator_impl.cc",
         "tracking_allocator.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler/xla:__subpackages__",
         "//tensorflow/core:__subpackages__",
         "//tsl:__subpackages__",
@@ -291,7 +291,7 @@ filegroup(
 cc_library(
     name = "numeric_types",
     hdrs = ["numeric_types.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler:__subpackages__",
         "//tensorflow/core:__subpackages__",
     ]),
@@ -333,7 +333,7 @@ cc_library(
 cc_library(
     name = "type_traits",
     hdrs = ["type_traits.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core/framework:__pkg__",
     ]),
     deps = [
@@ -347,7 +347,7 @@ filegroup(
     srcs = [
         "cancellation.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core:__subpackages__"]),
+    visibility = internal_visibility(["//tensorflow/core:__subpackages__"]),
 )
 
 cc_library(
@@ -403,7 +403,7 @@ exports_files(
         "shared_counter.h",
         "tracking_allocator.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/common_runtime:__pkg__",
         "//tensorflow/core/common_runtime/gpu:__pkg__",

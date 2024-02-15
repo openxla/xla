@@ -12,7 +12,7 @@ load(
     "tf_additional_cudnn_plugin_copts",
     "tf_additional_gpu_compilation_copts",
 )
-load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "set_external_visibility", "tsl_copts")
+load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility", "tsl_copts")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
@@ -29,7 +29,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([":friends"]),
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 

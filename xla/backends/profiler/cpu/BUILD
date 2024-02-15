@@ -1,3 +1,4 @@
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
@@ -6,10 +7,10 @@ load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 cc_library(
     name = "host_tracer",
     srcs = ["host_tracer_factory.cc"],
-    visibility = [
+    visibility = internal_visibility([
         "//xla/backends/profiler:__pkg__",
         # copybara:uncomment "//tensorflow/core/profiler:internal",
-    ],
+    ]),
     deps = [
         ":host_tracer_impl",
         "@tsl//tsl/profiler/lib:profiler_factory",
@@ -23,9 +24,9 @@ cc_library(
     srcs = ["host_tracer.cc"],
     hdrs = ["host_tracer.h"],
     copts = tf_profiler_copts(),
-    visibility = [
+    visibility = internal_visibility([
         # copybara:uncomment "//tensorflow/core/profiler:internal",
-    ],
+    ]),
     deps = [
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
@@ -43,10 +44,10 @@ cc_library(
 cc_library(
     name = "python_tracer",
     srcs = ["python_tracer_factory.cc"],
-    visibility = [
+    visibility = internal_visibility([
         "//xla/python:__pkg__",
         # copybara:uncomment "//tensorflow/core/profiler:internal",
-    ],
+    ]),
     deps = [
         ":python_tracer_impl",
         "@tsl//tsl/profiler/lib:profiler_factory",
@@ -61,9 +62,9 @@ cc_library(
     hdrs = ["python_tracer.h"],
     copts = tf_profiler_copts() + ["-fexceptions"],
     features = ["-use_header_modules"],
-    visibility = [
+    visibility = internal_visibility([
         # copybara:uncomment "//tensorflow/core/profiler:internal",
-    ],
+    ]),
     deps = [
         "//xla/python/profiler/internal:python_hooks",
         "@tsl//tsl/platform:errors",
@@ -79,10 +80,10 @@ cc_library(
     name = "metadata_collector",
     srcs = ["metadata_collector.cc"],
     copts = tf_profiler_copts(),
-    visibility = [
+    visibility = internal_visibility([
         "//xla/backends/profiler:__pkg__",
         # copybara:uncomment "//tensorflow/core/profiler:internal",
-    ],
+    ]),
     deps = [
         ":metadata_utils",
         "//xla/service:hlo_proto_cc",
@@ -102,9 +103,9 @@ cc_library(
 cc_library(
     name = "metadata_utils",
     hdrs = ["metadata_utils.h"],
-    visibility = [
+    visibility = internal_visibility([
         # copybara:uncomment "//tensorflow/core/profiler:internal",
-    ],
+    ]),
     deps = [
         "//xla/service:hlo_proto_cc",
         "@tsl//tsl/profiler/convert:xla_op_utils",

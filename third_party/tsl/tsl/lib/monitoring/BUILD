@@ -1,4 +1,4 @@
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
@@ -7,7 +7,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//learning/brain/google/data:__subpackages__",
         "//learning/brain/google/monitoring:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
@@ -94,7 +94,7 @@ cc_library(
 cc_library(
     name = "metric_def",
     hdrs = ["metric_def.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__subpackages__",
     ]),
     deps = [
@@ -109,7 +109,7 @@ cc_library(
     name = "collection_registry",
     srcs = ["collection_registry.cc"],
     hdrs = ["collection_registry.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__subpackages__",
     ]),
     deps = [
@@ -230,7 +230,7 @@ filegroup(
         "timed.h",
         "types.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/monitoring:__pkg__",
     ]),
@@ -251,7 +251,7 @@ filegroup(
         "timed.h",
         "types.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/monitoring:__pkg__",
     ]),
@@ -271,7 +271,7 @@ filegroup(
         "test_utils.h",
         "types.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/monitoring:__pkg__",
     ]),

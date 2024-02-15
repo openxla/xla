@@ -1,4 +1,10 @@
-load("//tsl:tsl.bzl", "if_not_fuchsia", "if_not_windows", "set_external_visibility", "tsl_copts")
+load(
+    "//tsl:tsl.bzl",
+    "if_not_fuchsia",
+    "if_not_windows",
+    "internal_visibility",
+    "tsl_copts",
+)
 load("//tsl:tsl.default.bzl", "filegroup", "tsl_grpc_cc_dependencies")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -7,7 +13,7 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//tensorflow/core/lib/jpeg:__pkg__",
         "//tensorflow/core/platform:__pkg__",
         "//tsl/platform:__pkg__",
@@ -504,7 +510,7 @@ cc_library(
         "nobuilder",
     ],
     textual_hdrs = ["crash_analysis.h"],
-    visibility = set_external_visibility(["//tensorflow:__subpackages__"]),
+    visibility = internal_visibility(["//tensorflow:__subpackages__"]),
     deps = [
         "//tsl/platform",
         "//tsl/platform:protobuf",
@@ -519,7 +525,7 @@ cc_library(
         "nobuilder",
     ],
     textual_hdrs = ["status.h"],
-    visibility = set_external_visibility(["//tensorflow:__subpackages__"]),
+    visibility = internal_visibility(["//tensorflow:__subpackages__"]),
 )
 
 cc_library(
@@ -530,7 +536,7 @@ cc_library(
         "nobuilder",
     ],
     textual_hdrs = ["statusor.h"],
-    visibility = set_external_visibility(["//tensorflow:__subpackages__"]),
+    visibility = internal_visibility(["//tensorflow:__subpackages__"]),
     deps = [
         "//tsl/platform:macros",
         "//tsl/platform:status",
@@ -541,7 +547,7 @@ cc_library(
 bzl_library(
     name = "cuda_build_defs_bzl",
     srcs = ["cuda_build_defs.bzl"],
-    visibility = set_external_visibility(["//tensorflow:__subpackages__"]),
+    visibility = internal_visibility(["//tensorflow:__subpackages__"]),
 )
 
 bzl_library(
@@ -552,7 +558,7 @@ bzl_library(
 # Export source files needed for mobile builds, which do not use granular targets.
 filegroup(
     name = "additional_mobile_srcs_no_runtime",
-    visibility = set_external_visibility(["//tensorflow/core/platform:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core/platform:__pkg__"]),
 )
 
 filegroup(
@@ -573,7 +579,7 @@ filegroup(
         "//tsl/platform/profile_utils:cpu_utils.h",
         "//tsl/platform/profile_utils:i_cpu_utils_helper.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core/platform:__pkg__",
         "//tsl/platform:__pkg__",
     ]),
@@ -592,7 +598,7 @@ filegroup(
         "subprocess.cc",
         "subprocess.h",
     ]),
-    visibility = set_external_visibility(["//tensorflow/core/platform:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core/platform:__pkg__"]),
 )
 
 exports_files(
@@ -604,7 +610,7 @@ exports_files(
             "test.cc",
         ],
     ),
-    visibility = set_external_visibility(["//tensorflow/core/platform:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core/platform:__pkg__"]),
 )
 
 exports_files(
@@ -613,7 +619,7 @@ exports_files(
         "logging.h",
         "test.cc",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/gif:__pkg__",
         "//tensorflow/core/lib/jpeg:__pkg__",

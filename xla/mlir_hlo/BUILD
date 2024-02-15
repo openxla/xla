@@ -1,11 +1,12 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "gentbl_filegroup", "td_library")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//visibility:public"],
+    default_visibility = internal_visibility(["//learning/brain/mlir:mhlo_friends"]),
     licenses = ["notice"],
 )
 

@@ -1,5 +1,5 @@
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
-load("//tsl:tsl.bzl", "set_external_visibility")
 load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
@@ -7,9 +7,9 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
+    default_visibility = internal_visibility([
         "//tensorflow:__subpackages__",
-    ],
+    ]),
     licenses = ["notice"],
 )
 
@@ -17,7 +17,7 @@ cc_library(
     name = "math_util",
     hdrs = ["math_util.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//platforms/performance/tf_sim/utils:__subpackages__",
         "//platforms/xla/service:__subpackages__",
         "//tensorflow:__subpackages__",
@@ -48,7 +48,7 @@ filegroup(
         "math_util.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//tensorflow/core:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 exports_files([

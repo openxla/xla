@@ -4,9 +4,9 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
-load("//tsl/platform:build_config.bzl", "tsl_cc_test")
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
@@ -28,7 +28,7 @@ filegroup(
         "bits.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility(["//tensorflow/core:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 filegroup(
@@ -39,7 +39,7 @@ filegroup(
         "status_test_util.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/core:__pkg__",
     ]),
@@ -51,7 +51,7 @@ filegroup(
         "bitmap_test.cc",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility(["//tensorflow/core:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 filegroup(
@@ -61,7 +61,7 @@ filegroup(
         "bits.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility(["//tensorflow/core:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 filegroup(
@@ -70,7 +70,7 @@ filegroup(
         "status_test_util.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/core:__pkg__",
     ]),

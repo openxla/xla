@@ -14,7 +14,7 @@ load(
     "acl_deps",
     "if_enable_acl",
 )
-load("@tsl//tsl:tsl.bzl", "tf_openmp_copts", "tsl_copts")
+load("@tsl//tsl:tsl.bzl", "internal_visibility", "tf_openmp_copts", "tsl_copts")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/mkl:build_defs.bzl",
@@ -26,7 +26,7 @@ load(":build_defs.bzl", "runtime_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -105,7 +105,7 @@ filegroup(
         "runtime_matmul_s32.cc",
         "runtime_fork_join.cc",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 filegroup(
@@ -132,7 +132,7 @@ filegroup(
         "runtime_lightweight_check.h",
         "runtime_matmul.h",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 cc_library(

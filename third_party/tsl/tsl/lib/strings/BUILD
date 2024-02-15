@@ -1,4 +1,4 @@
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
@@ -11,7 +11,7 @@ cc_library(
     name = "proto_serialization",
     srcs = ["proto_serialization.cc"],
     hdrs = ["proto_serialization.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler/xla/pjrt:__subpackages__",
         "//tensorflow/compiler/xla/python:__pkg__",
         "//tensorflow/compiler/xla/service:__pkg__",
@@ -37,7 +37,7 @@ filegroup(
         "proto_serialization.cc",
         "proto_serialization.h",
     ],
-    visibility = ["//tensorflow/core/lib/strings:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/lib/strings:__pkg__"]),
 )
 
 filegroup(
@@ -45,7 +45,7 @@ filegroup(
     srcs = [
         "proto_serialization.h",
     ],
-    visibility = ["//tensorflow/core/lib/strings:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/lib/strings:__pkg__"]),
 )
 
 filegroup(
@@ -53,7 +53,7 @@ filegroup(
     srcs = [
         "proto_serialization.h",
     ],
-    visibility = ["//tensorflow/core/lib/strings:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/lib/strings:__pkg__"]),
 )
 
 filegroup(
@@ -61,5 +61,5 @@ filegroup(
     srcs = [
         "proto_serialization.h",
     ],
-    visibility = ["//tensorflow/core/lib/strings:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/lib/strings:__pkg__"]),
 )

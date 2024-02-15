@@ -1,6 +1,7 @@
 # Placeholder: load py_proto_library
 load("//xla:xla.bzl", "xla_cc_test", "xla_py_proto_library")
 load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/platform:build_config.bzl",
@@ -10,7 +11,7 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = internal_visibility(["//xla:internal"]),
     licenses = ["notice"],
 )
 
@@ -67,7 +68,7 @@ filegroup(
         "cpu_function_runtime.cc",
         "executable_run_options.cc",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 filegroup(
@@ -77,7 +78,7 @@ filegroup(
         "executable_run_options.h",
         "types.h",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 tf_proto_library(
@@ -105,7 +106,7 @@ tf_proto_library(
 cc_library(
     name = "bit_cast",
     hdrs = ["bit_cast.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":types",
         "@com_google_absl//absl/base",
@@ -135,7 +136,7 @@ cc_library(
         "comparison_util.h",
         "primitive_util.h",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":shape_util",
         ":statusor",
@@ -165,14 +166,14 @@ xla_cc_test(
 cc_library(
     name = "compiler_macros",
     hdrs = ["compiler_macros.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 cc_library(
     name = "ef57",
     srcs = ["ef57.cc"],
     hdrs = ["ef57.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":compiler_macros",
         "@com_google_absl//absl/types:span",
@@ -202,7 +203,7 @@ cc_library(
     hdrs = [
         "execution_options_util.h",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":debug_options_flags",
         ":xla_proto_cc",
@@ -217,7 +218,7 @@ cc_library(
     hdrs = [
         "frontend_attributes.h",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = ["//xla/hlo/ir:hlo"],
 )
 
@@ -225,7 +226,7 @@ cc_library(
     name = "test",
     testonly = 1,
     hdrs = ["test.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:test",
@@ -236,7 +237,7 @@ cc_library(
     name = "types",
     hdrs = ["types.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
@@ -261,7 +262,7 @@ cc_library(
     name = "service_interface",
     srcs = [],
     hdrs = ["service_interface.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":status",
         ":xla_data_proto_cc",
@@ -680,14 +681,14 @@ cc_library(
 cc_library(
     name = "error_spec",
     hdrs = ["error_spec.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 cc_library(
     name = "literal_comparison",
     srcs = ["literal_comparison.cc"],
     hdrs = ["literal_comparison.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":error_spec",
         ":literal",
@@ -736,7 +737,7 @@ cc_library(
     name = "array",
     srcs = ["array.cc"],
     hdrs = ["array.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":status",
         ":types",
@@ -782,7 +783,7 @@ xla_cc_test(
 cc_library(
     name = "array3d",
     hdrs = ["array3d.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":array",
         ":types",
@@ -804,7 +805,7 @@ xla_cc_test(
 cc_library(
     name = "array4d",
     hdrs = ["array4d.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":array",
         ":array2d",
@@ -842,7 +843,7 @@ cc_library(
     name = "packed_literal_reader",
     srcs = ["packed_literal_reader.cc"],
     hdrs = ["packed_literal_reader.h"],
-    visibility = [":internal"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":literal",
         ":shape_util",
@@ -862,7 +863,7 @@ cc_library(
     name = "test_helpers",
     testonly = 1,
     hdrs = ["test_helpers.h"],
-    visibility = [":internal"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":statusor",
         ":types",
@@ -877,7 +878,7 @@ cc_library(
     name = "text_literal_reader",
     srcs = ["text_literal_reader.cc"],
     hdrs = ["text_literal_reader.h"],
-    visibility = [":internal"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":literal",
         ":shape_util",
@@ -914,7 +915,7 @@ cc_library(
     name = "text_literal_writer",
     srcs = ["text_literal_writer.cc"],
     hdrs = ["text_literal_writer.h"],
-    visibility = [":internal"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":literal",
         ":shape_util",
@@ -1098,7 +1099,7 @@ cc_library(
     ],
     hdrs = ["debug_options_flags.h"],
     copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]),
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps =
         [
             ":parse_flags_from_env",
@@ -1119,7 +1120,7 @@ cc_library(
     srcs = ["cpu_function_runtime.cc"],
     hdrs = ["cpu_function_runtime.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         "@com_google_absl//absl/base:dynamic_annotations",
     ],
@@ -1223,7 +1224,7 @@ cc_library(
 # py_proto_library(
 #     name = "xla_data_proto_py_pb2",
 #     api_version = 2,
-#     visibility = [":friends"],
+#     visibility = internal_visibility([":friends"]),
 #     deps = [":xla_data_proto"],
 # )
 #
@@ -1232,7 +1233,7 @@ cc_library(
 #     testonly = 0,
 #     api_version = 2,
 #     compatible_with = ["//buildenv/target:non_prod"],
-#     visibility = [":friends"],
+#     visibility = internal_visibility([":friends"]),
 #     deps = [":xla_proto"],
 # )
 # copybara:uncomment_end

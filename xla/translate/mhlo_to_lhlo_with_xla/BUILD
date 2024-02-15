@@ -2,11 +2,12 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("//xla:xla.bzl", "xla_cc_binary")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//visibility:public"],
+    default_visibility = internal_visibility(["//learning/brain/mlir:xla_friends"]),
     licenses = ["notice"],
 )
 

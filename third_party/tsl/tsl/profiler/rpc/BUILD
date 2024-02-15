@@ -1,15 +1,15 @@
+load("//tsl:tsl.bzl", "internal_visibility")
+load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//tsl/profiler/builds:build_config.bzl",
     "tf_profiler_copts",
     "tf_profiler_pybind_cc_library_wrapper",
 )
-load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
-load("//tsl:tsl.bzl", "set_external_visibility")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility(["//tsl/profiler:internal"]),
+    default_visibility = internal_visibility(["//tsl/profiler:internal"]),
     licenses = ["notice"],
 )
 
@@ -19,7 +19,7 @@ cc_library(
     srcs = ["profiler_service_impl.cc"],
     hdrs = ["profiler_service_impl.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core/data/service:__pkg__",
         "//tensorflow/core/distributed_runtime/rpc:__pkg__",
         "//tensorflow/core/profiler/rpc:__pkg__",
@@ -53,7 +53,7 @@ cc_library(
 tf_profiler_pybind_cc_library_wrapper(
     name = "profiler_server_for_pybind",
     actual = ":profiler_server_impl",
-    visibility = ["//tensorflow/python/profiler/internal:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/python/profiler/internal:__pkg__"]),
 )
 
 cc_library(
@@ -61,7 +61,7 @@ cc_library(
     srcs = ["profiler_server.cc"],
     hdrs = ["profiler_server.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler/xla:__subpackages__",
         "//tensorflow/core/profiler/rpc:__pkg__",
         "//tensorflow/python:__pkg__",

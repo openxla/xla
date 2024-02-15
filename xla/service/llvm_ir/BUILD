@@ -2,12 +2,13 @@
 #    Libraries for helping construct LLVM IR for XLA backends.
 
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 

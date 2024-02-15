@@ -20,7 +20,7 @@ load(
     "if_rocm",
     "if_rocm_is_configured",
 )
-load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu")
+load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
 load(
     "@tsl//tsl/platform:build_config.bzl",
@@ -35,7 +35,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -6487,13 +6487,13 @@ filegroup(
         "custom_call_status.h",
         "custom_call_status_internal.h",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 filegroup(
     name = "custom_call_status_srcs",
     srcs = ["custom_call_status.cc"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 # Internal version that exposes internal details and private interfaces. For
@@ -6504,10 +6504,10 @@ cc_library(
         "custom_call_status_internal.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = [
+    visibility = internal_visibility([
         ":__subpackages__",
         "//tensorflow/compiler/tf2xla:__pkg__",
-    ],
+    ]),
     deps = [
         ":custom_call_status",
         "@com_google_absl//absl/strings",

@@ -21,7 +21,14 @@ load(
     "if_rocm_is_configured",
     "rocm_copts",
 )
-load("@tsl//tsl:tsl.bzl", "if_google", "if_nccl", "tsl_copts", "tsl_gpu_library")
+load(
+    "@tsl//tsl:tsl.bzl",
+    "if_google",
+    "if_nccl",
+    "internal_visibility",
+    "tsl_copts",
+    "tsl_gpu_library",
+)
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/platform:build_config.bzl",
@@ -40,7 +47,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 

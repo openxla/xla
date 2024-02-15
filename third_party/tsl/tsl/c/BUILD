@@ -1,9 +1,9 @@
 # Description:
 # C API for TensorFlow, for use by client language bindings.
 
+load("//tsl:tsl.bzl", "internal_visibility", "tsl_copts", "tsl_gpu_library")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
-load("//tsl:tsl.bzl", "tsl_copts", "tsl_gpu_library")
 
 # buildifier: disable=same-origin-load
 load("//tsl:tsl.default.bzl", "filegroup")
@@ -21,7 +21,7 @@ filegroup(
     srcs = [
         "tsl_status.h",
     ],
-    visibility = ["//tensorflow:__subpackages__"],
+    visibility = internal_visibility(["//tensorflow:__subpackages__"]),
 )
 
 filegroup(
@@ -35,9 +35,9 @@ filegroup(
             "*test*",
         ],
     ),
-    visibility = [
+    visibility = internal_visibility([
         "//tensorflow/c:__subpackages__",
-    ],
+    ]),
 )
 
 tsl_gpu_library(
@@ -111,7 +111,7 @@ tsl_gpu_library(
 filegroup(
     name = "tsl_status_internal_headers",
     srcs = ["tsl_status_internal.h"],
-    visibility = [
+    visibility = internal_visibility([
         "//tensorflow/c:__subpackages__",
-    ],
+    ]),
 )

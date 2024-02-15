@@ -11,7 +11,7 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load("@tsl//tsl:tsl.bzl", "tsl_copts")
+load("@tsl//tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
@@ -25,7 +25,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
