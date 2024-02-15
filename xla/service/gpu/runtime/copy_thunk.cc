@@ -40,7 +40,8 @@ absl::Status DeviceToDeviceCopyThunk::ExecuteOnStream(
       params.buffer_allocations->GetDeviceAddress(destination_buffer_);
   se::DeviceMemoryBase source_data =
       params.buffer_allocations->GetDeviceAddress(source_buffer_);
-  VLOG(3) << "Memcpy D2D";
+  VLOG(3) << "Memcpy D2D of size " << mem_size_ << " from "
+      << source_data.opaque() << " to " << destination_data.opaque();
   params.stream->ThenMemcpy(&destination_data, source_data, mem_size_);
   return absl::OkStatus();
 }
@@ -63,7 +64,8 @@ absl::Status DeviceToHostCopyThunk::ExecuteOnStream(
   se::DeviceMemoryBase source_data =
       params.buffer_allocations->GetDeviceAddress(source());
    void *cpu_dst = destination_data.opaque();
-  VLOG(3) << "Memcpy D2H for memory offload";
+  VLOG(3) << "Memcpy D2H for memory offload from "
+          << source_data.opaque() << " to " << cpu_dst;
   params.stream->ThenMemcpy(cpu_dst, source_data, size_bytes());
   return absl::OkStatus();
 }
@@ -86,7 +88,8 @@ absl::Status HostToDeviceCopyThunk::ExecuteOnStream(
   se::DeviceMemoryBase source_data =
       params.buffer_allocations->GetDeviceAddress(source());
   void *cpu_src = source_data.opaque();
-  VLOG(3) << "Memcpy H2D for memory offload";
+  VLOG(3) << "Memcpy H2D for memory offload from " << cpu_src
+          << " to " << destination_data.opaque();
   params.stream->ThenMemcpy(&destination_data, cpu_src, size_bytes());
   return absl::OkStatus();
 }

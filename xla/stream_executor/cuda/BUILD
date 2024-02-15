@@ -602,6 +602,7 @@ cuda_only_cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:plugin_registry",
         "//xla/stream_executor:stream_executor_internal",
+        "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor/gpu:gpu_collectives_header",
         "//xla/stream_executor/gpu:gpu_command_buffer",
         "//xla/stream_executor/gpu:gpu_diagnostics_header",

@@ -3676,6 +3676,31 @@ xla_test(
 )
 
 xla_cc_test(
+    name = "gpu_offloading_test",
+    srcs = ["gpu_offloading_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        ":horizontal_loop_fusion",
+        ":metrics",
+       "//xla/hlo/utils:hlo_matchers",
+       "//xla/service:hlo_rematerialization_test_utils",
+        "//xla:autotune_results_proto_cc",
+        "//xla/service:gpu_plugin",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/service:xla_debug_info_manager",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/base:log_severity",
+        "@com_google_absl//absl/log:scoped_mock_log",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/lib/core:status_test_util",
+    ],
+)
+
+
+xla_cc_test(
     name = "auto_sharding_gpu_compiler_test",
     srcs = ["auto_sharding_gpu_compiler_test.cc"],
     tags = tf_cuda_tests_tags() + ["no_oss"],  # TODO(b/277355322): Make autosharding work in OSS

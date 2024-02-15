@@ -2743,8 +2743,12 @@ static std::optional<GlobalDeviceId> DeviceConstraint(
 absl::Status IrEmitterUnnested::EmitCopyStartThunk(
     const HloCopyStartInstruction* instr) {
 
+  // copy-start has a tuple shape: {host, device, context},
+  // or {device, host, context}.
+  // Only the destination shape is needed to get the output buffer.
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice dst_buffer,
-                      GetAllocationSliceForHlo(instr, {}));
+                      GetAllocationSliceForHlo(instr,
+                      /*ShapeIndex=*/{0}));
 
   const HloInstruction* src = instr->operand(0);
   const Shape& input_shape = src->shape();
