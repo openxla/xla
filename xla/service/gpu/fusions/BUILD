@@ -409,6 +409,8 @@ cc_library(
         "//xla/service/gpu:reduction_utils",
         "//xla/service/gpu:target_util",
         "//xla/service/gpu:thunk",
+        "//xla/service/gpu/model:indexing_analysis",
+        "//xla/service/gpu/model:indexing_map",
         "//xla/service/gpu/runtime:kernel_thunk",
         "//xla/service/llvm_ir:fused_ir_emitter",
         "//xla/service/llvm_ir:ir_array",
@@ -433,6 +435,26 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "reduction_test",
+    srcs = ["reduction_test.cc"],
+    deps = [
+        ":fusions",
+        ":reduction",
+        "//xla:status_macros",
+        "//xla:statusor",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu/model:indexing_test_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
     ],
 )
