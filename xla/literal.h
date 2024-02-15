@@ -1051,14 +1051,14 @@ class MutableLiteralBase : public LiteralBase {
       return *this;
     }
 
-    MaybeOwningShapePtr& operator=(MaybeOwningShapePtr&& other) {
+    MaybeOwningShapePtr& operator=(MaybeOwningShapePtr&& other) noexcept {
       using std::swap;
       swap(ptr_and_owning_bit_, other.ptr_and_owning_bit_);
       return *this;
     }
 
     MaybeOwningShapePtr(const MaybeOwningShapePtr&) = delete;
-    MaybeOwningShapePtr(MaybeOwningShapePtr&& other)
+    MaybeOwningShapePtr(MaybeOwningShapePtr&& other) noexcept
         : ptr_and_owning_bit_(other.ptr_and_owning_bit_) {
       other.ptr_and_owning_bit_ = 0;
     }
@@ -1132,13 +1132,13 @@ class Literal : public MutableLiteralBase {
   // of literals which can be expensive.
   Literal(const Literal& other) = delete;
   Literal& operator=(const Literal& other) = delete;
-  Literal(Literal&& other);
+  Literal(Literal&& other) noexcept;
   // 'allocate_arrays' indicates whether to allocate memory for the arrays in
   // the shape. If false, buffer pointers inside of the Literal::Pieces are set
   // to nullptr.
   Literal(const Shape& shape, bool allocate_arrays,
           ArrayValueState leaf_array_value_state = ArrayValueState::kKnown);
-  Literal& operator=(Literal&& other);
+  Literal& operator=(Literal&& other) noexcept;
 
   // Similar to CopyFrom, but with move semantics. The subshape of this literal
   // rooted at 'dest_shape_index' must be *equal* to the shape 'src_literal'
