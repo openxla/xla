@@ -70,7 +70,8 @@ absl::StatusOr<Shape> GetBatchRowColumnShape(
 absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
                                                     int64_t operand_idx);
 
-// Returns true if the matrices are too small to benefit from cublas/triton.
+// Returns true if the sum of the sizes of the unbatched operand matrices
+// for the dot is smaller than the given threshold.
 absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
     const HloInstruction& dot, int64_t threshold);
 

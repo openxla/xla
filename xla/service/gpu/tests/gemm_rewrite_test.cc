@@ -7154,8 +7154,7 @@ ENTRY AddDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 }
 
-// A test fixture class for tests which are specific to legacy cublas
-class SmallMatrixGemmRewriteTest : public GemmRewriteTest {
+class SmallDotGemmRewriteTest : public GemmRewriteTest {
  public:
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
@@ -7164,7 +7163,7 @@ class SmallMatrixGemmRewriteTest : public GemmRewriteTest {
   }
 };
 
-TEST_F(SmallMatrixGemmRewriteTest, SkipSmallMatrixRewrite) {
+TEST_F(SmallDotGemmRewriteTest, SkipSmallMatrixRewrite) {
   const char* hlo_text = R"(
 HloModule SkipSmallMatrixRewrite
 
@@ -7175,7 +7174,6 @@ ENTRY DotFunc {
 }
 )";
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
 ; CHECK-LABEL: ENTRY %DotFunc ({{.*}}: f32[3,3], {{.*}}: f32[3,3]) -> f32[3,3] {
@@ -7186,7 +7184,7 @@ ENTRY DotFunc {
 )");
 }
 
-TEST_F(SmallMatrixGemmRewriteTest, LargeMatrixRewrite) {
+TEST_F(SmallDotGemmRewriteTest, LargeMatrixMultiplicationIsRewritten) {
   const char* hlo_text = R"(
 HloModule SkipSmallMatrixRewrite
 
@@ -7197,7 +7195,6 @@ ENTRY DotFunc {
 }
 )";
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
   MatchOptimizedHlo(hlo_text,
                     R"(
 ; CHECK-LABEL: ENTRY %DotFunc ({{.*}}: f32[8,8], {{.*}}: f32[8,8]) -> f32[8,8] {

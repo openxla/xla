@@ -234,7 +234,7 @@ HloModule DotFuncModule
 ENTRY DotFunc {
   x = f32[100,30,3] parameter(0)
   y = f32[100,3,3] parameter(1)
-  ROOT dot_a = f32[100,30,3] dot(x, y), lhs_contracting_dims={2}, rhs_contracting_dims={1}, lhs_batch_dims={0}, rhs_batch_dims={0}
+  ROOT dot = f32[100,30,3] dot(x, y), lhs_contracting_dims={2}, rhs_contracting_dims={1}, lhs_batch_dims={0}, rhs_batch_dims={0}
 }
 
 )";
@@ -252,7 +252,7 @@ HloModule DotFuncModule
 ENTRY DotFunc {
   x = f32[50,2] parameter(0)
   y = f32[2,2] parameter(1)
-  ROOT dot.1 = f32[50,2] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT dot = f32[50,2] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 
 )";
@@ -270,7 +270,7 @@ HloModule DotFuncModule
 ENTRY DotFunc {
   x = f32[2,2] parameter(0)
   y = f32[2,50] parameter(1)
-  ROOT dot.1 = f32[2,50] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT dot = f32[2,50] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 
 )";
@@ -288,7 +288,7 @@ HloModule DotFuncModule
 ENTRY DotFunc {
   x = f32[4,16] parameter(0)
   y = f32[16,4] parameter(1)
-  ROOT dot.1 = f32[4,4] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT dot = f32[4,4] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 
 )";

@@ -1099,7 +1099,7 @@ ENTRY e {
 }
 
 // A test fixture class for testing the threshold for small matrices.
-class SmallMatrixGemmRewriterTritonTest : public GemmRewriterTritonTest {
+class SmallDotGemmRewriterTritonTest : public GemmRewriterTritonTest {
  public:
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options =
@@ -1109,7 +1109,7 @@ class SmallMatrixGemmRewriterTritonTest : public GemmRewriterTritonTest {
   }
 };
 
-TEST_F(SmallMatrixGemmRewriterTritonTest, SkipSmallMatrixRewrite) {
+TEST_F(SmallDotGemmRewriterTritonTest, SkipSmallMatrixRewrite) {
   auto module = ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -1117,7 +1117,7 @@ ENTRY e {
   p0 = f16[2,10] parameter(0)
   p1 = f16[10,2] parameter(1)
   ROOT d = f16[10,10] dot(p0, p1),
-    lhs_contracting_dims={0}, rhs_contracting_dims={1}, metadata={op_name="foo"}
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
 })")
                     .value();
 
@@ -1131,7 +1131,7 @@ ENTRY e {
 })");
 }
 
-TEST_F(SmallMatrixGemmRewriterTritonTest, LargeMatrixRewrite) {
+TEST_F(SmallDotGemmRewriterTritonTest, LargeMatrixMultiplicationIsRewritten) {
   auto module = ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -1139,7 +1139,7 @@ ENTRY e {
   p0 = f16[2,18] parameter(0)
   p1 = f16[50,2] parameter(1)
   ROOT d = f16[18,50] dot(p0, p1),
-    lhs_contracting_dims={0}, rhs_contracting_dims={1}, metadata={op_name="foo"}
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
 })")
                     .value();
 

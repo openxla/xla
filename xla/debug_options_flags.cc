@@ -1579,7 +1579,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       int64_setter_for(&DebugOptions::set_xla_gpu_gemm_rewrite_size_threshold),
       debug_options->xla_gpu_gemm_rewrite_size_threshold(),
       "Threshold to rewrite matmul to cuBLAS or Triton "
-      "(total number of elements)."));
+      "(minumum combined number of elements of both matrices "
+      "in non-batch dimensions to be considered for a rewrite)."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
