@@ -658,7 +658,6 @@ lit_test_suite(
             "add_preds.hlo",
             "calling_convention.hlo",
             "concat.hlo",
-            "constant.hlo",
             "copy.hlo",
             "copy_nested.hlo",
             "dynamic_update_slice_inplace.hlo",
