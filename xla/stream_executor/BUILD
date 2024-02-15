@@ -51,7 +51,7 @@ package_group(
 # an implementation detail of StreamExecutor and has internal visibility.
 #
 # TODO(ezhulenev): Remove from public API headers that are exported via standalone public libraries,
-# e.g. `platform` and `multi_platform_manager` should be added with an explicit dependency.
+# e.g. `platform` and `platform_manager` should be added with an explicit dependency.
 filegroup(
     name = "stream_executor_api_headers",
     srcs = [
@@ -73,6 +73,7 @@ filegroup(
         "multi_platform_manager.h",
         "numeric_options.h",
         "platform.h",
+        "platform_manager.h",
         "scratch_allocator.h",
         "stream.h",
         "stream_executor.h",
@@ -241,9 +242,9 @@ cc_library(
 )
 
 cc_library(
-    name = "multi_platform_manager",
-    srcs = ["multi_platform_manager.cc"],
-    hdrs = ["multi_platform_manager.h"],
+    name = "platform_manager",
+    srcs = ["platform_manager.cc"],
+    hdrs = ["platform_manager.h"],
     deps = [
         ":platform",
         "//xla/stream_executor/platform",
@@ -257,6 +258,15 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
+)
+
+# TODO(hebecker): Remove compatibility target when all users have been migrated to :platform_manager
+cc_library(
+    name = "multi_platform_manager",
+    hdrs = ["multi_platform_manager.h"],
+    deprecation = "The type MultiPlatformManager is being renamed to PlatformManager. " +
+                  "Use target :platform_manager instead.",
+    deps = [":platform_manager"],
 )
 
 cc_library(
@@ -612,8 +622,8 @@ cc_library(
         ":kernel",
         ":kernel_spec",
         ":launch_dim",
-        ":multi_platform_manager",
         ":platform",
+        ":platform_manager",
         ":scratch_allocator",
         ":stream_executor_headers",
         ":stream_executor_pimpl",
@@ -694,7 +704,7 @@ cc_library(
     deps = [
         ":dnn",
         ":event",
-        ":multi_platform_manager",
+        ":platform_manager",
         ":scratch_allocator",
         ":stream_executor",
         "//xla/stream_executor/cuda:cuda_platform_id",
