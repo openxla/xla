@@ -7,16 +7,16 @@
 load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
+    "//tsl/platform:build_config.bzl",
+    "tsl_cc_test",
+)
+load(
     "//tsl/platform:build_config_root.bzl",
     "if_static",
 )
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
-)
-load(
-    "//tsl/platform:build_config.bzl",
-    "tsl_cc_test",
 )
 
 package(
@@ -374,6 +374,56 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "serving_device_selector",
+    srcs = ["serving_device_selector.cc"],
+    hdrs = ["serving_device_selector.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tsl/platform:logging",
+        "@com_google_absl//absl/container:fixed_array",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "serving_device_selector_policies",
+    srcs = ["serving_device_selector_policies.cc"],
+    hdrs = ["serving_device_selector_policies.h"],
+    features = ["-layering_check"],
+    deps = [
+        ":serving_device_selector",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "scheduling_metrics",
+    srcs = ["scheduling_metrics.cc"],
+    hdrs = ["scheduling_metrics.h"],
+    deps = [":scheduling_metrics_storage"],
+)
+
+cc_library(
+    name = "scheduling_metrics_test_util",
+    srcs = ["scheduling_metrics_test_util.cc"],
+    hdrs = ["scheduling_metrics_test_util.h"],
+    deps = [":scheduling_metrics_storage"],
+)
+
+cc_library(
+    name = "real_time_in_memory_metric",
+    hdrs = ["real_time_in_memory_metric.h"],
+)
+
+cc_library(
+    name = "scheduling_metrics_storage",
+    srcs = ["scheduling_metrics_storage.cc"],
+    hdrs = ["scheduling_metrics_storage.h"],
+    deps = [":real_time_in_memory_metric"],
+)
+
 tsl_cc_test(
     name = "cancellation_test",
     size = "small",
@@ -437,5 +487,15 @@ tsl_cc_test(
         "//tsl/platform:test_main",
         "//tsl/protobuf:error_codes_proto_impl_cc",
         "//tsl/util:device_name_utils",
+    ],
+)
+
+tsl_cc_test(
+    name = "real_time_in_memory_metric_test",
+    srcs = ["real_time_in_memory_metric_test.cc"],
+    deps = [
+        ":real_time_in_memory_metric",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )
