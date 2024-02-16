@@ -25,7 +25,6 @@ load(
     "tf_stream_executor_deps",
     "tf_windows_aware_platform_deps",
     "tsl_cc_test",
-    "tsl_grpc_credentials_deps",
     "tsl_protobuf_deps",
 )
 load("//tsl/platform:build_config_root.bzl", "if_static")
@@ -650,7 +649,6 @@ exports_files(
         "file_system.h",
         "file_system_helper.cc",
         "file_system_helper.h",
-        "grpc_credentials.h",
         "host_info.h",
         "human_readable_json.h",
         "init_main.h",
@@ -1056,13 +1054,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
     ] + tf_error_logging_deps(),
-)
-
-cc_library(
-    name = "grpc_credentials",
-    compatible_with = get_compatible_with_portable(),
-    textual_hdrs = ["grpc_credentials.h"],
-    deps = tsl_grpc_credentials_deps(),
 )
 
 cc_library(
