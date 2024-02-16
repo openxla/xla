@@ -43,7 +43,7 @@ class LhloDialectEmitter : public xla::ConstDfsHloVisitorWithDefault {
  public:
   // Initializes internal data structures. It must be called before calling any
   // of the visitors.
-  tsl::Status Initialize(
+  absl::Status Initialize(
       std::vector<const xla::BufferAllocation*>* ordered_allocations);
 
   LhloDialectEmitter(const xla::BufferAssignment& assignment,
@@ -154,8 +154,8 @@ class LhloDialectEmitter : public xla::ConstDfsHloVisitorWithDefault {
   tsl::StatusOr<lmhlo::CommandBufferOp> EmitCommandBufferOp(
       const xla::HloInstruction* instr);
 
-  tsl::Status ImportAsLmhloRegion(xla::HloComputation* computation,
-                                  mlir::Region* region);
+  absl::Status ImportAsLmhloRegion(xla::HloComputation* computation,
+                                   mlir::Region* region);
 
   // Since LMHLO dialect does not define token types, this enum controls how
   // token operand/results from XLA:HLO are lowered to MLIR.
@@ -171,11 +171,11 @@ class LhloDialectEmitter : public xla::ConstDfsHloVisitorWithDefault {
   // operands of the instruction are converted to MLIR. The function returns the
   // actual number of operands and results generated for MLIR in `num_arguments`
   // and `num_results`.
-  tsl::Status CreateOperands(const xla::HloInstruction* instr,
-                             std::optional<int64_t> num_operands,
-                             TokenLoweringMode token_mode,
-                             SmallVectorImpl<Value>& operands,
-                             size_t& num_arguments, size_t& num_results);
+  absl::Status CreateOperands(const xla::HloInstruction* instr,
+                              std::optional<int64_t> num_operands,
+                              TokenLoweringMode token_mode,
+                              SmallVectorImpl<Value>& operands,
+                              size_t& num_arguments, size_t& num_results);
 
   template <typename OpType>
   tsl::StatusOr<OpType> CreateOpWithoutAttrs(
@@ -214,11 +214,11 @@ class LhloDialectEmitter : public xla::ConstDfsHloVisitorWithDefault {
   static mlir::DenseIntElementsAttr GetLayoutAttribute(
       const xla::Layout& layout, Builder* builder);
 
-  tsl::Status DefaultAction(const xla::HloInstruction* instr) final;
+  absl::Status DefaultAction(const xla::HloInstruction* instr) final;
 
   // Computation parameters don't need any specific handling when they are
   // visited, they are already processed when we enter a new computation.
-  tsl::Status HandleParameter(const xla::HloInstruction* instr) final {
+  absl::Status HandleParameter(const xla::HloInstruction* instr) final {
     return ::tsl::OkStatus();
   }
 
@@ -226,11 +226,11 @@ class LhloDialectEmitter : public xla::ConstDfsHloVisitorWithDefault {
   // `current_shape`, and reconstruct a matching lmhlo::TupleOp.
   // Each leaf node is converted to an std.view op with corresponding offsets.
   // If no tuple presents, it simply returns a view of the buffer.
-  tsl::Status GetOrCreateViewImpl(const xla::HloInstruction* instr,
-                                  const xla::Shape& current_shape,
-                                  xla::ShapeIndex* current_shape_index,
-                                  SmallVectorImpl<Value>* values,
-                                  TokenLoweringMode token_mode);
+  absl::Status GetOrCreateViewImpl(const xla::HloInstruction* instr,
+                                   const xla::Shape& current_shape,
+                                   xla::ShapeIndex* current_shape_index,
+                                   SmallVectorImpl<Value>* values,
+                                   TokenLoweringMode token_mode);
 
   // Helper function to create view/tuple of views to a buffer for a given
   // instruction result. `result_subset` can be used to for instructions that
@@ -238,7 +238,7 @@ class LhloDialectEmitter : public xla::ConstDfsHloVisitorWithDefault {
   // tuple elements. Note that if needed, this can be extended to take a list of
   // ShapeIndex values in case we need finer control on what elements of the
   // output tuple to be converted to MLIR.
-  tsl::Status GetOrCreateView(
+  absl::Status GetOrCreateView(
       const xla::HloInstruction* instr, SmallVectorImpl<Value>* values,
       const xla::ShapeIndex& result_subset = {},
       TokenLoweringMode token_mode = TokenLoweringMode::kFailToLower);
@@ -333,7 +333,7 @@ class LhloDialectEmitter : public xla::ConstDfsHloVisitorWithDefault {
 // that ops inside the bodies of fusions are not included (but all fusions are).
 // Store buffer allocations from buffer assignment in the order of inputs to the
 // LMHLO entry function.
-tsl::Status HloToLhloModule(
+absl::Status HloToLhloModule(
     const xla::BufferAssignment& assignment, const xla::HloModule& hlo_module,
     ModuleOp module,
     std::vector<const xla::BufferAllocation*>* ordered_allocation,
