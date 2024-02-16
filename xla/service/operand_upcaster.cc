@@ -64,8 +64,7 @@ bool OperandUpcaster::InstructionMatchesPattern(HloInstruction* instruction) {
   }
 
   // Always expand packed nibble precision mode.
-  if (absl::c_count(instruction->precision_config().operand_precision(),
-                    PrecisionConfig::PACKED_NIBBLE) == 2) {
+  if (count_packed_nibbles(instruction->precision_config()) == 2) {
     return true;
   }
 
@@ -81,9 +80,8 @@ bool OperandUpcaster::InstructionMatchesPattern(HloInstruction* instruction) {
 
 absl::StatusOr<HloInstruction*> OperandUpcaster::ExpandInstruction(
     HloInstruction* instruction) {
-  const bool packed_nibble =
-      absl::c_count(instruction->precision_config().operand_precision(),
-                    PrecisionConfig::PACKED_NIBBLE) == 2;
+  const bool packed_nibble = 
+      count_packed_nibbles(instruction->precision_config()) == 2;
   auto type = instruction->shape().element_type();
 
   // If the precision is packed nibble create clone the linear op for each
@@ -121,10 +119,7 @@ absl::StatusOr<HloInstruction*> OperandUpcaster::ExpandInstruction(
     HloInstruction* linear_n0 =
         instruction->parent()->AddInstruction(instruction->CloneWithNewOperands(
             instruction->shape(), {lhs_n0, rhs_n0}));
-    linear_n0->mutable_precision_config()->mutable_operand_precision()->Set(
-        0, PrecisionConfig::DEFAULT);
-    linear_n0->mutable_precision_config()->mutable_operand_precision()->Set(
-        1, PrecisionConfig::DEFAULT);
+    *linear_n0->mutable_precision_config() = PrecisionToPrecisionConfig(PrecisionConfig::DEFAULT);
     HloInstruction* linear_n1 =
         instruction->parent()->AddInstruction(linear_n0->CloneWithNewOperands(
             instruction->shape(), {lhs_n1, rhs_n1}));

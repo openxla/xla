@@ -91,11 +91,11 @@ class ForwardPassConvolution_3x3x256_256_OutputZ_Iota : public ConvolutionTest {
     auto lhs = ConstantR4FromArray4D<T>(&builder, *alhs);
     auto rhs = ConstantR4FromArray4D<T>(&builder, *arhs);
     PrecisionConfig precision;
+    precision.add_operand_precision(PrecisionConfig::HIGHEST);
+    precision.add_operand_precision(PrecisionConfig::DEFAULT);
     // The left hand side of the convolution is numbers between 0 and 2304 which
     // requires at least 11 mantissa bits and the DEFAULT precision config is
     // allowed to round to bfloat16 which only has 7 mantissa bits.
-    precision.add_operand_precision(PrecisionConfig::HIGHEST);
-    precision.add_operand_precision(PrecisionConfig::DEFAULT);
     Conv(lhs, rhs, {1, 1}, Padding::kValid, /*feature_group_count=*/1,
          /*batch_group_count=*/1, &precision);
 

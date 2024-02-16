@@ -143,9 +143,7 @@ HloInstruction* ShuffleWithinEachPartitionUsingOneHot(HloInstruction* hlo,
   DotDimensionNumbers dot_dnums;
   dot_dnums.add_lhs_contracting_dimensions(hlo->shape().rank() - 1);
   dot_dnums.add_rhs_contracting_dimensions(0);
-  PrecisionConfig precision_config;
-  precision_config.mutable_operand_precision()->Resize(
-      2, PrecisionConfig::DEFAULT);
+  PrecisionConfig precision_config = PrecisionConfigDEFAULT();
   HloInstruction* dot = b->AddInstruction(HloInstruction::CreateDot(
       hlo->shape(), hlo, shuffle_one_hot, dot_dnums, precision_config));
   return dot;

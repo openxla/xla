@@ -92,6 +92,11 @@ absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
     se::OwningScratchAllocator<> scratch_allocator(
         buffer_allocations.device_ordinal(),
         buffer_allocations.memory_allocator());
+    const se::NumericOptions numeric_options{false, false,
+    // FIXME
+      xla::PrecisionConfig::DEFAULT,
+      xla::PrecisionConfig::DEFAULT
+    };
 
     std::vector<se::dnn::ProfileResult> profile_results;
     dnn->GetMIOpenConvolveAlgorithms(
@@ -99,6 +104,7 @@ absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
         conv_params.input_buf, config_.filter_descriptor,
         conv_params.filter_buf, config_.output_descriptor,
         conv_params.output_buf, config_.conv_desc, &scratch_allocator,
+        numeric_options,
         &profile_results);
   }
 #endif  // TENSORFLOW_USE_ROCM

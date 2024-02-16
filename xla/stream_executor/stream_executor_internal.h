@@ -338,7 +338,8 @@ class StreamExecutorInterface {
       kBlasLt = 3
     };
     GemmType op;
-    int flags;
+    bool profiling;
+    int precision1, precision2;
     uint64_t size1, size2;
   };
   // This may be expanded as necessary to trace other calls

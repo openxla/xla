@@ -893,6 +893,7 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       TF_RET_CHECK(proto.has_convolution_dimension_numbers());
       TF_RET_CHECK(absl::c_all_of(proto.precision_config().operand_precision(),
                                   PrecisionConfig::Precision_IsValid));
+
       PrecisionConfig precision_config = proto.precision_config();
       precision_config.mutable_operand_precision()->Resize(
           proto.operand_ids_size(), PrecisionConfig::DEFAULT);
