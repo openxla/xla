@@ -4099,7 +4099,11 @@ absl::Status ROCmFusedMatmulRunner::gemm(Stream* stream,
   blas::Transpose tb =
       _trans_b ? blas::Transpose::kTranspose : blas::Transpose::kNoTranspose;
 
-  return stream->ThenBlasGemm<T, T>(
+  auto* blas = stream->parent()->AsBlas();
+  if (blas == nullptr) {
+    return absl::InternalError("No Blas support for stream");
+  }
+  return blas->BlasGemm<T, T>(stream,
       tb, ta, _n, _m, _k, static_cast<DeviceMemory<T>>(b_data), _ldb,
       static_cast<DeviceMemory<T>>(a_data), _lda,
       static_cast<DeviceMemory<T>*>(&c_data), _ldc, NumericOptions{},
