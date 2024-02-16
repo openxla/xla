@@ -7163,7 +7163,7 @@ class SmallDotGemmRewriteTest : public GemmRewriteTest {
   }
 };
 
-TEST_F(SmallDotGemmRewriteTest, SkipSmallMatrixRewrite) {
+TEST_F(SmallDotGemmRewriteTest, SkipSmallMatrixMultiplicationRewrite) {
   const char* hlo_text = R"(
 HloModule SkipSmallMatrixRewrite
 

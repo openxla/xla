@@ -1109,7 +1109,7 @@ class SmallDotGemmRewriterTritonTest : public GemmRewriterTritonTest {
   }
 };
 
-TEST_F(SmallDotGemmRewriterTritonTest, SkipSmallMatrixRewrite) {
+TEST_F(SmallDotGemmRewriterTritonTest, SkipSmallMatrixMultiplicationRewrite) {
   auto module = ParseAndReturnVerifiedModule(R"(
 HloModule m
 
