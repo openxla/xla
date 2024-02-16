@@ -482,6 +482,17 @@ static xla::ConvolutionDimensionNumbers Convert_dimension_numbers(
   return xla::ConvertConvDimensionNumbers(input);
 }
 
+static xla::SparsityDescriptor Convert_sparsity_descriptor(
+    mlir::mhlo::SparsityDescriptorAttr sparsity_attr) {
+  xla::SparsityDescriptor sparsity_descriptor;
+  sparsity_descriptor.set_type(xla::SPARSITY_STRUCTURED_N_M);
+  sparsity_descriptor.set_index(sparsity_attr.getIndex());
+  sparsity_descriptor.set_dimension(sparsity_attr.getDimension());
+  sparsity_descriptor.set_n(sparsity_attr.getN());
+  sparsity_descriptor.set_m(sparsity_attr.getM());
+  return sparsity_descriptor;
+}
+
 xla::ChannelHandle Convert_channel_handle(mlir::mhlo::ChannelHandleAttr attr) {
   xla::ChannelHandle channel_handle;
   channel_handle.set_handle(attr.getHandle());
@@ -1466,6 +1477,34 @@ LogicalResult ExportXlaOp(DotGeneralOp op, OpLoweringContext ctx) {
       lhs, rhs, Convert_dot_dimension_numbers(op.getDotDimensionNumbers()),
       Unwrap(Convert_precision_config(op.getPrecisionConfig())),
       preferred_element_type);
+  return mlir::success();
+}
+
+LogicalResult ExportXlaOp(SparseDotOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaOp lhs, rhs;
+  if (failed(GetXlaOp(op.getLhs(), value_map, &lhs, op)))
+    return mlir::failure();
+  if (failed(GetXlaOp(op.getRhs(), value_map, &rhs, op)))
+    return mlir::failure();
+  xla::PrimitiveType preferred_element_type =
+      xla::TypeToPrimitiveType(getElementTypeOrSelf(op.getType()));
+
+  llvm::SmallVector<xla::XlaOp> sparse_meta;
+  if (failed(GetTuple(op, op.getMeta(), ctx, sparse_meta))) return failure();
+  std::vector<xla::SparsityDescriptor> sparsity;
+  if (op.getLhsSparsity().has_value()) {
+    sparsity.push_back(Convert_sparsity_descriptor(*op.getLhsSparsity()));
+  }
+  if (op.getRhsSparsity().has_value()) {
+    sparsity.push_back(Convert_sparsity_descriptor(*op.getRhsSparsity()));
+  }
+
+  value_map[op] =
+      xla::SparseDot(lhs, rhs, absl::MakeSpan(sparse_meta), sparsity,
+                     Convert_dot_dimension_numbers(op.getDotDimensionNumbers()),
+                     Unwrap(Convert_precision_config(op.getPrecisionConfig())),
+                     preferred_element_type);
   return mlir::success();
 }
 

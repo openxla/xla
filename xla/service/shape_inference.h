@@ -19,6 +19,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_SHAPE_INFERENCE_H_
 #define XLA_SERVICE_SHAPE_INFERENCE_H_
 
+#include <optional>
 #include <vector>
 
 #include "absl/types/span.h"
@@ -344,7 +345,13 @@ class ShapeInference {
   static StatusOr<Shape> InferDotOpShape(
       const Shape& lhs, const Shape& rhs,
       const DotDimensionNumbers& dimension_numbers,
-      std::optional<PrimitiveType> preferred_element_type);
+      std::optional<PrimitiveType> preferred_element_type,
+      absl::Span<const SparsityDescriptor> sparsity = {});
+
+  // Helper that infers the shape of the sparse dot metadata.
+  static StatusOr<Shape> InferSparseDotMetadataShape(
+      const Shape& operand_shape, const DotDimensionNumbers& dimension_numbers,
+      const SparsityDescriptor& sparsity, PrimitiveType element_type = U16);
 
   // Helper that infers the shape of the tensor produced by a gather operation
   // with the given input shape, gather indices shape and gather dimension

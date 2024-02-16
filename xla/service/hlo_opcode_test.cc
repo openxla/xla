@@ -63,6 +63,7 @@ TEST(HloOpcodeTest, OpcodeProperties) {
       case HloOpcode::kConcatenate:
       case HloOpcode::kConditional:
       case HloOpcode::kCustomCall:
+      case HloOpcode::kDot:  // Sparse dot has an extra meta argument.
       case HloOpcode::kDynamicSlice:
       case HloOpcode::kDynamicUpdateSlice:
       case HloOpcode::kDynamicReshape:
