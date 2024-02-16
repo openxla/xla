@@ -315,10 +315,11 @@ void CheckPreconditions(blas::Transpose transa, blas::Transpose transb,
   }
 }
 
-uint32_t GemmFloat16Flags(blas::DataType dtype, blas::CallContext context,
+uint32_t GemmFloat16Flags(blas::DataType dtype,
+                          const NumericOptions& numeric_options,
                           bool use_alt_impl) {
-  bool is_backprop = (context == blas::CallContext::kBackpropInput1 ||
-                      context == blas::CallContext::kBackpropInput2);
+    bool is_backprop = (numeric_options.precision1 == NumericOptions::E5)
+      ||  (numeric_options.precision2 == NumericOptions::E5);
 
   return ((dtype == blas::DataType::kHalf) && is_backprop && use_alt_impl)
              ? rocblas_gemm_flags_fp16_alt_impl
@@ -455,13 +456,13 @@ Impl_DoBlasScal(wrap::rocblas_sscal, float,
 using sei = internal::StreamExecutorInterface;
 using GemmCallTrace = sei::GemmCallTrace;
 
-void ROCMBlas::MaybeLogGemmOp(GemmCallTrace::GemmType op,
-                              blas::CallContext context, 
-                              uint64_t size1, uint64_t size2) {
+void ROCMBlas::MaybeLogGemmOp(internal::StreamExecutorInterface::GemmCallTrace::GemmType op,
+    bool profiling, NumericOptions numeric_options, uint64_t size1, uint64_t size2) {
   absl::MutexLock lock{&parent_->LoggerMutex()};
   if(parent_->GetArgumentLoggingMode() & sei::ArgumentLogging::kGemm) {
     parent_->ArgumentLogs().emplace_back(
-      GemmCallTrace{op, (int)context, size1, size2});
+      GemmCallTrace{op, profiling, numeric_options.precision1, 
+                    numeric_options.precision2, size1, size2});
   }
 }
 
@@ -470,9 +471,19 @@ absl::Status ROCMBlas::DoBlasGemm(
     uint64_t n, uint64_t k, blas::DataType dtype, const void *alpha,
     const DeviceMemoryBase &a, int lda, const DeviceMemoryBase &b, int ldb,
     const void *beta, DeviceMemoryBase *c, int ldc,
-    const NumericOptions &numeric_options, blas::CallContext context) {
-  MaybeLogGemmOp(GemmCallTrace::GemmType::kPlain, context, m*k*DtypeSize(dtype),
-    n*k*DtypeSize(dtype));
+    const NumericOptions &numeric_options) {
+    return DoBlasGemmImpl(stream, transa, transb, m, n, k,
+      dtype, alpha, a, lda, b, ldb, beta, c, ldc, numeric_options, nullptr);
+}
+
+absl::Status ROCMBlas::DoBlasGemmImpl(
+    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64_t m,
+    uint64_t n, uint64_t k, blas::DataType dtype, const void *alpha,
+    const DeviceMemoryBase &a, int lda, const DeviceMemoryBase &b, int ldb,
+    const void *beta, DeviceMemoryBase *c, int ldc,
+    const NumericOptions &numeric_options, blas::ProfileResult* profile_result) {
+ MaybeLogGemmOp(GemmCallTrace::GemmType::kPlain, profile_result != 0,
+    numeric_options, m*k*DtypeSize(dtype), n*k*DtypeSize(dtype));
 
   VLOG(1) << absl::StreamFormat(
       "doing rocBLAS GEMM: at=%d bt=%d m=%u n=%u "
@@ -485,8 +496,8 @@ absl::Status ROCMBlas::DoBlasGemm(
 
   absl::Status status;
   uint32_t gemm_ex_flags = rocblas_gemm_flags_none;
-  bool is_backprop = (context == blas::CallContext::kBackpropInput1) ||
-                     (context == blas::CallContext::kBackpropInput2);
+  bool is_backprop = (numeric_options.precision1 == NumericOptions::E5)
+    ||  (numeric_options.precision2 == NumericOptions::E5);
   if (is_backprop && use_hgemm_alt_impl_)
     gemm_ex_flags = rocblas_gemm_flags_fp16_alt_impl;
 
@@ -557,7 +568,7 @@ absl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
     blas::DataType type_b, int ldb, const void *beta, DeviceMemoryBase *c,
     blas::DataType type_c, int ldc, blas::ComputationType computation_type,
     blas::AlgorithmType algorithm, const NumericOptions &numeric_options,
-    blas::ProfileResult *profile_result, blas::CallContext context) {
+    blas::ProfileResult *profile_result) {
   if (type_a != type_b) {
     return absl::InternalError(absl::StrFormat(
         "DoBlasGemmWithAlgorithm: different "
@@ -572,13 +583,12 @@ absl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
 
   // fall back to the default implementation
   if (algorithm == blas::kDefaultAlgorithm && type_a == type_c) {
-    TF_RETURN_IF_ERROR(DoBlasGemm(stream, transa, transb, m, n, k, type_a,
+    TF_RETURN_IF_ERROR(DoBlasGemmImpl(stream, transa, transb, m, n, k, type_a,
                                   alpha, a, lda, b, ldb, beta, c, ldc,
-                                  numeric_options, context));
-
+                                  numeric_options, profile_result));
   } else {
-    MaybeLogGemmOp(GemmCallTrace::GemmType::kPlain, context, m*k*DtypeSize(type_a),
-      n * k * DtypeSize(type_a));
+    MaybeLogGemmOp(GemmCallTrace::GemmType::kPlain, profile_result != 0,
+       numeric_options, m * k * DtypeSize(type_a), n * k * DtypeSize(type_a));
     CheckPreconditions(transa, transb, m, n, k, type_a, lda, ldb);
     TF_ASSIGN_OR_RETURN(auto roc_type_a, AsRocBlasType(type_a));
     TF_ASSIGN_OR_RETURN(auto roc_type_c, AsRocBlasType(type_c));
@@ -602,7 +612,7 @@ absl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
         (rocblas_int)k, alpha, a.opaque(), roc_type_a, lda, b.opaque(),
         roc_type_a, ldb, beta, c->opaque(), roc_type_c, ldc, c->opaque(),
         roc_type_c, ldc, roc_comp_type, rocblas_gemm_algo_solution_index,
-        algorithm, GemmFloat16Flags(type_a, context, use_hgemm_alt_impl_)));
+        algorithm, GemmFloat16Flags(type_a, numeric_options, use_hgemm_alt_impl_)));
   }
   TF_RETURN_IF_ERROR(
       PopulateProfileFromTimer(timer, algorithm, profile_result));
@@ -618,7 +628,7 @@ absl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
     DeviceMemoryBase *c, blas::DataType type_c, int ldc, int64_t stride_c,
     int batch_count, blas::ComputationType computation_type,
     blas::AlgorithmType algorithm, const NumericOptions &numeric_options,
-    blas::ProfileResult *profile_result, blas::CallContext context) {
+    blas::ProfileResult *profile_result) {
   if (type_a != type_b) {
     return absl::InternalError(absl::StrFormat(
         "DoBlasGemmStridedBatchedWithAlgorithm: different "
@@ -633,12 +643,12 @@ absl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
 
   // fall back to the default implementation
   if (algorithm == blas::kDefaultAlgorithm && type_a == type_c) {
-    TF_RETURN_IF_ERROR(DoBlasGemmStridedBatched(
+    TF_RETURN_IF_ERROR(DoBlasGemmStridedBatchedImpl(
         stream, transa, transb, m, n, k, type_a, alpha, a, lda, stride_a, b,
-        ldb, stride_b, beta, c, ldc, stride_c, batch_count, numeric_options,
-        context));
+        ldb, stride_b, beta, c, ldc, stride_c, batch_count, numeric_options, profile_result));
   } else {
-    MaybeLogGemmOp(GemmCallTrace::GemmType::kStridedBatched, context, a.size(), b.size());
+    MaybeLogGemmOp(GemmCallTrace::GemmType::kStridedBatched, profile_result != 0,
+      numeric_options, a.size(), b.size());
     VLOG(1) << absl::StreamFormat(
         "doing rocBLAS GEMM strided batched with Algorithm: at=%d bt=%d m=%u "
         "n=%u "
@@ -664,7 +674,7 @@ absl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
         b.opaque(), roc_type_a, ldb, stride_b, beta, c->opaque(), roc_type_c,
         ldc, stride_c, c->opaque(), roc_type_c, ldc, stride_c, batch_count,
         roc_comp_type, rocblas_gemm_algo_solution_index, algorithm,
-        GemmFloat16Flags(type_a, context, use_hgemm_alt_impl_)));
+        GemmFloat16Flags(type_a, numeric_options, use_hgemm_alt_impl_)));
   }
   TF_RETURN_IF_ERROR(
       PopulateProfileFromTimer(timer, algorithm, profile_result));
@@ -1064,9 +1074,9 @@ bool ROCMBlas::DoBlasGemmBatched(
     uint64_t n, uint64_t k, float alpha, DeviceMemorySlice<Eigen::half> a,
     int lda, DeviceMemorySlice<Eigen::half> b, int ldb, float beta,
     DeviceMemorySlice<Eigen::half> c, int ldc, int batch_count,
-    const NumericOptions &numeric_options, ScratchAllocator *scratch_allocator,
-    blas::CallContext context) {
-  MaybeLogGemmOp(GemmCallTrace::GemmType::kBatched, context, a.size(), b.size());
+    const NumericOptions &numeric_options, ScratchAllocator *scratch_allocator) {
+  MaybeLogGemmOp(GemmCallTrace::GemmType::kBatched, false,
+      numeric_options, a.size(), b.size());
   const Eigen::half alpha_half(alpha);
   const Eigen::half beta_half(beta);
   absl::Status status;
@@ -1078,8 +1088,8 @@ bool ROCMBlas::DoBlasGemmBatched(
   };
 
   if (has_mfma_) {
-    bool is_backprop = (context == blas::CallContext::kBackpropInput1) ||
-                       (context == blas::CallContext::kBackpropInput2);
+    bool is_backprop = (numeric_options.precision1 == NumericOptions::E5)
+      ||  (numeric_options.precision2 == NumericOptions::E5);
     status = call_gemm(
         rocblas_hgemm_strided_batched_mfma(is_backprop && use_hgemm_alt_impl_));
   } else {
@@ -1099,9 +1109,9 @@ bool ROCMBlas::DoBlasGemmBatched(
     DeviceMemorySlice<Eigen::bfloat16> a_array, int lda,
     DeviceMemorySlice<Eigen::bfloat16> b_array, int ldb, float beta,
     DeviceMemorySlice<Eigen::bfloat16> c_array, int ldc, int batch_count,
-    const NumericOptions &numeric_options, ScratchAllocator *scratch_allocator,
-    blas::CallContext context) {
-  MaybeLogGemmOp(GemmCallTrace::GemmType::kBatched, context, a_array.size(), b_array.size());
+    const NumericOptions &numeric_options, ScratchAllocator *scratch_allocator) {
+  MaybeLogGemmOp(GemmCallTrace::GemmType::kBatched, false, numeric_options, 
+    a_array.size(), b_array.size());
   const Eigen::bfloat16 alpha_bf16(alpha);
   const Eigen::bfloat16 beta_bf16(beta);
 
@@ -1122,8 +1132,8 @@ bool ROCMBlas::DoBlasGemmBatched(
       int lda, DeviceMemorySlice<T> b_array, int ldb, T beta,                  \
       DeviceMemorySlice<T> c_array, int ldc, int batch_count,                  \
       const NumericOptions &numeric_options,                                   \
-      ScratchAllocator *scratch_allocator, blas::CallContext context) {        \
-    MaybeLogGemmOp(GemmCallTrace::GemmType::kBatched, context,                                          \
+      ScratchAllocator *scratch_allocator) {                                   \
+    MaybeLogGemmOp(GemmCallTrace::GemmType::kBatched, false, numeric_options,  \
       a_array.size(), b_array.size());                                         \
     absl::Status status = DoBlasGemmBatchedInternal(                           \
         Fun, stream, transa, transb, m, n, k, alpha, a_array, lda, b_array,    \
@@ -1165,25 +1175,32 @@ IMPL_DoBlasGemmBatched(float, wrap::rocblas_sgemm_strided_batched)
                           complex_cast(*bs), ldb, batch_count);              \
   }
 
-                IMPL_DoBlasTrsm(float, wrap::rocblas_strsm,
-                                wrap::rocblas_strsm_batched)
-                    IMPL_DoBlasTrsm(double, wrap::rocblas_dtrsm,
-                                    wrap::rocblas_dtrsm_batched)
-                        IMPL_DoBlasTrsm(std::complex<float>,
-                                        wrap::rocblas_ctrsm,
-                                        wrap::rocblas_ctrsm_batched)
-                            IMPL_DoBlasTrsm(std::complex<double>,
-                                            wrap::rocblas_ztrsm,
-                                            wrap::rocblas_ztrsm_batched)
+IMPL_DoBlasTrsm(float, wrap::rocblas_strsm, wrap::rocblas_strsm_batched)
+IMPL_DoBlasTrsm(double, wrap::rocblas_dtrsm, wrap::rocblas_dtrsm_batched)
+IMPL_DoBlasTrsm(std::complex<float>, wrap::rocblas_ctrsm,
+                wrap::rocblas_ctrsm_batched)
+IMPL_DoBlasTrsm(std::complex<double>, wrap::rocblas_ztrsm,
+                wrap::rocblas_ztrsm_batched)
 
-                                absl::Status
-    ROCMBlas::DoBlasGemmStridedBatched(
+absl::Status ROCMBlas::DoBlasGemmStridedBatched(
         Stream *stream, blas::Transpose transa, blas::Transpose transb,
         uint64_t m, uint64_t n, uint64_t k, blas::DataType dtype,
         const void *alpha, const DeviceMemoryBase &a, int lda, int64_t stride_a,
         const DeviceMemoryBase &b, int ldb, int64_t stride_b, const void *beta,
         DeviceMemoryBase *c, int ldc, int64_t stride_c, int batch_count,
-        const NumericOptions &numeric_options, blas::CallContext context) {
+        const NumericOptions &numeric_options) {
+  return DoBlasGemmStridedBatchedImpl(stream, transa, transb, m, n, k,
+    dtype, alpha, a, lda, stride_a, b, ldb, stride_b, beta,
+    c, ldc, stride_c, batch_count, numeric_options, nullptr);
+}
+
+absl::Status  ROCMBlas::DoBlasGemmStridedBatchedImpl(
+        Stream *stream, blas::Transpose transa, blas::Transpose transb,
+        uint64_t m, uint64_t n, uint64_t k, blas::DataType dtype,
+        const void *alpha, const DeviceMemoryBase &a, int lda, int64_t stride_a,
+        const DeviceMemoryBase &b, int ldb, int64_t stride_b, const void *beta,
+        DeviceMemoryBase *c, int ldc, int64_t stride_c, int batch_count,
+        const NumericOptions &numeric_options, blas::ProfileResult* result) {
   VLOG(1) << absl::StreamFormat(
       "doing rocBLAS GEMM Strided Batched: at=%d bt=%d m=%u n=%u "
       "k=%llu alpha=%p a=%p lda=%d b=%p ldb=%d beta=%p "
@@ -1191,7 +1208,8 @@ IMPL_DoBlasGemmBatched(float, wrap::rocblas_sgemm_strided_batched)
       static_cast<int>(transa), static_cast<int>(transb), m, n, k, alpha,
       a.opaque(), lda, b.opaque(), ldb, beta, c->opaque(), ldc, stride_a,
       stride_b, stride_c, batch_count);
-  MaybeLogGemmOp(GemmCallTrace::GemmType::kStridedBatched, context, a.size(), b.size());
+  MaybeLogGemmOp(GemmCallTrace::GemmType::kStridedBatched, result != 0, numeric_options,
+      a.size(), b.size());
 
   absl::Status status;
   auto call_gemm = [&](auto func, auto type) {
@@ -1208,8 +1226,8 @@ IMPL_DoBlasGemmBatched(float, wrap::rocblas_sgemm_strided_batched)
 
   switch (dtype) {
     case blas::DataType::kHalf: {
-      bool is_backprop = (context == blas::CallContext::kBackpropInput1) ||
-                         (context == blas::CallContext::kBackpropInput2);
+      bool is_backprop = (numeric_options.precision1 == NumericOptions::E5)
+        ||  (numeric_options.precision2 == NumericOptions::E5);
       Eigen::half alpha_half = Eigen::half(*static_cast<const float *>(alpha));
       Eigen::half beta_half = Eigen::half(*static_cast<const float *>(beta));
       alpha = &alpha_half;

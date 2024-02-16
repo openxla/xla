@@ -38,6 +38,8 @@ limitations under the License.
 #include "tsl/platform/host_info.h"
 #include "tsl/platform/logging.h"
 
+using std::string;
+
 namespace stream_executor {
 namespace rocm {
 

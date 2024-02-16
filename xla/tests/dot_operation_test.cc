@@ -38,8 +38,104 @@ limitations under the License.
 #include "tsl/platform/test.h"
 #include "tsl/platform/test_benchmark.h"
 
+#include "xla/stream_executor/stream_executor_internal.h"
+#include "xla/stream_executor/numeric_options.h"
+
+using ::stream_executor::internal::StreamExecutorInterface;
+
 namespace xla {
 namespace {
+
+class GradFlagVerifier
+{
+  size_t size_x_=0, size_y_=0;
+  bool trivial_ = false;
+  PrecisionConfig::Precision prec1_=PrecisionConfig::DEFAULT, prec2_=PrecisionConfig::DEFAULT;
+  StreamExecutorInterface* executor_ = nullptr;
+public:
+  GradFlagVerifier(LocalClient* client, XlaBuilder& builder, XlaOp& x, XlaOp& y, PrecisionConfig& cfg) {
+#if !TENSORFLOW_USE_ROCM
+    cfg = xla::PrecisionConfigDEFAULT();
+#else
+    prec1_ = static_cast<PrecisionConfig::Precision>(int(PrecisionConfig::E4B6) + (rand() % 5));
+    prec2_ = static_cast<PrecisionConfig::Precision>(int(PrecisionConfig::E4B6) + (rand() % 5));
+    cfg.add_operand_precision(prec1_);
+    cfg.add_operand_precision(prec2_);
+    executor_ = client->backend().default_stream_executor()->implementation();
+    executor_->SetArgumentLoggingMode(StreamExecutorInterface::ArgumentLogging::kGemm);
+
+    Shape x_shape = *(builder.GetShape(x));
+    if(x_shape.is_static()) {
+      size_x_ = 1;
+      int nontrivial_dims = 0;
+      int nd=0;
+      for(auto d: x_shape.dimensions()) {
+        // If one of the inputs has no dimensions larger than 1, GEMM call may be optimized out
+        if(d > 1)
+          nontrivial_dims++;
+        // For F16 and BF16, last 2 dimensions of both inputs will be padded to multiples of 8
+        if(nd+2>=x_shape.rank() && (x_shape.element_type()==F16 || x_shape.element_type()==BF16))
+          d = (d+7) & ~7;
+        size_x_ *= d;
+        nd++;
+      }
+      if(nontrivial_dims <= 1)
+        trivial_ = true;
+      size_x_ *= xla::primitive_util::BitWidth(x_shape.element_type())/8;
+    }
+    Shape y_shape = *(builder.GetShape(y));
+    if(y_shape.is_static()) {
+      size_y_ = 1;
+      int nontrivial_dims = 0;
+      int nd = 0;
+      for(auto d: y_shape.dimensions()) {
+        if(d > 1)
+          nontrivial_dims++;
+
+        if(nd+2 >= y_shape.rank() && (y_shape.element_type()==F16 || y_shape.element_type()==BF16))
+          d = (d+7) & ~7;
+        size_y_ *= d;
+        nd++;
+      }
+      if(nontrivial_dims <= 1)
+        trivial_ = true;
+      size_y_ *= xla::primitive_util::BitWidth(y_shape.element_type())/8;
+    }
+#endif
+  }
+  ~GradFlagVerifier() {
+#if TENSORFLOW_USE_ROCM
+    std::vector<StreamExecutorInterface::ApiTrace> logs = *(executor_->ExtractApiTrace());
+    executor_->SetArgumentLoggingMode(StreamExecutorInterface::ArgumentLogging::kNone);
+    bool gemm_found = false;
+    for(auto entry: logs) {
+      auto gemm_entry = std::get_if<StreamExecutorInterface::GemmCallTrace>(&entry);
+      if (gemm_entry == 0)
+        continue;
+      if (gemm_entry->profiling)
+        continue;
+      gemm_found = true;
+      auto prec1 = gemm_entry->precision1;
+      auto prec2 = gemm_entry->precision2;
+      uint64_t size1 = gemm_entry->size1;
+      uint64_t size2 = gemm_entry->size2;
+
+      // Dot inputs may be swapped at some point before reaching rocblas
+      // or hipblaslt; if so, flags should be swapped too
+      if(size_x_!=0 && size_y_!=0) {
+        EXPECT_TRUE((prec1==prec1_ && prec2==prec2_ && size1==size_x_ && size2==size_y_)
+          || (prec2==prec1_ && prec1==prec2_ && size2==size_x_ && size1==size_y_));
+      } else {
+        EXPECT_TRUE((prec1==prec1_ && prec2==prec2_)
+          || (prec2==prec1_ && prec1==prec2_));
+      }
+      if(!trivial_)
+        EXPECT_TRUE(gemm_found);
+    }
+#endif
+  }
+};
+
 
 class DotOperationTest : public ClientLibraryTestBase {
  public:
@@ -92,7 +188,9 @@ XLA_TEST_F(DotOperationTest, DotOfInputTupleElem) {
           "arg0", &builder, &param));
   auto lhs = GetTupleElement(param, 0);
   auto rhs = GetTupleElement(param, 1);
-  Dot(lhs, rhs);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   ComputeAndCompareLiteral(&builder,
                            LiteralUtil::CreateR2<float>({{19, 22}, {43, 50}}),
@@ -109,7 +207,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, ZeroElementVectorDot) {
 
   auto lhs = ConstantR1<T>(&builder, {});
   auto rhs = ConstantR1<T>(&builder, {});
-  Dot(lhs, rhs);
+  PrecisionConfig cfg; 
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   this->template ComputeAndCompareR0<T>(&builder, static_cast<T>(0.0), {},
                                         this->error_spec_);
@@ -124,7 +224,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64, TrivialMatrixVectorDot) {
   XlaBuilder builder(this->TestName());
   auto lhs = ConstantR2FromArray2D<T>(&builder, {{3.0f, 4.0f}});
   auto rhs = ConstantFromArray<T>(&builder, {3.0f, 4.0f});
-  Dot(lhs, rhs);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   this->template ComputeAndCompareR1<T>(&builder, {static_cast<T>(25.0f)}, {},
                                         this->error_spec_);
@@ -135,7 +237,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, OneElementVectorDot) {
   XlaBuilder builder(this->TestName());
   auto lhs = ConstantR1<T>(&builder, {static_cast<T>(2.0f)});
   auto rhs = ConstantR1<T>(&builder, {static_cast<T>(3.0f)});
-  Dot(lhs, rhs);
+  PrecisionConfig cfg; 
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   this->template ComputeAndCompareR0<T>(&builder, static_cast<T>(6.0f), {},
                                         this->error_spec_);
@@ -146,7 +250,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64, VectorDot) {
   XlaBuilder builder(this->TestName());
   auto lhs = ConstantFromArray<T>(&builder, {1.0f, 2.5f, 42.0f});
   auto rhs = ConstantFromArray<T>(&builder, {11.0f, -1.0f, 0.5f});
-  Dot(lhs, rhs);
+  PrecisionConfig cfg; 
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   this->template ComputeAndCompareR0<T>(&builder, static_cast<T>(29.5f), {},
                                         this->error_spec_);
@@ -161,7 +267,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, Dot_0x2_2x0) {
   XlaBuilder builder(this->TestName());
   auto lhs = ConstantR2FromArray2D<T>(&builder, Array2D<T>(0, 2));
   auto rhs = ConstantR2FromArray2D<T>(&builder, Array2D<T>(2, 0));
-  Dot(lhs, rhs);
+  PrecisionConfig cfg; 
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   this->template ComputeAndCompareR2<T>(&builder, Array2D<T>(0, 0), {},
                                         this->error_spec_);
@@ -173,7 +281,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, Dot_0x2_2x3) {
   auto lhs = ConstantR2FromArray2D<T>(&builder, Array2D<T>(0, 2));
   auto rhs = ConstantR2FromArray2D<T>(
       &builder, {{7.0f, 8.0f, 9.0f}, {42.0f, 77.0f, 101.0f}});
-  Dot(lhs, rhs);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   this->template ComputeAndCompareR2<T>(&builder, Array2D<T>(0, 3), {},
                                         this->error_spec_);
@@ -185,7 +295,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, Dot_3x2_2x0) {
   auto lhs = ConstantR2FromArray2D<T>(
       &builder, {{7.0f, 8.0f}, {9.0f, 42.0f}, {77.0f, 101.0f}});
   auto rhs = ConstantR2FromArray2D<T>(&builder, Array2D<T>(2, 0));
-  Dot(lhs, rhs);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   this->template ComputeAndCompareR2<T>(&builder, Array2D<T>(3, 0), {},
                                         this->error_spec_);
@@ -196,7 +308,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, Dot_2x0_0x2) {
   XlaBuilder builder(this->TestName());
   auto lhs = ConstantR2FromArray2D<T>(&builder, Array2D<T>(2, 0));
   auto rhs = ConstantR2FromArray2D<T>(&builder, Array2D<T>(0, 2));
-  Dot(lhs, rhs);
+  PrecisionConfig cfg; 
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   this->template ComputeAndCompareR2<T>(
       &builder, Array2D<T>(2, 2, static_cast<T>(0.0f)), {}, this->error_spec_);
@@ -210,7 +324,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, FusedDot) {
   auto param1 =
       Parameter(&builder, 1, ShapeUtil::MakeShapeWithType<T>({4, 1}), "arg1");
   auto exp0 = Exp(param0);
-  Dot(exp0, param1);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, exp0, param1, cfg);
+  Dot(exp0, param1, &cfg);
 
   auto lhs_handle =
       this->client_
@@ -715,7 +831,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, GeneralMatMul) {
   dnums.add_lhs_batch_dimensions(0);
   dnums.add_rhs_batch_dimensions(0);
 
-  DotGeneral(x, y, dnums);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, x, y, cfg);
+  DotGeneral(x, y, dnums, &cfg);
 
   auto x_data =
       this->client_
@@ -765,7 +883,9 @@ XLA_TYPED_TEST(DotOperationTestWithCublasLt_F16F32F64CF64,
   dnums.add_lhs_batch_dimensions(0);
   dnums.add_rhs_batch_dimensions(0);
 
-  auto dot = DotGeneral(x, y, dnums);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, x, y, cfg);
+  auto dot = DotGeneral(x, y, dnums, &cfg);
   auto prim_type = primitive_util::NativeToPrimitiveType<T>();
   auto x_data =
       this->client_
@@ -789,6 +909,130 @@ XLA_TYPED_TEST(DotOperationTestWithCublasLt_F16F32F64CF64,
   }
   this->template ComputeAndCompareR3<T>(
       &builder, expected, {x_data.get(), y_data.get()}, this->error_spec_);
+}
+
+
+template <typename T>
+class DotOperationTestWithCublasLt_F16F32 : public DotOperationTest {
+ public:
+  DotOperationTestWithCublasLt_F16F32() {
+    bool enable_cublas_lt = true;
+
+    execution_options_.mutable_debug_options()->set_xla_gpu_enable_cublaslt(
+        enable_cublas_lt);
+  }
+};
+TYPED_TEST_CASE(DotOperationTestWithCublasLt_F16F32, TypesF16F32);
+
+template <typename T>
+void EmitApproxGelu(XlaBuilder& builder, XlaOp& input, absl::Span<const int64_t> shape) {
+    auto mul0 = Mul(input, input);
+    auto mul1 = Mul(input, mul0);
+    auto c0 = ConstantR0<T>(&builder, T(0.044715f));
+    auto bcast0 = Broadcast(c0, shape);
+    auto mul2 = Mul(mul1, bcast0);
+    auto add0 = Add(input, mul2);
+    auto c1 = ConstantR0<T>(&builder, T(0.797884583f));
+    auto bcast1 = Broadcast(c1, shape);
+    auto mul3 = Mul(add0, bcast1);
+    auto tanh = Tanh(mul3);
+    auto c2 = ConstantR0<T>(&builder, T(1.0f));
+    auto bcast2 = Broadcast(c2, shape);
+    auto add2 = Add(tanh, bcast2);
+    auto c3 = ConstantR0<T>(&builder, T(0.5f));
+    auto bcast3 = Broadcast(c3, shape);
+    auto mul4 = Mul(add2, bcast3);
+    Mul(input, mul4);
+}
+
+inline float gelu(float x) {
+  return 0.5f * x * (1.f + std::tanh(0.797884583f * (x + 0.044715f * x*x*x)));
+}
+
+XLA_TYPED_TEST(DotOperationTestWithCublasLt_F16F32,
+               GeneralMatMulActivation2) {
+  using T = TypeParam;
+  int call_counter=0;
+
+  for(int lhs_contract=1; lhs_contract<=2; lhs_contract++) {
+    for(int rhs_contract=1; rhs_contract<=2; rhs_contract++) {
+      for(int act=0; act<2; act++) {
+        XlaBuilder builder(this->TestName());
+        std::array<int64_t,3> shape_x, shape_y, shape_out={2,8,24};
+        int contract = 16;
+        shape_x[0] = shape_out[0];
+        shape_y[0] = shape_out[0];
+        shape_x[lhs_contract] = contract;
+        shape_y[rhs_contract] = contract;
+        shape_x[3-lhs_contract] = shape_out[1];
+        shape_y[3-rhs_contract] = shape_out[2];
+        auto x =
+            Parameter(&builder, 0, ShapeUtil::MakeShapeWithType<T>({shape_x[0],shape_x[1],shape_x[2]}), "x");
+        auto y =
+            Parameter(&builder, 1, ShapeUtil::MakeShapeWithType<T>({shape_y[0],shape_y[1],shape_y[2]}), "y");
+
+        DotDimensionNumbers dnums;
+        dnums.add_lhs_contracting_dimensions(lhs_contract);
+        dnums.add_rhs_contracting_dimensions(rhs_contract);
+        dnums.add_lhs_batch_dimensions(0);
+        dnums.add_rhs_batch_dimensions(0);
+
+        PrecisionConfig cfg;
+        GradFlagVerifier gf(this->client_, builder, x, y, cfg);
+        auto dot = DotGeneral(x, y, dnums, &cfg);
+        auto prim_type = primitive_util::NativeToPrimitiveType<T>();
+        Array3D<T> arr_x(shape_x[0], shape_x[1], shape_x[2]);
+        Array3D<T> arr_y(shape_y[0], shape_y[1], shape_y[2]);
+        Array3D<T> zeros(shape_out[0], shape_out[1], shape_out[2]);
+        Array3D<T> expected(shape_out[0], shape_out[1], shape_out[2]);
+
+        arr_x.FillRandom(T(1.0f), T(0.0f), call_counter*2+0);
+        arr_y.FillRandom(T(1.0f), T(0.0f), call_counter*2+1);
+        zeros.Fill(T(0.0f));
+
+        for(int i=0; i<shape_out[0]; i++)
+          for(int j=0; j<shape_out[1]; j++)
+            for(int k=0; k<shape_out[2]; k++) {
+              float sum = 0;
+              for(int m=0; m<contract; m++) {
+                T a = (lhs_contract==1) ? arr_x(i,m,j) : arr_x(i,j,m);
+                T b = (rhs_contract==1) ? arr_y(i,m,k) : arr_y(i,k,m);
+                sum += float(a)*float(b);
+              }
+              if(act == 0) {
+                if(sum < 0)
+                  sum = 0;
+              } else {
+                sum = gelu(sum);
+              }
+              expected(i,j,k)=T(sum);
+            }
+
+
+        auto x_data =
+            this->client_
+                ->TransferToServer(LiteralUtil::CreateR3FromArray3D<T>(arr_x))
+                .value();
+
+        auto y_data =
+            this->client_
+                ->TransferToServer(LiteralUtil::CreateR3FromArray3D<T>(arr_y))
+                .value();
+        if(act == 0)
+          Max(dot, ConstantR3FromArray3D<T>(&builder, zeros));
+        else
+          EmitApproxGelu<T>(builder, dot, shape_out);
+
+        auto error_spec = std::is_same<Eigen::half, T>::value 
+            ? ErrorSpec{0.001, 1e-2}
+            : ErrorSpec{0.0001, 1e-5};
+
+        this->template ComputeAndCompareR3<T>(
+          &builder, expected, {x_data.get(), y_data.get()}, error_spec);
+        call_counter++;
+      }
+    }
+  }
 }
 #endif  // GOOGLE_CUDA || TF_HIPBLASLT
 
@@ -828,7 +1072,9 @@ XLA_TYPED_TEST(DotOperationTestWithCublasLt_F8, ScaledABUnscaledDF8) {
   XlaOp b_scale_bcast = Broadcast(b_scale, {16, 16});
   XlaOp b_scaled_f32 = Mul(b_f32, b_scale_bcast);
 
-  DotGeneral(a_scaled_f32, b_scaled_f32, dnums);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, a_scaled_f32, b_scaled_f32, cfg);
+  DotGeneral(a_scaled_f32, b_scaled_f32, dnums, &cfg);
 
   auto a_data = this->client_
                     ->TransferToServer(LiteralUtil::CreateR2FromArray2D<T>(
@@ -974,7 +1220,9 @@ XLA_TYPED_TEST(DotOperationTestWithCublasLt_F8, ScaledABScaledDWithDAmaxF8) {
   XlaOp b_scale_bcast = Broadcast(b_scale, {16, 16});
   XlaOp b_scaled_f32 = Mul(b_f32, b_scale_bcast);
 
-  XlaOp d_f32 = DotGeneral(a_scaled_f32, b_scaled_f32, dnums);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, a_scaled_f32, b_scaled_f32, cfg);
+  XlaOp d_f32 = DotGeneral(a_scaled_f32, b_scaled_f32, dnums, &cfg);
   XlaComputation max = CreateScalarMaxComputation(F32, &builder);
   const XlaOp d_amax = ReduceAll(
       d_f32,
@@ -1271,7 +1519,13 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64, TransposeFolding) {
         if (transpose_rhs) {
           rhs_arg = Transpose(rhs_arg, {1, 0});
         }
-        Dot(lhs_arg, rhs_arg);
+        PrecisionConfig cfg;
+        GradFlagVerifier gf(this->client_, builder, lhs_arg, rhs_arg, cfg);
+        Dot(lhs_arg, rhs_arg, &cfg);
+
+        // For some reason, in this test only, BLAS receives shapes that look 
+        // nothing like lhs/rhs (two 8x8 matrices???)
+        //Dot(lhs_arg, rhs_arg);
 
         Array2D<T> expected({{26.0f, 0.0f}, {-12.0f, 10.0f}});
         VLOG(1) << "TestTransposeFolding " << transpose_lhs << " "
@@ -1379,6 +1633,9 @@ XLA_TYPED_TEST(DotOperationTest_F16F32F64CF64,
       this->error_spec_);
 }
 
+// Don't use GradFlagVerifier in DotOfGather... tests:
+// an optimization results in the GEMM call having different dimensions
+// from XlaOp shapes
 XLA_TEST_F(DotOperationTest, DotOfGatherOptimizationWithConstRHSClassicMM) {
   std::unique_ptr<Array2D<float>> constant_lhs_array(new Array2D<float>(
       {{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {6.0, 5.0, 4.0, 3.0, 2.0, 1.0}}));
@@ -1622,7 +1879,9 @@ XLA_TEST_F(DotOperationTest, DotRank2AndRank2NonDefaultContractionDims) {
   DotDimensionNumbers dot_dnums;
   dot_dnums.add_lhs_contracting_dimensions(0);
   dot_dnums.add_rhs_contracting_dimensions(0);
-  DotGeneral(lhs_constant, rhs_constant, dot_dnums);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs_constant, rhs_constant, cfg);
+  DotGeneral(lhs_constant, rhs_constant, dot_dnums, &cfg);
 
   Array2D<float> expected({
       {26.f, 30.f},
@@ -1735,7 +1994,10 @@ XLA_TEST_P(BatchDotTest, BroadcastingBatchDotTest) {
       MakeFakeLiteral(ShapeUtil::MakeShape(F32, std::get<1>(GetParam())))
           .value(),
       &builder);
-  auto batch_dot = BatchDot(x, y);
+
+  PrecisionConfig cfg; 
+  GradFlagVerifier gf(this->client_, builder, x, y, cfg);
+  auto batch_dot = BatchDot(x, y, cfg);
   auto output_shape = builder.GetShape(batch_dot).value();
   EXPECT_EQ(output_shape.dimensions(), std::get<2>(GetParam()));
   ComputeAndCompare(&builder, {}, ErrorSpec{1e-3, 1e-3});
@@ -2188,7 +2450,9 @@ XLA_TEST_F(DotOperationTest, ReorderContractingDimsConstLHS_RL) {
   auto t1 = Transpose(t0, {1, 0, 2});
   auto rhs = Reshape(t1, {6, 2});
   auto lhs = ConstantR2FromArray2D(&builder, const_arr);
-  Dot(lhs, rhs);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   ComputeAndCompare(&builder, {}, error_spec_);
 }
@@ -2209,7 +2473,9 @@ XLA_TEST_F(DotOperationTest, ReorderContractingDimsConstRHS_LR) {
   DotDimensionNumbers dims;
   dims.add_lhs_contracting_dimensions(0);
   dims.add_rhs_contracting_dimensions(1);
-  DotGeneral(lhs, rhs, dims);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  DotGeneral(lhs, rhs, dims, &cfg);
 
   ComputeAndCompare(&builder, {}, error_spec_);
 }
@@ -2226,7 +2492,9 @@ XLA_TEST_F(DotOperationTest, ReorderContractingDimsConstRHS_RL) {
   auto t1 = Transpose(t0, {0, 2, 3, 1});
   auto lhs = Reshape(t1, {2, 24});
   auto rhs = ConstantR2FromArray2D(&builder, const_arr);
-  Dot(lhs, rhs);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
 
   ComputeAndCompare(&builder, {}, error_spec_);
 }
@@ -2250,7 +2518,9 @@ XLA_TEST_F(DotOperationTest, ReorderContractingDimsConstRHS_MM) {
   dims.add_rhs_contracting_dimensions(1);
   dims.add_lhs_batch_dimensions(0);
   dims.add_rhs_batch_dimensions(0);
-  DotGeneral(lhs, rhs, dims);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  DotGeneral(lhs, rhs, dims, &cfg);
 
   ComputeAndCompare(&builder, {}, error_spec_);
 }
@@ -2273,7 +2543,9 @@ XLA_TEST_F(DotOperationTest, ReorderContractingDims_Multipass) {
   DotDimensionNumbers dims;
   dims.add_lhs_contracting_dimensions(1);
   dims.add_rhs_contracting_dimensions(1);
-  DotGeneral(lhs, rhs, dims);
+  PrecisionConfig cfg;
+  GradFlagVerifier gf(this->client_, builder, lhs, rhs, cfg);
+  DotGeneral(lhs, rhs, dims, &cfg);
 
   // Constant folding are disabled by default in unit tests. algsimp
   // optimization can be applied multiple times if we fold the transpose
@@ -2330,7 +2602,9 @@ void DOT_ReorderContracting(::testing::benchmark::State& state) {
   auto t1 = Transpose(t0, {0, 2, 1});
   auto lhs = Reshape(t1, {d0, d2 * d1});
   auto rhs = ConstantR2FromArray2D(&builder, const_arr);
-  Dot(lhs, rhs);
+  PrecisionConfig cfg; 
+  GradFlagVerifier gf(client, builder, lhs, rhs, cfg);
+  Dot(lhs, rhs, &cfg);
   auto computation = builder.Build().value();
 
   auto input_literal = LiteralUtil::CreateR3FromArray3D<float>(input_arr);

@@ -943,13 +943,34 @@ message SourceTarget {
 // meaning.
 message PrecisionConfig {
   enum Precision {
+    // [ROCm] Equivalent to E4B8
     DEFAULT = 0;
     HIGH = 1;
+
+    // [ROCm] Backend may not downcast into F8 for GEMMs
     HIGHEST = 2;
     // Each U8/S8 value in a tensor actually represents 2 nibble values.
     PACKED_NIBBLE = 3;
 
-    // Next: 4
+    // [ROCm] The following values are only meaningful for F16 and BF16.
+    // If both inputs of a GEMM have one of the following precisions,
+    // backend may downcast internally into F8
+    // (possibly with scaling).
+
+    // Values expected to be almost always within dynamic range of F8_E4M3:
+    // - with bias 6 (maximum amplitude 960.0)
+    E4B6 = 4;
+    // - with bias 8 (maximum amplitude 240.0)
+    E4B8 = 5;
+    // - with bias 10 (maximum amplitude 60.0)
+    E4B10 = 6;
+    // - with bias 12 (maximum amplitude 15.0)
+    E4B12 = 7;
+
+    // Values expected to be within dynamic range of F8_E5M2
+    E5 = 8;
+
+    // Next: 9
   }
 
   // The algorithm used to evaluate the instruction.

@@ -112,13 +112,13 @@ struct GemmConfig {  // plain GemmConfig which is extended with create functions
   xla::complex128 alpha;
   double beta;
   int64_t compute_precision;
+  xla::PrecisionConfig::Precision input_precisions[2];
   // PrecisionConfig-level algorithm
   xla::PrecisionConfig::Algorithm precision_algorithm;
   // BLAS-library-level algorithm.
   std::optional<int64_t> algorithm;
-  bool grad_x;
-  bool grad_y;
   std::optional<blas::ComputationType> compute_type;
+  int grad_flags;
 };
 
 struct BlasLt {

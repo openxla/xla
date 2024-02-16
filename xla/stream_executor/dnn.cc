@@ -299,6 +299,7 @@ bool DnnSupport::GetMIOpenConvolveAlgorithms(
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& /*convolution_descriptor*/,
     ScratchAllocator* scratch_allocator,
+    const NumericOptions& numeric_options,
     std::vector<ProfileResult>* /*out_algorithms*/) {
   return false;
 }

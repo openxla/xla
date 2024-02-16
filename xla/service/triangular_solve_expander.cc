@@ -336,9 +336,7 @@ XlaOp TriangularSolveExpander::InvertDiagonalBlocks(
       dnums.add_rhs_batch_dimensions(0);
       dnums.add_lhs_contracting_dimensions(2);
       dnums.add_rhs_contracting_dimensions(1);
-      PrecisionConfig precision_proto;
-      precision_proto.add_operand_precision(precision);
-      precision_proto.add_operand_precision(precision);
+      PrecisionConfig precision_proto = PrecisionToPrecisionConfig(precision);
       auto update = -DotGeneral(input_row, body_out, dnums, &precision_proto);
 
       body_out = DynamicUpdateSlice(body_out, update, {zero, j, zero});

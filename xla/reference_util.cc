@@ -482,9 +482,7 @@ ReferenceUtil::ConvArray4DGeneralDimensionsDilated(
   HloInstruction* rhs_instruction =
       b.AddInstruction(HloInstruction::CreateConstant(std::move(rhs_literal)));
 
-  PrecisionConfig precision_config;
-  precision_config.mutable_operand_precision()->Resize(
-      /*new_size=*/2, PrecisionConfig::DEFAULT);
+  PrecisionConfig precision_config = PrecisionConfigDEFAULT();
   b.AddInstruction(HloInstruction::CreateConvolve(
       shape, lhs_instruction, rhs_instruction, /*feature_group_count=*/1,
       /*batch_group_count=*/1, window, dnums, precision_config));

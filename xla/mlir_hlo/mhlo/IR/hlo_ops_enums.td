@@ -18,6 +18,7 @@ limitations under the License.
 
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/PatternBase.td"
+include "mlir/IR/AttrTypeBase.td"
 
 //===----------------------------------------------------------------------===//
 // Precision Config enum definitions.
@@ -28,10 +29,15 @@ def MHLO_PRECISION_DEFAULT : I32EnumAttrCase<"DEFAULT", 0>;
 def MHLO_PRECISION_HIGH    : I32EnumAttrCase<"HIGH", 1>;
 def MHLO_PRECISION_HIGHEST : I32EnumAttrCase<"HIGHEST", 2>;
 def MHLO_PRECISION_PACKED_NIBBLE : I32EnumAttrCase<"PACKED_NIBBLE", 3>;
+def MHLO_PRECISION_E4B8 : I32EnumAttrCase<"E4B8", 4>;
+def MHLO_PRECISION_E4B10 : I32EnumAttrCase<"E4B10", 5>;
+def MHLO_PRECISION_E4B12 : I32EnumAttrCase<"E4B12", 6>;
+def MHLO_PRECISION_E5 : I32EnumAttrCase<"E5", 7>;
 
 def MHLO_Precision : I32EnumAttr<"Precision",
     "XLA precision for an operand. Has backend specific meaning.",
-    [MHLO_PRECISION_DEFAULT, MHLO_PRECISION_HIGH, MHLO_PRECISION_HIGHEST, MHLO_PRECISION_PACKED_NIBBLE]> {
+    [MHLO_PRECISION_DEFAULT, MHLO_PRECISION_HIGH, MHLO_PRECISION_HIGHEST, MHLO_PRECISION_PACKED_NIBBLE,
+    MHLO_PRECISION_E4B8, MHLO_PRECISION_E4B10, MHLO_PRECISION_E4B12, MHLO_PRECISION_E5]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::mhlo";
 }
@@ -42,6 +48,7 @@ def MHLO_PrecisionAttr : EnumAttr<MHLO_Dialect, MHLO_Precision, "precision">;
 def MHLO_PrecisionConfigAttr:
     OptionalAttr<
           TypedArrayAttrBase<MHLO_PrecisionAttr, "Precision Config attribute">>;
+
 
 //===----------------------------------------------------------------------===//
 // Custom call schedule hints

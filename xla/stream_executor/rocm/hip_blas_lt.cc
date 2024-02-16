@@ -135,7 +135,7 @@ absl::Status BlasLt::Init() {
 }
 
 /*static*/ absl::StatusOr<BlasLt::MatrixLayout> BlasLt::MatrixLayout::Create(
-    const gpu::MatrixLayout& m) {
+    const gpu::MatrixLayout& m, int prec) {
   TF_ASSIGN_OR_RETURN(auto type, gpu::AsBlasDataType(m.dtype));
 
   auto hipblas_data_type_ = AsHipblasDataType(type);
@@ -144,7 +144,7 @@ absl::Status BlasLt::Init() {
       &hip_layout, hipblas_data_type_, m.num_rows, m.num_cols,
       m.leading_dim_stride));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
-  BlasLt::MatrixLayout layout(hip_layout, hipblas_data_type_);
+  BlasLt::MatrixLayout layout(m, hip_layout, hipblas_data_type_, prec);
   if (m.order != gpu::MatrixLayout::Order::kColumnMajor)
     return absl::InternalError("HipblasLT does not support row-major matrices");
   TF_RETURN_IF_ERROR(SetAttr(hip_layout, HIPBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
@@ -165,7 +165,7 @@ absl::Status BlasLt::Init() {
 /*static*/ absl::StatusOr<BlasLt::MatmulDesc> BlasLt::MatmulDesc::Create(
     blas::ComputationType compute_type, blas::DataType scale_type,
     blas::Transpose trans_a, blas::Transpose trans_b, Epilogue epilogue,
-    PointerMode pointer_mode) {
+    PointerMode pointer_mode, int grads) {
   hipblasLtMatmulDesc_t hip_desc;
   VLOG(2) << "BlasLt::MatmulDesc::Create compute_type: " << int(compute_type)
           << " scale_type: " << int(scale_type)
@@ -177,7 +177,9 @@ absl::Status BlasLt::Init() {
   SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmulDescCreate(
       &hip_desc, hip_compute_type, hip_scale_type));
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
-  BlasLt::MatmulDesc desc(hip_desc, hip_compute_type, hip_scale_type);
+  BlasLt::MatmulDesc desc(hip_desc, hip_compute_type, hip_scale_type, grads);
+  desc.trans_a_ = trans_a;
+  desc.trans_b_ = trans_b;
   if (pointer_mode != PointerMode::kHost) {
     return absl::InternalError("hipblaslt does not support device pointers");
   }
@@ -254,7 +256,7 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
     -> absl::StatusOr<MatmulPlanPtr> {
   auto lhs_layout = cfg.lhs_layout, rhs_layout = cfg.rhs_layout,
        output_layout = cfg.output_layout, c_layout = cfg.c_layout;
-
+  int grad_flags = cfg.grad_flags;
   // cublasLt matmul requires batch sizes to be equal. If only one operand has a
   // batch, the other will be broadcast (as its batch_stride == 0).
   size_t batch_size = std::max(lhs_layout.batch_size, rhs_layout.batch_size);
@@ -272,6 +274,11 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
   // transpose A or B, and expect the caller to ensure A is row-major and B is
   // column when A and B are FP8.
   auto trans_a = lhs_layout.transpose, trans_b = rhs_layout.transpose;
+
+  int a_prec = static_cast<int>(cfg.input_precisions[0]);
+  int b_prec = static_cast<int>(cfg.input_precisions[1]);
+  if(must_swap_operands)
+    std::swap(a_prec, b_prec);
 
   if (xla::primitive_util::IsF8Type(lhs_layout.dtype) &&
       lhs_layout.order == gpu::MatrixLayout::Order::kColumnMajor) {
@@ -306,12 +313,13 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
       auto op_desc,
       MatmulDesc::Create(*compute_type,
                          gpu::GetScaleType(output_dtype, *compute_type),
-                         trans_a, trans_b, epilogue));
+                         trans_a, trans_b, epilogue, PointerMode::kHost,
+                         grad_flags));
 
-  TF_ASSIGN_OR_RETURN(auto a_desc, MatrixLayout::Create(lhs_layout));
-  TF_ASSIGN_OR_RETURN(auto b_desc, MatrixLayout::Create(rhs_layout));
-  TF_ASSIGN_OR_RETURN(auto c_desc, MatrixLayout::Create(c_layout));
-  TF_ASSIGN_OR_RETURN(auto d_desc, MatrixLayout::Create(output_layout));
+  TF_ASSIGN_OR_RETURN(auto a_desc, MatrixLayout::Create(lhs_layout, a_prec));
+  TF_ASSIGN_OR_RETURN(auto b_desc, MatrixLayout::Create(rhs_layout, b_prec));
+  TF_ASSIGN_OR_RETURN(auto c_desc, MatrixLayout::Create(c_layout, xla::PrecisionConfig::HIGHEST));
+  TF_ASSIGN_OR_RETURN(auto d_desc, MatrixLayout::Create(output_layout, xla::PrecisionConfig::HIGHEST));
 
 #if TF_ROCM_VERSION >= 60000
   // Currently, the default bias data type in hipblasLt is the same with output
@@ -397,7 +405,8 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
     if(blas_lt_ref_.parent_->GetArgumentLoggingMode() & sei::ArgumentLogging::kGemm) {
       blas_lt_ref_.parent_->ArgumentLogs().push_back(
         /* Known bug: blas::CallContext is not passed to this method */
-          sei::GemmCallTrace{sei::GemmCallTrace::GemmType::kBlasLt, 0,
+          sei::GemmCallTrace{sei::GemmCallTrace::GemmType::kBlasLt, profile_result != 0,
+            a_desc_.precision(), b_desc_.precision(),
             a.size(), b.size()});
     }
   }

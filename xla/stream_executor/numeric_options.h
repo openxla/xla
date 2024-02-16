@@ -21,8 +21,9 @@ namespace stream_executor {
 // Options that specify the numeric behavior of operations like matrix
 // multiplications and convolutions
 struct NumericOptions {
-  NumericOptions(bool require_determinism, bool allow_tf32)
-      : require_determinism(require_determinism), allow_tf32(allow_tf32) {}
+  NumericOptions(bool require_determinism, bool allow_tf32, int prec1=-1, int prec2=-1)
+      : require_determinism(require_determinism), allow_tf32(allow_tf32), 
+      precision1(DynamicRange(prec1)), precision2(DynamicRange(prec2)) {}
 
   NumericOptions() : require_determinism(false), allow_tf32(true) {}
 
@@ -30,6 +31,24 @@ struct NumericOptions {
   bool require_determinism;
   // If true, float32 inputs can be rounded to TensorFloat-32 precision
   bool allow_tf32;
+
+  // Mirrors xla_data.proto/Precision
+  enum DynamicRange {
+    UNDEFINED = -1,
+
+    DEFAULT = 0,
+    HIGH = 1,
+    HIGHEST = 2,
+    PACKED_NIBBLE = 3,
+    E4B6 = 4,
+    E4B8 = 5,
+    E4B10 = 6,
+    E4B12 = 7,
+    E5 = 8
+  };
+
+  DynamicRange precision1=UNDEFINED;
+  DynamicRange precision2=UNDEFINED;
 };
 
 }  // namespace stream_executor

@@ -260,6 +260,7 @@ class MIOpenSupport : public dnn::DnnSupport {
       DeviceMemoryBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
       ScratchAllocator* scratch_allocator,
+      const NumericOptions& numeric_options,
       std::vector<dnn::ProfileResult>* out_algorithms) override;
 
   bool GetRnnAlgorithms(

@@ -48,6 +48,7 @@ limitations under the License.
 #include "Eigen/Core"  // from @eigen_archive
 #include "xla/status.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/numeric_options.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/math/math_util.h"
@@ -820,6 +821,43 @@ void PackInt4(absl::Span<const char> input, absl::Span<char> output);
 // should have num_elements bytes. The high-order 4-bits in each output are
 // zero.
 void UnpackInt4(absl::Span<const char> input, absl::Span<char> output);
+
+inline PrecisionConfig PrecisionToPrecisionConfig(PrecisionConfig::Precision precision, int n = 2)
+{
+  PrecisionConfig cfg;
+  for(int i=0; i<n; i++)
+    cfg.add_operand_precision(precision); 
+  return cfg;
+}
+
+inline PrecisionConfig PrecisionConfigDEFAULT(int n = 2) 
+{ 
+  return PrecisionToPrecisionConfig(PrecisionConfig::DEFAULT, n);
+}
+
+inline PrecisionConfig PrecisionConfigHIGHEST(int n = 2) 
+{ 
+  return PrecisionToPrecisionConfig(PrecisionConfig::HIGHEST, n);
+}
+
+
+inline bool equal_configs(const PrecisionConfig& cfg1, const PrecisionConfig& cfg2) {
+  if(cfg1.operand_precision_size() != cfg2.operand_precision_size())
+    return false;
+  int n = 0;
+  for(int i=0; i<cfg1.operand_precision_size(); i++) {
+    if(cfg1.operand_precision(i) != cfg2.operand_precision(i))
+      return false;
+  }
+  return true;
+}
+
+inline int count_packed_nibbles(const PrecisionConfig& cfg) {
+  int n = 0;
+  for(auto x: cfg.operand_precision())
+    n += (x == PrecisionConfig::PACKED_NIBBLE);
+  return n;
+}
 
 class HloInstruction;
 class HloModule;

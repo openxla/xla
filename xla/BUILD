@@ -366,6 +366,7 @@ cc_library(
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:stacktrace",
+        "//xla/stream_executor:numeric_options"
     ],
 )
 
