@@ -555,7 +555,6 @@ cc_library(
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@llvm-project//mlir:Transforms",
         "@triton//:TritonDialects",
-        "@triton//:TritonTmaMetadata",
         "@triton//:TritonTransforms",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
