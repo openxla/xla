@@ -26,10 +26,10 @@ package_group(
 
 cc_library(
     name = "onednn_plugin",
-    srcs = ["sycl_dnn.cc"],
-    hdrs = ["sycl_dnn.h"],
+    srcs = if_sycl_is_configured(["sycl_dnn.cc"]),
+    hdrs = if_sycl_is_configured(["sycl_dnn.h"]),
     visibility = ["//visibility:public"],
-    deps = [
+    deps = if_sycl_is_configured([
         ":sycl_driver",
         ":sycl_executor",
         ":sycl_platform_id",
@@ -50,27 +50,27 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-    ],
+    ]),
     alwayslink = True,
 )
 
 cc_library(
     name = "sycl_gpu_runtime",
-    srcs = ["sycl_gpu_runtime.cc"],
-    hdrs = ["sycl_gpu_runtime.h"],
-    deps = [
+    srcs = if_sycl_is_configured(["sycl_gpu_runtime.cc"]),
+    hdrs = if_sycl_is_configured(["sycl_gpu_runtime.h"]),
+    deps = if_sycl_is_configured([
         "//xla/stream_executor/gpu:gpu_types_header",
         "@com_google_absl//absl/strings",
         "@local_config_sycl//sycl",
         "@local_config_sycl//sycl:sycl_headers",
         "@tsl//tsl/util:env_var",
-    ],
+    ]),
 )
 
 cc_library(
     name = "sycl_driver",
-    srcs = ["sycl_driver.cc"],
-    deps = [
+    srcs = if_sycl_is_configured(["sycl_driver.cc"]),
+    deps = if_sycl_is_configured([
         ":sycl_gpu_runtime",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -91,20 +91,19 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
-    ] + if_sycl_is_configured([
         "@local_config_sycl//sycl:mkl",
     ]),
 )
 
 cc_library(
     name = "sycl_collectives",
-    srcs = ["sycl_collectives.cc"],
-    deps = [
+    srcs = if_sycl_is_configured(["sycl_collectives.cc"]),
+    deps = if_sycl_is_configured([
         "//xla/stream_executor/gpu:gpu_collectives_header",
         "//xla/stream_executor/gpu:gpu_driver_header",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-    ],
+    ]),
 )
 
 cc_library(
@@ -116,10 +115,10 @@ cc_library(
 
 cc_library(
     name = "sycl_platform",
-    srcs = ["sycl_platform.cc"],
-    hdrs = ["sycl_platform.h"],
+    srcs = if_sycl_is_configured(["sycl_platform.cc"]),
+    hdrs = if_sycl_is_configured(["sycl_platform.h"]),
     visibility = ["//visibility:public"],
-    deps = [
+    deps = if_sycl_is_configured([
         ":sycl_executor",
         ":sycl_platform_id",
         "@com_google_absl//absl/base",
@@ -134,36 +133,36 @@ cc_library(
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/platform",
-    ],
+    ]),
     alwayslink = True,  # Registers itself with the MultiPlatformManager.
 )
 
 cc_library(
     name = "sycl_kernel",
-    srcs = ["sycl_kernel.cc"],
-    deps = [
+    srcs = if_sycl_is_configured(["sycl_kernel.cc"]),
+    deps = if_sycl_is_configured([
         ":sycl_gpu_runtime",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_kernel_header",
         "//xla/stream_executor/platform",
-    ],
+    ]),
 )
 
 cc_library(
     name = "sycl_event",
-    srcs = ["sycl_event.cc"],
-    deps = [
+    srcs = if_sycl_is_configured(["sycl_event.cc"]),
+    deps = if_sycl_is_configured([
         ":sycl_driver",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/gpu:gpu_event",
         "//xla/stream_executor/gpu:gpu_stream_header",
-    ],
+    ]),
 )
 
 cc_library(
     name = "sycl_executor",
-    srcs = ["sycl_executor.cc"],
-    deps = [
+    srcs = if_sycl_is_configured(["sycl_executor.cc"]),
+    deps = if_sycl_is_configured([
         ":sycl_collectives",
         ":sycl_driver",
         ":sycl_event",
@@ -178,17 +177,17 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_command_buffer",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
-    ],
+    ]),
     alwayslink = True,
 )
 
 cc_library(
     name = "all_runtime",
     visibility = ["//visibility:public"],
-    deps = [
+    deps = if_sycl_is_configured([
         ":onednn_plugin",
         ":sycl_platform",
-    ],
+    ]),
     alwayslink = 1,
 )
 

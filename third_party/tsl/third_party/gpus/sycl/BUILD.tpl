@@ -23,10 +23,10 @@ cc_library(
 cc_library(
     name = "sycl",
     srcs = [
-        %{core_sycl_libs},
+        %{core_sycl_libs}
     ],
     data = [
-        %{core_sycl_libs},
+        %{core_sycl_libs}
     ],
     includes = [
         ".",
@@ -43,13 +43,13 @@ cc_library(
         "sycl/lib/%{mkl_intel_ilp64_lib}",
         "sycl/lib/%{mkl_sequential_lib}",
         "sycl/lib/%{mkl_core_lib}",
-        %{mkl_sycl_libs},
+        %{mkl_sycl_libs}
     ],
     data = [
         "sycl/lib/%{mkl_intel_ilp64_lib}",
         "sycl/lib/%{mkl_sequential_lib}",
         "sycl/lib/%{mkl_core_lib}",
-        %{mkl_sycl_libs},
+        %{mkl_sycl_libs}
     ],
     includes = [
         ".",

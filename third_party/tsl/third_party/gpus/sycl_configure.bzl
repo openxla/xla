@@ -348,7 +348,19 @@ error_gpu_disabled()
 def _create_dummy_repository(repository_ctx):
     # Set up BUILD file for sycl/.
     _tpl(repository_ctx, "sycl:build_defs.bzl")
-    _tpl(repository_ctx, "sycl:BUILD")
+    _tpl(
+        repository_ctx,
+        "sycl:BUILD",
+        {
+            "%{mkl_intel_ilp64_lib}": _lib_name("mkl_intel_ilp64"),
+            "%{mkl_sequential_lib}": _lib_name("mkl_sequential"),
+            "%{mkl_core_lib}": _lib_name("mkl_core"),
+            "%{mkl_sycl_libs}": "",
+            "%{core_sycl_libs}": "",
+            "%{copy_rules}": "",
+            "%{sycl_headers}": "",
+        },
+    )
 
     # If sycl_configure is not configured to build with SYCL support, and the user
     # attempts to build with --config=sycl, add a dummy build rule to intercept
