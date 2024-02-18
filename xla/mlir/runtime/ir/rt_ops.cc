@@ -18,10 +18,19 @@ limitations under the License.
 #include <iterator>
 #include <optional>
 
-#include "llvm/ADT/STLExtras.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/IR/Block.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project  // IWYU pragma: keep
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/OperationSupport.h"  // from @llvm-project
+#include "mlir/IR/Region.h"  // from @llvm-project
+#include "mlir/IR/SymbolTable.h"  // from @llvm-project
+#include "mlir/IR/TypeRange.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/ValueRange.h"  // from @llvm-project
+#include "mlir/Interfaces/ControlFlowInterfaces.h"  // from @llvm-project
+#include "mlir/Interfaces/FunctionInterfaces.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "xla/mlir/runtime/ir/rt_interfaces.h"
 
 namespace xla {

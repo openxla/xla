@@ -102,9 +102,12 @@ cc_library(
         ":rt_inc_gen",
         ":rt_interfaces_inc_gen",
         "//xla/runtime:constraints",
+        "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
