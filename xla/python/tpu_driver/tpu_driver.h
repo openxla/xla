@@ -88,11 +88,6 @@ class CompiledProgramHandle {
   // automatically add this event as a dependency.
   virtual std::shared_ptr<Event> OnReady() = 0;
 
-  virtual int64_t size_in_bytes() {
-    LOG(FATAL) << "Unimplemented.";
-    return 0;
-  }
-
   // Returns the shape of the compiled program. Blocks until compile completes.
   virtual xla::Status program_shape(xla::ProgramShapeProto* program_shape) = 0;
 };
@@ -107,11 +102,6 @@ class LoadedProgramHandle {
   // Methods that take a loaded program handle, including ExecuteProgram and
   // UnloadProgram, automatically add this event as a dependency.
   virtual std::shared_ptr<Event> OnReady() = 0;
-
-  virtual int64_t size_in_bytes() {
-    LOG(FATAL) << "Unimplemented.";
-    return 0;
-  }
 };
 
 // A TpuLinearizer manages the linearization and delinearization of user buffers
