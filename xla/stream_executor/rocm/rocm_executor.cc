@@ -346,7 +346,8 @@ absl::Status GpuExecutor::Launch(Stream* stream, const ThreadDim& thread_dims,
   if (VLOG_IS_ON(2)) {
     absl::MutexLock lock(&launched_kernels_mu_);
     if (!launched_kernels_.count(hipfunc)) {
-      VlogOccupancyInfo(kernel, thread_dims, block_dims);
+      VlogOccupancyInfo(stream->parent()->GetDeviceDescription(), kernel, 
+                        thread_dims, block_dims);
       // TODO(rspringer): Remove elements from launched_kernels_...if we ever
       // expose a kernel/module deallocation method.
       launched_kernels_.insert(hipfunc);
@@ -464,7 +465,8 @@ absl::Status GpuExecutor::LoadModuleFromHsaco(const char* hsaco,
 // This is a non-essential operation; if there's a failure, proceed without
 // logging an error. It's nearly certain that in case of failures, we'd never
 // get here in the first place; these are very low-impact routines.
-void GpuExecutor::VlogOccupancyInfo(const Kernel& kernel,
+void GpuExecutor::VlogOccupancyInfo(const DeviceDescription& device_desc,
+                                    const Kernel& kernel,
                                     const ThreadDim& thread_dims,
                                     const BlockDim& block_dims) {
   VLOG(2) << "Computing kernel occupancy for kernel "
@@ -479,18 +481,15 @@ void GpuExecutor::VlogOccupancyInfo(const Kernel& kernel,
     return;
   }
 
-  const DeviceDescription& device_description =
-      kernel.parent()->GetDeviceDescription();
-
   const GpuKernel* rocm_kernel = AsGpuKernel(&kernel);
   auto hipfunc = rocm_kernel->AsGpuFunctionHandle();
 
-  int blocks_per_sm = CalculateOccupancy(device_description, *regs_per_thread,
+  int blocks_per_sm = CalculateOccupancy(device_desc, *regs_per_thread,
                                          *smem_per_block, thread_dims, hipfunc);
   VLOG(2) << "Resident blocks per SM is " << blocks_per_sm;
 
   int suggested_threads =
-      CompareOccupancy(&blocks_per_sm, device_description, *regs_per_thread,
+      CompareOccupancy(&blocks_per_sm, device_desc, *regs_per_thread,
                        *smem_per_block, thread_dims, hipfunc);
   if (suggested_threads != 0) {
     VLOG(2) << "The rocm occupancy calculator recommends using "
