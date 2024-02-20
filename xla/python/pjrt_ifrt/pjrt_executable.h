@@ -81,9 +81,9 @@ class PjRtExecutable final
     : public llvm::RTTIExtends<PjRtExecutable, PjRtCompatibleExecutable> {
  public:
   // Creates PjRtExecutable from xla::PjRtExecutable.
-  static StatusOr<std::unique_ptr<Executable>> Create(
+  static absl::StatusOr<std::unique_ptr<Executable>> Create(
       std::unique_ptr<xla::PjRtExecutable> pjrt_executable);
-  static StatusOr<std::unique_ptr<Executable>> Create(
+  static absl::StatusOr<std::unique_ptr<Executable>> Create(
       std::shared_ptr<xla::PjRtExecutable> pjrt_executable);
 
   // PjRtCompatibleExecutable implementation.
@@ -113,19 +113,19 @@ class PjRtExecutable final
     return pjrt_executable_->GetOutputShardings();
   }
 
-  StatusOr<std::vector<Layout>> GetParameterLayouts() const override {
+  absl::StatusOr<std::vector<Layout>> GetParameterLayouts() const override {
     DCHECK(this);
     return pjrt_executable_->GetParameterLayouts();
   }
 
-  StatusOr<std::vector<Layout>> GetOutputLayouts() const override {
+  absl::StatusOr<std::vector<Layout>> GetOutputLayouts() const override {
     DCHECK(this);
     return pjrt_executable_->GetOutputLayouts();
   }
 
-  StatusOr<std::optional<std::string>> Fingerprint() const override;
+  absl::StatusOr<std::optional<std::string>> Fingerprint() const override;
 
-  StatusOr<std::string> Serialize() const override;
+  absl::StatusOr<std::string> Serialize() const override;
 
   int num_devices() const override {
     DCHECK(this);
@@ -136,18 +136,19 @@ class PjRtExecutable final
     DCHECK(this);
     return pjrt_executable_->SizeOfGeneratedCodeInBytes();
   }
-  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
     DCHECK(this);
     return pjrt_executable_->GetCompiledMemoryStats();
   }
 
-  StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
+  absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
       const override {
     DCHECK(this);
     return pjrt_executable_->GetHloModules();
   }
 
-  StatusOr<absl::flat_hash_map<std::string, Executable::CostAnalysisValue>>
+  absl::StatusOr<
+      absl::flat_hash_map<std::string, Executable::CostAnalysisValue>>
   GetCostAnalysis() const override {
     return pjrt_executable_->GetCostAnalysis();
   }
@@ -172,11 +173,11 @@ class PjRtLoadedExecutable final
   // Creates PjRtExecutable from xla::PjRtLoadedExecutable. We expect that
   // xla::PjRtLoadedExecutable has fixed output dtypes/shapes/shardings.
   // PjRtLoadedExecutable::GetHloModules() must be implemented.
-  static StatusOr<std::unique_ptr<LoadedExecutable>> Create(
+  static absl::StatusOr<std::unique_ptr<LoadedExecutable>> Create(
       PjRtCompatibleClient* client,
       std::unique_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks);
-  static StatusOr<std::unique_ptr<LoadedExecutable>> Create(
+  static absl::StatusOr<std::unique_ptr<LoadedExecutable>> Create(
       PjRtCompatibleClient* client,
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks);
@@ -186,7 +187,7 @@ class PjRtLoadedExecutable final
   // options.executable_build_options has use_auto_spmd_partitioning or
   // allow_spmd_sharding_propagation_to_output enabled,
   // PjRtLoadedExecutable::GetHloModules() must be implemented.
-  static StatusOr<std::unique_ptr<LoadedExecutable>> Create(
+  static absl::StatusOr<std::unique_ptr<LoadedExecutable>> Create(
       PjRtCompatibleClient* client, mlir::ModuleOp module,
       xla::CompileOptions compile_options,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks);
@@ -223,19 +224,19 @@ class PjRtLoadedExecutable final
     return pjrt_loaded_executable_->GetOutputShardings();
   }
 
-  StatusOr<std::vector<Layout>> GetParameterLayouts() const override {
+  absl::StatusOr<std::vector<Layout>> GetParameterLayouts() const override {
     DCHECK(this);
     return pjrt_loaded_executable_->GetParameterLayouts();
   }
 
-  StatusOr<std::vector<Layout>> GetOutputLayouts() const override {
+  absl::StatusOr<std::vector<Layout>> GetOutputLayouts() const override {
     DCHECK(this);
     return pjrt_loaded_executable_->GetOutputLayouts();
   }
 
-  StatusOr<std::optional<std::string>> Fingerprint() const override;
+  absl::StatusOr<std::optional<std::string>> Fingerprint() const override;
 
-  StatusOr<std::string> Serialize() const override;
+  absl::StatusOr<std::string> Serialize() const override;
 
   int num_devices() const override {
     DCHECK(this);
@@ -246,19 +247,19 @@ class PjRtLoadedExecutable final
     DCHECK(this);
     return pjrt_loaded_executable_->SizeOfGeneratedCodeInBytes();
   }
-  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
     DCHECK(this);
     return pjrt_loaded_executable_->GetCompiledMemoryStats();
   }
 
-  StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
+  absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
       const override {
     DCHECK(this);
     return pjrt_loaded_executable_->GetHloModules();
   }
 
-  StatusOr<std::vector<std::vector<absl::string_view>>> GetOutputMemoryKinds()
-      const override {
+  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetOutputMemoryKinds() const override {
     DCHECK(this);
     return pjrt_loaded_executable_->GetOutputMemoryKinds();
   }
@@ -267,9 +268,9 @@ class PjRtLoadedExecutable final
     DCHECK(this);
     return client_;
   }
-  StatusOr<ExecuteResult> Execute(absl::Span<tsl::RCReference<Array>> args,
-                                  const ExecuteOptions& options,
-                                  std::optional<DeviceList> devices) override;
+  absl::StatusOr<ExecuteResult> Execute(
+      absl::Span<tsl::RCReference<Array>> args, const ExecuteOptions& options,
+      std::optional<DeviceList> devices) override;
 
   Future<Status> Delete() override;
   bool IsDeleted() const override {
@@ -287,7 +288,8 @@ class PjRtLoadedExecutable final
     return pjrt_loaded_executable_->addressable_devices();
   }
 
-  StatusOr<absl::flat_hash_map<std::string, Executable::CostAnalysisValue>>
+  absl::StatusOr<
+      absl::flat_hash_map<std::string, Executable::CostAnalysisValue>>
   GetCostAnalysis() const override {
     return pjrt_loaded_executable_->GetCostAnalysis();
   }
@@ -295,7 +297,7 @@ class PjRtLoadedExecutable final
   static char ID;  // NOLINT
 
  private:
-  static StatusOr<std::unique_ptr<LoadedExecutable>> CreateInternal(
+  static absl::StatusOr<std::unique_ptr<LoadedExecutable>> CreateInternal(
       PjRtCompatibleClient* client,
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
       absl::Span<const xla::PrimitiveType> result_element_types,
