@@ -37,7 +37,7 @@ namespace xla {
 // provided, the post-optimization module will be stored in it.
 //
 // This is the expected entry point to the compilation functionality.
-StatusOr<std::string> CompileExecutable(
+absl::StatusOr<std::string> CompileExecutable(
     std::unique_ptr<HloModule> hlo_module, absl::string_view platform,
     std::optional<Compiler::TargetConfig> target_config,
     CompilationResult& result);

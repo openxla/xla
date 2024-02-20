@@ -54,7 +54,7 @@ limitations under the License.
 
 namespace xla {
 
-static StatusOr<std::string> AotCompileCpuExecutable(
+static absl::StatusOr<std::string> AotCompileCpuExecutable(
     std::unique_ptr<HloModule> hlo_module) {
   cpu::CpuCompiler cpu_compiler;
   auto module_group = std::make_unique<HloModuleGroup>(std::move(hlo_module));
@@ -66,7 +66,7 @@ static StatusOr<std::string> AotCompileCpuExecutable(
   return aot_result->SerializeAsString();
 }
 
-static StatusOr<std::string> CompileGpuExecutable(
+static absl::StatusOr<std::string> CompileGpuExecutable(
     std::unique_ptr<HloModule> hlo_module,
     std::optional<Compiler::TargetConfig> target_config,
     CompilationResult& result) {
@@ -128,7 +128,7 @@ static StatusOr<std::string> CompileGpuExecutable(
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 }
 
-StatusOr<std::string> CompileExecutable(
+absl::StatusOr<std::string> CompileExecutable(
     std::unique_ptr<HloModule> hlo_module, absl::string_view platform,
     std::optional<Compiler::TargetConfig> target_config,
     CompilationResult& result) {
