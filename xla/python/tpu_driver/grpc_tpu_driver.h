@@ -24,7 +24,7 @@
 
 namespace tpu_driver {
 
-xla::StatusOr<std::unique_ptr<TpuDriver>> CreateGrpcTpuDriver(
+absl::StatusOr<std::unique_ptr<TpuDriver>> CreateGrpcTpuDriver(
     const TpuDriverConfig& config,
     std::shared_ptr<grpc::ChannelCredentials> credentials);
 

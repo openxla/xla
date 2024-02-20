@@ -967,7 +967,7 @@ void PodEvent::AddCallback(std::function<void(Status)> callback) {
   driver_->AddCallbackForEvent(operation_id_, std::move(callback));
 }
 
-xla::StatusOr<std::unique_ptr<TpuDriver>> CreatePodTpuDriver(
+absl::StatusOr<std::unique_ptr<TpuDriver>> CreatePodTpuDriver(
     const TpuDriverConfig& config,
     std::shared_ptr<::grpc::ChannelCredentials> creds) {
   return std::unique_ptr<TpuDriver>(new PodTpuDriver(config, creds));
@@ -982,7 +982,7 @@ xla::Status PodCompiledProgramHandle::program_shape(
 
 REGISTER_TPU_DRIVER(kPodTpuDriverPrefix,
                     [](const TpuDriverConfig& config)
-                        -> xla::StatusOr<std::unique_ptr<TpuDriver>> {
+                        -> absl::StatusOr<std::unique_ptr<TpuDriver>> {
                       return CreatePodTpuDriver(
                           config,
                           ::grpc::InsecureChannelCredentials());  // NOLINT
