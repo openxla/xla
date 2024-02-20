@@ -980,6 +980,49 @@ LogicalResult DotGeneralOp::reifyReturnTypeShapes(
 }
 
 //===----------------------------------------------------------------------===//
+// SparseDotOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SparseDotOp::verify() {
+  RankedTensorType lhsType = getLhs().getType().dyn_cast<RankedTensorType>();
+  RankedTensorType rhsType = getRhs().getType().dyn_cast<RankedTensorType>();
+
+  std::vector<std::optional<SparsityDescriptorAttr>> sparsityAttrs = {
+      getLhsSparsity(), getRhsSparsity()};
+  for (auto& attr : sparsityAttrs) {
+    if (!attr.has_value()) continue;
+    RankedTensorType& sparseType = attr->getIndex() == 0 ? lhsType : rhsType;
+    SmallVector<int64_t> sparseShape(sparseType.getShape());
+    if (static_cast<size_t>(attr->getDimension()) >= sparseShape.size()) {
+      return emitOptionalError(getLoc(), "sparsity dimension is incorrect");
+    }
+    sparseShape[attr->getDimension()] *= attr->getM() / attr->getN();
+    sparseType = sparseType.clone(sparseShape);
+  }
+
+  SmallVector<ShapedTypeComponents> inferredReturnShapes;
+  if (failed(hlo::inferDotGeneralOp(
+          getLoc(), lhsType, rhsType,
+          getDotDimensionNumbersAttr().getLhsBatchingDimensions(),
+          getDotDimensionNumbersAttr().getRhsBatchingDimensions(),
+          getDotDimensionNumbersAttr().getLhsContractingDimensions(),
+          getDotDimensionNumbersAttr().getRhsContractingDimensions(),
+          getPrecisionConfig(), inferredReturnShapes)))
+    return failure();
+
+  auto inferredShape = inferredReturnShapes[0];
+  auto resultType = getResult().getType().cast<ShapedType>();
+  if (inferredShape.hasRank() && resultType.hasRank() &&
+      failed(verifyCompatibleShape(inferredShape.getDims(),
+                                   resultType.getShape())))
+    return emitOptionalError(getLoc(), "inferred shape '",
+                             hlo::dimSizesToString(inferredShape.getDims()),
+                             "' is incompatible with return type of operation ",
+                             resultType);
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // FftOp
 //===----------------------------------------------------------------------===//
 LogicalResult verify1dTensor(std::optional<Location> loc,
