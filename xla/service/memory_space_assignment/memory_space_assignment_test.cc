@@ -266,7 +266,8 @@ class MemorySpaceAssignmentTestBase : public HloTestBase {
     return std::move(status_or.value());
   }
 
-  StatusOr<std::unique_ptr<PresetAssignments>> AssignMemorySpaceAndReturnStatus(
+  absl::StatusOr<std::unique_ptr<PresetAssignments>>
+  AssignMemorySpaceAndReturnStatus(
       HloModule* module, std::optional<Options> options_override,
       std::optional<MemorySpaceAssignment::BufferIntervalCompare>
           buffer_interval_compare,
@@ -6694,7 +6695,8 @@ class FakeMemorySpaceAssignmentRepacker : public MemorySpaceAssignmentRepacker {
         check_fun_(check_fun),
         always_return_modified_(always_return_modified) {}
 
-  StatusOr<bool> Repack(absl::Span<AllocationBlock*> allocations) override {
+  absl::StatusOr<bool> Repack(
+      absl::Span<AllocationBlock*> allocations) override {
     bool modified = false;
     for (AllocationBlock* block : allocations) {
       absl::flat_hash_set<int64_t> colocations;
@@ -9427,7 +9429,7 @@ class MemoryBoundLoopOptimizerTest : public HloTestBase {
     return OkStatus();
   }
 
-  StatusOr<MemoryBoundLoopOptimizer*> CreateOptimizer(
+  absl::StatusOr<MemoryBoundLoopOptimizer*> CreateOptimizer(
       int loop_start, int loop_end, const HloModule* module,
       uint64_t alternate_memory_size = 256) {
     TF_RETURN_IF_ERROR(Initialize(module, alternate_memory_size));
@@ -9443,7 +9445,7 @@ class MemoryBoundLoopOptimizerTest : public HloTestBase {
     return optimizer_.get();
   }
 
-  StatusOr<std::unique_ptr<HloModule>> ParseAndCreateOptimizer(
+  absl::StatusOr<std::unique_ptr<HloModule>> ParseAndCreateOptimizer(
       absl::string_view hlo_loop_str, uint64_t alternate_memory_size,
       int& loop_start_idx, MemoryBoundLoopOptimizer** optimizer) {
     int loop_end_idx;
@@ -9464,7 +9466,7 @@ class MemoryBoundLoopOptimizerTest : public HloTestBase {
   //  $op2 = f32[1,4] add(f32[1,4] $param2, f32[1,4] $op0)
   //  $op3 = f32[8,4] add(f32[8,4] $param3, f32[8,4] $op1)
   //  $op4 = f32[1,4] add(f32[1,4] $param4, f32[1,4] $op2)
-  StatusOr<std::string> ParseAndCreateModuleString(
+  absl::StatusOr<std::string> ParseAndCreateModuleString(
       absl::string_view hlo_loop_str, int& loop_start_idx, int& loop_end_idx) {
     // Parse op name and types first.
     RE2 op_re("\\$op([0-9]+) += +(\\S+).*");
@@ -9616,7 +9618,7 @@ ENTRY Entry {
     return hlo_string;
   }
 
-  StatusOr<std::unique_ptr<PresetAssignments>> RunMsa(
+  absl::StatusOr<std::unique_ptr<PresetAssignments>> RunMsa(
       HloModule* module, uint64_t alternate_memory_size = 256) {
     options_.max_size_in_bytes = alternate_memory_size;
     options_.alignment_in_bytes = 8;
@@ -10826,13 +10828,13 @@ class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
     SliceProposer() = default;
     virtual ~SliceProposer() = default;
 
-    virtual StatusOr<SliceProposalCollection> ProposeSlices(
+    virtual absl::StatusOr<SliceProposalCollection> ProposeSlices(
         const Shape& shape, const SlicedPrefetchOptions& options) = 0;
   };
 
   class MockSliceProposer : public SliceProposer {
    public:
-    MOCK_METHOD(StatusOr<SliceProposalCollection>, ProposeSlices,
+    MOCK_METHOD(absl::StatusOr<SliceProposalCollection>, ProposeSlices,
                 (const Shape& shape, const SlicedPrefetchOptions& options),
                 (override));
   };
@@ -11190,7 +11192,7 @@ class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
   }
 
   // Returns the index of the first instruction with the given name.
-  static StatusOr<int> FindScheduleIndexOfInstruction(
+  static absl::StatusOr<int> FindScheduleIndexOfInstruction(
       const std::vector<HloInstruction*>& schedule, std::string_view name,
       InstructionClass c) {
     for (int i = 0; i < schedule.size(); ++i) {
@@ -11216,7 +11218,7 @@ class SlicedPrefetchTest : public MemorySpaceAssignmentTestBase {
     return nullptr;
   }
 
-  static StatusOr<std::vector<int>> GetSliceStartIndicies(
+  static absl::StatusOr<std::vector<int>> GetSliceStartIndicies(
       const std::vector<HloInstruction*>& schedule,
       const HloInstruction* concat_bitcast) {
     std::vector<int> indicies;
@@ -11916,7 +11918,7 @@ ENTRY main {
   EXPECT_CALL(slice_proposer_,
               ProposeSlices(f32_8_8_, EqualsSlicedPrefetchOptions(
                                           options_.sliced_prefetch_options)))
-      .WillRepeatedly(Return(StatusOr<SliceProposalCollection>(
+      .WillRepeatedly(Return(absl::StatusOr<SliceProposalCollection>(
           FailedPrecondition("%s", "Cannot slice."))));
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
@@ -12109,7 +12111,7 @@ class MockRepacker : public MemorySpaceAssignmentRepacker {
   MockRepacker()
       : MemorySpaceAssignmentRepacker(std::numeric_limits<int64_t>::max(), 1) {}
 
-  MOCK_METHOD(StatusOr<bool>, Repack, (absl::Span<AllocationBlock*>),
+  MOCK_METHOD(absl::StatusOr<bool>, Repack, (absl::Span<AllocationBlock*>),
               (override));
 };
 
@@ -12234,7 +12236,7 @@ ENTRY main {
   absl::flat_hash_map<std::pair<int64_t, int64_t>, int64_t> repack_map;
   EXPECT_CALL(repacker, Repack(_))
       .WillRepeatedly([](absl::Span<AllocationBlock*> allocations)
-                          -> StatusOr<bool> {
+                          -> absl::StatusOr<bool> {
         bool found_p2 = false;
         bool found_p3 = false;
         for (AllocationBlock* block : allocations) {
@@ -12456,7 +12458,7 @@ ENTRY main {
   // Define a lambda for running MSA on the specified HLO, with the
   // configuration above.
   auto run_msa =
-      [&](std::string_view hlo_text) -> StatusOr<ModuleAndAssignments> {
+      [&](std::string_view hlo_text) -> absl::StatusOr<ModuleAndAssignments> {
     ModuleAndAssignments module_and_assignments;
     TF_ASSIGN_OR_RETURN(module_and_assignments.module,
                         ParseAndReturnVerifiedModule(hlo_text));
