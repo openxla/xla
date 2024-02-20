@@ -46,7 +46,7 @@ char PyHostSendAndRecvLoadedHostCallback::ID = 0;
 
 namespace {
 
-StatusOr<std::vector<CpuCallback::Arg>> CreateCallbackArgs(
+absl::StatusOr<std::vector<CpuCallback::Arg>> CreateCallbackArgs(
     absl::Span<const Shape> operand_shapes) {
   std::vector<CpuCallback::Arg> callback_args(operand_shapes.size());
   for (int i = 0; i < operand_shapes.size(); ++i) {
@@ -75,7 +75,7 @@ StatusOr<std::vector<CpuCallback::Arg>> CreateCallbackArgs(
   return callback_args;
 }
 
-StatusOr<std::vector<CpuCallback::Result>> CreateCallbackResults(
+absl::StatusOr<std::vector<CpuCallback::Result>> CreateCallbackResults(
     absl::Span<const Shape> result_shapes) {
   std::vector<CpuCallback::Result> callback_results(result_shapes.size());
   for (int i = 0; i < result_shapes.size(); ++i) {
@@ -107,7 +107,7 @@ StatusOr<std::vector<CpuCallback::Result>> CreateCallbackResults(
 
 }  // namespace
 
-StatusOr<tsl::RCReference<PyCpuLoadedHostCallback>>
+absl::StatusOr<tsl::RCReference<PyCpuLoadedHostCallback>>
 PyCpuLoadedHostCallback::Create(ifrt::Client* ifrt_client,
                                 pybind11::function callable,
                                 absl::Span<const Shape> operand_shapes,
@@ -131,12 +131,12 @@ PyCpuLoadedHostCallback::Create(ifrt::Client* ifrt_client,
                                             std::move(cpu_callback)));
 }
 
-StatusOr<std::string> PyCpuLoadedHostCallback::Serialize() const {
+absl::StatusOr<std::string> PyCpuLoadedHostCallback::Serialize() const {
   return Unimplemented(
       "PyHostSendAndRecvLoadedHostCallback serialization is not supported");
 }
 
-StatusOr<tsl::RCReference<PyHostSendAndRecvLoadedHostCallback>>
+absl::StatusOr<tsl::RCReference<PyHostSendAndRecvLoadedHostCallback>>
 PyHostSendAndRecvLoadedHostCallback::Create(
     ifrt::Client* ifrt_client, pybind11::function callable,
     absl::Span<const Shape> operand_shapes,
@@ -210,7 +210,8 @@ PyHostSendAndRecvLoadedHostCallback::~PyHostSendAndRecvLoadedHostCallback() {
       absl::MakeSpan(static_cast<pybind11::object*>(&serializer_), 1));
 }
 
-StatusOr<std::string> PyHostSendAndRecvLoadedHostCallback::Serialize() const {
+absl::StatusOr<std::string> PyHostSendAndRecvLoadedHostCallback::Serialize()
+    const {
   if (serializer_.is_none()) {
     return InvalidArgument(
         "Host callback cannot be serialized because serializer was not "

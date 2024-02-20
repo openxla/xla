@@ -66,7 +66,7 @@ int PprofProfileBuilder::LocationId(PyCodeObject* code, int instruction) {
   return ret.first->second;
 }
 
-StatusOr<pybind11::bytes> JsonToPprofProfile(std::string json) {
+absl::StatusOr<pybind11::bytes> JsonToPprofProfile(std::string json) {
   tensorflow::tfprof::pprof::Profile profile;
   auto status = tsl::protobuf::util::JsonStringToMessage(json, &profile);
   if (!status.ok()) {
@@ -79,7 +79,7 @@ StatusOr<pybind11::bytes> JsonToPprofProfile(std::string json) {
   return py::bytes(profile.SerializeAsString());
 }
 
-StatusOr<std::string> PprofProfileToJson(py::bytes binary_proto) {
+absl::StatusOr<std::string> PprofProfileToJson(py::bytes binary_proto) {
   tensorflow::tfprof::pprof::Profile profile;
   profile.ParseFromString(binary_proto);
   std::string output;

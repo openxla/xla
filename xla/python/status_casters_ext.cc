@@ -31,11 +31,13 @@ class MyClass {
   xla::Status MyMethod(int a, int b) { return xla::OkStatus(); }
   xla::Status MyMethodConst(int a, int b) const { return xla::OkStatus(); }
 
-  xla::StatusOr<int> MyStatusOrMethod(int a, int b) { return a + b; }
-  xla::StatusOr<int> MyStatusOrMethodConst(int a, int b) const { return a + b; }
+  absl::StatusOr<int> MyStatusOrMethod(int a, int b) { return a + b; }
+  absl::StatusOr<int> MyStatusOrMethodConst(int a, int b) const {
+    return a + b;
+  }
 };
 
-xla::StatusOr<int> StatusOrIdentity(int i) { return i; }
+absl::StatusOr<int> StatusOrIdentity(int i) { return i; }
 
 PYBIND11_MODULE(status_casters_ext, m) {
   // Exceptions
@@ -47,7 +49,7 @@ PYBIND11_MODULE(status_casters_ext, m) {
   m.def("my_lambda2", xla::ThrowIfErrorWrapper(MyFunc));
 
   m.def("my_lambda_statusor",
-        xla::ValueOrThrowWrapper([]() -> xla::StatusOr<int> { return 1; }));
+        xla::ValueOrThrowWrapper([]() -> absl::StatusOr<int> { return 1; }));
   m.def("status_or_identity", xla::ValueOrThrowWrapper(StatusOrIdentity));
 
   py::class_<MyClass> my_class(m, "MyClass");

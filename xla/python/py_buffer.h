@@ -41,7 +41,7 @@ struct PyHostValue {
                                 std::optional<Shape>& dynamic_shape_holder,
                                 ifrt::Array* ifrt_array);
 
-  static StatusOr<pybind11::object> AsNumPyArray(
+  static absl::StatusOr<pybind11::object> AsNumPyArray(
       std::shared_ptr<PyHostValue>& host_value,
       std::optional<Shape>& dynamic_shape_holder, ifrt::Array* ifrt_array,
       pybind11::handle this_obj);
@@ -52,9 +52,9 @@ struct PyHostValue {
 };
 
 struct IfrtHelpers {
-  static StatusOr<const Shape*> xla_dynamic_shape(
+  static absl::StatusOr<const Shape*> xla_dynamic_shape(
       ifrt::Array* ifrt_array, std::optional<Shape>& scratch);
-  static StatusOr<tsl::RCReference<ifrt::Array>> CopyToDevice(
+  static absl::StatusOr<tsl::RCReference<ifrt::Array>> CopyToDevice(
       ifrt::Array* ifrt_array, PjRtDevice* dst_device);
   static PjRtBuffer* pjrt_buffer(ifrt::Array* ifrt_array);
   static PjRtDevice* pjrt_device(ifrt::Array* ifrt_array);
@@ -63,8 +63,8 @@ struct IfrtHelpers {
 };
 
 // TODO(hyeontaek): Move the following functions to a separate file.
-StatusOr<ifrt::DType> ToIfRtDType(pybind11::dtype dtype);
-StatusOr<pybind11::dtype> ToPybind11DType(ifrt::DType dtype);
+absl::StatusOr<ifrt::DType> ToIfRtDType(pybind11::dtype dtype);
+absl::StatusOr<pybind11::dtype> ToPybind11DType(ifrt::DType dtype);
 
 }  // namespace xla
 

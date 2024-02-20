@@ -135,13 +135,13 @@ class PyLoadedExecutable
     return ifrt_loaded_executable_->SizeOfGeneratedCodeInBytes();
   }
 
-  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const {
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const {
     pybind11::gil_scoped_release scope;
     return ifrt_loaded_executable_->GetCompiledMemoryStats();
   }
 
-  StatusOr<absl::flat_hash_map<std::string, PjRtValueType>> GetCostAnalysis()
-      const {
+  absl::StatusOr<absl::flat_hash_map<std::string, PjRtValueType>>
+  GetCostAnalysis() const {
     return ifrt_loaded_executable_->GetCostAnalysis();
   }
 
@@ -156,24 +156,24 @@ class PyLoadedExecutable
   // PjRtExecutable::Execute. The result is similarly transposed back into the
   // argid,deviceid format.
   // args is [num_args x num_devices].
-  StatusOr<std::vector<std::vector<PyArray>>> ExecuteShardedOnLocalDevices(
-      absl::Span<const ExecuteShardedArg> args);
+  absl::StatusOr<std::vector<std::vector<PyArray>>>
+  ExecuteShardedOnLocalDevices(absl::Span<const ExecuteShardedArg> args);
 
-  StatusOr<std::pair<std::vector<std::vector<PyArray>>, PyShardedToken>>
+  absl::StatusOr<std::pair<std::vector<std::vector<PyArray>>, PyShardedToken>>
   ExecuteShardedOnLocalDevicesWithTokens(
       absl::Span<const ExecuteShardedArg> args);
 
-  StatusOr<PyExecuteResults> ExecuteSharded(std::vector<ExecuteShardedArg> args,
-                                            bool with_tokens);
+  absl::StatusOr<PyExecuteResults> ExecuteSharded(
+      std::vector<ExecuteShardedArg> args, bool with_tokens);
 
-  StatusOr<std::vector<std::shared_ptr<HloModule>>> HloModules() const;
+  absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> HloModules() const;
 
-  StatusOr<std::vector<std::vector<absl::string_view>>> GetOutputMemoryKinds()
-      const;
+  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetOutputMemoryKinds() const;
 
-  StatusOr<std::vector<Layout>> GetParameterLayouts() const;
+  absl::StatusOr<std::vector<Layout>> GetParameterLayouts() const;
 
-  StatusOr<std::vector<Layout>> GetOutputLayouts() const;
+  absl::StatusOr<std::vector<Layout>> GetOutputLayouts() const;
 
   std::optional<std::vector<OpSharding>> GetParameterShardings() const;
 

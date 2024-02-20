@@ -51,16 +51,14 @@ namespace xla {
 
 namespace {
 
-using DevicePutFunc = std::function<StatusOr<DevicePutResult>(
+using DevicePutFunc = std::function<absl::StatusOr<DevicePutResult>(
     py::handle, ifrt::Client*, ifrt::Device*, const DevicePutOptions& options,
     ifrt::MemoryKind to_memory_kind)>;
 
 template <typename T, typename SquashedT>
-StatusOr<DevicePutResult> HandlePythonScalar(py::handle obj,
-                                             ifrt::Client* client,
-                                             ifrt::Device* to_device,
-                                             const DevicePutOptions& options,
-                                             ifrt::MemoryKind to_memory_kind) {
+absl::StatusOr<DevicePutResult> HandlePythonScalar(
+    py::handle obj, ifrt::Client* client, ifrt::Device* to_device,
+    const DevicePutOptions& options, ifrt::MemoryKind to_memory_kind) {
   T data;
 
   try {
@@ -102,10 +100,9 @@ StatusOr<DevicePutResult> HandlePythonScalar(py::handle obj,
   return DevicePutResult(std::move(ifrt_array), /*weak_type=*/true);
 }
 
-StatusOr<DevicePutResult> HandlePythonInt(py::handle obj, ifrt::Client* client,
-                                          ifrt::Device* to_device,
-                                          const DevicePutOptions& options,
-                                          ifrt::MemoryKind to_memory_kind) {
+absl::StatusOr<DevicePutResult> HandlePythonInt(
+    py::handle obj, ifrt::Client* client, ifrt::Device* to_device,
+    const DevicePutOptions& options, ifrt::MemoryKind to_memory_kind) {
   void* ptr;
   PrimitiveType type;
   int64_t data_int64;
@@ -152,10 +149,9 @@ StatusOr<DevicePutResult> HandlePythonInt(py::handle obj, ifrt::Client* client,
 }
 
 template <typename T, typename SquashedT = T>
-StatusOr<DevicePutResult> HandleNumpyScalar(py::handle h, ifrt::Client* client,
-                                            ifrt::Device* to_device,
-                                            const DevicePutOptions& options,
-                                            ifrt::MemoryKind to_memory_kind) {
+absl::StatusOr<DevicePutResult> HandleNumpyScalar(
+    py::handle h, ifrt::Client* client, ifrt::Device* to_device,
+    const DevicePutOptions& options, ifrt::MemoryKind to_memory_kind) {
   T data;
   SquashedT data_squashed;
   void* ptr;
@@ -210,10 +206,9 @@ StatusOr<DevicePutResult> HandleNumpyScalar(py::handle h, ifrt::Client* client,
   return DevicePutResult(std::move(ifrt_array), /*weak_type=*/false);
 }
 
-StatusOr<DevicePutResult> HandleNumpyArray(py::handle h, ifrt::Client* client,
-                                           ifrt::Device* to_device,
-                                           const DevicePutOptions& options,
-                                           ifrt::MemoryKind to_memory_kind) {
+absl::StatusOr<DevicePutResult> HandleNumpyArray(
+    py::handle h, ifrt::Client* client, ifrt::Device* to_device,
+    const DevicePutOptions& options, ifrt::MemoryKind to_memory_kind) {
   py::array array = py::cast<py::array>(h);
   TF_ASSIGN_OR_RETURN(PrimitiveType type, DtypeToPrimitiveType(array.dtype()));
 
@@ -263,10 +258,11 @@ StatusOr<DevicePutResult> HandleNumpyArray(py::handle h, ifrt::Client* client,
   return DevicePutResult(std::move(ifrt_array), /*weak_type=*/false);
 }
 
-StatusOr<DevicePutResult> HandlePyArray(py::handle obj, ifrt::Client* client,
-                                        ifrt::Device* to_device,
-                                        const DevicePutOptions& options,
-                                        ifrt::MemoryKind to_memory_kind) {
+absl::StatusOr<DevicePutResult> HandlePyArray(py::handle obj,
+                                              ifrt::Client* client,
+                                              ifrt::Device* to_device,
+                                              const DevicePutOptions& options,
+                                              ifrt::MemoryKind to_memory_kind) {
   auto py_array = py::reinterpret_borrow<PyArray>(obj);
 
   // We only allow single device case for PyArray in device put.
@@ -309,10 +305,10 @@ StatusOr<DevicePutResult> HandlePyArray(py::handle obj, ifrt::Client* client,
 
 }  // namespace
 
-StatusOr<DevicePutResult> DevicePut(py::handle arg, ifrt::Client* client,
-                                    ifrt::Device* to_device,
-                                    const DevicePutOptions& options,
-                                    ifrt::MemoryKind to_memory_kind) {
+absl::StatusOr<DevicePutResult> DevicePut(py::handle arg, ifrt::Client* client,
+                                          ifrt::Device* to_device,
+                                          const DevicePutOptions& options,
+                                          ifrt::MemoryKind to_memory_kind) {
   tsl::profiler::TraceMe traceme("DevicePut");
   static const absl::flat_hash_map<PyObject*, DevicePutFunc>* const handlers =
       [] {
@@ -415,10 +411,10 @@ std::string PyArgSignature::DebugString() const {
 }
 
 using ToPyArgSignatureHandler =
-    std::function<StatusOr<PyArgSignature>(py::handle, bool)>;
+    std::function<absl::StatusOr<PyArgSignature>(py::handle, bool)>;
 
-StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
-                                               bool jax_enable_x64) {
+absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
+                                                     bool jax_enable_x64) {
   static const absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>* const
       handlers = [] {
         auto p = new absl::flat_hash_map<PyObject*, ToPyArgSignatureHandler>();
@@ -427,11 +423,12 @@ StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
 
         // The 4 Python native types.
         ToPyArgSignatureHandler bool_handler =
-            [](py::handle, bool) -> StatusOr<PyArgSignature> {
+            [](py::handle, bool) -> absl::StatusOr<PyArgSignature> {
           return PyArgSignature(PrimitiveType::PRED, {}, true);
         };
         ToPyArgSignatureHandler int_handler =
-            [](py::handle h, bool jax_enable_x64) -> StatusOr<PyArgSignature> {
+            [](py::handle h,
+               bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           // TODO(phawkins): we should consider checking for integer overflow.
           if (jax_enable_x64) {
             return PyArgSignature(PrimitiveType::S64, {}, true);
@@ -441,7 +438,7 @@ StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
         };
         ToPyArgSignatureHandler float_handler =
             [&dtypes](py::handle h,
-                      bool jax_enable_x64) -> StatusOr<PyArgSignature> {
+                      bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           // Only Python native types has a True weak_type.
           bool weak_type = !py::isinstance(h, dtypes.np_float64);
           if (jax_enable_x64) {
@@ -452,7 +449,7 @@ StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
         };
         ToPyArgSignatureHandler complex_handler =
             [&dtypes](py::handle h,
-                      bool jax_enable_x64) -> StatusOr<PyArgSignature> {
+                      bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           // Note that this branch is also taken  for np.complex128:
           // isinstance(np.complex128(3), complex) returns True
           // isinstance(np.complex64(3), complex) returns False
@@ -470,7 +467,8 @@ StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
         (*p)[reinterpret_cast<PyObject*>(&PyComplex_Type)] = complex_handler;
 
         ToPyArgSignatureHandler numpy_handler =
-            [](py::handle h, bool jax_enable_x64) -> StatusOr<PyArgSignature> {
+            [](py::handle h,
+               bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           py::array numpy_array = py::cast<py::array>(h);
           TF_ASSIGN_OR_RETURN(PrimitiveType dtype,
                               DtypeToPrimitiveType(numpy_array.dtype()));
@@ -493,7 +491,8 @@ StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
         (*p)[numpy.attr("ndarray").ptr()] = numpy_handler;
 
         ToPyArgSignatureHandler np_uint64_handler =
-            [](py::handle h, bool jax_enable_x64) -> StatusOr<PyArgSignature> {
+            [](py::handle h,
+               bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           if (jax_enable_x64) {
             return PyArgSignature(PrimitiveType::U64, {}, /*weak_type=*/false);
           } else {
@@ -501,7 +500,8 @@ StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
           }
         };
         ToPyArgSignatureHandler np_int_handler =
-            [](py::handle h, bool jax_enable_x64) -> StatusOr<PyArgSignature> {
+            [](py::handle h,
+               bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           if (jax_enable_x64) {
             return PyArgSignature(PrimitiveType::S64, {}, /*weak_type=*/false);
           } else {
@@ -509,7 +509,8 @@ StatusOr<PyArgSignature> PyArgSignatureOfValue(py::handle arg,
           }
         };
         ToPyArgSignatureHandler numpy_array_handler =
-            [](py::handle h, bool jax_enable_x64) -> StatusOr<PyArgSignature> {
+            [](py::handle h,
+               bool jax_enable_x64) -> absl::StatusOr<PyArgSignature> {
           // This block deals with all numpy scalar types, except for int64_dt,
           // float64_dt and complex128_dt which are taken care of in previous if
           // blocks.

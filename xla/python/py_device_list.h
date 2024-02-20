@@ -45,7 +45,7 @@ class PyDeviceList : public std::enable_shared_from_this<PyDeviceList> {
 
   // These two methods are safe to call from C++ without GIL.
   std::shared_ptr<xla::PyClient> py_client() const { return py_client_; }
-  xla::StatusOr<xla::ifrt::DeviceList> ifrt_device_list() const;
+  absl::StatusOr<xla::ifrt::DeviceList> ifrt_device_list() const;
 
   // Methods below require GIL.
   int64_t Hash();
@@ -65,8 +65,8 @@ class PyDeviceList : public std::enable_shared_from_this<PyDeviceList> {
 
   bool IsFullyAddressable();
   std::shared_ptr<PyDeviceList> AddressableDeviceList();
-  xla::StatusOr<pybind11::object> DefaultMemoryKind();
-  xla::StatusOr<pybind11::tuple> MemoryKinds();
+  absl::StatusOr<pybind11::object> DefaultMemoryKind();
+  absl::StatusOr<pybind11::tuple> MemoryKinds();
 
  private:
   pybind11::tuple AsTuple();

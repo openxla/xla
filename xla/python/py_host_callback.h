@@ -44,7 +44,7 @@ class PyCpuLoadedHostCallback final
     : public llvm::RTTIExtends<PyCpuLoadedHostCallback,
                                ifrt::LoadedHostCallback> {
  public:
-  static StatusOr<tsl::RCReference<PyCpuLoadedHostCallback>> Create(
+  static absl::StatusOr<tsl::RCReference<PyCpuLoadedHostCallback>> Create(
       ifrt::Client* ifrt_client, pybind11::function callable,
       absl::Span<const Shape> operand_shapes,
       absl::Span<const Shape> result_shapes);
@@ -60,7 +60,7 @@ class PyCpuLoadedHostCallback final
 
   ifrt::Client* client() const override { return ifrt_client_; }
 
-  StatusOr<std::string> Serialize() const override;
+  absl::StatusOr<std::string> Serialize() const override;
 
   static char ID;  // NOLINT
 
@@ -89,19 +89,19 @@ class PyHostSendAndRecvLoadedHostCallback final
     : public llvm::RTTIExtends<PyHostSendAndRecvLoadedHostCallback,
                                ifrt::PjRtHostSendAndRecvLoadedHostCallback> {
  public:
-  static StatusOr<tsl::RCReference<PyHostSendAndRecvLoadedHostCallback>> Create(
-      ifrt::Client* ifrt_client, pybind11::function callable,
-      absl::Span<const Shape> operand_shapes,
-      absl::Span<const Shape> result_shapes,
-      absl::Span<const uint16_t> send_channel_ids,
-      absl::Span<const uint16_t> recv_channel_ids,
-      pybind11::function serializer);
+  static absl::StatusOr<tsl::RCReference<PyHostSendAndRecvLoadedHostCallback>>
+  Create(ifrt::Client* ifrt_client, pybind11::function callable,
+         absl::Span<const Shape> operand_shapes,
+         absl::Span<const Shape> result_shapes,
+         absl::Span<const uint16_t> send_channel_ids,
+         absl::Span<const uint16_t> recv_channel_ids,
+         pybind11::function serializer);
 
   // PjRtLoadedHostCallback implementation.
 
   ~PyHostSendAndRecvLoadedHostCallback() override;
 
-  StatusOr<std::string> Serialize() const override;
+  absl::StatusOr<std::string> Serialize() const override;
 
   static char ID;  // NOLINT
 

@@ -73,7 +73,7 @@ py::object CheckAndCanonicalizeMemoryKind(py::object memory_kind,
         ". Got memory kind: ", py::cast<std::string>(memory_kind)));
   }
   // If memory kind is None, canonicalize to default memory.
-  xla::StatusOr<py::object> default_memory_kind =
+  absl::StatusOr<py::object> default_memory_kind =
       device_list->DefaultMemoryKind();
   if (!default_memory_kind.ok()) {
     return py::none();

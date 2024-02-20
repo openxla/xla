@@ -144,7 +144,7 @@ class PyArray : public pybind11::object {
 
   // Returns xla::InvalidArgument if the buffer has been deleted.
   // See `PjRtFuture` for the semantics of `IsReady` and `IsKnownReady`.
-  StatusOr<bool> IsReady() {
+  absl::StatusOr<bool> IsReady() {
     ifrt::Array* ifrt_array_ptr = ifrt_array();
     if (ifrt_array_ptr->IsDeleted()) {
       return InvalidArgument("Array has been deleted.");
@@ -192,7 +192,7 @@ class PyArray : public pybind11::object {
 
   pybind11::object arrays();
   Status set_arrays(pybind11::object obj);
-  StatusOr<PyArray> FullyReplicatedShard();
+  absl::StatusOr<PyArray> FullyReplicatedShard();
 
   int num_shards() const {
     ifrt::Array* ifrt_array_ptr = ifrt_array();
@@ -216,11 +216,11 @@ class PyArray : public pybind11::object {
 
   Status BlockUntilReady() const;
 
-  StatusOr<size_t> GetOnDeviceSizeInBytes();
-  StatusOr<pybind11::object> SingleDeviceArrayToNumpyArray();
+  absl::StatusOr<size_t> GetOnDeviceSizeInBytes();
+  absl::StatusOr<pybind11::object> SingleDeviceArrayToNumpyArray();
   Status CopySingleDeviceArrayToHostAsync();
   pybind11::dict CudaArrayInterface();
-  StatusOr<std::uintptr_t> UnsafeBufferPointer();
+  absl::StatusOr<std::uintptr_t> UnsafeBufferPointer();
 
   Status Delete();
 
@@ -228,10 +228,10 @@ class PyArray : public pybind11::object {
 
   PyArray Clone() const;
 
-  StatusOr<PyArray> CopyToDeviceWithSharding(ifrt::DeviceList devices,
-                                             pybind11::object dst_sharding);
+  absl::StatusOr<PyArray> CopyToDeviceWithSharding(
+      ifrt::DeviceList devices, pybind11::object dst_sharding);
 
-  static StatusOr<PyArray> BatchedDevicePut(
+  static absl::StatusOr<PyArray> BatchedDevicePut(
       pybind11::object aval, pybind11::object sharding,
       std::vector<pybind11::object> xs,
       std::vector<ClientAndPtr<PjRtDevice>> dst_devices, bool committed,
@@ -239,8 +239,8 @@ class PyArray : public pybind11::object {
       bool jax_enable_x64);
 
  private:
-  StatusOr<PyArray> FetchSingleShard(std::string_view api);
-  StatusOr<PyArray> AssertUnsharded(std::string_view api);
+  absl::StatusOr<PyArray> FetchSingleShard(std::string_view api);
+  absl::StatusOr<PyArray> AssertUnsharded(std::string_view api);
 
   void CheckAndRearrange();
 
@@ -276,7 +276,7 @@ class PyArrayResultHandler {
   std::vector<int64_t> shape_;
 };
 
-StatusOr<pybind11::object> CudaArrayInterfaceToBuffer(
+absl::StatusOr<pybind11::object> CudaArrayInterfaceToBuffer(
     const pybind11::dict& cai, std::shared_ptr<PyClient> cuda_client);
 
 }  // namespace xla
