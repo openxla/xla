@@ -24,10 +24,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/service/hlo_runner_interface.h"
+#include "xla/statusor.h"
 #include "xla/tools/hlo_bisect/hlo_bisect_state.h"
 
 namespace xla {
