@@ -22,6 +22,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/xla_builder.h"
 #include "xla/literal.h"

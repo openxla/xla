@@ -21,8 +21,12 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/service/custom_call_sharding_helper.h"
-#include "xla/service/spmd/spmd_partitioner_util.h"
+#include "xla/status.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace jax {
 
