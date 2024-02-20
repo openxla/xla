@@ -53,7 +53,8 @@ absl::Duration RandomDuration() {
 
 }  // namespace
 
-/*static*/ absl::StatusOr<GpuTimer> GpuTimer::Create(GpuStream* stream) {
+/*static*/ absl::StatusOr<GpuTimer> GpuTimer::Create(Stream* real_stream) {
+  GpuStream* stream = AsGpuStream(real_stream);
   GpuExecutor* parent = stream->parent();
   GpuContext* context = parent->gpu_context();
   GpuEventHandle start_event;
@@ -70,7 +71,7 @@ absl::Duration RandomDuration() {
 }
 
 /*static*/ absl::StatusOr<std::optional<GpuTimer>> GpuTimer::CreateIfNeeded(
-    GpuStream* stream, bool is_needed) {
+    Stream* stream, bool is_needed) {
   if (is_needed) {
     TF_ASSIGN_OR_RETURN(GpuTimer t, GpuTimer::Create(stream));
     return {std::make_optional(std::move(t))};
