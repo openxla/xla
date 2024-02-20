@@ -600,38 +600,6 @@ tsl_gpu_library(
     ],
 )
 
-gpu_only_cc_library(
-    name = "gpu_graph",
-    srcs = ["gpu_graph.cc"],
-    hdrs = ["gpu_graph.h"],
-    deps = [
-        ":gpu_driver_header",
-        ":gpu_executor_header",
-        ":gpu_kernel_header",
-        ":gpu_stream",
-        ":gpu_types_header",
-        "//xla/stream_executor",
-        "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-    ] + if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",
-        "//xla/stream_executor/cuda:cuda_driver",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor/rocm:rocm_driver",
-    ]),
-)
-
 cc_library(
     name = "gpu_blas_lt",
     srcs = ["gpu_blas_lt.cc"],
