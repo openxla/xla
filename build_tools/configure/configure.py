@@ -467,6 +467,7 @@ def main():
       DiscoverablePathsAndVersions(
           clang_path=args.clang_path,
           gcc_path=args.gcc_path,
+          lld_path=args.lld_path,
           ld_library_path=args.ld_library_path,
           cublas_version=args.cublas_version,
           cuda_toolkit_path=args.cuda_toolkit_path,
