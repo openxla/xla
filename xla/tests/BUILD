@@ -2864,6 +2864,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
+        "//xla/hlo/utils:hlo_matchers",
         "@tsl//tsl/platform:platform_port",
     ],
 )

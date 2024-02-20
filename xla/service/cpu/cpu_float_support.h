@@ -40,9 +40,6 @@ class CpuFloatSupport : public FloatSupport {
 
  private:
   bool IsSupported(const HloInstruction& hlo) const;
-  // Performs early check for things that cannot be delayed becuase some later
-  // passes may change the shape of dot inputs.
-  bool DotSupported(const HloInstruction& hlo) const;
 };
 
 }  // namespace cpu
