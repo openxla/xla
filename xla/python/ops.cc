@@ -35,8 +35,11 @@ limitations under the License.
 #include "xla/client/lib/svd.h"
 #include "xla/client/xla_builder.h"
 #include "xla/client/xla_computation.h"
+#include "xla/literal.h"
 #include "xla/pjrt/status_casters.h"
-#include "xla/python/types.h"
+#include "xla/service/hlo.pb.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {

@@ -23,17 +23,22 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/thread_annotations.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/synchronization/mutex.h"
 #include "pybind11/cast.h"  // from @pybind11
 #include "pybind11/functional.h"  // from @pybind11
 #include "pybind11/pybind11.h"  // from @pybind11
 #include "xla/client/executable_build_options.h"
 #include "xla/client/xla_builder.h"
+#include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/outfeed_receiver.h"
 #include "xla/python/py_client.h"
 #include "xla/python/types.h"
+#include "xla/statusor.h"
 
 namespace xla {
 
