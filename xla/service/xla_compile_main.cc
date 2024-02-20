@@ -83,7 +83,7 @@ const char kUsageHeader[] =
     "understood by that repository."
     "\n";
 
-xla::StatusOr<std::unique_ptr<HloModule>> LoadModule(
+absl::StatusOr<std::unique_ptr<HloModule>> LoadModule(
     const std::string& module_path) {
   auto format = std::string(tsl::io::Extension(module_path));
   if (format == "hlo" || format == "txt") {
