@@ -274,7 +274,7 @@ class GrpcTpuStream {
 
   void AddWriteRequest(std::unique_ptr<StreamRequest::Entry> req) {
     absl::MutexLock m(&request_lock_);
-    VLOG(2) << "Adding request: " << req->DebugString();
+    VLOG(2) << "Adding request: " << *req;
     requests_.push_back(std::move(req));
   }
 
@@ -659,7 +659,7 @@ void GrpcTpuStream::StreamWriterFn() {
         request_bytes = 0;
       }
       VLOG(1) << "Sending request: " << EventId::FromInt(e->operation_id());
-      VLOG(2) << "Sending request: " << e->DebugString();
+      VLOG(2) << "Sending request: " << *e;
       reqs.back().mutable_entry()->AddAllocated(e);
     }
     num_pending_requests_ = 0;
@@ -677,7 +677,7 @@ void GrpcTpuStream::StreamWriterFn() {
 void GrpcTpuStream::StreamReaderFn() {
   StreamResponse resp;
   while (stream_->Read(&resp)) {
-    VLOG(2) << "Received response: " << resp.DebugString();
+    VLOG(2) << "Received response: " << resp;
     for (const StreamResponse::Entry& entry : resp.entry()) {
       EventId event_id = EventId::FromInt(entry.operation_id());
       VLOG(1) << "Received response for: " << event_id;
