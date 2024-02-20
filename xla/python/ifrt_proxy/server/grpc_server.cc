@@ -18,8 +18,11 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -60,7 +63,29 @@ absl::StatusOr<std::unique_ptr<GrpcServer>> GrpcServer::Create(
   builder.AddChannelArgument(GRPC_ARG_MAX_SEND_MESSAGE_LENGTH, -1);
   builder.AddChannelArgument(GRPC_ARG_MAX_RECEIVE_MESSAGE_LENGTH, -1);
   builder.RegisterService(impl.get());
-  builder.AddListeningPort(std::string(address), GetServerCredentials());
+
+  std::vector<std::string> listen_addresses;
+  absl::flat_hash_set<std::string> listen_addresses_set;
+  auto insert_address = [&](std::string addr) {
+    if (!listen_addresses_set.contains(addr)) {
+      listen_addresses_set.insert(addr);
+      listen_addresses.push_back(addr);
+    }
+  };
+
+  std::string address_str = std::string(address);
+  if (auto c = address_str.find_last_of(':'); c != std::string::npos) {
+    std::string port_suffix = address_str.substr(c);
+    LOG(ERROR) << "Found listening on " << port_suffix;
+    insert_address(absl::StrCat("[::]", port_suffix));
+    insert_address(absl::StrCat("0.0.0.0", port_suffix));
+  }
+  insert_address(address_str);
+
+  for (const auto& addr : listen_addresses) {
+    builder.AddListeningPort(addr, GetServerCredentials());
+  }
+
   auto server = builder.BuildAndStart();
   if (server == nullptr) {
     return absl::UnavailableError(

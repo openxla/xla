@@ -31,7 +31,9 @@ cc_library(
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_cc_grpc_proto",
         "@com_github_grpc_grpc//:grpc",
         "@com_github_grpc_grpc//:grpc++",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -91,7 +93,6 @@ ifrt_proxy_cc_test(
     name = "grpc_service_impl_test",
     size = "small",
     srcs = ["grpc_service_impl_test.cc"],
-    tags = ["no_aarch64"],  # TODO(b/326080238): Fix this.
     deps = [
         ":grpc_server",
         ":grpc_service_impl",
