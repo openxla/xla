@@ -2766,9 +2766,7 @@ absl::Status IrEmitterUnnested::EmitCopyStartThunk(
       Thunk::ThunkInfo::WithProfileAnnotation(instr),
       /*source_buffer=*/src_buffer,
       /*destination_buffer=*/dst_buffer,
-      /*mem_size=*/ShapeUtil::ByteSizeOf(input_shape),
-      /*source_value=*/nullptr,
-      /*destination_value=*/nullptr);
+      /*mem_size=*/ShapeUtil::ByteSizeOf(input_shape));
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
@@ -2781,9 +2779,7 @@ absl::Status IrEmitterUnnested::EmitCopyStartThunk(
       Thunk::ThunkInfo::WithProfileAnnotation(instr),
       /*source_buffer=*/src_buffer,
       /*destination_buffer=*/dst_buffer,
-      /*mem_size=*/ShapeUtil::ByteSizeOf(input_shape),
-      /*source_value=*/nullptr,
-      /*destination_value=*/nullptr);
+      /*mem_size=*/ShapeUtil::ByteSizeOf(input_shape));
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
@@ -2795,9 +2791,7 @@ absl::Status IrEmitterUnnested::EmitCopyStartThunk(
       Thunk::ThunkInfo::WithProfileAnnotation(instr),
       /*source_buffer=*/src_buffer,
       /*destination_buffer=*/dst_buffer,
-      /*mem_size=*/ShapeUtil::ByteSizeOf(input_shape),
-      /*source_value=*/nullptr,
-      /*destination_value=*/nullptr);
+      /*mem_size=*/ShapeUtil::ByteSizeOf(input_shape));
     AddThunkToThunkSequence(std::move(thunk));
 
   return absl::OkStatus();

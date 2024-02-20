@@ -59,8 +59,7 @@ class DeviceToHostCopyThunk : public DeviceToDeviceCopyThunk {
    DeviceToHostCopyThunk(ThunkInfo thunk_info,
                          const BufferAllocation::Slice& source_buffer,
                          const BufferAllocation::Slice& destination_buffer,
-                         uint64_t mem_size, mlir::Value source_value,
-                         mlir::Value destination_value);
+                         uint64_t mem_size);
    absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 };
 
@@ -69,8 +68,7 @@ class HostToDeviceCopyThunk : public DeviceToDeviceCopyThunk {
    HostToDeviceCopyThunk(ThunkInfo thunk_info,
                          const BufferAllocation::Slice& source_buffer,
                          const BufferAllocation::Slice& destination_buffer,
-                         uint64_t mem_size, mlir::Value source_value,
-                         mlir::Value destination_value);
+                         uint64_t mem_size);
    absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 };
 
