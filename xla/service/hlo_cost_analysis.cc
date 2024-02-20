@@ -1411,8 +1411,8 @@ int64_t HloCostAnalysis::GetBytesWritten(
   return bytes_written;
 }
 
-StatusOr<HloCostAnalysis::Properties> HloCostAnalysis::ProcessSubcomputation(
-    HloComputation* computation) {
+absl::StatusOr<HloCostAnalysis::Properties>
+HloCostAnalysis::ProcessSubcomputation(HloComputation* computation) {
   auto visitor = CreateNestedCostAnalysis();
   visitor->ReserveVisitStates(computation->instruction_count());
   TF_RETURN_IF_ERROR(computation->Accept(visitor.get()));
