@@ -662,6 +662,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/concurrency:async_value",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
     ],
