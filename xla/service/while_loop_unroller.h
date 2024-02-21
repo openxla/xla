@@ -47,8 +47,9 @@ absl::flat_hash_map<HloInstruction*, WhileLoopConfig> GetUnrollableLoops(
 // Unrolls the given while loop with the defaul behaviour set to full unroll. If
 // wrap_in_trivial_loop is set, the unrolled body of the loop will be wrapped in
 // a loop with trip count of one.
-StatusOr<bool> Unroll(HloInstruction* while_op, int64_t unroll_factor = -1,
-                      bool wrap_in_trivial_loop = false);
+absl::StatusOr<bool> Unroll(HloInstruction* while_op,
+                            int64_t unroll_factor = -1,
+                            bool wrap_in_trivial_loop = false);
 
 // This pass unrolls while loops with the given unrolling factor. The value of
 // unroll_factor = -1 will fully unroll the loop.
@@ -73,7 +74,7 @@ class WhileLoopUnroller : public HloModulePass {
   absl::string_view name() const override { return "while_loop_unroller"; }
 
   using HloPassInterface::Run;
-  StatusOr<bool> Run(
+  absl::StatusOr<bool> Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
