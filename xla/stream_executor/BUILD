@@ -466,6 +466,7 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
