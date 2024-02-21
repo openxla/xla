@@ -549,7 +549,7 @@ class RecordingTpuDriver : public TpuDriver {
   int64_t GetCurrentThreadId() { return absl::base_internal::GetTID(); }
 };
 
-xla::StatusOr<std::unique_ptr<TpuDriver>> RegisterRecordingTpuDriver(
+absl::StatusOr<std::unique_ptr<TpuDriver>> RegisterRecordingTpuDriver(
     const TpuDriverConfig& config) {
   std::vector<std::string> configs = absl::StrSplit(config.worker(), '|');
 

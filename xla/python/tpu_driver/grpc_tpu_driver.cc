@@ -1064,7 +1064,7 @@ Status GrpcTpuDriver::Close() {
 }
 }  // namespace
 
-xla::StatusOr<std::unique_ptr<TpuDriver>> CreateGrpcTpuDriver(
+absl::StatusOr<std::unique_ptr<TpuDriver>> CreateGrpcTpuDriver(
     const TpuDriverConfig& config,
     std::shared_ptr<::grpc::ChannelCredentials> creds) {
   auto stub = GrpcTpuDriver::CreateTpuDriverStub(config, creds);
@@ -1094,7 +1094,7 @@ xla::StatusOr<std::unique_ptr<TpuDriver>> CreateGrpcTpuDriver(
 REGISTER_TPU_DRIVER(
     "grpc://",
     [](const TpuDriverConfig& config)
-        -> xla::StatusOr<std::unique_ptr<TpuDriver>> {
+        -> absl::StatusOr<std::unique_ptr<TpuDriver>> {
       if (absl::StartsWith(config.worker(), "grpc://localhost")) {
         LOG(INFO) << "Using local credentials for localhost: connection.";
         return CreateGrpcTpuDriver(

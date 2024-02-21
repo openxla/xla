@@ -236,11 +236,11 @@ class TpuDriver {
 
 class TpuDriverRegistry {
  public:
-  static xla::StatusOr<std::unique_ptr<TpuDriver>> Open(
+  static absl::StatusOr<std::unique_ptr<TpuDriver>> Open(
       const TpuDriverConfig& config);
   static int RegisterDriver(
       const std::string& prefix,
-      const std::function<xla::StatusOr<std::unique_ptr<TpuDriver>>(
+      const std::function<absl::StatusOr<std::unique_ptr<TpuDriver>>(
           const TpuDriverConfig&)>& creator);
 };
 
