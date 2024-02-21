@@ -197,7 +197,12 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor/gpu:gpu_asm_opts",
-    ]) + ["@tsl//tsl/platform:status"],
+    ]) + [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+    ],
 )
 
 cc_library(
