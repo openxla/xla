@@ -299,7 +299,7 @@ class DefaultNcclApi final : public NcclApi {
 
   absl::StatusOr<std::vector<OwnedNcclComm>> CommSplit(
       absl::Span<const NcclCommHandle> comms, int32_t color,
-      absl::Span<const int32_t> keys, const Config& config) final;
+      absl::Span<const int32_t> keys, std::optional<Config> config) final;
 
   absl::Status CommAbort(NcclCommHandle comm) final;
   absl::Status CommFinalize(NcclCommHandle comm) final;
@@ -404,7 +404,7 @@ DefaultNcclApi::CommInitRanks(int32_t nranks, const NcclCliqueId& clique_id,
 
 absl::StatusOr<std::vector<NcclApi::OwnedNcclComm>> DefaultNcclApi::CommSplit(
     absl::Span<const NcclCommHandle> comms, int32_t color,
-    absl::Span<const int32_t> keys, const Config& config) {
+    absl::Span<const int32_t> keys, std::optional<Config> config) {
   VLOG(1) << absl::StreamFormat(
       "Split %d NCCL communicators using color %d and keys: [%s]", comms.size(),
       color, absl::StrJoin(keys, ","));
@@ -417,13 +417,15 @@ absl::StatusOr<std::vector<NcclApi::OwnedNcclComm>> DefaultNcclApi::CommSplit(
   }
 
   ncclConfig_t comm_config = NCCL_CONFIG_INITIALIZER;
-  comm_config.splitShare = config.split_share;
-  // If max_nchannels is set, then we don't want to
-  // inherit from parent comm.
-  if (config.max_nchannels > 0) {
-    comm_config.maxCTAs = config.max_nchannels;
-    VLOG(1) << "CommSplit maximum number of channels "
-            << " is set to: " << comm_config.maxCTAs;
+  if (config.has_value()) {
+    comm_config.splitShare = config.value().split_share;
+    // If max_nchannels is set, then we don't want to
+    // inherit from parent comm.
+    if (config.value().max_nchannels > 0) {
+      comm_config.maxCTAs = config.value().max_nchannels;
+      VLOG(1) << "CommSplit maximum number of channels "
+              << " is set to: " << comm_config.maxCTAs;
+    }
   }
 
   // In contrast to grouped initialization communicator splitting initializes
@@ -432,13 +434,14 @@ absl::StatusOr<std::vector<NcclApi::OwnedNcclComm>> DefaultNcclApi::CommSplit(
   std::vector<ncclComm_t> split_comms_handles;
   split_comms_handles.resize(comms.size(), nullptr);
 
+  ncclConfig_t* comm_config_ptr = config.has_value() ? &comm_config : nullptr;
   TF_RETURN_IF_ERROR(GroupStart());
   for (size_t i = 0; i < comms.size(); ++i) {
     VLOG(1) << "Split NCCL communicator " << comms[i] << " with color " << color
             << " and key " << keys[i];
     XLA_NCCL_RETURN_IF_ERROR(ncclCommSplit(Cast(comms[i]), color, keys[i],
                                            &split_comms_handles[i],
-                                           /*config=*/&comm_config));
+                                           /*config=*/comm_config_ptr));
   }
   TF_RETURN_IF_ERROR(GroupEnd());
 
