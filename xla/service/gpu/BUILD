@@ -3225,6 +3225,42 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "multi_streaming_scheduling",
+    srcs = ["multi_streaming_scheduling.cc"],
+    hdrs = ["multi_streaming_scheduling.h"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla:status",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "multi_streaming_scheduling_test",
+    srcs = ["multi_streaming_scheduling_test.cc"],
+    deps = [
+        ":multi_streaming_scheduling",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_parser",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:filecheck",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:verified_hlo_module",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
 xla_cc_test(
     name = "command_buffer_scheduling_test",
     srcs = ["command_buffer_scheduling_test.cc"],
