@@ -100,7 +100,7 @@ std::vector<HloInstruction*> GetAllInstructionsWithZeroUsers(
   return results;
 }
 
-StatusOr<HloInstruction*> GetMatchingSendOrRecvFromMap(
+absl::StatusOr<HloInstruction*> GetMatchingSendOrRecvFromMap(
     HloInstruction* send_or_recv, const SendRecvGroupMap& send_recv_group_map) {
   if (send_or_recv->opcode() != HloOpcode::kSend &&
       send_or_recv->opcode() != HloOpcode::kRecv) {
@@ -168,7 +168,7 @@ Status EinsumDepthAnalysis::RunInternal(
   return dfs.Run(computation, this);
 }
 
-StatusOr<std::unique_ptr<EinsumDepthAnalysis>> EinsumDepthAnalysis::Run(
+absl::StatusOr<std::unique_ptr<EinsumDepthAnalysis>> EinsumDepthAnalysis::Run(
     const HloComputation& computation,
     const SendRecvGroupMap& send_recv_group_map) {
   EinsumDepthAnalysis* analysis_ptr =
@@ -666,7 +666,7 @@ const HloValueSemantics* HloValueSemanticsAnalysis::GetSemantics(
   return GetInstructionSemantics(instruction).element(index);
 }
 
-StatusOr<std::unique_ptr<HloValueSemanticsAnalysis>>
+absl::StatusOr<std::unique_ptr<HloValueSemanticsAnalysis>>
 HloValueSemanticsAnalysis::Run(const HloModule& module) {
   std::unique_ptr<HloValueSemanticsAnalysis> value_semantics_analysis =
       absl::WrapUnique(new HloValueSemanticsAnalysis(module));
@@ -696,7 +696,8 @@ bool HloValueSemanticsAnalysis::HasSemanticsFor(
   return value_semantics_.contains(instruction);
 }
 
-StatusOr<HloInstruction*> HloValueSemanticsAnalysis::GetMatchingSendOrRecv(
+absl::StatusOr<HloInstruction*>
+HloValueSemanticsAnalysis::GetMatchingSendOrRecv(
     HloInstruction* send_or_recv) const {
   return GetMatchingSendOrRecvFromMap(send_or_recv, send_recv_group_map_);
 }
@@ -915,7 +916,7 @@ bool HloValueSemanticsPropagation::OriginDependsOn(
   return !dependent_einsums.empty();
 }
 
-StatusOr<HloValueSemantics>
+absl::StatusOr<HloValueSemantics>
 HloValueSemanticsPropagation::ComputeSemanticsFromStaticAndOther(
     const HloValueSemantics& static_semantics,
     const HloValueSemantics& other_semantics,
@@ -936,7 +937,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromStaticAndOther(
   return CopySemantics(other_semantics);
 }
 
-StatusOr<HloValueSemantics>
+absl::StatusOr<HloValueSemantics>
 HloValueSemanticsPropagation::ComputeSemanticsFromRandomAndOther(
     const HloValueSemantics& random_semantics,
     const HloValueSemantics& other_semantics,
@@ -949,7 +950,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromRandomAndOther(
   return CopySemantics(other_semantics);
 }
 
-StatusOr<HloValueSemantics>
+absl::StatusOr<HloValueSemantics>
 HloValueSemanticsPropagation::MaybeCreateGradientSemantics(
     HloInstruction* gradient_candidate,
     HloValueSemanticLabel fallback_label) const {
@@ -971,7 +972,7 @@ HloValueSemanticsPropagation::MaybeCreateGradientSemantics(
   return HloValueSemantics(fallback_label, {gradient_candidate, {}});
 }
 
-StatusOr<HloValueSemantics>
+absl::StatusOr<HloValueSemantics>
 HloValueSemanticsPropagation::ComputeSemanticsFromWeightAndOther(
     const HloValueSemantics& weight_semantics,
     const HloValueSemantics& other_semantics,
@@ -1019,7 +1020,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromWeightAndOther(
   return CopySemantics(other_semantics);
 }
 
-StatusOr<HloValueSemantics>
+absl::StatusOr<HloValueSemantics>
 HloValueSemanticsPropagation::ComputeSemanticsFromActivationAndOther(
     const HloValueSemantics& activation_semantics,
     const HloValueSemantics& other_semantics,
@@ -1072,7 +1073,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromActivationAndOther(
   return CopySemantics(other_semantics);
 }
 
-StatusOr<HloValueSemantics>
+absl::StatusOr<HloValueSemantics>
 HloValueSemanticsPropagation::ComputeSemanticsFromActivationGradientAndOther(
     const HloValueSemantics& activation_gradient_semantics,
     const HloValueSemantics& other_semantics,
@@ -1091,7 +1092,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromActivationGradientAndOther(
   return CopySemantics(other_semantics);
 }
 
-StatusOr<HloValueSemantics>
+absl::StatusOr<HloValueSemantics>
 HloValueSemanticsPropagation::ComputeSemanticsFromWeightGradientAndOther(
     const HloValueSemantics& weight_gradient_semantics,
     const HloValueSemantics& other_semantics,
@@ -1106,7 +1107,7 @@ HloValueSemanticsPropagation::ComputeSemanticsFromWeightGradientAndOther(
   return CopySemantics(weight_gradient_semantics);
 }
 
-StatusOr<HloValueSemantics>
+absl::StatusOr<HloValueSemantics>
 HloValueSemanticsPropagation::ComputeSemanticsFromOperands(
     HloInstruction* instruction, absl::Span<const int64_t> operand_indices,
     absl::Span<const ShapeIndex> operand_shape_indices) const {
