@@ -564,8 +564,8 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:tensor_float_32_utils",
     ] + if_cuda_is_configured([
-        "@triton//:NVGPUToLLVM",
-        "@triton//:TritonGPUToLLVM",
+        "@triton//third_party/nvidia:NVGPUToLLVM",
+        "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
         "@triton//:TritonGPUTransforms",
         "@triton//:TritonNvidiaGPUTransforms",
         "@triton//:TritonLLVMIR",
