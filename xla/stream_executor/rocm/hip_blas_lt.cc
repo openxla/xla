@@ -390,6 +390,17 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
     DeviceMemoryBase b_scale, DeviceMemoryBase c_scale,
     DeviceMemoryBase d_scale, DeviceMemoryBase d_amax,
     blas::ProfileResult* profile_result) const {
+  {
+    absl::MutexLock lock{&blas_lt_ref_.parent_->LoggerMutex()};
+    using sei = internal::StreamExecutorInterface;
+
+    if(blas_lt_ref_.parent_->GetArgumentLoggingMode() & sei::ArgumentLogging::kGemm) {
+      blas_lt_ref_.parent_->ArgumentLogs().push_back(
+        /* Known bug: blas::CallContext is not passed to this method */
+          sei::GemmCallTrace{sei::GemmCallTrace::GemmType::kBlasLt, 0,
+            a.size(), b.size()});
+    }
+  }
   TF_ASSIGN_OR_RETURN(
       std::optional<gpu::GpuTimer> timer,
       gpu::GpuTimer::CreateIfNeeded(

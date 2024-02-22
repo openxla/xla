@@ -3211,8 +3211,8 @@ class RocmConvRunner : public dnn::ConvRunner {
     TF_ASSIGN_OR_RETURN(std::optional<GpuTimer> timer,
                         GpuTimer::CreateIfNeeded(
                             stream,
-                            output_profile_result &&
-                                output_profile_result->warmup_run_executed(),
+                            profile_result &&
+                                profile_result->warmup_run_executed(),
                             is_profiling));
 
     miopenStatus_t status = miopenStatusSuccess;
