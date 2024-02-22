@@ -326,10 +326,47 @@ class StreamExecutorInterface {
   // Performs linear search over alive GPU streams.
   virtual Stream* FindAllocatedStream(void* /*gpu_stream*/) { return nullptr; }
 
+  // The following methods access an internal log of some subset
+  // of arguments passed to other class methods.
+  // Used for testing/debugging purposes.
+
+  struct GemmCallTrace {
+    enum class GemmType {
+      kPlain = 0,
+      kStridedBatched = 1,
+      kBatched = 2,
+      kBlasLt = 3
+    };
+    GemmType op;
+    int flags;
+    uint64_t size1, size2;
+  };
+  // This may be expanded as necessary to trace other calls
+  using ApiTrace = std::variant<GemmCallTrace>;
+
+  // Retrieves and clears internal argument logs.
+  virtual absl::StatusOr<std::vector<ApiTrace> > ExtractApiTrace() {
+    return absl::UnimplementedError("Not implemented");
+  }
+
+  // Bit mask
+  enum class ArgumentLogging: uint64_t {
+    kNone = 0,
+    kGemm = 1,
+  };
+
+  // Sets the argument logging mode. Returns true if 'mode' is valid.
+  virtual bool SetArgumentLoggingMode(ArgumentLogging mode) { return false; }
+
  private:
   StreamExecutorInterface(const StreamExecutorInterface&) = delete;
   void operator=(const StreamExecutorInterface&) = delete;
 };
+
+inline bool operator&(StreamExecutorInterface::ArgumentLogging a, 
+                      StreamExecutorInterface::ArgumentLogging b) { 
+  return static_cast<uint64_t>(a) & static_cast<uint64_t>(b);
+}
 
 }  // namespace internal
 }  // namespace stream_executor
