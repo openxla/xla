@@ -3682,8 +3682,8 @@ xla_cc_test(
     deps = [
         ":horizontal_loop_fusion",
         ":metrics",
-       "//xla/hlo/utils:hlo_matchers",
-       "//xla/service:hlo_rematerialization_test_utils",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:hlo_rematerialization_test_utils",
         "//xla:autotune_results_proto_cc",
         "//xla/service:gpu_plugin",
         "//xla/service:pattern_matcher",
@@ -3696,6 +3696,12 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
+        "//xla/hlo/ir:hlo",
+        "//xla:shape_util",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service:hlo_memory_scheduler",
+        "//xla:util",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
