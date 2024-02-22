@@ -91,6 +91,9 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":gpu_codegen_test",
+        "//xla:error_spec",
+        "//xla/tests:test_utils",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
