@@ -56,12 +56,12 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"              // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"            // from @llvm-project
+#include "mlir/IR/Diagnostics.h"           // from @llvm-project
+#include "mlir/IR/DialectRegistry.h"       // from @llvm-project
+#include "mlir/IR/OwningOpRef.h"           // from @llvm-project
+#include "mlir/Support/LLVM.h"             // from @llvm-project
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"

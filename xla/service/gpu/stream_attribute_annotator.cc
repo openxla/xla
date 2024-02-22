@@ -52,7 +52,7 @@ bool IsOnlyRootNonDefaultStream(HloComputation* computation) {
   VLOG(2) << "Found fusion computation's root stream id to be "
           << root_stream_id;
 
-  if (root_stream_id == Thunk::GetMainComputeStreamId().value()) {
+  if (root_stream_id == Thunk::kDefaultExecutionStreamId.value()) {
     return false;
   }
   for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
@@ -61,7 +61,7 @@ bool IsOnlyRootNonDefaultStream(HloComputation* computation) {
     }
     int64_t instr_stream_id =
         instr->backend_config<GpuBackendConfig>()->operation_queue_id();
-    if (instr_stream_id != Thunk::GetMainComputeStreamId().value() &&
+    if (instr_stream_id != Thunk::kDefaultExecutionStreamId.value() &&
         instr_stream_id != root_stream_id) {
       return false;
     }
@@ -78,7 +78,7 @@ absl::StatusOr<bool> AnnotateStreamAttributesForInstruction(
   int64_t stream_id = instr_gpu_config.operation_queue_id();
 
   if (!IsOnlyRootNonDefaultStream(called_comp) ||
-      stream_id != Thunk::GetMainComputeStreamId().value()) {
+      stream_id != Thunk::kDefaultExecutionStreamId.value()) {
     return false;
   }
 
@@ -97,7 +97,7 @@ absl::StatusOr<bool> AnnotateStreamAttributesForUsers(
     HloInstruction* instr, GpuBackendConfig& instr_gpu_config) {
   bool changed = false;
   int64_t stream_id = instr_gpu_config.operation_queue_id();
-  if (stream_id == Thunk::GetMainComputeStreamId().value()) {
+  if (stream_id == Thunk::kDefaultExecutionStreamId.value()) {
     return changed;
   }
   std::vector<HloInstruction*> all_consumers;

@@ -44,17 +44,16 @@ namespace xla::gpu {
 namespace {
 static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
-  if (!instr_gpu_config.ok() ||
-      instr_gpu_config->operation_queue_id() ==
-          Thunk::GetMainComputeStreamId().value()) {
+  if (!instr_gpu_config.ok() || instr_gpu_config->operation_queue_id() ==
+                                    Thunk::kDefaultExecutionStreamId.value()) {
     return false;
   }
   HloComputation* computation = instr->parent();
-  TF_ASSIGN_OR_RETURN(HloInstruction * done,
-                      computation->CreateAsyncInstructions(
-                        instr, {},
-                        StreamAttributeAsyncWrapper::kParallelExecutionThread,
-                        /*replace=*/true));
+  TF_ASSIGN_OR_RETURN(
+      HloInstruction * done,
+      computation->CreateAsyncInstructions(
+          instr, {}, StreamAttributeAsyncWrapper::kParallelExecutionThread,
+          /*replace=*/true));
   VLOG(5) << "Created async instruction: " << done->ToString();
   return true;
 }
@@ -67,7 +66,7 @@ absl::StatusOr<bool> StreamAttributeAsyncWrapper::Run(
       2, "StreamAttributeAsyncWrapper::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (const HloComputation* comp :
-      module->MakeNonfusionComputations(execution_threads)) {
+       module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instr : comp->instructions()) {
       TF_ASSIGN_OR_RETURN(bool result, AsynchronizeInstruction(instr));
       changed |= result;

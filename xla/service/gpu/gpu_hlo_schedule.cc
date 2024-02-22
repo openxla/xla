@@ -313,8 +313,9 @@ class GpuAsyncTrackerBase : public AsyncTracker {
   bool IsAsyncComputeOp(const HloInstruction& hlo) const {
     return (hlo.opcode() == HloOpcode::kAsyncStart ||
             hlo.opcode() == HloOpcode::kAsyncDone) &&
-      !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
-      hlo.async_execution_thread() != hlo.parent()->execution_thread();
+           !hlo_query::IsCollectiveCommunicationOp(
+               hlo.async_wrapped_opcode()) &&
+           hlo.async_execution_thread() != hlo.parent()->execution_thread();
   }
 
   bool IsSupportedAsyncDone(const HloInstruction& hlo) const override {
@@ -358,7 +359,7 @@ class GpuAsyncTracker : public GpuAsyncTrackerBase {
         add_resource(GpuResourceType::kGpuAsyncStreamSend);
       } else if (op.inner == HloOpcode::kRecv) {
         add_resource(GpuResourceType::kGpuAsyncStreamRecv);
-      } else if (hlo_query::IsCollectiveCommunicationOp(op.inner)){
+      } else if (hlo_query::IsCollectiveCommunicationOp(op.inner)) {
         add_resource(GpuResourceType::kGpuAsyncStreamCollectives);
       } else {
         add_resource(GpuResourceType::kGpuAsyncStreamComputes);
@@ -396,7 +397,7 @@ class GpuAsyncTracker : public GpuAsyncTrackerBase {
     // for an async computation operation which will be allocated with
     // a dedicated compute stream. It can run concurrently with
     // another collective.
-    if((resource_type - first_target_resource) ==
+    if ((resource_type - first_target_resource) ==
         static_cast<int64_t>(GpuResourceType::kGpuAsyncStreamComputes)) {
       return 2;
     }
