@@ -942,7 +942,7 @@ absl::Span<PJRT_DeviceDescription* const> DeviceDescriptions(
   return {args.descriptions, args.num_descriptions};
 }
 
-absl::StatusOr<xla::CompiledMemoryStats> GetCompiledMemoryStats(
+absl::StatusOr<std::vector<xla::CompiledMemoryStats>> GetCompiledMemoryStats(
     const PJRT_Api* api, PJRT_Executable* executable) {
   // TODO(jieying): To be removed after 03/2024.
   if (api->pjrt_api_version.major_version == 0 &&
@@ -957,12 +957,17 @@ absl::StatusOr<xla::CompiledMemoryStats> GetCompiledMemoryStats(
   args.executable = executable;
   RETURN_STATUS_IF_PJRT_ERROR(
       api->PJRT_Executable_GetCompiledMemoryStats(&args), api);
-  xla::CompiledMemoryStats results;
-  results.generated_code_size_in_bytes = args.generated_code_size_in_bytes;
-  results.argument_size_in_bytes = args.argument_size_in_bytes;
-  results.output_size_in_bytes = args.output_size_in_bytes;
-  results.alias_size_in_bytes = args.alias_size_in_bytes;
-  results.temp_size_in_bytes = args.temp_size_in_bytes;
+  std::vector<xla::CompiledMemoryStats> results;
+  results.reserve(args.num_outputs);
+  for (int i = 0; i < args.num_outputs; ++i) {
+    results.push_back(xla::CompiledMemoryStats{
+        .generated_code_size_in_bytes = args.generated_code_size_in_bytes[i],
+        .argument_size_in_bytes = args.argument_size_in_bytes[i],
+        .output_size_in_bytes = args.output_size_in_bytes[i],
+        .alias_size_in_bytes = args.alias_size_in_bytes[i],
+        .temp_size_in_bytes = args.temp_size_in_bytes[i],
+    });
+  }
   return results;
 }
 

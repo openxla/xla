@@ -139,6 +139,41 @@ static xla::Status PopulateExecutableCostAnalysis(PJRT_Executable* executable) {
   return xla::OkStatus();
 }
 
+static xla::Status PopulateExecutableCompiledMemoryStats(
+    PJRT_Executable* executable) {
+  TF_ASSIGN_OR_RETURN(auto compiled_memory_stats,
+                      executable->get()->GetCompiledMemoryStats());
+  if (compiled_memory_stats.empty()) {
+    return xla::InvalidArgument(
+        "Can't get compiled memory stats, the list is empty for executable "
+        "%s.",
+        executable->get()->name());
+  }
+
+  std::vector<int64_t>& generated_code_size_in_bytes =
+      executable->generated_code_size_in_bytes;
+  std::vector<int64_t>& argument_size_in_bytes =
+      executable->argument_size_in_bytes;
+  std::vector<int64_t>& output_size_in_bytes = executable->output_size_in_bytes;
+  std::vector<int64_t>& alias_size_in_bytes = executable->alias_size_in_bytes;
+  std::vector<int64_t>& temp_size_in_bytes = executable->temp_size_in_bytes;
+  generated_code_size_in_bytes.reserve(compiled_memory_stats.size());
+  argument_size_in_bytes.reserve(compiled_memory_stats.size());
+  output_size_in_bytes.reserve(compiled_memory_stats.size());
+  alias_size_in_bytes.reserve(compiled_memory_stats.size());
+  temp_size_in_bytes.reserve(compiled_memory_stats.size());
+  for (const auto& memory_stats : compiled_memory_stats) {
+    generated_code_size_in_bytes.push_back(
+        memory_stats.generated_code_size_in_bytes);
+    argument_size_in_bytes.push_back(memory_stats.argument_size_in_bytes);
+    output_size_in_bytes.push_back(memory_stats.output_size_in_bytes);
+    alias_size_in_bytes.push_back(memory_stats.alias_size_in_bytes);
+    temp_size_in_bytes.push_back(memory_stats.temp_size_in_bytes);
+  }
+
+  return xla::OkStatus();
+}
+
 static xla::Status PopulateExecutableOutputElementTypes(
     PJRT_Executable* executable) {
   TF_ASSIGN_OR_RETURN(auto output_types,
@@ -1501,14 +1536,23 @@ PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_Serialize_Args",
       PJRT_Executable_Serialize_Args_STRUCT_SIZE, args->struct_size));
-  PJRT_ASSIGN_OR_RETURN(auto memory_stats,
-                        args->executable->executable->GetCompiledMemoryStats());
+  {
+    absl::MutexLock lock(&args->executable->mutex);
+    if (!args->executable->memory_stats_ran) {
+      PJRT_RETURN_IF_ERROR(
+          PopulateExecutableCompiledMemoryStats(args->executable));
+      args->executable->memory_stats_ran = true;
+    }
+  }
+
+  args->num_outputs = args->executable->generated_code_size_in_bytes.size();
   args->generated_code_size_in_bytes =
-      memory_stats.generated_code_size_in_bytes;
-  args->argument_size_in_bytes = memory_stats.argument_size_in_bytes;
-  args->output_size_in_bytes = memory_stats.output_size_in_bytes;
-  args->alias_size_in_bytes = memory_stats.alias_size_in_bytes;
-  args->temp_size_in_bytes = memory_stats.temp_size_in_bytes;
+      args->executable->generated_code_size_in_bytes.data();
+  args->argument_size_in_bytes =
+      args->executable->argument_size_in_bytes.data();
+  args->output_size_in_bytes = args->executable->output_size_in_bytes.data();
+  args->alias_size_in_bytes = args->executable->alias_size_in_bytes.data();
+  args->temp_size_in_bytes = args->executable->temp_size_in_bytes.data();
   return nullptr;
 }
 

@@ -351,7 +351,8 @@ class PjRtExecutable {
 
   // Return memory stats that allow callers to estimate device memory usage
   // when running this executable.
-  virtual StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const {
+  virtual StatusOr<std::vector<CompiledMemoryStats>> GetCompiledMemoryStats()
+      const {
     return Unimplemented("Retrieving CompiledMemoryStats is not supported.");
   }
 

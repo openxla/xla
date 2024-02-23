@@ -135,6 +135,13 @@ struct PJRT_Executable {
   std::vector<int64_t> out_dimensions;
   std::vector<size_t> out_dimension_sizes;
 
+  bool memory_stats_ran ABSL_GUARDED_BY(mutex) = false;
+  std::vector<int64_t> generated_code_size_in_bytes;
+  std::vector<int64_t> argument_size_in_bytes;
+  std::vector<int64_t> output_size_in_bytes;
+  std::vector<int64_t> alias_size_in_bytes;
+  std::vector<int64_t> temp_size_in_bytes;
+
   explicit PJRT_Executable(std::shared_ptr<xla::PjRtExecutable> executable);
 
   const xla::PjRtExecutable* get() const { return executable.get(); }
