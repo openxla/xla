@@ -175,7 +175,7 @@ void PopulateExecuteShardedResults(
 }
 
 template <typename ArgT, typename ArgAdapter = ShardedBufferAdapter<ArgT>>
-StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
+absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     const ExecuteOptions& options, const std::shared_ptr<PyClient>& client,
     ifrt::LoadedExecutable* ifrt_loaded_executable, absl::Span<const ArgT> args,
     std::optional<std::vector<PjRtFuture<Status>>>& returned_futures) {
@@ -316,7 +316,7 @@ std::vector<py::object> PyExecuteResults::ConsumeWithHandlers(
   return outputs;
 }
 
-StatusOr<std::vector<std::vector<PyArray>>>
+absl::StatusOr<std::vector<std::vector<PyArray>>>
 PyLoadedExecutable::ExecuteShardedOnLocalDevices(
     absl::Span<const ExecuteShardedArg> args) {
   std::optional<std::vector<PjRtFuture<Status>>> returned_futures;
@@ -327,7 +327,7 @@ PyLoadedExecutable::ExecuteShardedOnLocalDevices(
   return outputs_and_tokens.DisassembleIntoSingleDeviceArrays();
 }
 
-StatusOr<std::pair<std::vector<std::vector<PyArray>>, PyShardedToken>>
+absl::StatusOr<std::pair<std::vector<std::vector<PyArray>>, PyShardedToken>>
 PyLoadedExecutable::ExecuteShardedOnLocalDevicesWithTokens(
     absl::Span<const ExecuteShardedArg> args) {
   std::optional<std::vector<PjRtFuture<Status>>> returned_futures;
@@ -340,7 +340,7 @@ PyLoadedExecutable::ExecuteShardedOnLocalDevicesWithTokens(
                         outputs_and_tokens.ConsumeToken());
 }
 
-StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
+absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
     std::vector<ExecuteShardedArg> args, bool with_tokens) {
   std::optional<std::vector<PjRtFuture<Status>>> returned_futures;
   if (with_tokens) {
@@ -352,24 +352,26 @@ StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
                                               span_args, returned_futures);
 }
 
-StatusOr<std::vector<std::shared_ptr<HloModule>>>
+absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>
 PyLoadedExecutable::HloModules() const {
   py::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetHloModules();
 }
 
-StatusOr<std::vector<std::vector<absl::string_view>>>
+absl::StatusOr<std::vector<std::vector<absl::string_view>>>
 PyLoadedExecutable::GetOutputMemoryKinds() const {
   py::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetOutputMemoryKinds();
 }
 
-StatusOr<std::vector<Layout>> PyLoadedExecutable::GetParameterLayouts() const {
+absl::StatusOr<std::vector<Layout>> PyLoadedExecutable::GetParameterLayouts()
+    const {
   py::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetParameterLayouts();
 }
 
-StatusOr<std::vector<Layout>> PyLoadedExecutable::GetOutputLayouts() const {
+absl::StatusOr<std::vector<Layout>> PyLoadedExecutable::GetOutputLayouts()
+    const {
   py::gil_scoped_release gil_release;
   return ifrt_loaded_executable_->GetOutputLayouts();
 }

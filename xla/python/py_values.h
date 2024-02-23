@@ -59,10 +59,11 @@ struct DevicePutOptions {
   bool squash_64bit_types = false;
   bool allow_zero_copy = true;
 };
-StatusOr<DevicePutResult> DevicePut(pybind11::handle arg, ifrt::Client* client,
-                                    ifrt::Device* to_device,
-                                    const DevicePutOptions& options,
-                                    ifrt::MemoryKind to_memory_kind);
+absl::StatusOr<DevicePutResult> DevicePut(pybind11::handle arg,
+                                          ifrt::Client* client,
+                                          ifrt::Device* to_device,
+                                          const DevicePutOptions& options,
+                                          ifrt::MemoryKind to_memory_kind);
 
 // Returns `true` if `arg` is a JAX float0 array.
 bool IsFloat0(pybind11::array arg);
@@ -90,8 +91,8 @@ struct PyArgSignature {
 
 // Returns the PyArgSignature associated with an argument. Returns an error if
 // the argument is not supported.
-StatusOr<PyArgSignature> PyArgSignatureOfValue(pybind11::handle arg,
-                                               bool jax_enable_x64);
+absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(pybind11::handle arg,
+                                                     bool jax_enable_x64);
 
 template <typename H>
 H AbslHashValue(H h, const xla::PyArgSignature& s) {

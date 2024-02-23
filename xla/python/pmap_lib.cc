@@ -112,7 +112,7 @@ struct ShardArgResult {
 // need to fallback to Python.
 //
 // Both `devices` and `sharding_spec` has the same length.
-xla::StatusOr<ShardArgResult> ShardArg(
+absl::StatusOr<ShardArgResult> ShardArg(
     py::handle arg, absl::Span<xla::PjRtDevice* const> devices,
     const InputSpec& input_spec, py::handle py_devices,
     const py::function& python_fallback) {
@@ -291,8 +291,8 @@ class PmapFunction {
   // (c) call the executable
   // (d) construct `Array` objects from the outputs
   // (e) reconstruct the `PyTree`.
-  xla::StatusOr<py::object> Call(py::handle callable, PyObject* const* args,
-                                 size_t nargs, PyObject* kwnames);
+  absl::StatusOr<py::object> Call(py::handle callable, PyObject* const* args,
+                                  size_t nargs, PyObject* kwnames);
 
   py::object PythonSignature() {
     static const auto* inspect = new py::module(py::module::import("inspect"));
@@ -511,9 +511,9 @@ void PmapFunction::PopulateCacheEntry(PmapCacheEntry& cache_entry,
   }
 }
 
-xla::StatusOr<py::object> PmapFunction::Call(py::handle callable,
-                                             PyObject* const* args,
-                                             size_t nargs, PyObject* kwnames) {
+absl::StatusOr<py::object> PmapFunction::Call(py::handle callable,
+                                              PyObject* const* args,
+                                              size_t nargs, PyObject* kwnames) {
   xla::GlobalPyRefManager()->MaybeCollectGarbage();
 
   // Calls the cache_miss_ function. This just calls the Python function; it may
@@ -707,7 +707,7 @@ PmapFunction* PmapFunction::AsPmapFunctionUnchecked(py::handle handle) {
   return &(reinterpret_cast<JaxPmapFunctionObject*>(handle.ptr())->fun);
 }
 
-xla::StatusOr<PmapFunction*> AsPmapFunction(py::handle handle) {
+absl::StatusOr<PmapFunction*> AsPmapFunction(py::handle handle) {
   if (!PmapFunction::IsPmapFunction(handle)) {
     return xla::InvalidArgument("Expected a PmapFunction");
   }
@@ -726,7 +726,8 @@ PyObject* JaxPmapFunction_tp_vectorcall(PyObject* callable,
     return absl::StrCat("JaxPmapFunction(", o->fun.function_name(), ")");
   });
   try {
-    xla::StatusOr<py::object> out = o->fun.Call(callable, args, nargs, kwnames);
+    absl::StatusOr<py::object> out =
+        o->fun.Call(callable, args, nargs, kwnames);
     if (!out.ok()) {
       PyErr_SetString(PyExc_ValueError, out.status().ToString().c_str());
       return nullptr;

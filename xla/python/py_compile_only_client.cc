@@ -71,7 +71,7 @@ class PjRtCompileOnlyDevice : public PjRtDevice {
   absl::Span<PjRtMemorySpace* const> memory_spaces() const override {
     return {};
   }
-  StatusOr<PjRtMemorySpace*> default_memory_space() const override {
+  absl::StatusOr<PjRtMemorySpace*> default_memory_space() const override {
     return Unimplemented("default_memory_space is not supported");
   }
 
@@ -82,13 +82,14 @@ class PjRtCompileOnlyDevice : public PjRtDevice {
 class InvalidIfrtCompiler final
     : public llvm::RTTIExtends<InvalidIfrtCompiler, ifrt::Compiler> {
  public:
-  StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> Compile(
+  absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> Compile(
       std::unique_ptr<ifrt::Program> program,
       std::unique_ptr<ifrt::CompileOptions> options) override {
     return Unimplemented("Compile not implemented.");
   }
 
-  StatusOr<std::unique_ptr<ifrt::LoadedExecutable>> DeserializeLoadedExecutable(
+  absl::StatusOr<std::unique_ptr<ifrt::LoadedExecutable>>
+  DeserializeLoadedExecutable(
       absl::string_view serialized,
       std::unique_ptr<ifrt::DeserializeExecutableOptions> options) override {
     return Unimplemented("DeserializeLoadedExecutable not implemented.");
@@ -112,7 +113,7 @@ class CompileOnlyIfRtClient final
     }
   }
 
-  StatusOr<tsl::RCReference<ifrt::Array>> MakeArrayFromHostBuffer(
+  absl::StatusOr<tsl::RCReference<ifrt::Array>> MakeArrayFromHostBuffer(
       const void* data, ifrt::DType dtype, ifrt::Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
       std::shared_ptr<const ifrt::Sharding> sharding,
@@ -122,7 +123,8 @@ class CompileOnlyIfRtClient final
         "MakeArrayFromHostBuffer not available with compile-only client.");
   }
 
-  StatusOr<tsl::RCReference<ifrt::Array>> AssembleArrayFromSingleDeviceArrays(
+  absl::StatusOr<tsl::RCReference<ifrt::Array>>
+  AssembleArrayFromSingleDeviceArrays(
       ifrt::Shape shape, std::shared_ptr<const ifrt::Sharding> sharding,
       absl::Span<tsl::RCReference<ifrt::Array>> arrays,
       ifrt::ArrayCopySemantics semantics) override {
@@ -131,7 +133,7 @@ class CompileOnlyIfRtClient final
         "client.");
   }
 
-  StatusOr<tsl::RCReference<ifrt::Tuple>> MakeTuple(
+  absl::StatusOr<tsl::RCReference<ifrt::Tuple>> MakeTuple(
       absl::Span<tsl::RCReference<ifrt::Value>> values) override {
     return Unimplemented("MakeTuple not available with compile-only client.");
   }
@@ -161,17 +163,17 @@ class CompileOnlyIfRtClient final
     return {};
   }
   int process_index() const override { return 0; }
-  StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
+  absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override {
     return Unimplemented(
         "GetDefaultDeviceAssignment not available with compile-only client.");
   }
-  StatusOr<ifrt::Device*> LookupDevice(int device_id) const override {
+  absl::StatusOr<ifrt::Device*> LookupDevice(int device_id) const override {
     return Unimplemented(
         "LookupDevice not available with compile-only client.");
   }
 
-  StatusOr<ifrt::Device*> LookupAddressableDevice(
+  absl::StatusOr<ifrt::Device*> LookupAddressableDevice(
       int local_hardware_id) const override {
     return Unimplemented(
         "LookupAddressableDevice not available with compile-only client.");
@@ -183,7 +185,7 @@ class CompileOnlyIfRtClient final
 
   const PjRtTopologyDescription& topology() const { return *topology_; }
 
-  StatusOr<std::shared_ptr<const xla::PjRtTopologyDescription>>
+  absl::StatusOr<std::shared_ptr<const xla::PjRtTopologyDescription>>
   GetTopologyForDevices(
       absl::Span<ifrt::Device* const> devices) const override {
     return topology_;
@@ -203,7 +205,7 @@ class CompileOnlyPyClient : public PyClient {
  public:
   using PyClient::PyClient;
 
-  StatusOr<std::shared_ptr<PjRtExecutable>> CompileUnloaded(
+  absl::StatusOr<std::shared_ptr<PjRtExecutable>> CompileUnloaded(
       std::string mlir_module, CompileOptions options,
       std::vector<pybind11::capsule> host_callbacks) {
     if (!host_callbacks.empty()) {

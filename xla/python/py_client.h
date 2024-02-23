@@ -173,7 +173,7 @@ class PyClient : public std::enable_shared_from_this<PyClient> {
 
   std::vector<ClientAndPtr<PjRtDevice>> Devices();
   std::vector<ClientAndPtr<PjRtDevice>> LocalDevices();
-  StatusOr<ClientAndPtr<PjRtDevice>> DeviceFromLocalHardwareId(
+  absl::StatusOr<ClientAndPtr<PjRtDevice>> DeviceFromLocalHardwareId(
       int local_hardware_id);
 
   // Returns a vector of live PyArray objects. PyArray objects may share
@@ -190,25 +190,25 @@ class PyClient : public std::enable_shared_from_this<PyClient> {
   // TODO(zhangqiaorjc): Remove when we have transparent defragmentation.
   Status Defragment();
 
-  StatusOr<std::vector<std::pair<pybind11::bytes, pybind11::object>>>
+  absl::StatusOr<std::vector<std::pair<pybind11::bytes, pybind11::object>>>
   MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
                               PjRtDevice* device);
 
-  StatusOr<pybind11::object> BufferFromPyval(
+  absl::StatusOr<pybind11::object> BufferFromPyval(
       pybind11::handle argument, PjRtDevice* device, bool force_copy,
       ifrt::Client::HostBufferSemantics host_buffer_semantics);
 
-  StatusOr<std::shared_ptr<PyLoadedExecutable>> Compile(
+  absl::StatusOr<std::shared_ptr<PyLoadedExecutable>> Compile(
       std::string mlir_module, CompileOptions options,
       std::vector<pybind11::capsule> host_callbacks);
 
-  StatusOr<pybind11::bytes> SerializeExecutable(
+  absl::StatusOr<pybind11::bytes> SerializeExecutable(
       const PyLoadedExecutable& executable) const;
-  StatusOr<std::shared_ptr<PyLoadedExecutable>> DeserializeExecutable(
+  absl::StatusOr<std::shared_ptr<PyLoadedExecutable>> DeserializeExecutable(
       const std::string& serialized, std::optional<CompileOptions> options,
       std::vector<pybind11::capsule> host_callbacks);
 
-  StatusOr<pybind11::bytes> HeapProfile();
+  absl::StatusOr<pybind11::bytes> HeapProfile();
 
   // `GetEmitPythonCallbackDescriptor` takes in an input Python callable that
   // takes in arguments of shapes `operand_shapes` and returns values of shapes
@@ -222,18 +222,18 @@ class PyClient : public std::enable_shared_from_this<PyClient> {
   // The callable receives as arguments NumPy arrays for arguments with array
   // types, and None for Token argument. The callable must return a tuple of
   // either arrays or None values.
-  StatusOr<std::pair<uint64_t, pybind11::object>>
+  absl::StatusOr<std::pair<uint64_t, pybind11::object>>
   GetEmitPythonCallbackDescriptor(pybind11::function callable,
                                   absl::Span<Shape const> operand_shapes,
                                   absl::Span<Shape const> result_shapes);
   // Deprecated; please switch to emitting a `CustomCallOp` directly.
-  StatusOr<XlaOp> EmitPythonCallbackFromDescriptor(
+  absl::StatusOr<XlaOp> EmitPythonCallbackFromDescriptor(
       XlaBuilder& builder, uint64_t descriptor,
       absl::Span<XlaOp const> operands, absl::Span<Shape const> result_shapes,
       std::optional<std::vector<Shape>> operand_layouts, bool has_side_effect);
   // Deprecated; please switch to using `GetEmitPythonCallbackDescriptor`
   // and then emitting a `CustomCall` op instead.
-  StatusOr<std::pair<XlaOp, pybind11::object>> EmitPythonCallback(
+  absl::StatusOr<std::pair<XlaOp, pybind11::object>> EmitPythonCallback(
       pybind11::function callable, XlaBuilder& builder,
       absl::Span<XlaOp const> operands, absl::Span<Shape const> result_shapes,
       std::optional<std::vector<Shape>> operand_layouts, bool has_side_effect);
@@ -253,7 +253,7 @@ class PyClient : public std::enable_shared_from_this<PyClient> {
   // The callable receives as arguments NumPy arrays for arguments with array
   // types, and None for Token argument. The callable must return a tuple of
   // either arrays or None values.
-  StatusOr<pybind11::object> MakePythonCallbackUsingHostSendAndRecv(
+  absl::StatusOr<pybind11::object> MakePythonCallbackUsingHostSendAndRecv(
       pybind11::function callable, absl::Span<Shape const> operand_shapes,
       absl::Span<Shape const> result_shapes,
       absl::Span<uint16_t const> send_channel_ids,

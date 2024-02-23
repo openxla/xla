@@ -85,7 +85,7 @@ PyDeviceList::~PyDeviceList() {
   }
 }
 
-xla::StatusOr<xla::ifrt::DeviceList> PyDeviceList::ifrt_device_list() const {
+absl::StatusOr<xla::ifrt::DeviceList> PyDeviceList::ifrt_device_list() const {
   switch (device_list_.index()) {
     case 0:
       return std::get<0>(device_list_);
@@ -391,7 +391,7 @@ void PyDeviceList::PopulateMemoryKindInfoForDuckTypedDevices() {
   }
 }
 
-xla::StatusOr<py::tuple> PyDeviceList::MemoryKinds() {
+absl::StatusOr<py::tuple> PyDeviceList::MemoryKinds() {
   if (!memory_kind_info_.has_value()) {
     PopulateMemoryKindInfo();
   }
@@ -401,7 +401,7 @@ xla::StatusOr<py::tuple> PyDeviceList::MemoryKinds() {
   return (*memory_kind_info_)->memory_kinds;
 }
 
-xla::StatusOr<py::object> PyDeviceList::DefaultMemoryKind() {
+absl::StatusOr<py::object> PyDeviceList::DefaultMemoryKind() {
   if (!memory_kind_info_.has_value()) {
     PopulateMemoryKindInfo();
   }

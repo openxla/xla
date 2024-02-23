@@ -85,7 +85,7 @@ std::optional<std::vector<int64_t>> ByteStridesOrDefaultForShapeInt64(
   return ifrt_array->sharding().devices().front();
 }
 
-/* static */ StatusOr<const Shape*> IfrtHelpers::xla_dynamic_shape(
+/* static */ absl::StatusOr<const Shape*> IfrtHelpers::xla_dynamic_shape(
     ifrt::Array* ifrt_array, std::optional<Shape>& scratch) {
   auto* pjrt_buffer = IfrtHelpers::pjrt_buffer(ifrt_array);
 
@@ -120,8 +120,8 @@ pybind11::dtype IfrtHelpers::python_dtype(ifrt::Array* ifrt_array) {
   return PrimitiveTypeToDtype(primitive).value();
 }
 
-/* static */ StatusOr<tsl::RCReference<ifrt::Array>> IfrtHelpers::CopyToDevice(
-    ifrt::Array* ifrt_array, PjRtDevice* dst_device) {
+/* static */ absl::StatusOr<tsl::RCReference<ifrt::Array>>
+IfrtHelpers::CopyToDevice(ifrt::Array* ifrt_array, PjRtDevice* dst_device) {
   CHECK(dst_device != nullptr);
   auto transfer_guard_formatter = [ifrt_array, dst_device] {
     auto shape = py::cast<std::string>(py::str(python_shape(ifrt_array)));
@@ -141,7 +141,7 @@ pybind11::dtype IfrtHelpers::python_dtype(ifrt::Array* ifrt_array) {
       ifrt::ArrayCopySemantics::kReuseInput);
 }
 
-/* static */ StatusOr<pybind11::object> PyHostValue::AsNumPyArray(
+/* static */ absl::StatusOr<pybind11::object> PyHostValue::AsNumPyArray(
     std::shared_ptr<PyHostValue>& host_value,
     std::optional<Shape>& dynamic_shape_holder, ifrt::Array* ifrt_array,
     pybind11::handle this_obj) {
@@ -262,12 +262,12 @@ pybind11::dtype IfrtHelpers::python_dtype(ifrt::Array* ifrt_array) {
   return OkStatus();
 }
 
-StatusOr<ifrt::DType> ToIfRtDType(py::dtype dtype) {
+absl::StatusOr<ifrt::DType> ToIfRtDType(py::dtype dtype) {
   TF_ASSIGN_OR_RETURN(auto primitive_type, DtypeToPrimitiveType(dtype));
   return ifrt::ToDType(primitive_type);
 }
 
-StatusOr<py::dtype> ToPybind11DType(ifrt::DType dtype) {
+absl::StatusOr<py::dtype> ToPybind11DType(ifrt::DType dtype) {
   TF_ASSIGN_OR_RETURN(auto primitive_type, ifrt::ToPrimitiveType(dtype));
   return PrimitiveTypeToDtype(primitive_type);
 }
