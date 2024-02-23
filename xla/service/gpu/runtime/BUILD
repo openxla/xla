@@ -114,6 +114,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
