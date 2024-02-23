@@ -270,14 +270,9 @@ cc_library(
 cc_library(
     name = "nvtx_utils",
     hdrs = ["nvtx_utils.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    srcs = if_cuda_is_configured(["nvtx_utils.cc"], ["nvtx_utils_stub.cc"]),
     visibility = ["//visibility:public"],
-    deps = [
-        "//tsl/platform:logging",
-        "//tsl/platform:macros",
-        "//tsl/platform:types",
-        "@com_google_absl//absl/strings",
-    ] + if_cuda_is_configured(nvtx_headers()),
+    deps = if_cuda_is_configured(nvtx_headers()),
 )
 
 cc_library(
