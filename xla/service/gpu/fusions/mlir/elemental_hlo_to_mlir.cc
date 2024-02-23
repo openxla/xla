@@ -142,16 +142,11 @@ static auto& kUnsupportedOps =
                                         HloOpcode::kCall};
 
 static auto& kUnimplementedOps = *new absl::flat_hash_set<HloOpcode>{
-    HloOpcode::kConvolution,
-    HloOpcode::kDot,
-    HloOpcode::kDynamicUpdateSlice,
-    HloOpcode::kMap,
-    HloOpcode::kReduceWindow,
-    // Has a custom approximation in XLA:
-    HloOpcode::kErf,
-};
-
-static auto& kF32SupportedOps = *new absl::flat_hash_set<HloOpcode>{
+    HloOpcode::kConvolution, HloOpcode::kDot, HloOpcode::kDynamicUpdateSlice,
+    HloOpcode::kMap, HloOpcode::kReduceWindow,
+    // Custom approximations in XLA:
+    HloOpcode::kErf, HloOpcode::kTanh,
+    // Incorrect NaN handling:
     HloOpcode::kMaximum, HloOpcode::kMinimum, HloOpcode::kClamp};
 
 bool IsUnsupportedConstant(const HloInstruction* instr) {
@@ -776,12 +771,6 @@ bool IsHloOpSupported(const HloInstruction* instr,
     return false;
   }
 
-  // TODO(jreiffers): Fix the F64 lowering for these ops.
-  if (kF32SupportedOps.contains(instr->opcode()) &&
-      instr->shape().element_type() == F64) {
-    return false;
-  }
-
   return !(kUnsupportedOps.contains(instr->opcode()) ||
            kUnimplementedOps.contains(instr->opcode()) ||
            IsUnsupportedConstant(instr) || IsUnsupportedTuple(instr) ||
@@ -822,10 +811,6 @@ bool IsHloConversionSupported(const HloFusionAdaptor& fusion,
   }
   auto cuda_compute_capability =
       std::get<se::CudaComputeCapability>(compute_capability);
-  if (!cuda_compute_capability.IsAtLeastAmpere()) {
-    // Not all lowerings work with pre-ampere yet.
-    return false;
-  }
 
   if (fusion.GetRoots().size() > 1) {
     auto first_shape = fusion.GetRoots()[0].instruction().shape();
