@@ -585,7 +585,8 @@ class PjRtCApiExecutable : public PjRtExecutable {
   StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
       const override;
 
-  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
+  StatusOr<std::vector<CompiledMemoryStats>> GetCompiledMemoryStats()
+      const override {
     return pjrt::GetCompiledMemoryStats(c_api_, executable_.get());
   }
 
@@ -654,7 +655,8 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
     return executable_->GetHloModules();
   }
 
-  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
+  StatusOr<std::vector<CompiledMemoryStats>> GetCompiledMemoryStats()
+      const override {
     return executable_->GetCompiledMemoryStats();
   }
 

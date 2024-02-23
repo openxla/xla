@@ -527,7 +527,8 @@ class TfrtCpuExecutable final : public PjRtLoadedExecutable {
     return Unimplemented("GetOutputMemoryKinds is not supported.");
   }
 
-  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
+  StatusOr<std::vector<CompiledMemoryStats>> GetCompiledMemoryStats()
+      const override {
     CompiledMemoryStats memory_stats = CompiledMemoryStats();
     memory_stats.generated_code_size_in_bytes = SizeOfGeneratedCodeInBytes();
     const HloProto* proto = cpu_executable_->hlo_proto();
@@ -536,7 +537,7 @@ class TfrtCpuExecutable final : public PjRtLoadedExecutable {
           "cpu_executable_ has no hlo_proto.");
     }
     memory_stats.serialized_hlo_proto = proto->SerializeAsString();
-    return memory_stats;
+    return std::vector<CompiledMemoryStats>{memory_stats};
   }
 
   using PjRtLoadedExecutable::Execute;

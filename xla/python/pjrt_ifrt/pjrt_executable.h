@@ -138,7 +138,9 @@ class PjRtExecutable final
   }
   StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
     DCHECK(this);
-    return pjrt_executable_->GetCompiledMemoryStats();
+    ASSIGN_OR_RETURN(auto compiled_memory_stats,
+                     pjrt_executable_->GetCompiledMemoryStats());
+    return compiled_memory_stats[0];
   }
 
   StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
@@ -248,7 +250,9 @@ class PjRtLoadedExecutable final
   }
   StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
     DCHECK(this);
-    return pjrt_loaded_executable_->GetCompiledMemoryStats();
+    ASSIGN_OR_RETURN(auto compiled_memory_stats,
+                     pjrt_loaded_executable_->GetCompiledMemoryStats());
+    return compiled_memory_stats[0];
   }
 
   StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()

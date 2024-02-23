@@ -53,7 +53,7 @@ extern "C" {
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 42
+#define PJRT_API_MINOR 43
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1381,13 +1381,14 @@ struct PJRT_Executable_GetCompiledMemoryStats_Args {
   void* extension_start;
   PJRT_Executable* executable;
 
+  size_t num_outputs;
   // Mirrors xla::CompiledMemoryStats.
-  int64_t generated_code_size_in_bytes;  // out
-  int64_t argument_size_in_bytes;        // out
-  int64_t output_size_in_bytes;          // out
+  const int64_t* generated_code_size_in_bytes;  // out
+  const int64_t* argument_size_in_bytes;        // out
+  const int64_t* output_size_in_bytes;          // out
   // How much argument is reused for output.
-  int64_t alias_size_in_bytes;  // out
-  int64_t temp_size_in_bytes;   // out
+  const int64_t* alias_size_in_bytes;  // out
+  const int64_t* temp_size_in_bytes;   // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_GetCompiledMemoryStats_Args,
                           temp_size_in_bytes);

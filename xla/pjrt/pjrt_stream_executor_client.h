@@ -835,7 +835,8 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
     return size;
   }
 
-  StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
+  StatusOr<std::vector<CompiledMemoryStats>> GetCompiledMemoryStats()
+      const override {
     if (executables_.size() != 1) {
       return Unimplemented(
           "Retrieving CompiledMemoryStats is not supported for multiple "
@@ -847,7 +848,7 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
     if (proto != nullptr) {
       memory_stats.serialized_hlo_proto = proto->SerializeAsString();
     }
-    return memory_stats;
+    return std::vector<CompiledMemoryStats>{memory_stats};
   }
 
   const DeviceAssignment& device_assignment() const override {
