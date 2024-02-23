@@ -172,19 +172,20 @@ void AppendToMessage(::tsl::Status* status, Args... args) {
   *status = std::move(new_status);
 }
 
+static thread_local ::absl::Status _status;
 // For propagating errors when calling a function.
-#define TF_RETURN_IF_ERROR(...)             \
-  do {                                      \
-    ::absl::Status _status = (__VA_ARGS__); \
-    if (TF_PREDICT_FALSE(!_status.ok())) {  \
-      MAYBE_ADD_SOURCE_LOCATION(_status)    \
-      return _status;                       \
-    }                                       \
+#define TF_RETURN_IF_ERROR(...)            \
+  do {                                     \
+    _status = (__VA_ARGS__);               \
+    if (TF_PREDICT_FALSE(!_status.ok())) { \
+      MAYBE_ADD_SOURCE_LOCATION(_status)   \
+      return _status;                      \
+    }                                      \
   } while (0)
 
 #define TF_RETURN_WITH_CONTEXT_IF_ERROR(expr, ...)           \
   do {                                                       \
-    ::tsl::Status _status = (expr);                          \
+    _status = (expr);                                        \
     if (TF_PREDICT_FALSE(!_status.ok())) {                   \
       ::tsl::errors::AppendToMessage(&_status, __VA_ARGS__); \
       return _status;                                        \
