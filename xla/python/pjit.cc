@@ -63,6 +63,7 @@ struct PjitCacheEntry {
   // Bitvector of kept arguments from Jaxpr DCE pass. Used to drop some `args`
   // in PjitFunction::Call before calling into compiled computation.
   std::vector<bool> kept_var_bitvec;
+  std::vector<bool> are_in_shardings_from_xla;
 
   // Ensures a single thread performs the compilation for a given executable.
   //
@@ -318,11 +319,13 @@ PjitFunction::PjitFunction(
 PjitFunction::~PjitFunction() { GetGlobalPjitFunctionStore().Erase(this); }
 
 void CallShardArgFallback(
-    py::handle arg, py::handle sharding, const py::function& fallback,
+    py::handle arg, py::handle sharding, bool is_sharding_from_xla,
+    const py::function& shard_arg_fallback,
     std::vector<tsl::RCReference<xla::ifrt::Array>>& num_args_arrays,
     ParsedArgumentsAsBuffers& arguments) {
   tsl::profiler::TraceMe traceme("cpp_pjit_shard_arg_fallback");
-  auto py_array_or_bufs = fallback(arg, sharding);
+  auto py_array_or_bufs =
+      shard_arg_fallback(arg, sharding, is_sharding_from_xla);
   auto py_array = py::cast<xla::PyArray>(py_array_or_bufs);
   num_args_arrays.push_back(tsl::FormRef(py_array.ifrt_array()));
   arguments.keep_alive_objects.push_back(std::move(py_array_or_bufs));
@@ -335,6 +338,7 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
                   ParsedArgumentsAsBuffers& arguments,
                   const std::vector<bool>& kept_args,
                   const std::vector<py::object>& in_shardings,
+                  const std::vector<bool>& are_in_shardings_from_xla,
                   const py::function& shard_arg_fallback) {
   const auto& addressable_devices = executable.AddressableDevices();
   int num_args = arguments.flat_dynamic_args.size();
@@ -377,8 +381,9 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
         }
         continue;
       } else {
-        CallShardArgFallback(arg, in_shardings[dce_index], shard_arg_fallback,
-                             num_args_arrays, arguments);
+        CallShardArgFallback(arg, in_shardings[dce_index],
+                             are_in_shardings_from_xla[dce_index],
+                             shard_arg_fallback, num_args_arrays, arguments);
         continue;
       }
     }
@@ -394,14 +399,16 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
            (!py_array.committed() && sharding_num_devices == 1));
 
     if (sharding.get_type() == jax::PmapSharding::type()) {
-      CallShardArgFallback(arg, in_shardings[dce_index], shard_arg_fallback,
-                           num_args_arrays, arguments);
+      CallShardArgFallback(arg, in_shardings[dce_index],
+                           are_in_shardings_from_xla[dce_index],
+                           shard_arg_fallback, num_args_arrays, arguments);
       continue;
     }
 
     if (py_array.num_shards() != addressable_devices.size()) {
-      CallShardArgFallback(arg, in_shardings[dce_index], shard_arg_fallback,
-                           num_args_arrays, arguments);
+      CallShardArgFallback(arg, in_shardings[dce_index],
+                           are_in_shardings_from_xla[dce_index],
+                           shard_arg_fallback, num_args_arrays, arguments);
       continue;
     }
 
@@ -584,7 +591,8 @@ xla::StatusOr<py::object> PjitFunction::Call(py::handle callable,
   // A vector of [num_inputs].
   auto num_args_arrays = PrepareIfrtInputs(
       *cache_entry->executable, arguments, cache_entry->kept_var_bitvec,
-      cache_entry->in_shardings, shard_arg_fallback_);
+      cache_entry->in_shardings, cache_entry->are_in_shardings_from_xla,
+      shard_arg_fallback_);
 
   if (!num_args_arrays.ok()) {
     VLOG(2) << "Failed to prepare IFRT inputs: " << num_args_arrays.status();
@@ -673,7 +681,6 @@ xla::Status PjitFunction::UpdateArgsSignature(
     // PjitFunction::Call().
     if (arg.get_type() == xla::PyArray::type()) {
       auto py_array = py::reinterpret_borrow<xla::PyArray>(arg);
-
       arguments.signature.dynamic_arg_shardings.push_back(py_array.sharding());
       arguments.signature.committed_args.push_back(py_array.committed());
     } else {
@@ -745,6 +752,14 @@ void PjitFunction::PopulateCacheEntry(PjitCacheEntry& cache_entry,
   cache_entry.kept_var_bitvec.reserve(kept_var_bitvec.size());
   for (py::handle k : kept_var_bitvec) {
     cache_entry.kept_var_bitvec.push_back(py::cast<bool>(k));
+  }
+
+  py::list are_in_shardings_from_xla =
+      fastpath_data.attr("are_in_shardings_from_xla");
+  cache_entry.are_in_shardings_from_xla.reserve(in_shardings.size());
+  for (int i = 0; i < are_in_shardings_from_xla.size(); ++i) {
+    cache_entry.are_in_shardings_from_xla.push_back(
+        py::cast<bool>(are_in_shardings_from_xla[i]));
   }
 }
 
