@@ -60,7 +60,10 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "mhlo/transforms/mhlo_passes.td",
-    deps = ["@llvm-project//mlir:PassBaseTdFiles"],
+    deps = [
+        "@llvm-project//mlir:PassBaseTdFiles",
+        "@llvm-project//mlir:QuantizationOpsTdFiles",
+    ],
 )
 
 gentbl_cc_library(
@@ -692,6 +695,7 @@ cc_library(
         "mhlo/transforms/shape_simplification/shape_simplification.cc",
         "mhlo/transforms/sink_constants_to_control_flow/sink_constants_to_control_flow.cc",
         "mhlo/transforms/sparse_rewriting/sparse_rewriting.cc",
+        "mhlo/transforms/stablehlo_compose_uniform_quantization/stablehlo_compose_uniform_quantization_pass.cc",
         "mhlo/transforms/stablehlo_legalize_to_hlo/stablehlo_legalize_to_hlo_pass.cc",
         "mhlo/transforms/symbolic_shape_optimization/symbolic_shape_optimization.cc",
         "mhlo/transforms/test_infer_shaped_type/test_infer_shaped_type_pass.cc",

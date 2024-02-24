@@ -198,6 +198,11 @@ std::unique_ptr<OperationPass<func::FuncOp>> createShapeLegalizeToHloPass(
 // like int ops.
 std::unique_ptr<OperationPass<func::FuncOp>> createMhloQuantLegalizeToIntPass();
 
+// Identifies uniform quantization patterns and composes them into equivalent
+// ops that accept uniform quantized types. The target dialect is stablehlo.
+std::unique_ptr<OperationPass<ModuleOp>>
+createStablehloComposeUniformQuantizationPass();
+
 // Test passes.
 std::unique_ptr<Pass> createTestInferShapedTypeMethodsPass();
 std::unique_ptr<Pass> createTestMaterializeBroadcastsPass();
