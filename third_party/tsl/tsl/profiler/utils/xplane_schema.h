@@ -61,6 +61,8 @@ TF_CONST_INIT extern const absl::string_view kPythonTracerPlaneName;
 TF_CONST_INIT extern const absl::string_view kHostCpusPlaneName;
 // Name of XPlane that contains kTrace system calls.
 TF_CONST_INIT extern const absl::string_view kSyscallsPlaneName;
+// Name of XPlane that contains BMC power events.
+TF_CONST_INIT extern const absl::string_view kBmcPowerPlaneName;
 
 // Names of XLines that contain ML-level events.
 TF_CONST_INIT extern const absl::string_view kStepLineName;
