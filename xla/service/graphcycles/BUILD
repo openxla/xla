@@ -53,9 +53,7 @@ xla_cc_test(
     srcs = ["ordered_set_test.cc"],
     deps = [
         ":ordered_set",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
     ],
 )
