@@ -371,8 +371,7 @@ DefaultNcclApi::CommInitRanks(int32_t nranks, const NcclCliqueId& clique_id,
   VLOG(1) << "Initialize NCCL communicator for " << ranks.size()
           << " devices; hash(id)=" << absl::HashOf(clique_id);
 
-#if !defined(TENSORFLOW_USE_ROCM) ||  (defined(TENSORFLOW_USE_ROCM) && 
-                                        TF_ROCM_VERSION > 50700)
+#if !defined(TENSORFLOW_USE_ROCM) || (defined(TENSORFLOW_USE_ROCM) && TF_ROCM_VERSION > 50700)
   ncclConfig_t comm_config = NCCL_CONFIG_INITIALIZER;
   comm_config.splitShare = config.split_share;
   if (config.max_nchannels > 0) {
