@@ -18,8 +18,11 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/strings/string_view.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/python/ifrt/compiler.h"
+#include "xla/python/ifrt/executable.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace ifrt {

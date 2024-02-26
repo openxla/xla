@@ -17,6 +17,9 @@ limitations under the License.
 
 #include <string>
 
+#include "xla/statusor.h"
+#include "xla/util.h"
+
 namespace xla {
 namespace ifrt {
 

@@ -20,8 +20,11 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/python/ifrt/host_callback.h"
+#include "xla/statusor.h"
+#include "tsl/concurrency/ref_count.h"
 
 namespace xla {
 namespace ifrt {
